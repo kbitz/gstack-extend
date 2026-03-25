@@ -10,7 +10,7 @@
 # Usage:
 #   ./scripts/validate.sh [--app "App Name"] [--gate 1|2|3] [--verbose]
 #
-# Defaults to Notes.app. Pass --app to test a different app.
+# Defaults to TextEdit. Pass --app to test a different app.
 # Pass --gate to run a single gate. Omit to run all gates.
 
 set -euo pipefail
@@ -258,38 +258,121 @@ run_gate_1() {
 run_gate_2() {
   header "Gate 2: Interaction Reliability"
 
-  # Screenshot: initial state
-  take_screenshot "$SESSION_DIR/screenshots/gate2-01-initial.png" || true
+  # Step 1: See to get the element map
+  local see_output
+  see_output=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate2-01-initial.png" || echo "")
 
-  # Step 1: Click the document body to ensure focus
+  if [[ -z "$see_output" ]]; then
+    fail "Could not capture UI elements"
+    return
+  fi
+
+  # Step 2: Find a text input element by ID from the AX tree
+  local text_element
+  text_element=$(echo "$see_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+elems = d.get('data', {}).get('ui_elements', [])
+for e in elems:
+    role = (e.get('role') or '').lower()
+    if role in ('textarea', 'text area', 'textfield', 'text field'):
+        print(e['id'])
+        break
+" 2>/dev/null || echo "")
+
+  if [[ -z "$text_element" ]]; then
+    fail "No text input element found in AX tree"
+    return
+  fi
+
+  log "Found text element: $text_element"
+
+  # Step 3: Click the text element by ID (not coordinates)
   local click_result
-  click_result=$(peekaboo click --coords "300,300" --app "$APP_NAME" --json 2>/dev/null || echo "")
+  click_result=$(peekaboo click --on "$text_element" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
   local click_ok
   click_ok=$(check_success "$click_result")
 
   if [[ "$click_ok" == "True" ]]; then
-    pass "Click into document"
+    pass "Clicked text element $text_element by ID"
   else
-    fail "Click into document failed"
+    fail "Click on element $text_element failed"
   fi
 
-  # Step 2: Type text
-  take_screenshot "$SESSION_DIR/screenshots/gate2-02-before-type.png" || true
-
+  # Step 4: Type text
+  local test_text="validate-test"
   local type_result
-  type_result=$(peekaboo type "validate-test" --app "$APP_NAME" --json 2>/dev/null || echo "")
+  type_result=$(peekaboo type "$test_text" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
   local type_ok
   type_ok=$(check_success "$type_result")
 
   if [[ "$type_ok" == "True" ]]; then
-    pass "Typed text into document"
+    pass "Typed text via --window-id"
   else
-    fail "Type into document failed"
+    fail "Type into element failed"
   fi
 
-  take_screenshot "$SESSION_DIR/screenshots/gate2-03-after-type.png" || true
+  # Step 5: Verify typed text appears in AX tree (state verification)
+  local verify_output
+  verify_output=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate2-02-after-type.png" || echo "")
 
-  # Step 3: Hotkey test (Select All via Cmd+A)
+  local text_verified
+  text_verified=$(echo "$verify_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+elems = d.get('data', {}).get('ui_elements', [])
+target = 'validate-test'
+found = False
+for e in elems:
+    for field in ('value', 'label', 'title', 'description'):
+        v = str(e.get(field, '') or '')
+        if target in v:
+            found = True
+            break
+    if found:
+        break
+if not found:
+    # Fallback: check raw JSON string
+    raw = json.dumps(d)
+    found = target in raw
+print('found' if found else 'missing')
+" 2>/dev/null || echo "missing")
+
+  if [[ "$text_verified" == "found" ]]; then
+    pass "Typed text verified in AX tree"
+  else
+    fail "Typed text not found in AX tree after typing"
+  fi
+
+  # Step 6: Find and click a button by ID
+  local button_element
+  button_element=$(echo "$see_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+elems = d.get('data', {}).get('ui_elements', [])
+for e in elems:
+    if e.get('role') == 'button':
+        print(e['id'])
+        break
+" 2>/dev/null || echo "")
+
+  if [[ -n "$button_element" ]]; then
+    local btn_click
+    btn_click=$(peekaboo click --on "$button_element" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
+    local btn_ok
+    btn_ok=$(check_success "$btn_click")
+
+    if [[ "$btn_ok" == "True" ]]; then
+      pass "Clicked button $button_element by ID"
+    else
+      fail "Click on button $button_element failed"
+    fi
+  else
+    fail "No button element found in AX tree"
+  fi
+
+  # Step 7: Hotkey test (Select All via Cmd+A)
+  # Note: hotkey uses --app (peekaboo CLI limitation)
   local hotkey_result
   hotkey_result=$(peekaboo hotkey --keys "cmd,a" --app "$APP_NAME" --json 2>/dev/null || echo "")
   local hotkey_ok
@@ -301,7 +384,7 @@ run_gate_2() {
     fail "Hotkey (Cmd+A) failed"
   fi
 
-  take_screenshot "$SESSION_DIR/screenshots/gate2-04-after-hotkey.png" || true
+  take_screenshot "$SESSION_DIR/screenshots/gate2-03-after-hotkey.png" || true
 
   # Verify app still running
   if [[ -n "$APP_PID" ]]; then
