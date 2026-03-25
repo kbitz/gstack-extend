@@ -1,0 +1,5 @@
+# gstack (loaded from global install)
+.claude/skills/gstack/
+
+# Conductor context
+.context/
