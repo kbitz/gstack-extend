@@ -1,0 +1,5 @@
+# Conductor context
+.context/
+
+# gstack skill symlinks (managed by global install)
+.claude/skills/
