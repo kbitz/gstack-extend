@@ -37,7 +37,7 @@ Core (from design doc):
 - @e ref system (depth limit 8, cap 200, expandable groups)
 - /browse-native skill (see, click, type, press, scroll, window, menu)
 - /design-review-native skill (native-first visual QA)
-- Validation against user's SwiftUI app + Notes.app + System Settings
+- Validation against user's SwiftUI app + TextEdit (baseline)
 
 Expansions:
 - Auto-build-and-launch via xcodebuild (CLAUDE.md config: scheme, bundle ID, workspace path, configuration, launch args)
@@ -57,11 +57,10 @@ Architecture decisions (from CEO review):
 - 8 error paths fully rescued (zero silent failures)
 - Primary target: SwiftUI apps. Other frameworks (AppKit, Electron, Catalyst) are best-effort.
 
-Validation gates (from Codex outside voice):
-- 20-step reliability proof: Agent must complete a 20-step interaction flow against the SwiftUI app 5/5 times before expansion work begins
-- AX tree quality gate: Peekaboo see output must contain actionable elements
-- Interaction reliability gate: Peekaboo click and type must work on 3+ SwiftUI controls
-- Latency gate: see-act-see cycle <1000ms (prototype target)
+Validation gates (implemented in `scripts/validate.sh`):
+- Gate 1 — AX tree quality: Peekaboo see output must contain actionable elements (buttons + text fields)
+- Gate 2 — Interaction reliability: Element-ID targeting (click by AX ID, not coordinates), type with `--window-id`, state verification (typed text confirmed in AX tree), button click by ID, hotkey
+- Gate 3 — Latency: see-act-see cycle <2000ms (relaxed per eng review; 1000ms triggers daemon graduation)
 
 ## Deferred to TODOS.md
 
@@ -92,19 +91,14 @@ All files use `/tmp/native-browse-{session-id}/` where session-id is a timestamp
 (e.g., `20260324-143022`). This supersedes the design doc's `{pid}` convention.
 The skill markdown generates the session ID at the start of a run.
 
-### 20-Step Reliability Proof (definition)
+### 20-Step Reliability Proof (deferred to TODOS)
+Moved to TODOS P1. The 3-gate validation proves the core loop works (AX tree
+quality, element-ID interaction with state verification, latency). The 20-step
+proof is better suited as a confidence test once a real SwiftUI app is the target,
+since it requires app-specific navigation flows (menus, screens, save/confirm).
+
+Definition (for when implemented):
 One "step" = one see-act-see cycle (3 Peekaboo invocations).
-Example 20-step flow:
-1-2: launch app, see initial state
-3-4: click a navigation item, see new screen
-5-6: type in a text field, see field populated
-7-8: click Save button, see confirmation
-9-10: navigate back, see original screen
-11-12: open a menu, see menu items
-13-14: click menu item, see result
-15-16: resize window, see layout change
-17-18: toggle dark mode, see appearance change
-19-20: click another control, see final state
 Must complete 5/5 without losing element, window, or state.
 
 ### Timeout Policy
@@ -178,7 +172,7 @@ The following decisions were made during the /plan-eng-review session:
    build errors naturally from stderr. No error categorization code.
 6. **2000ms latency target** — Relaxed from 1000ms for stateless prototype.
    1000ms becomes daemon graduation trigger (TODOS P1).
-7. **Dual validation** — Notes.app baseline + user's real SwiftUI app.
+7. **Dual validation** — TextEdit baseline + user's real SwiftUI app.
 8. **Permissions onboarding** — Detect and guide via `peekaboo permissions --json`.
 9. **Output management** — Window-scoped via `--window-id`. Large AX trees
    documented as known limitation.
@@ -186,7 +180,7 @@ The following decisions were made during the /plan-eng-review session:
     Split into separate skills only if markdown exceeds ~500 lines.
 
 ### Codex Outside Voice Findings (incorporated)
-- Validation target expanded to include user's SwiftUI app (not just Notes.app)
+- Validation target expanded to include user's SwiftUI app (not just TextEdit)
 - App identity made deterministic via bundle-ID + window-ID
 - AX tree output management added for large UIs
 - Permissions onboarding added as explicit setup step
