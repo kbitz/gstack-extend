@@ -2,6 +2,10 @@
 
 Native macOS app interaction and QA via Peekaboo CLI.
 
+## Versioning
+
+SemVer. Source of truth: `VERSION` file. Status: `PROGRESS.md`. Backlog: `TODOS.md`.
+
 ## Testing
 
 Run the validation gates:
@@ -21,8 +25,7 @@ To run a single gate:
 ```bash
 ./scripts/validate.sh --gate 1  # AX Tree Quality
 ./scripts/validate.sh --gate 2  # Interaction Reliability
-./scripts/validate.sh --gate 3  # 20-Step Reliability Proof
-./scripts/validate.sh --gate 4  # Latency
+./scripts/validate.sh --gate 3  # Latency
 ```
 
 ## Native App

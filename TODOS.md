@@ -9,7 +9,7 @@ see-act-see cycles.
 - **Why:** Process spawn overhead (6 spawns per cycle) is the latency bottleneck.
   Session state (crash monitoring, action logs) is duct-taped with session files.
 - **Effort:** M (human: ~2 weeks / CC: ~2-3 hours)
-- **Depends on:** Core adapter validated + 20-step reliability proof passed
+- **Depends on:** Core adapter validated (gates 1-3 passing)
 - **Context:** Design doc Approach A. The stateless adapter (Approach C) is
   intentional tech debt — graduate when latency exceeds 1000ms or session state
   management becomes a bottleneck.

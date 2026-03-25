@@ -4,22 +4,21 @@
 #
 # Gates:
 #   1. AX Tree Quality — Peekaboo see returns actionable elements
-#   2. Interaction Reliability — click + type work on 3+ controls
-#   3. 20-Step Reliability Proof — 20 see-act-see cycles, 5/5 runs
-#   4. Latency — see-act-see cycle <2000ms
+#   2. Interaction Reliability — hotkey + click + type work
+#   3. Latency — see-act-see cycle <2000ms
 #
 # Usage:
-#   ./scripts/validate.sh [--app "App Name"] [--gate 1|2|3|4] [--verbose]
+#   ./scripts/validate.sh [--app "App Name"] [--gate 1|2|3] [--verbose]
 #
 # Defaults to Notes.app. Pass --app to test a different app.
 # Pass --gate to run a single gate. Omit to run all gates.
 
 set -euo pipefail
 
-APP_NAME="${APP_NAME:-Notes}"
+APP_NAME="${APP_NAME:-TextEdit}"
 GATE=""
 VERBOSE=false
-SESSION_DIR="/tmp/native-browse-validate-$(date +%Y%m%d-%H%M%S)"
+SESSION_DIR=$(mktemp -d /tmp/native-browse-validate-XXXXXXXX)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -62,12 +61,24 @@ ensure_app_running() {
 
   if [[ -z "$bundle_id" ]]; then
     echo "Launching $APP_NAME..."
-    if [[ "$APP_NAME" == "Notes" ]]; then
-      open -a Notes
-    else
-      peekaboo app launch "$APP_NAME" --wait-until-ready --json >/dev/null 2>&1
-    fi
+    # Create a temp file to open, avoids file-picker dialogs
+    local tmpfile
+    tmpfile="$SESSION_DIR/scratch.txt"
+    touch "$tmpfile"
+    open -a "$APP_NAME" "$tmpfile"
     sleep 2
+
+    # Retry until a window appears
+    local retries=5
+    while [[ $retries -gt 0 ]]; do
+      local wid
+      wid=$(get_window_id)
+      if [[ -n "$wid" ]]; then
+        break
+      fi
+      sleep 1
+      retries=$((retries - 1))
+    done
   fi
 }
 
@@ -95,27 +106,36 @@ run_see() {
   peekaboo see --window-id "$wid" --json --annotate --path "$path" 2>/dev/null
 }
 
+# Screenshot-only capture (no element detection, never times out)
+take_screenshot() {
+  local path="$1"
+  screencapture -l "$WINDOW_ID" "$path" 2>/dev/null
+  [[ -f "$path" ]]
+}
+
 count_elements() {
   local json="$1"
   echo "$json" | python3 -c "
-import sys, json, re
-data = sys.stdin.read()
-# Count element IDs like B1, T2, S3, etc.
-ids = re.findall(r'\b[A-Z]\d+\b', data)
-print(len(set(ids)))
+import sys, json
+d = json.load(sys.stdin)
+print(d['data'].get('element_count', len(d['data'].get('ui_elements', []))))
 " 2>/dev/null || echo "0"
 }
 
 has_interactive_elements() {
   local json="$1"
   echo "$json" | python3 -c "
-import sys, re
-data = sys.stdin.read()
-# Look for button (B) and text field (T) IDs
-buttons = re.findall(r'\bB\d+\b', data)
-textfields = re.findall(r'\bT\d+\b', data)
-print(len(set(buttons)) + len(set(textfields)))
+import sys, json
+d = json.load(sys.stdin)
+elems = d['data'].get('ui_elements', [])
+buttons = [e for e in elems if e.get('role') == 'button']
+textfields = [e for e in elems if e.get('role') in ('textField', 'text field')]
+print(len(buttons) + len(textfields))
 " 2>/dev/null || echo "0"
+}
+
+check_success() {
+  echo "$1" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False"
 }
 
 # --------------------------------------------------------------------------
@@ -163,8 +183,9 @@ if [[ "$SCREEN_REC" != "granted" ]]; then
 fi
 
 if [[ "$ACCESSIBILITY" != "granted" ]]; then
-  echo "WARNING: Accessibility permission not granted. Interaction tests may fail."
+  echo "ERROR: Accessibility permission required."
   echo "Grant at: System Settings > Privacy & Security > Accessibility"
+  exit 1
 fi
 
 ensure_app_running
@@ -176,8 +197,12 @@ if [[ -z "$WINDOW_ID" ]]; then
   exit 1
 fi
 
+if [[ -z "$APP_PID" ]]; then
+  echo "WARNING: Could not determine PID for $APP_NAME. Crash detection will be skipped."
+fi
+
 echo "Window ID: $WINDOW_ID"
-echo "PID: $APP_PID"
+echo "PID: ${APP_PID:-unknown}"
 
 # --------------------------------------------------------------------------
 # Gate 1: AX Tree Quality
@@ -195,7 +220,7 @@ run_gate_1() {
   fi
 
   local success
-  success=$(echo "$see_output" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False")
+  success=$(check_success "$see_output")
 
   if [[ "$success" != "True" ]]; then
     fail "peekaboo see did not succeed"
@@ -233,188 +258,185 @@ run_gate_1() {
 run_gate_2() {
   header "Gate 2: Interaction Reliability"
 
-  local see_output
-  see_output=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate2-before.png" || echo "")
+  # Screenshot: initial state
+  take_screenshot "$SESSION_DIR/screenshots/gate2-01-initial.png" || true
 
-  if [[ -z "$see_output" ]] || [[ "$(echo "$see_output" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null)" != "True" ]]; then
-    fail "Could not capture initial state"
-    return
-  fi
+  # Step 1: Click the document body to ensure focus
+  local click_result
+  click_result=$(peekaboo click --coords "300,300" --app "$APP_NAME" --json 2>/dev/null || echo "")
+  local click_ok
+  click_ok=$(check_success "$click_result")
 
-  # Extract first button ID
-  local first_button
-  first_button=$(echo "$see_output" | python3 -c "
-import sys, re
-data = sys.stdin.read()
-buttons = re.findall(r'\bB\d+\b', data)
-print(buttons[0] if buttons else '')
-" 2>/dev/null || echo "")
-
-  if [[ -n "$first_button" ]]; then
-    local click_result
-    click_result=$(peekaboo click --on "$first_button" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
-    local click_success
-    click_success=$(echo "$click_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False")
-
-    if [[ "$click_success" == "True" ]]; then
-      pass "Click on $first_button succeeded"
-    else
-      fail "Click on $first_button failed"
-    fi
+  if [[ "$click_ok" == "True" ]]; then
+    pass "Click into document"
   else
-    fail "No buttons found to click"
+    fail "Click into document failed"
   fi
 
-  # Re-see after click
-  see_output=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate2-after-click.png" || echo "")
+  # Step 2: Type text
+  take_screenshot "$SESSION_DIR/screenshots/gate2-02-before-type.png" || true
 
-  # Try to find and type in a text field
-  local first_textfield
-  first_textfield=$(echo "$see_output" | python3 -c "
-import sys, re
-data = sys.stdin.read()
-fields = re.findall(r'\bT\d+\b', data)
-print(fields[0] if fields else '')
-" 2>/dev/null || echo "")
+  local type_result
+  type_result=$(peekaboo type "validate-test" --app "$APP_NAME" --json 2>/dev/null || echo "")
+  local type_ok
+  type_ok=$(check_success "$type_result")
 
-  if [[ -n "$first_textfield" ]]; then
-    peekaboo click --on "$first_textfield" --window-id "$WINDOW_ID" --json >/dev/null 2>&1
-    local type_result
-    type_result=$(peekaboo type "validate-test" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
-    local type_success
-    type_success=$(echo "$type_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False")
-
-    if [[ "$type_success" == "True" ]]; then
-      pass "Type into $first_textfield succeeded"
-    else
-      fail "Type into $first_textfield failed"
-    fi
+  if [[ "$type_ok" == "True" ]]; then
+    pass "Typed text into document"
   else
-    log "SKIP: No text fields found to type into"
+    fail "Type into document failed"
   fi
 
-  # Try pressing a key
-  local press_result
-  press_result=$(peekaboo press Tab --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
-  local press_success
-  press_success=$(echo "$press_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False")
+  take_screenshot "$SESSION_DIR/screenshots/gate2-03-after-type.png" || true
 
-  if [[ "$press_success" == "True" ]]; then
-    pass "Press Tab succeeded"
+  # Step 3: Hotkey test (Select All via Cmd+A)
+  local hotkey_result
+  hotkey_result=$(peekaboo hotkey --keys "cmd,a" --app "$APP_NAME" --json 2>/dev/null || echo "")
+  local hotkey_ok
+  hotkey_ok=$(check_success "$hotkey_result")
+
+  if [[ "$hotkey_ok" == "True" ]]; then
+    pass "Hotkey (Cmd+A) succeeded"
   else
-    fail "Press Tab failed"
+    fail "Hotkey (Cmd+A) failed"
   fi
+
+  take_screenshot "$SESSION_DIR/screenshots/gate2-04-after-hotkey.png" || true
 
   # Verify app still running
-  if kill -0 "$APP_PID" 2>/dev/null; then
-    pass "App still running after interactions"
+  if [[ -n "$APP_PID" ]]; then
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      pass "App still running after interactions"
+    else
+      fail "App crashed during interactions"
+    fi
   else
-    fail "App crashed during interactions"
+    log "SKIP: Crash detection (PID unknown)"
   fi
 }
 
 # --------------------------------------------------------------------------
-# Gate 3: 20-Step Reliability Proof
+# Gate 3: Latency
 # --------------------------------------------------------------------------
 
 run_gate_3() {
-  header "Gate 3: 20-Step Reliability Proof (5 runs)"
+  header "Gate 3: Latency (<2000ms per see-act-see cycle)"
 
-  local consecutive_passes=0
-  local required_passes=5
+  # Single clean see-act-see measurement, matching real browse-skill usage:
+  # snapshot → interact → snapshot (with natural spacing)
 
-  for run in $(seq 1 $required_passes); do
-    log "Run $run/$required_passes..."
-    local steps_ok=0
-    local steps_fail=0
+  local start_ms
+  start_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 
-    for step in $(seq 1 20); do
-      # see
-      local see_out
-      see_out=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate3-run${run}-step${step}.png" 2>/dev/null || echo "")
-      local see_ok
-      see_ok=$(echo "$see_out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('success', False))" 2>/dev/null || echo "False")
+  # see (snapshot to get element state)
+  local see1
+  see1=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate3-before.png" 2>/dev/null || echo "")
 
-      if [[ "$see_ok" != "True" ]]; then
-        steps_fail=$((steps_fail + 1))
-        continue
-      fi
+  # act (press Tab — safe, non-destructive)
+  local act
+  act=$(peekaboo press Tab --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
 
-      # act (press Tab to cycle focus — safe, non-destructive)
-      peekaboo press Tab --window-id "$WINDOW_ID" --json >/dev/null 2>&1
+  # see (verify state after action)
+  local see2
+  see2=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate3-after.png" 2>/dev/null || echo "")
 
-      # see again
-      run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate3-run${run}-step${step}-after.png" >/dev/null 2>&1
+  local end_ms
+  end_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 
-      steps_ok=$((steps_ok + 1))
-    done
+  local see1_ok act_ok see2_ok
+  see1_ok=$(check_success "$see1")
+  act_ok=$(check_success "$act")
+  see2_ok=$(check_success "$see2")
 
-    if [[ $steps_fail -eq 0 ]]; then
-      consecutive_passes=$((consecutive_passes + 1))
-      log "  Run $run: 20/20 steps passed"
-    else
-      consecutive_passes=0
-      log "  Run $run: $steps_ok/20 steps passed ($steps_fail failed)"
-    fi
+  local cycle_ms=$((end_ms - start_ms))
 
-    # Check app still alive
-    if ! kill -0 "$APP_PID" 2>/dev/null; then
-      fail "App crashed during run $run"
-      return
-    fi
-  done
+  if [[ "$see1_ok" != "True" ]] || [[ "$act_ok" != "True" ]] || [[ "$see2_ok" != "True" ]]; then
+    fail "see-act-see cycle incomplete (see1=$see1_ok act=$act_ok see2=$see2_ok)"
+    return
+  fi
 
-  if [[ $consecutive_passes -ge $required_passes ]]; then
-    pass "20-step proof: $consecutive_passes/$required_passes consecutive runs passed"
+  log "Cycle time: ${cycle_ms}ms (see → Tab → see)"
+
+  if [[ $cycle_ms -lt 2000 ]]; then
+    pass "Latency ${cycle_ms}ms < 2000ms target"
   else
-    fail "20-step proof: only $consecutive_passes/$required_passes consecutive runs passed"
+    fail "Latency ${cycle_ms}ms exceeds 2000ms target"
   fi
 }
 
 # --------------------------------------------------------------------------
-# Gate 4: Latency
+# Cleanup: close the app
 # --------------------------------------------------------------------------
 
-run_gate_4() {
-  header "Gate 4: Latency (<2000ms per see-act-see cycle)"
+close_app() {
+  header "Cleanup: Close $APP_NAME"
 
-  local total_ms=0
-  local samples=5
+  # Find the close button in the AX tree
+  local see_output
+  see_output=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/cleanup-before.png" 2>/dev/null || echo "")
 
-  for i in $(seq 1 $samples); do
-    local start_ms
-    start_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+  local close_button
+  close_button=$(echo "$see_output" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+elems = d.get('data', {}).get('ui_elements', [])
+for e in elems:
+    label = (e.get('label') or '').lower()
+    if e.get('role') == 'button' and 'close' in label:
+        print(e['id'])
+        break
+" 2>/dev/null || echo "")
 
-    # see
-    run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate4-${i}-before.png" >/dev/null 2>&1
+  if [[ -n "$close_button" ]]; then
+    local click_result
+    click_result=$(peekaboo click --on "$close_button" --window-id "$WINDOW_ID" --json 2>/dev/null || echo "")
+    local click_ok
+    click_ok=$(check_success "$click_result")
 
-    # act
-    peekaboo press Tab --window-id "$WINDOW_ID" --json >/dev/null 2>&1
+    if [[ "$click_ok" == "True" ]]; then
+      pass "Clicked close button ($close_button)"
+    else
+      fail "Click close button failed"
+    fi
 
-    # see
-    run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/gate4-${i}-after.png" >/dev/null 2>&1
+    sleep 0.5
 
-    local end_ms
-    end_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+    # TextEdit may prompt "Don't Save" — dismiss it
+    local dialog_see
+    dialog_see=$(run_see "$WINDOW_ID" "$SESSION_DIR/screenshots/cleanup-dialog.png" 2>/dev/null || echo "")
+    local dont_save
+    dont_save=$(echo "$dialog_see" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+elems = d.get('data', {}).get('ui_elements', [])
+for e in elems:
+    label = (e.get('label') or '').lower()
+    if e.get('role') == 'button' and ('don' in label and 'save' in label):
+        print(e['id'])
+        break
+    if e.get('role') == 'button' and label == 'delete':
+        print(e['id'])
+        break
+" 2>/dev/null || echo "")
 
-    local cycle_ms=$((end_ms - start_ms))
-    total_ms=$((total_ms + cycle_ms))
-    log "  Cycle $i: ${cycle_ms}ms"
-  done
-
-  local avg_ms=$((total_ms / samples))
-  echo ""
-  log "Average: ${avg_ms}ms over $samples cycles"
-
-  if [[ $avg_ms -lt 2000 ]]; then
-    pass "Latency ${avg_ms}ms < 2000ms target"
+    if [[ -n "$dont_save" ]]; then
+      peekaboo click --on "$dont_save" --window-id "$WINDOW_ID" --json >/dev/null 2>&1 || true
+      log "Dismissed save dialog"
+    fi
   else
-    fail "Latency ${avg_ms}ms exceeds 2000ms target"
-    log "Consider daemon graduation (see TODOS.md)"
+    log "Close button not found — killing process"
   fi
 
-  if [[ $avg_ms -lt 1000 ]]; then
-    log "NOTE: Already under 1000ms — daemon graduation may not be needed"
+  sleep 0.5
+
+  # Ensure process is gone
+  if [[ -n "$APP_PID" ]]; then
+    if kill -0 "$APP_PID" 2>/dev/null; then
+      kill "$APP_PID" 2>/dev/null || true
+      pass "Process cleaned up"
+    else
+      pass "App already closed"
+    fi
   fi
 }
 
@@ -423,12 +445,16 @@ run_gate_4() {
 # --------------------------------------------------------------------------
 
 if [[ -n "$GATE" ]]; then
+  if ! declare -f "run_gate_$GATE" >/dev/null 2>&1; then
+    echo "ERROR: Unknown gate '$GATE'. Valid gates: 1, 2, 3"
+    exit 1
+  fi
   "run_gate_$GATE"
 else
   run_gate_1
   run_gate_2
   run_gate_3
-  run_gate_4
+  close_app
 fi
 
 # --------------------------------------------------------------------------

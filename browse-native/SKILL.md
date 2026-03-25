@@ -164,7 +164,7 @@ peekaboo scroll --direction down --amount 3 --window-id WINDOW_ID
 peekaboo menu --app "APP_NAME" --path "File > New"
 
 # Keyboard shortcut
-peekaboo hotkey --keys "command+n" --app "APP_NAME"
+peekaboo hotkey --keys "cmd,n" --app "APP_NAME"
 ```
 
 ### 3. See Again — Verify the state changed
@@ -201,8 +201,11 @@ For apps with complex UIs (>500 elements in the `see` output):
 ORIGINAL=$(cat "$SESSION_DIR/original-appearance.txt")
 
 # 2. Print restore command BEFORE toggling (crash recovery)
-echo "RESTORE COMMAND: defaults write -g AppleInterfaceStyle -string $ORIGINAL"
-# (or: defaults delete -g AppleInterfaceStyle   if original was Light)
+if [[ "$ORIGINAL" == "Dark" ]]; then
+  echo "RESTORE COMMAND: defaults write -g AppleInterfaceStyle -string Dark"
+else
+  echo "RESTORE COMMAND: defaults delete -g AppleInterfaceStyle"
+fi
 
 # 3. Toggle to Dark
 defaults write -g AppleInterfaceStyle -string Dark
