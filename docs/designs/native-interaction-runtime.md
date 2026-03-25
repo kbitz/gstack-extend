@@ -161,3 +161,34 @@ Known limitation: Crash reports may be delayed beyond 5s.
 ### Depth Limit Clarification
 Depth limit 8 and cap 200 are NEW additions from the CEO review.
 The original design doc did not specify these numbers.
+
+## Eng Review Decisions (2026-03-24)
+
+The following decisions were made during the /plan-eng-review session:
+
+1. **Skill-markdown-first** — No Bun adapter. Peekaboo CLI invoked directly via Bash.
+   Adapter deferred unless Peekaboo's native interface proves insufficient.
+2. **Peekaboo native IDs** — B1, T2 etc. used directly. No custom @e ref system.
+   Peekaboo's snapshot-based IDs are sufficient for the see-act-see pattern.
+3. **Bundle-ID + window-ID targeting** — Deterministic app identity via
+   `--window-id` (from `peekaboo window list`), not ambiguous `--app X`.
+4. **Dark mode save-and-restore** — Save current appearance to session file,
+   print restore command before toggling. Crash recovery via printed command.
+5. **Simple build path** — `xcodebuild` happy path only. Claude troubleshoots
+   build errors naturally from stderr. No error categorization code.
+6. **2000ms latency target** — Relaxed from 1000ms for stateless prototype.
+   1000ms becomes daemon graduation trigger (TODOS P1).
+7. **Dual validation** — Notes.app baseline + user's real SwiftUI app.
+8. **Permissions onboarding** — Detect and guide via `peekaboo permissions --json`.
+9. **Output management** — Window-scoped via `--window-id`. Large AX trees
+   documented as known limitation.
+10. **Single skill** — `/browse-native` covers both interaction and visual QA.
+    Split into separate skills only if markdown exceeds ~500 lines.
+
+### Codex Outside Voice Findings (incorporated)
+- Validation target expanded to include user's SwiftUI app (not just Notes.app)
+- App identity made deterministic via bundle-ID + window-ID
+- AX tree output management added for large UIs
+- Permissions onboarding added as explicit setup step
+- PID-aware liveness monitoring added to TODOS (P1)
+- Browse-contract compatibility layer added to TODOS (P1)

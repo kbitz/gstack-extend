@@ -14,6 +14,23 @@ see-act-see cycles.
   intentional tech debt — graduate when latency exceeds 1000ms or session state
   management becomes a bottleneck.
 
+### PID-aware liveness monitoring
+Upgrade crash detection from .ips file polling to PID-based liveness. Catches hangs,
+deadlocks, failed launches — not just clean crashes with diagnostic reports.
+- **Why:** Polling DiagnosticReports for .ips files only catches clean crashes.
+  Hangs, deadlocks, and stale reports are more common failure modes.
+- **Effort:** S (human: ~2 days / CC: ~15 min)
+- **Depends on:** Core skill working
+
+### Browse-contract compatibility layer
+Thin compatibility layer so /qa-native and /design-review-native can reuse gstack's
+existing skill layering (/browse as transport, /qa as workflow).
+- **Why:** gstack separates /browse (transport) from /qa and /design-review (workflow).
+  If /browse-native exposes a compatible interface, existing workflow skills can be
+  adapted rather than rebuilt from scratch.
+- **Effort:** M (human: ~1 week / CC: ~1 hour)
+- **Depends on:** Core skill validated + daemon graduation
+
 ### /qa-native skill (full QA loop)
 Autonomous QA skill: explore app, find visual + interaction bugs, fix code, rebuild,
 re-verify. The native equivalent of gstack's /qa.
