@@ -2,6 +2,16 @@
 
 ## P1 — After validation
 
+### 20-step reliability proof
+Agent must complete a 20-step interaction flow (20 see-act-see cycles) against
+a real SwiftUI app 5/5 times. Validates sustained multi-step workflows — element
+IDs stay resolvable, window tracking holds, state doesn't drift.
+- **Why:** The 3-gate validation proves individual operations work. This proves
+  the *loop* works over a sustained workflow. Deferred because it requires
+  app-specific navigation flows (menus, screens, save/confirm).
+- **Effort:** S (human: ~1 day / CC: ~30 min)
+- **Depends on:** Gates 1-3 passing, a target SwiftUI app configured
+
 ### Persistent daemon graduation (Approach A)
 Replace stateless Bun adapter with persistent Bun/TS daemon. Maintains Peekaboo
 connections, caches ref maps, manages session state natively. Target: <500ms
