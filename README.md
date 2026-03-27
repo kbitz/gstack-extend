@@ -4,7 +4,7 @@ See, interact with, and QA-test native macOS apps from Claude Code via [Peekaboo
 
 ## Prerequisites
 
-- **Peekaboo CLI** — `brew install peekaboo` or download from [peekaboo.dev](https://peekaboo.dev)
+- **Peekaboo CLI** — `brew install steipete/tap/peekaboo` (see [github.com/steipete/Peekaboo](https://github.com/steipete/Peekaboo))
 - **macOS permissions** — Screen Recording and Accessibility (the skill will guide you through granting these on first run)
 
 ## Installation
@@ -21,7 +21,7 @@ Add `.claude/skills/browse-native` to your `.gitignore`:
 echo ".claude/skills/browse-native" >> .gitignore
 ```
 
-Claude Code will automatically discover the skill from `browse-native/SKILL.md`.
+Claude Code will automatically discover the skill from `SKILL.md` at the repo root.
 
 ## Configuration
 

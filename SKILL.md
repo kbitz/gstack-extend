@@ -31,8 +31,8 @@ Before first use, verify Peekaboo is installed and permissions are granted.
 which peekaboo || echo "NOT_INSTALLED"
 ```
 
-If not installed: "Peekaboo is required. Install from https://peekaboo.dev or
-via `brew install peekaboo`."
+If not installed: "Peekaboo is required. Install via
+`brew install steipete/tap/peekaboo` (see https://github.com/steipete/Peekaboo)."
 
 ### Step 2: Check Permissions
 
