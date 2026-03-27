@@ -36,14 +36,39 @@ If not installed: "Peekaboo is required. Install via
 
 ### Step 2: Check Permissions
 
+First, detect which app needs permissions. macOS grants Accessibility and Screen
+Recording to the **host app** (the terminal or IDE), not to CLI tools like Peekaboo.
+
+```bash
+echo "${__CFBundleIdentifier:-unknown}"
+```
+
+Map the bundle ID to a friendly name:
+- `com.apple.Terminal` → Terminal
+- `com.mitchellh.ghostty` → Ghostty
+- `com.googlecode.iterm2` → iTerm2
+- `net.kovidgoyal.kitty` → kitty
+- `dev.warp.Warp-Stable` → Warp
+- `com.conductor.app` → Conductor
+- `com.microsoft.VSCode` → Visual Studio Code
+- `com.todesktop.230313mzl4w4u92` → Cursor
+- `com.anthropic.claudedesktop` → Claude for Desktop
+- `com.anthropic.claudecode.desktop` → Claude Code
+- `unknown` or unrecognized → "your terminal app"
+
+Save the resolved name as `$HOST_APP`.
+
+Then check permission status:
+
 ```bash
 peekaboo permissions --json
 ```
 
 Parse the JSON output. For each permission where `isGranted` is `false`:
-- Print the permission name and `grantInstructions` path
-- Ask the user to grant it in System Settings
-- Re-check after they confirm
+- Tell the user: "**$HOST_APP** needs $PERMISSION_NAME permission."
+- Print the `grantInstructions` path (e.g., System Settings > Privacy & Security > Screen Recording)
+- Clarify: "Add **$HOST_APP** (not Peekaboo) to the list."
+- Ask the user to grant it, then re-check after they confirm
 
 Required permissions:
 - **Screen Recording** — needed for screenshots and UI capture
