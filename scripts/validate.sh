@@ -153,6 +153,11 @@ if ! command -v peekaboo &>/dev/null; then
   exit 1
 fi
 
+# Detect host app (permissions are granted to it, not to peekaboo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/detect-host-app.sh"
+HOST_APP=$(detect_host_app_name)
+
 # Check permissions
 PERMS=$(peekaboo permissions --json 2>/dev/null)
 SCREEN_REC=$(echo "$PERMS" | python3 -c "
@@ -173,18 +178,19 @@ for p in d['data']['permissions']:
         break
 " 2>/dev/null || echo "unknown")
 
+echo "Host app: $HOST_APP"
 echo "Screen Recording: $SCREEN_REC"
 echo "Accessibility: $ACCESSIBILITY"
 
 if [[ "$SCREEN_REC" != "granted" ]]; then
   echo "ERROR: Screen Recording permission required."
-  echo "Grant at: System Settings > Privacy & Security > Screen Recording"
+  echo "Grant to '$HOST_APP' at: System Settings > Privacy & Security > Screen Recording"
   exit 1
 fi
 
 if [[ "$ACCESSIBILITY" != "granted" ]]; then
   echo "ERROR: Accessibility permission required."
-  echo "Grant at: System Settings > Privacy & Security > Accessibility"
+  echo "Grant to '$HOST_APP' at: System Settings > Privacy & Security > Accessibility"
   exit 1
 fi
 
