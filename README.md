@@ -5,7 +5,7 @@ See, interact with, and QA-test native macOS apps from Claude Code via [Peekaboo
 ## Prerequisites
 
 - **Peekaboo CLI** — `brew install steipete/tap/peekaboo` (see [github.com/steipete/Peekaboo](https://github.com/steipete/Peekaboo))
-- **macOS permissions** — Screen Recording and Accessibility (the skill will guide you through granting these on first run)
+- **macOS permissions** — Screen Recording and Accessibility, granted to your host app (e.g. Terminal, Ghostty, Conductor — the skill auto-detects which app needs them)
 
 ## Installation
 
