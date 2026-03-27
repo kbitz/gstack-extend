@@ -4,7 +4,7 @@ Native macOS app interaction and QA via Peekaboo CLI.
 
 ## Versioning
 
-SemVer. Source of truth: `VERSION` file. Status: `PROGRESS.md`. Backlog: `TODOS.md`.
+SemVer. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
 
 ## Testing
 
