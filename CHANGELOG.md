@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-04-04
+
+### Added
+- Implementation guide for adding debug infrastructure to new SwiftUI apps (docs/debug-infrastructure-guide.md). Documents all six components from Bolt's reference implementation with code examples, wiring instructions, and a verification checklist.
+- Skill now detects missing infrastructure at setup and guides users to add it before falling back to degraded mode. Explains what's lost without instrumentation and offers to help implement it (~400 lines Swift, ~15 min with CC).
+
+### Changed
+- Moved skill to `skills/browse-native.md` (preparing for multi-skill layout).
+- Moved design docs to `docs/archive/` (historical decision records, not active references).
+- Promoted implementation guide to `docs/` root (living reference used by the skill).
+
 ## [0.3.0] - 2026-04-04
 
 ### Changed
@@ -13,7 +24,7 @@ All notable changes to this project will be documented in this file.
 - Updated roadmap: Phase 2 is now UI Truth Layer, Phase 3 is /qa-native redesign.
 
 ### Added
-- Design doc: docs/designs/inside-out-debugging.md (approved, covers snapshot bundle spec, trigger protocol, osascript primitives, architectural decisions).
+- Design doc: docs/archive/inside-out-debugging.md (approved, covers snapshot bundle spec, trigger protocol, osascript primitives, architectural decisions).
 - Color and alignment rules: skill instructs the agent to always use probe data for precise comparisons, never rely on screenshot vision alone.
 - Degraded mode: skill works with uninstrumented apps via osascript + screencapture.
 - Skill routing rules in CLAUDE.md.

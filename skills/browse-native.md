@@ -67,7 +67,8 @@ uninstrumented apps).
 
 **Degraded mode is limited.** Without instrumentation, you only get screenshots
 via screencapture. No structured data, no probes, no state. Useful for basic
-visual checks only.
+visual checks only. Adding instrumentation takes ~15 min with CC — see
+`docs/debug-infrastructure-guide.md`.
 
 ## Setup & Instrumentation Check
 
@@ -87,6 +88,15 @@ If config is missing, ask the user for:
 - App name (as it appears in Activity Monitor)
 - Snapshot directory path (if instrumented)
 - Trigger file path (if instrumented)
+
+If the user doesn't know what snapshot directory or trigger file means, the app
+likely doesn't have debug infrastructure yet. Explain briefly:
+
+> "The /browse-native skill works best with apps that have inside-out debug
+> infrastructure — the app captures its own screenshots, layout measurements,
+> and state dumps. If your app doesn't have this yet, I can help you add it
+> (~400 lines of Swift, ~15 min). See `docs/debug-infrastructure-guide.md`.
+> Or I can proceed in degraded mode with basic screencapture."
 
 Save the app name as `$APP_NAME`, snapshot dir as `$SNAPSHOT_DIR`, trigger file
 as `$TRIGGER_FILE`.
@@ -121,10 +131,42 @@ Report: "Partial instrumentation. Screenshots and state available, but no
 layout probes. Color and alignment comparisons will be approximate."
 
 **No instrumentation** (degraded mode):
-No snapshot directory or trigger file → **Degraded mode.** Report:
-"No debug infrastructure detected. Running in degraded mode: osascript +
-screencapture only. No structured data available. For better results, add
-debug instrumentation to the app (see docs/designs/inside-out-debugging.md)."
+No snapshot directory or trigger file → **Degraded mode.**
+
+**STOP and explain to the user before proceeding.** Degraded mode is
+significantly limited — no structured data, no probes, no state dumps. The
+skill can only take basic screenshots and send keystrokes. Most of what makes
+/browse-native powerful (exact color comparison, precise alignment checking,
+state verification) is unavailable.
+
+Report to the user:
+
+```
+This app doesn't have inside-out debug infrastructure. I can run in degraded
+mode (osascript + screencapture only), but capabilities are very limited:
+
+- No structured layout data (I'll guess from screenshots, which is unreliable)
+- No app state dumps (I can't verify what the app thinks is happening)
+- No filesystem-triggered snapshots (slower, manual screencapture only)
+
+To get the full experience, add debug infrastructure to the app. It's ~400
+lines of Swift and takes about 15 minutes with CC:
+
+  → See: docs/debug-infrastructure-guide.md
+
+The guide covers: DebugSnapshotService, InspectableModifier, filesystem
+triggers, state dumps, keyboard shortcuts, and CLAUDE.md configuration.
+
+Want me to proceed in degraded mode, or would you like to add instrumentation first?
+```
+
+If the user wants to add instrumentation, read
+`docs/debug-infrastructure-guide.md` and help them implement it in
+their app's codebase. Follow the checklist at the bottom of that guide.
+
+If the user wants to proceed in degraded mode, continue but **prefix every
+finding with an explicit confidence qualifier** (e.g., "Based on screenshot
+only — cannot verify exact color values without probe data").
 
 Save the tier as `$TIER` (full / partial / degraded).
 
