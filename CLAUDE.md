@@ -1,6 +1,6 @@
 # Native Interaction Runtime
 
-Native macOS app interaction and QA via Peekaboo CLI.
+Native macOS app interaction via inside-out debug infrastructure.
 
 ## Versioning
 
@@ -23,22 +23,26 @@ To test against a specific app:
 To run a single gate:
 
 ```bash
-./scripts/validate.sh --gate 1  # AX Tree Quality
-./scripts/validate.sh --gate 2  # Interaction Reliability
-./scripts/validate.sh --gate 3  # Latency
+./scripts/validate.sh --gate 1  # Snapshot Bundle Validity
+./scripts/validate.sh --gate 2  # osascript Interaction
+./scripts/validate.sh --gate 3  # Cycle Latency
+```
+
+To test degraded mode (no instrumentation):
+
+```bash
+./scripts/validate.sh --degraded
 ```
 
 ## Native App
 
-Configure these for build integration:
+Configure these for app interaction:
 
 ```yaml
 native_app_bundle_id: ""
 native_app_scheme: ""
-# native_workspace_path: ""
-# native_build_configuration: "Debug"
-# native_launch_args: ""
-# native_build_timeout: 120
+native_snapshot_dir: ".context/snapshots"
+native_trigger_file: ".context/snapshot-trigger"
 ```
 
 ## Skill routing

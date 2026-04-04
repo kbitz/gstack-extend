@@ -2,59 +2,70 @@
 
 ## P1 — After validation
 
-### 20-step reliability proof
-Agent must complete a 20-step interaction flow (20 see-act-see cycles) against
-a real SwiftUI app 5/5 times. Validates sustained multi-step workflows — element
-IDs stay resolvable, window tracking holds, state doesn't drift.
-- **Why:** The 3-gate validation proves individual operations work. This proves
-  the *loop* works over a sustained workflow. Deferred because it requires
-  app-specific navigation flows (menus, screens, save/confirm).
-- **Effort:** S (human: ~1 day / CC: ~30 min)
-- **Depends on:** Gates 1-3 passing, a target SwiftUI app configured
+### osascript validation spike
+Validate that osascript menu access and keystroke sending work reliably with
+Bolt's specific window configuration. Catalog which commands work, which fail,
+and document workarounds.
+- **Why:** The inside-out skill uses osascript as the primary interaction
+  mechanism. Before the skill is production-ready, we need confidence that
+  the core primitives (activate, menu click, keystroke) work reliably.
+- **Effort:** S (human: ~1 day / CC: ~15 min)
+- **Depends on:** Bolt running with debug infrastructure
 
-### Persistent daemon graduation (Approach A)
-Replace stateless Bun adapter with persistent Bun/TS daemon. Maintains Peekaboo
-connections, caches ref maps, manages session state natively. Target: <500ms
-see-act-see cycles.
-- **Why:** Process spawn overhead (6 spawns per cycle) is the latency bottleneck.
-  Session state (crash monitoring, action logs) is duct-taped with session files.
-- **Effort:** M (human: ~2 weeks / CC: ~2-3 hours)
-- **Depends on:** Core adapter validated (gates 1-3 passing)
-- **Context:** Design doc Approach A. The stateless adapter (Approach C) is
-  intentional tech debt — graduate when latency exceeds 1000ms or session state
-  management becomes a bottleneck.
+### Bolt probe enrichment (Workstream 1)
+Add foreground/background hex color values to LayoutProbe. Add z-order, focus
+state, and route identifier to manifest.json window entries. Add summary.md
+generation to DebugSnapshotService.
+- **Why:** The agent can't reliably distinguish colors or determine window
+  focus from screenshots alone. Structured data in probes and manifest solves
+  this. Implementation plan: docs/designs/inside-out-debugging.md (Workstream 1).
+- **Effort:** S (human: ~2 days / CC: ~30 min)
+- **Depends on:** osascript spike, runs in Bolt repo (not this repo)
 
-### PID-aware liveness monitoring
-Upgrade crash detection from .ips file polling to PID-based liveness. Catches hangs,
-deadlocks, failed launches — not just clean crashes with diagnostic reports.
-- **Why:** Polling DiagnosticReports for .ips files only catches clean crashes.
-  Hangs, deadlocks, and stale reports are more common failure modes.
-- **Effort:** S (human: ~2 days / CC: ~15 min)
-- **Depends on:** Core skill working
+### Pattern documentation for future apps
+Write a guide in docs/designs/ explaining how to add inside-out debug
+infrastructure to a new SwiftUI app. Covers: DebugSnapshotService,
+InspectableModifier, state dumps, filesystem trigger, snapshot bundle format.
+- **Why:** The pattern is currently implicit in Bolt's code. Documenting it
+  makes it reproducible for future native app projects without having to
+  reverse-engineer Bolt.
+- **Effort:** S (human: ~1 day / CC: ~15 min)
+- **Depends on:** Bolt probe enrichment (to document the enriched format)
 
-### Browse-contract compatibility layer
-Thin compatibility layer so /qa-native and /design-review-native can reuse gstack's
-existing skill layering (/browse as transport, /qa as workflow).
-- **Why:** gstack separates /browse (transport) from /qa and /design-review (workflow).
-  If /browse-native exposes a compatible interface, existing workflow skills can be
-  adapted rather than rebuilt from scratch.
-- **Effort:** M (human: ~1 week / CC: ~1 hour)
-- **Depends on:** Core skill validated + daemon graduation
-
-### /qa-native skill (full QA loop)
-Autonomous QA skill: explore app, find visual + interaction bugs, fix code, rebuild,
-re-verify. The native equivalent of gstack's /qa.
-- **Why:** This is the 10x version. /browse-native is the foundation; /qa-native
-  is the autonomous loop that makes Claude a QA engineer for native apps.
-- **Effort:** M (human: ~2 weeks / CC: ~2-3 hours)
-- **Depends on:** Core adapter + daemon graduation + all expansions validated
+### Manual test review skill
+New skill for structured manual test review process. Agent guides a human
+through testing steps and processes their results. Needs design work to define
+the workflow (checklist generation, result capture, report format).
+- **Why:** Not all native app testing can be automated. A structured manual
+  review process fills the gap between fully automated QA and ad-hoc testing.
+- **Effort:** TBD (needs design via /office-hours)
+- **Depends on:** Workflow design
 
 ## P2 — Phase 2
 
+### UI Truth Layer (Approach C)
+Full implementation of semantic scene graph, Delta E color comparisons,
+before/after diffs, summary.md briefings, events.jsonl structured logging.
+The "hardcore mode" version of inside-out debugging.
+- **Why:** Takes the current snapshot-based approach to its logical conclusion.
+  The agent never guesses about UI state. See design doc cross-model perspective
+  (Codex's "UI Truth Layer" proposal).
+- **Effort:** M (human: ~2 weeks / CC: ~1-2 hours)
+- **Depends on:** P1 items complete, pattern validated
+
+### /qa-native redesign
+Redesign the autonomous QA skill around the inside-out pattern. The original
+/qa-native assumed an external CLI tool as transport. Needs fresh design with
+inside-out infrastructure as the foundation.
+- **Why:** Full autonomous QA (explore app, find bugs, fix code, rebuild,
+  re-verify) is the 10x version. /browse-native is the foundation.
+- **Effort:** M (human: ~2 weeks / CC: ~2-3 hours)
+- **Depends on:** UI Truth Layer, pattern documentation
+
 ### Contrast ratio + VoiceOver order analysis
-Extend accessibility report with pixel-level contrast analysis (screenshot sampling)
-and VoiceOver navigation order verification (VoiceOver API).
-- **Why:** Important accessibility metrics not available from the AX tree alone.
+Extend accessibility reporting with pixel-level contrast analysis (using probe
+color data) and VoiceOver navigation order verification.
+- **Why:** Important accessibility metrics not available from probes alone.
   Apple requires these for App Store review.
 - **Effort:** M (human: ~1 week / CC: ~30 min)
-- **Depends on:** Core accessibility report (labels + roles) working
+- **Depends on:** Bolt probe enrichment (color hex data)
