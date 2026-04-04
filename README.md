@@ -71,8 +71,7 @@ Use `/browse-native` in Claude Code to interact with your macOS app:
 ./scripts/validate.sh --gate 3           # Cycle latency
 ```
 
-## Design
+## Documentation
 
-See [docs/designs/inside-out-debugging.md](docs/designs/inside-out-debugging.md) for the
-full design document, including snapshot bundle spec, trigger protocol, and architectural
-decisions.
+- [Implementation Guide](docs/debug-infrastructure-guide.md) — How to add debug infrastructure to a new SwiftUI app
+- [Design Doc](docs/archive/inside-out-debugging.md) — Original design document with architectural decisions and snapshot bundle spec

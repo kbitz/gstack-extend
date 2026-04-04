@@ -18,19 +18,16 @@ state, and route identifier to manifest.json window entries. Add summary.md
 generation to DebugSnapshotService.
 - **Why:** The agent can't reliably distinguish colors or determine window
   focus from screenshots alone. Structured data in probes and manifest solves
-  this. Implementation plan: docs/designs/inside-out-debugging.md (Workstream 1).
+  this. Implementation plan: docs/archive/inside-out-debugging.md (Workstream 1).
 - **Effort:** S (human: ~2 days / CC: ~30 min)
 - **Depends on:** osascript spike, runs in Bolt repo (not this repo)
 
-### Pattern documentation for future apps
-Write a guide in docs/designs/ explaining how to add inside-out debug
-infrastructure to a new SwiftUI app. Covers: DebugSnapshotService,
-InspectableModifier, state dumps, filesystem trigger, snapshot bundle format.
-- **Why:** The pattern is currently implicit in Bolt's code. Documenting it
-  makes it reproducible for future native app projects without having to
-  reverse-engineer Bolt.
-- **Effort:** S (human: ~1 day / CC: ~15 min)
-- **Depends on:** Bolt probe enrichment (to document the enriched format)
+### ~~Pattern documentation for future apps~~ ✓ DONE (v0.3.1)
+Completed: `docs/debug-infrastructure-guide.md`. Covers all six
+components (DebugSnapshotService, DebugSnapshotTrigger, InspectableModifier,
+InspectorRegistry, LayoutProbe, state dumps), wiring, CLAUDE.md config,
+workspace integration, and a verification checklist. Skill updated to detect
+missing infrastructure and point users to the guide.
 
 ### Manual test review skill
 New skill for structured manual test review process. Agent guides a human
