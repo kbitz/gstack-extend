@@ -1,9 +1,10 @@
 ---
 name: browse-native
 description: |
-  Focused interaction with native macOS apps via Peekaboo CLI. Point it at a
-  specific screen, flow, or feature to interact with. Sees the UI, clicks
-  elements, types text, and verifies state — scoped to what the user asks for.
+  Focused interaction with native macOS apps via inside-out debug infrastructure.
+  The app instruments itself (screenshots, layout probes, state dumps). The agent
+  communicates via filesystem triggers and osascript. Three tiers: full
+  instrumentation, partial, or screenshot-only degraded mode.
   Use when asked to "test this screen", "interact with the settings panel",
   "check the message composer", or "click through the onboarding flow".
   NOT for autonomous full-app QA — use /qa-native for that (when available).
@@ -16,11 +17,12 @@ allowed-tools:
   - Grep
 ---
 
-# /browse-native — Focused Native macOS App Interaction
+# /browse-native — Inside-Out Native App Interaction
 
-Interact with a specific part of a native macOS app using Peekaboo CLI. See the
-UI, click elements, type text, and verify state — scoped to a targeted area or
-flow that the user specifies.
+Interact with a specific part of a native macOS app using inside-out debug
+infrastructure. The app instruments itself: captures its own screenshots,
+measures its own layout, dumps its own state. You communicate via filesystem
+triggers and osascript.
 
 **This is a focused interaction tool, not an autonomous QA suite.** It does one
 thing well: interact with the part of the app you're pointed at. For full
@@ -46,79 +48,30 @@ Save the target as `$INTERACTION_TARGET` and scope all actions to it.
 
 Be honest about what works and what doesn't before starting a session.
 
-**SwiftUI apps often have sparse AX trees.** `see --json` may return few or no
-interactive elements (B1, T2, etc.) for SwiftUI views. When this happens,
-element-based clicking (`click --on B1`) won't work. The skill detects this
-during capability probing and switches to keyboard-first mode automatically.
+**Polling trigger adds latency.** The filesystem trigger mechanism has ~500ms of
+polling overhead. A full See-Act-See cycle takes ~1-3 seconds. Plan interactions
+efficiently — don't trigger a snapshot after every micro-action.
 
-**Window targeting can fail.** `--window-id` sometimes fails with "Failed to focus
-frontmost window." The skill falls back to `--app` targeting when this happens.
+**No fine-grained element clicking.** You cannot click on a specific UI element
+by ID or accessibility label. Use keyboard shortcuts and osascript menu access
+instead. Most well-built macOS apps have rich keyboard navigation.
 
-**Keystroke delivery is not guaranteed.** `peekaboo type` reports success even when
-the target view doesn't have keyboard focus. There's no way to verify which
-responder received the input — you must verify via screenshot.
+**Color and alignment from screenshots alone is unreliable.** LLMs cannot
+reliably distinguish similar colors (#F5F5F7 vs #F0F0F2) or detect sub-pixel
+misalignment from screenshots. Always use probes.json for exact values. If
+probes are unavailable (degraded mode), explicitly state your uncertainty.
 
-**Each `see` command takes 3-5 seconds.** A See-Act-See cycle is 7-10 seconds
-minimum. Plan interactions efficiently — batch where possible, don't screenshot
-after every micro-action.
+**App must be running.** The skill does not build or launch apps. The app must
+be running with its debug infrastructure active (or degraded mode for
+uninstrumented apps).
 
-**Sandboxed apps may block input.** Some apps restrict programmatic input. If
-interactions consistently fail, this may be the cause.
+**Degraded mode is limited.** Without instrumentation, you only get screenshots
+via screencapture. No structured data, no probes, no state. Useful for basic
+visual checks only.
 
-## Setup & Onboarding
+## Setup & Instrumentation Check
 
-Before first use, verify Peekaboo is installed and permissions are granted.
-
-### Step 1: Check Peekaboo
-
-```bash
-which peekaboo
-```
-
-If not found: "Peekaboo is required. Install via
-`brew install steipete/tap/peekaboo` (see https://github.com/steipete/Peekaboo)."
-
-### Step 2: Check Permissions
-
-First, detect which app needs permissions. macOS grants Accessibility and Screen
-Recording to the **host app** (the terminal or IDE), not to CLI tools like Peekaboo.
-
-```bash
-echo "${__CFBundleIdentifier:-unknown}"
-```
-
-Map the bundle ID to a friendly name:
-- `com.apple.Terminal` → Terminal
-- `com.mitchellh.ghostty` → Ghostty
-- `com.googlecode.iterm2` → iTerm2
-- `net.kovidgoyal.kitty` → kitty
-- `dev.warp.Warp-Stable` → Warp
-- `com.conductor.app` → Conductor
-- `com.microsoft.VSCode` → Visual Studio Code
-- `com.todesktop.230313mzl4w4u92` → Cursor
-- `com.anthropic.claudedesktop` → Claude for Desktop
-- `com.anthropic.claudecode.desktop` → Claude Code
-- `unknown` or unrecognized → "your terminal app"
-
-Save the resolved name as `$HOST_APP`.
-
-Then check permission status:
-
-```bash
-peekaboo permissions --json
-```
-
-Parse the JSON output. For each permission where `isGranted` is `false`:
-- Tell the user: "**$HOST_APP** needs $PERMISSION_NAME permission."
-- Print the `grantInstructions` path (e.g., System Settings > Privacy & Security > Screen Recording)
-- Clarify: "Add **$HOST_APP** (not Peekaboo) to the list."
-- Ask the user to grant it, then re-check after they confirm
-
-Required permissions:
-- **Screen Recording** — needed for screenshots and UI capture
-- **Accessibility** — needed for element detection and interaction
-
-### Step 3: Read App Config
+### Step 1: Read App Config
 
 Check CLAUDE.md for native app configuration:
 
@@ -126,433 +79,323 @@ Check CLAUDE.md for native app configuration:
 ## Native App
 native_app_bundle_id: "com.example.MyApp"
 native_app_scheme: "MyApp"
-# Optional:
-# native_workspace_path: "MyApp.xcworkspace"
-# native_build_configuration: "Debug"
-# native_launch_args: ""
-# native_build_timeout: 120
+native_snapshot_dir: ".context/snapshots"
+native_trigger_file: ".context/snapshot-trigger"
 ```
 
-If `native_app_bundle_id` is missing, ask the user:
-- What is the bundle ID? (e.g., `com.example.MyApp`)
-- What is the Xcode scheme name?
-- Save to CLAUDE.md for future runs.
+If config is missing, ask the user for:
+- App name (as it appears in Activity Monitor)
+- Snapshot directory path (if instrumented)
+- Trigger file path (if instrumented)
 
-## Session Setup
+Save the app name as `$APP_NAME`, snapshot dir as `$SNAPSHOT_DIR`, trigger file
+as `$TRIGGER_FILE`.
 
-At the start of each interaction session:
+### Step 2: Verify App Is Running
 
 ```bash
-SESSION_DIR="/tmp/native-browse-$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$SESSION_DIR/screenshots"
-echo "$SESSION_DIR"
+osascript -e 'tell application "System Events" to (name of processes) contains "APP_NAME"'
 ```
 
-Save the dark mode state for later restoration:
+If not running, tell the user: "APP_NAME doesn't appear to be running. Please
+launch it and try again." The skill does not build or launch apps.
+
+### Step 3: Detect Instrumentation Tier
+
+Check what debug infrastructure the app provides:
+
+**Full instrumentation** (best experience):
+```bash
+ls "$SNAPSHOT_DIR/latest/manifest.json" 2>/dev/null
+ls "$SNAPSHOT_DIR/latest/probes.json" 2>/dev/null
+ls "$SNAPSHOT_DIR/latest/state.json" 2>/dev/null
+ls "$SNAPSHOT_DIR/latest/windows/" 2>/dev/null
+```
+
+All files present → **Full mode.** Report: "Full instrumentation detected.
+Screenshots, layout probes, and state dumps available."
+
+**Partial instrumentation** (screenshots + state, no probes):
+manifest.json and windows/ present but no probes.json → **Partial mode.**
+Report: "Partial instrumentation. Screenshots and state available, but no
+layout probes. Color and alignment comparisons will be approximate."
+
+**No instrumentation** (degraded mode):
+No snapshot directory or trigger file → **Degraded mode.** Report:
+"No debug infrastructure detected. Running in degraded mode: osascript +
+screencapture only. No structured data available. For better results, add
+debug instrumentation to the app (see docs/designs/inside-out-debugging.md)."
+
+Save the tier as `$TIER` (full / partial / degraded).
+
+## osascript Interaction Primitives
+
+These commands handle app interaction via Apple Events. osascript is more reliable
+than accessibility-based tools for app automation but doesn't support fine-grained
+element targeting.
+
+### Activate App
 
 ```bash
-defaults read -g AppleInterfaceStyle 2>/dev/null
+osascript -e 'tell application "APP_NAME" to activate'
 ```
 
-If output is "Dark", save "Dark". If command fails (exit 1), save "Light".
-Write the result to `$SESSION_DIR/original-appearance.txt`.
-
-## Build & Launch
-
-### Build from Source
-
-Only if the user asks to build, or the app isn't running:
+### List Windows
 
 ```bash
-xcodebuild \
-  -workspace "PATH_TO_WORKSPACE" \
-  -scheme "SCHEME_NAME" \
-  -destination 'platform=macOS' \
-  -configuration Debug \
-  build \
-  -derivedDataPath "$SESSION_DIR/DerivedData" \
-  2>&1
+osascript -e 'tell application "System Events" to get name of every window of process "APP_NAME"'
 ```
 
-- Replace `PATH_TO_WORKSPACE` and `SCHEME_NAME` from CLAUDE.md config
-- If `native_workspace_path` is not set, auto-detect: `find . -name "*.xcworkspace" -not -path "*/Pods/*" | head -1`
-- Timeout: 120s (or `native_build_timeout` from CLAUDE.md)
-- If build fails, read the stderr output and troubleshoot naturally
-
-### Launch the App
+### Trigger Menu Item
 
 ```bash
-peekaboo app launch --bundle-id "BUNDLE_ID" --wait-until-ready --json
+osascript -e 'tell application "System Events" to tell process "APP_NAME" to click menu item "ITEM" of menu "MENU" of menu bar 1'
 ```
 
-### Capture Target Identity
+Example: Open a new compose window:
+```bash
+osascript -e 'tell application "System Events" to tell process "Bolt" to click menu item "New Message" of menu "File" of menu bar 1'
+```
 
-After launch, capture the PID and window ID for deterministic targeting:
+### Send Keystroke
 
 ```bash
-peekaboo window list --app "APP_NAME" --json
+osascript -e 'tell application "System Events" to keystroke "KEY" using MODIFIER down'
 ```
 
-From the JSON response, extract:
-- `data.target_application_info.pid` → save as `$APP_PID`
-- `data.windows[0].window_id` → save as `$WINDOW_ID`
+Examples:
+- `keystroke "n" using command down` — Cmd+N
+- `keystroke "," using command down` — Cmd+, (Settings)
+- `keystroke "a" using command down` — Cmd+A (Select All)
+- `key code 48` — Tab
+- `key code 36` — Return/Enter
+- `key code 53` — Escape
 
-### Capability Probe
+### What osascript CANNOT Do
 
-**Run this immediately after launch, before any interaction.** This determines
-which interaction mode to use for the session.
+- Click on a specific UI element by identifier or accessibility label
+- Type into a specific text field (it sends to the focused responder)
+- Scroll a specific view
+- Read UI element properties (use probes.json instead)
 
+For these operations, use keyboard navigation (Tab, arrow keys, shortcuts) to
+reach the target element, then act.
+
+## The Core Pattern: See-Act-See
+
+This is the fundamental interaction loop. Every interaction follows this pattern.
+
+### Step 1: Trigger Snapshot
+
+**Full/Partial mode:**
 ```bash
-peekaboo see --window-id $WINDOW_ID --json --path "$SESSION_DIR/screenshots/probe.png"
+touch "$TRIGGER_FILE"
 ```
 
-Evaluate the result:
-
-1. **Did `--window-id` work?** If it failed with "Failed to focus frontmost window"
-   or similar, set `$TARGET_MODE=app` and use `--app "APP_NAME"` for all subsequent
-   commands. Otherwise set `$TARGET_MODE=window`.
-
-2. **Count interactive elements.** From the JSON, count elements with IDs (B1, T2, etc.):
-   - **≥5 interactive elements** → `$INTERACTION_MODE=element` (use click --on ID)
-   - **<5 interactive elements** → `$INTERACTION_MODE=keyboard` (use hotkeys, type, press)
-
-3. **Test keyboard delivery.** Send a no-op key and screenshot:
-   ```bash
-   peekaboo hotkey --keys "cmd,l" --app "APP_NAME"
-   ```
-   Screenshot and verify the app responded. If it did, keyboard input works.
-   If not, note that keystroke delivery is unreliable for this app.
-
-Log the probe results to `$SESSION_DIR/probe-results.txt`:
-```
-target_mode: window|app
-interaction_mode: element|keyboard
-keyboard_delivery: verified|unreliable
-element_count: N
-```
-
-## Interaction Modes
-
-### Element Mode (`$INTERACTION_MODE=element`)
-
-Use when the AX tree returns rich element maps. This is the ideal path.
-
-Follow the See-Act-See pattern (see below), clicking elements by their IDs.
-
-### Keyboard Mode (`$INTERACTION_MODE=keyboard`)
-
-Use when element detection is sparse (common with SwiftUI apps). Interact
-primarily through keyboard shortcuts, typing, and tab navigation.
-
-**Strategy:**
-- Use `peekaboo hotkey` for app-level actions (cmd+n, cmd+s, cmd+comma, etc.)
-- Use `peekaboo type` for text input (verify delivery via screenshot)
-- Use `peekaboo press Tab` to move between controls
-- Use `peekaboo press Enter` / `peekaboo press Space` to activate focused elements
-- Use `peekaboo menu --app "APP_NAME" --path "Menu > Item"` for menu bar actions
-- Use `peekaboo click --x X --y Y` for coordinate-based clicking as a last resort
-  (identify coordinates from the annotated screenshot)
-
-**Establishing focus:** Before typing, ensure the target field has focus. Either:
-1. Click the field by coordinates (from the screenshot)
-2. Tab to the field
-3. Use a shortcut that focuses it (e.g., cmd+L for address bars)
-
-Always screenshot after typing to verify the text appeared where expected.
-
-## Core Pattern: See-Act-See
-
-Every interaction follows this cycle:
-
-### 1. See — Capture the current UI state
-
-Use the targeting flag from your probe results:
-
+Then wait for a FRESH snapshot bundle (not a stale one from a previous run):
 ```bash
-# If target_mode=window:
-peekaboo see --window-id $WINDOW_ID --json --annotate --path "$SESSION_DIR/screenshots/STATE_NAME.png"
-
-# If target_mode=app:
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/STATE_NAME.png"
+# Save hash of existing manifest (if any) BEFORE triggering
+BEFORE_HASH=$(md5 -q "$SNAPSHOT_DIR/latest/manifest.json" 2>/dev/null || echo "none")
+# Poll for manifest.json change (200ms intervals, 2s timeout)
+for i in $(seq 1 10); do
+  if [[ -f "$SNAPSHOT_DIR/latest/manifest.json" ]]; then
+    CURRENT_HASH=$(md5 -q "$SNAPSHOT_DIR/latest/manifest.json" 2>/dev/null || echo "none")
+    if [[ "$CURRENT_HASH" != "$BEFORE_HASH" ]]; then
+      break
+    fi
+  fi
+  sleep 0.2
+done
 ```
 
-This returns a JSON element map with IDs like `B1` (button 1), `T2` (text field 2),
-`S3` (static text 3), etc. The annotated screenshot marks each element with its ID.
+**IMPORTANT:** Check that the manifest CHANGED, not just that it exists. A stale
+manifest from a previous snapshot will already be on disk. Without the hash
+comparison, you'll read stale data.
 
-### 2. Act — Interact with the app
+If timeout: retry once. If second attempt fails, report the error and fall back
+to screencapture.
 
-Choose the right tool based on your interaction mode:
-
-**Element mode:**
+**Degraded mode:**
 ```bash
-peekaboo click --on B1 --window-id $WINDOW_ID
-peekaboo type "Hello world" --window-id $WINDOW_ID
-peekaboo press Enter --window-id $WINDOW_ID
-peekaboo scroll --direction down --amount 3 --window-id $WINDOW_ID
+# Get the app's PID, then find its CGWindowID via Quartz
+PID=$(osascript -e 'tell application "System Events" to get unix id of process "APP_NAME"')
+# Use Python + Quartz to get the CGWindowID (System Events IDs are NOT CGWindowIDs)
+WINDOW_ID=$(python3 -c "
+import Quartz
+windows = Quartz.CGWindowListCopyWindowInfo(
+    Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+    Quartz.kCGNullWindowID
+)
+for w in windows:
+    if w.get('kCGWindowOwnerPID') == $PID and w.get('kCGWindowLayer', 999) == 0:
+        print(w['kCGWindowNumber'])
+        break
+")
+screencapture -l "$WINDOW_ID" "/tmp/browse-native-capture.png"
 ```
 
-**Keyboard mode:**
-```bash
-peekaboo hotkey --keys "cmd,n" --app "APP_NAME"
-peekaboo type "Hello world" --app "APP_NAME"
-peekaboo press Tab --app "APP_NAME"
-peekaboo press Enter --app "APP_NAME"
-peekaboo menu --app "APP_NAME" --path "File > New"
-peekaboo click --x 200 --y 150 --app "APP_NAME"
+Note: `screencapture -l` requires a CGWindowID (from `CGWindowListCopyWindowInfo`),
+not an accessibility element ID from System Events. The Python/Quartz approach above
+correctly maps PID to CGWindowID.
+
+### Step 2: Read the Snapshot Bundle
+
+**CRITICAL: Read summary.md FIRST** (if it exists). This tells you which windows
+are present, which is focused, and what the app state is. This prevents the
+common mistake of only looking at main.png.
+
+```
+Reading order:
+1. summary.md (if exists) — overview of what's in the bundle
+2. manifest.json — window list, z-order, focus state
+3. ALL window screenshots — not just main.png
+4. probes.json — exact frame coordinates and colors (full mode only)
+5. state.json — app state (full/partial mode only)
 ```
 
-**Batching actions:** When performing a sequence of actions where intermediate
-state doesn't matter, batch them with a single screenshot at the end:
+### Step 3: Reason with Structured Data + Visual Confirmation
 
-```bash
-peekaboo hotkey --keys "cmd,n" --app "APP_NAME"
-sleep 0.2
-peekaboo type "Document title" --app "APP_NAME"
-sleep 0.2
-peekaboo press Tab --app "APP_NAME"
-peekaboo type "Document body" --app "APP_NAME"
-# NOW screenshot to verify the whole sequence
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/after-sequence.png"
-```
+The screenshots show what actually rendered. The JSON tells you the precise
+values. Use both together:
 
-This turns 5 See-Act-See cycles into 1 — much faster.
+- **Color comparison:** Read hex values from probes.json, not from the screenshot.
+  Two backgrounds that look identical in a screenshot might be #F5F5F7 vs #F0F0F2.
+  The probes know. The screenshot doesn't.
 
-### 3. See Again — Verify the state changed
+- **Alignment checking:** Read frame coordinates from probes.json. Two elements
+  that look aligned might be 2px off. The probes have exact coordinates.
+  `{ "x": 12, "y": 48 }` vs `{ "x": 14, "y": 48 }` — that's a 2px horizontal
+  misalignment the screenshot won't reveal.
 
-```bash
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/AFTER_ACTION.png"
-```
+- **State verification:** Read state.json to confirm what the app thinks is
+  happening. The screenshot shows what rendered. The state shows the underlying
+  data. If they disagree, that's a bug.
 
-Compare the before and after screenshots to verify the action took effect.
+- **When probes are unavailable (partial/degraded mode):** Explicitly state
+  uncertainty. Say "Based on the screenshot, these appear to be the same color,
+  but I cannot verify without probe data." Never claim pixel-level precision
+  without structured data to back it up.
 
-### Important Notes
+### Step 4: Act
 
-- **Always re-see after acting.** Element IDs are tied to snapshots. After any UI
-  state change, the old IDs may be stale. Re-see to get fresh IDs.
-- **Batch when possible.** Only screenshot when you need to verify or make a decision.
-  Don't screenshot between every keystroke in a sequence.
-- **Start with short waits.** Use `sleep 0.2` between rapid actions. Only increase
-  to `sleep 0.5` or `sleep 1` if the UI hasn't updated (e.g., after launching a
-  window, opening a sheet, or triggering an animation).
+Choose the right interaction method:
+
+1. **Keyboard shortcut** (preferred) — fastest, most reliable
+2. **osascript menu item** — for menu-driven actions
+3. **osascript keystroke** — for keyboard input
+4. **Tab navigation** — to reach specific UI elements
+
+### Step 5: Trigger Another Snapshot
+
+Repeat Step 1 to capture the result of your action.
+
+### Step 6: Compare Before/After
+
+Compare the new snapshot with the previous one:
+- Did the expected UI change occur?
+- Did any unexpected changes occur?
+- Are there visual regressions?
+
+Use the manifest.json window list to check if windows appeared or disappeared.
+Use state.json to check if app state changed as expected.
 
 ## Error Recovery
 
-When something goes wrong, follow these patterns:
+### Snapshot Trigger Timeout
 
-### Window targeting fails
-```
-Error: "Failed to focus frontmost window"
-```
-**Recovery:** Switch `$TARGET_MODE` to `app`. Use `--app "APP_NAME"` for all
-subsequent commands. Re-probe to get fresh state.
+If the trigger file doesn't produce a snapshot within 2 seconds:
 
-### Element click does nothing
-The click reported success but the UI didn't change.
-**Recovery:**
-1. The element may be decorative, not interactive. Check the element role in the JSON.
-2. Try double-click: `peekaboo click --on B1 --window-id $WINDOW_ID --double`
-3. Fall back to keyboard: use Tab to reach the element, then press Enter/Space.
-4. Fall back to coordinate click from the annotated screenshot.
+1. Retry once (touch trigger file again, wait 2s)
+2. If still no response: "Snapshot trigger timed out. Is the app running with
+   debug infrastructure enabled?"
+3. Fall back to screencapture for a basic screenshot
+4. Continue in degraded mode for the rest of the session
 
-### Keystrokes not received
-`peekaboo type` reported success but text didn't appear.
-**Recovery:**
-1. The wrong view likely has focus. Click the target field by coordinates first.
-2. Try `peekaboo hotkey --keys "cmd,a"` then `peekaboo type` to select-all and replace.
-3. If the app is in a modal state (dialog, sheet), dismiss it first.
+### osascript Failure
 
-### App becomes unresponsive
-Actions succeed but the UI doesn't update across multiple attempts.
-**Recovery:**
-1. Check if the app is still running: `kill -0 $APP_PID 2>/dev/null`
-2. Check for modal dialogs blocking input — screenshot to see current state.
-3. Try Escape to dismiss any hidden modals.
-4. Last resort: re-launch the app and re-probe.
+If an osascript command fails:
 
-### AX tree suddenly empty
-Previously working element detection stops returning results.
-**Recovery:** The app likely changed windows (opened a sheet, dialog, or popover).
-1. Re-list windows: `peekaboo window list --app "APP_NAME" --json`
-2. Update `$WINDOW_ID` if a new window appeared.
-3. If no new window, the view hierarchy changed — switch to keyboard mode.
+1. Report the specific error message
+2. Suggest a keyboard shortcut alternative if possible
+3. Check if the app is still running
+4. If the app crashed, report it and stop
 
-## Output Management
+### Missing Window
 
-For apps with complex UIs (>500 elements in the `see` output):
-- Scope to a specific window using `--window-id`
-- If still too large, focus on a specific area by describing what you're looking for
-- Known limitation: Very complex AX trees may exceed context. In that case, target
-  specific windows or use `--window-title` to narrow scope.
+If a window referenced in the target isn't visible:
 
-## Additional Capabilities
+1. Read manifest.json for all windows
+2. Try activating the app: `osascript -e 'tell application "APP_NAME" to activate'`
+3. If the window was supposed to be opened by a menu action, retry the menu command
+4. If still missing, report: "Window 'X' not found. Available windows: [list from manifest]"
 
-Use these only when the user's target specifically calls for them (e.g., "check
-dark mode on the settings screen", "test how the sidebar resizes"). Do not run
-these unprompted.
+### App Crash
 
-### Dark Mode Testing
+If the app stops responding or disappears:
 
-**WARNING: This toggles the SYSTEM-WIDE appearance. Always restore after testing.**
-
-```bash
-# 1. Save current state (already done in session setup)
-ORIGINAL=$(cat "$SESSION_DIR/original-appearance.txt")
-
-# 2. Print restore command BEFORE toggling (crash recovery)
-if [[ "$ORIGINAL" == "Dark" ]]; then
-  echo "RESTORE COMMAND: defaults write -g AppleInterfaceStyle -string Dark"
-else
-  echo "RESTORE COMMAND: defaults delete -g AppleInterfaceStyle"
-fi
-
-# 3. Toggle to Dark
-defaults write -g AppleInterfaceStyle -string Dark
-
-# 4. Wait for apps to respond
-sleep 1
-
-# 5. Screenshot in dark mode
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/dark-mode.png"
-
-# 6. Toggle to Light
-defaults delete -g AppleInterfaceStyle
-
-# 7. Wait and screenshot in light mode
-sleep 1
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/light-mode.png"
-
-# 8. Restore original
-# If ORIGINAL was "Dark": defaults write -g AppleInterfaceStyle -string Dark
-# If ORIGINAL was "Light": defaults delete -g AppleInterfaceStyle
-```
-
-Compare the dark and light screenshots for:
-- Text readability (contrast issues)
-- Missing dark mode adaptations (bright backgrounds, invisible text)
-- Asset issues (images not adapting to dark mode)
-
-### Window Resize Testing
-
-Test layout at different sizes:
-
-```bash
-# Save original bounds
-peekaboo window list --app "APP_NAME" --json
-# Extract bounds from response
-
-# Test predefined sizes
-peekaboo window set-bounds --app "APP_NAME" --width 1280 --height 800
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/resize-1280x800.png"
-
-peekaboo window set-bounds --app "APP_NAME" --width 800 --height 600
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/resize-800x600.png"
-
-# Test minimum size (resize very small, see what happens)
-peekaboo window set-bounds --app "APP_NAME" --width 400 --height 300
-peekaboo see --app "APP_NAME" --json --annotate --path "$SESSION_DIR/screenshots/resize-min.png"
-
-# Restore original bounds
-peekaboo window set-bounds --app "APP_NAME" --x ORIG_X --y ORIG_Y --width ORIG_W --height ORIG_H
-```
-
-Look for: truncated content, overlapping elements, broken layouts, missing scroll bars.
-
-### Keyboard Navigation Audit
-
-Test that all focusable elements are reachable via Tab:
-
-```bash
-# Click the first interactive area to establish focus
-peekaboo click --x 200 --y 200 --app "APP_NAME"
-
-# Tab through elements, capturing each focus state
-peekaboo press Tab --app "APP_NAME"
-peekaboo see --app "APP_NAME" --json --path "$SESSION_DIR/screenshots/tab-1.png"
-
-peekaboo press Tab --app "APP_NAME"
-peekaboo see --app "APP_NAME" --json --path "$SESSION_DIR/screenshots/tab-2.png"
-
-# Repeat until focus returns to the first element or gets stuck
-```
-
-Check for:
-- **Focus traps** — Tab stops cycling (stuck on one element)
-- **Unreachable elements** — Interactive elements that Tab never reaches
-- **Missing focus rings** — No visual indicator of which element is focused
-
-### Accessibility Audit
-
-Parse the `see --json` output to check for accessibility issues.
-
-**Note:** This audit is only meaningful in element mode. If the AX tree is sparse
-(keyboard mode), report: "AX tree too sparse for accessibility audit — SwiftUI app
-may need explicit .accessibilityLabel() and .accessibilityRole() modifiers."
-
-From the element map, check each interactive element (buttons, text fields, etc.):
-- **Missing labels** — elements with no `label` or `accessibilityLabel`
-- **Missing roles** — elements with no `role` specified
-- **Generic labels** — labels like "button", "image", or empty strings
-
-Report findings as:
-```
-ACCESSIBILITY AUDIT
-===================
-[PASS] B1: "Save" button — has label and role
-[FAIL] B3: button — missing label (add .accessibilityLabel("description"))
-[FAIL] I2: image — generic label "image" (add .accessibilityLabel("description"))
-[PASS] T1: "Username" text field — has label and role
-```
-
-### Screenshot Gallery
-
-Organize screenshots by state in the session directory:
-
-```
-$SESSION_DIR/screenshots/
-├── probe.png
-├── initial-state.png
-├── after-sequence.png
-├── dark-mode.png
-├── light-mode.png
-├── resize-1280x800.png
-├── resize-800x600.png
-├── resize-min.png
-├── tab-1.png
-├── tab-2.png
-└── ...
-```
-
-Use descriptive filenames that reflect the app state at capture time.
-
-### Crash Detection
-
-After any interaction, check if the app is still running:
-
-```bash
-kill -0 $APP_PID 2>/dev/null
-```
-
-If exit code is non-zero (app crashed):
-1. Note the last action that was performed
+1. Check if the process is still running:
+   ```bash
+   osascript -e 'tell application "System Events" to (name of processes) contains "APP_NAME"'
+   ```
 2. Check for crash logs:
+   ```bash
+   ls -t ~/Library/Logs/DiagnosticReports/*.ips 2>/dev/null | head -3
+   ```
+3. Report: "APP_NAME appears to have crashed. Recent crash logs: [list if found]"
+4. Stop the session — do not attempt to relaunch
 
-```bash
-find ~/Library/Logs/DiagnosticReports -name "*.ips" -newer "$SESSION_DIR" -maxdepth 1 2>/dev/null
+## Session Reporting
+
+At the end of a session, summarize what was tested and what was found:
+
+```
+## Session Report: $INTERACTION_TARGET
+
+### Environment
+- App: $APP_NAME
+- Instrumentation: $TIER
+- Snapshots taken: N
+- Duration: Xm Ys
+
+### Actions Taken
+1. [action] → [result]
+2. [action] → [result]
+...
+
+### Findings
+- [issue or observation]
+- [issue or observation]
+
+### Limitations
+- [anything you couldn't verify due to instrumentation tier]
 ```
 
-3. If a crash log is found, read the first 50 lines for the crash reason
-4. If no log found: "Crash detected but log not yet available. Check
-   ~/Library/Logs/DiagnosticReports/ manually."
-5. Report the crash with the last action as likely trigger
+Be specific about limitations. If you couldn't verify color accuracy because
+probes were unavailable, say so. If you couldn't test a flow because osascript
+couldn't reach a specific element, say so.
 
-## Reporting
+## App-Specific Configuration
 
-When done with the targeted interaction, report:
+Apps can provide additional configuration in CLAUDE.md to improve the skill's
+effectiveness:
 
-1. **What was tested** — restate the target and what steps were taken
-2. **What worked** — interactions that succeeded as expected
-3. **What didn't work** — interactions that failed or produced unexpected results
-4. **Screenshots** — reference the before/after screenshots in `$SESSION_DIR`
+```yaml
+## Native App
+native_app_bundle_id: "com.example.MyApp"
+native_app_scheme: "MyApp"
+native_snapshot_dir: ".context/snapshots"
+native_trigger_file: ".context/snapshot-trigger"
 
-Keep the report scoped to the target. Do not extrapolate findings to untested
-areas of the app.
+## App Keyboard Shortcuts (optional — helps the skill navigate)
+# native_shortcuts:
+#   new_window: "cmd+n"
+#   settings: "cmd+,"
+#   close_window: "cmd+w"
+#   search: "cmd+f"
+#   next_item: "j"
+#   prev_item: "k"
+#   select: "return"
+```
+
+When keyboard shortcuts are documented, prefer them over osascript menu access.
+They're faster and more reliable.
