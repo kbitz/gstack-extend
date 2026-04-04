@@ -1,0 +1,33 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.3.0] - 2026-04-04
+
+### Changed
+- Replaced Peekaboo CLI with inside-out debug infrastructure. The app now instruments itself (screenshots, layout probes, state dumps) and the agent communicates via filesystem triggers and osascript.
+- Rewrote /browse-native skill around the new interaction pattern: trigger snapshot, read structured data + screenshots, act via osascript/keyboard, verify.
+- Rewrote validation gates: Gate 1 validates snapshot bundles, Gate 2 tests osascript interaction, Gate 3 measures see-act-see cycle latency (<3000ms).
+- Three instrumentation tiers: full (probes + state + screenshots), partial (state + screenshots), and degraded (osascript + screencapture only).
+- Updated TODOS.md: obsoleted 5 Peekaboo-era items, added new P1/P2 backlog.
+- Updated roadmap: Phase 2 is now UI Truth Layer, Phase 3 is /qa-native redesign.
+
+### Added
+- Design doc: docs/designs/inside-out-debugging.md (approved, covers snapshot bundle spec, trigger protocol, osascript primitives, architectural decisions).
+- Color and alignment rules: skill instructs the agent to always use probe data for precise comparisons, never rely on screenshot vision alone.
+- Degraded mode: skill works with uninstrumented apps via osascript + screencapture.
+- Skill routing rules in CLAUDE.md.
+
+### Removed
+- Peekaboo CLI dependency. No external tools required.
+- scripts/detect-host-app.sh (Peekaboo permission detection).
+
+## [0.2.0] - 2026-03-27
+
+### Changed
+- Skill rewrite from hands-on feedback: focused interaction tool, mandatory target, capability probe, keyboard-first mode for sparse AX trees.
+
+## [0.1.0] - 2026-03-24
+
+### Added
+- Initial /browse-native skill with Peekaboo CLI, validation gates, design doc.

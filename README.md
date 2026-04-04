@@ -1,11 +1,29 @@
 # browse-native
 
-See, interact with, and QA-test native macOS apps from Claude Code via [Peekaboo](https://peekaboo.dev) CLI.
+Interact with native macOS apps from Claude Code using inside-out debug infrastructure.
 
-## Prerequisites
+## How It Works
 
-- **Peekaboo CLI** — `brew install steipete/tap/peekaboo` (see [github.com/steipete/Peekaboo](https://github.com/steipete/Peekaboo))
-- **macOS permissions** — Screen Recording and Accessibility, granted to your host app (e.g. Terminal, Ghostty, Conductor — the skill auto-detects which app needs them)
+Instead of using external tools to inspect the app from outside, the app instruments
+itself and exposes structured data to the agent:
+
+1. **App captures its own screenshots** via ScreenCaptureKit (per-window PNGs)
+2. **App measures its own layout** via probe modifiers (exact coordinates, colors)
+3. **App dumps its own state** via ViewModel serialization (JSON)
+4. **Agent triggers snapshots** by writing a trigger file (filesystem-based)
+5. **Agent interacts** via osascript (window management, menus, keystrokes)
+
+The agent reads the snapshot bundle (screenshots + structured JSON) to understand
+what's happening, then acts. The combination of visual ground truth and structured
+data lets the agent reason precisely about colors, alignment, and state.
+
+## Three Instrumentation Tiers
+
+| Tier | What the app provides | Agent capability |
+|------|----------------------|-----------------|
+| **Full** | Screenshots + probes + state dumps + events | Best: precise colors, alignment, state reasoning |
+| **Partial** | Screenshots + state dumps (no probes) | Good: visual + state, no precise measurements |
+| **None** | Nothing (degraded mode) | Basic: osascript + screencapture, no structured data |
 
 ## Installation
 
@@ -21,8 +39,6 @@ Add `.claude/skills/browse-native` to your `.gitignore`:
 echo ".claude/skills/browse-native" >> .gitignore
 ```
 
-Claude Code will automatically discover the skill from `SKILL.md` at the repo root.
-
 ## Configuration
 
 Add your app's details to your project's `CLAUDE.md`:
@@ -31,27 +47,32 @@ Add your app's details to your project's `CLAUDE.md`:
 ## Native App
 native_app_bundle_id: "com.example.MyApp"
 native_app_scheme: "MyApp"
-# native_workspace_path: "MyApp.xcworkspace"
-# native_build_configuration: "Debug"
-# native_launch_args: ""
-# native_build_timeout: 120
+native_snapshot_dir: ".context/snapshots"
+native_trigger_file: ".context/snapshot-trigger"
 ```
 
 ## Usage
 
-Once installed, use the `/browse-native` command in Claude Code to interact with your macOS app. The skill supports:
+Use `/browse-native` in Claude Code to interact with your macOS app:
 
-- **See-Act-See loop** — capture UI state, interact with elements, verify results
-- **Dark mode testing** — toggle system appearance and compare screenshots
-- **Window resize testing** — test layouts at different window sizes
-- **Keyboard navigation audit** — verify Tab traversal and focus indicators
-- **Accessibility audit** — check for missing labels, roles, and contrast issues
-- **Crash detection** — detect and report app crashes with diagnostic logs
+- **See-Act-See loop** — trigger snapshot, read structured data + screenshots, act, verify
+- **Color comparison** — exact hex values from probes, not guessing from pixels
+- **Alignment checking** — exact frame coordinates from probes
+- **Multi-window awareness** — reads ALL windows, not just the main one
+- **State reasoning** — knows app state from JSON, not just visual inspection
 
-## Updating
-
-Pull the latest version:
+## Validation
 
 ```bash
-git -C .claude/skills/browse-native pull
+./scripts/validate.sh                    # Run all gates
+./scripts/validate.sh --app "MyApp"      # Test specific app
+./scripts/validate.sh --gate 1           # Snapshot bundle validity
+./scripts/validate.sh --gate 2           # osascript interaction
+./scripts/validate.sh --gate 3           # Cycle latency
 ```
+
+## Design
+
+See [docs/designs/inside-out-debugging.md](docs/designs/inside-out-debugging.md) for the
+full design document, including snapshot bundle spec, trigger protocol, and architectural
+decisions.
