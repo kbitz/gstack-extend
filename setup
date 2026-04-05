@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# gstack-native setup — install skill symlinks into ~/.claude/skills/
+#
+# Usage:
+#   ./setup              # Install from current directory
+#   ./setup --uninstall  # Remove symlinks
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+SKILLS_DIR="${HOME}/.claude/skills"
+
+SKILLS=(
+  pair-review
+  browse-native
+)
+
+if [ "${1:-}" = "--uninstall" ]; then
+  for skill in "${SKILLS[@]}"; do
+    target="$SKILLS_DIR/$skill"
+    if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
+      # Only remove if the symlink points back to us
+      link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
+      expected="$SCRIPT_DIR/skills/${skill}.md"
+      if [ "$link_target" = "$expected" ]; then
+        rm -f "$target/SKILL.md"
+        rmdir "$target" 2>/dev/null || true
+        echo "Removed $skill"
+      else
+        echo "Skipped $skill (symlink points elsewhere)"
+      fi
+    fi
+  done
+  echo "Uninstall complete."
+  exit 0
+fi
+
+mkdir -p "$SKILLS_DIR"
+
+installed=0
+for skill in "${SKILLS[@]}"; do
+  src="$SCRIPT_DIR/skills/${skill}.md"
+  if [ ! -f "$src" ]; then
+    echo "Warning: $src not found, skipping" >&2
+    continue
+  fi
+  target="$SKILLS_DIR/$skill"
+  if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
+    echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
+    continue
+  fi
+  mkdir -p "$target"
+  ln -snf "$src" "$target/SKILL.md"
+  installed=$((installed + 1))
+done
+
+echo "Installed $installed skills into $SKILLS_DIR"
