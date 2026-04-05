@@ -29,14 +29,24 @@ InspectorRegistry, LayoutProbe, state dumps), wiring, CLAUDE.md config,
 workspace integration, and a verification checklist. Skill updated to detect
 missing infrastructure and point users to the guide.
 
-### Manual test review skill
-New skill for structured manual test review process. Agent guides a human
-through testing steps and processes their results. Needs design work to define
-the workflow (checklist generation, result capture, report format).
-- **Why:** Not all native app testing can be automated. A structured manual
-  review process fills the gap between fully automated QA and ad-hoc testing.
-- **Effort:** TBD (needs design via /office-hours)
-- **Depends on:** Workflow design
+### ~~Manual test review skill~~ ✓ DONE (v0.4.0)
+Completed: `skills/pair-review.md`. Pair testing session manager with deploy
+discovery, grouped test plans from diffs, test-fix-retest loop with group-level
+checkpoints, and cross-machine resume. Design doc: `docs/designs/pair-review.md`.
+
+### /pair-review PR comment integration
+Post test session report as a PR comment via `gh pr comment` with
+update-or-create idempotency. Deferred from v1 to prove the core loop first.
+- **Why:** Connects manual testing evidence to the PR record
+- **Effort:** S (human: ~1 day / CC: ~10 min)
+- **Depends on:** /pair-review proven reliable through real usage
+
+### /pair-review validation script
+After the skill is battle-tested, add `scripts/validate-pair-review.sh` with
+gates for state file validity, resume round-trip, and deploy recipe discovery.
+- **Why:** Catches regressions when the skill file is modified
+- **Effort:** S (human: ~1 day / CC: ~15 min)
+- **Depends on:** /pair-review proven reliable through real usage
 
 ## P2 — Phase 2
 
@@ -58,6 +68,22 @@ inside-out infrastructure as the foundation.
   re-verify) is the 10x version. /browse-native is the foundation.
 - **Effort:** M (human: ~2 weeks / CC: ~2-3 hours)
 - **Depends on:** UI Truth Layer, pattern documentation
+
+### Multi-agent test orchestration (/pair-review Approach C)
+Each test group assigned to a separate conductor agent. Session.yaml as
+coordination point, groups as independent files so agents don't conflict.
+Parallel testing across agents for large test suites.
+- **Why:** Dramatically speeds up large test suites (15-20 items)
+- **Effort:** L (human: ~2 weeks / CC: ~2 hours)
+- **Depends on:** /pair-review v1 proven reliable, conductor agent API maturity
+
+### Repo rename: gstack-native → gstack-extend
+The repo name no longer reflects the content. Skills being designed
+(/pair-review) are general-purpose, not native-app-specific. Better
+positioning for upstream gstack PR.
+- **Why:** Accurate naming
+- **Effort:** S (human: ~1 hour / CC: ~15 min, GitHub rename + link updates)
+- **Depends on:** Nothing
 
 ### Contrast ratio + VoiceOver order analysis
 Extend accessibility reporting with pixel-level contrast analysis (using probe
