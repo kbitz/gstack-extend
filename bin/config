@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# gstack-extend config — simple key=value config store.
+#
+# Usage:
+#   bin/config get <key>       # Print value (empty if missing)
+#   bin/config set <key> <value>
+#
+# Config file: ~/.gstack-extend/config
+set -euo pipefail
+
+STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
+CONFIG_FILE="$STATE_DIR/config"
+
+cmd="${1:-}"
+key="${2:-}"
+value="${3:-}"
+
+case "$cmd" in
+  get)
+    [ -z "$key" ] && exit 1
+    awk -F= -v k="$key" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$CONFIG_FILE" 2>/dev/null || true
+    ;;
+  set)
+    [ -z "$key" ] && exit 1
+    mkdir -p "$STATE_DIR"
+    if [ -f "$CONFIG_FILE" ]; then
+      { awk -F= -v k="$key" '$1 != k' "$CONFIG_FILE" || true; } > "$CONFIG_FILE.tmp"
+    else
+      touch "$CONFIG_FILE.tmp"
+    fi
+    echo "${key}=${value}" >> "$CONFIG_FILE.tmp"
+    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+    ;;
+  *)
+    echo "Usage: config {get|set} <key> [<value>]" >&2
+    exit 1
+    ;;
+esac
