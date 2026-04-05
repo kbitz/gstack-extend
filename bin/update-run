@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# gstack-extend update-run — perform the actual upgrade.
+#
+# Usage:
+#   bin/update-run <repo-root>
+#
+# The repo root is passed from the skill preamble (resolved via readlink).
+# This avoids hardcoding paths and works regardless of where the repo is cloned.
+#
+# Output:
+#   UPGRADE_OK <old> <new>     — upgrade succeeded
+#   UPGRADE_FAILED <reason>    — upgrade failed
+set -euo pipefail
+
+INSTALL_DIR="${1:-}"
+STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
+
+if [ -z "$INSTALL_DIR" ]; then
+  echo "UPGRADE_FAILED missing repo root argument"
+  exit 1
+fi
+
+if [ ! -d "$INSTALL_DIR/.git" ]; then
+  echo "UPGRADE_FAILED not a git repo: $INSTALL_DIR"
+  exit 1
+fi
+
+# ─── Step 1: Save old version ─────────────────────────────────
+OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+
+# ─── Step 2: Upgrade via git ──────────────────────────────────
+mkdir -p "$STATE_DIR"
+
+cd "$INSTALL_DIR"
+STASH_OUTPUT=$(git stash 2>&1)
+git fetch origin
+git reset --hard origin/main
+./setup
+
+if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
+  echo "Note: local changes were stashed. Run 'git stash pop' in $INSTALL_DIR to restore them."
+fi
+
+# ─── Step 3: Write upgrade marker ─────────────────────────────
+NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+echo "$OLD_VERSION" > "$STATE_DIR/just-upgraded-from"
+
+# Clear cache so next check is fresh
+rm -f "$STATE_DIR/last-update-check"
+rm -f "$STATE_DIR/update-snoozed"
+
+echo "UPGRADE_OK $OLD_VERSION $NEW_VERSION"
