@@ -64,3 +64,4 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+- Manual testing, "give me a test list", pair test → invoke pair-review
