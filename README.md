@@ -1,4 +1,4 @@
-# gstack-native
+# gstack-extend
 
 Extension skills for [gstack](https://github.com/anthropics/gstack). Currently ships two skills:
 
@@ -14,21 +14,21 @@ Extension skills for [gstack](https://github.com/anthropics/gstack). Currently s
 Clone and run setup:
 
 ```bash
-git clone git@github.com:kbitz/gstack-native.git ~/.claude/skills/gstack-native
-~/.claude/skills/gstack-native/setup
+git clone git@github.com:kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
+~/.claude/skills/gstack-extend/setup
 ```
 
 This creates symlinks in `~/.claude/skills/` so Claude Code discovers both skills.
-To uninstall: `~/.claude/skills/gstack-native/setup --uninstall`
+To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
 
 ### Per-project install
 
 Clone into a project's `.claude/skills/` directory, then run setup:
 
 ```bash
-git clone git@github.com:kbitz/gstack-native.git .claude/skills/gstack-native
-echo ".claude/skills/gstack-native" >> .gitignore
-.claude/skills/gstack-native/setup
+git clone git@github.com:kbitz/gstack-extend.git .claude/skills/gstack-extend
+echo ".claude/skills/gstack-extend" >> .gitignore
+.claude/skills/gstack-extend/setup
 ```
 
 Both skills are now available in Claude Code. For `/browse-native`, see the
