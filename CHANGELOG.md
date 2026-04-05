@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-04-04
+
+### Fixed
+- Renamed pair-review skill's context directory from `.context/test-session/` to `.context/pair-review/` to match the skill name.
+
 ## [0.4.0] - 2026-04-04
 
 ### Added
