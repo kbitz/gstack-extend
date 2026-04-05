@@ -9,20 +9,30 @@ Extension skills for [gstack](https://github.com/anthropics/gstack). Currently s
 
 ## Installation
 
-Clone this repo into your project's `.claude/skills/` directory:
+### Global install (recommended)
+
+Clone and run setup:
+
+```bash
+git clone git@github.com:kbitz/gstack-native.git ~/.claude/skills/gstack-native
+~/.claude/skills/gstack-native/setup
+```
+
+This creates symlinks in `~/.claude/skills/` so Claude Code discovers both skills.
+To uninstall: `~/.claude/skills/gstack-native/setup --uninstall`
+
+### Per-project install
+
+Clone into a project's `.claude/skills/` directory, then run setup:
 
 ```bash
 git clone git@github.com:kbitz/gstack-native.git .claude/skills/gstack-native
-```
-
-Add it to your `.gitignore`:
-
-```bash
 echo ".claude/skills/gstack-native" >> .gitignore
+.claude/skills/gstack-native/setup
 ```
 
-Both skills are now available in Claude Code. No additional setup needed for
-`/pair-review`. For `/browse-native`, see the [Configuration](#browse-native-configuration) section below.
+Both skills are now available in Claude Code. For `/browse-native`, see the
+[Configuration](#browse-native-configuration) section below.
 
 ---
 
