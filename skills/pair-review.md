@@ -82,7 +82,7 @@ Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell us
 ```bash
 "$_EXTEND_ROOT/bin/config" set update_check false
 ```
-Tell user: "Update checks disabled. Re-enable with `~/.gstack-extend/bin/config set update_check true`."
+Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
 
 ---
 

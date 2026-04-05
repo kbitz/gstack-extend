@@ -18,13 +18,13 @@ value="${3:-}"
 case "$cmd" in
   get)
     [ -z "$key" ] && exit 1
-    grep -E "^${key}=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true
+    awk -F= -v k="$key" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$CONFIG_FILE" 2>/dev/null || true
     ;;
   set)
     [ -z "$key" ] && exit 1
     mkdir -p "$STATE_DIR"
     if [ -f "$CONFIG_FILE" ]; then
-      { grep -v "^${key}=" "$CONFIG_FILE" || true; } > "$CONFIG_FILE.tmp"
+      { awk -F= -v k="$key" '$1 != k' "$CONFIG_FILE" || true; } > "$CONFIG_FILE.tmp"
     else
       touch "$CONFIG_FILE.tmp"
     fi
