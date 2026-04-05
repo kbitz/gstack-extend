@@ -48,6 +48,21 @@ gates for state file validity, resume round-trip, and deploy recipe discovery.
 - **Effort:** S (human: ~1 day / CC: ~15 min)
 - **Depends on:** /pair-review proven reliable through real usage
 
+### Auto-update test script
+Add `scripts/test-update.sh` exercising update-check with mock remotes
+(env var overrides). Tests: remote > local, remote = local, remote < local
+(semver), cache fresh/stale, snooze active/expired, config disable.
+- **Why:** Catches regressions when update scripts are modified
+- **Effort:** S (human: ~1 day / CC: ~10 min)
+- **Depends on:** auto-update feature shipped (v0.6.0)
+
+### Migrate to raw.githubusercontent.com when repo goes public
+Replace gist URL with `raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION`
+in `bin/update-check`. Remove GitHub Action sync workflow and GIST_TOKEN secret.
+- **Why:** Eliminates gist indirection and PAT secret dependency
+- **Effort:** XS (human: ~30 min / CC: ~5 min)
+- **Depends on:** repo made public
+
 ## P2 — Phase 2
 
 ### UI Truth Layer (Approach C)
