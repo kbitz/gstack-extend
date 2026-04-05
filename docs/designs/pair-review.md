@@ -40,7 +40,7 @@ That's the whoa.
 
 1. **Some testing genuinely requires human judgment.** Subjective feel, animation smoothness, real-world usability, cross-device behavior... these can't be automated by /qa or /browse-native.
 2. **The test-fix-retest loop is the core, not just checklist generation.** The skill must handle rebuilds/redeploys as part of the loop.
-3. **Test state persists file-based in `.context/test-session/`.** Self-contained, conductor-visible, no external dependencies. Cross-machine resume via conductor workspace management or committing state to the repo.
+3. **Test state persists file-based in `.context/pair-review/`.** Self-contained, conductor-visible, no external dependencies. Cross-machine resume via conductor workspace management or committing state to the repo.
 4. **General-purpose gstack skill.** Works for web apps, native apps, CLI tools... anything with a dev deployment process.
 5. **Tests are grouped logically.** 15-20 items broken into groups, user works on 1-3 groups at a time.
 6. **Skill discovers and documents the dev deployment process.** If a robust, deterministic dev deployment process exists, document it for reuse. If not, help create one.
@@ -89,10 +89,10 @@ Multi-workspace test sessions. Test plan lives in .context/ and conductor agents
 ### State Format
 
 All state lives in one location:
-- `.context/test-session/` — Conductor-visible, gitignored, self-contained
+- `.context/pair-review/` — Conductor-visible, gitignored, self-contained
 
 ```
-test-session/
+pair-review/
   session.yaml          # Session metadata, active groups, deploy recipe
   deploy.md             # Discovered deploy recipe (how to rebuild/redeploy)
   groups/
@@ -252,7 +252,7 @@ When all groups are tested and all items pass:
 - **/checkpoint**: The skill auto-checkpoints before every fix attempt using group-level git commits.
 - **/ship**: After all tests pass, natural handoff to shipping.
 - **/review**: Test results can inform code review (what was manually verified).
-- **Conductor .context/**: Other agents can read `.context/test-session/session.yaml` to understand what's been tested.
+- **Conductor .context/**: Other agents can read `.context/pair-review/session.yaml` to understand what's been tested.
 
 ### Toward Approach C (Multi-Agent)
 
@@ -326,10 +326,10 @@ In practice, most of these are invoked conversationally. The user says "that pas
 
 ### Cross-Machine Survival (structural gap, fixed)
 
-State lives entirely in `.context/test-session/` (self-contained, no external
+State lives entirely in `.context/pair-review/` (self-contained, no external
 dependencies). Cross-machine resume works via:
 1. Conductor workspace management (conductor handles workspace state)
-2. Committing `.context/test-session/` to the repo (skill offers this on completion)
+2. Committing `.context/pair-review/` to the repo (skill offers this on completion)
 No assumptions about Dropbox, iCloud, or any sync service.
 
 ### history.jsonl (YAGNI, removed from Approach B)
