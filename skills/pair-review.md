@@ -70,6 +70,7 @@ On every state change, write to `.context/pair-review/` immediately.
 pair-review/
   session.yaml          # Session metadata, active groups, deploy recipe
   deploy.md             # Discovered deploy recipe
+  parked-bugs.md        # Bugs noticed during testing, not yet triaged
   groups/
     auth.md             # Test group with items, status, evidence
     onboarding.md       # Another group
@@ -91,6 +92,11 @@ summary:
   failed: <int>
   skipped: <int>
   untested: <int>
+parked_bugs:
+  total: <int>
+  todos: <int>          # promoted to docs/TODOS.md
+  this_branch: <int>    # still parked (fix after testing)
+  fixed: <int>          # fixed during triage or Phase 2.5
 checkpoints:
   - commit: <short hash>
     timestamp: <ISO 8601>
@@ -222,7 +228,7 @@ If the diff is large (>50 files), summarize and ask the user to scope:
 
 ### Step 2: Read project context
 
-Read CLAUDE.md and TODOS.md for project-specific context that informs what to test.
+Read CLAUDE.md and docs/TODOS.md for project-specific context that informs what to test.
 
 ### Step 3: Generate grouped test plan
 
@@ -344,13 +350,105 @@ If it fails again, repeat the fix cycle.
 4. Write to disk
 5. Continue with the current item (don't jump to the new one)
 
+### On PARK
+
+Available anytime during Phase 2 (testing loop) and FIX NOW flows. When the user
+says something like "park this", "note a bug", "not related but...", or describes
+a bug that is clearly unrelated to the current test item:
+
+1. If the user didn't include a description, ask: "What's the bug?"
+2. Append a new entry to `.context/pair-review/parked-bugs.md`.
+   Determine N by reading the file and incrementing the highest existing number
+   (or 1 if the file is empty/new).
+   ```markdown
+   ## <N>. <Bug description>
+   - Noticed during: <current group slug>, item <current item number>
+   - Timestamp: <ISO 8601 UTC>
+   - Description: <user's full description>
+   - Status: PARKED
+   ```
+   If `parked-bugs.md` doesn't exist yet, create it with a `# Parked Bugs` header.
+   If parking before any testing starts, use "before testing" for "Noticed during."
+3. Update session.yaml `parked_bugs.total` count
+4. Write to disk
+5. Return to whatever was in progress (current test item, or current fix)
+
+**Do NOT classify the bug at park time.** Classification happens at group completion.
+
 ### Group completion
 
 When all items in a group are tested (PASSED, FAILED with fix, or SKIPPED):
 1. Move the group from active_groups to completed_groups in session.yaml
 2. Show a group summary: "Auth group complete: 5 passed, 1 fixed, 1 skipped"
-3. If more active groups remain, move to the next one
-4. If all active groups are done, ask: "Start the next group, or wrap up?"
+3. **Triage parked bugs** (see below)
+4. If more active groups remain, move to the next one
+5. If all active groups are done:
+   a. Run **Phase 2.5** if any parked bugs remain with Status: PARKED
+   b. Then proceed to Phase 4
+
+### Group completion triage
+
+After the group summary, check `parked-bugs.md` for entries with Status: PARKED that
+were noticed during the just-completed group. If none, skip triage silently.
+
+For each parked bug from this group, the skill recommends a classification based on
+whether the bug relates to the branch's changes or upcoming test groups. Present each
+bug to the user:
+
+"**Parked bug #N:** <description>
+Noticed during: <group>, item <item>
+
+I think this is [a cross-branch issue / related to upcoming testing / a this-branch
+issue to fix after testing]. What would you like to do?"
+
+Options for each bug:
+- **Fix now** — blocks upcoming groups or relates to current area.
+  1. Checkpoint: `git add -u` then `git commit -m "test: checkpoint before parked bug fix"`
+     (skip if working tree is clean)
+  2. The agent implements the fix
+  3. Commit: `git add -u` then `git commit -m "fix: <description> (pair-review parked bug #<N>)"`
+  4. Rebuild/redeploy using deploy.md
+  5. Ask the user to verify the fix
+  6. Update the bug's status to `FIXED` and record the fix commit hash
+- **TODOS** — cross-branch bug, fix on another branch later.
+  Write the bug to `docs/TODOS.md` in the project's existing format:
+  ```markdown
+  ### <Bug title>
+  <Description>
+  - **Why:** Found during pair-review testing on branch <branch>
+  - **Effort:** S (human: ~N / CC: ~N)
+  - **Depends on:** Nothing
+  ```
+  Commit the TODOS.md change separately: `git add docs/TODOS.md`
+  then `git commit -m "chore: add parked bug to TODOS.md (<description>)"`
+  Update the bug's status to `DEFERRED_TO_TODOS`.
+- **Stay parked** — this-branch, non-blocking. Remains for Phase 2.5.
+
+Update `session.yaml` parked_bugs counts after each triage decision. Write to disk.
+
+---
+
+## Phase 2.5: Post-Testing Fix Queue
+
+After all test groups are complete and group-completion triage is done, check
+`parked-bugs.md` for ALL entries with Status: PARKED (regardless of which group
+they were noticed during, including bugs parked before testing started).
+
+If none remain, skip to Phase 4.
+
+If parked bugs remain, present them as a work queue:
+
+"**N parked bugs remaining.** These are this-branch bugs to address before wrapping up."
+
+For each remaining parked bug, present options (same as group-completion triage):
+- **Fix now** — checkpoint, agent implements fix, commit, rebuild, user verifies, mark FIXED
+- **TODOS** — cross-branch, write to docs/TODOS.md with own commit, mark DEFERRED_TO_TODOS
+- **Skip** — not worth fixing now, mark SKIPPED
+
+If a fix fails (build error), use the existing deploy error handling: show stderr,
+ask user whether to fix the build issue or skip.
+
+After all parked bugs are processed (or the user says to stop), proceed to Phase 4.
 
 ---
 
@@ -382,6 +480,7 @@ Branch: <branch> | Build: <commit> | Started: <date>
 <GROUP2> (active):     0/4 tested
 <GROUP3>:              not started (5 items)
 
+PARKED: <N> bugs parked (<M> triaged, <K> remaining)
 NEXT: <what to test next>
 DEPLOY: <build command from deploy.md>
 CHECKPOINTS: <N> saved
@@ -399,6 +498,12 @@ fresh?" If continue, enter Phase 2 at the next untested item.
 ## Phase 4: Completion
 
 When all groups are complete (or the user invokes `/pair-review done`).
+
+**Early termination check:** If `/pair-review done` is invoked and there are parked
+bugs with Status: PARKED, prompt: "You have N parked bugs that haven't been triaged.
+Triage them before wrapping up?" If yes, run group-completion triage on all remaining
+parked bugs (run triage on all remaining PARKED bugs regardless of which group
+they were noticed during). If no, mark remaining bugs as Status: SKIPPED and proceed.
 
 ### Step 1: Generate report
 
@@ -434,6 +539,11 @@ Duration: <time from started to now>
 | Item | Reason |
 |------|--------|
 | <description> | <reason> |
+
+### Parked Bugs
+| # | Bug | Noticed During | Outcome |
+|---|-----|----------------|---------|
+| 1 | <description> | <group>, item <N> | FIXED (abc123) / DEFERRED_TO_TODOS / SKIPPED |
 ```
 
 ### Step 2: Save report
@@ -505,6 +615,15 @@ manual list of things to test instead?"
 If the verify command from deploy.md fails after rebuild: "App doesn't appear
 to be running after rebuild. Check manually, then tell me when it's ready."
 
+### Parked bugs file missing
+If session.yaml shows parked_bugs.total > 0 but `parked-bugs.md` doesn't exist
+on resume: "Parked bugs were recorded in the session but the file is missing.
+Starting with 0 parked bugs." Reset parked_bugs counts in session.yaml.
+
+### Empty parked bugs at group completion
+If no parked bugs have Status: PARKED when a group completes, skip triage
+silently. Do not mention parked bugs if there are none.
+
 ---
 
 ## Conversational Interface
@@ -516,6 +635,7 @@ In practice, users won't type `/pair-review pass 3`. They'll say things like:
 - "nope, the spinner is stuck" → FAIL with evidence "the spinner is stuck"
 - "skip this one, can't test without VPN" → SKIP with reason
 - "we should also check dark mode" → ADD ITEM
+- "park this" / "note a bug" / "not related but..." / "unrelated bug" → PARK
 - "fix it" / "let's fix this" → enter FIX NOW flow
 - "where was I" → RESUME
 - "what's left" → STATUS
