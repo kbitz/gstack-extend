@@ -1,6 +1,6 @@
-# Native Interaction Runtime
+# gstack-extend
 
-Native macOS app interaction via inside-out debug infrastructure.
+Extension skills for gstack.
 
 ## Versioning
 

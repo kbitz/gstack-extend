@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1.1] - 2026-04-05
+
+### Changed
+- Renamed project from gstack-native to gstack-extend across all in-repo references: README, CLAUDE.md, setup script, design docs, and TODOS.
+
 ## [0.4.1] - 2026-04-04
 
 ### Added
