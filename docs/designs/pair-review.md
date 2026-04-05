@@ -358,3 +358,38 @@ The user can always override the recipe manually. The skill should never execute
 5. Record the fix commit hash in the failed item's metadata
 
 This gives a clean revert path. For single-commit fixes: `git revert {fix-commit}`. For multi-commit fixes (fix + follow-up): `git reset --hard {checkpoint-commit}` returns to the pre-fix state. The checkpoint commit hash in session.yaml is the authoritative rollback point.
+
+## Bug Parking (v0.5.0)
+
+### Problem
+During testing, the user finds bugs unrelated to the current test item. Today's
+options are all bad: FIX NOW (rabbit hole), ADD ITEM (wrong concept, these aren't
+tests), or ignore (lose the observation). The bugs can't just be filed in a
+separate workspace because they might be introduced by the current branch.
+
+### Design
+Park first, classify later. During testing, the user says "park this: sidebar
+icon is misaligned." The skill appends to `parked-bugs.md` and returns to the
+current test item. No classification at park time. Minimal friction.
+
+At group completion (after all fixes are committed, working tree clean), the skill
+triages each parked bug from that group:
+- **Fix now** — blocks upcoming groups or relates to current area
+- **TODOS.md** — cross-branch bug, write to docs/TODOS.md with own commit
+- **Stay parked** — this-branch, non-blocking, fix after testing
+
+After all test groups complete, Phase 2.5 presents remaining parked bugs as a
+work queue: checkpoint, fix, rebuild, verify for each.
+
+### Key Decisions
+- **Classify at group completion, not park time** — avoids `git add -u` sweeping
+  TODOS.md changes into fix commits (discovered via Codex outside voice)
+- **Single Status field** — PARKED → FIXED / DEFERRED_TO_TODOS / SKIPPED. No
+  separate Triage field (DRY, from eng review).
+- **TODOS.md writes get own commit** — clean separation from fix commits
+- **State stays self-contained** — all parking state in `.context/pair-review/`,
+  TODOS.md writes are a promotion at triage time
+
+### State Format
+New file: `.context/pair-review/parked-bugs.md`
+New session.yaml fields: `parked_bugs: { total, todos, this_branch, fixed }`
