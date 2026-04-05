@@ -1,11 +1,58 @@
-# browse-native
+# gstack-native
 
-Interact with native macOS apps from Claude Code using inside-out debug infrastructure.
+Extension skills for [gstack](https://github.com/anthropics/gstack). Currently ships two skills:
 
-## How It Works
+| Skill | What it does | Works with |
+|-------|-------------|------------|
+| `/pair-review` | Pair testing session manager | Any project (web, native, CLI) |
+| `/browse-native` | Native macOS app interaction | macOS SwiftUI/AppKit apps |
 
-Instead of using external tools to inspect the app from outside, the app instruments
-itself and exposes structured data to the agent:
+## Installation
+
+Clone this repo into your project's `.claude/skills/` directory:
+
+```bash
+git clone git@github.com:kbitz/gstack-native.git .claude/skills/gstack-native
+```
+
+Add it to your `.gitignore`:
+
+```bash
+echo ".claude/skills/gstack-native" >> .gitignore
+```
+
+Both skills are now available in Claude Code. No additional setup needed for
+`/pair-review`. For `/browse-native`, see the [Configuration](#browse-native-configuration) section below.
+
+---
+
+## /pair-review — Pair Testing Session Manager
+
+Manages the test-fix-retest loop for manual testing. The agent generates grouped
+test plans from diffs, tracks pass/fail, checkpoints before fixes, rebuilds/redeploys,
+and supports resume. Works for any project type.
+
+- **Persistent state** — test progress survives context compaction
+- **Deploy discovery** — finds your build/run process and reuses it across sessions
+- **Group-level checkpoints** — auto-commits before fix attempts for clean reverts
+- **Resume** — pick up exactly where you left off
+
+```
+/pair-review          # Start a new test session
+/pair-review resume   # Resume where you left off
+/pair-review status   # See the dashboard
+/pair-review done     # Complete and generate report
+```
+
+---
+
+## /browse-native — Native App Interaction
+
+Interact with native macOS apps using inside-out debug infrastructure. The app
+instruments itself (screenshots, layout probes, state dumps) and the agent
+communicates via filesystem triggers and osascript.
+
+### How It Works
 
 1. **App captures its own screenshots** via ScreenCaptureKit (per-window PNGs)
 2. **App measures its own layout** via probe modifiers (exact coordinates, colors)
@@ -13,11 +60,7 @@ itself and exposes structured data to the agent:
 4. **Agent triggers snapshots** by writing a trigger file (filesystem-based)
 5. **Agent interacts** via osascript (window management, menus, keystrokes)
 
-The agent reads the snapshot bundle (screenshots + structured JSON) to understand
-what's happening, then acts. The combination of visual ground truth and structured
-data lets the agent reason precisely about colors, alignment, and state.
-
-## Three Instrumentation Tiers
+### Three Instrumentation Tiers
 
 | Tier | What the app provides | Agent capability |
 |------|----------------------|-----------------|
@@ -25,21 +68,7 @@ data lets the agent reason precisely about colors, alignment, and state.
 | **Partial** | Screenshots + state dumps (no probes) | Good: visual + state, no precise measurements |
 | **None** | Nothing (degraded mode) | Basic: osascript + screencapture, no structured data |
 
-## Installation
-
-Clone this repo into your project's `.claude/skills/` directory:
-
-```bash
-git clone git@github.com:kbitz/gstack-native.git .claude/skills/browse-native
-```
-
-Add `.claude/skills/browse-native` to your `.gitignore`:
-
-```bash
-echo ".claude/skills/browse-native" >> .gitignore
-```
-
-## Configuration
+### Browse-Native Configuration
 
 Add your app's details to your project's `CLAUDE.md`:
 
@@ -51,17 +80,7 @@ native_snapshot_dir: ".context/snapshots"
 native_trigger_file: ".context/snapshot-trigger"
 ```
 
-## Usage
-
-Use `/browse-native` in Claude Code to interact with your macOS app:
-
-- **See-Act-See loop** — trigger snapshot, read structured data + screenshots, act, verify
-- **Color comparison** — exact hex values from probes, not guessing from pixels
-- **Alignment checking** — exact frame coordinates from probes
-- **Multi-window awareness** — reads ALL windows, not just the main one
-- **State reasoning** — knows app state from JSON, not just visual inspection
-
-## Validation
+### Validation
 
 ```bash
 ./scripts/validate.sh                    # Run all gates
@@ -71,7 +90,10 @@ Use `/browse-native` in Claude Code to interact with your macOS app:
 ./scripts/validate.sh --gate 3           # Cycle latency
 ```
 
+---
+
 ## Documentation
 
+- [/pair-review Design Doc](docs/designs/pair-review.md) — Design decisions, state format, workflow
 - [Implementation Guide](docs/debug-infrastructure-guide.md) — How to add debug infrastructure to a new SwiftUI app
-- [Design Doc](docs/archive/inside-out-debugging.md) — Original design document with architectural decisions and snapshot bundle spec
+- [Inside-Out Design Doc](docs/archive/inside-out-debugging.md) — Architectural decisions and snapshot bundle spec
