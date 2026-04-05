@@ -53,21 +53,21 @@ reliability mechanism: if context compacts, the skill re-reads from disk.
 
 ### Paths
 
-All state lives in `.context/test-session/` (gitignored, conductor-visible). This is
+All state lives in `.context/pair-review/` (gitignored, conductor-visible). This is
 the single source of truth. No external state directories.
 
 ```bash
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 ```
 
-**State path:** `.context/test-session/`
+**State path:** `.context/pair-review/`
 
-On every state change, write to `.context/test-session/` immediately.
+On every state change, write to `.context/pair-review/` immediately.
 
 ### File Format
 
 ```
-test-session/
+pair-review/
   session.yaml          # Session metadata, active groups, deploy recipe
   deploy.md             # Discovered deploy recipe
   groups/
@@ -122,7 +122,7 @@ Run this phase on **Init** only. On **Resume**, skip to Phase 3.
 
 Use Glob to check for an existing deploy recipe:
 ```
-Glob pattern: .context/test-session/deploy.md
+Glob pattern: .context/pair-review/deploy.md
 ```
 
 Also check CLAUDE.md for a pointer:
@@ -166,7 +166,7 @@ project for testing? I'll save it so we can reuse it."
 
 ### Step 4: Save the recipe
 
-Write `deploy.md` to `.context/test-session/`:
+Write `deploy.md` to `.context/pair-review/`:
 
 ```markdown
 # Deploy Recipe
@@ -198,7 +198,7 @@ other skills too?"
 If yes, append to CLAUDE.md:
 ```yaml
 ## Deploy Recipe
-test_deploy_recipe: ".context/test-session/deploy.md"
+test_deploy_recipe: ".context/pair-review/deploy.md"
 ```
 
 ---
@@ -249,7 +249,7 @@ at a time).
 Create the session directory and write all files:
 
 ```bash
-mkdir -p .context/test-session/groups
+mkdir -p .context/pair-review/groups
 ```
 
 Write `session.yaml` and each `groups/<name>.md` file. All items start as UNTESTED.
@@ -363,7 +363,7 @@ When `/pair-review resume` or `/pair-review status` is invoked.
 Use the Glob tool to check for an existing session:
 
 ```
-Glob pattern: .context/test-session/session.yaml
+Glob pattern: .context/pair-review/session.yaml
 ```
 
 If the file exists, read it and proceed to Step 2.
@@ -438,7 +438,7 @@ Duration: <time from started to now>
 
 ### Step 2: Save report
 
-Write report to `.context/test-session/report.md`.
+Write report to `.context/pair-review/report.md`.
 
 ### Step 3: Offer next steps
 
@@ -456,7 +456,7 @@ Options:
 On **Init**, before starting Phase 0, check for an existing active session:
 
 ```
-Glob pattern: .context/test-session/session.yaml
+Glob pattern: .context/pair-review/session.yaml
 ```
 
 If an active session exists, read it and present:
@@ -470,7 +470,7 @@ Options:
 
 If B, move the old session to a timestamped archive:
 ```bash
-mv .context/test-session .context/test-session-archived-$(date -u +%Y%m%d-%H%M%S)
+mv .context/pair-review .context/pair-review-archived-$(date -u +%Y%m%d-%H%M%S)
 ```
 
 ---

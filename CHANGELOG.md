@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Updated README installation instructions: two clear paths (global install and per-project install), both using the new setup script. Previously claimed skills were auto-discovered after cloning, which was incorrect.
 
+### Fixed
+- Renamed pair-review skill's context directory from `.context/test-session/` to `.context/pair-review/` to match the skill name.
+
 ## [0.4.0] - 2026-04-04
 
 ### Added
