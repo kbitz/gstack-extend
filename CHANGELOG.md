@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [0.4.1] - 2026-04-04
 
+### Added
+- Setup script (`setup`) for installing skill symlinks into `~/.claude/skills/`. Handles install and `--uninstall` with ownership verification (only removes symlinks it created).
+
+### Changed
+- Updated README installation instructions: two clear paths (global install and per-project install), both using the new setup script. Previously claimed skills were auto-discovered after cloning, which was incorrect.
+
 ### Fixed
 - Renamed pair-review skill's context directory from `.context/test-session/` to `.context/pair-review/` to match the skill name.
 

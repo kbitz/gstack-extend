@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.4.1 | 2026-04-04 | Added `setup` script for skill symlink installation. Handles both global (~/.claude/skills/) and per-project installs, with --uninstall support. README updated with proper install instructions. |
 | 0.4.0 | 2026-04-04 | New /pair-review skill: pair testing session manager with deploy discovery, grouped test plans from diffs, test-fix-retest loop with group-level checkpoints, and cross-machine resume. General-purpose (web, native, CLI). Design doc: docs/designs/pair-review.md |
 | 0.3.1 | 2026-04-04 | Implementation guide for adding debug infrastructure to new apps (docs/debug-infrastructure-guide.md). Skill now detects missing infrastructure and guides users to add it before proceeding in degraded mode. |
 | 0.3.0 | 2026-04-04 | Replaced Peekaboo with inside-out debug pattern. App instruments itself (screenshots via ScreenCaptureKit, layout probes, state dumps). Agent communicates via filesystem triggers + osascript. Three-tier degraded mode (full/partial/screenshot-only). New validation gates. Design doc: docs/archive/inside-out-debugging.md |
