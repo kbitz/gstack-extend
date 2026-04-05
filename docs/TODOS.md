@@ -77,13 +77,8 @@ Parallel testing across agents for large test suites.
 - **Effort:** L (human: ~2 weeks / CC: ~2 hours)
 - **Depends on:** /pair-review v1 proven reliable, conductor agent API maturity
 
-### Repo rename: gstack-native → gstack-extend
-The repo name no longer reflects the content. Skills being designed
-(/pair-review) are general-purpose, not native-app-specific. Better
-positioning for upstream gstack PR.
-- **Why:** Accurate naming
-- **Effort:** S (human: ~1 hour / CC: ~15 min, GitHub rename + link updates)
-- **Depends on:** Nothing
+### ~~Repo rename: gstack-native → gstack-extend~~ ✅ Done
+Renamed in-repo references. GitHub repo rename still needed.
 
 ### Contrast ratio + VoiceOver order analysis
 Extend accessibility reporting with pixel-level contrast analysis (using probe

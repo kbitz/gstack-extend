@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gstack-native setup — install skill symlinks into ~/.claude/skills/
+# gstack-extend setup — install skill symlinks into ~/.claude/skills/
 #
 # Usage:
 #   ./setup              # Install from current directory
