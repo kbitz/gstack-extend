@@ -40,6 +40,31 @@ CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
 # ─── Check 1: Vocabulary Lint ────────────────────────────────
 
 check_vocab_lint() {
+  # VOCAB LINT STATE MACHINE
+  # ========================
+  #                 ┌─────────────┐
+  #                 │  TOPLEVEL    │ ◄── default / unknown headings
+  #                 │ Phase: BAN  │
+  #                 │ (unless     │
+  #                 │  title line)│
+  #                 └──┬──────┬───┘
+  #                    │      │
+  #           ^## Group│      │ ^## Future
+  #                    ▼      ▼
+  #            ┌──────────┐  ┌──────────┐
+  #            │  GROUP    │  │  FUTURE   │
+  #            │ Phase:BAN │  │ Phase:OK  │
+  #            └──┬───┬────┘  └─────┬─────┘
+  #               │   │             │
+  #      ^## Group│   │^## other    │ ^## other
+  #       (stay)  │   │(→TOPLEVEL)  │ (→TOPLEVEL)
+  #               ▼   ▼             ▼
+  #
+  # Phase whitelist (allowed regardless of state):
+  #   1. Line matches ^# .*[Pp]hase (ROADMAP.md title)
+  #   2. State is FUTURE (inside ## Future section)
+  # Phase is BANNED everywhere else.
+
   echo "## VOCAB_LINT"
   if [ -z "$ROADMAP_FILE" ]; then
     echo "STATUS: skip"
@@ -52,13 +77,13 @@ check_vocab_lint() {
   local findings=""
   local found=0
 
-  # Banned terms (case-insensitive). Only scan ROADMAP.md.
-  local -a banned=("phase" "cluster" "workstream" "milestone" "sprint")
+  # Unconditionally banned terms (case-insensitive). Scanned via grep.
+  local -a banned=("cluster" "workstream" "milestone" "sprint")
   for term in "${banned[@]}"; do
     while IFS= read -r match; do
       local lineno="${match%%:*}"
       local text="${match#*:}"
-      # Skip lines that are inside strikethrough (completed items)
+      # Skip strikethrough lines (completed items)
       if echo "$text" | grep -q '~~'; then
         continue
       fi
@@ -66,6 +91,47 @@ check_vocab_lint() {
       found=1
     done < <(grep -in "\b${term}\b" "$ROADMAP_FILE" 2>/dev/null || true)
   done
+
+  # "Phase" — contextual detection via state machine
+  local state="TOPLEVEL"
+  local lineno=0
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+
+    # State transitions on ## headings
+    if echo "$line" | grep -q '^## ' 2>/dev/null; then
+      if echo "$line" | grep -qi '^## Group' 2>/dev/null; then
+        state="GROUP"
+      elif echo "$line" | grep -qiE '^## Future($| \()' 2>/dev/null; then
+        state="FUTURE"
+      else
+        # Any other ## heading (Execution Map, Unprocessed, unknown) → TOPLEVEL
+        state="TOPLEVEL"
+      fi
+    fi
+
+    # Check for "phase" on this line (case-insensitive)
+    if echo "$line" | grep -qi '\bphase\b' 2>/dev/null; then
+      # Skip strikethrough lines
+      if echo "$line" | grep -q '~~'; then
+        continue
+      fi
+
+      # Whitelist check 1: title line (^# .*Phase)
+      if echo "$line" | grep -q '^# .*[Pp]hase' 2>/dev/null; then
+        continue
+      fi
+
+      # Whitelist check 2: inside FUTURE state
+      if [ "$state" = "FUTURE" ]; then
+        continue
+      fi
+
+      # Everything else: banned
+      findings="${findings}- line ${lineno}: banned term \"phase\" found\n"
+      found=1
+    fi
+  done < "$ROADMAP_FILE"
 
   if [ "$found" -eq 0 ]; then
     echo "STATUS: pass"
@@ -100,7 +166,14 @@ check_structure() {
   group_count="${group_count:-0}"
   group_count=$(echo "$group_count" | tr -d '[:space:]')
 
-  if [ "$group_count" -eq 0 ]; then
+  # Check for Future section (## Future)
+  local has_future=0
+  if grep -qiE '^## Future($| \()' "$ROADMAP_FILE" 2>/dev/null; then
+    has_future=1
+  fi
+
+  # Future-only roadmap is valid (all items deferred to future phase)
+  if [ "$group_count" -eq 0 ] && [ "$has_future" -eq 0 ]; then
     findings="${findings}- No Group headings found (expected ## Group N: Name)\n"
     found=1
   fi
@@ -549,9 +622,18 @@ detect_mode() {
   group_count="${group_count:-0}"
   group_count=$(echo "$group_count" | tr -d '[:space:]')
 
+  # Check for Future section
+  local has_future=0
+  if grep -qiE '^## Future($| \()' "$ROADMAP_FILE" 2>/dev/null; then
+    has_future=1
+  fi
+
   if [ "$group_count" -gt 0 ]; then
     echo "DETECTED: triage"
     echo "REASON: Valid Groups > Tracks structure found (${group_count} groups)"
+  elif [ "$has_future" -eq 1 ]; then
+    echo "DETECTED: triage"
+    echo "REASON: Future-only roadmap found (all items deferred to future phase)"
   else
     echo "DETECTED: overhaul"
     echo "REASON: No Groups > Tracks structure found"
