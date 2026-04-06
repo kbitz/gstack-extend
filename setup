@@ -2,20 +2,33 @@
 # gstack-extend setup — install skill symlinks into ~/.claude/skills/
 #
 # Usage:
-#   ./setup              # Install from current directory
-#   ./setup --uninstall  # Remove symlinks
+#   ./setup                # Install stable skills
+#   ./setup --with-native  # Also install browse-native (beta)
+#   ./setup --uninstall    # Remove symlinks
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SKILLS_DIR="${HOME}/.claude/skills"
 
-SKILLS=(
+DEFAULT_SKILLS=(
   pair-review
+)
+
+BETA_SKILLS=(
   browse-native
 )
 
+# Uninstall checks all skills (default + beta)
+ALL_SKILLS=("${DEFAULT_SKILLS[@]}" "${BETA_SKILLS[@]}")
+
+if [ -n "${1:-}" ] && [ "$1" != "--uninstall" ] && [ "$1" != "--with-native" ]; then
+  echo "Unknown option: $1" >&2
+  echo "Usage: ./setup [--with-native | --uninstall]" >&2
+  exit 1
+fi
+
 if [ "${1:-}" = "--uninstall" ]; then
-  for skill in "${SKILLS[@]}"; do
+  for skill in "${ALL_SKILLS[@]}"; do
     target="$SKILLS_DIR/$skill"
     if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
       # Only remove if the symlink points back to us
@@ -35,6 +48,12 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 mkdir -p "$SKILLS_DIR"
+
+# Determine which skills to install
+SKILLS=("${DEFAULT_SKILLS[@]}")
+if [ "${1:-}" = "--with-native" ]; then
+  SKILLS=("${ALL_SKILLS[@]}")
+fi
 
 installed=0
 for skill in "${SKILLS[@]}"; do
