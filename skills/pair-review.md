@@ -664,9 +664,23 @@ Write report to `.context/pair-review/report.md`.
 
 ### Step 3: Offer next steps
 
+Before presenting options, determine the recommended next step:
+
+1. Run `gstack-review-read` and check its output.
+2. If the output is **not** "NO_REVIEWS", a review exists for this branch — recommend `/ship`.
+3. If the output **is** "NO_REVIEWS", check the diff size: run `git diff --stat main...HEAD` and count changed lines (insertions + deletions).
+   - **≤ 30 lines changed** (trivial): recommend `/ship` — the changes are minor enough to skip review.
+   - **> 30 lines changed**: recommend `/review` first.
+
 Present via AskUserQuestion:
+
+**If recommending `/review`:**
+- Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]\n\nYou haven't run `/review` on this branch yet and there are meaningful code changes — worth a quick review before shipping."
+- Options: ["Continue to /review", "Skip review, continue to /ship", "Commit the report to the repo", "Done for now"]
+
+**If recommending `/ship`:**
 - Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]"
-- Options: ["Commit the report to the repo", "Continue to /ship", "Done for now"]
+- Options: ["Continue to /ship", "Commit the report to the repo", "Done for now"]
 
 ---
 

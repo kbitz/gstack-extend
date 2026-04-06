@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-04-05
+
+### Added
+- Smart next-step suggestion at pair-review completion. Checks `gstack-review-read` for existing review logs and diff size against main. If no review has been run and changes exceed 30 lines, nudges toward `/review` before `/ship`. Trivial changes or already-reviewed branches go straight to `/ship`.
+
 ## [0.6.1] - 2026-04-05
 
 ### Fixed
