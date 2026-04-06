@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.6.2 | 2026-04-05 | Smart next-step suggestion at pair-review completion: checks for existing review logs and diff size, nudges toward `/review` before `/ship` when changes exceed 30 lines and no review has been run. |
 | 0.6.1 | 2026-04-05 | /pair-review UX fixes: standardized all prompts to AskUserQuestion with explicit options (eliminates inconsistent question styles across workspaces), added Conductor visibility awareness with action receipt pattern (important status updates always visible in final message). |
 | 0.6.0 | 2026-04-05 | Auto-update system: `bin/update-check` (gist-based remote VERSION, pure bash semver, caching, snooze) + `bin/update-run` (git pull + setup) + `bin/config` (key=value). Inline upgrade flow in skill preambles. GitHub Action syncs VERSION to gist. Global-install only. State in `~/.gstack-extend/`. |
 | 0.5.0 | 2026-04-05 | Bug parking for /pair-review: park unrelated bugs during testing, triage at group completion (fix now / defer to TODOS.md / keep parked), post-testing fix queue (Phase 2.5). Avoids git add -u pollution by deferring TODOS.md writes to group boundaries. Design doc updated. |
