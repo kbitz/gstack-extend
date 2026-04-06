@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.8.1 | 2026-04-06 | /roadmap phase triage step: keep/kill + phase assignment before Group/Track placement. Items triaged to current phase or deferred to Future. Version history audit: removed invalid 0.4.2 (doc-only rename folded into 0.4.1), added missing 0.8.0 CHANGELOG entry. |
 | 0.8.0 | 2026-04-06 | New /full-review skill: weekly codebase review pipeline with 3 specialized agents (reviewer, hygiene, consistency-auditor) dispatched in parallel, root-cause clustering for triage UX, human approve/reject/defer per cluster, approved findings written to TODOS.md as `[full-review]` source-tagged items. Dedup against ROADMAP.md prevents re-flagging tracked issues. Incremental state checkpointing for resume support. Designed to feed into /roadmap for execution topology. |
 | 0.7.0 | 2026-04-06 | New /roadmap skill: deterministic audit script (8 checks, 28 tests) + skill prompt for doc restructuring into Groups > Tracks > Tasks. TODOS.md/ROADMAP.md split (inbox vs execution plan). Two modes: overhaul (first run) and triage (process unprocessed items). /pair-review writes to TODOS.md Unprocessed section with source tags. Shared semver lib extracted. |
 | 0.6.3 | 2026-04-06 | browse-native gated as opt-in beta: `./setup` only installs stable skills by default, `--with-native` flag for beta. Unknown flags now rejected. README updated with maturity status. Test suite expanded to 24 tests. |
@@ -13,7 +14,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 | 0.6.1 | 2026-04-05 | /pair-review UX fixes: standardized all prompts to AskUserQuestion with explicit options (eliminates inconsistent question styles across workspaces), added Conductor visibility awareness with action receipt pattern (important status updates always visible in final message). |
 | 0.6.0 | 2026-04-05 | Auto-update system: `bin/update-check` (gist-based remote VERSION, pure bash semver, caching, snooze) + `bin/update-run` (git pull + setup) + `bin/config` (key=value). Inline upgrade flow in skill preambles. GitHub Action syncs VERSION to gist. Global-install only. State in `~/.gstack-extend/`. |
 | 0.5.0 | 2026-04-05 | Bug parking for /pair-review: park unrelated bugs during testing, triage at group completion (fix now / defer to TODOS.md / keep parked), post-testing fix queue (Phase 2.5). Avoids git add -u pollution by deferring TODOS.md writes to group boundaries. Design doc updated. |
-| 0.4.1 | 2026-04-04 | Added `setup` script for skill symlink installation. Handles both global (~/.claude/skills/) and per-project installs, with --uninstall support. README updated with proper install instructions. |
+| 0.4.1 | 2026-04-04 | Added `setup` script for skill symlink installation. Handles both global (~/.claude/skills/) and per-project installs, with --uninstall support. README updated with proper install instructions. Renamed project from gstack-native to gstack-extend. |
 | 0.4.0 | 2026-04-04 | New /pair-review skill: pair testing session manager with deploy discovery, grouped test plans from diffs, test-fix-retest loop with group-level checkpoints, and cross-machine resume. General-purpose (web, native, CLI). Design doc: docs/designs/pair-review.md |
 | 0.3.1 | 2026-04-04 | Implementation guide for adding debug infrastructure to new apps (docs/debug-infrastructure-guide.md). Skill now detects missing infrastructure and guides users to add it before proceeding in degraded mode. |
 | 0.3.0 | 2026-04-04 | Replaced Peekaboo with inside-out debug pattern. App instruments itself (screenshots via ScreenCaptureKit, layout probes, state dumps). Agent communicates via filesystem triggers + osascript. Three-tier degraded mode (full/partial/screenshot-only). New validation gates. Design doc: docs/archive/inside-out-debugging.md |
@@ -24,6 +25,5 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 ## Roadmap
 
-- **Phase 2: UI Truth Layer** — Before/after semantic diffs, Delta E color comparisons, scene graph, events.jsonl
-- **Phase 3: /qa-native Redesign** — Full autonomous QA loop built on inside-out pattern
-- **Phase 4: Multi-App Validation** — Validate pattern against a second native app project
+- **Current: install pipeline + distribution** — Per-project install support, raw GitHub migration, phase transition detection
+- **Future: multi-agent test orchestration** — Parallel testing across Conductor agents
