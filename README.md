@@ -5,6 +5,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | Skill | What it does | Works with | Status |
 |-------|-------------|------------|--------|
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
+| `/roadmap` | Documentation restructuring | Any project | Stable |
 | `/browse-native` | Native macOS app interaction | macOS SwiftUI/AppKit apps | **Beta** |
 
 ## Installation
@@ -16,7 +17,7 @@ git clone git@github.com:kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
 ~/.claude/skills/gstack-extend/setup
 ```
 
-This installs stable skills (`/pair-review`) into `~/.claude/skills/`.
+This installs stable skills (`/pair-review`, `/roadmap`) into `~/.claude/skills/`.
 To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
 
 ### Beta skills
@@ -47,6 +48,40 @@ and supports resume. Works for any project type.
 /pair-review status   # See the dashboard
 /pair-review done     # Complete and generate report
 ```
+
+---
+
+## /roadmap — Documentation Restructuring
+
+Restructures TODOS.md into a clean execution plan (ROADMAP.md) with consistent
+vocabulary, dependency ordering, and file-ownership grouping for parallel agent
+execution. Audits versioning, validates doc taxonomy, and recommends version bumps.
+
+- **Two files, one flow** — TODOS.md is the inbox (other skills write here), ROADMAP.md is the structured execution plan
+- **Two modes** — Overhaul (first run: full restructure) and Triage (subsequent runs: process only new items)
+- **Deterministic audit** — 8 automated checks (vocabulary lint, structure validation, staleness, version audit, taxonomy, dependencies, unprocessed detection, mode detection)
+- **Parallel-agent friendly** — Groups > Tracks > Tasks organized by file ownership to minimize merge conflicts
+
+```
+/roadmap              # Audit + restructure (auto-detects overhaul vs triage mode)
+```
+
+### How It Works
+
+1. **Audit** — Runs `bin/roadmap-audit` against repo docs. Reports vocabulary drift, structural violations, stale items, version mismatches, and taxonomy issues.
+2. **Build/Update ROADMAP.md** — In overhaul mode, reorganizes everything from scratch. In triage mode, classifies unprocessed items from TODOS.md into existing Groups/Tracks.
+3. **Update PROGRESS.md** — Appends version history rows, verifies phase status.
+4. **Version recommendation** — Suggests a bump based on changes since last tag (does not write VERSION).
+
+### Documentation Taxonomy
+
+| Doc | Purpose | Written by |
+|-----|---------|------------|
+| TODOS.md | Inbox — unprocessed items | /pair-review, /investigate, manual |
+| ROADMAP.md | Execution plan — Groups > Tracks > Tasks | /roadmap |
+| PROGRESS.md | Version history + phase status | /roadmap, /document-release |
+| CHANGELOG.md | User-facing release notes | /document-release |
+| VERSION | SemVer source of truth | /ship |
 
 ---
 
