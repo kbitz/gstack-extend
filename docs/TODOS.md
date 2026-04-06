@@ -78,6 +78,14 @@ in `bin/update-check`. Remove GitHub Action sync workflow and GIST_TOKEN secret.
 - **Effort:** XS (human: ~30 min / CC: ~5 min)
 - **Depends on:** repo made public
 
+### Phase transition detection
+When VERSION bumps to a new major version (0.x → 1.x), /roadmap should detect
+the phase boundary and offer to promote future-phase items to current phase.
+Automatically re-triage the `## Future` section in ROADMAP.md.
+- **Why:** Natural lifecycle automation once phases are real
+- **Effort:** M (human: ~1 day / CC: ~20 min)
+- **Depends on:** Phase triage shipping + at least one phase completion
+
 ## P2 — Phase 2
 
 ### UI Truth Layer (Approach C)
