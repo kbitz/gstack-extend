@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-04-06
+
+### Added
+- New `/roadmap` skill for documentation restructuring. Reorganizes project docs into Groups > Tracks > Tasks with dependency-chain ordering and file-ownership grouping for parallel agent execution.
+- Deterministic audit script (`bin/roadmap-audit`) with 8 checks: vocabulary lint, structure validation, staleness detection, version audit, taxonomy check, dependency integrity, unprocessed item detection, and mode detection.
+- Two-mode behavior: overhaul (first run, full restructure) and triage (process only new items from the inbox).
+- TODOS.md/ROADMAP.md split: TODOS.md is now a pure inbox where other skills dump unprocessed items. ROADMAP.md is the structured execution plan owned by `/roadmap`.
+- `/pair-review` now writes bugs to TODOS.md's `## Unprocessed` section with `[pair-review]` source tags.
+- Shared semver comparison library (`bin/lib/semver.sh`) extracted from `bin/update-check`.
+- 28 new tests for the audit script (`scripts/test-roadmap-audit.sh`).
+
 ## [0.6.3] - 2026-04-06
 
 ### Changed

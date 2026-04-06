@@ -518,16 +518,20 @@ Behavior for each option:
   5. Ask the user to verify the fix
   6. Update the bug's status to `FIXED` and record the fix commit hash
 - **Send to TODOS.md** — cross-branch bug, fix on another branch later.
-  Write the bug to `docs/TODOS.md` in the project's existing format:
+  Append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
+  whichever exists). If no `## Unprocessed` section exists, create it at the
+  end of the file. Use the source-tagged format:
   ```markdown
-  ### <Bug title>
-  <Description>
-  - **Why:** Found during pair-review testing on branch <branch>
-  - **Effort:** S (human: ~N / CC: ~N)
-  - **Depends on:** Nothing
+  ## Unprocessed
+
+  - [pair-review] <Bug title> — <description>. Found on branch <branch> (<date>)
   ```
-  Commit the TODOS.md change separately: `git add docs/TODOS.md`
-  then `git commit -m "chore: add parked bug to TODOS.md (<description>)"`
+  If the section already exists with other items, append the new item to it.
+  Do NOT attempt to classify or organize the bug into Groups/Tracks. That is
+  /roadmap's job during triage mode.
+  Commit the TODOS.md change separately: stage the TODOS.md file you wrote to
+  (root or docs/, whichever you used) then commit with
+  `git commit -m "chore: add parked bug to TODOS.md (<description>)"`
   Update the bug's status to `DEFERRED_TO_TODOS`.
 - **Stay parked** — this-branch, non-blocking. Remains for Phase 2.5.
 
@@ -551,7 +555,9 @@ triage):
 
 Behavior for each option:
 - **Fix now** — checkpoint, agent implements fix, commit, rebuild, user verifies, mark FIXED
-- **Send to TODOS.md** — cross-branch, write to docs/TODOS.md with own commit, mark DEFERRED_TO_TODOS
+- **Send to TODOS.md** — cross-branch, append to `## Unprocessed` section of TODOS.md
+  using the source-tagged format: `- [pair-review] <title> — <description>. Found on branch <branch> (<date>)`.
+  Create the section if it doesn't exist. Commit separately, mark DEFERRED_TO_TODOS
 - **Skip** — not worth fixing now, mark SKIPPED
 
 If a fix fails (build error), use the existing deploy error handling: present the

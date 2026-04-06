@@ -12,6 +12,7 @@ SKILLS_DIR="${HOME}/.claude/skills"
 
 DEFAULT_SKILLS=(
   pair-review
+  roadmap
 )
 
 BETA_SKILLS=(
