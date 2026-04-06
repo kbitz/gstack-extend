@@ -170,8 +170,8 @@ else
   fail "Clean file passes vocab lint" "$VOCAB_STATUS"
 fi
 
-# File with banned term "Phase"
-DIR=$(create_fixture "vocab-phase")
+# Phase as Group synonym heading (banned — not a whitelisted pattern)
+DIR=$(create_fixture "vocab-phase-heading")
 cat > "$DIR/ROADMAP.md" << 'EOF'
 # TODOs
 ## Phase 1: Something
@@ -179,12 +179,83 @@ cat > "$DIR/ROADMAP.md" << 'EOF'
 EOF
 OUTPUT=$(run_audit "$DIR")
 if echo "$OUTPUT" | grep -q 'banned term "phase"'; then
-  pass "Detects banned term 'Phase'"
+  pass "Detects Phase used as Group synonym heading"
 else
-  fail "Detects banned term 'Phase'"
+  fail "Detects Phase used as Group synonym heading"
 fi
 
-# Case insensitivity
+# Phase in ROADMAP.md title (allowed — whitelisted pattern)
+DIR=$(create_fixture "vocab-phase-title")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Group 1: Test
+### Track 1A: First
+_1 task . ~1 day . low risk . a.txt_
+- **Do A** — test. (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+VOCAB_STATUS=$(section_status "$OUTPUT" "VOCAB_LINT")
+if echo "$VOCAB_STATUS" | grep -q "pass"; then
+  pass "Phase in title is allowed"
+else
+  fail "Phase in title is allowed" "$VOCAB_STATUS"
+fi
+
+# Phase inside Future section (allowed)
+DIR=$(create_fixture "vocab-phase-future")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Future (Phase 2+)
+
+Phase 2 items go here. This mentions phase freely.
+- **Some item** — deferred to Phase 3.
+EOF
+OUTPUT=$(run_audit "$DIR")
+VOCAB_STATUS=$(section_status "$OUTPUT" "VOCAB_LINT")
+if echo "$VOCAB_STATUS" | grep -q "pass"; then
+  pass "Phase inside Future section is allowed"
+else
+  fail "Phase inside Future section is allowed" "$VOCAB_STATUS"
+fi
+
+# Phase inside Group body (banned)
+DIR=$(create_fixture "vocab-phase-group-body")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Group 1: Test
+This is the phase 1 work.
+### Track 1A: First
+_1 task . ~1 day . low risk . a.txt_
+- **Do A** — test. (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q 'banned term "phase"'; then
+  pass "Phase inside Group body is banned"
+else
+  fail "Phase inside Group body is banned"
+fi
+
+# Phase inside Track body (banned)
+DIR=$(create_fixture "vocab-phase-track-body")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Group 1: Test
+### Track 1A: First
+_1 task . ~1 day . low risk . a.txt_
+- **Do A** — this is a phase 2 task. (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q 'banned term "phase"'; then
+  pass "Phase inside Track body is banned"
+else
+  fail "Phase inside Track body is banned"
+fi
+
+# Other banned terms still work with state machine
 DIR=$(create_fixture "vocab-case")
 cat > "$DIR/ROADMAP.md" << 'EOF'
 # TODOs
@@ -192,9 +263,43 @@ cat > "$DIR/ROADMAP.md" << 'EOF'
 EOF
 OUTPUT=$(run_audit "$DIR")
 if echo "$OUTPUT" | grep -q 'banned term "workstream"'; then
-  pass "Case-insensitive detection"
+  pass "Case-insensitive detection (workstream)"
 else
-  fail "Case-insensitive detection"
+  fail "Case-insensitive detection (workstream)"
+fi
+
+# Other banned terms in Future section (still banned — only Phase is exempted)
+DIR=$(create_fixture "vocab-banned-in-future")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Future (Phase 2+)
+
+- This milestone is deferred.
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q 'banned term "milestone"'; then
+  pass "Other banned terms still caught in Future section"
+else
+  fail "Other banned terms still caught in Future section"
+fi
+
+# Strikethrough lines still skipped with state machine
+DIR=$(create_fixture "vocab-strikethrough")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Test
+### Track 1A: First
+_1 task . ~1 day . low risk . a.txt_
+- ~~This phase item is done~~ (completed)
+EOF
+OUTPUT=$(run_audit "$DIR")
+VOCAB_STATUS=$(section_status "$OUTPUT" "VOCAB_LINT")
+if echo "$VOCAB_STATUS" | grep -q "pass"; then
+  pass "Strikethrough lines with Phase are skipped"
+else
+  fail "Strikethrough lines with Phase are skipped" "$VOCAB_STATUS"
 fi
 
 # ─── structure tests ──────────────────────────────────────────
@@ -250,6 +355,45 @@ if echo "$OUTPUT" | grep -q "missing metadata line"; then
   pass "Missing track metadata detected"
 else
   fail "Missing track metadata detected"
+fi
+
+# Future-only roadmap (valid structure)
+DIR=$(create_fixture "struct-future-only")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Future (Phase 2+)
+
+- **Deferred item** — not yet. _Deferred because: not needed now._
+EOF
+OUTPUT=$(run_audit "$DIR")
+STRUCT_STATUS=$(section_status "$OUTPUT" "STRUCTURE")
+if echo "$STRUCT_STATUS" | grep -q "pass"; then
+  pass "Future-only roadmap is valid structure"
+else
+  fail "Future-only roadmap is valid structure" "$STRUCT_STATUS"
+fi
+
+# Groups + Future section (valid structure)
+DIR=$(create_fixture "struct-groups-future")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Group 1: Test
+### Track 1A: First
+_1 task . ~1 day . low risk . a.txt_
+- **Do A** — test. (S)
+
+## Future (Phase 2+)
+
+- **Deferred item** — not yet.
+EOF
+OUTPUT=$(run_audit "$DIR")
+STRUCT_STATUS=$(section_status "$OUTPUT" "STRUCTURE")
+if echo "$STRUCT_STATUS" | grep -q "pass"; then
+  pass "Groups + Future section is valid structure"
+else
+  fail "Groups + Future section is valid structure" "$STRUCT_STATUS"
 fi
 
 # ─── staleness tests ─────────────────────────────────────────
@@ -578,6 +722,28 @@ if echo "$MODE_LINE" | grep -qi "overhaul"; then
   pass "Overhaul mode detected (no Groups)"
 else
   fail "Overhaul mode detected (no Groups)" "$MODE_LINE"
+fi
+
+# Triage mode (Future-only roadmap, no Groups)
+DIR=$(create_fixture "mode-future-only")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1 (v0.x)
+
+## Future (Phase 2+)
+
+- **Deferred item** — not yet.
+EOF
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+## Unprocessed
+- [manual] New item
+EOF
+OUTPUT=$(run_audit "$DIR")
+MODE_LINE=$(echo "$OUTPUT" | grep "DETECTED:" | head -1)
+if echo "$MODE_LINE" | grep -qi "triage"; then
+  pass "Triage mode detected (Future-only roadmap)"
+else
+  fail "Triage mode detected (Future-only roadmap)" "$MODE_LINE"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────

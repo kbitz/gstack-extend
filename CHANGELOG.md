@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-04-06
+
+### Added
+- Phase-aware triage step in `/roadmap` (new Step 2 between audit and restructuring). Keep/kill decisions with auto-suggest kills (stale file refs, missed DONE markers), smart batching by area, and phase assignment (current vs future) before Group/Track structuring.
+- `## Future` section in ROADMAP.md for items deferred to a future phase. Not organized into Groups/Tracks, just a flat list with deferral reasons.
+- Phase header on ROADMAP.md title (`# Roadmap — Phase N (vX.x)`).
+- Contextual vocabulary lint: "Phase" reclaimed for top-level scoping (title, Future section) while remaining banned inside Group/Track sections. State machine in `check_vocab_lint()` with whitelist approach.
+- Future-only roadmap support: `check_structure()` and `detect_mode()` recognize ROADMAP.md with only a `## Future` section as valid (triage mode, not overhaul).
+- Triage mode phase integration: new inbox items get phase-assigned before Group/Track placement.
+- 9 new tests (37 total): contextual Phase vocab lint (6), Future section structure (2), Future-only mode detection (1).
+
+### Changed
+- Tighter `## Future` heading match in audit script (`^## Future($| \()`) to avoid matching `## Futures` or `## Future Work`.
+- Triage mode sub-steps renumbered (3a-3f) to reflect new Step 2 insertion.
+- Rule 8 updated: Unprocessed items are now drained by triage (Step 2), not preserved during overhaul.
+
 ## [0.7.0] - 2026-04-06
 
 ### Added

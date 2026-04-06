@@ -104,9 +104,73 @@ to triage." Do NOT prompt for a full restructure.
 Use AskUserQuestion to confirm which violations to address. Options:
 - A) Fix all violations (recommended)
 - B) Fix selected violations (let me choose)
-- C) Skip audit findings, go straight to restructuring
+- C) Skip audit findings, go straight to triage
 
-## Step 2: Build/Update ROADMAP.md
+## Step 2: Triage
+
+Before organizing anything into Groups > Tracks > Tasks, decide which TODOs to keep
+and which phase they belong to. This prevents roadmapping dead weight and keeps the
+execution plan focused on what you're actually doing now.
+
+### Step 2a: Keep or Kill
+
+Read the items to triage:
+- **Overhaul mode:** ALL items in TODOS.md (building the roadmap from scratch, so
+  every item gets triaged).
+- **Triage mode:** ONLY items in the `## Unprocessed` section of TODOS.md. Items
+  already organized in ROADMAP.md are NOT re-triaged.
+
+**Auto-suggest kills:** Before presenting the keep/kill table, check for items that
+are likely dead:
+1. Feed any STALENESS audit findings (from Step 1) as "suggest: kill" entries. These
+   are items marked DONE whose version tag exists — they should have been deleted.
+2. Read backtick-quoted file paths (`` `path/to/file` ``) from TODO descriptions. Run
+   `git ls-files` to check if referenced files still exist. Flag missing paths as
+   "suggest: kill (referenced file deleted)".
+
+**Smart batching:** For large backlogs (10+ items), group the keep/kill questions by
+area instead of presenting a flat list:
+- In overhaul mode: group by existing section headers (`## P1`, `## P2`, etc.) from
+  TODOS.md. Items without headers get grouped by topic/file-path overlap (use your
+  judgment to cluster related items).
+- In triage mode with few items (< 10): skip batching, present as a flat list.
+- Each group gets its own AskUserQuestion: keep all, kill all, or drill into
+  individual items.
+
+Present the keep/kill decisions. Killed items get deleted — git has the history.
+
+**Edge case:** If ALL items are killed, exit gracefully: "All items killed. No roadmap
+to build. TODOS.md cleaned." Skip to Step 4 (Update PROGRESS.md) and Step 6 (Commit).
+
+### Step 2b: Phase Assignment
+
+For each surviving item, assign it to the current phase or a future phase.
+
+**Current phase** is determined by the major version in VERSION:
+- v0.x = "pre-1.0" phase
+- v1.x = "v1" phase
+- etc.
+
+Future items go into a single "Future" bucket (flat list in ROADMAP.md). Multi-phase
+roadmapping is deferred until phase transition detection ships.
+
+Present each surviving item with a recommended phase assignment. Use AskUserQuestion
+to confirm. Items assigned to the current phase proceed to Step 3 for full Groups >
+Tracks > Tasks treatment. Items assigned to future go directly to the `## Future`
+section in ROADMAP.md (flat list, not structured).
+
+**IMPORTANT:** Phase assignment happens BEFORE Group/Track placement. Future items
+skip Group/Track entirely. Only current-phase items get the structured treatment.
+
+**Edge case:** If ALL items are assigned to "future," write ROADMAP.md with just the
+Future section (no Groups). This is a valid roadmap state.
+
+### Step 2c: Triage Summary
+
+After triage completes, present a summary:
+"Triaged N items: kept M, killed K. Assigned X to current phase, Y to future."
+
+## Step 3: Build/Update ROADMAP.md
 
 Read TODOS.md (the inbox), ROADMAP.md (if it exists), recent git history, and the
 codebase file structure.
@@ -118,16 +182,24 @@ Groups > Tracks > Tasks, and write the result to ROADMAP.md. After writing, clea
 TODOS.md: remove all organized items, leaving only the `## Unprocessed` section
 header (empty, ready for future inbox items from other skills).
 
-### Banned Vocabulary
+### Vocabulary Rules
 
-**NEVER use these terms in TODOS.md** (case-insensitive):
-- Phase
+**Unconditionally banned** in ROADMAP.md (case-insensitive):
 - Cluster
 - Workstream
 - Milestone
 - Sprint
 
-The ONLY permitted organizational terms are: **Group**, **Track**, **Task**, **Pre-flight**.
+**Contextually controlled:**
+- **Phase** — allowed ONLY for top-level scoping:
+  - The ROADMAP.md title (e.g., `# Roadmap — Phase 1 (v0.x)`)
+  - The `## Future (Phase 2+)` section header and content
+- **Phase** is BANNED everywhere else: inside Group headings, Track headings, task
+  descriptions, or as a synonym for Group. "Phase" means "a collection of groups that
+  constitute a release." It is NOT a synonym for Group, Track, or any structural unit.
+
+**Permitted structural terms:** **Group**, **Track**, **Task**, **Pre-flight**.
+**Permitted scoping term:** **Phase** (top-level only, as described above).
 
 ### Restructuring Rules
 
@@ -160,17 +232,17 @@ The ONLY permitted organizational terms are: **Group**, **Track**, **Task**, **P
 7. **Delete completed items.** Completed work gets deleted from TODOS.md. Git has the
    history. Do NOT use strikethrough, checkmarks, or "DONE" annotations.
 
-8. **Preserve Unprocessed items during overhaul.** If an `## Unprocessed` section exists
-   with items, carry those items forward verbatim into the new `## Unprocessed` section
-   at the bottom. Do NOT attempt to triage them during overhaul. Keep the source tags
-   and format intact. Triage happens on the next run (when the structure is valid).
+8. **Unprocessed items are drained by triage.** Step 2 (Triage) processes all items
+   including any in the `## Unprocessed` section. After triage, the Unprocessed section
+   is empty (all items were kept/killed and phase-assigned). Keep the `## Unprocessed`
+   heading in ROADMAP.md even when empty (other skills will write to it again).
 
 ### Output Template
 
 Write the structured execution plan to ROADMAP.md following this exact format:
 
 ```markdown
-# Roadmap
+# Roadmap — Phase N (vX.x)
 
 Organized as **Groups > Tracks > Tasks**. Groups are sequential (complete one before
 starting the next). Tracks within a group run in parallel. Each track is one plan +
@@ -218,6 +290,15 @@ Group 2: [Name]
 
 ---
 
+## Future (Phase N+1+)
+
+Items triaged but deferred to a future phase. Not organized into Groups/Tracks.
+Will be promoted to the current phase and structured when their time comes.
+
+- **[Item title]** — [description]. _Deferred because: [reason]._
+
+---
+
 ## Unprocessed
 
 Items awaiting triage by /roadmap. Added by other skills or manually.
@@ -247,13 +328,25 @@ Options:
 ### Mode: Triage (subsequent runs, structure exists)
 
 This path runs when the audit detects MODE: triage. ROADMAP.md already has a valid
-Groups > Tracks > Tasks structure. Only the `## Unprocessed` section in TODOS.md
-is processed. Items move from TODOS.md (inbox) into ROADMAP.md (structured plan).
+structure (Groups > Tracks, or Future-only). Only the `## Unprocessed` section in
+TODOS.md is processed. Items move from TODOS.md (inbox) into ROADMAP.md.
 
-**Step 2a: Read the Unprocessed section from TODOS.md.** Parse each item, noting its source tag
-(`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
+**Note:** Triage mode does NOT run keep/kill on inbox items. These are fresh items
+just added by /pair-review or /investigate, so they don't need keep/kill triage.
+They only need phase assignment and Group/Track placement.
 
-**Step 2b: Classify each item against ROADMAP.md.** For each unprocessed item, determine:
+**Step 3a: Read the Unprocessed section from TODOS.md.** Parse each item, noting its
+source tag (`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
+
+**Step 3b: Phase assignment (before Group/Track placement).** For each unprocessed
+item, ask: current phase or future? Items assigned to "future" go directly to the
+`## Future` section in ROADMAP.md. Only current-phase items proceed to Step 3c for
+Group/Track placement.
+
+**Step 3c: Classify current-phase items against ROADMAP.md.** If ROADMAP.md is
+future-only (no Groups exist), create new Group/Track structure for the current-phase
+items (a mini-overhaul while preserving the Future section). Otherwise, for each item
+assigned to the current phase, determine:
 - Which existing Group in ROADMAP.md it belongs to (based on dependency position)
 - Which existing Track it fits in (based on file ownership overlap)
 - Whether it needs a new Track (no existing track touches those files)
@@ -264,37 +357,37 @@ Use the source tag as a signal:
 - `[manual]` items are feature requests or improvements, classify by area
 - `[investigate]` items are usually bugs found during debugging
 
-**Step 2c: Propose triage.** Present the proposed placement of each item via
+**Step 3d: Propose triage.** Present the proposed placement of each item via
 AskUserQuestion:
 ```
 Triaging 5 unprocessed items:
 
-1. [pair-review] Arrow key double-move → Track 2A: Message List Core (same files)
-2. [pair-review] NSNull crash → Track 2A: Message List Core (SyncMutationService)
-3. [manual] Cmd+Arrow navigation → Track 2A: Message List Core (KeyboardRouter)
-4. [pair-review] Draft conflict → NEW Track 2F: Draft Safety (ComposeViewModel)
-5. [manual] Template emails → Track 3B: Template Emails (existing)
+1. [pair-review] Arrow key double-move → Track 2A: Message List Core (current phase)
+2. [pair-review] NSNull crash → Track 2A: Message List Core (current phase)
+3. [manual] Cmd+Arrow navigation → Track 2A: Message List Core (current phase)
+4. [pair-review] Draft conflict → NEW Track 2F: Draft Safety (current phase)
+5. [manual] Template emails → Future (deferred: not needed until v2)
 ```
 
 Options:
 - A) Approve all placements
 - B) Adjust placements (specify which items to move)
 
-**Step 2d: Apply triage.** Add each item to its assigned Group/Track in ROADMAP.md.
-Update track metadata (task count, effort). Remove the triaged items from the
-`## Unprocessed` section in TODOS.md. Keep the `## Unprocessed` heading even when
-empty (other skills will write to it again).
+**Step 3e: Apply triage.** Add current-phase items to their assigned Group/Track in
+ROADMAP.md. Add future items to the `## Future` section. Update track metadata (task
+count, effort). Remove the triaged items from the `## Unprocessed` section in
+TODOS.md. Keep the `## Unprocessed` heading even when empty.
 
-**Step 2e: Revalidate.** Check if the triage changed any dependency ordering. If a new
+**Step 3f: Revalidate.** Check if the triage changed any dependency ordering. If a new
 item in Group 2 actually blocks something in Group 1, flag it. Check if any track
 metadata is stale (task count changed).
 
 Options:
-- A) Approve restructured TODOS.md
+- A) Approve restructured ROADMAP.md
 - B) Revise (specify which sections)
 - C) Revert to original
 
-## Step 3: Update PROGRESS.md
+## Step 4: Update PROGRESS.md
 
 Check if a version was bumped since the last PROGRESS.md entry.
 
@@ -309,7 +402,7 @@ If PROGRESS.md doesn't exist:
 - Create one with a single row for the current VERSION (or v0.1.0 if no VERSION file).
 - Add a phase status section and release roadmap.
 
-## Step 4: Version Recommendation
+## Step 5: Version Recommendation
 
 Based on changes since the last tag (or VERSION baseline if no tags):
 
@@ -325,7 +418,7 @@ Tell the user: "I recommend bumping to vX.Y.Z. Run `/ship` to execute the bump."
 
 If no bump is needed, say so.
 
-## Step 5: Commit
+## Step 6: Commit
 
 Stage only documentation files:
 - ROADMAP.md (structured execution plan)
@@ -350,5 +443,7 @@ This skill enforces these doc ownership boundaries:
 | docs/designs/*.md | "Why we chose this" -- architecture decisions | /office-hours |
 | VERSION | SemVer source of truth | /roadmap (recommends), /ship (executes) |
 
-**Data flow:** Skills write to TODOS.md (inbox) -> /roadmap reads TODOS.md, writes to
-ROADMAP.md (structured plan) -> /document-release prunes completed items from ROADMAP.md.
+**Data flow:** Skills write to TODOS.md (inbox) -> /roadmap triages (keep/kill + phase
+assignment), then writes current-phase items to ROADMAP.md (structured plan) and future
+items to ROADMAP.md's Future section -> /document-release prunes completed items from
+ROADMAP.md.
