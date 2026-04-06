@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.8.1] - 2026-04-06
 
+### Changed
+- Fixed invalid four-segment version 0.4.1.1 → removed (folded into 0.4.1).
+
 ### Added
 - Phase-aware triage step in `/roadmap` (new Step 2 between audit and restructuring). Keep/kill decisions with auto-suggest kills (stale file refs, missed DONE markers), smart batching by area, and phase assignment (current vs future) before Group/Track structuring.
 - `## Future` section in ROADMAP.md for items deferred to a future phase. Not organized into Groups/Tracks, just a flat list with deferral reasons.
@@ -17,6 +20,11 @@ All notable changes to this project will be documented in this file.
 - Tighter `## Future` heading match in audit script (`^## Future($| \()`) to avoid matching `## Futures` or `## Future Work`.
 - Triage mode sub-steps renumbered (3a-3f) to reflect new Step 2 insertion.
 - Rule 8 updated: Unprocessed items are now drained by triage (Step 2), not preserved during overhaul.
+
+## [0.8.0] - 2026-04-06
+
+### Added
+- New `/full-review` skill: weekly codebase review pipeline with 3 specialized agents (reviewer, hygiene, consistency-auditor) dispatched in parallel. Root-cause clustering synthesizes findings into actionable clusters for human triage (approve/reject/defer). Approved findings written to TODOS.md as `[full-review]` source-tagged items. Dedup against ROADMAP.md prevents re-flagging tracked issues. Incremental state checkpointing for resume support. Designed to feed into `/roadmap` for execution topology.
 
 ## [0.7.0] - 2026-04-06
 
@@ -68,11 +76,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Corrected TODOS.md path reference in Phase 1 test plan generation (was `TODOS.md`, now `docs/TODOS.md`).
 
-## [0.4.1.1] - 2026-04-05
-
-### Changed
-- Renamed project from gstack-native to gstack-extend across all in-repo references: README, CLAUDE.md, setup script, design docs, and TODOS.
-
 ## [0.4.1] - 2026-04-04
 
 ### Added
@@ -80,6 +83,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Updated README installation instructions: two clear paths (global install and per-project install), both using the new setup script. Previously claimed skills were auto-discovered after cloning, which was incorrect.
+- Renamed project from gstack-native to gstack-extend across all in-repo references: README, CLAUDE.md, setup script, design docs, and TODOS.
 
 ### Fixed
 - Renamed pair-review skill's context directory from `.context/test-session/` to `.context/pair-review/` to match the skill name.
