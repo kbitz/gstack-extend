@@ -22,7 +22,7 @@ allowed-tools:
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/browse-native/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
-if [ -n "$_EXTEND_ROOT" ] && [[ "$_EXTEND_ROOT" == "$HOME/.claude/skills/"* ]]; then
+if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
 fi
