@@ -31,14 +31,42 @@ OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo
 # ─── Step 2: Upgrade via git ──────────────────────────────────
 mkdir -p "$STATE_DIR"
 
-cd "$INSTALL_DIR"
-STASH_OUTPUT=$(git stash 2>&1)
-git fetch origin
-git reset --hard origin/main
-./setup
+PREV_BRANCH=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || true)
+STASH_OUTPUT=$(git -C "$INSTALL_DIR" stash 2>&1)
+git -C "$INSTALL_DIR" fetch origin
 
+# Switch to main if on a different branch
+if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
+  git -C "$INSTALL_DIR" checkout main
+  echo "Note: switched from branch '$PREV_BRANCH' to main for upgrade."
+fi
+
+# Fast-forward only — if main has diverged locally, fail safely instead of destroying work
+if ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
+  # Restore previous branch if we switched
+  if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
+    git -C "$INSTALL_DIR" checkout "$PREV_BRANCH" 2>/dev/null || true
+  fi
+  # Restore stashed changes
+  if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
+    git -C "$INSTALL_DIR" stash pop 2>/dev/null || true
+  fi
+  echo "UPGRADE_FAILED local main has diverged from origin/main (ff-only failed)"
+  exit 1
+fi
+
+"$INSTALL_DIR/setup"
+
+# Switch back to previous branch if we moved away
+if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
+  git -C "$INSTALL_DIR" checkout "$PREV_BRANCH" 2>/dev/null || true
+fi
+
+# Restore stashed changes on the original branch (best-effort)
 if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
-  echo "Note: local changes were stashed. Run 'git stash pop' in $INSTALL_DIR to restore them."
+  if ! git -C "$INSTALL_DIR" stash pop 2>/dev/null; then
+    echo "Note: local changes were stashed but could not be restored. Run 'git -C $INSTALL_DIR stash pop' manually."
+  fi
 fi
 
 # ─── Step 3: Write upgrade marker ─────────────────────────────
