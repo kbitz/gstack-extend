@@ -12,6 +12,7 @@ SKILLS_DIR="${HOME}/.claude/skills"
 SKILLS=(
   pair-review
   browse-native
+  roadmap
 )
 
 if [ "${1:-}" = "--uninstall" ]; then
