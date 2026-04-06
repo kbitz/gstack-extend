@@ -12,11 +12,11 @@ SKILLS_DIR="${HOME}/.claude/skills"
 
 DEFAULT_SKILLS=(
   pair-review
+  roadmap
 )
 
 BETA_SKILLS=(
   browse-native
-  roadmap
 )
 
 # Uninstall checks all skills (default + beta)
