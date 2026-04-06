@@ -96,6 +96,32 @@ structure, memory, and the rebuild/redeploy loop.
 session: generate test plans, track progress, checkpoint before fixes, implement
 fixes, rebuild, and help the human resume where they left off.
 
+## Conductor Visibility Rule
+
+Conductor shows only the last message before the agent stops. All intermediate
+messages and tool calls are collapsed by default. This means:
+
+1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
+   is the last message and is always visible.
+2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
+   of all actions taken since the last user interaction. This is the user's only
+   reliable confirmation that work was completed.
+3. **Never rely on intermediate text output for important confirmations.** If the
+   user needs to know something happened (bug parked, fix committed, build
+   succeeded), it goes in the next AskUserQuestion's question text.
+
+Action receipt format: emoji-free status line. Examples:
+- "Item 2 passed. Saved."
+- "Fixed in abc123. Build succeeded. Ready for retest."
+- "Parked bug #3."
+
+If multiple actions occurred since the last interaction, compose them:
+- "Parked bug #3. Item 7 skipped. Auth group complete: 5 passed, 1 fixed, 1 skipped."
+
+If no actions were taken (first prompt of session), omit the receipt.
+
+---
+
 ## Step 0: Detect Command
 
 Parse the user's input to determine which command to run:
@@ -336,12 +362,14 @@ This is the core loop. For each active group, present items one at a time.
 ### Present the next item
 
 Read the current group file from disk (not from context). Find the first UNTESTED
-item. Present it:
+item. Present it via AskUserQuestion:
 
-"**Auth group, item 3 of 7:** Verify the loading state after logout. Does the
-app show a clean transition back to the login screen?
+- **Question:** "[Action receipt if applicable]\n\n**[Group] [N]/[Total]:** [Item description]"
+- **Options:** ["Pass", "Fail", "Skip", "Park a bug", "Add item"]
 
-Pass / Fail / Skip / Add new item"
+Use this exact AskUserQuestion format every time. Do not present test items as
+plain text, yes/no questions, or lettered multiple choice. The options array is
+the canonical interface.
 
 Wait for the user's response.
 
@@ -351,14 +379,18 @@ Wait for the user's response.
    `Tested: <now>`
 2. Update session.yaml summary counts
 3. Write both files to disk
-4. Move to the next item
+4. Present the next item (the AskUserQuestion receipt will read: "Item N passed.")
 
 ### On FAIL
 
-1. Ask the user to describe what went wrong
-2. Update the item: `Status: FAILED`, `Evidence: <user's description>`
-3. Write to disk
-4. Ask: "Want to fix this now, or continue testing the rest of the group?"
+1. Update the item: `Status: FAILED`, `Evidence: <user's description>`
+   (If the user's response includes the failure description, use it directly.
+   If they just said "fail" with no details, ask via AskUserQuestion:
+   "**[Group] [N]/[Total] — What went wrong?**" with options: ["Let me describe it"])
+2. Write to disk
+3. Ask via AskUserQuestion:
+   - Question: "**[Group] [N]/[Total] FAILED:** [evidence summary]\n\nFix now or keep testing?"
+   - Options: ["Fix now", "Continue testing"]
 
 ### On FIX NOW
 
@@ -400,14 +432,17 @@ Mark the failed item as `Status: FAILED` with `Fix: <commit>` and
 
 **Continue testing:**
 
-Present the same item again for retest. If it passes now, mark as PASSED.
-If it fails again, repeat the fix cycle.
+Present the same item again for retest via AskUserQuestion:
+- Question: "Fixed in [commit]. Build [succeeded/failed]. Retest:\n\n**[Group] [N]/[Total]:** [Item description]"
+- Options: ["Pass", "Fail", "Skip", "Park a bug", "Add item"]
+
+If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
 
 ### On SKIP
 
-1. Ask for a reason (optional)
-2. Update: `Status: SKIPPED`, `Notes: <reason>`
-3. Write to disk, move to next item
+1. Update: `Status: SKIPPED`, `Notes: <reason if provided>`
+2. Write to disk
+3. Present the next item (receipt: "Item N skipped.")
 
 ### On ADD ITEM
 
@@ -438,7 +473,8 @@ a bug that is clearly unrelated to the current test item:
    If parking before any testing starts, use "before testing" for "Noticed during."
 3. Update session.yaml `parked_bugs.total` count
 4. Write to disk
-5. Return to whatever was in progress (current test item, or current fix)
+5. Return to whatever was in progress. The next AskUserQuestion receipt will
+   read: "Parked bug #N." followed by the current test item or fix prompt.
 
 **Do NOT classify the bug at park time.** Classification happens at group completion.
 
@@ -446,10 +482,17 @@ a bug that is clearly unrelated to the current test item:
 
 When all items in a group are tested (PASSED, FAILED with fix, or SKIPPED):
 1. Move the group from active_groups to completed_groups in session.yaml
-2. Show a group summary: "Auth group complete: 5 passed, 1 fixed, 1 skipped"
-3. **Triage parked bugs** (see below)
-4. If more active groups remain, move to the next one
-5. If all active groups are done:
+2. Write to disk
+3. Present group summary via AskUserQuestion:
+   - Question: "[Receipt from last action]\n\n**[Group] complete:** [N] passed, [M] fixed, [K] skipped."
+   - Options vary by state:
+     - If parked bugs from this group exist: ["Triage parked bugs", "Skip triage, next group"]
+     - If no parked bugs and more groups remain: ["Start next group"]
+     - If all groups done and parked bugs remain: ["Start bug fix queue"]
+     - If all groups done and no parked bugs: ["Generate report", "Add more tests"]
+4. On "Triage parked bugs": run **Group completion triage** (see below)
+5. After triage (or if skipped), if more active groups remain, move to the next one
+6. If all active groups are done:
    a. Run **Phase 2.5** if any parked bugs remain with Status: PARKED
    b. Then proceed to Phase 4
 
@@ -460,15 +503,12 @@ were noticed during the just-completed group. If none, skip triage silently.
 
 For each parked bug from this group, the skill recommends a classification based on
 whether the bug relates to the branch's changes or upcoming test groups. Present each
-bug to the user:
+bug via AskUserQuestion:
 
-"**Parked bug #N:** <description>
-Noticed during: <group>, item <item>
+- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']"
+- Options: ["Fix now", "Send to TODOS.md", "Stay parked"]
 
-I think this is [a cross-branch issue / related to upcoming testing / a this-branch
-issue to fix after testing]. What would you like to do?"
-
-Options for each bug:
+Behavior for each option:
 - **Fix now** — blocks upcoming groups or relates to current area.
   1. Checkpoint: `git add -u` then `git commit -m "test: checkpoint before parked bug fix"`
      (skip if working tree is clean)
@@ -477,7 +517,7 @@ Options for each bug:
   4. Rebuild/redeploy using deploy.md
   5. Ask the user to verify the fix
   6. Update the bug's status to `FIXED` and record the fix commit hash
-- **TODOS** — cross-branch bug, fix on another branch later.
+- **Send to TODOS.md** — cross-branch bug, fix on another branch later.
   Write the bug to `docs/TODOS.md` in the project's existing format:
   ```markdown
   ### <Bug title>
@@ -503,17 +543,19 @@ they were noticed during, including bugs parked before testing started).
 
 If none remain, skip to Phase 4.
 
-If parked bugs remain, present them as a work queue:
+If parked bugs remain, present each via AskUserQuestion (same format as group-completion
+triage):
 
-"**N parked bugs remaining.** These are this-branch bugs to address before wrapping up."
+- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]"
+- Options: ["Fix now", "Send to TODOS.md", "Skip"]
 
-For each remaining parked bug, present options (same as group-completion triage):
+Behavior for each option:
 - **Fix now** — checkpoint, agent implements fix, commit, rebuild, user verifies, mark FIXED
-- **TODOS** — cross-branch, write to docs/TODOS.md with own commit, mark DEFERRED_TO_TODOS
+- **Send to TODOS.md** — cross-branch, write to docs/TODOS.md with own commit, mark DEFERRED_TO_TODOS
 - **Skip** — not worth fixing now, mark SKIPPED
 
-If a fix fails (build error), use the existing deploy error handling: show stderr,
-ask user whether to fix the build issue or skip.
+If a fix fails (build error), use the existing deploy error handling: present the
+error via AskUserQuestion with options: ["Fix the build issue", "Skip this bug"].
 
 After all parked bugs are processed (or the user says to stop), proceed to Phase 4.
 
@@ -557,8 +599,11 @@ CHECKPOINTS: <N> saved
 
 If this was `/pair-review status`, stop here.
 
-If this was `/pair-review resume`, ask: "Continue where you left off, or start
-fresh?" If continue, enter Phase 2 at the next untested item.
+If this was `/pair-review resume`, present via AskUserQuestion:
+- Question: "[Dashboard from Step 2 above]\n\nContinue where you left off, or start fresh?"
+- Options: ["Continue testing", "Start fresh"]
+
+If continue, enter Phase 2 at the next untested item.
 
 ---
 
@@ -619,12 +664,9 @@ Write report to `.context/pair-review/report.md`.
 
 ### Step 3: Offer next steps
 
-"Test session complete. N items tested, M fixes applied."
-
-Options:
-- "Commit the report to the repo"
-- "Continue to /ship"
-- "Done for now"
+Present via AskUserQuestion:
+- Question: "**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\n\n[One-line summary of parked bug outcomes if any]"
+- Options: ["Commit the report to the repo", "Continue to /ship", "Done for now"]
 
 ---
 
@@ -636,14 +678,10 @@ On **Init**, before starting Phase 0, check for an existing active session:
 Glob pattern: .context/pair-review/session.yaml
 ```
 
-If an active session exists, read it and present:
+If an active session exists, read it and present via AskUserQuestion:
 
-"You have an active test session (started <date>, <N>/<M> items tested).
-What would you like to do?"
-
-Options:
-- A) Resume the existing session
-- B) Start a new session (archives the old one)
+- Question: "You have an active test session (started [date], [N]/[M] items tested). What would you like to do?"
+- Options: ["Resume the existing session", "Start a new session (archives the old one)"]
 
 If B, move the old session to a timestamped archive:
 ```bash
@@ -657,18 +695,22 @@ mv .context/pair-review .context/pair-review-archived-$(date -u +%Y%m%d-%H%M%S)
 ## Error Handling
 
 ### Deploy fails
-Show stderr. Ask: "Build failed. Want to fix the build issue, or skip
-rebuilding and continue testing?"
+Present via AskUserQuestion:
+- Question: "Build failed.\n\n```\n[stderr output]\n```"
+- Options: ["Fix the build issue", "Skip rebuild, continue testing"]
 
 ### State file corrupt
-If YAML parsing fails on resume: "Session state appears corrupted. Want to
-start fresh or try to recover?" On recover, attempt to read individual group
-files (they're independent markdown, more resilient than YAML).
+Present via AskUserQuestion:
+- Question: "Session state appears corrupted (YAML parsing failed)."
+- Options: ["Start fresh", "Try to recover from group files"]
+
+On recover, attempt to read individual group files (they're independent
+markdown, more resilient than YAML).
 
 ### Missing group file
-If session.yaml references a group that has no corresponding file in groups/:
-"Group '<name>' is listed in the session but its file is missing. Want to
-recreate it with the items from session.yaml, or remove it from the session?"
+Present via AskUserQuestion:
+- Question: "Group '[name]' is listed in the session but its file is missing."
+- Options: ["Recreate from session.yaml", "Remove from session"]
 
 ### Clean working tree at checkpoint
 If `git commit` fails because there's nothing to commit, skip the checkpoint
@@ -695,7 +737,11 @@ silently. Do not mention parked bugs if there are none.
 
 ## Conversational Interface
 
-In practice, users won't type `/pair-review pass 3`. They'll say things like:
+The primary interface is AskUserQuestion with explicit options (Pass, Fail, Skip,
+Park a bug, Add item). The user clicks a button or types via the "Other" option.
+
+When the user types free-text (via "Other" or as a direct message), map natural
+language to the appropriate action. In practice, users will say things like:
 
 - "that looks good" → PASS current item
 - "yep" / "yes" / "works" → PASS current item
