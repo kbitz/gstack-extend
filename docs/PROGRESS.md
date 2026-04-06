@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.8.0 | 2026-04-06 | New /full-review skill: weekly codebase review pipeline with 3 specialized agents (reviewer, hygiene, consistency-auditor) dispatched in parallel, root-cause clustering for triage UX, human approve/reject/defer per cluster, approved findings written to TODOS.md as `[full-review]` source-tagged items. Dedup against ROADMAP.md prevents re-flagging tracked issues. Incremental state checkpointing for resume support. Designed to feed into /roadmap for execution topology. |
 | 0.7.0 | 2026-04-06 | New /roadmap skill: deterministic audit script (8 checks, 28 tests) + skill prompt for doc restructuring into Groups > Tracks > Tasks. TODOS.md/ROADMAP.md split (inbox vs execution plan). Two modes: overhaul (first run) and triage (process unprocessed items). /pair-review writes to TODOS.md Unprocessed section with source tags. Shared semver lib extracted. |
 | 0.6.3 | 2026-04-06 | browse-native gated as opt-in beta: `./setup` only installs stable skills by default, `--with-native` flag for beta. Unknown flags now rejected. README updated with maturity status. Test suite expanded to 24 tests. |
 | 0.6.2 | 2026-04-05 | Bug fixes: `update-run` safe branch handling, preamble update-check guard works from any clone location. Smart next-step suggestion at pair-review completion (nudges `/review` before `/ship` for non-trivial changes). New test suite `scripts/test-update.sh` (17 tests). |
