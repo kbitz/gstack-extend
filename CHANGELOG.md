@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.3] - 2026-04-06
+
+### Changed
+- `/browse-native` is now opt-in (beta). Default `./setup` only installs `/pair-review`. Use `./setup --with-native` to also install browse-native.
+- README updated with skill maturity status table and separate beta install instructions.
+- Setup script rejects unknown flags instead of silently falling through to default install.
+
 ## [0.6.2] - 2026-04-05
 
 ### Fixed
