@@ -302,10 +302,10 @@ mkdir -p "$MOCK_HOME"
 OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed"; then
-  pass "Installs to default skills dir"
+if echo "$OUTPUT" | grep -q "Installed 1 skills"; then
+  pass "Installs 1 skill to default skills dir"
 else
-  fail "Should install successfully" "Got: $OUTPUT"
+  fail "Should install 1 skill" "Got: $OUTPUT"
 fi
 
 # Check symlinks were created
@@ -321,27 +321,85 @@ else
 fi
 
 if [ -L "$MOCK_HOME/.claude/skills/browse-native/SKILL.md" ]; then
-  pass "Creates browse-native symlink"
+  fail "Should NOT create browse-native symlink by default"
 else
-  fail "Should create browse-native symlink"
+  pass "browse-native not installed by default (beta)"
 fi
 
-# Test: --uninstall
+# Test: --with-native installs both
+echo ""
+echo "--- Install with --with-native ---"
+MOCK_HOME2="$TMPDIR_BASE/mock-home-native"
+mkdir -p "$MOCK_HOME2"
+OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --with-native 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "Installed 2 skills"; then
+  pass "--with-native reports 2 skills installed"
+else
+  fail "--with-native should report 2 skills" "Got: $OUTPUT"
+fi
+
+if [ -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
+  pass "--with-native installs pair-review"
+else
+  fail "--with-native should install pair-review"
+fi
+
+if [ -L "$MOCK_HOME2/.claude/skills/browse-native/SKILL.md" ]; then
+  pass "--with-native installs browse-native"
+else
+  fail "--with-native should install browse-native"
+fi
+
+# Test: --uninstall (uses MOCK_HOME2 which has both skills installed)
 echo ""
 echo "--- Uninstall ---"
-OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" --uninstall 2>&1 || true)
+OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --uninstall 2>&1 || true)
 log "Output: $OUTPUT"
 
 if echo "$OUTPUT" | grep -q "Removed pair-review"; then
-  pass "Uninstalls skills"
+  pass "Uninstalls pair-review"
 else
-  fail "Should uninstall" "Got: $OUTPUT"
+  fail "Should uninstall pair-review" "Got: $OUTPUT"
 fi
 
-if [ ! -L "$MOCK_HOME/.claude/skills/pair-review/SKILL.md" ]; then
-  pass "Symlink removed after uninstall"
+if echo "$OUTPUT" | grep -q "Removed browse-native"; then
+  pass "Uninstalls browse-native"
 else
-  fail "Symlink should be removed after uninstall"
+  fail "Should uninstall browse-native" "Got: $OUTPUT"
+fi
+
+if [ ! -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
+  pass "pair-review symlink removed after uninstall"
+else
+  fail "pair-review symlink should be removed after uninstall"
+fi
+
+if [ ! -L "$MOCK_HOME2/.claude/skills/browse-native/SKILL.md" ]; then
+  pass "browse-native symlink removed after uninstall"
+else
+  fail "browse-native symlink should be removed after uninstall"
+fi
+
+# Test: unknown flag is rejected
+echo ""
+echo "--- Unknown flag ---"
+MOCK_HOME3="$TMPDIR_BASE/mock-home-unknown"
+mkdir -p "$MOCK_HOME3"
+OUTPUT=$(HOME="$MOCK_HOME3" "$SCRIPT_DIR/setup" --bogus 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "Unknown option"; then
+  pass "Rejects unknown flag"
+else
+  fail "Should reject unknown flag" "Got: $OUTPUT"
+fi
+
+if [ ! -d "$MOCK_HOME3/.claude/skills/pair-review" ]; then
+  pass "Does not install anything on unknown flag"
+else
+  fail "Should not install when flag is unknown"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────
