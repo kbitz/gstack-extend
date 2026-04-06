@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.1] - 2026-04-06
+## [0.8.1] - 2026-04-06
 
 ### Added
 - Phase-aware triage step in `/roadmap` (new Step 2 between audit and restructuring). Keep/kill decisions with auto-suggest kills (stale file refs, missed DONE markers), smart batching by area, and phase assignment (current vs future) before Group/Track structuring.
