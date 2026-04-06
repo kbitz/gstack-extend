@@ -65,3 +65,4 @@ Key routing rules:
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 - Manual testing, "give me a test list", pair test → invoke pair-review
+- Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap

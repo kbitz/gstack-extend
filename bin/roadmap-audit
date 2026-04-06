@@ -1,0 +1,571 @@
+#!/usr/bin/env bash
+# gstack-extend roadmap-audit — deterministic doc audit for /roadmap skill.
+#
+# Scans TODOS.md, PROGRESS.md, VERSION, and CHANGELOG.md for vocabulary drift,
+# structural violations, stale items, version mismatches, and taxonomy issues.
+#
+# Output: structured report to stdout with ## CHECK_NAME / STATUS / FINDINGS.
+#
+# Usage:
+#   bin/roadmap-audit [REPO_ROOT]
+#
+# Env overrides (for testing):
+#   GSTACK_EXTEND_DIR — override auto-detected gstack-extend root
+set -euo pipefail
+
+EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$(dirname "$0")/.." && pwd -P)}"
+REPO_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+
+source "$(dirname "$0")/lib/semver.sh"
+
+# ─── Helpers ──────────────────────────────────────────────────
+
+# find_doc <filename>
+# Search root first, then docs/. Print path or empty.
+find_doc() {
+  local name="$1"
+  if [ -f "$REPO_ROOT/$name" ]; then
+    echo "$REPO_ROOT/$name"
+  elif [ -f "$REPO_ROOT/docs/$name" ]; then
+    echo "$REPO_ROOT/docs/$name"
+  fi
+}
+
+TODOS_FILE=$(find_doc "TODOS.md")
+ROADMAP_FILE=$(find_doc "ROADMAP.md")
+PROGRESS_FILE=$(find_doc "PROGRESS.md")
+VERSION_FILE="$REPO_ROOT/VERSION"
+CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
+
+# ─── Check 1: Vocabulary Lint ────────────────────────────────
+
+check_vocab_lint() {
+  echo "## VOCAB_LINT"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  local findings=""
+  local found=0
+
+  # Banned terms (case-insensitive). Only scan ROADMAP.md.
+  local -a banned=("phase" "cluster" "workstream" "milestone" "sprint")
+  for term in "${banned[@]}"; do
+    while IFS= read -r match; do
+      local lineno="${match%%:*}"
+      local text="${match#*:}"
+      # Skip lines that are inside strikethrough (completed items)
+      if echo "$text" | grep -q '~~'; then
+        continue
+      fi
+      findings="${findings}- line ${lineno}: banned term \"${term}\" found\n"
+      found=1
+    done < <(grep -in "\b${term}\b" "$ROADMAP_FILE" 2>/dev/null || true)
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 2: Structure Validation ───────────────────────────
+
+check_structure() {
+  echo "## STRUCTURE"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  local findings=""
+  local found=0
+
+  # Check for Group headings (## Group)
+  local group_count
+  group_count=$(grep -c '^## Group' "$ROADMAP_FILE" 2>/dev/null || true)
+  group_count="${group_count:-0}"
+  group_count=$(echo "$group_count" | tr -d '[:space:]')
+
+  if [ "$group_count" -eq 0 ]; then
+    findings="${findings}- No Group headings found (expected ## Group N: Name)\n"
+    found=1
+  fi
+
+  # Check for Track headings (### Track)
+  local track_count
+  track_count=$(grep -c '^### Track' "$ROADMAP_FILE" 2>/dev/null || true)
+  track_count="${track_count:-0}"
+  track_count=$(echo "$track_count" | tr -d '[:space:]')
+
+  if [ "$group_count" -gt 0 ] && [ "$track_count" -eq 0 ]; then
+    findings="${findings}- Groups found but no Track headings (expected ### Track NA: Name)\n"
+    found=1
+  fi
+
+  # Check track metadata lines (italic line after ### Track)
+  if [ "$track_count" -gt 0 ]; then
+    local tracks_with_meta=0
+    local in_track=0
+    local track_name=""
+    while IFS= read -r line; do
+      if echo "$line" | grep -q '^### Track' 2>/dev/null; then
+        if [ "$in_track" -eq 1 ] && [ -z "$track_name" ]; then
+          : # previous track had no metadata, already counted
+        fi
+        in_track=1
+        track_name=$(echo "$line" | sed 's/^### //')
+      elif [ "$in_track" -eq 1 ]; then
+        # Check if this line is italic metadata (_..._)
+        if echo "$line" | grep -q '^_.*_$' 2>/dev/null; then
+          # Validate it has required components: number, risk, files
+          if echo "$line" | grep -iq 'risk\|low\|medium\|high' 2>/dev/null; then
+            tracks_with_meta=$((tracks_with_meta + 1))
+          else
+            findings="${findings}- ${track_name}: metadata line missing risk level\n"
+            found=1
+          fi
+        elif [ -n "$line" ]; then
+          # Non-empty, non-metadata line after track heading
+          findings="${findings}- ${track_name}: missing metadata line (expected _N tasks . effort . risk . files_)\n"
+          found=1
+        fi
+        in_track=0
+        track_name=""
+      fi
+    done < <(cat "$ROADMAP_FILE")
+    # Handle last track if it had no metadata
+    if [ "$in_track" -eq 1 ] && [ -n "$track_name" ]; then
+      findings="${findings}- ${track_name}: missing metadata line (expected _N tasks . effort . risk . files_)\n"
+      found=1
+    fi
+  fi
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 3: Staleness Detection ────────────────────────────
+
+check_staleness() {
+  echo "## STALENESS"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  local findings=""
+  local found=0
+
+  # Look for completed-item markers with version patterns
+  # Patterns: ~~text~~ DONE (vX.Y.Z), ✓ DONE (vX.Y.Z), ✅ Done, Completed
+  local current_version=""
+  if [ -f "$VERSION_FILE" ]; then
+    current_version=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+  fi
+
+  # Collect all git tags
+  local tags=""
+  tags=$(git -C "$REPO_ROOT" tag --list 2>/dev/null || true)
+
+  while IFS= read -r match; do
+    [ -z "$match" ] && continue
+    local lineno="${match%%:*}"
+    local text="${match#*:}"
+
+    # Extract version pattern from the line
+    local ver=""
+    ver=$(echo "$text" | grep -oE '\(v?[0-9]+\.[0-9]+(\.[0-9]+)*\)' 2>/dev/null | head -1 | tr -d '()' | sed 's/^v//' || true)
+
+    if [ -z "$ver" ]; then
+      continue
+    fi
+
+    # Check if this version has shipped:
+    # 1. Check git tags
+    local tag_exists=0
+    if [ -n "$tags" ]; then
+      if echo "$tags" | grep -qE "^v?${ver}$"; then
+        tag_exists=1
+      fi
+    fi
+
+    # 2. Fall back to VERSION file comparison
+    local version_shipped=0
+    if [ "$tag_exists" -eq 1 ]; then
+      version_shipped=1
+    elif [ -n "$current_version" ] && [ -n "$ver" ]; then
+      # If current version >= completed version, it shipped
+      if [ "$current_version" = "$ver" ] || version_gt "$current_version" "$ver"; then
+        version_shipped=1
+      fi
+    fi
+
+    if [ "$version_shipped" -eq 1 ]; then
+      findings="${findings}- line ${lineno}: completed item still present (v${ver} shipped) — delete it\n"
+      found=1
+    fi
+  done < <(grep -nE '~~.*DONE|~~.*✓|~~.*✅|~~.*Completed|^### ~~' "$ROADMAP_FILE" 2>/dev/null || true)
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 4: Version Audit ──────────────────────────────────
+
+check_version() {
+  echo "## VERSION"
+  local findings=""
+  local found=0
+
+  # Read current version
+  local current=""
+  if [ -f "$VERSION_FILE" ]; then
+    current=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+  else
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No VERSION file found"
+    echo ""
+    return
+  fi
+
+  echo "CURRENT: $current"
+
+  # Check for invalid version format (must be 3-segment semver)
+  if ! echo "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    findings="${findings}- VERSION \"${current}\" is not valid SemVer (expected X.Y.Z)\n"
+    found=1
+  fi
+
+  # Latest git tag
+  local latest_tag=""
+  latest_tag=$(git -C "$REPO_ROOT" --no-pager tag --list --sort=-v:refname 2>/dev/null | head -1 || true)
+  if [ -n "$latest_tag" ]; then
+    echo "LATEST_TAG: $latest_tag"
+    local tag_ver
+    tag_ver=$(echo "$latest_tag" | sed 's/^v//')
+    if [ "$current" != "$tag_ver" ]; then
+      findings="${findings}- VERSION (${current}) does not match latest tag (${latest_tag})\n"
+      found=1
+    fi
+  else
+    echo "LATEST_TAG: (none)"
+    findings="${findings}- No git tags found — consider tagging releases (git tag vX.Y.Z)\n"
+    found=1
+  fi
+
+  # PROGRESS.md latest version
+  if [ -n "$PROGRESS_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
+    local progress_ver=""
+    # Look for version in table rows (| X.Y.Z | ...)
+    progress_ver=$(grep -oE '\| [0-9]+\.[0-9]+(\.[0-9]+)*(\.[0-9]+)* \|' "$PROGRESS_FILE" 2>/dev/null | head -1 | tr -d '| ' || true)
+    if [ -n "$progress_ver" ]; then
+      echo "PROGRESS_LATEST: $progress_ver"
+      # Check for four-segment versions in PROGRESS
+      if echo "$progress_ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+        findings="${findings}- PROGRESS.md has four-segment version ${progress_ver} (invalid SemVer)\n"
+        found=1
+      fi
+    fi
+  fi
+
+  # CHANGELOG.md latest version
+  if [ -f "$CHANGELOG_FILE" ]; then
+    # Scan for all version-like patterns, flag four-segment ones
+    while IFS= read -r ver; do
+      if echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+        findings="${findings}- CHANGELOG.md has four-segment version ${ver} (invalid SemVer)\n"
+        found=1
+      fi
+    done < <(grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)*' "$CHANGELOG_FILE" 2>/dev/null | sort -u || true)
+
+    local changelog_ver=""
+    changelog_ver=$(grep -oE '## \[?[0-9]+\.[0-9]+\.[0-9]+' "$CHANGELOG_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+    if [ -n "$changelog_ver" ]; then
+      echo "CHANGELOG_LATEST: $changelog_ver"
+    fi
+  fi
+
+  # Recommend bump type based on changes since last tag
+  local recommend="none"
+  if [ -n "$latest_tag" ]; then
+    local code_changed
+    code_changed=$(git -C "$REPO_ROOT" --no-pager diff --name-only "$latest_tag"..HEAD 2>/dev/null | grep -cvE '\.(md|txt|yml|yaml|json)$' || true)
+    code_changed="${code_changed:-0}"
+    code_changed=$(echo "$code_changed" | tr -d '[:space:]')
+    if [ "$code_changed" -gt 0 ]; then
+      recommend="patch"
+    fi
+  fi
+  echo "RECOMMEND: $recommend"
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 5: Taxonomy ───────────────────────────────────────
+
+check_taxonomy() {
+  echo "## TAXONOMY"
+  local findings=""
+  local found=0
+
+  # Check expected docs exist
+  if [ -z "$TODOS_FILE" ]; then
+    findings="${findings}- TODOS.md: missing (inbox for unprocessed items)\n"
+    found=1
+  fi
+  if [ -z "$ROADMAP_FILE" ]; then
+    findings="${findings}- ROADMAP.md: missing (run /roadmap to create from TODOS.md)\n"
+    found=1
+  fi
+  if [ -z "$PROGRESS_FILE" ]; then
+    findings="${findings}- PROGRESS.md: missing\n"
+    found=1
+  fi
+  if [ ! -f "$VERSION_FILE" ]; then
+    findings="${findings}- VERSION: missing\n"
+    found=1
+  fi
+
+  # Check for duplicate docs (both root and docs/)
+  if [ -f "$REPO_ROOT/TODOS.md" ] && [ -f "$REPO_ROOT/docs/TODOS.md" ]; then
+    findings="${findings}- TODOS.md exists in both root and docs/ — pick one location\n"
+    found=1
+  fi
+  if [ -f "$REPO_ROOT/ROADMAP.md" ] && [ -f "$REPO_ROOT/docs/ROADMAP.md" ]; then
+    findings="${findings}- ROADMAP.md exists in both root and docs/ — pick one location\n"
+    found=1
+  fi
+  if [ -f "$REPO_ROOT/PROGRESS.md" ] && [ -f "$REPO_ROOT/docs/PROGRESS.md" ]; then
+    findings="${findings}- PROGRESS.md exists in both root and docs/ — pick one location\n"
+    found=1
+  fi
+
+  # Exact-match overlap detection between PROGRESS.md and CHANGELOG.md
+  if [ -n "$PROGRESS_FILE" ] && [ -f "$CHANGELOG_FILE" ]; then
+    local overlap_count=0
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      # Skip table headers and separators
+      if echo "$line" | grep -qE '^\|[-]+' 2>/dev/null; then continue; fi
+      if echo "$line" | grep -qE '^\| Version' 2>/dev/null; then continue; fi
+      if grep -qF "$line" "$CHANGELOG_FILE" 2>/dev/null; then
+        overlap_count=$((overlap_count + 1))
+      fi
+    done < <(grep -E '^\|' "$PROGRESS_FILE" 2>/dev/null || true)
+
+    if [ "$overlap_count" -gt 3 ]; then
+      findings="${findings}- PROGRESS.md and CHANGELOG.md share ${overlap_count} identical lines — possible content duplication\n"
+      found=1
+    fi
+  fi
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 6: Dependency Integrity ───────────────────────────
+
+check_dependencies() {
+  echo "## DEPENDENCIES"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  # Collect all track names
+  local -a tracks=()
+  while IFS= read -r line; do
+    local name
+    name=$(echo "$line" | sed 's/^### //' | sed 's/:.*//')
+    tracks+=("$name")
+  done < <(grep '^### Track' "$ROADMAP_FILE" 2>/dev/null || true)
+
+  # Find Depends on: lines that reference Track patterns
+  local findings=""
+  local found=0
+  local has_deps=0
+
+  while IFS= read -r match; do
+    [ -z "$match" ] && continue
+    has_deps=1
+    local lineno="${match%%:*}"
+    local text="${match#*:}"
+
+    # Extract track references (Track [0-9A-Z]+)
+    while IFS= read -r ref; do
+      [ -z "$ref" ] && continue
+      # Check if this track exists
+      local exists=0
+      for t in "${tracks[@]}"; do
+        if echo "$t" | grep -q "$ref"; then
+          exists=1
+          break
+        fi
+      done
+      if [ "$exists" -eq 0 ]; then
+        findings="${findings}- line ${lineno}: references \"${ref}\" but no such track exists\n"
+        found=1
+      fi
+    done < <(echo "$text" | grep -oE 'Track [0-9]+[A-Z]' || true)
+  done < <(grep -n 'Depends on:' "$ROADMAP_FILE" 2>/dev/null || true)
+
+  if [ "$has_deps" -eq 0 ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No Depends on: lines found"
+  elif [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 7: Unprocessed Section + Mode Detection ───────────
+
+check_unprocessed() {
+  echo "## UNPROCESSED"
+  if [ -z "$TODOS_FILE" ]; then
+    echo "STATUS: skip"
+    echo "ITEMS: 0"
+    echo "FINDINGS:"
+    echo "- No TODOS.md found"
+    echo ""
+    return
+  fi
+
+  # Check if ## Unprocessed section exists
+  local has_section=0
+  local item_count=0
+  local in_section=0
+
+  while IFS= read -r line; do
+    if echo "$line" | grep -q '^## Unprocessed' 2>/dev/null; then
+      has_section=1
+      in_section=1
+      continue
+    fi
+    # Stop at the next ## heading
+    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## ' 2>/dev/null; then
+      in_section=0
+      continue
+    fi
+    # Count non-empty lines starting with - in the section
+    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^- ' 2>/dev/null; then
+      item_count=$((item_count + 1))
+    fi
+  done < <(cat "$TODOS_FILE")
+
+  echo "ITEMS: $item_count"
+
+  if [ "$has_section" -eq 1 ] && [ "$item_count" -gt 0 ]; then
+    echo "STATUS: found"
+    echo "FINDINGS:"
+    echo "- ${item_count} unprocessed items awaiting triage"
+  elif [ "$has_section" -eq 1 ]; then
+    echo "STATUS: empty"
+    echo "FINDINGS:"
+    echo "- Unprocessed section exists but is empty"
+  else
+    echo "STATUS: none"
+    echo "FINDINGS:"
+    echo "- No Unprocessed section"
+  fi
+  echo ""
+}
+
+# ─── Mode Detection ──────────────────────────────────────────
+
+detect_mode() {
+  echo "## MODE"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "DETECTED: overhaul"
+    echo "REASON: No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  # Check if Groups > Tracks structure exists in ROADMAP.md
+  local group_count
+  group_count=$(grep -c '^## Group' "$ROADMAP_FILE" 2>/dev/null || true)
+  group_count="${group_count:-0}"
+  group_count=$(echo "$group_count" | tr -d '[:space:]')
+
+  if [ "$group_count" -gt 0 ]; then
+    echo "DETECTED: triage"
+    echo "REASON: Valid Groups > Tracks structure found (${group_count} groups)"
+  else
+    echo "DETECTED: overhaul"
+    echo "REASON: No Groups > Tracks structure found"
+  fi
+  echo ""
+}
+
+# ─── Run all checks ──────────────────────────────────────────
+
+check_vocab_lint
+check_structure
+check_staleness
+check_version
+check_taxonomy
+check_dependencies
+check_unprocessed
+detect_mode

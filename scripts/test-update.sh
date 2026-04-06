@@ -302,10 +302,10 @@ mkdir -p "$MOCK_HOME"
 OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 1 skills"; then
-  pass "Installs 1 skill to default skills dir"
+if echo "$OUTPUT" | grep -q "Installed 2 skills"; then
+  pass "Installs 2 skills to default skills dir"
 else
-  fail "Should install 1 skill" "Got: $OUTPUT"
+  fail "Should install 2 skills" "Got: $OUTPUT"
 fi
 
 # Check symlinks were created
@@ -334,10 +334,10 @@ mkdir -p "$MOCK_HOME2"
 OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --with-native 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 2 skills"; then
-  pass "--with-native reports 2 skills installed"
+if echo "$OUTPUT" | grep -q "Installed 3 skills"; then
+  pass "--with-native reports 3 skills installed"
 else
-  fail "--with-native should report 2 skills" "Got: $OUTPUT"
+  fail "--with-native should report 3 skills" "Got: $OUTPUT"
 fi
 
 if [ -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
