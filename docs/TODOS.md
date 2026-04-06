@@ -56,6 +56,33 @@ Add `scripts/test-update.sh` exercising update-check with mock remotes
 - **Effort:** S (human: ~1 day / CC: ~10 min)
 - **Depends on:** auto-update feature shipped (v0.6.0)
 
+### setup script hardcodes global install path
+`setup` always symlinks into `~/.claude/skills/`, even when invoked from a
+per-project `.claude/skills/gstack-extend` checkout. This breaks project-scoped
+installs: skills leak into unrelated repos and removing the project leaves
+dangling global symlinks.
+- **Why:** Found by Codex review. The setup script should detect whether it's
+  being run for global or per-project install and target accordingly.
+- **Effort:** S (human: ~2 hours / CC: ~10 min)
+- **Depends on:** Nothing
+
+### update-run destroys non-main branch work
+`bin/update-run` uses `git reset --hard origin/main` which forcibly resets the
+current branch to origin/main. If the gstack-extend checkout is on a development
+branch, committed branch-only work is lost (git stash only preserves working-tree
+changes). Should use `git pull` or check that we're on main first.
+- **Why:** Found by Codex review. Unsafe for anyone developing on gstack-extend.
+- **Effort:** S (human: ~1 hour / CC: ~5 min)
+- **Depends on:** Nothing
+
+### Skill preamble update-check guard too narrow
+The update-check guard in `skills/pair-review.md` and `skills/browse-native.md`
+only fires when the symlink target lives under `~/.claude/skills/`. Installs
+from other directories (which `setup` allows) work but never report upgrades.
+- **Why:** Found by Codex review. Low priority since most installs are global.
+- **Effort:** XS (human: ~30 min / CC: ~5 min)
+- **Depends on:** Nothing
+
 ### Migrate to raw.githubusercontent.com when repo goes public
 Replace gist URL with `raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION`
 in `bin/update-check`. Remove GitHub Action sync workflow and GIST_TOKEN secret.
