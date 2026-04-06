@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.6.3 | 2026-04-06 | browse-native gated as opt-in beta: `./setup` only installs stable skills by default, `--with-native` flag for beta. Unknown flags now rejected. README updated with maturity status. Test suite expanded to 24 tests. |
 | 0.6.2 | 2026-04-05 | Bug fixes: `update-run` safe branch handling, preamble update-check guard works from any clone location. Smart next-step suggestion at pair-review completion (nudges `/review` before `/ship` for non-trivial changes). New test suite `scripts/test-update.sh` (17 tests). |
 | 0.6.1 | 2026-04-05 | /pair-review UX fixes: standardized all prompts to AskUserQuestion with explicit options (eliminates inconsistent question styles across workspaces), added Conductor visibility awareness with action receipt pattern (important status updates always visible in final message). |
 | 0.6.0 | 2026-04-05 | Auto-update system: `bin/update-check` (gist-based remote VERSION, pure bash semver, caching, snooze) + `bin/update-run` (git pull + setup) + `bin/config` (key=value). Inline upgrade flow in skill preambles. GitHub Action syncs VERSION to gist. Global-install only. State in `~/.gstack-extend/`. |

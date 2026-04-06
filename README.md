@@ -1,15 +1,13 @@
 # gstack-extend
 
-Extension skills for [gstack](https://github.com/anthropics/gstack). Currently ships two skills:
+Extension skills for [gstack](https://github.com/anthropics/gstack).
 
-| Skill | What it does | Works with |
-|-------|-------------|------------|
-| `/pair-review` | Pair testing session manager | Any project (web, native, CLI) |
-| `/browse-native` | Native macOS app interaction | macOS SwiftUI/AppKit apps |
+| Skill | What it does | Works with | Status |
+|-------|-------------|------------|--------|
+| `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
+| `/browse-native` | Native macOS app interaction | macOS SwiftUI/AppKit apps | **Beta** |
 
 ## Installation
-
-### Global install (recommended)
 
 Clone and run setup:
 
@@ -18,21 +16,17 @@ git clone git@github.com:kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
 ~/.claude/skills/gstack-extend/setup
 ```
 
-This creates symlinks in `~/.claude/skills/` so Claude Code discovers both skills.
+This installs stable skills (`/pair-review`) into `~/.claude/skills/`.
 To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
 
-### Per-project install
+### Beta skills
 
-Clone into a project's `.claude/skills/` directory, then run setup:
+`/browse-native` is in beta. It requires adding debug infrastructure to your app
+(6+ Swift components) and has unfinished validation work. To install it:
 
 ```bash
-git clone git@github.com:kbitz/gstack-extend.git .claude/skills/gstack-extend
-echo ".claude/skills/gstack-extend" >> .gitignore
-.claude/skills/gstack-extend/setup
+~/.claude/skills/gstack-extend/setup --with-native
 ```
-
-Both skills are now available in Claude Code. For `/browse-native`, see the
-[Configuration](#browse-native-configuration) section below.
 
 ---
 
@@ -56,7 +50,11 @@ and supports resume. Works for any project type.
 
 ---
 
-## /browse-native — Native App Interaction
+## /browse-native — Native App Interaction [BETA]
+
+> **Beta:** This skill requires adding [debug infrastructure](docs/debug-infrastructure-guide.md)
+> to your app before it can do anything useful. It's not installed by default...
+> use `setup --with-native` if you want to try it.
 
 Interact with native macOS apps using inside-out debug infrastructure. The app
 instruments itself (screenshots, layout probes, state dumps) and the agent
