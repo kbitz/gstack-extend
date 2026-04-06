@@ -128,16 +128,31 @@ are likely dead:
    `git ls-files` to check if referenced files still exist. Flag missing paths as
    "suggest: kill (referenced file deleted)".
 
-**Smart batching:** For large backlogs (10+ items), group the keep/kill questions by
-area instead of presenting a flat list:
-- In overhaul mode: group by existing section headers (`## P1`, `## P2`, etc.) from
-  TODOS.md. Items without headers get grouped by topic/file-path overlap (use your
-  judgment to cluster related items).
-- In triage mode with few items (< 10): skip batching, present as a flat list.
-- Each group gets its own AskUserQuestion: keep all, kill all, or drill into
-  individual items.
+**One-by-one triage:** Present each item individually via AskUserQuestion. Never
+cluster or batch items — every item gets its own prompt with full context.
 
-Present the keep/kill decisions. Killed items get deleted — git has the history.
+For each item, before presenting:
+1. Extract a distinctive phrase from the item title (3-5 words).
+2. Run `git log --oneline -1 -S "distinctive phrase" -- <TODOS-file-path>` to find
+   when the item was introduced.
+3. If the git log returns a result, extract the commit date and check if the commit
+   message contains a PR number (e.g., `(#123)`). Format as:
+   `Introduced: <relative time ago> (<commit short hash>, PR #NNN)` — or without
+   the PR number if none was found.
+4. If the git log returns nothing, show `Provenance: unknown`.
+
+Present each item via AskUserQuestion with this format:
+```
+**Item [N]/[Total]: [item title]**
+
+[Full item description from TODOS.md]
+[If auto-suggest kill: "⚠ Suggest kill: [reason]"]
+[Provenance line from step 3 above]
+```
+
+Options: ["Keep", "Kill"]
+
+Killed items get deleted — git has the history.
 
 **Edge case:** If ALL items are killed, exit gracefully: "All items killed. No roadmap
 to build. TODOS.md cleaned." Skip to Step 4 (Update PROGRESS.md) and Step 6 (Commit).
