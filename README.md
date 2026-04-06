@@ -6,6 +6,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 |-------|-------------|------------|--------|
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Documentation restructuring | Any project | Stable |
+| `/full-review` | Weekly codebase review pipeline | Any project | Stable |
 | `/browse-native` | Native macOS app interaction | macOS SwiftUI/AppKit apps | **Beta** |
 
 ## Installation
@@ -17,7 +18,7 @@ git clone git@github.com:kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
 ~/.claude/skills/gstack-extend/setup
 ```
 
-This installs stable skills (`/pair-review`, `/roadmap`) into `~/.claude/skills/`.
+This installs stable skills (`/pair-review`, `/roadmap`, `/full-review`) into `~/.claude/skills/`.
 To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
 
 ### Beta skills
@@ -82,6 +83,42 @@ execution. Audits versioning, validates doc taxonomy, and recommends version bum
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
 | VERSION | SemVer source of truth | /ship |
+
+---
+
+## /full-review — Weekly Codebase Review Pipeline
+
+Dispatches 3 specialized review agents (reviewer, hygiene, consistency-auditor) in
+parallel, synthesizes findings into root-cause clusters, guides you through triage,
+and writes approved findings to TODOS.md for /roadmap to organize.
+
+- **3 specialized agents** — implementation gaps, code waste, and pattern drift reviewed simultaneously
+- **Root-cause clustering** — findings grouped by theme for efficient triage (approve/reject/defer per cluster)
+- **TODOS.md integration** — approved items tagged `[full-review]` under `## Unprocessed` for /roadmap
+- **ROADMAP.md dedup** — skips findings already tracked in the roadmap
+- **Resume support** — state checkpointed after each phase, pick up where you left off
+
+```
+/full-review          # Start a fresh codebase review
+/full-review resume   # Resume where you left off
+/full-review status   # See the session dashboard
+```
+
+### How It Works
+
+1. **Scoping** — Identifies hot areas from recent git history to help agents prioritize
+2. **Agent dispatch** — 3 agents review the codebase in parallel with different lenses
+3. **Synthesis** — Findings merged, deduped, and clustered by root cause (target: 3-8 clusters)
+4. **Dedup** — Clusters matched against ROADMAP.md tracks to skip already-tracked issues
+5. **Triage** — You approve, reject, or defer each cluster via AskUserQuestion
+6. **Persist** — Approved findings written to TODOS.md, summary report saved to `.context/full-review/`
+
+### Documentation Taxonomy Update
+
+| Doc | Purpose | Written by |
+|-----|---------|------------|
+| TODOS.md | Inbox | /pair-review, /full-review, /investigate, manual |
+| ROADMAP.md | Execution plan | /roadmap |
 
 ---
 
