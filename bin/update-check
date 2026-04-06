@@ -33,21 +33,7 @@ if [ "$_UC" = "false" ]; then
 fi
 
 # ─── Semver comparison ──────────────────────────────────────
-# version_gt returns 0 if $1 > $2, 1 otherwise.
-# Pure bash, no sort -V (unavailable on stock macOS).
-version_gt() {
-  local IFS='.'
-  read -ra a <<< "$1"
-  read -ra b <<< "$2"
-  local i
-  for i in 0 1 2 3; do
-    local ai="${a[$i]:-0}"
-    local bi="${b[$i]:-0}"
-    if (( ai > bi )); then return 0; fi
-    if (( ai < bi )); then return 1; fi
-  done
-  return 1  # equal
-}
+source "$EXTEND_DIR/bin/lib/semver.sh"
 
 # ─── Snooze helper ──────────────────────────────────────────
 # check_snooze <remote_version>
