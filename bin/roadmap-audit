@@ -531,18 +531,6 @@ check_doc_location() {
     fi
   done
 
-  # Suggest creating docs/ if it doesn't exist and there are docs that should go there
-  if [ "$has_docs_dir" -eq 0 ]; then
-    local has_docs_candidates=0
-    for doc in "${DOCS_DIR_DOCS[@]}"; do
-      [ -f "$REPO_ROOT/$doc" ] && has_docs_candidates=1
-    done
-    if [ "$has_docs_candidates" -eq 0 ]; then
-      # No docs/ and no docs that need it — that's fine
-      :
-    fi
-  fi
-
   if [ "$found" -eq 0 ]; then
     echo "STATUS: pass"
     echo "FINDINGS:"
