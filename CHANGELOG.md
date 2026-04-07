@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-04-06
+
+### Changed
+- `/roadmap` triage now presents each TODO one-by-one instead of clustering by area. Each item gets its own AskUserQuestion with full description and git provenance (when introduced, which PR). Removes smart batching logic that forced extra round-trips to drill into clusters.
+
 ## [0.8.1] - 2026-04-06
 
 ### Changed
