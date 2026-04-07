@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.3] - 2026-04-06
+
+### Added
+- Opinionated doc location check in `/roadmap` audit: root docs (README, CHANGELOG, CLAUDE.md, VERSION, LICENSE) stay in root, everything else (TODOS, ROADMAP, PROGRESS, designs, archive) belongs in docs/. Flags misplaced files as advisory findings. Suggests creating docs/ when it doesn't exist.
+- Archive candidate detection: flags design docs in `docs/designs/` that reference a shipped version (version <= current VERSION) as candidates for archiving to `docs/archive/`.
+- `semver_lte()` function in shared semver library for version comparison.
+- 12 new tests for doc location and archive candidate checks (48 total).
+
+### Changed
+- Documentation Taxonomy table now includes a Location column showing where each doc should live.
+- Duplicate doc detection messages updated from "pick one location" to "should be in docs/ only" for consistency with new location opinions.
+
 ## [0.8.2] - 2026-04-06
 
 ### Changed

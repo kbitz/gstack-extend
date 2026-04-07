@@ -84,6 +84,11 @@ Present the findings as a summary to the user. For each check that failed:
   `/document-release` first if there are many stale items.
 - **VERSION failures:** Report mismatches and invalid versions.
 - **TAXONOMY failures:** Report missing or duplicate docs.
+- **DOC_LOCATION failures:** Report docs in wrong locations. Suggest moving them to the
+  correct location (root for repo conventions, docs/ for project artifacts). If docs/
+  doesn't exist yet, suggest creating it.
+- **ARCHIVE_CANDIDATES failures:** Report design docs in docs/designs/ that reference a
+  shipped version. Suggest moving them to docs/archive/.
 - **DEPENDENCIES failures:** Report broken track references.
 - **UNPROCESSED found:** Report the number of items awaiting triage.
 
@@ -446,17 +451,28 @@ Commit with message: `docs: restructure roadmap (Groups > Tracks > Tasks)`
 
 ## Documentation Taxonomy Reference
 
-This skill enforces these doc ownership boundaries:
+This skill enforces these doc ownership and location boundaries:
 
-| Doc | Purpose | Owned by |
-|-----|---------|----------|
-| TODOS.md | "Inbox" -- unprocessed items from other skills | /pair-review, /investigate (write), /roadmap (drain) |
-| ROADMAP.md | "Execution plan" -- Groups > Tracks > Tasks | /roadmap (owns structure) |
-| PROGRESS.md | "Where we are" -- append-only version history, phase status | /roadmap (structure), /document-release (content) |
-| CHANGELOG.md | "What users get" -- user-facing release notes | /document-release only |
-| docs/plan.md | "Where we're going" -- product vision | Manual / /office-hours |
-| docs/designs/*.md | "Why we chose this" -- architecture decisions | /office-hours |
-| VERSION | SemVer source of truth | /roadmap (recommends), /ship (executes) |
+| Doc | Location | Purpose | Owned by |
+|-----|----------|---------|----------|
+| README.md | root | Repo landing page | Manual |
+| CHANGELOG.md | root | User-facing release notes | /document-release only |
+| CLAUDE.md | root | Claude Code instructions | Manual / /claude-md-management |
+| VERSION | root | SemVer source of truth | /roadmap (recommends), /ship (executes) |
+| LICENSE | root | License file | Manual |
+| TODOS.md | docs/ | "Inbox" -- unprocessed items | /pair-review, /investigate (write), /roadmap (drain) |
+| ROADMAP.md | docs/ | "Execution plan" -- Groups > Tracks > Tasks | /roadmap (owns structure) |
+| PROGRESS.md | docs/ | "Where we are" -- version history, phase status | /roadmap (structure), /document-release (content) |
+| docs/designs/*.md | docs/designs/ | Architecture decisions | /office-hours |
+| docs/archive/*.md | docs/archive/ | Completed/superseded designs | /roadmap (recommends archiving) |
+
+**Location rule:** Root is for repo conventions that tools and platforms expect there
+(GitHub renders README, Claude Code reads CLAUDE.md, etc.). Everything else lives in
+docs/. The audit flags misplaced docs as advisory findings.
+
+**Archiving rule:** Design docs in `docs/designs/` whose referenced version has shipped
+(version <= current VERSION) are candidates for archiving. Move them to `docs/archive/`.
+The audit flags these automatically. Archiving keeps designs/ focused on active work.
 
 **Data flow:** Skills write to TODOS.md (inbox) -> /roadmap triages (keep/kill + phase
 assignment), then writes current-phase items to ROADMAP.md (structured plan) and future
