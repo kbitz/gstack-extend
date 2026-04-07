@@ -2,7 +2,7 @@
 #
 # test-roadmap-audit.sh — Test suite for bin/roadmap-audit
 #
-# Tests all 6 audit checks with fixture repos.
+# Tests all 8 audit checks with fixture repos.
 #
 # Usage:
 #   ./scripts/test-roadmap-audit.sh [--verbose]
@@ -538,6 +538,182 @@ if echo "$OUTPUT" | grep -q "PROGRESS.md: missing"; then
   pass "Missing PROGRESS.md detected"
 else
   fail "Missing PROGRESS.md detected"
+fi
+
+# ─── doc location tests ──────────────────────────────────────
+
+echo ""
+echo "=== doc_location ==="
+
+# Docs in correct locations (TODOS in docs/, README in root)
+DIR=$(create_fixture "loc-correct")
+mkdir -p "$DIR/docs"
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+echo "# README" > "$DIR/README.md"
+echo "# Progress" > "$DIR/docs/PROGRESS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+LOC_STATUS=$(section_status "$OUTPUT" "DOC_LOCATION")
+if echo "$LOC_STATUS" | grep -q "pass"; then
+  pass "Correct doc locations passes"
+else
+  fail "Correct doc locations passes" "$LOC_STATUS"
+fi
+
+# TODOS.md in root with docs/ existing
+DIR=$(create_fixture "loc-todos-root")
+mkdir -p "$DIR/docs"
+echo "# TODOs" > "$DIR/TODOS.md"
+echo "# Progress" > "$DIR/docs/PROGRESS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "TODOS.md is in root.*should be in docs/"; then
+  pass "TODOS.md in root with docs/ flagged"
+else
+  fail "TODOS.md in root with docs/ flagged"
+fi
+
+# PROGRESS.md in root with docs/ existing
+DIR=$(create_fixture "loc-progress-root")
+mkdir -p "$DIR/docs"
+echo "# Progress" > "$DIR/PROGRESS.md"
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "PROGRESS.md is in root.*should be in docs/"; then
+  pass "PROGRESS.md in root with docs/ flagged"
+else
+  fail "PROGRESS.md in root with docs/ flagged"
+fi
+
+# TODOS.md in root, no docs/ directory
+DIR=$(create_fixture "loc-no-docs-dir")
+echo "# TODOs" > "$DIR/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "TODOS.md is in root.*consider creating docs/"; then
+  pass "TODOS.md in root without docs/ suggests creating it"
+else
+  fail "TODOS.md in root without docs/ suggests creating it"
+fi
+
+# README.md only in docs/ (wrong direction)
+DIR=$(create_fixture "loc-readme-wrong")
+mkdir -p "$DIR/docs"
+echo "# README" > "$DIR/docs/README.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "README.md is in docs/.*should be in root"; then
+  pass "README.md in docs/ flagged as wrong direction"
+else
+  fail "README.md in docs/ flagged as wrong direction"
+fi
+
+# No misplaced docs at all (empty repo)
+DIR=$(create_fixture "loc-empty")
+OUTPUT=$(run_audit "$DIR")
+LOC_STATUS=$(section_status "$OUTPUT" "DOC_LOCATION")
+if echo "$LOC_STATUS" | grep -q "pass"; then
+  pass "No docs at all passes location check"
+else
+  fail "No docs at all passes location check" "$LOC_STATUS"
+fi
+
+# ─── archive candidate tests ────────────────────────────────
+
+echo ""
+echo "=== archive_candidates ==="
+
+# No docs/designs/ directory
+DIR=$(create_fixture "arch-no-designs")
+echo "# TODOs" > "$DIR/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+ARCH_STATUS=$(section_status "$OUTPUT" "ARCHIVE_CANDIDATES")
+if echo "$ARCH_STATUS" | grep -q "pass"; then
+  pass "No docs/designs/ passes archive check"
+else
+  fail "No docs/designs/ passes archive check" "$ARCH_STATUS"
+fi
+
+# Design doc referencing shipped version
+DIR=$(create_fixture "arch-shipped")
+echo "0.5.0" > "$DIR/VERSION"
+mkdir -p "$DIR/docs/designs"
+cat > "$DIR/docs/designs/old-feature.md" << 'EOF'
+# Old Feature Design
+Shipped in v0.3.0
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "old-feature.md.*candidate for archiving"; then
+  pass "Shipped design doc flagged as archive candidate"
+else
+  fail "Shipped design doc flagged as archive candidate"
+fi
+
+# Design doc referencing future version
+DIR=$(create_fixture "arch-future")
+echo "0.5.0" > "$DIR/VERSION"
+mkdir -p "$DIR/docs/designs"
+cat > "$DIR/docs/designs/future-feature.md" << 'EOF'
+# Future Feature Design
+Planned for v1.0.0
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+ARCH_STATUS=$(section_status "$OUTPUT" "ARCHIVE_CANDIDATES")
+if echo "$ARCH_STATUS" | grep -q "pass"; then
+  pass "Future design doc not flagged"
+else
+  fail "Future design doc not flagged" "$ARCH_STATUS"
+fi
+
+# Design doc with no version reference
+DIR=$(create_fixture "arch-no-ver")
+echo "0.5.0" > "$DIR/VERSION"
+mkdir -p "$DIR/docs/designs"
+cat > "$DIR/docs/designs/vague.md" << 'EOF'
+# Some Design
+No version mentioned here.
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+ARCH_STATUS=$(section_status "$OUTPUT" "ARCHIVE_CANDIDATES")
+if echo "$ARCH_STATUS" | grep -q "pass"; then
+  pass "Design doc without version reference not flagged"
+else
+  fail "Design doc without version reference not flagged" "$ARCH_STATUS"
+fi
+
+# ─── updated taxonomy duplicate message test ─────────────────
+
+echo ""
+echo "=== taxonomy_updated_messages ==="
+
+# Duplicate TODOS.md should recommend docs/
+DIR=$(create_fixture "tax-dup-opinionated")
+echo "# TODOs" > "$DIR/TODOS.md"
+mkdir -p "$DIR/docs"
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+echo "# Roadmap" > "$DIR/ROADMAP.md"
+echo "# Progress" > "$DIR/PROGRESS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "TODOS.md exists in both.*should be in docs/ only"; then
+  pass "Duplicate TODOS.md recommends docs/"
+else
+  fail "Duplicate TODOS.md recommends docs/"
 fi
 
 # ─── dependency tests ─────────────────────────────────────────

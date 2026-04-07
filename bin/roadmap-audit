@@ -2,7 +2,8 @@
 # gstack-extend roadmap-audit — deterministic doc audit for /roadmap skill.
 #
 # Scans TODOS.md, PROGRESS.md, VERSION, and CHANGELOG.md for vocabulary drift,
-# structural violations, stale items, version mismatches, and taxonomy issues.
+# structural violations, stale items, version mismatches, taxonomy issues,
+# doc location opinions, and archive candidates.
 #
 # Output: structured report to stdout with ## CHECK_NAME / STATUS / FINDINGS.
 #
@@ -444,15 +445,15 @@ check_taxonomy() {
 
   # Check for duplicate docs (both root and docs/)
   if [ -f "$REPO_ROOT/TODOS.md" ] && [ -f "$REPO_ROOT/docs/TODOS.md" ]; then
-    findings="${findings}- TODOS.md exists in both root and docs/ — pick one location\n"
+    findings="${findings}- TODOS.md exists in both root and docs/ — should be in docs/ only\n"
     found=1
   fi
   if [ -f "$REPO_ROOT/ROADMAP.md" ] && [ -f "$REPO_ROOT/docs/ROADMAP.md" ]; then
-    findings="${findings}- ROADMAP.md exists in both root and docs/ — pick one location\n"
+    findings="${findings}- ROADMAP.md exists in both root and docs/ — should be in docs/ only\n"
     found=1
   fi
   if [ -f "$REPO_ROOT/PROGRESS.md" ] && [ -f "$REPO_ROOT/docs/PROGRESS.md" ]; then
-    findings="${findings}- PROGRESS.md exists in both root and docs/ — pick one location\n"
+    findings="${findings}- PROGRESS.md exists in both root and docs/ — should be in docs/ only\n"
     found=1
   fi
 
@@ -487,7 +488,129 @@ check_taxonomy() {
   echo ""
 }
 
-# ─── Check 6: Dependency Integrity ───────────────────────────
+# ─── Check 6: Doc Location ──────────────────────────────────
+#
+# Opinionated check: which docs belong in root vs docs/.
+#
+#   Root (repo conventions):  README.md, CHANGELOG.md, CLAUDE.md, VERSION, LICENSE
+#   docs/ (project artifacts): TODOS.md, ROADMAP.md, PROGRESS.md, designs/, archive/
+#
+
+# Docs that should live in root (tools/platforms expect them there)
+ROOT_DOCS=("README.md" "CHANGELOG.md" "CLAUDE.md" "VERSION" "LICENSE" "LICENSE.md")
+# Docs that should live in docs/
+DOCS_DIR_DOCS=("TODOS.md" "ROADMAP.md" "PROGRESS.md")
+
+check_doc_location() {
+  echo "## DOC_LOCATION"
+  local findings=""
+  local found=0
+
+  # Check if docs/ directory exists
+  local has_docs_dir=0
+  [ -d "$REPO_ROOT/docs" ] && has_docs_dir=1
+
+  # Check docs/-destined files that are in root instead
+  for doc in "${DOCS_DIR_DOCS[@]}"; do
+    if [ -f "$REPO_ROOT/$doc" ] && [ ! -f "$REPO_ROOT/docs/$doc" ]; then
+      if [ "$has_docs_dir" -eq 1 ]; then
+        findings="${findings}- ${doc} is in root — should be in docs/\n"
+        found=1
+      else
+        findings="${findings}- ${doc} is in root — consider creating docs/ and moving it there\n"
+        found=1
+      fi
+    fi
+  done
+
+  # Check root-destined files that are only in docs/ (wrong direction)
+  for doc in "${ROOT_DOCS[@]}"; do
+    if [ -f "$REPO_ROOT/docs/$doc" ] && [ ! -f "$REPO_ROOT/$doc" ]; then
+      findings="${findings}- ${doc} is in docs/ — should be in root (tools/platforms expect it there)\n"
+      found=1
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 7: Archive Candidates ────────────────────────────
+#
+# Flags design docs in docs/designs/ that reference a version
+# that has already shipped (version <= current VERSION).
+# These are candidates for archiving to docs/archive/.
+#
+
+check_archive_candidates() {
+  echo "## ARCHIVE_CANDIDATES"
+  local findings=""
+  local found=0
+
+  # Need VERSION to compare against
+  if [ ! -f "$VERSION_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No VERSION file — cannot detect archive candidates"
+    echo ""
+    return
+  fi
+
+  local current_ver
+  current_ver=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+
+  # Need docs/designs/ to scan
+  if [ ! -d "$REPO_ROOT/docs/designs" ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+    echo ""
+    return
+  fi
+
+  # Scan each design doc for version references
+  for design_file in "$REPO_ROOT"/docs/designs/*.md; do
+    [ -f "$design_file" ] || continue
+    local basename
+    basename=$(basename "$design_file")
+
+    # Extract version references (e.g., v0.3.0, v1.0.0, 0.5.0)
+    local doc_ver
+    doc_ver=$(grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' "$design_file" 2>/dev/null | head -1 | sed 's/^v//' || true)
+
+    if [ -z "$doc_ver" ]; then
+      # No version reference — skip this doc
+      continue
+    fi
+
+    # Compare: if doc version <= current version, it's a candidate for archiving
+    if semver_lte "$doc_ver" "$current_ver"; then
+      findings="${findings}- docs/designs/${basename} references v${doc_ver} (current: v${current_ver}) — candidate for archiving to docs/archive/\n"
+      found=1
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check 8: Dependency Integrity ───────────────────────────
 
 check_dependencies() {
   echo "## DEPENDENCIES"
@@ -648,6 +771,8 @@ check_structure
 check_staleness
 check_version
 check_taxonomy
+check_doc_location
+check_archive_candidates
 check_dependencies
 check_unprocessed
 detect_mode
