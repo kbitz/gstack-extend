@@ -17,3 +17,11 @@ version_gt() {
   done
   return 1  # equal
 }
+
+# semver_lte returns 0 if $1 <= $2, 1 otherwise.
+semver_lte() {
+  if version_gt "$1" "$2"; then
+    return 1
+  fi
+  return 0
+}
