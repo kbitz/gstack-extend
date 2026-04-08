@@ -3,7 +3,7 @@
 #
 # Scans TODOS.md, PROGRESS.md, VERSION, and CHANGELOG.md for vocabulary drift,
 # structural violations, stale items, version mismatches, taxonomy issues,
-# doc location opinions, and archive candidates.
+# doc location opinions, archive candidates, and scattered TODOs.
 #
 # Output: structured report to stdout with ## CHECK_NAME / STATUS / FINDINGS.
 #
@@ -30,6 +30,101 @@ find_doc() {
   elif [ -f "$REPO_ROOT/docs/$name" ]; then
     echo "$REPO_ROOT/docs/$name"
   fi
+}
+
+# find_scannable_md_files
+# Find all .md files eligible for TODO scanning (maxdepth 2).
+# Excludes: known doc types (ROOT_DOCS, DOCS_DIR_DOCS), archived docs.
+# Prints one absolute path per line.
+find_scannable_md_files() {
+  local -a exclude_names=()
+  # Combine ROOT_DOCS + DOCS_DIR_DOCS into exclude list
+  for doc in "${ROOT_DOCS[@]}"; do exclude_names+=("$doc"); done
+  for doc in "${DOCS_DIR_DOCS[@]}"; do exclude_names+=("$doc"); done
+
+  find "$REPO_ROOT" -maxdepth 2 -name '*.md' -type f \
+    -not -path '*/node_modules/*' \
+    -not -path '*/.git/*' \
+    -not -path '*/vendor/*' \
+    -not -path '*/docs/archive/*' \
+    -not -path '*/.context/*' \
+    2>/dev/null | while IFS= read -r filepath; do
+      local basename
+      basename=$(basename "$filepath")
+      local skip=0
+      for excluded in "${exclude_names[@]}"; do
+        if [ "$basename" = "$excluded" ]; then
+          skip=1
+          break
+        fi
+      done
+      if [ "$skip" -eq 0 ]; then
+        echo "$filepath"
+      fi
+    done
+}
+
+# count_todo_patterns <filepath>
+# Count TODO-like patterns in a file, excluding fenced code blocks.
+# Patterns: checkboxes, TODO:/FIXME:/HACK:/XXX:, section headings
+# (## TODO, ## Tasks, ## Action Items, ## Backlog), and bold+effort markers.
+count_todo_patterns() {
+  local filepath="$1"
+  local count=0
+  local in_code_block=0
+  local fence_len=0
+  local fence_char=""
+
+  while IFS= read -r line; do
+    # Handle fenced code blocks: track fence char and count for nesting.
+    # Supports both backtick (```) and tilde (~~~) fences.
+    # A fence opens with N chars; only closes with >= N of the SAME char.
+    local fence_match=""
+    fence_match=$(echo "$line" | grep -oE '^\s*(`{3,}|~{3,})' 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -n "$fence_match" ]; then
+      local fm_len=${#fence_match}
+      local fm_char="${fence_match:0:1}"
+      if [ "$in_code_block" -eq 0 ]; then
+        in_code_block=1
+        fence_len=$fm_len
+        fence_char="$fm_char"
+      elif [ "$fm_char" = "$fence_char" ] && [ "$fm_len" -ge "$fence_len" ]; then
+        in_code_block=0
+        fence_len=0
+        fence_char=""
+      fi
+      continue
+    fi
+
+    # Skip lines inside code blocks
+    if [ "$in_code_block" -eq 1 ]; then
+      continue
+    fi
+
+    # Check for TODO-like patterns
+    # 1. Checkboxes: - [ ] or - [x]
+    if echo "$line" | grep -qE '^[[:space:]]*- \[[ xX]\]' 2>/dev/null; then
+      count=$((count + 1))
+      continue
+    fi
+    # 2. Inline markers: TODO:, FIXME:, HACK:, XXX:
+    if echo "$line" | grep -qE '\b(TODO|FIXME|HACK|XXX):' 2>/dev/null; then
+      count=$((count + 1))
+      continue
+    fi
+    # 3. Section headings: ## TODO, ## Tasks, ## Action Items, ## Backlog
+    if echo "$line" | grep -qiE '^#{1,3} (TODO|Tasks|Action Items|Backlog)' 2>/dev/null; then
+      count=$((count + 1))
+      continue
+    fi
+    # 4. Bold task title + effort marker at end: - **...** ... (S|M|L|XL)
+    if echo "$line" | grep -qE '^[[:space:]]*- \*\*.*\*\*.*\((S|M|L|XL)\)[[:space:]]*$' 2>/dev/null; then
+      count=$((count + 1))
+      continue
+    fi
+  done < "$filepath"
+
+  echo "$count"
 }
 
 TODOS_FILE=$(find_doc "TODOS.md")
@@ -764,6 +859,102 @@ detect_mode() {
   echo ""
 }
 
+# ─── Check 9: Doc Inventory ──────────────────────────────────
+#
+# Lists all .md files found in the repo with TODO-pattern counts
+# and whether they are a known doc type. Informational output
+# consumed by the skill prompt for Step 1.5 (Doc Discovery).
+#
+
+check_doc_inventory() {
+  echo "## DOC_INVENTORY"
+  local file_count=0
+  local files_output=""
+
+  # Known doc types for labeling
+  local -A known_types=()
+  for doc in "${ROOT_DOCS[@]}"; do known_types["$doc"]="root doc"; done
+  for doc in "${DOCS_DIR_DOCS[@]}"; do known_types["$doc"]="project doc"; done
+
+  # Scan all .md files (including known ones, for inventory)
+  while IFS= read -r filepath; do
+    [ -z "$filepath" ] && continue
+    local basename
+    basename=$(basename "$filepath")
+    local relpath="${filepath#$REPO_ROOT/}"
+
+    local todo_count
+    todo_count=$(count_todo_patterns "$filepath")
+
+    local doc_type="unknown"
+    if [ -n "${known_types[$basename]+x}" ]; then
+      doc_type="${known_types[$basename]}"
+    elif echo "$filepath" | grep -q '/docs/designs/' 2>/dev/null; then
+      doc_type="design doc"
+    elif echo "$filepath" | grep -q '/docs/archive/' 2>/dev/null; then
+      doc_type="archived doc"
+    fi
+
+    files_output="${files_output}- ${relpath}: ${todo_count} TODO patterns (${doc_type})\n"
+    file_count=$((file_count + 1))
+  done < <(find "$REPO_ROOT" -maxdepth 2 -name '*.md' -type f \
+    -not -path '*/node_modules/*' \
+    -not -path '*/.git/*' \
+    -not -path '*/vendor/*' \
+    -not -path '*/docs/archive/*' \
+    -not -path '*/.context/*' \
+    2>/dev/null | sort)
+
+  echo "STATUS: info"
+  echo "FILES:"
+  if [ "$file_count" -gt 0 ]; then
+    echo -e "$files_output"
+  else
+    echo "- (none)"
+  fi
+  echo "TOTAL_FILES: $file_count"
+  echo ""
+}
+
+# ─── Check 10: Scattered TODOs ──────────────────────────────
+#
+# Flags non-standard .md files that contain TODO-like patterns.
+# These are candidates for extraction by the skill prompt.
+#
+
+check_scattered_todos() {
+  echo "## SCATTERED_TODOS"
+  local findings=""
+  local found=0
+  local total_scattered=0
+
+  while IFS= read -r filepath; do
+    [ -z "$filepath" ] && continue
+    local relpath="${filepath#$REPO_ROOT/}"
+
+    local todo_count
+    todo_count=$(count_todo_patterns "$filepath")
+
+    if [ "$todo_count" -gt 0 ]; then
+      findings="${findings}- ${relpath}: ${todo_count} items\n"
+      total_scattered=$((total_scattered + todo_count))
+      found=1
+    fi
+  done < <(find_scannable_md_files)
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: found"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo "TOTAL_SCATTERED: $total_scattered"
+  echo ""
+}
+
 # ─── Run all checks ──────────────────────────────────────────
 
 check_vocab_lint
@@ -774,5 +965,7 @@ check_taxonomy
 check_doc_location
 check_archive_candidates
 check_dependencies
+check_doc_inventory
+check_scattered_todos
 check_unprocessed
 detect_mode
