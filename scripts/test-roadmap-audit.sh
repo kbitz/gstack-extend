@@ -922,6 +922,299 @@ else
   fail "Triage mode detected (Future-only roadmap)" "$MODE_LINE"
 fi
 
+# ─── scattered_todos tests ──────────────────────────────────
+
+echo ""
+echo "=== scattered_todos ==="
+
+# No non-standard .md files (only known docs)
+DIR=$(create_fixture "scatter-none")
+echo "# README" > "$DIR/README.md"
+echo "# TODOs" > "$DIR/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "No non-standard .md files passes scattered check"
+else
+  fail "No non-standard .md files passes scattered check" "$SCATTER_STATUS"
+fi
+
+# plan.md with TODO patterns
+DIR=$(create_fixture "scatter-found")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Feature Plan
+
+## Tasks
+
+- [ ] Add keyboard navigation
+- [ ] Fix crash on startup
+- **Refactor auth flow** -- Clean up token handling. _auth.ts._ (S)
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "found"; then
+  pass "plan.md with TODO patterns detected"
+else
+  fail "plan.md with TODO patterns detected" "$SCATTER_STATUS"
+fi
+# Verify count (## Tasks heading + 2 checkboxes + 1 effort marker = 4)
+if echo "$OUTPUT" | grep -q "docs/plan.md: 4 items"; then
+  pass "Correct TODO pattern count in plan.md (4)"
+else
+  fail "Correct TODO pattern count in plan.md" "$(echo "$OUTPUT" | grep 'docs/plan.md')"
+fi
+
+# plan.md with no TODO patterns
+DIR=$(create_fixture "scatter-clean")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Feature Plan
+
+This is a narrative document about our feature goals.
+We want to improve performance and user experience.
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "plan.md with no TODO patterns passes"
+else
+  fail "plan.md with no TODO patterns passes" "$SCATTER_STATUS"
+fi
+
+# Multiple files with scattered TODOs
+DIR=$(create_fixture "scatter-multi")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Plan
+- [ ] First item
+- [ ] Second item
+EOF
+cat > "$DIR/docs/notes.md" << 'EOF'
+# Notes
+TODO: fix the login bug
+FIXME: memory leak in parser
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "TOTAL_SCATTERED: 4"; then
+  pass "Multiple files: correct total scattered count (4)"
+else
+  fail "Multiple files: correct total scattered count" "$(echo "$OUTPUT" | grep 'TOTAL_SCATTERED')"
+fi
+
+# Excluded files not scanned (CHANGELOG.md with TODO:)
+DIR=$(create_fixture "scatter-excluded")
+cat > "$DIR/CHANGELOG.md" << 'EOF'
+## 0.1.0
+- TODO: update this section later
+- Added feature
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "CHANGELOG.md with TODO: not scanned (excluded)"
+else
+  fail "CHANGELOG.md with TODO: not scanned" "$SCATTER_STATUS"
+fi
+
+# Files in docs/archive/ not scanned
+DIR=$(create_fixture "scatter-archive")
+mkdir -p "$DIR/docs/archive"
+cat > "$DIR/docs/archive/old-design.md" << 'EOF'
+# Old Design
+- [ ] This was never done
+TODO: cleanup
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "docs/archive/ files not scanned"
+else
+  fail "docs/archive/ files not scanned" "$SCATTER_STATUS"
+fi
+
+# TODO patterns inside code blocks not counted
+DIR=$(create_fixture "scatter-codeblock")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/guide.md" << 'MDEOF'
+# Developer Guide
+
+Here is an example:
+
+```bash
+# TODO: this is just a code example, not a real TODO
+echo "hello"
+```
+
+This line is outside the code block.
+MDEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "TODO inside code block not counted"
+else
+  fail "TODO inside code block not counted" "$SCATTER_STATUS"
+fi
+
+# Checked-off [x] items still flagged
+DIR=$(create_fixture "scatter-checked")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Plan
+- [x] Completed item
+- [x] Another completed item
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "found"; then
+  pass "Checked-off [x] items still flagged"
+else
+  fail "Checked-off [x] items still flagged" "$SCATTER_STATUS"
+fi
+if echo "$OUTPUT" | grep -q "docs/plan.md: 2 items"; then
+  pass "Checked-off [x] items: correct count (2)"
+else
+  fail "Checked-off [x] items: correct count" "$(echo "$OUTPUT" | grep 'docs/plan.md')"
+fi
+
+# Nested code blocks (``` inside ```)
+DIR=$(create_fixture "scatter-nested-fence")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/guide.md" << 'MDEOF'
+# Guide
+
+````markdown
+```bash
+TODO: this is inside nested code block
+```
+````
+
+TODO: this is outside and should be counted
+MDEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+# Should find exactly 1 (only the one outside)
+if echo "$OUTPUT" | grep -q "docs/guide.md: 1 items"; then
+  pass "Nested code blocks handled correctly"
+else
+  fail "Nested code blocks handled correctly" "$(echo "$OUTPUT" | grep 'docs/guide.md')"
+fi
+
+# Mixed pattern file (checkboxes + TODO: + ## Tasks heading)
+DIR=$(create_fixture "scatter-mixed")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Feature Plan
+
+## Tasks
+
+- [ ] Add dark mode
+- [ ] Fix mobile layout
+TODO: investigate performance regression
+HACK: workaround for API bug
+- **Add caching layer** -- Redis integration. _cache.ts._ (M)
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+# ## Tasks heading (1) + 2 checkboxes + TODO: (1) + HACK: (1) + effort marker (1) = 6
+if echo "$OUTPUT" | grep -q "docs/plan.md: 6 items"; then
+  pass "Mixed pattern file: correct total (6)"
+else
+  fail "Mixed pattern file: correct total" "$(echo "$OUTPUT" | grep 'docs/plan.md')"
+fi
+
+# PROGRESS.md with TODO: markers (excluded, should not be scanned)
+DIR=$(create_fixture "scatter-progress-excluded")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/PROGRESS.md" << 'EOF'
+# Progress
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | TODO: fill in later |
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+SCATTER_STATUS=$(section_status "$OUTPUT" "SCATTERED_TODOS")
+if echo "$SCATTER_STATUS" | grep -q "pass"; then
+  pass "PROGRESS.md with TODO: not scanned (excluded)"
+else
+  fail "PROGRESS.md with TODO: not scanned" "$SCATTER_STATUS"
+fi
+
+# ─── doc_inventory tests ──────────────────────────────────────
+
+echo ""
+echo "=== doc_inventory ==="
+
+# Standard docs only
+DIR=$(create_fixture "inv-standard")
+echo "# README" > "$DIR/README.md"
+echo "# TODOs" > "$DIR/TODOS.md"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "DOC_INVENTORY"; then
+  pass "Doc inventory section present"
+else
+  fail "Doc inventory section present"
+fi
+# Should list README.md and TODOS.md (and VERSION dummy)
+if echo "$OUTPUT" | grep -q "TOTAL_FILES:"; then
+  pass "Doc inventory reports total file count"
+else
+  fail "Doc inventory reports total file count"
+fi
+
+# Non-standard .md files listed with counts
+DIR=$(create_fixture "inv-nonstandard")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/plan.md" << 'EOF'
+# Plan
+- [ ] A checkbox item
+TODO: do the thing
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "docs" --quiet
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "docs/plan.md:.*(unknown)"; then
+  pass "Non-standard .md file listed as unknown type"
+else
+  fail "Non-standard .md file listed as unknown type" "$(echo "$OUTPUT" | grep 'plan.md')"
+fi
+
+# Empty repo (no .md files besides what create_fixture makes)
+DIR=$(create_fixture "inv-empty")
+rm -f "$DIR/dummy.txt"
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "cleanup" --quiet
+OUTPUT=$(run_audit "$DIR")
+# Only VERSION exists (not .md), should have minimal files
+if echo "$OUTPUT" | grep -q "DOC_INVENTORY"; then
+  pass "Doc inventory works on minimal repo"
+else
+  fail "Doc inventory works on minimal repo"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""
