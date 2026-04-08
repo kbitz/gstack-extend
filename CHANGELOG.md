@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.4] - 2026-04-07
+
+### Added
+- Full doc discovery in `/roadmap`: scans all .md files for scattered TODOs (checkboxes, TODO:/FIXME:/HACK:/XXX: markers, section headings, effort markers), extracts actionable items, deduplicates against existing TODOS.md/ROADMAP.md, and merges confirmed items with `[discovered:<filepath>]` provenance tags.
+- Doc reclassification offers: after extracting TODOs from a file like plan.md, offers to rewrite the remaining content as a properly-named spec in docs/designs/, delete just the TODO sections, or leave as-is with drift detection.
+- Doc inventory audit check: lists all .md files with TODO-pattern counts and doc type classification.
+- Scattered TODOs audit check: flags non-standard .md files containing TODO-like patterns.
+- Shared `find_scannable_md_files()` helper with proper exclusion list (known docs, archive, .context, node_modules, vendor).
+- `count_todo_patterns()` with fenced code block exclusion supporting both backtick and tilde fences, including nested fence handling.
+- 17 new tests for doc discovery checks (65 total).
+
 ## [0.8.3] - 2026-04-06
 
 ### Added

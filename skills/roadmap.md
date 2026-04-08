@@ -1,8 +1,10 @@
 ---
 name: roadmap
 description: |
-  Documentation restructuring skill. Reorganizes TODOS.md into Groups > Tracks > Tasks
-  with dependency-chain ordering and file-ownership grouping for parallel agent execution.
+  Documentation restructuring skill. Discovers scattered TODOs across ALL project docs,
+  extracts and deduplicates them, reorganizes into Groups > Tracks > Tasks with
+  dependency-chain ordering and file-ownership grouping for parallel agent execution.
+  Offers to reclassify misnamed docs (e.g., plan.md that is really a spec).
   Audits versioning, validates doc taxonomy, and recommends version bumps.
   Use when asked to "restructure TODOs", "clean up the roadmap", "reorganize backlog",
   "tidy up docs", or after a big batch of work that generated many new TODOs.
@@ -62,6 +64,9 @@ ordering, and file-ownership grouping. Audits versioning and doc taxonomy.
 **HARD GATE:** This skill produces documentation changes ONLY. Never modify source code,
 configs, or CI files. The only files this skill writes to are ROADMAP.md, TODOS.md
 (to drain the inbox), PROGRESS.md, and (indirectly via recommendation) VERSION.
+During doc discovery (Step 1.5), the skill may also: create spec files in docs/designs/
+(user-approved reclassification), edit or delete source docs that had TODOs extracted
+(user-approved cleanup). All file modifications require explicit user approval.
 
 **File ownership:**
 - **TODOS.md** = inbox. Other skills write here (pair-review, investigate, manual). /roadmap reads and drains it.
@@ -110,6 +115,110 @@ Use AskUserQuestion to confirm which violations to address. Options:
 - A) Fix all violations (recommended)
 - B) Fix selected violations (let me choose)
 - C) Skip audit findings, go straight to triage
+
+## Step 1.5: Doc Discovery
+
+**Only runs when:** The audit's `SCATTERED_TODOS` section has `STATUS: found`.
+If `STATUS: pass`, skip this step entirely (silent).
+
+This step discovers TODOs scattered in non-standard docs (e.g., plan.md, notes.md),
+extracts them, deduplicates against existing items, and merges them into the triage
+pipeline. It also offers to reclassify docs whose content has drifted from their name.
+
+**Framing:** This is a one-time cleanup tool, not an ongoing vacuum. If the project
+was already cleaned up and new scattered items appear, frame as: "Found new scattered
+items since last cleanup. Want to clean up?"
+
+### Step 1.5a: Read flagged files
+
+For each file listed in the `SCATTERED_TODOS` findings, read the full content.
+Also read the `DOC_INVENTORY` section for context on the full doc landscape.
+
+### Step 1.5b: Extract and confirm actionable items
+
+For each flagged file, use semantic understanding to identify genuine actionable items
+(not narrative context, not code examples, not completed items). Present each extracted
+item one-by-one via AskUserQuestion:
+
+```
+**Discovered in docs/plan.md (line ~23):**
+"Add keyboard navigation for message list"
+
+Incorporate into roadmap or ignore?
+```
+
+Options: ["Incorporate", "Ignore"]
+
+Work through all items across all flagged files before proceeding to dedup.
+
+### Step 1.5c: Dedup against existing items
+
+For each item marked "Incorporate" in 1.5b, compare semantically against:
+- All items in TODOS.md (both Unprocessed and any other sections)
+- All tasks in ROADMAP.md (if it exists)
+
+**Strategy:** Conservative. Default to "keep both" when uncertain. Only flag as
+duplicate when the meaning is clearly the same, even if wording differs.
+
+If a potential duplicate is found, present via AskUserQuestion:
+
+```
+**Potential duplicate:**
+  Discovered: "Add keyboard navigation" (from docs/plan.md)
+  Existing:   "Cmd+Arrow page navigation" (ROADMAP.md Track 2A)
+  Same item?
+```
+
+Options: ["Yes, skip the discovered item", "No, keep both"]
+
+### Step 1.5d: Merge confirmed items
+
+Append all confirmed non-duplicate items to the `## Unprocessed` section of TODOS.md
+with the `[discovered:<filepath>]` source tag. The filepath is relative to repo root.
+
+Example entry:
+```
+- [discovered:docs/plan.md] Add keyboard navigation for message list
+```
+
+These items will be picked up by the normal Step 2 triage (keep/kill + phase assignment).
+No additional user interaction needed for this step.
+
+### Step 1.5e: Doc reclassification (PRIMARY RESOLUTION)
+
+After all items have been extracted and merged, assess each source file that had
+items extracted. Read the remaining content (after mentally removing the extracted
+items) and determine whether the file's content matches its name.
+
+For each source file, offer reclassification via AskUserQuestion:
+
+```
+**Doc reclassification: docs/plan.md**
+
+After extracting 7 TODOs, the remaining content is mostly requirements and
+acceptance criteria. This looks like a spec, not a plan.
+
+What would you like to do?
+```
+
+Options:
+- A) Rewrite as docs/designs/feature-spec.md (clean spec, TODOs already in TODOS.md)
+- B) Delete just the TODO sections from plan.md (keep narrative, remove extracted items)
+- C) Leave as-is (drift will be detected on next run)
+
+**If A chosen:** Generate the spec content from the remaining non-TODO material in the
+source file. Present the generated content for user approval before writing. Create
+the file in docs/designs/ (create the directory if needed). Delete the original file
+after the spec is written.
+
+**If B chosen:** Edit the source file to remove the sections/lines that contained the
+extracted TODOs. Keep all narrative, requirements, and other non-TODO content.
+
+**If C chosen:** Leave the file unchanged. The scattered TODOs audit will flag it again
+on the next /roadmap run (drift detection).
+
+Reclassification is the load-bearing step. It removes scattered TODOs from the source,
+preventing re-discovery loops on future runs.
 
 ## Step 2: Triage
 
@@ -376,6 +485,7 @@ Use the source tag as a signal:
 - `[pair-review]` items are usually bugs, likely belong in a bug-fix group/track
 - `[manual]` items are feature requests or improvements, classify by area
 - `[investigate]` items are usually bugs found during debugging
+- `[discovered:<filepath>]` items were extracted from scattered docs, classify by content
 
 **Step 3d: Propose triage.** Present the proposed placement of each item via
 AskUserQuestion:
@@ -444,8 +554,12 @@ Stage only documentation files:
 - ROADMAP.md (structured execution plan)
 - TODOS.md (cleaned inbox)
 - PROGRESS.md (if modified)
+- Any files created/modified by Step 1.5 doc reclassification (docs/designs/*.md)
+- Any source files deleted by Step 1.5 cleanup (git rm)
 
 Commit with message: `docs: restructure roadmap (Groups > Tracks > Tasks)`
+
+If Step 1.5 made doc changes, use: `docs: discover scattered TODOs and restructure roadmap`
 
 **Never stage VERSION, CHANGELOG.md, or any code files.**
 
@@ -474,7 +588,12 @@ docs/. The audit flags misplaced docs as advisory findings.
 (version <= current VERSION) are candidates for archiving. Move them to `docs/archive/`.
 The audit flags these automatically. Archiving keeps designs/ focused on active work.
 
-**Data flow:** Skills write to TODOS.md (inbox) -> /roadmap triages (keep/kill + phase
-assignment), then writes current-phase items to ROADMAP.md (structured plan) and future
-items to ROADMAP.md's Future section -> /document-release prunes completed items from
-ROADMAP.md.
+**Data flow:** Skills write to TODOS.md (inbox) -> /roadmap discovers scattered TODOs
+in other docs (Step 1.5) and merges them into TODOS.md with `[discovered:<filepath>]`
+tags -> triages all items (keep/kill + phase assignment) -> writes current-phase items
+to ROADMAP.md (structured plan) and future items to ROADMAP.md's Future section ->
+/document-release prunes completed items from ROADMAP.md.
+
+**Source tags:** Items in TODOS.md carry provenance tags: `[pair-review]`, `[manual]`,
+`[investigate]`, `[full-review]`, `[discovered:<filepath>]`. The `discovered` tag
+includes the source file path for traceability (e.g., `[discovered:docs/plan.md]`).
