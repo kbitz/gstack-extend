@@ -6,8 +6,11 @@ description: |
   dependency-chain ordering and file-ownership grouping for parallel agent execution.
   Offers to reclassify misnamed docs (e.g., plan.md that is really a spec).
   Audits versioning, validates doc taxonomy, and recommends version bumps.
+  Subcommands: `/roadmap` (full overhaul or triage), `/roadmap update` (incremental
+  refresh — process new TODOs, clean completed tasks, update progress).
   Use when asked to "restructure TODOs", "clean up the roadmap", "reorganize backlog",
-  "tidy up docs", or after a big batch of work that generated many new TODOs.
+  "tidy up docs", "update the roadmap", or after a big batch of work that generated
+  many new TODOs.
   Proactively suggest when TODOS.md has grown significantly or structure looks stale.
   Works for any project type.
 allowed-tools:
@@ -61,6 +64,19 @@ Handle responses the same way as /pair-review (see pair-review.md inline upgrade
 Restructures TODOS.md into a clean execution plan with consistent vocabulary, dependency
 ordering, and file-ownership grouping. Audits versioning and doc taxonomy.
 
+## Subcommands
+
+Parse the invocation arguments to determine the subcommand:
+
+- **`/roadmap`** (no argument) — Auto-detect mode: overhaul (no structure) or triage
+  (structure exists, process unprocessed items only). This is the existing behavior.
+- **`/roadmap update`** — Incremental refresh mode. For when the roadmap structure is
+  already good but needs freshening: process any new unprocessed items, scan for
+  completed/stale tasks, and update PROGRESS.md.
+  Does NOT exit early when the Unprocessed section is empty.
+
+If no argument is provided, auto-detect as before (overhaul or triage).
+
 **HARD GATE:** This skill produces documentation changes ONLY. Never modify source code,
 configs, or CI files. The only files this skill writes to are ROADMAP.md, TODOS.md
 (to drain the inbox), PROGRESS.md, and (indirectly via recommendation) VERSION.
@@ -101,6 +117,12 @@ Present the findings as a summary to the user. For each check that failed:
 
 The audit outputs a `## MODE` section with `DETECTED: overhaul` or `DETECTED: triage`.
 
+**If the `update` subcommand was used:** Force **update mode** regardless of what the
+audit detects. Skip the overhaul/triage auto-detection. Update mode always runs the
+full pipeline (audit → triage if items exist → freshness scan → progress update).
+It never exits early.
+
+**Otherwise (no subcommand):**
 - **Overhaul mode** (no Groups > Tracks structure): Full restructure of the entire TODOS.md.
   Every item gets reorganized from scratch.
 - **Triage mode** (valid structure exists): Process only the `## Unprocessed` section.
@@ -233,6 +255,9 @@ Read the items to triage:
   every item gets triaged).
 - **Triage mode:** ONLY items in the `## Unprocessed` section of TODOS.md. Items
   already organized in ROADMAP.md are NOT re-triaged.
+- **Update mode:** Same as triage mode — process only `## Unprocessed` items. If the
+  Unprocessed section is empty, skip Step 2 and Step 3 entirely and proceed to
+  Step 3.5 (Freshness Scan). Update mode never exits early.
 
 **Auto-suggest kills:** Before presenting the keep/kill table, check for items that
 are likely dead:
@@ -517,6 +542,83 @@ Options:
 - B) Revise (specify which sections)
 - C) Revert to original
 
+## Step 3.5: Freshness Scan (update mode only)
+
+**Only runs when:** The `update` subcommand was used. Skip this step entirely for
+overhaul and triage modes.
+
+This step checks ROADMAP.md tasks against git reality to find completed, stale, or
+unblocked work. The goal is to keep the roadmap reflecting what's actually true.
+
+### Step 3.5a: Detect completed tasks
+
+For each task in ROADMAP.md (including Pre-flight items):
+1. Extract file paths from the task description. Paths appear in two formats:
+   - Italic metadata: `_[setup, bin/update-run], ~15 lines._ (S)` — extract from brackets
+   - Backtick-quoted: `` `path/to/file` `` — extract from backticks
+   Skip entries that are clearly not file paths (flags like `--skills-dir`, URLs, commands).
+2. For each valid file path, run `git log --oneline --since="4 weeks ago" -- <file-path>`
+   to check for recent commits touching that file.
+3. If 2+ commits have landed on a task's files, flag it as **potentially done**. A single
+   commit is not enough (could be an unrelated refactor).
+
+Also check for tasks whose referenced files no longer exist (`git ls-files` check).
+These are likely done or obsoleted.
+
+### Step 3.5b: Detect unblocked tasks
+
+For each task or track with a "Depends on" or "blocked" annotation:
+1. Check whether the blocker condition has changed (e.g., a referenced PR merged,
+   a repo went public, a version was bumped).
+2. If the blocker appears resolved, flag the task as **potentially unblocked**.
+
+### Step 3.5c: Present findings
+
+Present all findings via AskUserQuestion. Group by type:
+
+```
+**Freshness scan results:**
+
+Potentially completed:
+  1. "Setup custom dir flag" — 3 commits on [setup] in last 2 weeks
+  2. "Replace gist URL" — bin/update-check rewritten in abc1234
+
+Potentially unblocked:
+  3. Track 2A: Raw GitHub Migration — repo is now public
+
+No changes detected:
+  4 tasks unchanged
+```
+
+For each flagged item, options:
+- **Completed items:** ["Mark done (remove from roadmap)", "Still in progress"]
+- **Unblocked items:** ["Remove blocker annotation", "Still blocked"]
+
+### Step 3.5d: Apply changes
+
+Remove completed tasks from ROADMAP.md. Update track metadata (task counts, effort
+estimates). Remove resolved blocker annotations. If an entire Track is completed,
+remove the Track. If an entire Group is completed, remove the Group and renumber
+subsequent groups. When renumbering, also update all "Depends on" and "blocked"
+annotations that reference the old group/track identifiers (e.g., "Track 3A" becomes
+"Track 2A" if Group 2 was removed).
+
+If removals changed the Execution Map, regenerate it.
+
+### Step 3.5e: Approval
+
+Present the modified ROADMAP.md for final approval via AskUserQuestion:
+
+```
+Freshness scan applied: removed N tasks, M tracks, K groups.
+[Summary of what was removed and what was renumbered]
+```
+
+Options:
+- A) Approve changes
+- B) Revise (specify which removals to undo)
+- C) Revert all freshness scan changes
+
 ## Step 4: Update PROGRESS.md
 
 Check if a version was bumped since the last PROGRESS.md entry.
@@ -557,9 +659,15 @@ Stage only documentation files:
 - Any files created/modified by Step 1.5 doc reclassification (docs/designs/*.md)
 - Any source files deleted by Step 1.5 cleanup (git rm)
 
-Commit with message: `docs: restructure roadmap (Groups > Tracks > Tasks)`
+Commit message by mode:
+- **Overhaul:** `docs: restructure roadmap (Groups > Tracks > Tasks)`
+- **Triage:** `docs: triage unprocessed items into roadmap`
+- **Update:** `docs: refresh roadmap (freshness scan + triage)`
 
-If Step 1.5 made doc changes, use: `docs: discover scattered TODOs and restructure roadmap`
+If Step 1.5 made doc changes, replace the mode-specific message with:
+- **Overhaul:** `docs: discover scattered TODOs and restructure roadmap`
+- **Triage:** `docs: discover scattered TODOs and triage into roadmap`
+- **Update:** `docs: discover scattered TODOs and refresh roadmap`
 
 **Never stage VERSION, CHANGELOG.md, or any code files.**
 

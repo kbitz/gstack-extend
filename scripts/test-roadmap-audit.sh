@@ -509,6 +509,66 @@ else
   fail "Missing tags flagged"
 fi
 
+# PROGRESS_LATEST picks highest version regardless of table order (oldest-first)
+DIR=$(create_fixture "ver-progress-oldest-first")
+echo "# TODOs" > "$DIR/TODOS.md"
+echo "0.4.11" > "$DIR/VERSION"
+cat > "$DIR/PROGRESS.md" << 'EOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+| 0.2.0 | 2026-01-15 | Feature |
+| 0.4.11 | 2026-03-01 | Latest |
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "PROGRESS_LATEST: 0.4.11"; then
+  pass "PROGRESS_LATEST picks highest version (oldest-first table)"
+else
+  fail "PROGRESS_LATEST picks highest version (oldest-first table)" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
+fi
+
+# PROGRESS_LATEST picks highest version (newest-first table)
+DIR=$(create_fixture "ver-progress-newest-first")
+echo "# TODOs" > "$DIR/TODOS.md"
+echo "0.8.4" > "$DIR/VERSION"
+cat > "$DIR/PROGRESS.md" << 'EOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.8.4 | 2026-04-07 | Latest |
+| 0.7.0 | 2026-04-06 | Older |
+| 0.1.0 | 2026-03-24 | Init |
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "PROGRESS_LATEST: 0.8.4"; then
+  pass "PROGRESS_LATEST picks highest version (newest-first table)"
+else
+  fail "PROGRESS_LATEST picks highest version (newest-first table)" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
+fi
+
+# PROGRESS_LATEST excludes four-segment versions (invalid SemVer)
+DIR=$(create_fixture "ver-progress-four-seg")
+echo "# TODOs" > "$DIR/TODOS.md"
+echo "0.8.4" > "$DIR/VERSION"
+cat > "$DIR/PROGRESS.md" << 'EOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.8.4 | 2026-04-07 | Latest valid |
+| 0.8.4.1 | 2026-04-08 | Invalid four-seg |
+| 0.7.0 | 2026-04-06 | Older |
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "PROGRESS_LATEST: 0.8.4"; then
+  pass "PROGRESS_LATEST excludes four-segment versions"
+else
+  fail "PROGRESS_LATEST excludes four-segment versions" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
+fi
+# Also verify the four-segment lint still fires
+if echo "$OUTPUT" | grep -q "four-segment version"; then
+  pass "Four-segment version in PROGRESS still flagged"
+else
+  fail "Four-segment version in PROGRESS still flagged"
+fi
+
 # ─── taxonomy tests ───────────────────────────────────────────
 
 echo ""
