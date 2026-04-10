@@ -66,4 +66,5 @@ Key routing rules:
 - Code quality, health check → invoke health
 - Manual testing, "give me a test list", pair test → invoke pair-review
 - Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap
+- Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
