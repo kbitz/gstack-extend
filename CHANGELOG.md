@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.5] - 2026-04-10
+
+### Added
+- `/roadmap update` subcommand: incremental refresh mode that processes new unprocessed items, scans ROADMAP.md tasks against git reality for completed and unblocked work, and updates PROGRESS.md. Never exits early when the Unprocessed section is empty.
+- Freshness scan (Step 3.5): detects potentially completed tasks via recent git commits on referenced files, detects unblocked tasks when blocker conditions resolve, presents findings for user confirmation before modifying ROADMAP.md.
+- Mode-specific commit messages for overhaul, triage, and update modes.
+- 4 new tests for PROGRESS_LATEST version parsing (69 total).
+
+### Fixed
+- PROGRESS_LATEST parsing bug: was using `head -1` which returned the first table row regardless of order. Now uses semver comparison to find the highest version, independent of table ordering.
+- Four-segment versions (invalid SemVer) in PROGRESS.md are now excluded from PROGRESS_LATEST output while still being flagged as lint findings.
+
 ## [0.8.4] - 2026-04-07
 
 ### Added
