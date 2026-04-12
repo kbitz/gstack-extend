@@ -1275,6 +1275,303 @@ else
   fail "Doc inventory works on minimal repo"
 fi
 
+# ─── task_list ─────────────────────────────────────────────────
+
+echo ""
+echo "=== task_list ==="
+
+# Standard ROADMAP.md with 2 groups, 3 tracks, 5 tasks
+DIR=$(create_fixture "tasklist-standard")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap — Pre-1.0 (v0.x)
+
+## Group 1: Foundation
+
+### Track 1A: Core Setup
+_2 tasks . ~1 day . low risk . [setup]_
+
+- **Init system** -- Initialize the system. _[setup], ~20 lines._ (S)
+- **Config loader** -- Load configuration. _[config.sh], ~30 lines._ (M)
+
+---
+
+## Group 2: Features
+
+### Track 2A: User Flow
+_1 task . ~2 days . medium risk . [lib/user.sh]_
+
+- **Add user creation** -- Create users. _[lib/user.sh], ~50 lines._ (M)
+
+### Track 2B: Admin Flow
+_2 tasks . ~1 day . low risk . [lib/admin.sh]_
+
+- **Admin dashboard** -- Build dashboard. _[lib/admin.sh], ~40 lines._ (L)
+- **Admin permissions** -- Set permissions. _[lib/admin.sh], ~20 lines._ (S)
+
+---
+
+## Execution Map
+
+```
+Group 1 → Group 2
+```
+
+## Future (Phase 1.x+)
+
+- **API v2** — Next gen API. _Deferred because: not needed yet. L effort._
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "TOTAL_TASKS: 6"; then
+  pass "Task list: correct total count (6)"
+else
+  fail "Task list: correct total count (6)" "$(echo "$OUTPUT" | grep TOTAL_TASKS)"
+fi
+
+if echo "$OUTPUT" | grep -q "TOTAL_CURRENT: 5"; then
+  pass "Task list: correct current count (5)"
+else
+  fail "Task list: correct current count (5)" "$(echo "$OUTPUT" | grep TOTAL_CURRENT)"
+fi
+
+if echo "$OUTPUT" | grep -q "TOTAL_FUTURE: 1"; then
+  pass "Task list: correct future count (1)"
+else
+  fail "Task list: correct future count (1)" "$(echo "$OUTPUT" | grep TOTAL_FUTURE)"
+fi
+
+if echo "$OUTPUT" | grep -q 'TASK: group=1|track=1A|title=Init system|effort=S|files=setup'; then
+  pass "Task list: correct task parsing (group, track, title, effort, files)"
+else
+  fail "Task list: correct task parsing" "$(echo "$OUTPUT" | grep 'Init system')"
+fi
+
+if echo "$OUTPUT" | grep -q 'TASK: group=future|track=none|title=API v2'; then
+  pass "Task list: future items extracted"
+else
+  fail "Task list: future items extracted" "$(echo "$OUTPUT" | grep 'API v2')"
+fi
+
+# ROADMAP.md with Pre-flight section
+DIR=$(create_fixture "tasklist-preflight")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Group 1: Setup
+
+**Pre-flight** (any agent, <30 min):
+- Fix typo in README
+- Update version constant
+
+### Track 1A: Core
+_1 task . ~1 day . low risk . [core.sh]_
+
+- **Build core** -- Build the core. _[core.sh], ~100 lines._ (M)
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "TOTAL_TASKS: 3"; then
+  pass "Task list: pre-flight items counted (3 total)"
+else
+  fail "Task list: pre-flight items counted" "$(echo "$OUTPUT" | grep TOTAL_TASKS)"
+fi
+
+if echo "$OUTPUT" | grep -q 'TASK: group=1|track=preflight|title=Fix typo in README|effort=S'; then
+  pass "Task list: pre-flight task parsed correctly"
+else
+  fail "Task list: pre-flight task parsed correctly" "$(echo "$OUTPUT" | grep 'preflight')"
+fi
+
+# Empty ROADMAP.md (no groups)
+DIR=$(create_fixture "tasklist-empty")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Future
+
+- **Someday** — maybe. _Deferred because: not now._
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "TOTAL_CURRENT: 0"; then
+  pass "Task list: future-only roadmap has 0 current tasks"
+else
+  fail "Task list: future-only roadmap has 0 current tasks" "$(echo "$OUTPUT" | grep TOTAL_CURRENT)"
+fi
+
+# No ROADMAP.md at all
+DIR=$(create_fixture "tasklist-none")
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "## TASK_LIST" && echo "$OUTPUT" | grep -q "STATUS: skip"; then
+  pass "Task list: missing ROADMAP.md skips gracefully"
+else
+  fail "Task list: missing ROADMAP.md skips gracefully"
+fi
+
+# ─── structural_fitness ─────────────────────────────────────────
+
+echo ""
+echo "=== structural_fitness ==="
+
+# Balanced groups (3 tasks each)
+DIR=$(create_fixture "fitness-balanced")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Group 1: Alpha
+
+### Track 1A: Core
+_3 tasks . ~1 day . low risk . [a.sh]_
+
+- **Task A1** -- desc. _[a.sh]._ (S)
+- **Task A2** -- desc. _[a.sh]._ (S)
+- **Task A3** -- desc. _[a.sh]._ (S)
+
+## Group 2: Beta
+
+### Track 2A: Core
+_3 tasks . ~1 day . low risk . [b.sh]_
+
+- **Task B1** -- desc. _[b.sh]._ (S)
+- **Task B2** -- desc. _[b.sh]._ (S)
+- **Task B3** -- desc. _[b.sh]._ (S)
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "IMBALANCE_RATIO: 1.00"; then
+  pass "Structural fitness: balanced groups ratio 1.00"
+else
+  fail "Structural fitness: balanced groups ratio 1.00" "$(echo "$OUTPUT" | grep IMBALANCE)"
+fi
+
+if echo "$OUTPUT" | grep -q "GROUP_COUNT: 2"; then
+  pass "Structural fitness: correct group count"
+else
+  fail "Structural fitness: correct group count" "$(echo "$OUTPUT" | grep GROUP_COUNT)"
+fi
+
+# Lopsided groups (8 vs 2)
+DIR=$(create_fixture "fitness-lopsided")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Group 1: Heavy
+
+### Track 1A: Lots
+_8 tasks . ~5 days . high risk . [heavy.sh]_
+
+- **T1** -- d. _[h.sh]._ (S)
+- **T2** -- d. _[h.sh]._ (S)
+- **T3** -- d. _[h.sh]._ (S)
+- **T4** -- d. _[h.sh]._ (S)
+- **T5** -- d. _[h.sh]._ (S)
+- **T6** -- d. _[h.sh]._ (S)
+- **T7** -- d. _[h.sh]._ (S)
+- **T8** -- d. _[h.sh]._ (S)
+
+## Group 2: Light
+
+### Track 2A: Few
+_2 tasks . ~1 day . low risk . [light.sh]_
+
+- **L1** -- d. _[l.sh]._ (S)
+- **L2** -- d. _[l.sh]._ (S)
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "IMBALANCE_RATIO: 4.00"; then
+  pass "Structural fitness: lopsided groups ratio 4.00"
+else
+  fail "Structural fitness: lopsided groups ratio 4.00" "$(echo "$OUTPUT" | grep IMBALANCE)"
+fi
+
+if echo "$OUTPUT" | grep -q "GROUP_SIZES: 1=8,2=2"; then
+  pass "Structural fitness: correct group sizes"
+else
+  fail "Structural fitness: correct group sizes" "$(echo "$OUTPUT" | grep GROUP_SIZES)"
+fi
+
+# Single group (no imbalance ratio)
+DIR=$(create_fixture "fitness-single")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Group 1: Only
+
+### Track 1A: Solo
+_2 tasks . ~1 day . low risk . [solo.sh]_
+
+- **S1** -- d. _[s.sh]._ (S)
+- **S2** -- d. _[s.sh]._ (S)
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "GROUP_COUNT: 1" && ! echo "$OUTPUT" | grep -q "IMBALANCE_RATIO"; then
+  pass "Structural fitness: single group, no imbalance ratio"
+else
+  fail "Structural fitness: single group, no imbalance ratio" "$(echo "$OUTPUT" | grep -E 'GROUP_COUNT|IMBALANCE')"
+fi
+
+# No groups (future-only)
+DIR=$(create_fixture "fitness-future")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'ROADMAPEOF'
+# Roadmap
+
+## Future
+
+- **Someday** — maybe.
+
+## Unprocessed
+
+ROADMAPEOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "add roadmap" --quiet
+OUTPUT=$(run_audit "$DIR")
+
+if echo "$OUTPUT" | grep -q "GROUP_COUNT: 0"; then
+  pass "Structural fitness: future-only has 0 groups"
+else
+  fail "Structural fitness: future-only has 0 groups" "$(echo "$OUTPUT" | grep GROUP_COUNT)"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""

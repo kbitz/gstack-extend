@@ -504,11 +504,16 @@ Before classifying items into existing Groups/Tracks, step back and assess wheth
 current structure still fits. Read the FULL existing ROADMAP.md (all Groups, Tracks,
 tasks, dependencies) alongside the new current-phase items.
 
-Consider:
+Use the `STRUCTURAL_FITNESS` section from the Step 1 audit output as concrete data:
+- `GROUP_SIZES` shows tasks per group (e.g., `1=3,2=2`)
+- `IMBALANCE_RATIO` shows max/min group size ratio (>2.0 = lopsided)
+- `TRACK_SIZES` shows tasks per track
+
+Consider these criteria alongside the audit data:
 - Do the new items cluster around a theme that doesn't match any existing Group?
 - Would any new item logically block or precede work in an earlier Group?
 - Has the project's focus shifted since the roadmap was last structured?
-- Are existing Groups now lopsided (one Group has 10 tasks, another has 1)?
+- Are existing Groups lopsided? (Check `IMBALANCE_RATIO` — >3.0 is a strong signal)
 - Do the existing Group names still describe what's actually in them?
 
 If the structure still fits: say so briefly and proceed to Step 3c (classify items into
@@ -524,9 +529,10 @@ Options:
 - B) Slot into existing structure — keep current Groups/Tracks, classify new items into them
 
 If the user chooses A (Reorganize):
-1. Extract ALL tasks from existing ROADMAP.md: every task from every Group, Track, and
-   Pre-flight section. Preserve the full task format including the italic metadata line
-   (files, effort, size estimate).
+1. Read the `TASK_LIST` section from the Step 1 audit output. This is the deterministic
+   list of all existing tasks (group, track, title, effort, files). Use it as ground
+   truth — do not re-parse ROADMAP.md manually. For each TASK line, read the full task
+   description from ROADMAP.md to preserve context beyond the structured fields.
 2. Combine extracted tasks with the new current-phase items from Step 3b.
 3. Also include items from the Future section. Re-triage them: if the project's focus
    has shifted, some Future items may now belong in the current phase. Present any
