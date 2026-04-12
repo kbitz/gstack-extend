@@ -870,7 +870,277 @@ detect_mode() {
   echo ""
 }
 
-# ─── Check 9: Doc Inventory ──────────────────────────────────
+# ─── Check 9: Task List ─────────────────────────────────────
+#
+# Parses ROADMAP.md and outputs a structured list of all tasks.
+# Used by the skill prompt during reorg to avoid LLM-based extraction.
+# Output: one TASK line per task with group, track, title, effort, files.
+#
+
+check_task_list() {
+  echo "## TASK_LIST"
+
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  if [ -z "$roadmap" ]; then
+    echo "STATUS: skip"
+    echo "TOTAL_TASKS: 0"
+    echo "TOTAL_CURRENT: 0"
+    echo "TOTAL_FUTURE: 0"
+    echo ""
+    return
+  fi
+
+  local section="none"
+  local group_num=""
+  local track_id=""
+  local total_tasks=0
+  local total_current=0
+  local total_future=0
+  local in_preflight=0
+
+  echo "STATUS: info"
+
+  while IFS= read -r line; do
+    # Group heading: ## Group N: Name
+    if echo "$line" | grep -qE '^## Group [0-9]+:'; then
+      group_num=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
+      section="group"
+      in_preflight=0
+      track_id=""
+      continue
+    fi
+
+    # Pre-flight heading
+    if echo "$line" | grep -qiE '^\*\*Pre-flight\*\*'; then
+      in_preflight=1
+      track_id="preflight"
+      section="preflight"
+      continue
+    fi
+
+    # Track heading: ### Track NA: Name
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
+      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+      section="track"
+      in_preflight=0
+      continue
+    fi
+
+    # Future section
+    if echo "$line" | grep -qiE '^## Future'; then
+      section="future"
+      group_num="future"
+      track_id="none"
+      in_preflight=0
+      continue
+    fi
+
+    # Unprocessed section — stop parsing
+    if echo "$line" | grep -qiE '^## Unprocessed'; then
+      break
+    fi
+
+    # Execution Map section — skip (not tasks)
+    if echo "$line" | grep -qiE '^## Execution Map'; then
+      section="skip"
+      continue
+    fi
+
+    # Any other ## heading — reset section
+    if echo "$line" | grep -qE '^## '; then
+      section="none"
+      continue
+    fi
+
+    # Skip if we're in a non-task section
+    if [ "$section" = "none" ] || [ "$section" = "skip" ]; then
+      continue
+    fi
+
+    # Task line: starts with - ** (bold title)
+    if echo "$line" | grep -qE '^- \*\*'; then
+      local title effort files
+
+      # Extract title: first **...** segment
+      title=$(echo "$line" | sed -E 's/^- \*\*([^*]+)\*\*.*/\1/')
+
+      # Extract effort: trailing (S), (M), (L), (XL)
+      effort=$(echo "$line" | grep -oE '\((S|M|L|XL)\)$' | tr -d '()' || true)
+      [ -z "$effort" ] && effort="?"
+
+      # Extract files: from italic _[files],_ or _[files]._
+      files=$(echo "$line" | sed -nE 's/.*_\[([^]]+)\].*/\1/p')
+      [ -z "$files" ] && files=""
+
+      local g="${group_num:-0}"
+      local t="${track_id:-none}"
+
+      echo "TASK: group=${g}|track=${t}|title=${title}|effort=${effort}|files=${files}"
+      total_tasks=$((total_tasks + 1))
+      if [ "$section" = "future" ]; then
+        total_future=$((total_future + 1))
+      else
+        total_current=$((total_current + 1))
+      fi
+      continue
+    fi
+
+    # Pre-flight task line: starts with - (no bold) in preflight section
+    if [ "$in_preflight" -eq 1 ] && echo "$line" | grep -qE '^- [^*]'; then
+      local title
+      title=$(echo "$line" | sed 's/^- //')
+
+      echo "TASK: group=${group_num:-0}|track=preflight|title=${title}|effort=S|files="
+      total_tasks=$((total_tasks + 1))
+      total_current=$((total_current + 1))
+      continue
+    fi
+
+  done < "$roadmap"
+
+  echo "TOTAL_TASKS: $total_tasks"
+  echo "TOTAL_CURRENT: $total_current"
+  echo "TOTAL_FUTURE: $total_future"
+  echo ""
+}
+
+# ─── Check 10: Structural Fitness ──────────────────────────────
+#
+# Computes structural metrics from ROADMAP.md: tasks per group,
+# tracks per group, imbalance ratio. Informational output consumed
+# by the skill prompt's structural assessment (Step 3-pre).
+#
+
+check_structural_fitness() {
+  echo "## STRUCTURAL_FITNESS"
+
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  if [ -z "$roadmap" ]; then
+    echo "STATUS: skip"
+    echo ""
+    return
+  fi
+
+  local group_count=0
+  local track_count=0
+  local task_count=0
+  local current_group=""
+  local current_track=""
+  local section="none"
+  local in_preflight=0
+
+  # Associative arrays for counting
+  declare -A group_task_counts
+  declare -A track_task_counts
+
+  while IFS= read -r line; do
+    # Group heading
+    if echo "$line" | grep -qE '^## Group [0-9]+:'; then
+      current_group=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
+      group_count=$((group_count + 1))
+      group_task_counts[$current_group]=0
+      section="group"
+      in_preflight=0
+      current_track=""
+      continue
+    fi
+
+    # Track heading
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
+      current_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+      track_count=$((track_count + 1))
+      track_task_counts[$current_track]=0
+      section="track"
+      in_preflight=0
+      continue
+    fi
+
+    # Pre-flight
+    if echo "$line" | grep -qiE '^\*\*Pre-flight\*\*'; then
+      in_preflight=1
+      section="preflight"
+      continue
+    fi
+
+    # Future / Unprocessed / Execution Map — stop counting
+    if echo "$line" | grep -qiE '^## (Future|Unprocessed|Execution Map)'; then
+      break
+    fi
+
+    # Task line (bold title)
+    if [ "$section" != "none" ] && echo "$line" | grep -qE '^- \*\*'; then
+      task_count=$((task_count + 1))
+      if [ -n "$current_group" ]; then
+        group_task_counts[$current_group]=$(( ${group_task_counts[$current_group]:-0} + 1 ))
+      fi
+      if [ "$in_preflight" -eq 0 ] && [ -n "$current_track" ]; then
+        track_task_counts[$current_track]=$(( ${track_task_counts[$current_track]:-0} + 1 ))
+      fi
+      continue
+    fi
+
+    # Pre-flight task (no bold)
+    if [ "$in_preflight" -eq 1 ] && echo "$line" | grep -qE '^- [^*]'; then
+      task_count=$((task_count + 1))
+      if [ -n "$current_group" ]; then
+        group_task_counts[$current_group]=$(( ${group_task_counts[$current_group]:-0} + 1 ))
+      fi
+      continue
+    fi
+
+  done < "$roadmap"
+
+  echo "STATUS: info"
+  echo "GROUP_COUNT: $group_count"
+  echo "TRACK_COUNT: $track_count"
+  echo "TASK_COUNT: $task_count"
+
+  # Group sizes
+  if [ "$group_count" -gt 0 ]; then
+    local sizes=""
+    for g in $(echo "${!group_task_counts[@]}" | tr ' ' '\n' | sort -n); do
+      [ -n "$sizes" ] && sizes="${sizes},"
+      sizes="${sizes}${g}=${group_task_counts[$g]}"
+    done
+    echo "GROUP_SIZES: $sizes"
+
+    # Track sizes
+    if [ "$track_count" -gt 0 ]; then
+      local tsizes=""
+      for t in $(echo "${!track_task_counts[@]}" | tr ' ' '\n' | sort); do
+        [ -n "$tsizes" ] && tsizes="${tsizes},"
+        tsizes="${tsizes}${t}=${track_task_counts[$t]}"
+      done
+      echo "TRACK_SIZES: $tsizes"
+    fi
+
+    # Imbalance ratio (max/min, only if 2+ groups)
+    if [ "$group_count" -ge 2 ]; then
+      local max_size=0
+      local min_size=999999
+      for g in "${!group_task_counts[@]}"; do
+        local s=${group_task_counts[$g]}
+        [ "$s" -gt "$max_size" ] && max_size=$s
+        [ "$s" -lt "$min_size" ] && min_size=$s
+      done
+      if [ "$min_size" -gt 0 ]; then
+        # Bash integer division with 2 decimal places
+        local ratio_int=$((max_size * 100 / min_size))
+        local ratio_whole=$((ratio_int / 100))
+        local ratio_frac=$((ratio_int % 100))
+        printf "IMBALANCE_RATIO: %d.%02d\n" "$ratio_whole" "$ratio_frac"
+      else
+        echo "IMBALANCE_RATIO: inf"
+      fi
+    fi
+  fi
+
+  echo ""
+}
+
+# ─── Check 11: Doc Inventory ─────────────────────────────────
 #
 # Lists all .md files found in the repo with TODO-pattern counts
 # and whether they are a known doc type. Informational output
@@ -927,7 +1197,7 @@ check_doc_inventory() {
   echo ""
 }
 
-# ─── Check 10: Scattered TODOs ──────────────────────────────
+# ─── Check 12: Scattered TODOs ─────────────────────────────
 #
 # Flags non-standard .md files that contain TODO-like patterns.
 # These are candidates for extraction by the skill prompt.
@@ -976,6 +1246,8 @@ check_taxonomy
 check_doc_location
 check_archive_candidates
 check_dependencies
+check_task_list
+check_structural_fitness
 check_doc_inventory
 check_scattered_todos
 check_unprocessed

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.6] - 2026-04-11
+
+### Added
+- Structural assessment step (Step 3-pre) for triage and update modes: before classifying new items into existing Groups/Tracks, the skill now steps back and assesses whether the structure still fits. Offers full reorganization when drift is detected.
+- Post-freshness-scan structural assessment (Step 3.5f): after removing completed tasks, checks if remaining structure is lopsided or broken.
+- Deterministic task extraction (`check_task_list()` in audit script): parses ROADMAP.md into structured TASK lines so reorg uses a reliable task inventory instead of LLM-based extraction.
+- Structural fitness metrics (`check_structural_fitness()` in audit script): computes group/track sizes and imbalance ratio as concrete signals for the structural assessment.
+- Future item re-triage during reorganization: when structural reorganization is approved, Future items are re-evaluated for current-phase promotion.
+- Mode-aware skip instruction after reorg: triage skips to Step 4, update proceeds to freshness scan.
+- Reorg-specific commit messages distinguishing structural reorganization from plain triage.
+- 15 new audit tests (84 total) covering task list parsing and structural fitness computation.
+
+### Fixed
+- Keep/kill step (Step 2a) clarified as overhaul-mode-only. Resolves pre-existing contradiction where triage mode was described as running keep/kill in one place and skipping it in another.
+
 ## [0.8.5] - 2026-04-10
 
 ### Added

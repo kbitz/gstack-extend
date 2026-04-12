@@ -248,16 +248,19 @@ Before organizing anything into Groups > Tracks > Tasks, decide which TODOs to k
 and which phase they belong to. This prevents roadmapping dead weight and keeps the
 execution plan focused on what you're actually doing now.
 
-### Step 2a: Keep or Kill
+### Step 2a: Keep or Kill (overhaul mode only)
 
-Read the items to triage:
-- **Overhaul mode:** ALL items in TODOS.md (building the roadmap from scratch, so
-  every item gets triaged).
-- **Triage mode:** ONLY items in the `## Unprocessed` section of TODOS.md. Items
-  already organized in ROADMAP.md are NOT re-triaged.
-- **Update mode:** Same as triage mode — process only `## Unprocessed` items. If the
-  Unprocessed section is empty, skip Step 2 and Step 3 entirely and proceed to
-  Step 3.5 (Freshness Scan). Update mode never exits early.
+**This step only runs in overhaul mode.** Triage and update modes skip keep/kill
+entirely — inbox items are fresh (just added by /pair-review, /investigate, or
+manually) and don't need keep/kill vetting. Triage/update modes go straight to
+Step 2b (Phase Assignment).
+
+**Update mode early-skip:** If the Unprocessed section is empty in update mode,
+skip Step 2 and Step 3 entirely and proceed to Step 3.5 (Freshness Scan). Update
+mode never exits early.
+
+Read ALL items in TODOS.md (building the roadmap from scratch, so every item gets
+triaged).
 
 **Auto-suggest kills:** Before presenting the keep/kill table, check for items that
 are likely dead:
@@ -485,10 +488,6 @@ This path runs when the audit detects MODE: triage. ROADMAP.md already has a val
 structure (Groups > Tracks, or Future-only). Only the `## Unprocessed` section in
 TODOS.md is processed. Items move from TODOS.md (inbox) into ROADMAP.md.
 
-**Note:** Triage mode does NOT run keep/kill on inbox items. These are fresh items
-just added by /pair-review or /investigate, so they don't need keep/kill triage.
-They only need phase assignment and Group/Track placement.
-
 **Step 3a: Read the Unprocessed section from TODOS.md.** Parse each item, noting its
 source tag (`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
 
@@ -496,6 +495,58 @@ source tag (`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
 item, ask: current phase or future? Items assigned to "future" go directly to the
 `## Future` section in ROADMAP.md. Only current-phase items proceed to Step 3c for
 Group/Track placement.
+
+**Step 3-pre: Structural Assessment (triage and update modes only).** Only runs when
+current-phase items exist from Step 3b. Skip if all items were assigned to Future, or
+if ROADMAP.md has no Groups (future-only — Step 3c will create structure from scratch).
+
+Before classifying items into existing Groups/Tracks, step back and assess whether the
+current structure still fits. Read the FULL existing ROADMAP.md (all Groups, Tracks,
+tasks, dependencies) alongside the new current-phase items.
+
+Use the `STRUCTURAL_FITNESS` section from the Step 1 audit output as concrete data:
+- `GROUP_SIZES` shows tasks per group (e.g., `1=3,2=2`)
+- `IMBALANCE_RATIO` shows max/min group size ratio (>2.0 = lopsided)
+- `TRACK_SIZES` shows tasks per track
+
+Consider these criteria alongside the audit data:
+- Do the new items cluster around a theme that doesn't match any existing Group?
+- Would any new item logically block or precede work in an earlier Group?
+- Has the project's focus shifted since the roadmap was last structured?
+- Are existing Groups lopsided? (Check `IMBALANCE_RATIO` — >3.0 is a strong signal)
+- Do the existing Group names still describe what's actually in them?
+
+If the structure still fits: say so briefly and proceed to Step 3c (classify items into
+existing Groups/Tracks). Do NOT offer reorganization just because you can — only when the
+structure genuinely doesn't serve the project anymore.
+
+If reorganization is warranted: present your reasoning via AskUserQuestion. Explain
+specifically what's wrong with the current structure and what a better one would look
+like. Be concrete — name the Groups you'd create.
+
+Options:
+- A) Reorganize — rebuild Groups/Tracks from all items
+- B) Slot into existing structure — keep current Groups/Tracks, classify new items into them
+
+If the user chooses A (Reorganize):
+1. Read the `TASK_LIST` section from the Step 1 audit output. This is the deterministic
+   list of all existing tasks (group, track, title, effort, files). Use it as ground
+   truth — do not re-parse ROADMAP.md manually. For each TASK line, read the full task
+   description from ROADMAP.md to preserve context beyond the structured fields.
+2. Combine extracted tasks with the new current-phase items from Step 3b.
+3. Also include items from the Future section. Re-triage them: if the project's focus
+   has shifted, some Future items may now belong in the current phase. Present any
+   proposed phase changes via AskUserQuestion before restructuring.
+4. Apply the Overhaul restructuring rules (Vocabulary Rules, Restructuring Rules 1-8,
+   Output Template) to the combined item set. This is a full rebuild of Groups > Tracks
+   > Tasks.
+5. Write the result to ROADMAP.md. Present via the Overhaul approval gate (Approve /
+   Revise / Revert).
+6. After overhaul approval, skip Steps 3c through 3f (those are for incremental triage,
+   not full restructures). If in update mode, proceed to Step 3.5 (Freshness Scan). If
+   in triage mode, skip directly to Step 4 (Update PROGRESS.md).
+
+If the user chooses B: proceed to Step 3c as normal.
 
 **Step 3c: Classify current-phase items against ROADMAP.md.** If ROADMAP.md is
 future-only (no Groups exist), create new Group/Track structure for the current-phase
@@ -619,6 +670,16 @@ Options:
 - B) Revise (specify which removals to undo)
 - C) Revert all freshness scan changes
 
+### Step 3.5f: Post-scan structural assessment
+
+After freshness scan changes are applied, assess whether the remaining structure still
+makes sense. Removals can leave lopsided or empty Groups, orphaned Tracks, or a
+structure that no longer reflects the project's priorities. Apply the same assessment
+criteria as Step 3-pre (theme mismatch, lopsided groups, stale names). If the structure
+looks broken, offer reorganization using the same reorg path as Step 3-pre (extract all
+tasks, re-triage Future items, apply overhaul rules). If the structure looks fine after
+removals, proceed to Step 4.
+
 ## Step 4: Update PROGRESS.md
 
 Check if a version was bumped since the last PROGRESS.md entry.
@@ -662,12 +723,16 @@ Stage only documentation files:
 Commit message by mode:
 - **Overhaul:** `docs: restructure roadmap (Groups > Tracks > Tasks)`
 - **Triage:** `docs: triage unprocessed items into roadmap`
+- **Triage with reorganization:** `docs: reorganize roadmap and triage unprocessed items`
 - **Update:** `docs: refresh roadmap (freshness scan + triage)`
+- **Update with reorganization:** `docs: reorganize roadmap and refresh (freshness scan + triage)`
 
 If Step 1.5 made doc changes, replace the mode-specific message with:
 - **Overhaul:** `docs: discover scattered TODOs and restructure roadmap`
 - **Triage:** `docs: discover scattered TODOs and triage into roadmap`
+- **Triage with reorganization:** `docs: discover scattered TODOs, reorganize roadmap and triage`
 - **Update:** `docs: discover scattered TODOs and refresh roadmap`
+- **Update with reorganization:** `docs: discover scattered TODOs, reorganize roadmap and refresh`
 
 **Never stage VERSION, CHANGELOG.md, or any code files.**
 
