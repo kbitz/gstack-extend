@@ -22,3 +22,25 @@ markers -> inbox, has architecture diagrams -> design doc. Report mismatches
 - **Effort:** M (human: ~2 days / CC: ~20 min)
 - **Priority:** P2
 - **Depends on:** Doc discovery shipping (v0.9.0)
+
+### Deterministic task extraction for reorg safety
+Add a `check_task_list()` function to `bin/roadmap-audit` that parses ROADMAP.md
+and outputs a structured list of all tasks (title, files, effort, group, track).
+The LLM uses this as ground truth during reorg extraction instead of parsing the
+markdown itself, eliminating data loss risk.
+- **Why:** During reorg, the LLM extracts tasks from ROADMAP.md and may miss items.
+  A deterministic parser provides a reliable task list to merge with new items.
+- **Effort:** M (human: ~2 days / CC: ~20 min)
+- **Priority:** P2
+- **Depends on:** Structural assessment step shipping
+
+### Deterministic drift signals for structural assessment
+Add deterministic signals from `bin/roadmap-audit` (group size imbalance, % of
+items needing new tracks, dependency violations) that the LLM reads as context
+for its structural assessment judgment. Not heuristics that make the decision,
+signals that inform it.
+- **Why:** Makes the LLM's structural assessment more consistent across runs.
+  Reduces variance in reorganization recommendations.
+- **Effort:** S (human: ~1 day / CC: ~15 min)
+- **Priority:** P3
+- **Depends on:** Structural assessment step shipping
