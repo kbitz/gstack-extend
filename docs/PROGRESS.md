@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.8.8 | 2026-04-13 | /roadmap triage mode now runs the freshness scan (Step 3.5) before classifying items into groups. Previously, triage slotted new items into potentially-complete groups because the scan was gated to update mode only. Stale/completed tasks are now always cleaned before new items get placed. Early exit no longer skips the freshness check. |
 | 0.8.7 | 2026-04-12 | /pair-review latency optimization: lookahead display (next item preview inline with current), batch mode (3 items at once with "All pass"), PASS/SKIP fast path (cached lookahead + parallel state writes). Reduces perceived wait and actual round-trips. |
 | 0.8.4 | 2026-04-07 | /roadmap doc discovery: scans all .md files for scattered TODOs, extracts actionable items with one-by-one triage, deduplicates against existing TODOS.md/ROADMAP.md, merges with [discovered:filepath] provenance tags, and offers doc reclassification (rewrite as spec, delete TODO sections, or leave with drift detection). Hybrid architecture: deterministic bash audit for discovery, LLM for semantic extraction and dedup. 17 new tests (65 total). |
 | 0.8.1 | 2026-04-06 | /roadmap phase triage step: keep/kill + phase assignment before Group/Track placement. Items triaged to current phase or deferred to Future. Version history audit: removed invalid 0.4.2 (doc-only rename folded into 0.4.1), added missing 0.8.0 CHANGELOG entry. |

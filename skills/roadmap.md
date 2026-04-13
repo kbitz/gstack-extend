@@ -6,8 +6,9 @@ description: |
   dependency-chain ordering and file-ownership grouping for parallel agent execution.
   Offers to reclassify misnamed docs (e.g., plan.md that is really a spec).
   Audits versioning, validates doc taxonomy, and recommends version bumps.
-  Subcommands: `/roadmap` (full overhaul or triage), `/roadmap update` (incremental
-  refresh — process new TODOs, clean completed tasks, update progress).
+  Subcommands: `/roadmap` (full overhaul or triage — triage always freshness-scans
+  first), `/roadmap update` (incremental refresh — forces triage pipeline even when
+  overhaul would normally trigger).
   Use when asked to "restructure TODOs", "clean up the roadmap", "reorganize backlog",
   "tidy up docs", "update the roadmap", or after a big batch of work that generated
   many new TODOs.
@@ -69,11 +70,12 @@ ordering, and file-ownership grouping. Audits versioning and doc taxonomy.
 Parse the invocation arguments to determine the subcommand:
 
 - **`/roadmap`** (no argument) — Auto-detect mode: overhaul (no structure) or triage
-  (structure exists, process unprocessed items only). This is the existing behavior.
+  (structure exists). Triage mode always runs a freshness scan before slotting new
+  items into the existing structure — completed/stale tasks are cleaned first.
 - **`/roadmap update`** — Incremental refresh mode. For when the roadmap structure is
   already good but needs freshening: process any new unprocessed items, scan for
-  completed/stale tasks, and update PROGRESS.md.
-  Does NOT exit early when the Unprocessed section is empty.
+  completed/stale tasks, and update PROGRESS.md. Like triage, always runs the
+  freshness scan first. Does NOT exit early when the Unprocessed section is empty.
 
 If no argument is provided, auto-detect as before (overhaul or triage).
 
@@ -101,8 +103,9 @@ _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
 Present the findings as a summary to the user. For each check that failed:
 - **VOCAB_LINT failures:** List each banned term and its line number.
 - **STRUCTURE failures:** Explain what's wrong with the current organization.
-- **STALENESS failures:** List completed items that should be deleted. Suggest running
-  `/document-release` first if there are many stale items.
+- **STALENESS failures:** List completed items that should be deleted. Note that the
+  freshness scan (Step 3.5) will clean these before triage classification. If there are
+  many stale items, also suggest running `/document-release` first.
 - **VERSION failures:** Report mismatches and invalid versions.
 - **TAXONOMY failures:** Report missing or duplicate docs.
 - **DOC_LOCATION failures:** Report docs in wrong locations. Suggest moving them to the
@@ -119,19 +122,22 @@ The audit outputs a `## MODE` section with `DETECTED: overhaul` or `DETECTED: tr
 
 **If the `update` subcommand was used:** Force **update mode** regardless of what the
 audit detects. Skip the overhaul/triage auto-detection. Update mode always runs the
-full pipeline (audit → triage if items exist → freshness scan → progress update).
+full pipeline (audit → freshness scan → triage if items exist → progress update).
 It never exits early.
 
 **Otherwise (no subcommand):**
 - **Overhaul mode** (no Groups > Tracks structure): Full restructure of the entire TODOS.md.
   Every item gets reorganized from scratch.
-- **Triage mode** (valid structure exists): Process only the `## Unprocessed` section.
-  Move items into existing Groups/Tracks or create new Tracks as needed. Do NOT
-  restructure items that are already organized.
+- **Triage mode** (valid structure exists): Run freshness scan first (Step 3.5) to clean
+  completed/stale items, then process the `## Unprocessed` section. Move items into
+  existing Groups/Tracks or create new Tracks as needed. Do NOT restructure items that
+  are already organized.
 
-If MODE is triage and the Unprocessed section is empty (ITEMS: 0), run a quick
-validation (audit findings only) and exit: "Roadmap looks good. No unprocessed items
-to triage." Do NOT prompt for a full restructure.
+If MODE is triage and the Unprocessed section is empty (ITEMS: 0), still run
+Step 3.5 (Freshness Scan) — completed items must be cleaned even when there's nothing
+new to triage. After the freshness scan, if no changes were made and no items need
+triage, exit: "Roadmap looks good. No unprocessed items and no stale tasks found."
+Do NOT prompt for a full restructure.
 
 Use AskUserQuestion to confirm which violations to address. Options:
 - A) Fix all violations (recommended)
@@ -255,9 +261,9 @@ entirely — inbox items are fresh (just added by /pair-review, /investigate, or
 manually) and don't need keep/kill vetting. Triage/update modes go straight to
 Step 2b (Phase Assignment).
 
-**Update mode early-skip:** If the Unprocessed section is empty in update mode,
-skip Step 2 and Step 3 entirely and proceed to Step 3.5 (Freshness Scan). Update
-mode never exits early.
+**Triage/update mode early-skip:** If the Unprocessed section is empty in triage or
+update mode, skip Step 2 and Step 3 entirely and proceed to Step 3.5 (Freshness
+Scan). Neither triage nor update mode exits before the freshness scan runs.
 
 Read ALL items in TODOS.md (building the roadmap from scratch, so every item gets
 triaged).
@@ -488,6 +494,12 @@ This path runs when the audit detects MODE: triage. ROADMAP.md already has a val
 structure (Groups > Tracks, or Future-only). Only the `## Unprocessed` section in
 TODOS.md is processed. Items move from TODOS.md (inbox) into ROADMAP.md.
 
+**Pre-triage cleanup:** Step 3.5 (Freshness Scan) runs before this point. By the
+time you reach Step 3a, completed/stale tasks have already been removed from
+ROADMAP.md. See Step 3.5 for the full procedure. If for any reason Step 3.5 was
+skipped (e.g., overhaul-to-triage mode switch mid-flow), run it now before
+proceeding.
+
 **Step 3a: Read the Unprocessed section from TODOS.md.** Parse each item, noting its
 source tag (`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
 
@@ -543,8 +555,8 @@ If the user chooses A (Reorganize):
 5. Write the result to ROADMAP.md. Present via the Overhaul approval gate (Approve /
    Revise / Revert).
 6. After overhaul approval, skip Steps 3c through 3f (those are for incremental triage,
-   not full restructures). If in update mode, proceed to Step 3.5 (Freshness Scan). If
-   in triage mode, skip directly to Step 4 (Update PROGRESS.md).
+   not full restructures). Step 3.5 (Freshness Scan) already ran before this point in
+   triage and update modes, so proceed to Step 4 (Update PROGRESS.md).
 
 If the user chooses B: proceed to Step 3c as normal.
 
@@ -593,10 +605,16 @@ Options:
 - B) Revise (specify which sections)
 - C) Revert to original
 
-## Step 3.5: Freshness Scan (update mode only)
+## Step 3.5: Freshness Scan (triage and update modes)
 
-**Only runs when:** The `update` subcommand was used. Skip this step entirely for
-overhaul and triage modes.
+**Runs in triage and update modes.** Skip this step entirely for overhaul mode
+(overhaul rebuilds everything from scratch — staleness is handled by keep/kill in
+Step 2a).
+
+**Sequencing:** This step runs BEFORE Step 3's classification (Steps 3-pre through
+3f). Clean the roadmap before slotting new items into it. In triage mode with an
+empty Unprocessed section, this is the only substantive step — run it, then proceed
+to Step 4. In update mode with an empty Unprocessed section, same behavior.
 
 This step checks ROADMAP.md tasks against git reality to find completed, stale, or
 unblocked work. The goal is to keep the roadmap reflecting what's actually true.
@@ -722,15 +740,15 @@ Stage only documentation files:
 
 Commit message by mode:
 - **Overhaul:** `docs: restructure roadmap (Groups > Tracks > Tasks)`
-- **Triage:** `docs: triage unprocessed items into roadmap`
-- **Triage with reorganization:** `docs: reorganize roadmap and triage unprocessed items`
+- **Triage:** `docs: freshen and triage unprocessed items into roadmap`
+- **Triage with reorganization:** `docs: freshen, reorganize, and triage into roadmap`
 - **Update:** `docs: refresh roadmap (freshness scan + triage)`
 - **Update with reorganization:** `docs: reorganize roadmap and refresh (freshness scan + triage)`
 
 If Step 1.5 made doc changes, replace the mode-specific message with:
 - **Overhaul:** `docs: discover scattered TODOs and restructure roadmap`
-- **Triage:** `docs: discover scattered TODOs and triage into roadmap`
-- **Triage with reorganization:** `docs: discover scattered TODOs, reorganize roadmap and triage`
+- **Triage:** `docs: discover scattered TODOs, freshen and triage into roadmap`
+- **Triage with reorganization:** `docs: discover scattered TODOs, freshen, reorganize and triage`
 - **Update:** `docs: discover scattered TODOs and refresh roadmap`
 - **Update with reorganization:** `docs: discover scattered TODOs, reorganize roadmap and refresh`
 
