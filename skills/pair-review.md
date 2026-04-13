@@ -370,8 +370,12 @@ also identify item N+1 (next UNTESTED after N). Remember both descriptions.
 
 **Fast path (PASS/SKIP):** After a PASS or SKIP, you already know item N+1 from
 the lookahead. Update state and present N+1 **without re-reading the group file**.
-Read ahead to find item N+2 for the new lookahead only when writing the updated
-group file (you already have it open for the edit).
+Read the group file once to identify item N+2 for the new lookahead, then edit it
+to mark item N.
+
+**Compaction fallback:** If you do not have the lookahead cached (e.g., after
+context compaction or session resume), fall back to a full read of the group file
+before presenting the next item. The fast path is an optimization, not a requirement.
 
 ### Present the next item
 
@@ -519,12 +523,20 @@ throughput. This reduces round-trips by 3x for rapid testing sessions.
    session.yaml counts, write both in parallel. Present the next batch (or next
    single item if fewer than 3 remain).
 
-4. **On "Report results"**: Parse the user's free-text response. Map each item to
-   PASS, FAIL (with evidence), or SKIP. For any FAILs, follow the standard FAIL
-   flow (ask "Fix now or continue testing?") after recording all results.
+4. **On "Report results"**: The user clicked a button, so you don't have results yet.
+   Ask a follow-up via AskUserQuestion:
+   - Question: "Enter results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+   - Options: ["Submit"]
+   Parse the user's free-text response. Map each item to PASS, FAIL (with evidence),
+   or SKIP. For any FAILs, follow the standard FAIL flow (ask "Fix now or continue
+   testing?") one at a time in item order after recording all results.
 
 5. **On "Back to single mode"**: Return to single-item presentation with lookahead
    at the next UNTESTED item.
+
+**Minimum threshold:** If fewer than 2 UNTESTED items remain when "Batch: next 3"
+is selected, stay in single-item mode. Tell the user: "Only N item(s) left —
+staying in single mode."
 
 After a batch, if remaining UNTESTED items >= 3, offer another batch. If < 3,
 fall back to single-item presentation with lookahead.
@@ -823,7 +835,7 @@ language to the appropriate action. In practice, users will say things like:
 - "fix it" / "let's fix this" → enter FIX NOW flow
 - "batch" / "give me a few" / "speed up" / "faster" → enter BATCH mode
 - "one at a time" / "slow down" / "single mode" → exit BATCH mode
-- "all pass" / "all good" → PASS all items in current batch
+- "all pass" / "all good" → if in batch mode, PASS all items in current batch; if in single mode, PASS current item
 - "where was I" → RESUME
 - "what's left" → STATUS
 - "done" / "that's everything" → DONE
