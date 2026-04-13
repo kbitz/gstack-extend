@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.8] - 2026-04-13
+
+### Changed
+- /roadmap triage mode now runs the freshness scan (Step 3.5) before classifying items into groups. Previously, triage slotted new items into potentially-complete groups because the freshness scan was gated to `/roadmap update` only. Now stale/completed tasks are always cleaned before new items get placed.
+- Triage mode no longer exits early when the Unprocessed section is empty if stale items need cleaning. The freshness scan runs first, then exits if nothing was found.
+- Update mode pipeline order corrected: audit → freshness scan → triage (was audit → triage → freshness scan).
+
 ## [0.8.7] - 2026-04-12
 
 ### Added
