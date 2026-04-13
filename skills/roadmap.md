@@ -72,10 +72,10 @@ Parse the invocation arguments to determine the subcommand:
 - **`/roadmap`** (no argument) — Auto-detect mode: overhaul (no structure) or triage
   (structure exists). Triage mode always runs a freshness scan before slotting new
   items into the existing structure — completed/stale tasks are cleaned first.
-- **`/roadmap update`** — Incremental refresh mode. Same as triage but forces execution
-  even when the roadmap structure would normally trigger overhaul. Process any new
-  unprocessed items, scan for completed/stale tasks, and update PROGRESS.md.
-  Does NOT exit early when the Unprocessed section is empty.
+- **`/roadmap update`** — Incremental refresh mode. For when the roadmap structure is
+  already good but needs freshening: process any new unprocessed items, scan for
+  completed/stale tasks, and update PROGRESS.md. Like triage, always runs the
+  freshness scan first. Does NOT exit early when the Unprocessed section is empty.
 
 If no argument is provided, auto-detect as before (overhaul or triage).
 
@@ -494,11 +494,11 @@ This path runs when the audit detects MODE: triage. ROADMAP.md already has a val
 structure (Groups > Tracks, or Future-only). Only the `## Unprocessed` section in
 TODOS.md is processed. Items move from TODOS.md (inbox) into ROADMAP.md.
 
-**Pre-triage cleanup:** Before classifying any items, Step 3.5 (Freshness Scan) must
-have already run. This ensures completed/stale tasks are removed from ROADMAP.md
-before new items get slotted into Groups. If Step 3.5 hasn't run yet (e.g., because
-Unprocessed was non-empty and the flow came through Step 2), run it now before
-proceeding to Step 3a. See Step 3.5 for the full freshness scan procedure.
+**Pre-triage cleanup:** Step 3.5 (Freshness Scan) runs before this point. By the
+time you reach Step 3a, completed/stale tasks have already been removed from
+ROADMAP.md. See Step 3.5 for the full procedure. If for any reason Step 3.5 was
+skipped (e.g., overhaul-to-triage mode switch mid-flow), run it now before
+proceeding.
 
 **Step 3a: Read the Unprocessed section from TODOS.md.** Parse each item, noting its
 source tag (`[pair-review]`, `[manual]`, `[investigate]`, etc.) and description.
@@ -740,15 +740,15 @@ Stage only documentation files:
 
 Commit message by mode:
 - **Overhaul:** `docs: restructure roadmap (Groups > Tracks > Tasks)`
-- **Triage:** `docs: triage unprocessed items into roadmap (freshness scan + triage)`
-- **Triage with reorganization:** `docs: reorganize roadmap and triage (freshness scan + triage)`
+- **Triage:** `docs: freshen and triage unprocessed items into roadmap`
+- **Triage with reorganization:** `docs: freshen, reorganize, and triage into roadmap`
 - **Update:** `docs: refresh roadmap (freshness scan + triage)`
 - **Update with reorganization:** `docs: reorganize roadmap and refresh (freshness scan + triage)`
 
 If Step 1.5 made doc changes, replace the mode-specific message with:
 - **Overhaul:** `docs: discover scattered TODOs and restructure roadmap`
-- **Triage:** `docs: discover scattered TODOs, freshness scan, and triage into roadmap`
-- **Triage with reorganization:** `docs: discover scattered TODOs, freshness scan, reorganize and triage`
+- **Triage:** `docs: discover scattered TODOs, freshen and triage into roadmap`
+- **Triage with reorganization:** `docs: discover scattered TODOs, freshen, reorganize and triage`
 - **Update:** `docs: discover scattered TODOs and refresh roadmap`
 - **Update with reorganization:** `docs: discover scattered TODOs, reorganize roadmap and refresh`
 
