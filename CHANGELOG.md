@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.7] - 2026-04-12
+
+### Added
+- Lookahead display in /pair-review Phase 2: every test item now shows a preview of the next item inline (_Next up: N+1. description_), so the user can start testing it immediately while waiting for the agent to process. Reduces perceived wait time to near zero.
+- Batch mode for /pair-review: "Batch: next 3" option presents 3 items at once with "All pass" / "Report results" responses. Cuts round-trips by 3x for rapid testing sessions. Natural language triggers: "batch", "faster", "speed up".
+- Fast path optimization for PASS/SKIP: agent uses cached lookahead data and parallelizes state writes (group file + session.yaml in same turn), avoiding unnecessary re-reads between items.
+
 ## [0.8.6] - 2026-04-11
 
 ### Added

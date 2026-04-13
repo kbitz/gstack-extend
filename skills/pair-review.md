@@ -359,13 +359,35 @@ Write `session.yaml` and each `groups/<name>.md` file. All items start as UNTEST
 
 This is the core loop. For each active group, present items one at a time.
 
+### Lookahead & Fast Path
+
+To minimize wait time between items, **always pre-read the next UNTESTED item**
+when presenting the current one. Show its description inline so the user can
+start testing it immediately — they don't need to wait for the next prompt.
+
+**Lookahead rule:** When reading the group file to find item N (current UNTESTED),
+also identify item N+1 (next UNTESTED after N). Remember both descriptions.
+
+**Fast path (PASS/SKIP):** After a PASS or SKIP, you already know item N+1 from
+the lookahead. Update state and present N+1 **without re-reading the group file**.
+Read the group file once to identify item N+2 for the new lookahead, then edit it
+to mark item N.
+
+**Compaction fallback:** If you do not have the lookahead cached (e.g., after
+context compaction or session resume), fall back to a full read of the group file
+before presenting the next item. The fast path is an optimization, not a requirement.
+
 ### Present the next item
 
 Read the current group file from disk (not from context). Find the first UNTESTED
-item. Present it via AskUserQuestion:
+item (item N). Also find the second UNTESTED item (item N+1) — the lookahead.
+Present via AskUserQuestion:
 
-- **Question:** "[Action receipt if applicable]\n\n**[Group] [N]/[Total]:** [Item description]"
-- **Options:** ["Pass", "Fail", "Skip", "Park a bug", "Add item"]
+- **Question:** "[Action receipt if applicable]\n\n**[Group] [N]/[Total]:** [Item description]\n\n_Next up: [N+1]. [Next item description]_"
+- **Options:** ["Pass", "Fail", "Skip", "Park a bug", "Add item", "Batch: next 3"]
+
+If item N is the last UNTESTED in the group, replace the _Next up:_ line with
+_Last item in this group._
 
 Use this exact AskUserQuestion format every time. Do not present test items as
 plain text, yes/no questions, or lettered multiple choice. The options array is
@@ -375,11 +397,14 @@ Wait for the user's response.
 
 ### On PASS
 
-1. Update the item in the group file: `Status: PASSED`, `Build: <HEAD>`,
-   `Tested: <now>`
-2. Update session.yaml summary counts
-3. Write both files to disk
-4. Present the next item (the AskUserQuestion receipt will read: "Item N passed.")
+**Fast path** — use the cached lookahead to avoid re-reading the group file:
+
+1. Edit the group file: mark item N as `Status: PASSED`, `Build: <HEAD>`,
+   `Tested: <now>`. While the file is open, identify item N+2 (new lookahead).
+2. Edit session.yaml summary counts.
+3. Write both edits in **parallel** (two Edit tool calls in the same turn).
+4. Present item N+1 (from the cached lookahead) immediately via AskUserQuestion
+   with item N+2 as the new lookahead preview. Receipt: "Item N passed."
 
 ### On FAIL
 
@@ -440,9 +465,14 @@ If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
 
 ### On SKIP
 
-1. Update: `Status: SKIPPED`, `Notes: <reason if provided>`
-2. Write to disk
-3. Present the next item (receipt: "Item N skipped.")
+**Fast path** — same as PASS, use the cached lookahead:
+
+1. Edit the group file: mark item N as `Status: SKIPPED`, `Notes: <reason if provided>`.
+   While the file is open, identify item N+2 (new lookahead).
+2. Edit session.yaml summary counts.
+3. Write both edits in **parallel** (two Edit tool calls in the same turn).
+4. Present item N+1 (from the cached lookahead) immediately via AskUserQuestion
+   with item N+2 as the new lookahead preview. Receipt: "Item N skipped."
 
 ### On ADD ITEM
 
@@ -477,6 +507,39 @@ a bug that is clearly unrelated to the current test item:
    read: "Parked bug #N." followed by the current test item or fix prompt.
 
 **Do NOT classify the bug at park time.** Classification happens at group completion.
+
+### On BATCH
+
+When the user selects "Batch: next 3", switch to batch presentation for faster
+throughput. This reduces round-trips by 3x for rapid testing sessions.
+
+1. Read the group file. Collect the next 3 UNTESTED items (or fewer if the group
+   is nearly done). Also identify the item after the batch (the post-batch lookahead).
+2. Present all items in a single AskUserQuestion:
+   - **Question:** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]\n[N+2]. [Item description]\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+   - **Options:** ["All pass", "Report results", "Park a bug", "Back to single mode"]
+
+3. **On "All pass"**: Mark all batch items as PASSED in the group file, update
+   session.yaml counts, write both in parallel. Present the next batch (or next
+   single item if fewer than 3 remain).
+
+4. **On "Report results"**: The user clicked a button, so you don't have results yet.
+   Ask a follow-up via AskUserQuestion:
+   - Question: "Enter results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+   - Options: ["Submit"]
+   Parse the user's free-text response. Map each item to PASS, FAIL (with evidence),
+   or SKIP. For any FAILs, follow the standard FAIL flow (ask "Fix now or continue
+   testing?") one at a time in item order after recording all results.
+
+5. **On "Back to single mode"**: Return to single-item presentation with lookahead
+   at the next UNTESTED item.
+
+**Minimum threshold:** If fewer than 2 UNTESTED items remain when "Batch: next 3"
+is selected, stay in single-item mode. Tell the user: "Only N item(s) left —
+staying in single mode."
+
+After a batch, if remaining UNTESTED items >= 3, offer another batch. If < 3,
+fall back to single-item presentation with lookahead.
 
 ### Group completion
 
@@ -770,6 +833,9 @@ language to the appropriate action. In practice, users will say things like:
 - "we should also check dark mode" → ADD ITEM
 - "park this" / "note a bug" / "not related but..." / "unrelated bug" → PARK
 - "fix it" / "let's fix this" → enter FIX NOW flow
+- "batch" / "give me a few" / "speed up" / "faster" → enter BATCH mode
+- "one at a time" / "slow down" / "single mode" → exit BATCH mode
+- "all pass" / "all good" → if in batch mode, PASS all items in current batch; if in single mode, PASS current item
 - "where was I" → RESUME
 - "what's left" → STATUS
 - "done" / "that's everything" → DONE
