@@ -481,7 +481,7 @@ else
   fail "VERSION/tag mismatch detected"
 fi
 
-# Four-segment version in CHANGELOG
+# Four-segment version in CHANGELOG accepted
 DIR=$(create_fixture "ver-fourseg")
 echo "# TODOs" > "$DIR/TODOS.md"
 echo "0.4.0" > "$DIR/VERSION"
@@ -492,10 +492,10 @@ cat > "$DIR/CHANGELOG.md" << 'EOF'
 - Added thing
 EOF
 OUTPUT=$(run_audit "$DIR")
-if echo "$OUTPUT" | grep -q "four-segment version"; then
-  pass "Four-segment version in CHANGELOG detected"
+if echo "$OUTPUT" | grep -q "CHANGELOG_LATEST: 0.4.1.1"; then
+  pass "Four-segment version in CHANGELOG accepted"
 else
-  fail "Four-segment version in CHANGELOG detected"
+  fail "Four-segment version in CHANGELOG accepted"
 fi
 
 # No git tags
@@ -545,28 +545,22 @@ else
   fail "PROGRESS_LATEST picks highest version (newest-first table)" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
 fi
 
-# PROGRESS_LATEST excludes four-segment versions (invalid SemVer)
+# PROGRESS_LATEST includes four-segment versions
 DIR=$(create_fixture "ver-progress-four-seg")
 echo "# TODOs" > "$DIR/TODOS.md"
-echo "0.8.4" > "$DIR/VERSION"
+echo "0.8.4.1" > "$DIR/VERSION"
 cat > "$DIR/PROGRESS.md" << 'EOF'
 | Version | Date | Summary |
 |---------|------|---------|
-| 0.8.4 | 2026-04-07 | Latest valid |
-| 0.8.4.1 | 2026-04-08 | Invalid four-seg |
+| 0.8.4 | 2026-04-07 | Three-seg |
+| 0.8.4.1 | 2026-04-08 | Four-seg micro |
 | 0.7.0 | 2026-04-06 | Older |
 EOF
 OUTPUT=$(run_audit "$DIR")
-if echo "$OUTPUT" | grep -q "PROGRESS_LATEST: 0.8.4"; then
-  pass "PROGRESS_LATEST excludes four-segment versions"
+if echo "$OUTPUT" | grep -q "PROGRESS_LATEST: 0.8.4.1"; then
+  pass "PROGRESS_LATEST includes four-segment versions"
 else
-  fail "PROGRESS_LATEST excludes four-segment versions" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
-fi
-# Also verify the four-segment lint still fires
-if echo "$OUTPUT" | grep -q "four-segment version"; then
-  pass "Four-segment version in PROGRESS still flagged"
-else
-  fail "Four-segment version in PROGRESS still flagged"
+  fail "PROGRESS_LATEST includes four-segment versions" "$(echo "$OUTPUT" | grep PROGRESS_LATEST)"
 fi
 
 # ─── taxonomy tests ───────────────────────────────────────────

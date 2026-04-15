@@ -433,9 +433,9 @@ check_version() {
 
   echo "CURRENT: $current"
 
-  # Check for invalid version format (must be 3-segment semver)
-  if ! echo "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-    findings="${findings}- VERSION \"${current}\" is not valid SemVer (expected X.Y.Z)\n"
+  # Check for invalid version format (3 or 4 segments: X.Y.Z or X.Y.Z.W)
+  if ! echo "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+    findings="${findings}- VERSION \"${current}\" is not valid (expected X.Y.Z or X.Y.Z.W)\n"
     found=1
   fi
 
@@ -459,16 +459,10 @@ check_version() {
   # PROGRESS.md latest version (highest by semver, not table order)
   if [ -n "$PROGRESS_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
     local progress_ver=""
-    local progress_four_seg=""
     while IFS= read -r candidate; do
       candidate=$(echo "$candidate" | tr -d '| ')
       [ -z "$candidate" ] && continue
-      # Track four-segment versions for the SemVer lint (but exclude from max)
-      if echo "$candidate" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
-        progress_four_seg="$candidate"
-        continue
-      fi
-      # Keep the highest valid (3-segment) version
+      # Keep the highest version (3 or 4 segments both valid)
       if [ -z "$progress_ver" ] || version_gt "$candidate" "$progress_ver"; then
         progress_ver="$candidate"
       fi
@@ -476,24 +470,12 @@ check_version() {
     if [ -n "$progress_ver" ]; then
       echo "PROGRESS_LATEST: $progress_ver"
     fi
-    if [ -n "$progress_four_seg" ]; then
-      findings="${findings}- PROGRESS.md has four-segment version ${progress_four_seg} (invalid SemVer)\n"
-      found=1
-    fi
   fi
 
   # CHANGELOG.md latest version
   if [ -f "$CHANGELOG_FILE" ]; then
-    # Scan for all version-like patterns, flag four-segment ones
-    while IFS= read -r ver; do
-      if echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
-        findings="${findings}- CHANGELOG.md has four-segment version ${ver} (invalid SemVer)\n"
-        found=1
-      fi
-    done < <(grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)*' "$CHANGELOG_FILE" 2>/dev/null | sort -u || true)
-
     local changelog_ver=""
-    changelog_ver=$(grep -oE '## \[?[0-9]+\.[0-9]+\.[0-9]+' "$CHANGELOG_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+    changelog_ver=$(grep -oE '## \[?[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' "$CHANGELOG_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' || true)
     if [ -n "$changelog_ver" ]; then
       echo "CHANGELOG_LATEST: $changelog_ver"
     fi
