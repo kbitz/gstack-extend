@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.10] - 2026-04-15
+
+### Added
+- GitHub Action (`auto-tag.yml`) to create git tags automatically when VERSION changes on merge to main. Idempotent: skips if tag already exists.
+- Update-check and 4-digit version tests in `test-update.sh`: semver comparisons, regex validation, upgrade detection with MICRO versions.
+- Versioning section in README defining MAJOR.MINOR.PATCH.MICRO semantics.
+
+### Changed
+- Version validation regex in `bin/update-check` tightened from `^[0-9]+\.[0-9.]+$` to `^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$`. Now rejects malformed versions (double dots, trailing dots, 5+ segments) while accepting X.Y.Z and X.Y.Z.W.
+
+### Fixed
+- Added gist bridge comment in `bin/update-check` documenting why the old gist URL (pre-0.8.8.1) must be kept alive as a permanent upgrade bridge.
+- `bin/roadmap-audit`: replaced bash 4+ associative arrays (`declare -A`, `local -A`) with bash 3-compatible helpers. The old code crashed on stock macOS (bash 3.2), silently skipping `check_unprocessed()` and `check_mode()`. Fixed 3 pre-existing test failures.
+- `scripts/test-update.sh`: updated setup test expectations from 2 to 3 default skills (full-review was added in v0.8.0 but test wasn't updated). Fixed 2 pre-existing test failures.
+
 ## [0.8.9.0] - 2026-04-14
 
 ### Changed

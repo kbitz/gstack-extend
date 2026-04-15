@@ -302,10 +302,10 @@ mkdir -p "$MOCK_HOME"
 OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 2 skills"; then
-  pass "Installs 2 skills to default skills dir"
+if echo "$OUTPUT" | grep -q "Installed 3 skills"; then
+  pass "Installs 3 skills to default skills dir"
 else
-  fail "Should install 2 skills" "Got: $OUTPUT"
+  fail "Should install 3 skills" "Got: $OUTPUT"
 fi
 
 # Check symlinks were created
@@ -334,10 +334,10 @@ mkdir -p "$MOCK_HOME2"
 OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --with-native 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 3 skills"; then
-  pass "--with-native reports 3 skills installed"
+if echo "$OUTPUT" | grep -q "Installed 4 skills"; then
+  pass "--with-native reports 4 skills installed"
 else
-  fail "--with-native should report 3 skills" "Got: $OUTPUT"
+  fail "--with-native should report 4 skills" "Got: $OUTPUT"
 fi
 
 if [ -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
@@ -400,6 +400,126 @@ if [ ! -d "$MOCK_HOME3/.claude/skills/pair-review" ]; then
   pass "Does not install anything on unknown flag"
 else
   fail "Should not install when flag is unknown"
+fi
+
+# ─── semver tests ─────────────────────────────────────────────
+
+echo ""
+echo "═══ semver (4-digit) ═══"
+
+source "$SCRIPT_DIR/bin/lib/semver.sh"
+
+# 4-digit > 4-digit
+echo ""
+echo "--- version_gt 4-digit ---"
+if version_gt "0.8.9.1" "0.8.9.0"; then
+  pass "0.8.9.1 > 0.8.9.0"
+else
+  fail "0.8.9.1 should be > 0.8.9.0"
+fi
+
+if version_gt "0.9.0" "0.8.9.0"; then
+  pass "0.9.0 > 0.8.9.0"
+else
+  fail "0.9.0 should be > 0.8.9.0"
+fi
+
+# 3-digit vs 4-digit with trailing .0 (should be equal)
+if version_gt "0.8.9" "0.8.9.0"; then
+  fail "0.8.9 should NOT be > 0.8.9.0 (equal)"
+else
+  pass "0.8.9 == 0.8.9.0 (not greater)"
+fi
+
+if version_gt "0.8.9.0" "0.8.9"; then
+  fail "0.8.9.0 should NOT be > 0.8.9 (equal)"
+else
+  pass "0.8.9.0 == 0.8.9 (not greater)"
+fi
+
+# 4-digit < 4-digit
+if version_gt "0.8.9.0" "0.8.9.1"; then
+  fail "0.8.9.0 should NOT be > 0.8.9.1"
+else
+  pass "0.8.9.0 < 0.8.9.1"
+fi
+
+# ─── update-check tests ──────────────────────────────────────
+
+echo ""
+echo "═══ bin/update-check ═══"
+
+# Test: version validation regex
+echo ""
+echo "--- Version regex validation ---"
+
+# Valid versions (should be accepted by the regex)
+for ver in "0.8.9" "0.8.9.0" "1.0.0" "0.8.10" "10.20.30.40"; do
+  if echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+    pass "Accepts valid version: $ver"
+  else
+    fail "Should accept valid version: $ver"
+  fi
+done
+
+# Invalid versions (should be rejected by the regex)
+for ver in "1..2" "1.2." "1.2.3.4.5" "1" "abc" "1.2" ".1.2.3" "1.2.3." "1.2.3.4.5.6"; do
+  if echo "$ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+    fail "Should reject invalid version: $ver"
+  else
+    pass "Rejects invalid version: $ver"
+  fi
+done
+
+# Test: update-check with 4-digit versions
+echo ""
+echo "--- update-check with 4-digit versions ---"
+UC_REPO=$(create_fixture_repo "uc-fourseg")
+UC_STATE="$TMPDIR_BASE/state-uc-fourseg"
+mkdir -p "$UC_STATE"
+
+# Set local version to 4-digit
+echo "0.8.9.0" > "$UC_REPO/VERSION"
+git -C "$UC_REPO" add VERSION
+git -C "$UC_REPO" commit -m "set 4-digit version" --quiet
+
+# Copy update-check and semver lib into fixture
+cp "$SCRIPT_DIR/bin/update-check" "$UC_REPO/bin/update-check"
+mkdir -p "$UC_REPO/bin/lib"
+cp "$SCRIPT_DIR/bin/lib/semver.sh" "$UC_REPO/bin/lib/semver.sh"
+cp "$SCRIPT_DIR/bin/config" "$UC_REPO/bin/config"
+
+# Create a fake remote that serves a newer 4-digit version
+UC_REMOTE_FILE="$TMPDIR_BASE/uc-remote-version"
+echo "0.8.9.1" > "$UC_REMOTE_FILE"
+
+OUTPUT=$(GSTACK_EXTEND_DIR="$UC_REPO" \
+  GSTACK_EXTEND_STATE_DIR="$UC_STATE" \
+  GSTACK_EXTEND_REMOTE_URL="file://$UC_REMOTE_FILE" \
+  "$UC_REPO/bin/update-check" --force 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "UPGRADE_AVAILABLE 0.8.9.0 0.8.9.1"; then
+  pass "Detects upgrade: 0.8.9.0 → 0.8.9.1"
+else
+  fail "Should detect upgrade 0.8.9.0 → 0.8.9.1" "Got: $OUTPUT"
+fi
+
+# Test: 3-digit local == 4-digit remote with .0 (should be UP_TO_DATE)
+echo "0.8.9" > "$UC_REPO/VERSION"
+echo "0.8.9.0" > "$UC_REMOTE_FILE"
+rm -f "$UC_STATE/last-update-check"
+
+OUTPUT=$(GSTACK_EXTEND_DIR="$UC_REPO" \
+  GSTACK_EXTEND_STATE_DIR="$UC_STATE" \
+  GSTACK_EXTEND_REMOTE_URL="file://$UC_REMOTE_FILE" \
+  "$UC_REPO/bin/update-check" --force 2>&1 || true)
+log "Output: $OUTPUT"
+
+if [ -z "$OUTPUT" ]; then
+  pass "3-digit 0.8.9 treats 4-digit 0.8.9.0 remote as up-to-date"
+else
+  fail "0.8.9 should produce no output for 0.8.9.0 remote" "Got: $OUTPUT"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────

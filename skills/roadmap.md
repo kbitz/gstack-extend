@@ -650,7 +650,7 @@ Present all findings via AskUserQuestion. Group by type:
 
 Potentially completed:
   1. "Setup custom dir flag" — 3 commits on [setup] in last 2 weeks
-  2. "Replace gist URL" — bin/update-check rewritten in abc1234
+  2. "Add responsive layout" — styles/layout.css updated in abc1234
 
 Potentially unblocked:
   3. Track 2A: Raw GitHub Migration — repo is now public
