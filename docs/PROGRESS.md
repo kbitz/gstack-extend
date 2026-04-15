@@ -6,6 +6,7 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.8.9.0 | 2026-04-14 | Roadmap audit accepts 4-digit versions (X.Y.Z.W). MICRO segment for doc-only/config bumps. Removed stale design docs, trimmed CLAUDE.md, refreshed roadmap (Track 2A done, added Track 1B: Roadmap Onboarding). |
 | 0.8.8.1 | 2026-04-14 | Public-ready cleanup: MIT license, gist-to-raw-GitHub version check migration, removed archived design docs with internal references, anonymized app name across docs and skill, SSH→HTTPS clone URL. |
 | 0.8.8 | 2026-04-13 | /roadmap triage mode now runs the freshness scan (Step 3.5) before classifying items into groups. Previously, triage slotted new items into potentially-complete groups because the scan was gated to update mode only. Stale/completed tasks are now always cleaned before new items get placed. Early exit no longer skips the freshness check. |
 | 0.8.7 | 2026-04-12 | /pair-review latency optimization: lookahead display (next item preview inline with current), batch mode (3 items at once with "All pass"), PASS/SKIP fast path (cached lookahead + parallel state writes). Reduces perceived wait and actual round-trips. |
