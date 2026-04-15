@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.9.0] - 2026-04-14
+
+### Changed
+- Roadmap audit now accepts 4-digit versions (`X.Y.Z.W`). The MICRO segment enables finer-grained bumps for doc-only and config changes. Previously, any 4-digit version was flagged as invalid SemVer.
+
 ## [0.8.8.1] - 2026-04-14
 
 ### Added
