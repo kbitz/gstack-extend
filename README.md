@@ -14,7 +14,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 Clone and run setup:
 
 ```bash
-git clone git@github.com:kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
+git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
 ~/.claude/skills/gstack-extend/setup
 ```
 
@@ -176,4 +176,7 @@ native_trigger_file: ".context/snapshot-trigger"
 
 - [/pair-review Design Doc](docs/designs/pair-review.md) — Design decisions, state format, workflow
 - [Implementation Guide](docs/debug-infrastructure-guide.md) — How to add debug infrastructure to a new SwiftUI app
-- [Inside-Out Design Doc](docs/archive/inside-out-debugging.md) — Architectural decisions and snapshot bundle spec
+
+## License
+
+[MIT](LICENSE)

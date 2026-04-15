@@ -31,12 +31,8 @@ Improvements to how the repo is distributed and how /roadmap handles version
 transitions. These are independent of Group 1 but have external blockers (repo
 going public, phase completion). Tracks run in parallel.
 
-### Track 2A: Raw GitHub Migration
-_1 task . ~30 min (human) / ~5 min (CC) . low risk . [bin/update-check]_
-
-Depends on: repo made public on GitHub.
-
-- **Replace gist URL with raw.githubusercontent.com** -- Swap the gist URL on line 21 of `bin/update-check` with `raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION`. Remove the GitHub Action that syncs VERSION to the gist and the `GIST_TOKEN` secret. _[bin/update-check, .github/workflows/], ~5 lines changed._ (S)
+### Track 2A: Raw GitHub Migration — DONE
+_Completed: gist URL replaced with raw.githubusercontent.com, gist sync workflow removed._
 
 ### Track 2B: Phase Transition Detection
 _1 task . ~1 day (human) / ~20 min (CC) . medium risk . [bin/roadmap-audit, skills/roadmap.md]_
@@ -56,7 +52,7 @@ Group 1: Install Pipeline
                   |
 
 Group 2: Distribution Infrastructure
-  +-- Track 2A ........... ~30 min ... 1 task  (blocked: repo public)
+  +-- Track 2A ........... DONE
   +-- Track 2B ........... ~1 day .... 1 task  (blocked: phase completion)
 ```
 

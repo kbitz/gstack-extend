@@ -263,7 +263,7 @@ osascript -e 'tell application "System Events" to tell process "APP_NAME" to cli
 
 Example: Open a new compose window:
 ```bash
-osascript -e 'tell application "System Events" to tell process "Bolt" to click menu item "New Message" of menu "File" of menu bar 1'
+osascript -e 'tell application "System Events" to tell process "MyApp" to click menu item "New Message" of menu "File" of menu bar 1'
 ```
 
 ### Send Keystroke

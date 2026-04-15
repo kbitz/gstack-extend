@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.8.1] - 2026-04-14
+
+### Added
+- MIT LICENSE file for open source distribution.
+
+### Changed
+- Update check now uses `raw.githubusercontent.com` instead of private gist for version lookups.
+- README clone URL switched from SSH to HTTPS for public accessibility.
+- Anonymized internal project references in design docs and implementation guide.
+
+### Removed
+- Gist sync GitHub Action (`.github/workflows/sync-version.yml`) — no longer needed with raw GitHub URL.
+- Archived design docs (`docs/archive/`) containing internal project references.
+
 ## [0.8.8] - 2026-04-13
 
 ### Changed
@@ -168,7 +182,7 @@ All notable changes to this project will be documented in this file.
 ## [0.3.1] - 2026-04-04
 
 ### Added
-- Implementation guide for adding debug infrastructure to new SwiftUI apps (docs/debug-infrastructure-guide.md). Documents all six components from Bolt's reference implementation with code examples, wiring instructions, and a verification checklist.
+- Implementation guide for adding debug infrastructure to new SwiftUI apps (docs/debug-infrastructure-guide.md). Documents all six components from the reference implementation with code examples, wiring instructions, and a verification checklist.
 - Skill now detects missing infrastructure at setup and guides users to add it before falling back to degraded mode. Explains what's lost without instrumentation and offers to help implement it (~400 lines Swift, ~15 min with CC).
 
 ### Changed
