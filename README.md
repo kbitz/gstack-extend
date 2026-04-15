@@ -176,6 +176,19 @@ native_trigger_file: ".context/snapshot-trigger"
 
 - [Implementation Guide](docs/debug-infrastructure-guide.md) — How to add debug infrastructure to a new SwiftUI app
 
+## Versioning
+
+4-digit SemVer: `MAJOR.MINOR.PATCH.MICRO`
+
+| Segment | Meaning | Example |
+|---------|---------|---------|
+| MAJOR   | Breaking changes | 1.0.0 |
+| MINOR   | New features, new skills | 0.9.0 |
+| PATCH   | Bug fixes, behavior changes | 0.8.10 |
+| MICRO   | Doc-only, config-only, no behavior change | 0.8.9.0 |
+
+Source of truth: `VERSION` file. Tags created automatically on merge to main.
+
 ## License
 
 [MIT](LICENSE)
