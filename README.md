@@ -174,7 +174,6 @@ native_trigger_file: ".context/snapshot-trigger"
 
 ## Documentation
 
-- [/pair-review Design Doc](docs/designs/pair-review.md) — Design decisions, state format, workflow
 - [Implementation Guide](docs/debug-infrastructure-guide.md) — How to add debug infrastructure to a new SwiftUI app
 
 ## License

@@ -29,5 +29,5 @@ Build the /browse-native skill and validate it against real macOS apps.
 
 ## Roadmap
 
-- **Current: install pipeline + distribution** — Per-project install support, raw GitHub migration, phase transition detection
+- **Current: install pipeline + distribution** — Per-project install support, roadmap onboarding (scaffolding + doc type detection), phase transition detection
 - **Future: multi-agent test orchestration** — Parallel testing across Conductor agents

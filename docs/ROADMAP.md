@@ -23,18 +23,23 @@ v0.6.2 to avoid half-baked behavior — this delivers the full pipeline.
 - **Propagate dir to update-run** -- `bin/update-run` calls `setup` on line 58 without passing through any custom dir. Thread the custom dir from config or env so upgrades preserve per-project installs. _[bin/update-run, bin/config], ~15 lines._ (S)
 - **Preamble symlink resolution** -- Skill preambles resolve `$_EXTEND_ROOT` via `readlink` on `SKILL.md`. Verify this works when symlinks originate from a non-default directory (e.g., `./project/.claude/skills/`). Fix if broken. _[skills/*.md preambles], ~10 lines._ (S)
 
+### Track 1B: Roadmap Onboarding
+_2 tasks . ~3 days (human) / ~35 min (CC) . low risk . [bin/roadmap-audit, skills/roadmap.md, setup]_
+
+Improve the first-run experience for /roadmap: auto-scaffold project docs and detect
+doc types by content pattern.
+
+- **Layout scaffolding for new projects** -- Add a `/roadmap --init` or first-run mode that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and moves misplaced docs to their canonical locations automatically. The audit flags misplaced docs but users must move them manually. _[setup, bin/roadmap-audit, skills/roadmap.md], ~50 lines._ (S)
+- **Doc type detection heuristics** -- Teach `bin/roadmap-audit` to classify .md files by content patterns: has requirements/acceptance criteria -> spec, has timeline/phases -> plan, has TODO markers -> inbox, has architecture diagrams -> design doc. Report mismatches. Currently Step 1.5e relies on LLM judgment. Bash heuristics make the audit more actionable and consistent. _[bin/roadmap-audit], ~80 lines._ (M)
+
 ---
 
 ## Group 2: Distribution Infrastructure
 
-Improvements to how the repo is distributed and how /roadmap handles version
-transitions. These are independent of Group 1 but have external blockers (repo
-going public, phase completion). Tracks run in parallel.
+Improvements to how /roadmap handles version transitions. Independent of Group 1
+but blocked on a major version bump to validate against.
 
-### Track 2A: Raw GitHub Migration — DONE
-_Completed: gist URL replaced with raw.githubusercontent.com, gist sync workflow removed._
-
-### Track 2B: Phase Transition Detection
+### Track 2A: Phase Transition Detection
 _1 task . ~1 day (human) / ~20 min (CC) . medium risk . [bin/roadmap-audit, skills/roadmap.md]_
 
 Depends on: at least one major version bump (0.x -> 1.x) to validate against.
@@ -48,15 +53,15 @@ Depends on: at least one major version bump (0.x -> 1.x) to validate against.
 ```
 Group 1: Install Pipeline
   +-- Track 1A ........... ~2 hours .. 3 tasks
+  +-- Track 1B ........... ~3 days ... 2 tasks
 
                   |
 
 Group 2: Distribution Infrastructure
-  +-- Track 2A ........... DONE
-  +-- Track 2B ........... ~1 day .... 1 task  (blocked: phase completion)
+  +-- Track 2A ........... ~1 day .... 1 task  (blocked: major version bump)
 ```
 
-**Total: 2 groups . 3 tracks . 5 tasks**
+**Total: 2 groups . 3 tracks . 6 tasks**
 
 ---
 

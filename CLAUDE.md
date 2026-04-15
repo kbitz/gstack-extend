@@ -4,7 +4,7 @@ Extension skills for gstack.
 
 ## Versioning
 
-SemVer. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+4-digit format: `MAJOR.MINOR.PATCH.MICRO`. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
 
 ## Testing
 
