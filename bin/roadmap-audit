@@ -459,7 +459,6 @@ check_version() {
   # PROGRESS.md latest version (highest by semver, not table order)
   if [ -n "$PROGRESS_FILE" ] && [ -f "$PROGRESS_FILE" ]; then
     local progress_ver=""
-    local progress_four_seg=""
     while IFS= read -r candidate; do
       candidate=$(echo "$candidate" | tr -d '| ')
       [ -z "$candidate" ] && continue
