@@ -4,46 +4,11 @@ Extension skills for gstack.
 
 ## Versioning
 
-SemVer. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+4-digit format: `MAJOR.MINOR.PATCH.MICRO`. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
 
 ## Testing
 
-Run the validation gates:
-
-```bash
-./scripts/validate.sh
-```
-
-To test against a specific app:
-
-```bash
-./scripts/validate.sh --app "MyApp"
-```
-
-To run a single gate:
-
-```bash
-./scripts/validate.sh --gate 1  # Snapshot Bundle Validity
-./scripts/validate.sh --gate 2  # osascript Interaction
-./scripts/validate.sh --gate 3  # Cycle Latency
-```
-
-To test degraded mode (no instrumentation):
-
-```bash
-./scripts/validate.sh --degraded
-```
-
-## Native App
-
-Configure these for app interaction:
-
-```yaml
-native_app_bundle_id: ""
-native_app_scheme: ""
-native_snapshot_dir: ".context/snapshots"
-native_trigger_file: ".context/snapshot-trigger"
-```
+Run `./scripts/validate.sh`. See README for flags (`--app`, `--gate`, `--degraded`).
 
 ## Skill routing
 
