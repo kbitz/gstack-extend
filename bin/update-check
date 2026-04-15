@@ -19,6 +19,10 @@ MARKER_FILE="$STATE_DIR/just-upgraded-from"
 SNOOZE_FILE="$STATE_DIR/update-snoozed"
 VERSION_FILE="$EXTEND_DIR/VERSION"
 REMOTE_URL="${GSTACK_EXTEND_REMOTE_URL:-https://raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION}"
+# NOTE: Pre-0.8.8.1 installs still check a gist at the old URL
+# (gist ID 511b8a4861f7b4df3a7fedd42911c701). That gist is kept as a
+# permanent bridge so those installs can discover the upgrade to this
+# raw GitHub URL. Do not delete the gist.
 
 # ─── Force flag (busts cache + snooze) ──────────────────────
 if [ "${1:-}" = "--force" ]; then
@@ -150,7 +154,7 @@ REMOTE="$(curl -sf --max-time 5 "$REMOTE_URL" 2>/dev/null || true)"
 REMOTE="$(echo "$REMOTE" | tr -d '[:space:]')"
 
 # Validate: must look like a version number (reject HTML error pages)
-if ! echo "$REMOTE" | grep -qE '^[0-9]+\.[0-9.]+$'; then
+if ! echo "$REMOTE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
   # Invalid or empty response — assume up to date
   echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE"
   exit 0
