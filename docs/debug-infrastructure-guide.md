@@ -1,7 +1,7 @@
 # Inside-Out Debug Infrastructure: Implementation Guide
 
 How to add Claude Code-compatible debug infrastructure to a SwiftUI macOS app.
-Reference implementation: Bolt (email client).
+Reference implementation: a macOS email client app.
 
 ## Overview
 
@@ -499,7 +499,7 @@ orientation). Y-axis is flipped from SwiftUI's global coordinate space.
 ## Component 6: State Dump
 
 An app-specific Encodable struct that captures navigation and selection state.
-This is the most app-specific component — your schema will differ from Bolt's.
+This is the most app-specific component — your schema will differ from the reference app's.
 
 ### Requirements:
 - Always include `capturedAt: Date`
@@ -507,7 +507,7 @@ This is the most app-specific component — your schema will differ from Bolt's.
 - Capture relevant data counts (unread count, message count, etc.)
 - Include sync/network state if applicable
 
-### Example (Bolt's email client state):
+### Example (email client state):
 
 ```swift
 struct SnapshotState: Encodable {

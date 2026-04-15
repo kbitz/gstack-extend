@@ -18,7 +18,7 @@ CACHE_FILE="$STATE_DIR/last-update-check"
 MARKER_FILE="$STATE_DIR/just-upgraded-from"
 SNOOZE_FILE="$STATE_DIR/update-snoozed"
 VERSION_FILE="$EXTEND_DIR/VERSION"
-REMOTE_URL="${GSTACK_EXTEND_REMOTE_URL:-https://gist.githubusercontent.com/kbitz/511b8a4861f7b4df3a7fedd42911c701/raw/gstack-extend_VERSION.md}"
+REMOTE_URL="${GSTACK_EXTEND_REMOTE_URL:-https://raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION}"
 
 # ─── Force flag (busts cache + snooze) ──────────────────────
 if [ "${1:-}" = "--force" ]; then
