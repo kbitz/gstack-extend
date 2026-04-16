@@ -281,10 +281,10 @@ cluster or batch items — every item gets its own prompt with full context.
 
 For each item, before presenting:
 1. Extract a distinctive phrase from the item title (3-5 words).
-2. Run `git log -1 --format="%H %ai" -S "distinctive phrase" -- <TODOS-file-path>` to find
-   when the item was introduced. This outputs the commit hash and author date in ISO format.
-3. If the git log returns a result, extract the commit hash and date. Check the commit
-   message (via `git log -1 --format="%s" <hash>`) for a PR number (e.g., `(#123)`). Format as:
+2. Run `git log -1 --format="%H %ai %s" -S "distinctive phrase" -- <TODOS-file-path>` to find
+   when the item was introduced. This outputs the commit hash, author date, and subject in one call.
+3. If the git log returns a result, extract the commit hash and date. Check the subject
+   for a PR number (e.g., `(#123)`). Format as:
    `Introduced: <relative time ago> (<commit short hash>, PR #NNN)` — or without
    the PR number if none was found.
 4. If the git log returns nothing, show `Provenance: unknown`.
@@ -649,6 +649,8 @@ For each task in ROADMAP.md (including Pre-flight items):
    `git log --oneline --since="4 weeks ago" -- <file-path>`
 6. If 2+ commits have landed on a task's files (per step 4 or 5), flag it as **potentially
    done**. A single commit is not enough (could be an unrelated refactor).
+   When presenting results, distinguish the two cases: "since introduced (date)" for
+   anchored lookups vs "in last 4 weeks (provenance unknown)" for fallback lookups.
 
 Also check for tasks whose referenced files no longer exist (`git ls-files` check).
 These are likely done or obsoleted.
