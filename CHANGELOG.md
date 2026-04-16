@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.11] - 2026-04-16
+
+### Fixed
+- Freshness scan in `/roadmap` now only considers commits made AFTER a task was introduced. Previously, `--since="4 weeks ago"` credited old commits as potential fixes for recently-added TODOs, producing false positives. Now uses `git log -S` to find each task's introduction date, then filters with `--after`.
+- Step 2a (Keep or Kill) now has an explicit, date-guarded file-activity check instead of relying on ad-hoc LLM behavior.
+- Freshness scan display shows "since introduced (date)" instead of "in last N weeks" so you can see the temporal anchor.
+
 ## [0.8.10] - 2026-04-15
 
 ### Added

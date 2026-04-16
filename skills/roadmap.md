@@ -281,13 +281,22 @@ cluster or batch items — every item gets its own prompt with full context.
 
 For each item, before presenting:
 1. Extract a distinctive phrase from the item title (3-5 words).
-2. Run `git log --oneline -1 -S "distinctive phrase" -- <TODOS-file-path>` to find
-   when the item was introduced.
-3. If the git log returns a result, extract the commit date and check if the commit
-   message contains a PR number (e.g., `(#123)`). Format as:
+2. Run `git log -1 --format="%H %ai %s" -S "distinctive phrase" -- <TODOS-file-path>` to find
+   when the item was introduced. This outputs the commit hash, author date, and subject in one call.
+3. If the git log returns a result, extract the commit hash and date. Check the subject
+   for a PR number (e.g., `(#123)`). Format as:
    `Introduced: <relative time ago> (<commit short hash>, PR #NNN)` — or without
    the PR number if none was found.
 4. If the git log returns nothing, show `Provenance: unknown`.
+5. Extract file paths from the item description (backtick-quoted paths like `` `path/to/file` ``).
+   Skip entries that are clearly not file paths (flags, URLs, commands).
+6. For each valid file path, run:
+   `git log --oneline --after="<introduction-date>" -- <file-path>`
+   where `<introduction-date>` is the author date from step 2.
+7. If 2+ commits have landed on the item's files AFTER its introduction date,
+   add to the presentation: `⚠ Possibly resolved: N commits on [files] since introduction`
+8. If provenance is unknown (step 4), skip this file-activity check — cannot determine
+   temporal ordering without a known introduction date.
 
 Present each item via AskUserQuestion with this format:
 ```
@@ -626,10 +635,22 @@ For each task in ROADMAP.md (including Pre-flight items):
    - Italic metadata: `_[setup, bin/update-run], ~15 lines._ (S)` — extract from brackets
    - Backtick-quoted: `` `path/to/file` `` — extract from backticks
    Skip entries that are clearly not file paths (flags like `--skills-dir`, URLs, commands).
-2. For each valid file path, run `git log --oneline --since="4 weeks ago" -- <file-path>`
-   to check for recent commits touching that file.
-3. If 2+ commits have landed on a task's files, flag it as **potentially done**. A single
-   commit is not enough (could be an unrelated refactor).
+2. Extract a distinctive phrase from the task title (3-5 words).
+3. Run `git log -1 --format="%H %ai" -S "distinctive phrase" -- <ROADMAP-file-path>`
+   to find when the task was introduced to ROADMAP.md. This outputs the commit hash and
+   author date in ISO format.
+4. For each valid file path, run:
+   `git log --oneline --after="<introduction-date>" -- <file-path>`
+   where `<introduction-date>` is the author date from step 3. This ensures only commits
+   made AFTER the task was added are considered — a commit that predates the task cannot
+   be a fix for it.
+5. If the provenance lookup in step 3 returns nothing (rare — task predates git history
+   or phrase was significantly reworded), fall back to:
+   `git log --oneline --since="4 weeks ago" -- <file-path>`
+6. If 2+ commits have landed on a task's files (per step 4 or 5), flag it as **potentially
+   done**. A single commit is not enough (could be an unrelated refactor).
+   When presenting results, distinguish the two cases: "since introduced (date)" for
+   anchored lookups vs "in last 4 weeks (provenance unknown)" for fallback lookups.
 
 Also check for tasks whose referenced files no longer exist (`git ls-files` check).
 These are likely done or obsoleted.
@@ -649,8 +670,8 @@ Present all findings via AskUserQuestion. Group by type:
 **Freshness scan results:**
 
 Potentially completed:
-  1. "Setup custom dir flag" — 3 commits on [setup] in last 2 weeks
-  2. "Add responsive layout" — styles/layout.css updated in abc1234
+  1. "Setup custom dir flag" — 3 commits on [setup] since introduced (2 weeks ago)
+  2. "Add responsive layout" — 2 commits on [styles/layout.css] since introduced (3 weeks ago)
 
 Potentially unblocked:
   3. Track 2A: Raw GitHub Migration — repo is now public
