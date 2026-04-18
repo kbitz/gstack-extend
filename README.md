@@ -7,6 +7,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Documentation restructuring | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
+| `/review-apparatus` | Project testing/debugging apparatus audit | Any project | New |
 
 ## Installation
 
@@ -70,7 +71,7 @@ execution. Audits versioning, validates doc taxonomy, and recommends version bum
 
 | Doc | Purpose | Written by |
 |-----|---------|------------|
-| TODOS.md | Inbox — unprocessed items | /pair-review, /investigate, manual |
+| TODOS.md | Inbox — unprocessed items | /pair-review, /full-review, /investigate, /review-apparatus, manual |
 | ROADMAP.md | Execution plan — Groups > Tracks > Tasks | /roadmap |
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
@@ -109,8 +110,32 @@ and writes approved findings to TODOS.md for /roadmap to organize.
 
 | Doc | Purpose | Written by |
 |-----|---------|------------|
-| TODOS.md | Inbox | /pair-review, /full-review, /investigate, manual |
+| TODOS.md | Inbox | /pair-review, /full-review, /investigate, /review-apparatus, manual |
 | ROADMAP.md | Execution plan | /roadmap |
+
+---
+
+## /review-apparatus — Project Testing & Debugging Apparatus Audit
+
+Reads a project, inventories existing testing/debugging apparatus (scripts, bin/ tools,
+Makefile targets, dev endpoints, logging, staging configs, existing test infra), and
+proposes lightweight bolt-on additions where a small helper would simplify CC-assisted
+verification or debugging. Approved proposals land in TODOS.md as `[review-apparatus]`
+items for /roadmap to organize.
+
+- **Judgment-driven** — reads the project with CC's reasoning, not regex over manifests. Proposals reflect the project's actual shape.
+- **Bolt-on bar** — only proposes additions that are lightweight, unlikely to cause new bugs, and don't require refactors
+- **Project-agnostic** — no enumerated stack list. Rails, Next.js, Go services, native apps, Python/FastAPI all work
+- **Non-invasive** — doesn't modify any existing code. Writes TODOs; the helpers get built later through the /roadmap → implementation pipeline
+
+```
+/review-apparatus        # Audit the project, produce proposals, write approved to TODOS.md
+/review-apparatus status # Show what the last run produced (if anything)
+```
+
+Consumer skills (/pair-review, /qa, /investigate) pick up new apparatus organically
+once the helpers exist in the project. How they discover and invoke apparatus is a
+future, separate design.
 
 ---
 

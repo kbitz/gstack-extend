@@ -37,3 +37,27 @@ that is the signal to promote them into a shared template.
 - **Context:** deferred from /plan-eng-review on kbitz/gstack-patterns (see
   `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`).
 
+### Tighten `git commit` failure handling across skills (full-review, pair-review, review-apparatus)
+All three skills currently treat any non-zero exit from `git commit` as "nothing to
+commit, that's fine — continue." Affected lines: `skills/full-review.md:498`,
+`skills/pair-review.md` (parked-bug and fix-flow commits), `skills/review-apparatus.md:346`.
+The pattern silently swallows pre-commit hook rejections, missing `user.email`
+config, detached-HEAD refusal, and other failure modes that are NOT "clean tree."
+Result: the skill reports a commit that didn't land, and the user thinks their
+work is safe when it isn't.
+- **Why:** data loss risk. If a user's pre-commit hook rejects the change and the
+  skill moves on, the approved TODOs / group summary / apparatus proposals exist
+  only as unstaged working-tree edits. Next operation that touches those files
+  can lose them silently.
+- **Proposed fix:** before committing, snapshot staged state via
+  `git diff --cached --quiet; _HAS_STAGED=$?`. Run `git commit` only if
+  `_HAS_STAGED` is 1 (something staged). On non-zero `git commit` with staged
+  content present, escalate as BLOCKED with the stderr tail rather than
+  swallowing silently. Apply identically to all three skills to preserve parity.
+- **Effort:** S (human: ~2 hours / CC: ~20 min) — small, mechanical, three skills
+  to touch but each edit is one code block.
+- **Context:** Flagged by Claude adversarial subagent during /review on
+  kbitz/pair-review-assist (2026-04-18). Not fixed in that PR because the pattern
+  is inherited from full-review.md and fixing only review-apparatus would create
+  inconsistency. Worth a dedicated cleanup PR. Source: `[review]`.
+
