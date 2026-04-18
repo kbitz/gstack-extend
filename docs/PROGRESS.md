@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.11.0 | 2026-04-18 | Completion Status Protocol, Escalation format, and Confusion Protocol grafted into `/pair-review`, `/roadmap`, and `/full-review`. Each skill now rolls up to `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` with per-skill rules tied to its existing phase/item vocabulary. No behavior change to the skills' main flows. New `scripts/test-skill-protocols.sh` gates 36 grep assertions across the three skills (36/36 pass). Second of three PRs in the gstack-parity sequence. |
 | 0.10.0 | 2026-04-18 | Dropped `/browse-native` beta and all supporting infrastructure (`docs/debug-infrastructure-guide.md`, `scripts/validate.sh`, `--with-native` setup flag). Zero known users, ongoing maintenance cost for no shipping value. README skill table now lists only the three stable skills. `scripts/test-update.sh` regression-tests that `--with-native` is rejected and that uninstall still cleans up legacy `browse-native` symlinks for pre-0.10 installs. First of three PRs in the gstack-parity sequence (see `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`). |
 
 ## Phase 1: Core Adapter (retired)

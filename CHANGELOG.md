@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-04-18
+
+### Added
+- Completion Status Protocol grafted into `/pair-review`, `/roadmap`, and `/full-review`. Every session now rolls up to one of `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` with per-skill rollup rules (pair-review maps per-item states, roadmap maps audit findings, full-review maps agent outcomes + phase state).
+- Escalation format block in each skill. 3-attempt rule, security gate, scope-exceeds-verification gate. Standard STATUS/REASON/ATTEMPTED/RECOMMENDATION shape.
+- Confusion Protocol block in each skill. Stop-and-ask gate for high-stakes ambiguity, with per-skill example ambiguities (e.g., pair-review "reset" scope; roadmap PARALLEL collision merge; full-review cluster framing).
+- `scripts/test-skill-protocols.sh`: 36 grep-based assertions across the three skills. Verifies each contains Completion Status Protocol, Escalation subsection, Confusion Protocol, all four status tokens, and all four escalation fields.
+
+### Why
+Second PR in the gstack-parity sequence. Before this, extend's three skills each used ad-hoc phase vocabulary for session state and had no standard escalation or ambiguity gate. That is the "feels different from gstack" friction. These three sections close most of it in one diff, without touching behavior. Same verbatim pattern as gstack core, adapted per-skill for the rollup rules. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`.
+
 ## [0.10.0] - 2026-04-18
 
 ### Removed

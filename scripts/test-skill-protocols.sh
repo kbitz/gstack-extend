@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+#
+# test-skill-protocols.sh — Assert every skill file has the shared protocol sections
+# grafted in v0.11.0. Each skill must contain Completion Status Protocol (with the
+# full 4-status enum), Escalation format, and Confusion Protocol.
+#
+# Usage:
+#   ./scripts/test-skill-protocols.sh [--verbose]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
+VERBOSE=false
+PASSED=0
+FAILED=0
+TOTAL=0
+
+if [ "${1:-}" = "--verbose" ]; then
+  VERBOSE=true
+fi
+
+log() {
+  if $VERBOSE; then
+    echo "  $*"
+  fi
+}
+
+pass() {
+  PASSED=$((PASSED + 1))
+  TOTAL=$((TOTAL + 1))
+  echo "  ✓ $1"
+}
+
+fail() {
+  FAILED=$((FAILED + 1))
+  TOTAL=$((TOTAL + 1))
+  echo "  ✗ $1"
+  if [ -n "${2:-}" ]; then
+    echo "    $2"
+  fi
+}
+
+# ─── skill protocol assertions ─────────────────────────────────
+
+SKILLS=(pair-review roadmap full-review)
+
+REQUIRED_SECTIONS=(
+  "## Completion Status Protocol"
+  "### Escalation"
+  "## Confusion Protocol"
+)
+
+REQUIRED_STATUS_TOKENS=(
+  "**DONE**"
+  "**DONE_WITH_CONCERNS**"
+  "**BLOCKED**"
+  "**NEEDS_CONTEXT**"
+)
+
+REQUIRED_ESCALATION_FIELDS=(
+  "STATUS: BLOCKED | NEEDS_CONTEXT"
+  "REASON:"
+  "ATTEMPTED:"
+  "RECOMMENDATION:"
+)
+
+for skill in "${SKILLS[@]}"; do
+  echo ""
+  echo "═══ skills/${skill}.md ═══"
+  file="$SCRIPT_DIR/skills/${skill}.md"
+
+  if [ ! -f "$file" ]; then
+    fail "Skill file exists" "Missing: $file"
+    continue
+  fi
+  pass "Skill file exists"
+
+  for section in "${REQUIRED_SECTIONS[@]}"; do
+    if grep -qF "$section" "$file"; then
+      pass "Contains section: $section"
+    else
+      fail "Missing section: $section" "in $file"
+    fi
+  done
+
+  for token in "${REQUIRED_STATUS_TOKENS[@]}"; do
+    if grep -qF "$token" "$file"; then
+      pass "Contains status token: $token"
+    else
+      fail "Missing status token: $token" "in $file"
+    fi
+  done
+
+  for field in "${REQUIRED_ESCALATION_FIELDS[@]}"; do
+    if grep -qF "$field" "$file"; then
+      pass "Contains escalation field: $field"
+    else
+      fail "Missing escalation field: $field" "in $file"
+    fi
+  done
+done
+
+echo ""
+echo "═══════════════════════════════════════"
+echo "Results: $PASSED passed, $FAILED failed (of $TOTAL)"
+echo "═══════════════════════════════════════"
+
+exit $FAILED

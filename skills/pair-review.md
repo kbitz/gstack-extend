@@ -841,3 +841,51 @@ language to the appropriate action. In practice, users will say things like:
 - "done" / "that's everything" → DONE
 
 Map natural language to the appropriate action. When ambiguous, ask.
+
+---
+
+## Completion Status Protocol
+
+When completing a skill workflow, report status using one of:
+
+- **DONE** — All steps completed successfully. Evidence provided for each claim.
+- **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
+- **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
+- **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+
+For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`) and per-group statuses to the session-level enum at `/pair-review done` time. Rollup rule:
+
+- All groups complete, no parked bugs and no failures → **DONE**
+- Complete with items SKIPPED, PARKED, or with deferred bugs → **DONE_WITH_CONCERNS** (list them)
+- A group cannot proceed (deploy broken, can't reach the app, missing credentials) → **BLOCKED**
+- Session interrupted or resumed without required context (lost `.context/pair-review/` state, for example) → **NEEDS_CONTEXT**
+
+### Escalation
+
+It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+
+- If you have attempted a fix 3 times without success, STOP and escalate (park the bug, move on, surface at group rollup).
+- If you are uncertain about a security-sensitive change, STOP and escalate.
+- If the scope of work exceeds what you can verify, STOP and escalate.
+
+Escalation format:
+
+```
+STATUS: BLOCKED | NEEDS_CONTEXT
+REASON: [1-2 sentences]
+ATTEMPTED: [what you tried]
+RECOMMENDATION: [what the user should do next]
+```
+
+## Confusion Protocol
+
+When you encounter high-stakes ambiguity during this workflow:
+
+- Two plausible interpretations of a user request, with different outcomes (e.g., "fix it" could mean patch the current bug or re-derive the test from scratch).
+- A request that contradicts the existing session plan and you're unsure which to follow.
+- A destructive or irreversible operation where the scope is unclear (e.g., "reset" — reset this group? the whole session? discard local changes?).
+- Missing context that would change your approach significantly (unknown test target, ambiguous failure mode).
+
+STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on decisions that affect the test record or the user's code.
+
+This does NOT apply to routine pass/fail decisions, obvious next-item moves, or small clarifications.
