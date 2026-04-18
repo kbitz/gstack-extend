@@ -302,10 +302,10 @@ mkdir -p "$MOCK_HOME"
 OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 3 skills"; then
-  pass "Installs 3 skills to default skills dir"
+if echo "$OUTPUT" | grep -q "Installed 4 skills"; then
+  pass "Installs 4 skills to default skills dir"
 else
-  fail "Should install 3 skills" "Got: $OUTPUT"
+  fail "Should install 4 skills" "Got: $OUTPUT"
 fi
 
 # Check symlinks were created
@@ -318,6 +318,17 @@ if [ -L "$MOCK_HOME/.claude/skills/pair-review/SKILL.md" ]; then
   fi
 else
   fail "Should create pair-review symlink"
+fi
+
+if [ -L "$MOCK_HOME/.claude/skills/review-apparatus/SKILL.md" ]; then
+  LINK_TARGET=$(readlink "$MOCK_HOME/.claude/skills/review-apparatus/SKILL.md")
+  if [ "$LINK_TARGET" = "$SCRIPT_DIR/skills/review-apparatus.md" ]; then
+    pass "review-apparatus symlink points to correct source"
+  else
+    fail "review-apparatus symlink target wrong" "Got: $LINK_TARGET"
+  fi
+else
+  fail "Should create review-apparatus symlink"
 fi
 
 if [ -L "$MOCK_HOME/.claude/skills/browse-native/SKILL.md" ]; then
