@@ -71,7 +71,7 @@ execution. Audits versioning, validates doc taxonomy, and recommends version bum
 
 | Doc | Purpose | Written by |
 |-----|---------|------------|
-| TODOS.md | Inbox — unprocessed items | /pair-review, /investigate, manual |
+| TODOS.md | Inbox — unprocessed items | /pair-review, /full-review, /investigate, /review-apparatus, manual |
 | ROADMAP.md | Execution plan — Groups > Tracks > Tasks | /roadmap |
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
