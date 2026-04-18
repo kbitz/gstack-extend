@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-04-18
+
+### Added
+- `/review-apparatus` — new skill that audits a project's testing and debugging apparatus. Reads existing scripts, `bin/` tools, Makefile targets, dev endpoints, logging, staging configs, and test infra. Proposes lightweight bolt-on additions where a small helper would make CC-assisted verification or debugging materially easier. Approved proposals land in `docs/TODOS.md` as `[review-apparatus]` items for `/roadmap` to organize.
+- `/roadmap` source-tag signal list now includes `[review-apparatus]` with classification guidance (tooling proposals classify by which code area they support, or form a platform/tooling track when several accumulate). `[review-apparatus]` added to the canonical provenance tag list alongside `[pair-review]`, `[manual]`, `[investigate]`, `[full-review]`, `[discovered:<filepath>]`.
+- `scripts/test-skill-protocols.sh` extended to cover the new skill (62 → 82 assertions). Each of the four skills must now contain all three protocol sections plus the REPORT table.
+- `scripts/test-update.sh` extended with a symlink check for `review-apparatus` and updated `Installed 3 skills` → `Installed 4 skills` assertion.
+- README updated with a `/review-apparatus` table entry and a full skill section describing the audit + proposal flow.
+
+### Why
+The concrete itch came from Bolt: during manual testing of email compose/send/store, the user wants CC to verify that the editor HTML, the sent payload, and the stored row all match. That is not work pair-review can do today, because the projects being tested lack the dev-time hooks CC would need (direct DB access, last-sent readers, editor HTML dumps). The load-bearing reframe: most projects don't have the apparatus that would let ANY gstack skill do CC-assisted verification. /review-apparatus fills the producer side of that equation. pair-review, /qa, /investigate, and /full-review will pick up the apparatus organically once it exists in a project. How they discover and invoke it is a future, separate design. Design doc: `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-pair-review-assist-design-20260418-113742.md`.
+
 ## [0.12.0] - 2026-04-18
 
 ### Added
