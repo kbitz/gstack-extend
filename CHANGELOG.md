@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-04-18
+
+### Added
+- `/roadmap` now enforces per-Track size caps (`max_tasks_per_track=5`, `max_loc_per_track=300`, `max_files_per_track=8`, `max_tracks_per_group=8`). Ceilings are tunable via `bin/config`; effort labels `(S/M/L/XL)` map to seed LOC (50/150/300/500). A track exceeding any cap is a `## SIZE` audit blocker.
+- Every track gains a dedicated `_touches:_` metadata line enumerating its full file footprint. The audit uses it to compute pairwise `## COLLISIONS` within each Group. Collisions are classified **SHARED_INFRA** (overlap in `docs/shared-infra.txt` — fix: promote to per-Group Pre-flight) or **PARALLEL** (fix: merge tracks or move one to next Group). Legacy tracks without `_touches:_` are tolerated (`LEGACY_TRACKS` banner + `skip-legacy` status) and trigger a migration prompt on next `/roadmap` run.
+- `## STYLE_LINT` warns (non-blocking) when a track uses `Depends on: Track NA` to reference another track in the same Group — "blocks → next Group" is a rule, not an annotation.
+- `## SIZE_LABEL_MISMATCH` warns when a task's declared `~N lines` hint diverges from its effort tier's LOC mapping by more than 3x.
+- New `bin/lib/effort.sh` library: deterministic LOC mapping, ceiling resolution (env var > `bin/config` > default), numeric validation on config overrides (non-numeric values fall through to default with a `CONFIG_INVALID` warning).
+- New `docs/shared-infra.txt` (per-project): hand-curated list of files where two parallel tracks overlapping is always a SHARED_INFRA collision. Supports `*` globs, `{a,b}` brace expansion, and `#` comments. Loaded once per audit run via `find -path`.
+- 34 new test cases in `scripts/test-roadmap-audit.sh` covering size caps (happy path + every failure axis + env overrides + non-numeric), collisions (disjoint/PARALLEL/SHARED_INFRA/cross-Group-excluded/legacy-excluded), shared-infra glob (literal/`*`/brace/comments), style lint, touches parsing (whitespace/wrong order), max-tracks-per-Group, and a load-bearing regression assertion that the repo's own migrated `docs/ROADMAP.md` passes the full audit.
+
+### Changed
+- `skills/roadmap.md` Rule 1 reframed: "A Group is a wave of PRs that land together — parallel-safe within, sequential between. Create a new Group whenever dependency ordering demands it OR parallel tasks would collide on files." Kept the existing "Group" vocabulary (no rename) to preserve freshness-scan provenance lookups and existing user docs.
+- `bin/roadmap-audit` `check_structure()` now detects `_touches:_` appearing before the italic metadata line and emits a clear error (previously misreported as "missing risk level").
+- `docs/ROADMAP.md` migrated to the new two-line metadata format. Track 1B deleted (all tasks were shared-infra → moved to Group 1 Pre-flight); Track 1A flattened to its only non-shared-infra task.
+
+### Why
+Two recurring failure modes of `/roadmap`: tracks too big for a single PR (get split mid-implementation) and "parallel" tracks that actually conflict (shared-infra files not modeled). The skill now enforces size as a hard invariant and computes collisions from explicit `_touches:_` sets instead of relying on informal "primary files" vibes. See `~/.gstack/projects/kbitz-gstack-extend/ceo-plans/2026-04-18-roadmap-track-sizing.md` for the full decision trail (3 adversarial review rounds, score 8.0/10).
+
 ## [0.8.11] - 2026-04-16
 
 ### Fixed

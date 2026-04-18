@@ -18,6 +18,7 @@ EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 REPO_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 source "$(dirname "$0")/lib/semver.sh"
+EXTEND_DIR="$EXTEND_DIR" source "$(dirname "$0")/lib/effort.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────
 
@@ -68,63 +69,41 @@ find_scannable_md_files() {
 # Count TODO-like patterns in a file, excluding fenced code blocks.
 # Patterns: checkboxes, TODO:/FIXME:/HACK:/XXX:, section headings
 # (## TODO, ## Tasks, ## Action Items, ## Backlog), and bold+effort markers.
+#
+# Single-pass awk (NOT per-line bash + grep): on a repo with a large
+# CHANGELOG.md + test-roadmap-audit.sh this cuts audit time from ~45s to <1s.
 count_todo_patterns() {
   local filepath="$1"
-  local count=0
-  local in_code_block=0
-  local fence_len=0
-  local fence_char=""
+  awk '
+    BEGIN { in_code = 0; fence_len = 0; fence_char = "" }
+    {
+      # Fence line: capture leading ```/~~~ (any length >= 3)
+      if (match($0, /^[[:space:]]*(`{3,}|~{3,})/)) {
+        fence_raw = substr($0, RSTART, RLENGTH)
+        gsub(/[[:space:]]/, "", fence_raw)
+        fl = length(fence_raw)
+        fc = substr(fence_raw, 1, 1)
+        if (in_code == 0) {
+          in_code = 1; fence_len = fl; fence_char = fc
+        } else if (fc == fence_char && fl >= fence_len) {
+          in_code = 0; fence_len = 0; fence_char = ""
+        }
+        next
+      }
+      if (in_code == 1) { next }
 
-  while IFS= read -r line; do
-    # Handle fenced code blocks: track fence char and count for nesting.
-    # Supports both backtick (```) and tilde (~~~) fences.
-    # A fence opens with N chars; only closes with >= N of the SAME char.
-    local fence_match=""
-    fence_match=$(echo "$line" | grep -oE '^\s*(`{3,}|~{3,})' 2>/dev/null | tr -d '[:space:]' || true)
-    if [ -n "$fence_match" ]; then
-      local fm_len=${#fence_match}
-      local fm_char="${fence_match:0:1}"
-      if [ "$in_code_block" -eq 0 ]; then
-        in_code_block=1
-        fence_len=$fm_len
-        fence_char="$fm_char"
-      elif [ "$fm_char" = "$fence_char" ] && [ "$fm_len" -ge "$fence_len" ]; then
-        in_code_block=0
-        fence_len=0
-        fence_char=""
-      fi
-      continue
-    fi
-
-    # Skip lines inside code blocks
-    if [ "$in_code_block" -eq 1 ]; then
-      continue
-    fi
-
-    # Check for TODO-like patterns
-    # 1. Checkboxes: - [ ] or - [x]
-    if echo "$line" | grep -qE '^[[:space:]]*- \[[ xX]\]' 2>/dev/null; then
-      count=$((count + 1))
-      continue
-    fi
-    # 2. Inline markers: TODO:, FIXME:, HACK:, XXX:
-    if echo "$line" | grep -qE '\b(TODO|FIXME|HACK|XXX):' 2>/dev/null; then
-      count=$((count + 1))
-      continue
-    fi
-    # 3. Section headings: ## TODO, ## Tasks, ## Action Items, ## Backlog
-    if echo "$line" | grep -qiE '^#{1,3} (TODO|Tasks|Action Items|Backlog)' 2>/dev/null; then
-      count=$((count + 1))
-      continue
-    fi
-    # 4. Bold task title + effort marker at end: - **...** ... (S|M|L|XL)
-    if echo "$line" | grep -qE '^[[:space:]]*- \*\*.*\*\*.*\((S|M|L|XL)\)[[:space:]]*$' 2>/dev/null; then
-      count=$((count + 1))
-      continue
-    fi
-  done < "$filepath"
-
-  echo "$count"
+      # 1. Checkboxes: - [ ] or - [x]
+      if ($0 ~ /^[[:space:]]*- \[[ xX]\]/) { count++; next }
+      # 2. Inline markers: TODO:|FIXME:|HACK:|XXX:, word-boundary approximated
+      #    via non-alnum/start-of-line prefix.
+      if ($0 ~ /(^|[^a-zA-Z0-9_])(TODO|FIXME|HACK|XXX):/) { count++; next }
+      # 3. Section headings: ## TODO, ## Tasks, ## Action Items, ## Backlog (case-insensitive)
+      if (tolower($0) ~ /^#{1,3} (todo|tasks|action items|backlog)/) { count++; next }
+      # 4. Bold task + effort marker at end: - **...** ... (S|M|L|XL)
+      if ($0 ~ /^[[:space:]]*- \*\*.*\*\*.*\((S|M|L|XL)\)[[:space:]]*$/) { count++; next }
+    }
+    END { print count + 0 }
+  ' "$filepath"
 }
 
 TODOS_FILE=$(find_doc "TODOS.md")
@@ -299,7 +278,11 @@ check_structure() {
         track_name=$(echo "$line" | sed 's/^### //')
       elif [ "$in_track" -eq 1 ]; then
         # Check if this line is italic metadata (_..._)
-        if echo "$line" | grep -q '^_.*_$' 2>/dev/null; then
+        if echo "$line" | grep -qE '^_touches:' 2>/dev/null; then
+          # _touches:_ line came first — metadata must come before it.
+          findings="${findings}- ${track_name}: _touches:_ line appears before metadata (expected metadata first)\n"
+          found=1
+        elif echo "$line" | grep -q '^_.*_$' 2>/dev/null; then
           # Validate it has required components: number, risk, files
           if echo "$line" | grep -iq 'risk\|low\|medium\|high' 2>/dev/null; then
             tracks_with_meta=$((tracks_with_meta + 1))
@@ -1015,13 +998,9 @@ check_structural_fitness() {
 
   # Bash 3-compatible key=value storage (no associative arrays)
   # Format: "key1=val1 key2=val2 ..."
+  # _kv_get/_kv_set/_kv_keys are defined at module scope — see Check 13.
   local group_task_counts=""
   local track_task_counts=""
-
-  # Helpers: get/set/incr values in "key=val key=val" strings
-  _kv_get() { echo "$1" | tr ' ' '\n' | grep "^$2=" | tail -1 | cut -d= -f2; }
-  _kv_set() { echo "$1" | tr ' ' '\n' | grep -v "^$2=" | tr '\n' ' '; printf "%s=%s" "$2" "$3"; }
-  _kv_keys() { echo "$1" | tr ' ' '\n' | grep '=' | cut -d= -f1 | sort; }
 
   while IFS= read -r line; do
     # Group heading
@@ -1235,6 +1214,560 @@ check_scattered_todos() {
   echo ""
 }
 
+# ─── Check 13: Size, Collisions, Style Lint (parse + emit) ────
+#
+# Rev 0.9.0 additions. Parse ROADMAP.md once into per-track state,
+# then run size, collision, and style checks against that state.
+# Shared infra is loaded once from docs/shared-infra.txt.
+#
+# See docs/designs/... or ceo-plans for the rationale.
+
+# Module-level parser state (populated by _parse_roadmap).
+_ROADMAP_PARSED=0
+_TRACK_LIST=""           # space-sep track IDs: "1A 1B 2A"
+_TRACK_GROUP=""          # kv: "1A=1 1B=1 2A=2"
+_TRACK_TOUCHES=""        # kv: "1A=setup,bin/foo 1B=... 2A="   (empty = legacy)
+_TRACK_TASKS=""          # kv: "1A=3 1B=2"
+_TRACK_LOC=""            # kv: "1A=250 1B=150"
+_TRACK_FILES_COUNT=""    # kv: "1A=2 1B=3" (count of files in touches)
+_TRACK_LEGACY=""         # kv: "1A=0 1B=1" (1 = no _touches:_ line)
+_GROUP_LIST=""           # space-sep group numbers: "1 2"
+_GROUP_TRACKS=""         # kv: "1=1A,1B 2=2A"
+_SIZE_LABEL_MISMATCHES=""  # newline-sep "TrackID|title|effort|declared|expected"
+_STYLE_LINT_WARNINGS=""    # newline-sep "TrackID: depends on TrackYY (same Group N)"
+
+# kv helpers — promoted to module scope for reuse across checks.
+# Format: "key1=val1 key2=val2 ...". Bash 3 compatible (no assoc arrays).
+# Trailing `|| true` so that a no-match grep doesn't kill the script under
+# `set -eo pipefail` when these run inside command substitution.
+_kv_get() { echo "$1" | tr ' ' '\n' | { grep "^$2=" || true; } | tail -1 | cut -d= -f2; }
+_kv_set() { printf '%s ' "$1" | tr ' ' '\n' | { grep -v "^$2=" || true; } | tr '\n' ' '; printf "%s=%s" "$2" "$3"; }
+_kv_keys() { echo "$1" | tr ' ' '\n' | { grep '=' || true; } | cut -d= -f1 | sort -u; }
+
+# Trim leading/trailing whitespace from a string.
+_trim() {
+  local s="$1"
+  # shellcheck disable=SC2001
+  s=$(echo "$s" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  echo "$s"
+}
+
+# Extract the count from a "~N lines" hint, or empty if none.
+_extract_lines_hint() {
+  echo "$1" | grep -oE '~[0-9]+[[:space:]]*lines?' | head -1 | grep -oE '[0-9]+' || true
+}
+
+# _parse_roadmap
+# Single-pass parse of ROADMAP.md. Populates _TRACK_*/_GROUP_* state and
+# the label-mismatch / style-lint finding lists. Idempotent (runs once).
+_parse_roadmap() {
+  if [ "$_ROADMAP_PARSED" -eq 1 ]; then
+    return 0
+  fi
+  _ROADMAP_PARSED=1
+
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  if [ -z "$roadmap" ]; then
+    return 0
+  fi
+
+  local section="none"
+  local group_num=""
+  local track_id=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Top-level sections that end per-track scoping.
+    if echo "$line" | grep -qiE '^## (Future|Unprocessed|Execution Map)'; then
+      section="skip"
+      track_id=""
+      continue
+    fi
+
+    # Group heading: ## Group N: Name
+    if echo "$line" | grep -qE '^## Group [0-9]+:'; then
+      group_num=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
+      if ! echo " $_GROUP_LIST " | grep -q " $group_num "; then
+        _GROUP_LIST="${_GROUP_LIST}${_GROUP_LIST:+ }${group_num}"
+      fi
+      section="group"
+      track_id=""
+      continue
+    fi
+
+    # Any other ## heading — reset
+    if echo "$line" | grep -qE '^## '; then
+      section="none"
+      track_id=""
+      continue
+    fi
+
+    # Pre-flight block within a Group — per-Group trivial bucket.
+    if echo "$line" | grep -qiE '^\*\*Pre-flight\*\*'; then
+      section="preflight"
+      track_id=""
+      continue
+    fi
+
+    # Track heading: ### Track NA: Name
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
+      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+      if echo " $_TRACK_LIST " | grep -q " $track_id "; then
+        # Duplicate track ID — earlier state gets stomped by kv_set. Warn.
+        _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: duplicate track ID (another track earlier in ROADMAP.md also uses '${track_id}') — rename one; track IDs must be globally unique\n"
+      else
+        _TRACK_LIST="${_TRACK_LIST}${_TRACK_LIST:+ }${track_id}"
+      fi
+      _TRACK_GROUP=$(_kv_set "$_TRACK_GROUP" "$track_id" "${group_num:-0}")
+      _TRACK_TOUCHES=$(_kv_set "$_TRACK_TOUCHES" "$track_id" "")
+      _TRACK_TASKS=$(_kv_set "$_TRACK_TASKS" "$track_id" 0)
+      _TRACK_LOC=$(_kv_set "$_TRACK_LOC" "$track_id" 0)
+      _TRACK_FILES_COUNT=$(_kv_set "$_TRACK_FILES_COUNT" "$track_id" 0)
+      _TRACK_LEGACY=$(_kv_set "$_TRACK_LEGACY" "$track_id" 1)  # assume legacy until we see _touches:_
+      # Append to group's track list
+      if [ -n "$group_num" ]; then
+        local cur
+        cur=$(_kv_get "$_GROUP_TRACKS" "$group_num")
+        if [ -n "$cur" ]; then
+          _GROUP_TRACKS=$(_kv_set "$_GROUP_TRACKS" "$group_num" "${cur},${track_id}")
+        else
+          _GROUP_TRACKS=$(_kv_set "$_GROUP_TRACKS" "$group_num" "$track_id")
+        fi
+      fi
+      section="track"
+      in_preflight=0
+      expecting_touches=1  # metadata line comes next; after that, maybe _touches:_
+      continue
+    fi
+
+    # Within a track, check for _touches:_ line (can appear after metadata).
+    # The italic metadata line is skipped here — check_structure validates it.
+    if [ -n "$track_id" ] && [ "$section" = "track" ]; then
+      # _touches: <comma-sep files>_
+      if echo "$line" | grep -qE '^_touches:'; then
+        local raw
+        raw=$(echo "$line" | sed -E 's/^_touches:[[:space:]]*//; s/_[[:space:]]*$//')
+        # Split, trim, drop empties. Reject tokens containing whitespace or
+        # `=` — these corrupt the kv store downstream.
+        local touches_list=""
+        local files_count=0
+        local malformed=0
+        local IFS_ORIG="$IFS"
+        IFS=','
+        for f in $raw; do
+          local ft
+          ft=$(_trim "$f")
+          if [ -z "$ft" ]; then
+            continue
+          fi
+          # Reject internal whitespace or `=` — our kv store uses space/= as separators.
+          if echo "$ft" | grep -qE '[[:space:]=]'; then
+            malformed=1
+            continue
+          fi
+          touches_list="${touches_list}${touches_list:+,}${ft}"
+          files_count=$((files_count + 1))
+        done
+        IFS="$IFS_ORIG"
+
+        # Empty/whitespace-only _touches:_ MUST NOT silently promote to modern
+        # (that would disable the collision check for this track). Keep legacy.
+        if [ "$files_count" -eq 0 ]; then
+          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: _touches:_ line is empty or whitespace-only — track remains legacy (add file paths to opt into SIZE/COLLISIONS checks)\n"
+          continue
+        fi
+        if [ "$malformed" -eq 1 ]; then
+          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: _touches:_ contained tokens with whitespace or '=' — those entries were dropped (kv-store limitation)\n"
+        fi
+        _TRACK_TOUCHES=$(_kv_set "$_TRACK_TOUCHES" "$track_id" "$touches_list")
+        _TRACK_FILES_COUNT=$(_kv_set "$_TRACK_FILES_COUNT" "$track_id" "$files_count")
+        _TRACK_LEGACY=$(_kv_set "$_TRACK_LEGACY" "$track_id" 0)
+        continue
+      fi
+
+      # Same-group Depends on: Track NA — style lint (warning, not fail).
+      # Match any "Depends on: Track <ID>" in the track body. Flag if that
+      # referenced ID starts with the same group digits.
+      if echo "$line" | grep -qiE 'Depends on:[[:space:]]*Track [0-9]+[A-Z]'; then
+        local dep_id
+        dep_id=$(echo "$line" | grep -oiE 'Track [0-9]+[A-Z]' | head -1 | sed -E 's/^Track //')
+        if [ "$dep_id" = "$track_id" ]; then
+          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: Depends on itself (Track ${dep_id}) — typo or stale reference?\n"
+        else
+          local dep_group
+          dep_group=$(echo "$dep_id" | grep -oE '^[0-9]+')
+          local track_group
+          track_group=$(echo "$track_id" | grep -oE '^[0-9]+')
+          if [ -n "$dep_group" ] && [ "$dep_group" = "$track_group" ]; then
+            _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: Depends on Track ${dep_id} (same Group ${track_group}) — tracks in a Group must be fully parallel-safe; move to next Group\n"
+          fi
+        fi
+      fi
+    fi
+
+    # Task line within a track — update task/loc/files-count + label cross-check.
+    if [ -n "$track_id" ] && [ "$section" = "track" ] && echo "$line" | grep -qE '^- \*\*'; then
+      local title effort declared_lines expected_loc
+      title=$(echo "$line" | sed -E 's/^- \*\*([^*]+)\*\*.*/\1/')
+      effort=$(echo "$line" | grep -oE '\((S|M|L|XL)\)[[:space:]]*$' | tr -d '() ' || true)
+      declared_lines=$(_extract_lines_hint "$line")
+
+      local cur_tasks cur_loc
+      cur_tasks=$(_kv_get "$_TRACK_TASKS" "$track_id")
+      cur_loc=$(_kv_get "$_TRACK_LOC" "$track_id")
+
+      _TRACK_TASKS=$(_kv_set "$_TRACK_TASKS" "$track_id" $(( ${cur_tasks:-0} + 1 )))
+
+      if [ -n "$effort" ]; then
+        expected_loc=$(effort_to_loc "$effort")
+        _TRACK_LOC=$(_kv_set "$_TRACK_LOC" "$track_id" $(( ${cur_loc:-0} + expected_loc )))
+        # Label mismatch: declared "~N lines" diverges from effort tier by >3x
+        # Guard: both values must be positive integers (avoid /0 when declared_lines is 0).
+        if [ -n "$declared_lines" ] && [ "$declared_lines" -gt 0 ] && [ "$expected_loc" -gt 0 ]; then
+          local ratio_num ratio_den
+          if [ "$declared_lines" -gt "$expected_loc" ]; then
+            ratio_num=$declared_lines; ratio_den=$expected_loc
+          else
+            ratio_num=$expected_loc; ratio_den=$declared_lines
+          fi
+          # >3x divergence
+          if [ "$ratio_num" -gt $(( ratio_den * 3 )) ]; then
+            _SIZE_LABEL_MISMATCHES="${_SIZE_LABEL_MISMATCHES}${track_id}|${title}|${effort}|${declared_lines}|${expected_loc}\n"
+          fi
+        fi
+      fi
+    fi
+
+  done < "$roadmap"
+}
+
+# load_shared_infra
+# Read docs/shared-infra.txt (if present), expand patterns via find -path,
+# populate _SHARED_INFRA_FILES (newline-sep relative paths).
+# Supports: literal paths, * (matches any chars incl /), ** (no special
+# meaning — treated as *), and {a,b} brace expansion (via bash).
+_SHARED_INFRA_LOADED=0
+_SHARED_INFRA_FILES=""
+_SHARED_INFRA_STATUS="missing"
+load_shared_infra() {
+  if [ "$_SHARED_INFRA_LOADED" -eq 1 ]; then
+    return 0
+  fi
+  _SHARED_INFRA_LOADED=1
+
+  local f="$REPO_ROOT/docs/shared-infra.txt"
+  if [ ! -f "$f" ]; then
+    _SHARED_INFRA_STATUS="missing"
+    return 0
+  fi
+  _SHARED_INFRA_STATUS="loaded"
+
+  local -a all_matches=()
+  while IFS= read -r raw_pat || [ -n "$raw_pat" ]; do
+    # Strip comments and blanks.
+    local pat
+    pat=$(echo "$raw_pat" | sed 's/#.*//')
+    pat=$(_trim "$pat")
+    if [ -z "$pat" ]; then
+      continue
+    fi
+
+    # Brace expansion without path-glob: disable pathname expansion, let
+    # bash do brace expansion only, collect words into an array, re-enable
+    # pathname expansion. Each expanded word goes through find -path.
+    #
+    # Security: validate the pattern against a strict whitelist before eval.
+    # shared-infra.txt is project-owned, but a malicious pattern would otherwise
+    # execute via eval. Only allow characters needed for paths/globs/braces.
+    if ! echo "$pat" | grep -qE '^[a-zA-Z0-9/._{}*,+-]+$'; then
+      echo "SHARED_INFRA_WARN: skipping pattern with unsafe characters: '$pat'" >&2
+      continue
+    fi
+    # Reject `..` (path traversal) and `{..` (brace range expansion, which
+    # can produce arbitrarily large outputs like {1..1000000000}).
+    if echo "$pat" | grep -qE '\.\.'; then
+      echo "SHARED_INFRA_WARN: skipping pattern containing '..': '$pat'" >&2
+      continue
+    fi
+    # Keep pathname expansion disabled throughout: disable at expand time
+    # AND during the for-loop (word splitting of `$_expansion` would otherwise
+    # re-glob against CWD). Cap expanded word count to defend against
+    # brace-expansion bombs like {a,b}{c,d}{e,f}... (exponential) or
+    # {1..1000000} (range). 1000 is generous for real patterns.
+    local p
+    local expand_count=0
+    local expand_cap=1000
+    set -f
+    local _expansion
+    # shellcheck disable=SC2086
+    _expansion=$(eval "echo $pat")
+    # shellcheck disable=SC2086
+    for p in $_expansion; do
+      expand_count=$((expand_count + 1))
+      if [ "$expand_count" -gt "$expand_cap" ]; then
+        echo "SHARED_INFRA_WARN: pattern '$pat' expanded past $expand_cap entries — truncating" >&2
+        break
+      fi
+      # find -path uses absolute pattern; prefix with REPO_ROOT.
+      local full="$REPO_ROOT/$p"
+      local match
+      while IFS= read -r match; do
+        if [ -z "$match" ]; then
+          continue
+        fi
+        local rel="${match#$REPO_ROOT/}"
+        all_matches+=("$rel")
+      done < <(find "$REPO_ROOT" -path "$full" -type f 2>/dev/null)
+    done
+    set +f
+  done < "$f"
+
+  # Deduplicate + sort.
+  if [ ${#all_matches[@]} -gt 0 ]; then
+    _SHARED_INFRA_FILES=$(printf '%s\n' "${all_matches[@]}" | sort -u)
+  fi
+}
+
+# _is_shared_infra <relpath>
+# 0 if path is in the loaded shared-infra set, 1 otherwise.
+_is_shared_infra() {
+  if [ -z "$_SHARED_INFRA_FILES" ]; then
+    return 1
+  fi
+  echo "$_SHARED_INFRA_FILES" | grep -Fxq -- "$1"
+}
+
+# ─── Check: SIZE ──────────────────────────────────────────────
+# Enforces per-track size caps on modern tracks (those with _touches:_).
+# Legacy tracks are skipped with a banner. Also emits SIZE_LABEL_MISMATCH
+# warnings for tasks whose declared `~N lines` diverges from their
+# effort tier's LOC mapping by >3x.
+check_size_caps() {
+  echo "## SIZE"
+  _parse_roadmap
+
+  if [ -z "$_TRACK_LIST" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No tracks found"
+    echo ""
+    return
+  fi
+
+  local max_tasks max_loc max_files
+  max_tasks=$(ceiling max_tasks_per_track)
+  max_loc=$(ceiling max_loc_per_track)
+  max_files=$(ceiling max_files_per_track)
+
+  local findings=""
+  local mismatch_findings=""
+  local found=0
+  local legacy_tracks=""
+  local modern_count=0
+
+  local t
+  for t in $_TRACK_LIST; do
+    local is_legacy
+    is_legacy=$(_kv_get "$_TRACK_LEGACY" "$t")
+    if [ "${is_legacy:-1}" = "1" ]; then
+      legacy_tracks="${legacy_tracks}${legacy_tracks:+,}${t}"
+      continue
+    fi
+    modern_count=$((modern_count + 1))
+
+    local tasks loc files
+    tasks=$(_kv_get "$_TRACK_TASKS" "$t")
+    loc=$(_kv_get "$_TRACK_LOC" "$t")
+    files=$(_kv_get "$_TRACK_FILES_COUNT" "$t")
+    tasks=${tasks:-0}
+    loc=${loc:-0}
+    files=${files:-0}
+
+    if [ "$tasks" -gt "$max_tasks" ]; then
+      findings="${findings}- ${t}: tasks=${tasks} exceeds max_tasks_per_track=${max_tasks}\n"
+      found=1
+    fi
+    if [ "$loc" -gt "$max_loc" ]; then
+      findings="${findings}- ${t}: loc=${loc} exceeds max_loc_per_track=${max_loc}\n"
+      found=1
+    fi
+    if [ "$files" -gt "$max_files" ]; then
+      findings="${findings}- ${t}: files=${files} exceeds max_files_per_track=${max_files}\n"
+      found=1
+    fi
+  done
+
+  # Emit label mismatch findings separately (informational, not blocking).
+  if [ -n "$_SIZE_LABEL_MISMATCHES" ]; then
+    mismatch_findings=$(printf "%b" "$_SIZE_LABEL_MISMATCHES" | while IFS='|' read -r tid title effort decl exp; do
+      if [ -z "$tid" ]; then
+        continue
+      fi
+      echo "- ${tid} \"${title}\": effort=(${effort}) implies ~${exp} LOC, declared ~${decl} lines (>3x divergence)"
+    done)
+  fi
+
+  if [ "$found" -eq 0 ] && [ "$modern_count" -eq 0 ]; then
+    echo "STATUS: skip-legacy-all"
+    echo "FINDINGS:"
+    echo "- All tracks are legacy (no _touches:_ metadata) — run /roadmap to migrate"
+  elif [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+
+  if [ -n "$mismatch_findings" ]; then
+    echo "SIZE_LABEL_MISMATCH:"
+    echo "$mismatch_findings"
+  fi
+
+  echo "MAX_TASKS_PER_TRACK: $max_tasks"
+  echo "MAX_LOC_PER_TRACK: $max_loc"
+  echo "MAX_FILES_PER_TRACK: $max_files"
+  if [ -n "$legacy_tracks" ]; then
+    echo "LEGACY_TRACKS: $legacy_tracks"
+  fi
+  echo ""
+}
+
+# ─── Check: COLLISIONS ─────────────────────────────────────────
+# For each Group, compute the pairwise intersection of every modern
+# track's _touches:_ set. Non-empty intersection = audit blocker.
+# Classifies each collision as SHARED_INFRA (overlap is in shared-infra
+# set — fix is "promote to Pre-flight") or PARALLEL (otherwise — fix is
+# "merge tracks or split into next Group").
+check_collisions() {
+  echo "## COLLISIONS"
+  _parse_roadmap
+  load_shared_infra
+
+  if [ -z "$_GROUP_LIST" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No Groups found"
+    echo ""
+    return
+  fi
+
+  local findings=""
+  local found=0
+  local max_tracks_per_group
+  max_tracks_per_group=$(ceiling max_tracks_per_group)
+  local group_size_warnings=""
+
+  local g
+  for g in $_GROUP_LIST; do
+    local tracks_csv
+    tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g")
+    if [ -z "$tracks_csv" ]; then
+      continue
+    fi
+
+    # Split tracks by comma.
+    local IFS_ORIG="$IFS"
+    IFS=','
+    local -a tracks=()
+    for tid in $tracks_csv; do
+      # Only include modern tracks (legacy excluded from pairing).
+      local is_legacy
+      is_legacy=$(_kv_get "$_TRACK_LEGACY" "$tid")
+      if [ "${is_legacy:-1}" = "0" ]; then
+        tracks+=("$tid")
+      fi
+    done
+    IFS="$IFS_ORIG"
+
+    # Enforce max tracks per Group cap.
+    if [ ${#tracks[@]} -gt "$max_tracks_per_group" ]; then
+      group_size_warnings="${group_size_warnings}- Group ${g}: ${#tracks[@]} modern tracks exceeds max_tracks_per_group=${max_tracks_per_group}\n"
+      found=1
+    fi
+
+    # Pairwise intersection check.
+    local i j
+    for (( i=0; i<${#tracks[@]}; i++ )); do
+      for (( j=i+1; j<${#tracks[@]}; j++ )); do
+        local a="${tracks[$i]}"
+        local b="${tracks[$j]}"
+        local a_touches b_touches
+        a_touches=$(_kv_get "$_TRACK_TOUCHES" "$a")
+        b_touches=$(_kv_get "$_TRACK_TOUCHES" "$b")
+        if [ -z "$a_touches" ] || [ -z "$b_touches" ]; then
+          continue
+        fi
+
+        # Compute intersection as newline-sep list of shared files.
+        local a_sorted b_sorted intersection
+        a_sorted=$(echo "$a_touches" | tr ',' '\n' | sort -u)
+        b_sorted=$(echo "$b_touches" | tr ',' '\n' | sort -u)
+        intersection=$(comm -12 <(echo "$a_sorted") <(echo "$b_sorted"))
+
+        if [ -n "$intersection" ]; then
+          # Classify by shared-infra membership of any overlapping file.
+          local classification="PARALLEL"
+          local f
+          while IFS= read -r f; do
+            if [ -z "$f" ]; then
+              continue
+            fi
+            if _is_shared_infra "$f"; then
+              classification="SHARED_INFRA"
+              break
+            fi
+          done <<< "$intersection"
+
+          local intersect_flat
+          intersect_flat=$(echo "$intersection" | tr '\n' ',' | sed 's/,$//')
+          findings="${findings}- ${a}-${b}: [${intersect_flat}] [${classification}]\n"
+          found=1
+        fi
+      done
+    done
+  done
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  if [ -n "$group_size_warnings" ]; then
+    echo "GROUP_SIZE_WARNINGS:"
+    echo -e "$group_size_warnings"
+  fi
+  echo "MAX_TRACKS_PER_GROUP: $max_tracks_per_group"
+  echo "SHARED_INFRA_STATUS: $_SHARED_INFRA_STATUS"
+  echo ""
+}
+
+# ─── Check: STYLE_LINT ─────────────────────────────────────────
+# Warning (not fail) for intra-Group `Depends on: Track NA` references.
+# Tracks inside the same Group must be fully parallel-safe — if one
+# depends on another, the dependent belongs in a later Group.
+check_style_lint() {
+  echo "## STYLE_LINT"
+  _parse_roadmap
+
+  if [ -z "$_STYLE_LINT_WARNINGS" ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: warn"
+    echo "FINDINGS:"
+    echo -e "$_STYLE_LINT_WARNINGS"
+  fi
+  echo ""
+}
+
 # ─── Run all checks ──────────────────────────────────────────
 
 check_vocab_lint
@@ -1247,6 +1780,9 @@ check_archive_candidates
 check_dependencies
 check_task_list
 check_structural_fitness
+check_size_caps
+check_collisions
+check_style_lint
 check_doc_inventory
 check_scattered_todos
 check_unprocessed
