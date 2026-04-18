@@ -1566,6 +1566,986 @@ else
   fail "Structural fitness: future-only has 0 groups" "$(echo "$OUTPUT" | grep GROUP_COUNT)"
 fi
 
+# ─── size, collisions, style_lint, shared_infra (v0.9.0) ──────
+
+# Helper: fixture with one Group containing one modern Track.
+# Writes a minimal ROADMAP.md with the given track body (including _touches:_).
+make_modern_fixture() {
+  local name="$1" track_body="$2"
+  local dir
+  dir=$(create_fixture "$name")
+  mkdir -p "$dir/docs"
+  {
+    echo "# Roadmap"
+    echo ""
+    echo "## Group 1: G1"
+    echo ""
+    echo "$track_body"
+    echo ""
+    echo "## Unprocessed"
+  } > "$dir/docs/ROADMAP.md"
+  echo "# TODOs" > "$dir/docs/TODOS.md"
+  cat > "$dir/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+  echo "$dir"
+}
+
+# Helper: run audit with env overrides (passes through configured vars).
+run_audit_env() {
+  local dir="$1"
+  shift
+  env "$@" GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" "$dir" 2>/dev/null || true
+}
+
+echo ""
+echo "=== size caps ==="
+
+# Passes: 3-task track under every cap
+DIR=$(make_modern_fixture "size-pass" '### Track 1A: Small
+_3 tasks . low risk . [a, b, c]_
+_touches: a, b, c_
+
+- **T1** -- do it. _~30 lines._ (S)
+- **T2** -- do it. _~100 lines._ (M)
+- **T3** -- do it. _~40 lines._ (S)')
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "SIZE" | grep -q "pass"; then
+  pass "size: 3-task S+M+S track passes"
+else
+  fail "size: 3-task S+M+S track passes" "$(section_status "$OUTPUT" SIZE)"
+fi
+
+# Fails on tasks > max_tasks_per_track
+DIR=$(make_modern_fixture "size-tasks-fail" '### Track 1A: TooMany
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "1A: tasks=6 exceeds max_tasks_per_track=5"; then
+  pass "size: tasks cap blocks"
+else
+  fail "size: tasks cap blocks" "$(echo "$OUTPUT" | grep -A3 '^## SIZE')"
+fi
+
+# Fails on LOC (2 XL = 1000)
+DIR=$(make_modern_fixture "size-loc-fail" '### Track 1A: Heavy
+_2 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (XL)
+- **T2** -- . (XL)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "1A: loc=1000 exceeds max_loc_per_track=300"; then
+  pass "size: loc cap blocks"
+else
+  fail "size: loc cap blocks"
+fi
+
+# Fails on files > 8
+DIR=$(make_modern_fixture "size-files-fail" '### Track 1A: Wide
+_1 task . low risk . [a]_
+_touches: a, b, c, d, e, f, g, h, i_
+
+- **T1** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "1A: files=9 exceeds max_files_per_track=8"; then
+  pass "size: files cap blocks"
+else
+  fail "size: files cap blocks"
+fi
+
+# Env override raises tasks cap to 7
+DIR=$(make_modern_fixture "size-env-override" '### Track 1A: Six
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)')
+OUTPUT=$(run_audit_env "$DIR" ROADMAP_MAX_TASKS_PER_TRACK=7)
+if section_status "$OUTPUT" "SIZE" | grep -q "pass"; then
+  pass "size: env override raises tasks cap"
+else
+  fail "size: env override raises tasks cap" "$(section_status "$OUTPUT" SIZE)"
+fi
+
+# Non-numeric env var: fall back to default, still blocks 6-task track
+DIR=$(make_modern_fixture "size-env-bad" '### Track 1A: Six
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)')
+OUTPUT=$(run_audit_env "$DIR" ROADMAP_MAX_TASKS_PER_TRACK=foo)
+if echo "$OUTPUT" | grep -q "1A: tasks=6 exceeds max_tasks_per_track=5"; then
+  pass "size: non-numeric env falls back to default"
+else
+  fail "size: non-numeric env falls back to default"
+fi
+
+# Legacy track (no _touches:_) yields skip-legacy
+DIR=$(create_fixture "size-legacy")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+### Track 1A: Legacy
+_1 task . low risk . [a]_
+
+- **T1** -- do it. (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "LEGACY_TRACKS: 1A"; then
+  pass "size: legacy track emits LEGACY_TRACKS banner"
+else
+  fail "size: legacy track emits LEGACY_TRACKS banner"
+fi
+
+# Legacy-only roadmap emits skip-legacy-all
+if section_status "$OUTPUT" "SIZE" | grep -q "skip-legacy-all"; then
+  pass "size: all-legacy roadmap is skip-legacy-all"
+else
+  fail "size: all-legacy roadmap is skip-legacy-all"
+fi
+
+# SIZE_LABEL_MISMATCH: (S) + ~200 lines (4x divergence) → warn
+DIR=$(make_modern_fixture "size-mismatch" '### Track 1A: Lie
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- big. _~200 lines._ (S)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "SIZE_LABEL_MISMATCH"; then
+  pass "size: label mismatch detected on 4x divergence"
+else
+  fail "size: label mismatch detected on 4x divergence"
+fi
+
+# SIZE_LABEL_MISMATCH: (S) + ~80 lines (<3x) → silent
+DIR=$(make_modern_fixture "size-near" '### Track 1A: Close
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- close. _~80 lines._ (S)')
+OUTPUT=$(run_audit "$DIR")
+if ! echo "$OUTPUT" | grep -q "SIZE_LABEL_MISMATCH"; then
+  pass "size: label mismatch silent below 3x"
+else
+  fail "size: label mismatch silent below 3x"
+fi
+
+# SIZE_LABEL_MISMATCH: task with no ~N lines hint → skip cross-check
+DIR=$(make_modern_fixture "size-no-hint" '### Track 1A: NoHint
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- unlabeled. (S)')
+OUTPUT=$(run_audit "$DIR")
+if ! echo "$OUTPUT" | grep -q "SIZE_LABEL_MISMATCH"; then
+  pass "size: no lines-hint skips label mismatch"
+else
+  fail "size: no lines-hint skips label mismatch"
+fi
+
+echo ""
+echo "=== collisions ==="
+
+# No overlap: pass
+DIR=$(create_fixture "coll-none")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [x]_
+_touches: x_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [y]_
+_touches: y_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "COLLISIONS" | grep -q "pass"; then
+  pass "collisions: disjoint touches pass"
+else
+  fail "collisions: disjoint touches pass" "$(section_status "$OUTPUT" COLLISIONS)"
+fi
+
+# PARALLEL collision: 1A and 1B both touch web/foo.ts (not in shared infra)
+DIR=$(create_fixture "coll-parallel")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [web/foo.ts]_
+_touches: web/foo.ts_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [web/foo.ts]_
+_touches: web/foo.ts_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '1A-1B:.*\[web/foo.ts\].*\[PARALLEL\]'; then
+  pass "collisions: PARALLEL classification when no shared-infra match"
+else
+  fail "collisions: PARALLEL classification when no shared-infra match" "$(echo "$OUTPUT" | grep -A3 '^## COLLISIONS')"
+fi
+
+# SHARED_INFRA collision: both touch bin/config (which IS in default shared-infra)
+DIR=$(create_fixture "coll-shared")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [bin/config]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [bin/config]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+# Put a shared-infra file and make the overlapping file exist
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/config"
+echo "bin/config" > "$DIR/docs/shared-infra.txt"
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '1A-1B:.*\[bin/config\].*\[SHARED_INFRA\]'; then
+  pass "collisions: SHARED_INFRA classification when overlap is in shared-infra set"
+else
+  fail "collisions: SHARED_INFRA classification" "$(echo "$OUTPUT" | grep -A3 '^## COLLISIONS')"
+fi
+
+# Cross-Group: 1A vs 2A share file — NOT flagged (intra-Group only)
+DIR=$(create_fixture "coll-cross-group")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G1
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Group 2: G2
+
+### Track 2A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "COLLISIONS" | grep -q "pass"; then
+  pass "collisions: cross-Group overlap NOT flagged"
+else
+  fail "collisions: cross-Group overlap NOT flagged"
+fi
+
+# Legacy tracks excluded from pairing
+DIR=$(create_fixture "coll-legacy-excluded")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: Legacy
+_1 task . low risk . [a]_
+
+- **T1** -- . (S)
+
+### Track 1B: Modern
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "COLLISIONS" | grep -q "pass"; then
+  pass "collisions: legacy tracks excluded from pairing"
+else
+  fail "collisions: legacy tracks excluded from pairing"
+fi
+
+# SHARED_INFRA_STATUS: missing when file absent
+DIR=$(make_modern_fixture "coll-shared-missing" '### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "SHARED_INFRA_STATUS: missing"; then
+  pass "collisions: shared-infra.txt absent reports missing"
+else
+  fail "collisions: shared-infra.txt absent reports missing"
+fi
+
+echo ""
+echo "=== shared_infra glob ==="
+
+# Literal path match
+DIR=$(make_modern_fixture "glob-literal" '### Track 1A: A
+_1 task . low risk . [bin/config]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [bin/config]_
+_touches: bin/config_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/config"
+echo "bin/config" > "$DIR/docs/shared-infra.txt"
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '\[SHARED_INFRA\]'; then
+  pass "glob: literal path matches"
+else
+  fail "glob: literal path matches"
+fi
+
+# Single-star glob skills/*.md matches skills/foo.md
+DIR=$(make_modern_fixture "glob-single-star" '### Track 1A: A
+_1 task . low risk . [x]_
+_touches: skills/foo.md_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [x]_
+_touches: skills/foo.md_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/skills"
+touch "$DIR/skills/foo.md"
+echo "skills/*.md" > "$DIR/docs/shared-infra.txt"
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '\[SHARED_INFRA\]'; then
+  pass "glob: *.md pattern matches"
+else
+  fail "glob: *.md pattern matches"
+fi
+
+# Brace expansion bin/{config,update-run}
+DIR=$(make_modern_fixture "glob-brace" '### Track 1A: A
+_1 task . low risk . [x]_
+_touches: bin/update-run_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [x]_
+_touches: bin/update-run_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/update-run"
+echo "bin/{config,update-run}" > "$DIR/docs/shared-infra.txt"
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '\[SHARED_INFRA\]'; then
+  pass "glob: brace expansion matches"
+else
+  fail "glob: brace expansion matches"
+fi
+
+# SECURITY: malicious pattern with shell metachars is rejected
+DIR=$(make_modern_fixture "glob-injection" '### Track 1A: A
+_1 task . low risk . [a]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [a]_
+_touches: bin/config_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/config"
+cat > "$DIR/docs/shared-infra.txt" << 'INFRAEOF'
+bin/config
+; touch /tmp/gstack-pwn-should-not-exist
+$(touch /tmp/gstack-pwn-should-not-exist)
+INFRAEOF
+rm -f /tmp/gstack-pwn-should-not-exist
+OUTPUT=$(GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" "$DIR" 2>&1 || true)
+# Valid pattern still matches
+valid_match=0
+if echo "$OUTPUT" | grep -q '\[SHARED_INFRA\]'; then
+  valid_match=1
+fi
+# Malicious patterns rejected with warning
+rejected=0
+if echo "$OUTPUT" | grep -q "SHARED_INFRA_WARN: skipping pattern with unsafe characters"; then
+  rejected=1
+fi
+# No pwn file created
+safe=1
+if [ -e /tmp/gstack-pwn-should-not-exist ]; then
+  safe=0
+  rm -f /tmp/gstack-pwn-should-not-exist
+fi
+if [ "$valid_match" -eq 1 ] && [ "$rejected" -eq 1 ] && [ "$safe" -eq 1 ]; then
+  pass "security: malicious shared-infra pattern rejected, safe patterns still match"
+else
+  fail "security: malicious shared-infra pattern rejected, safe patterns still match" "valid_match=$valid_match rejected=$rejected safe=$safe"
+fi
+
+# Comment lines and blank lines ignored in shared-infra.txt
+DIR=$(make_modern_fixture "glob-comments" '### Track 1A: A
+_1 task . low risk . [x]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [x]_
+_touches: bin/config_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/config"
+cat > "$DIR/docs/shared-infra.txt" << 'EOF'
+# this is a comment
+
+bin/config
+# another comment
+EOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '\[SHARED_INFRA\]'; then
+  pass "glob: comment lines ignored"
+else
+  fail "glob: comment lines ignored"
+fi
+
+echo ""
+echo "=== style_lint ==="
+
+# Same-Group Depends on: → warn
+DIR=$(create_fixture "style-same-group")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [b]_
+_touches: b_
+
+Depends on: Track 1A
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "1B: Depends on Track 1A (same Group 1)"; then
+  pass "style_lint: same-Group Depends on warns"
+else
+  fail "style_lint: same-Group Depends on warns" "$(echo "$OUTPUT" | grep -A3 '^## STYLE_LINT')"
+fi
+
+# Cross-Group Depends on: → silent
+DIR=$(create_fixture "style-cross-group")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G1
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Group 2: G2
+
+### Track 2A: A
+_1 task . low risk . [c]_
+_touches: c_
+
+Depends on: Track 1A
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "STYLE_LINT" | grep -q "pass"; then
+  pass "style_lint: cross-Group Depends on is silent"
+else
+  fail "style_lint: cross-Group Depends on is silent"
+fi
+
+echo ""
+echo "=== touches parsing ==="
+
+# Whitespace tolerant: `  a ,  b  ,c_` → [a, b, c]
+DIR=$(make_modern_fixture "parse-whitespace" '### Track 1A: Spaces
+_1 task . low risk . [a]_
+_touches:   a  ,  b ,c_
+
+- **T1** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "SIZE" | grep -q "pass"; then
+  # Files-count should be 3, not failing any cap
+  pass "parse: whitespace trim in touches list"
+else
+  fail "parse: whitespace trim in touches list"
+fi
+
+# _touches:_ line before metadata → structure error with helpful message
+DIR=$(create_fixture "parse-touches-first")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+### Track 1A: Wrong
+_touches: a_
+_1 task . low risk . [a]_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "_touches:_ line appears before metadata"; then
+  pass "parse: touches-before-metadata triggers clear error"
+else
+  fail "parse: touches-before-metadata triggers clear error"
+fi
+
+echo ""
+echo "=== max_tracks_per_group ==="
+
+# More than 8 modern tracks in a Group → warning
+DIR=$(create_fixture "group-track-cap")
+mkdir -p "$DIR/docs"
+{
+  echo "# Roadmap"
+  echo ""
+  echo "## Group 1: G"
+  echo ""
+  for letter in A B C D E F G H I; do
+    echo "### Track 1${letter}: T${letter}"
+    echo "_1 task . low risk . [f${letter}]_"
+    echo "_touches: f${letter}_"
+    echo ""
+    echo "- **T1** -- . (S)"
+    echo ""
+  done
+  echo "## Unprocessed"
+} > "$DIR/docs/ROADMAP.md"
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "9 modern tracks exceeds max_tracks_per_group=8"; then
+  pass "group cap: 9 tracks flagged"
+else
+  fail "group cap: 9 tracks flagged"
+fi
+
+echo ""
+echo "=== migration regression ==="
+
+# The repo's own ROADMAP.md (post-migration) passes every new check.
+# This is the load-bearing "dogfood" assertion.
+OUTPUT=$(run_audit "$SCRIPT_DIR")
+if section_status "$OUTPUT" "SIZE" | grep -q "pass" \
+   && section_status "$OUTPUT" "COLLISIONS" | grep -q "pass" \
+   && section_status "$OUTPUT" "STYLE_LINT" | grep -q "pass" \
+   && section_status "$OUTPUT" "STRUCTURE" | grep -q "pass" \
+   && section_status "$OUTPUT" "VOCAB_LINT" | grep -q "pass"; then
+  pass "REGRESSION: repo's own migrated ROADMAP.md passes full audit"
+else
+  fail "REGRESSION: repo's own migrated ROADMAP.md passes full audit" "$(echo "$OUTPUT" | grep -E '^(## |STATUS:)' | head -40)"
+fi
+
+# Shared infra file exists and is loaded
+if echo "$OUTPUT" | grep -q "SHARED_INFRA_STATUS: loaded"; then
+  pass "REGRESSION: repo's docs/shared-infra.txt is loaded"
+else
+  fail "REGRESSION: repo's docs/shared-infra.txt is loaded"
+fi
+
+# Strengthened: no SIZE_LABEL_MISMATCH should fire on own repo.
+if ! echo "$OUTPUT" | grep -q "^SIZE_LABEL_MISMATCH:"; then
+  pass "REGRESSION: repo's own ROADMAP.md emits no SIZE_LABEL_MISMATCH"
+else
+  fail "REGRESSION: repo's own ROADMAP.md emits no SIZE_LABEL_MISMATCH" "$(echo "$OUTPUT" | grep -A3 '^SIZE_LABEL_MISMATCH:')"
+fi
+
+echo ""
+echo "=== round-2 hardening ==="
+
+# CONFIG_INVALID warning is actually emitted on stderr for non-numeric env
+DIR=$(make_modern_fixture "stderr-config-invalid" '### Track 1A: Six
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)')
+STDERR=$(env ROADMAP_MAX_TASKS_PER_TRACK=foo GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" "$DIR" 2>&1 >/dev/null || true)
+if echo "$STDERR" | grep -q "CONFIG_INVALID: env ROADMAP_MAX_TASKS_PER_TRACK='foo'"; then
+  pass "config: non-numeric env var emits CONFIG_INVALID on stderr"
+else
+  fail "config: non-numeric env var emits CONFIG_INVALID on stderr" "$STDERR"
+fi
+
+# Zero-boundary: _is_positive_int rejects 0; ceiling falls through to default
+DIR=$(make_modern_fixture "config-zero" '### Track 1A: Six
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)')
+OUTPUT=$(run_audit_env "$DIR" ROADMAP_MAX_TASKS_PER_TRACK=0)
+if echo "$OUTPUT" | grep -q "MAX_TASKS_PER_TRACK: 5"; then
+  pass "config: zero override rejected, default used"
+else
+  fail "config: zero override rejected, default used"
+fi
+
+# Mixed SHARED_INFRA + PARALLEL intersection: SHARED_INFRA wins on first hit
+DIR=$(create_fixture "coll-mixed")
+mkdir -p "$DIR/docs" "$DIR/bin" "$DIR/src"
+touch "$DIR/bin/config" "$DIR/src/foo.ts"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [x]_
+_touches: bin/config, src/foo.ts_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [x]_
+_touches: bin/config, src/foo.ts_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+echo "bin/config" > "$DIR/docs/shared-infra.txt"
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q '1A-1B:.*\[SHARED_INFRA\]'; then
+  pass "collisions: mixed shared+non-shared overlap classifies SHARED_INFRA"
+else
+  fail "collisions: mixed shared+non-shared overlap classification"
+fi
+
+# Whitespace-only `_touches: _` should NOT silently promote to modern
+DIR=$(make_modern_fixture "touches-empty" '### Track 1A: Stub
+_1 task . low risk . [a]_
+_touches:   _
+
+- **T1** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+# Legacy-all behavior OR explicit warning both acceptable
+if echo "$OUTPUT" | grep -q "LEGACY_TRACKS: 1A" \
+   || echo "$OUTPUT" | grep -q "_touches:_ line is empty or whitespace-only"; then
+  pass "parse: whitespace-only _touches:_ does NOT silently modern-ify"
+else
+  fail "parse: whitespace-only _touches:_ silently bypassed legacy check" "$(echo "$OUTPUT" | grep -E '^(## |LEGACY)')"
+fi
+
+# Touches value containing whitespace: reject, keep track modern with only valid files
+DIR=$(make_modern_fixture "touches-space-in-value" '### Track 1A: A
+_2 tasks . low risk . [a]_
+_touches: a b.ts, c.ts_
+
+- **T1** -- . (S)
+- **T2** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+# Should warn about the malformed entry AND count only 1 file
+if echo "$OUTPUT" | grep -q "contained tokens with whitespace"; then
+  pass "parse: touches value with internal whitespace rejected with warning"
+else
+  fail "parse: touches value with internal whitespace rejected with warning"
+fi
+
+# ~0 lines hint should NOT divide-by-zero / false-positive mismatch
+DIR=$(make_modern_fixture "size-zero-lines" '### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- nothing. _~0 lines._ (S)')
+OUTPUT=$(run_audit "$DIR")
+if ! echo "$OUTPUT" | grep -q "SIZE_LABEL_MISMATCH"; then
+  pass "size: ~0 lines hint does not trigger mismatch (div-by-zero guard)"
+else
+  fail "size: ~0 lines hint triggered spurious mismatch"
+fi
+
+# Duplicate track IDs across Groups: warn via STYLE_LINT
+DIR=$(create_fixture "dup-track-id")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G1
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Group 2: G2
+
+### Track 1A: AA
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "1A: duplicate track ID"; then
+  pass "parse: duplicate track ID across Groups triggers STYLE_LINT warning"
+else
+  fail "parse: duplicate track ID warning missing" "$(echo "$OUTPUT" | grep -A3 '^## STYLE_LINT')"
+fi
+
+# Pre-flight bullets are NOT counted toward any Track (critical invariant)
+DIR=$(create_fixture "preflight-isolation")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+**Pre-flight** (shared-infra; serial):
+- **P1** -- . (XL)
+- **P2** -- . (XL)
+- **P3** -- . (XL)
+- **P4** -- . (XL)
+- **P5** -- . (XL)
+- **P6** -- . (XL)
+- **P7** -- . (XL)
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+# 7 XL Pre-flight = 3500 LOC would blow every cap if they leaked into Track 1A
+if section_status "$OUTPUT" "SIZE" | grep -q "pass"; then
+  pass "preflight: Pre-flight bullets excluded from Track counters"
+else
+  fail "preflight: Pre-flight bullets leaked into Track 1A" "$(echo "$OUTPUT" | grep -A3 '^## SIZE')"
+fi
+
+# Self-reference Depends on: emits distinct warning, not "move to next Group"
+DIR=$(create_fixture "style-self-ref")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+Depends on: Track 1A
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "Depends on itself"; then
+  pass "style_lint: self-reference emits distinct warning"
+else
+  fail "style_lint: self-reference warning missing"
+fi
+
+# Brace-expansion bomb defense: pattern with `..` rejected
+DIR=$(make_modern_fixture "brace-traversal" '### Track 1A: A
+_1 task . low risk . [a]_
+_touches: bin/config_
+
+- **T1** -- . (S)
+
+### Track 1B: B
+_1 task . low risk . [a]_
+_touches: bin/config_
+
+- **T1** -- . (S)')
+mkdir -p "$DIR/bin"
+touch "$DIR/bin/config"
+cat > "$DIR/docs/shared-infra.txt" << 'INFRAEOF'
+../../../etc/passwd
+bin/config
+INFRAEOF
+STDERR=$(GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" "$DIR" 2>&1 >/dev/null || true)
+if echo "$STDERR" | grep -q "skipping pattern containing '..'"; then
+  pass "security: path-traversal pattern ('..') rejected"
+else
+  fail "security: path-traversal pattern not rejected" "$STDERR"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""

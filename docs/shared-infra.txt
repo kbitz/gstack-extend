@@ -1,0 +1,19 @@
+# Shared infrastructure patterns for /roadmap collision classification.
+#
+# Any track whose `_touches:_` set intersects another track's `_touches:_`
+# on a file matching these patterns is classified as SHARED_INFRA and
+# should be promoted to per-Group Pre-flight (serial, single-track cohort).
+#
+# Globs: `*` matches any chars including `/`. `**` is treated as `*`.
+# `{a,b}` brace expansion supported. Lines beginning with `#` are comments.
+#
+# Edit for your project — this list is intentionally project-specific.
+
+bin/roadmap-audit
+bin/config
+bin/update-run
+bin/update-check
+bin/lib/*.sh
+skills/*.md
+setup
+VERSION

@@ -60,11 +60,13 @@ execution. Audits versioning, validates doc taxonomy, and recommends version bum
 
 - **Two files, one flow** — TODOS.md is the inbox (other skills write here), ROADMAP.md is the structured execution plan
 - **Two modes** — Overhaul (first run: full restructure) and Triage (subsequent runs: process only new items)
-- **Deterministic audit** — 8 automated checks (vocabulary lint, structure validation, staleness, version audit, taxonomy, dependencies, unprocessed detection, mode detection)
+- **Deterministic audit** — 16 automated checks (vocabulary, structure, staleness, versioning, taxonomy, doc location, archive candidates, dependencies, unprocessed, task list, structural fitness, doc inventory, scattered TODOs, size caps, collisions, style lint)
+- **Size caps + collision detection** — Tracks have explicit `_touches:_` file sets. The audit blocks any Track over per-track caps (5 tasks, 300 LOC, 8 files — tunable via `bin/config`) and flags intra-Group collisions, classified `SHARED_INFRA` (fix: promote to Pre-flight) or `PARALLEL` (fix: merge tracks or move one to next Group). Edit `docs/shared-infra.txt` to tune which files are always considered shared.
 - **Parallel-agent friendly** — Groups > Tracks > Tasks organized by file ownership to minimize merge conflicts
 
 ```
 /roadmap              # Audit + restructure (auto-detects overhaul vs triage mode)
+/roadmap update       # Incremental refresh (freshness scan + triage, never exits early)
 ```
 
 ### How It Works
