@@ -641,6 +641,7 @@ Use the source tag as a signal:
 - `[manual]` items are feature requests or improvements, classify by area
 - `[investigate]` items are usually bugs found during debugging
 - `[discovered:<filepath>]` items were extracted from scattered docs, classify by content
+- `[review-apparatus]` items are tooling/bolt-on proposals from an apparatus audit — classify by which code area they support (e.g., an `inspect-db-row` proposal lines up with whichever track owns data access), or create a platform/tooling track if several accumulate
 
 **Step 3d: Propose triage.** Present the proposed placement of each item via
 AskUserQuestion:
@@ -865,8 +866,9 @@ to ROADMAP.md (structured plan) and future items to ROADMAP.md's Future section 
 /document-release prunes completed items from ROADMAP.md.
 
 **Source tags:** Items in TODOS.md carry provenance tags: `[pair-review]`, `[manual]`,
-`[investigate]`, `[full-review]`, `[discovered:<filepath>]`. The `discovered` tag
-includes the source file path for traceability (e.g., `[discovered:docs/plan.md]`).
+`[investigate]`, `[full-review]`, `[review-apparatus]`, `[discovered:<filepath>]`.
+The `discovered` tag includes the source file path for traceability
+(e.g., `[discovered:docs/plan.md]`).
 
 ---
 
