@@ -867,3 +867,85 @@ to ROADMAP.md (structured plan) and future items to ROADMAP.md's Future section 
 **Source tags:** Items in TODOS.md carry provenance tags: `[pair-review]`, `[manual]`,
 `[investigate]`, `[full-review]`, `[discovered:<filepath>]`. The `discovered` tag
 includes the source file path for traceability (e.g., `[discovered:docs/plan.md]`).
+
+---
+
+## Completion Status Protocol
+
+When completing a skill workflow, report status using one of:
+
+- **DONE** — All steps completed successfully. Evidence provided for each claim.
+- **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
+- **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
+- **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+
+For /roadmap specifically: map the `bin/roadmap-audit` output plus the current run's
+work (triage decisions, ROADMAP.md updates, PROGRESS.md appends) to the session-level
+enum. Rollup rule:
+
+- Audit clean, all triage complete, no unresolved blockers → **DONE**
+- Audit returned advisory findings (STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH) that were acknowledged but not fixed → **DONE_WITH_CONCERNS** (list the findings)
+- Audit returned blockers (SIZE cap violations, COLLISIONS, STRUCTURE errors, VOCAB_LINT errors, VERSION errors) that could not be resolved in this run → **BLOCKED**
+- Required inputs missing (no ROADMAP.md yet, conflicting TODOS.md states, ambiguous dependency graph) → **NEEDS_CONTEXT**
+
+### Escalation
+
+It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+
+- If you have attempted a restructure 3 times and the audit still fails, STOP and escalate.
+- If you are uncertain whether a TODO is stale or active and the freshness scan is ambiguous, STOP and escalate.
+- If the scope of reorganization exceeds what you can verify against the current code state, STOP and escalate.
+
+Escalation format:
+
+```
+STATUS: BLOCKED | NEEDS_CONTEXT
+REASON: [1-2 sentences]
+ATTEMPTED: [what you tried]
+RECOMMENDATION: [what the user should do next]
+```
+
+## Confusion Protocol
+
+When you encounter high-stakes ambiguity during this workflow:
+
+- Two plausible interpretations of a TODO or design doc, with different Group/Track placements.
+- A request that contradicts the existing structure (e.g., user wants to merge two tracks that the audit flags as a PARALLEL collision).
+- A destructive or irreversible operation where the scope is unclear (e.g., "clean up" — delete completed tracks? move them to PROGRESS.md? archive the design doc?).
+- Missing context that would change placement significantly (unknown phase, unclear file ownership).
+
+STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on architectural or data-model decisions.
+
+This does NOT apply to routine classification of clearly-scoped items, obvious naming fixes, or small edits where the intent is unambiguous.
+
+## GSTACK REVIEW REPORT
+
+Lead every `/roadmap` run's summary output with this table, above the deterministic audit sections (`## MODE`, `## VOCAB_LINT`, `## STRUCTURE`, `## STALENESS`, etc.). The table is a dashboard; the audit sections are the detail.
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Roadmap Audit | `/roadmap` | TODO + doc structure drift | 1 | <STATUS> | <N> blockers, <M> advisories |
+
+**VERDICT:** <STATUS> — <one-line summary>
+```
+
+Substitutions:
+
+- `<STATUS>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
+- `<N>` counts audit sections that emit `STATUS: fail` (blockers): `SIZE`, `COLLISIONS`, `STRUCTURE`, `VOCAB_LINT`, `VERSION`.
+- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info` (advisories): `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`, `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`, `DOC_INVENTORY`.
+- `<one-line summary>` names the concrete outcome: "triage complete, ROADMAP.md updated", "blockers listed — resolve and re-run", "2 sections dedupe-flagged for user review", etc.
+
+Verdict-to-status mapping:
+
+- Audit clean + triage complete + no unresolved blockers → "DONE — triage complete, ROADMAP.md updated".
+- Only advisory findings, acknowledged → "DONE_WITH_CONCERNS — <advisory list>".
+- Blocker findings unresolved → "BLOCKED — <blocker list>; resolve before re-running triage".
+- Missing inputs or conflicting states → "NEEDS_CONTEXT — <what is missing>".
+
+The table always leads. Audit section detail stays below it.
