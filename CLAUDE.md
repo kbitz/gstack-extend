@@ -8,7 +8,7 @@ Extension skills for gstack.
 
 ## Testing
 
-Run `./scripts/validate.sh`. See README for flags (`--app`, `--gate`, `--degraded`).
+Run the test suites under `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`).
 
 ## Skill routing
 

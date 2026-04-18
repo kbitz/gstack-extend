@@ -1,8 +1,16 @@
 # Progress
 
-## Phase 1: Core Adapter (current)
+## Phase 2: Gstack parity (current)
 
-Build the /browse-native skill and validate it against real macOS apps.
+Graft gstack's consistency patterns into extend's three daily-use skills (pair-review, roadmap, full-review) so workflows feel as reliable as gstack core.
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.10.0 | 2026-04-18 | Dropped `/browse-native` beta and all supporting infrastructure (`docs/debug-infrastructure-guide.md`, `scripts/validate.sh`, `--with-native` setup flag). Zero known users, ongoing maintenance cost for no shipping value. README skill table now lists only the three stable skills. `scripts/test-update.sh` regression-tests that `--with-native` is rejected and that uninstall still cleans up legacy `browse-native` symlinks for pre-0.10 installs. First of three PRs in the gstack-parity sequence (see `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`). |
+
+## Phase 1: Core Adapter (retired)
+
+Built the `/browse-native` skill against real macOS apps. Beta never left beta; retired in v0.10.0.
 
 | Version | Date | Summary |
 |---------|------|---------|

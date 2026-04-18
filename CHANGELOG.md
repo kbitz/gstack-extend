@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-04-18
+
+### Removed
+- `/browse-native` skill and all supporting infrastructure. The beta never left beta, had zero known active users, and carried ongoing maintenance overhead (22KB implementation guide, inside-out debug pattern, three validation gates) for no shipping value. Deleted `skills/browse-native.md`, `docs/debug-infrastructure-guide.md`, and `scripts/validate.sh` (which only ran the browse-native gates).
+- `--with-native` flag from `setup`. Rejected as an unknown option now. `setup --uninstall` still iterates legacy `browse-native` symlinks for a clean upgrade path from pre-0.10.0 installs (removes its own symlinks, preserves foreign ones).
+
+### Changed
+- `README.md` skill table shrunk to the three shipping skills (`/pair-review`, `/roadmap`, `/full-review`). Beta skills section and the full `/browse-native` section removed.
+- `CLAUDE.md` testing line switched from the now-deleted `validate.sh` to the generic `scripts/test-*.sh` pattern.
+- `scripts/test-update.sh` now asserts `browse-native` is NOT installed, `--with-native` is rejected, and uninstall leaves foreign `browse-native` symlinks alone (the cleanup path for legitimate pre-0.10 symlinks is preserved in code but not positively tested, since constructing that state post-deletion would defeat PR 1).
+
+### Why
+First step in a three-PR sequence that grafts gstack's consistency patterns (Completion Status Protocol, Confusion Protocol, GSTACK REVIEW REPORT table) into extend's three daily-use skills. Dropping an unused beta keeps the parity work scoped and maintenance-free. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md` for the full design + eng review (7 issues resolved, 3/3 Lake Score).
+
 ## [0.9.0] - 2026-04-18
 
 ### Added

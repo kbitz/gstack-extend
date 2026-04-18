@@ -22,3 +22,18 @@ of inline content. Produces a streamlined CLAUDE.md with cross-references.
   and suggest consolidation automatically.
 - **Effort:** M (human: ~2 days / CC: ~30 min)
 
+### Evaluate SKILL.md.tmpl shared template (Approach A) once patterns 1-3 have lived
+The v0.10-v0.12 plan grafts three patterns (Completion Status Protocol, Confusion
+Protocol, GSTACK REVIEW REPORT table) into each of the three skills as appended
+sections. If the same cross-cutting edits start getting duplicated across skills,
+that is the signal to promote them into a shared template.
+- **Why:** single source of truth for cross-cutting protocol additions; new skills
+  inherit automatically; matches gstack's own generated-SKILL.md pattern. Defer
+  until the pain is real — template + conditional logic can get ugly if pattern
+  variations emerge per-skill.
+- **Depends on:** v0.10.0–v0.12.0 shipped; at least one cross-skill protocol edit
+  that felt painful to do three times.
+- **Effort:** L (human: ~3 days / CC: ~1 hour)
+- **Context:** deferred from /plan-eng-review on kbitz/gstack-patterns (see
+  `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`).
+
