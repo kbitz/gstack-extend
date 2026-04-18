@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # test-skill-protocols.sh — Assert every skill file has the shared protocol sections
-# grafted in v0.11.0. Each skill must contain Completion Status Protocol (with the
-# full 4-status enum), Escalation format, and Confusion Protocol.
+# grafted in v0.11.0 and the REPORT table sections grafted in v0.12.0. Each skill
+# must contain Completion Status Protocol (with the full 4-status enum), Escalation
+# format, Confusion Protocol, and a GSTACK REVIEW REPORT section.
 #
 # Usage:
 #   ./scripts/test-skill-protocols.sh [--verbose]
@@ -64,6 +65,23 @@ REQUIRED_ESCALATION_FIELDS=(
   "RECOMMENDATION:"
 )
 
+REQUIRED_REPORT_TOKENS=(
+  "GSTACK REVIEW REPORT"
+  "| Trigger |"
+  "| Why |"
+  "| Runs |"
+  "| Status |"
+  "| Findings |"
+  "**VERDICT:**"
+)
+
+# First column header is "Review" for roadmap/full-review (single-row dashboard) and
+# "Group" for pair-review (multi-row rollup across session groups). Either is fine.
+REQUIRED_FIRST_COL_ANY=(
+  "| Review |"
+  "| Group |"
+)
+
 for skill in "${SKILLS[@]}"; do
   echo ""
   echo "═══ skills/${skill}.md ═══"
@@ -98,7 +116,45 @@ for skill in "${SKILLS[@]}"; do
       fail "Missing escalation field: $field" "in $file"
     fi
   done
+
+  for token in "${REQUIRED_REPORT_TOKENS[@]}"; do
+    if grep -qF "$token" "$file"; then
+      pass "Contains REPORT token: $token"
+    else
+      fail "Missing REPORT token: $token" "in $file"
+    fi
+  done
+
+  # First-column header: must contain at least one of REQUIRED_FIRST_COL_ANY.
+  matched_first_col=""
+  for token in "${REQUIRED_FIRST_COL_ANY[@]}"; do
+    if grep -qF "$token" "$file"; then
+      matched_first_col="$token"
+      break
+    fi
+  done
+  if [ -n "$matched_first_col" ]; then
+    pass "Contains first-column header: $matched_first_col"
+  else
+    fail "Missing first-column header (expected one of '| Review |' or '| Group |')" "in $file"
+  fi
 done
+
+# pair-review additionally must describe BOTH a per-group mini-table AND a session-done
+# rollup, since its multi-group model is the reason the table renders more than once.
+echo ""
+echo "═══ pair-review multi-table ═══"
+PR_FILE="$SCRIPT_DIR/skills/pair-review.md"
+if grep -qF "GSTACK REVIEW REPORT — <group-name> group" "$PR_FILE"; then
+  pass "pair-review contains per-group mini-table template"
+else
+  fail "pair-review missing per-group mini-table template"
+fi
+if grep -qF "GSTACK REVIEW REPORT — session rollup" "$PR_FILE"; then
+  pass "pair-review contains session-done rollup template"
+else
+  fail "pair-review missing session-done rollup template"
+fi
 
 echo ""
 echo "═══════════════════════════════════════"

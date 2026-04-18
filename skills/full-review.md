@@ -689,3 +689,34 @@ When you encounter high-stakes ambiguity during this workflow:
 STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on decisions that affect TODOS.md writes or the approval record.
 
 This does NOT apply to routine cluster naming, obvious approve/reject calls where the evidence is unambiguous, or small clarifications.
+
+## GSTACK REVIEW REPORT
+
+At session-done, prepend this table to `.context/full-review/report.md` as the first section (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately.
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Full Review | `/full-review` | Weekly codebase sweep | 1 | <STATUS> | <N> clusters (<approved> approved, <deferred> deferred, <rejected> rejected) |
+
+**VERDICT:** <STATUS> — <one-line summary>
+```
+
+Substitutions:
+
+- `<STATUS>` is the Completion Status Protocol enum computed at session-done: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
+- `<N>`, `<approved>`, `<deferred>`, `<rejected>` come from the triage record.
+- `<one-line summary>` names the concrete outcome: "3 approved clusters landed in TODOS.md", "2 deferred for next review", "agent dispatch blocked — see BLOCKED entry above", etc.
+
+Verdict-to-status mapping (same as the Completion Status Protocol rollup):
+
+- All 3 agents completed + clustering + dedup + triage done + approved items written → verdict "DONE — <N> approved clusters landed in TODOS.md".
+- Complete with deferred clusters or warnings → verdict "DONE_WITH_CONCERNS — <specifics>".
+- Agent timeout/crash/no-output → verdict "BLOCKED — <which agent>, <what was tried>".
+- State files missing on resume → verdict "NEEDS_CONTEXT — <which state is missing>".
+
+The table always leads. The narrative clusters, decision trail, and triage log stay below it.

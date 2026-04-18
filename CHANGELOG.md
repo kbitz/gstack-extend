@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-04-18
+
+### Added
+- GSTACK REVIEW REPORT table rendering in `/pair-review`, `/roadmap`, and `/full-review`. Each skill now leads its end-of-run output with a dashboard table (Review/Group | Trigger | Why | Runs | Status | Findings) plus a one-line verdict mapped from the Completion Status Protocol enum.
+- `/full-review` prepends the table to the top of `.context/full-review/report.md` and emits it in the chat response. Narrative clusters stay below.
+- `/roadmap` leads every run's summary with the table, above the deterministic audit sections (`## MODE`, `## VOCAB_LINT`, etc.). Table counts blockers vs advisories from the audit output.
+- `/pair-review` emits a per-group mini-table at each group checkpoint (single-row rollup of that group's state) AND a session-done rollup with one row per group. The per-group table keeps the Conductor action-receipt pattern clean; the rollup is the final dashboard.
+- `scripts/test-skill-protocols.sh` extended from 36 to 62 assertions: each skill must contain the REPORT table template, column headers (Trigger/Why/Runs/Status/Findings plus either Review or Group as first column), and the VERDICT line. pair-review additionally verified for both per-group and session-done templates.
+
+### Why
+Third and final PR in the gstack-parity sequence. Closes the "feels different from gstack" gap: every skill now surfaces a predictable dashboard at its most visible output point, plus a verdict line driven by the same status enum introduced in v0.11. Three PRs, zero behavior change to the skills' main flows, ~600 lines total added across skills + tests. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`.
+
 ## [0.11.0] - 2026-04-18
 
 ### Added

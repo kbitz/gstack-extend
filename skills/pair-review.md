@@ -889,3 +889,56 @@ When you encounter high-stakes ambiguity during this workflow:
 STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on decisions that affect the test record or the user's code.
 
 This does NOT apply to routine pass/fail decisions, obvious next-item moves, or small clarifications.
+
+## GSTACK REVIEW REPORT
+
+Emit a REPORT table at two points in every `/pair-review` session:
+
+1. **At each group checkpoint** (after the group's items are all resolved, before moving to the next group): a per-group mini-table with a single row for the just-completed group.
+2. **At session-done** (at `/pair-review done`): a rollup table with one row per group covered in the session.
+
+### Per-group mini-table (at group checkpoint)
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT — <group-name> group
+
+| Group | Trigger | Why | Runs | Status | Findings |
+|-------|---------|-----|------|--------|----------|
+| <group-name> | `/pair-review` | Manual test coverage | 1 | <STATUS> | <passed>/<total> passed, <skipped> skipped, <parked> parked |
+
+**VERDICT:** <STATUS> — <one-line summary>
+```
+
+### Session-done rollup table (at `/pair-review done`)
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT — session rollup
+
+| Group | Trigger | Why | Runs | Status | Findings |
+|-------|---------|-----|------|--------|----------|
+| <group-1> | `/pair-review` | Manual test coverage | 1 | <STATUS-1> | <findings-1> |
+| <group-2> | `/pair-review` | Manual test coverage | 1 | <STATUS-2> | <findings-2> |
+| ... | ... | ... | ... | ... | ... |
+
+**VERDICT:** <SESSION_STATUS> — <one-line session summary>
+```
+
+Substitutions:
+
+- `<STATUS>` / `<STATUS-n>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
+- `<SESSION_STATUS>` is the rollup across all groups: DONE if all groups DONE, DONE_WITH_CONCERNS if any group had skips/parks/deferred fixes, BLOCKED if any group was blocked.
+- Findings cells come from the group's item state tally (`PASSED`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`). Prefer compact form like "6/7 passed, 1 skipped (VPN), 1 parked".
+- `<one-line summary>` names the concrete group outcome: "6/7 passed, moving to next group", "deploy broken after fix attempt", "1 parked bug carried forward to Payments", etc.
+
+Verdict-to-status mapping:
+
+- All items in group are PASSED or FIXED → group "DONE — all <N> items pass".
+- Group has SKIPPED or PARKED items, or deferred bugs → group "DONE_WITH_CONCERNS — <specifics>".
+- Group could not proceed (deploy broken, app unreachable, missing credentials) → "BLOCKED — <reason>".
+- Session state malformed or `.context/pair-review/` lost on resume → "NEEDS_CONTEXT — <what is missing>".
+
+The mini-table runs at each group boundary so the Conductor action-receipt pattern still shows a clean summary in the collapsed view. The rollup runs once at session-done.

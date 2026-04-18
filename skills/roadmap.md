@@ -885,7 +885,7 @@ enum. Rollup rule:
 
 - Audit clean, all triage complete, no unresolved blockers → **DONE**
 - Audit returned advisory findings (STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH) that were acknowledged but not fixed → **DONE_WITH_CONCERNS** (list the findings)
-- Audit returned blockers (SIZE cap violations, COLLISIONS, STRUCTURE errors, VOCAB_LINT errors, STYLE_LINT errors) that could not be resolved in this run → **BLOCKED**
+- Audit returned blockers (SIZE cap violations, COLLISIONS, STRUCTURE errors, VOCAB_LINT errors, VERSION errors) that could not be resolved in this run → **BLOCKED**
 - Required inputs missing (no ROADMAP.md yet, conflicting TODOS.md states, ambiguous dependency graph) → **NEEDS_CONTEXT**
 
 ### Escalation
@@ -917,3 +917,35 @@ When you encounter high-stakes ambiguity during this workflow:
 STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on architectural or data-model decisions.
 
 This does NOT apply to routine classification of clearly-scoped items, obvious naming fixes, or small edits where the intent is unambiguous.
+
+## GSTACK REVIEW REPORT
+
+Lead every `/roadmap` run's summary output with this table, above the deterministic audit sections (`## MODE`, `## VOCAB_LINT`, `## STRUCTURE`, `## STALENESS`, etc.). The table is a dashboard; the audit sections are the detail.
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Roadmap Audit | `/roadmap` | TODO + doc structure drift | 1 | <STATUS> | <N> blockers, <M> advisories |
+
+**VERDICT:** <STATUS> — <one-line summary>
+```
+
+Substitutions:
+
+- `<STATUS>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
+- `<N>` counts audit sections that emit `STATUS: fail` (blockers): `SIZE`, `COLLISIONS`, `STRUCTURE`, `VOCAB_LINT`, `VERSION`.
+- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info` (advisories): `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`, `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`, `DOC_INVENTORY`.
+- `<one-line summary>` names the concrete outcome: "triage complete, ROADMAP.md updated", "blockers listed — resolve and re-run", "2 sections dedupe-flagged for user review", etc.
+
+Verdict-to-status mapping:
+
+- Audit clean + triage complete + no unresolved blockers → "DONE — triage complete, ROADMAP.md updated".
+- Only advisory findings, acknowledged → "DONE_WITH_CONCERNS — <advisory list>".
+- Blocker findings unresolved → "BLOCKED — <blocker list>; resolve before re-running triage".
+- Missing inputs or conflicting states → "NEEDS_CONTEXT — <what is missing>".
+
+The table always leads. Audit section detail stays below it.
