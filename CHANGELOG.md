@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-04-18
+
+### Added
+- GSTACK REVIEW REPORT table rendering in `/pair-review`, `/roadmap`, and `/full-review`. Each skill now leads its end-of-run output with a dashboard table (Review/Group | Trigger | Why | Runs | Status | Findings) plus a one-line verdict mapped from the Completion Status Protocol enum.
+- `/full-review` prepends the table to the top of `.context/full-review/report.md` and emits it in the chat response. Narrative clusters stay below.
+- `/roadmap` leads every run's summary with the table, above the deterministic audit sections (`## MODE`, `## VOCAB_LINT`, etc.). Table counts blockers vs advisories from the audit output.
+- `/pair-review` emits a per-group mini-table at each group checkpoint (single-row rollup of that group's state) AND a session-done rollup with one row per group. The per-group table keeps the Conductor action-receipt pattern clean; the rollup is the final dashboard.
+- `scripts/test-skill-protocols.sh` extended from 36 to 62 assertions: each skill must contain the REPORT table template, column headers (Trigger/Why/Runs/Status/Findings plus either Review or Group as first column), and the VERDICT line. pair-review additionally verified for both per-group and session-done templates.
+
+### Why
+Third and final PR in the gstack-parity sequence. Closes the "feels different from gstack" gap: every skill now surfaces a predictable dashboard at its most visible output point, plus a verdict line driven by the same status enum introduced in v0.11. Three PRs, zero behavior change to the skills' main flows, ~600 lines total added across skills + tests. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`.
+
+## [0.11.0] - 2026-04-18
+
+### Added
+- Completion Status Protocol grafted into `/pair-review`, `/roadmap`, and `/full-review`. Every session now rolls up to one of `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` with per-skill rollup rules (pair-review maps per-item states, roadmap maps audit findings, full-review maps agent outcomes + phase state).
+- Escalation format block in each skill. 3-attempt rule, security gate, scope-exceeds-verification gate. Standard STATUS/REASON/ATTEMPTED/RECOMMENDATION shape.
+- Confusion Protocol block in each skill. Stop-and-ask gate for high-stakes ambiguity, with per-skill example ambiguities (e.g., pair-review "reset" scope; roadmap PARALLEL collision merge; full-review cluster framing).
+- `scripts/test-skill-protocols.sh`: 36 grep-based assertions across the three skills. Verifies each contains Completion Status Protocol, Escalation subsection, Confusion Protocol, all four status tokens, and all four escalation fields.
+
+### Why
+Second PR in the gstack-parity sequence. Before this, extend's three skills each used ad-hoc phase vocabulary for session state and had no standard escalation or ambiguity gate. That is the "feels different from gstack" friction. These three sections close most of it in one diff, without touching behavior. Same verbatim pattern as gstack core, adapted per-skill for the rollup rules. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md`.
+
+## [0.10.0] - 2026-04-18
+
+### Removed
+- `/browse-native` skill and all supporting infrastructure. The beta never left beta, had zero known active users, and carried ongoing maintenance overhead (22KB implementation guide, inside-out debug pattern, three validation gates) for no shipping value. Deleted `skills/browse-native.md`, `docs/debug-infrastructure-guide.md`, and `scripts/validate.sh` (which only ran the browse-native gates).
+- `--with-native` flag from `setup`. Rejected as an unknown option now. `setup --uninstall` still iterates legacy `browse-native` symlinks for a clean upgrade path from pre-0.10.0 installs (removes its own symlinks, preserves foreign ones).
+
+### Changed
+- `README.md` skill table shrunk to the three shipping skills (`/pair-review`, `/roadmap`, `/full-review`). Beta skills section and the full `/browse-native` section removed.
+- `CLAUDE.md` testing line switched from the now-deleted `validate.sh` to the generic `scripts/test-*.sh` pattern.
+- `scripts/test-update.sh` now asserts `browse-native` is NOT installed, `--with-native` is rejected, and uninstall leaves foreign `browse-native` symlinks alone (the cleanup path for legitimate pre-0.10 symlinks is preserved in code but not positively tested, since constructing that state post-deletion would defeat PR 1).
+
+### Why
+First step in a three-PR sequence that grafts gstack's consistency patterns (Completion Status Protocol, Confusion Protocol, GSTACK REVIEW REPORT table) into extend's three daily-use skills. Dropping an unused beta keeps the parity work scoped and maintenance-free. See `~/.gstack/projects/kbitz-gstack-extend/kb-kbitz-gstack-patterns-design-20260418-105937.md` for the full design + eng review (7 issues resolved, 3/3 Lake Score).
+
 ## [0.9.0] - 2026-04-18
 
 ### Added

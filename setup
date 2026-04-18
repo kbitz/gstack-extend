@@ -2,38 +2,35 @@
 # gstack-extend setup — install skill symlinks into ~/.claude/skills/
 #
 # Usage:
-#   ./setup                # Install stable skills
-#   ./setup --with-native  # Also install browse-native (beta)
+#   ./setup                # Install skills
 #   ./setup --uninstall    # Remove symlinks
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SKILLS_DIR="${HOME}/.claude/skills"
 
-DEFAULT_SKILLS=(
+SKILLS=(
   pair-review
   roadmap
   full-review
 )
 
-BETA_SKILLS=(
+# Historical skills that prior releases installed. Still iterated on uninstall so
+# users upgrading from <0.10.0 get a clean removal of browse-native.
+LEGACY_SKILLS=(
   browse-native
 )
 
-# Uninstall checks all skills (default + beta)
-ALL_SKILLS=("${DEFAULT_SKILLS[@]}" "${BETA_SKILLS[@]}")
-
-if [ -n "${1:-}" ] && [ "$1" != "--uninstall" ] && [ "$1" != "--with-native" ]; then
+if [ -n "${1:-}" ] && [ "$1" != "--uninstall" ]; then
   echo "Unknown option: $1" >&2
-  echo "Usage: ./setup [--with-native | --uninstall]" >&2
+  echo "Usage: ./setup [--uninstall]" >&2
   exit 1
 fi
 
 if [ "${1:-}" = "--uninstall" ]; then
-  for skill in "${ALL_SKILLS[@]}"; do
+  for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
     target="$SKILLS_DIR/$skill"
     if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
-      # Only remove if the symlink points back to us
       link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
       expected="$SCRIPT_DIR/skills/${skill}.md"
       if [ "$link_target" = "$expected" ]; then
@@ -50,12 +47,6 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 mkdir -p "$SKILLS_DIR"
-
-# Determine which skills to install
-SKILLS=("${DEFAULT_SKILLS[@]}")
-if [ "${1:-}" = "--with-native" ]; then
-  SKILLS=("${ALL_SKILLS[@]}")
-fi
 
 installed=0
 for skill in "${SKILLS[@]}"; do

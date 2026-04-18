@@ -639,3 +639,84 @@ free-text (via "Other" or as a direct message), map natural language:
 - "done" / "that's enough" / "stop" / "finish up" → DONE TRIAGING
 - "where was I" / "resume" / "continue" → RESUME
 - "what's left" / "status" / "how many left" → STATUS
+
+---
+
+## Completion Status Protocol
+
+When completing a skill workflow, report status using one of:
+
+- **DONE** — All steps completed successfully. Evidence provided for each claim.
+- **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
+- **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
+- **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+
+For /full-review specifically: map the six session phases (`dispatch_complete`,
+`clusters_complete`, `dedup_complete`, `triage_complete`, `complete`) and per-agent
+outcomes to the session-level enum at `/full-review done` time. Rollup rule:
+
+- All 3 agents completed, clustering + dedup + triage done, approved items written to TODOS.md → **DONE**
+- Complete but some clusters deferred, or agents returned warnings that weren't actioned → **DONE_WITH_CONCERNS** (list deferred clusters + warnings)
+- One or more agents timed out, crashed, or returned no usable output AND no fallback path succeeded → **BLOCKED**
+- Session interrupted or state files are missing/malformed on resume → **NEEDS_CONTEXT**
+
+### Escalation
+
+It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+
+- If an agent has been retried 3 times without producing usable output, STOP and escalate.
+- If you are uncertain whether a cluster represents a real issue or a false positive, STOP and present the evidence.
+- If the scope of findings exceeds what can be sensibly triaged in one session, STOP and escalate (offer to split into multiple sessions).
+
+Escalation format:
+
+```
+STATUS: BLOCKED | NEEDS_CONTEXT
+REASON: [1-2 sentences]
+ATTEMPTED: [what you tried]
+RECOMMENDATION: [what the user should do next]
+```
+
+## Confusion Protocol
+
+When you encounter high-stakes ambiguity during this workflow:
+
+- Two plausible root-cause framings for the same set of findings (different clusterings lead to different remediations).
+- A request that contradicts the existing triage record (e.g., user wants to approve a cluster already marked rejected).
+- A destructive or irreversible operation where the scope is unclear (e.g., "restart" — discard clusters? discard triage decisions? rerun the agents?).
+- Missing context that would change the clustering significantly (unknown hot areas, ambiguous ownership, conflicting prior reviews).
+
+STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask the user via AskUserQuestion. Do not guess on decisions that affect TODOS.md writes or the approval record.
+
+This does NOT apply to routine cluster naming, obvious approve/reject calls where the evidence is unambiguous, or small clarifications.
+
+## GSTACK REVIEW REPORT
+
+At session-done, prepend this table to `.context/full-review/report.md` as the first section (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately.
+
+Template:
+
+```markdown
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| Full Review | `/full-review` | Weekly codebase sweep | 1 | <STATUS> | <N> clusters (<approved> approved, <deferred> deferred, <rejected> rejected) |
+
+**VERDICT:** <STATUS> — <one-line summary>
+```
+
+Substitutions:
+
+- `<STATUS>` is the Completion Status Protocol enum computed at session-done: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
+- `<N>`, `<approved>`, `<deferred>`, `<rejected>` come from the triage record.
+- `<one-line summary>` names the concrete outcome: "3 approved clusters landed in TODOS.md", "2 deferred for next review", "agent dispatch blocked — see BLOCKED entry above", etc.
+
+Verdict-to-status mapping (same as the Completion Status Protocol rollup):
+
+- All 3 agents completed + clustering + dedup + triage done + approved items written → verdict "DONE — <N> approved clusters landed in TODOS.md".
+- Complete with deferred clusters or warnings → verdict "DONE_WITH_CONCERNS — <specifics>".
+- Agent timeout/crash/no-output → verdict "BLOCKED — <which agent>, <what was tried>".
+- State files missing on resume → verdict "NEEDS_CONTEXT — <which state is missing>".
+
+The table always leads. The narrative clusters, decision trail, and triage log stay below it.

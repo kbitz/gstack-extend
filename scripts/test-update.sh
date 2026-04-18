@@ -321,41 +321,29 @@ else
 fi
 
 if [ -L "$MOCK_HOME/.claude/skills/browse-native/SKILL.md" ]; then
-  fail "Should NOT create browse-native symlink by default"
+  fail "Should NOT create browse-native symlink (removed in v0.10.0)"
 else
-  pass "browse-native not installed by default (beta)"
+  pass "browse-native not installed (removed in v0.10.0)"
 fi
 
-# Test: --with-native installs both
+# Test: --with-native flag rejected (removed in v0.10.0)
 echo ""
-echo "--- Install with --with-native ---"
-MOCK_HOME2="$TMPDIR_BASE/mock-home-native"
-mkdir -p "$MOCK_HOME2"
-OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --with-native 2>&1 || true)
+echo "--- --with-native rejected ---"
+MOCK_HOME_NATIVE="$TMPDIR_BASE/mock-home-native-rejected"
+mkdir -p "$MOCK_HOME_NATIVE"
+OUTPUT=$(HOME="$MOCK_HOME_NATIVE" "$SCRIPT_DIR/setup" --with-native 2>&1 || true)
 log "Output: $OUTPUT"
 
-if echo "$OUTPUT" | grep -q "Installed 4 skills"; then
-  pass "--with-native reports 4 skills installed"
+if echo "$OUTPUT" | grep -q "Unknown option"; then
+  pass "Rejects --with-native (flag removed in v0.10.0)"
 else
-  fail "--with-native should report 4 skills" "Got: $OUTPUT"
+  fail "Should reject --with-native flag" "Got: $OUTPUT"
 fi
 
-if [ -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
-  pass "--with-native installs pair-review"
-else
-  fail "--with-native should install pair-review"
-fi
-
-if [ -L "$MOCK_HOME2/.claude/skills/browse-native/SKILL.md" ]; then
-  pass "--with-native installs browse-native"
-else
-  fail "--with-native should install browse-native"
-fi
-
-# Test: --uninstall (uses MOCK_HOME2 which has both skills installed)
+# Test: --uninstall (uses MOCK_HOME which has only stable skills installed)
 echo ""
 echo "--- Uninstall ---"
-OUTPUT=$(HOME="$MOCK_HOME2" "$SCRIPT_DIR/setup" --uninstall 2>&1 || true)
+OUTPUT=$(HOME="$MOCK_HOME" "$SCRIPT_DIR/setup" --uninstall 2>&1 || true)
 log "Output: $OUTPUT"
 
 if echo "$OUTPUT" | grep -q "Removed pair-review"; then
@@ -364,22 +352,28 @@ else
   fail "Should uninstall pair-review" "Got: $OUTPUT"
 fi
 
-if echo "$OUTPUT" | grep -q "Removed browse-native"; then
-  pass "Uninstalls browse-native"
-else
-  fail "Should uninstall browse-native" "Got: $OUTPUT"
-fi
-
-if [ ! -L "$MOCK_HOME2/.claude/skills/pair-review/SKILL.md" ]; then
+if [ ! -L "$MOCK_HOME/.claude/skills/pair-review/SKILL.md" ]; then
   pass "pair-review symlink removed after uninstall"
 else
   fail "pair-review symlink should be removed after uninstall"
 fi
 
-if [ ! -L "$MOCK_HOME2/.claude/skills/browse-native/SKILL.md" ]; then
-  pass "browse-native symlink removed after uninstall"
+# Test: uninstall path still attempts to clean up legacy browse-native symlinks
+# (for users upgrading from pre-0.10.0 installs). Create a stale symlink pointing
+# to a non-existent source and verify uninstall leaves it alone because the link
+# target does not match what this setup would have created.
+echo ""
+echo "--- Uninstall leaves foreign browse-native symlinks alone ---"
+MOCK_HOME_LEGACY="$TMPDIR_BASE/mock-home-legacy"
+mkdir -p "$MOCK_HOME_LEGACY/.claude/skills/browse-native"
+ln -sf "/nonexistent/elsewhere.md" "$MOCK_HOME_LEGACY/.claude/skills/browse-native/SKILL.md"
+OUTPUT=$(HOME="$MOCK_HOME_LEGACY" "$SCRIPT_DIR/setup" --uninstall 2>&1 || true)
+log "Output: $OUTPUT"
+
+if [ -L "$MOCK_HOME_LEGACY/.claude/skills/browse-native/SKILL.md" ]; then
+  pass "Foreign browse-native symlink preserved (points elsewhere)"
 else
-  fail "browse-native symlink should be removed after uninstall"
+  fail "Should not remove foreign browse-native symlink"
 fi
 
 # Test: unknown flag is rejected
