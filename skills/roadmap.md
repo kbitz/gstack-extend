@@ -376,11 +376,12 @@ header (empty, ready for future inbox items from other skills).
 ### Restructuring Rules
 
 1. **What a Group is.** A Group is a wave of PRs that land together — parallel-safe
-   within, sequential between. Create a new Group whenever (a) dependency ordering
-   demands it, OR (b) parallel tasks would collide on files. This replaces the older
-   "Groups are architectural phases" framing. Earlier Groups still typically contain
-   foundational work (refactors before features, infra before UI), but "create a new
-   Group" is also the correct answer when two tasks would step on each other.
+   within, dependency-ordered between. Create a new Group whenever (a) dependency
+   ordering demands it, OR (b) parallel tasks would collide on files. By default
+   each Group depends on the immediately preceding Group (single linear chain — the
+   original model). Projects with genuinely parallel workstreams can annotate
+   explicit dependencies (see Rule 3) so the DAG reflects reality instead of
+   forcing work into a single chain.
 
 2. **Tracks within a Group must be parallel-safe.** Every Track has an explicit
    `_touches:_` file set. Any two Tracks in the same Group whose `touches:` sets
@@ -393,6 +394,27 @@ header (empty, ready for future inbox items from other skills).
    they belong in *different* Groups, not the same Group with a `Depends on:` note.
    Same-Group tracks must be fully parallel-safe. The audit's `STYLE_LINT` emits a
    warning on intra-Group `Depends on:` references.
+
+3a. **Group-level dependencies (optional).** A Group may declare its dependencies
+   explicitly via an italic line immediately after the heading:
+   ```
+   ## Group 10: CLI Foundation
+   _Depends on: none_
+
+   ## Group 11: CLI Layer 2
+   _Depends on: Group 9 (Core App Ready), Group 10 (CLI Foundation)_
+   ```
+   - **No annotation** = depends on the immediately preceding Group (single linear
+     chain, the original behavior — backward compatible).
+   - **`_Depends on: none_`** = parallel-safe from day one, no blockers.
+   - **`_Depends on: Group N, Group M_`** = explicit multi-ref; any combination
+     allowed (DAG), but cycles are rejected by the audit.
+   - **Name-anchored refs:** `Group 9 (Core App Ready)` captures the Group's heading
+     name at annotation time. If that Group's heading drifts to a different name,
+     the audit emits a `STALE_DEPS` warning so stale references are visible. The
+     name is optional — plain `Group 9` works fine.
+   - `STYLE_LINT` warns when an explicit annotation is redundant with the default
+     (`_Depends on: Group N_` on Group N+1, where N is the preceding Group).
 
 4. **Size caps.** The audit rejects any Track with `> max_tasks_per_track` tasks
    (default 5), `> max_loc_per_track` forecasted LOC (default 300), or `> max_files_per_track`
@@ -458,6 +480,18 @@ planning, not a command directed at you.
   but both Tracks touch them. Fix: merge the Tracks, or move one to the next Group.
 - **`STYLE_LINT: warn 1C: Depends on Track 1A (same Group 1)`** — same-Group dependency.
   Fix: move 1C to Group 2 (or later). Warning only; not a blocker.
+- **`STYLE_LINT: warn Group N: _Depends on: Group N-1_ is redundant`** — explicit
+  annotation duplicates the implicit default (preceding Group). Fix: drop the
+  annotation. Warning only.
+- **`GROUP_DEPS: fail Cycle detected involving Groups: 2,3,4`** — the DAG has a
+  cycle. Fix: find the misattributed dependency in one of the listed Groups and
+  invert or remove it. Blocker.
+- **`GROUP_DEPS: fail Group N references nonexistent Group M`** — forward reference
+  to a Group that doesn't exist. Fix: typo check, or remove the annotation if the
+  referenced Group was deleted. Blocker.
+- **`GROUP_DEPS: warn Group N references "Group M (Old Name)" but Group M is now
+  titled "New Name"`** — STALE_DEPS. Fix: update the annotation to match the
+  current heading, or accept the drift. Warning only.
 - **`LEGACY_TRACKS: 1A,2A — run /roadmap to migrate`** — those tracks lack
   `_touches:_` metadata. Prompt: "Track 1A is missing `_touches:_`. Infer from
   `[primary files]`?" Yes (copy verbatim) / Edit / Skip.
@@ -473,14 +507,18 @@ Write the structured execution plan to ROADMAP.md following this exact format:
 # Roadmap — Phase N (vX.x)
 
 Organized as **Groups > Tracks > Tasks**. A Group is a wave of PRs that land
-together — parallel-safe within, sequential between. Create a new Group whenever
-(a) dependency ordering demands it, OR (b) parallel tasks would collide on files.
+together — parallel-safe within, dependency-ordered between. By default each
+Group depends on the immediately preceding Group (single linear chain); projects
+with parallel workstreams annotate explicit `_Depends on:_` lines for a DAG.
 Within a Group, Tracks must be fully parallel-safe (set-disjoint `_touches:_`
 footprints). Each track is one plan + implement session.
 
 ---
 
 ## Group 1: [Name]
+
+[Optional italic annotation — omit for default linear chain:]
+[_Depends on: none_]
 
 [1-2 sentence rationale for why this Group comes first. If Pre-flight is heavy,
 acknowledge that Group N is mostly serial shared-infra work.]
@@ -500,18 +538,29 @@ _touches: file1, file2_
 ---
 
 ## Group 2: [Name]
+[Omit annotation for default, or: _Depends on: Group N (Name)_]
 ...
 
 ---
 
 ## Execution Map
 
+Adjacency list (who depends on whom — the useful artifact for humans and agents):
+
+```
+- Group 1 ← {}
+- Group 2 ← {1}
+- Group 3 ← {1}      (if parallel to Group 2)
+- Group 4 ← {2, 3}   (joins)
+```
+
+Track detail per group:
+
 ```
 Group 1: [Name]
   Pre-flight .............. ~30 min
   +-- Track 1A ........... ~X days .. N tasks
   +-- Track 1B ........... ~X days .. N tasks
-                  |
 Group 2: [Name]
   +-- Track 2A ........... ~X days .. N tasks
 ```
@@ -748,9 +797,18 @@ For each flagged item, options:
 Remove completed tasks from ROADMAP.md. Update track metadata (task counts, effort
 estimates). Remove resolved blocker annotations. If an entire Track is completed,
 remove the Track. If an entire Group is completed, remove the Group and renumber
-subsequent groups. When renumbering, also update all "Depends on" and "blocked"
-annotations that reference the old group/track identifiers (e.g., "Track 3A" becomes
-"Track 2A" if Group 2 was removed).
+subsequent groups. When renumbering, also update:
+
+- All Track-level "Depends on" and "blocked" annotations that reference old Track
+  identifiers (e.g., `Track 3A` becomes `Track 2A` if Group 2 was removed).
+- All **Group-level `_Depends on: Group N_`** annotations that reference old Group
+  numbers. Scan every Group's italic annotation line; for each `Group N` reference
+  where N was renumbered, rewrite to the new number. Preserve the name-anchor
+  `(Name)` if present — but update it to the Group's current heading name if the
+  renumbered Group has a different name than what the anchor recorded.
+- This pass must be boringly thorough: any downstream reader (other skills, future
+  `/roadmap` invocations, humans browsing git blame) assumes the numeric references
+  in ROADMAP.md are consistent with the current Group list at any point.
 
 If removals changed the Execution Map, regenerate it.
 
@@ -939,8 +997,8 @@ Template:
 Substitutions:
 
 - `<STATUS>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
-- `<N>` counts audit sections that emit `STATUS: fail` (blockers): `SIZE`, `COLLISIONS`, `STRUCTURE`, `VOCAB_LINT`, `VERSION`.
-- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info` (advisories): `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`, `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`, `DOC_INVENTORY`.
+- `<N>` counts audit sections that emit `STATUS: fail` (blockers): `SIZE`, `COLLISIONS`, `STRUCTURE`, `VOCAB_LINT`, `VERSION`, `GROUP_DEPS`.
+- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info` (advisories): `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`, `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`, `DOC_INVENTORY`, `GROUP_DEPS`.
 - `<one-line summary>` names the concrete outcome: "triage complete, ROADMAP.md updated", "blockers listed — resolve and re-run", "2 sections dedupe-flagged for user review", etc.
 
 Verdict-to-status mapping:

@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-04-20
+
+### Added
+- `/roadmap` supports optional **Group-level `_Depends on:_`** annotations so projects with parallel workstreams can express a DAG instead of a single linear chain. Syntax: `_Depends on: Group 9 (Core App Ready), Group 10_` on the italic line immediately after a Group heading. Default (no annotation) = depends on the immediately preceding Group — backward compatible, every existing roadmap still validates. `_Depends on: none_` (or `—`) marks a Group as parallel-safe with no deps.
+- New **`## GROUP_DEPS` audit section** in `bin/roadmap-audit`. Parses annotations, builds the DAG, runs Kahn's cycle detection, validates forward references, and emits **`STALE_DEPS` warn** when a name-anchored ref (`Group N (Name)`) has drifted from the current heading. Always emits a topologically-ordered adjacency list (`- Group 13 ← {9, 12}`) regardless of STATUS — this is the useful artifact.
+- New **`STYLE_LINT` rule: redundant backwards-adjacent deps** warns when an explicit `Depends on: Group N` duplicates the implicit default (preceding Group). Keeps annotations semantically meaningful.
+- 18 new test cases in `scripts/test-roadmap-audit.sh`: default linear chain, explicit `none`, em-dash as none, single/multi-ref, name-anchor match/drift, cycle detection, forward-ref failure, redundant-backwards-adjacent warn, non-redundant ref, backward compat with no annotations, adjacency list always-emitted, empty roadmap skip, own ROADMAP.md regression, Group 1 alone, implicit-default cycle, name-anchor with spaces. 141 tests total (123 existing + 18 new), 0 failures.
+
+### Changed
+- `skills/roadmap.md` **Rule 1 reframed**: "A Group is a wave of PRs that land together — parallel-safe within, **dependency-ordered** between." Default remains single linear chain; the DAG is opt-in via annotation.
+- New **Rule 3a** documents Group-level `_Depends on:_` syntax, defaults, name anchoring, and the redundant-annotation lint.
+- Output Template updated: Execution Map leads with the **adjacency list** (the always-useful artifact) and keeps the track-detail tree below.
+- **Step 3.5d (renumber pass)** extended: when a Group is deleted, all Group-level `_Depends on: Group N_` references must be updated (and name anchors refreshed to the renumbered Group's current heading). Explicitly called out as a "boringly thorough" guarantee — the renumber pass is the structural replacement for a concurrent-edit orchestration guard (single-writer architecture + thorough renumber = downstream readers always see consistent numeric refs).
+- `Interpreting audit findings` in `skills/roadmap.md` gains entries for the new `GROUP_DEPS: fail/warn` statuses and the new redundant-backwards-adjacent `STYLE_LINT` warning.
+
+### Why
+The design plan assumed a single linear chain of Groups. Real case from Bolt v0.9.22.x: a CLI workstream (MCP server reading read-only SQLite) needs to run parallel with ongoing Swift-side core-app work — the CLI's Layer 1 has zero file overlap with current Groups, and Layers 2-3 depend on a later core-app Group. The only current escape hatch was two ROADMAP files, splitting `/roadmap` drainage and PROGRESS.md tracking. Group-level deps let one ROADMAP.md express the DAG cleanly. Scope converged after a codex outside-voice review: **rejected** Streams as a first-class primitive (premature with sample size of 1 project), **rejected** `/pair-review --stream/--groups` flag (pair-review's "groups" are an unrelated test-session concept — naming collision), **rejected** swim-lane ASCII Execution Map render (the adjacency list carries all the information without the failure surface). **Kept** name-anchored refs (user's explicit judgment: rename safety worth the churn). See `~/.gstack/projects/kbitz-gstack-extend/ceo-plans/2026-04-20-roadmap-group-deps.md` for the full decision trail.
+
 ## [0.13.0] - 2026-04-18
 
 ### Added
