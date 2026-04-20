@@ -1233,6 +1233,10 @@ _TRACK_FILES_COUNT=""    # kv: "1A=2 1B=3" (count of files in touches)
 _TRACK_LEGACY=""         # kv: "1A=0 1B=1" (1 = no _touches:_ line)
 _GROUP_LIST=""           # space-sep group numbers: "1 2"
 _GROUP_TRACKS=""         # kv: "1=1A,1B 2=2A"
+_GROUP_NAMES=""          # newline-sep "N|Group heading name" (names may contain spaces, can't use kv)
+_GROUP_DEPS=""           # kv: "1=2,3 4=2" (dep group numbers only; "-" = explicit none)
+_GROUP_DEPS_RAW=""       # newline-sep "N|raw annotation text" (for diagnostics)
+_GROUP_DEP_ANCHORS=""    # newline-sep "group_num|dep_num|anchored_name_at_annotation_time"
 _SIZE_LABEL_MISMATCHES=""  # newline-sep "TrackID|title|effort|declared|expected"
 _STYLE_LINT_WARNINGS=""    # newline-sep "TrackID: depends on TrackYY (same Group N)"
 
@@ -1287,8 +1291,13 @@ _parse_roadmap() {
     # Group heading: ## Group N: Name
     if echo "$line" | grep -qE '^## Group [0-9]+:'; then
       group_num=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
+      local group_name
+      group_name=$(echo "$line" | sed -E 's/^## Group [0-9]+:[[:space:]]*//')
+      group_name=$(_trim "$group_name")
       if ! echo " $_GROUP_LIST " | grep -q " $group_num "; then
         _GROUP_LIST="${_GROUP_LIST}${_GROUP_LIST:+ }${group_num}"
+        _GROUP_NAMES="${_GROUP_NAMES}${_GROUP_NAMES:+
+}${group_num}|${group_name}"
       fi
       section="group"
       track_id=""
@@ -1299,6 +1308,55 @@ _parse_roadmap() {
     if echo "$line" | grep -qE '^## '; then
       section="none"
       track_id=""
+      continue
+    fi
+
+    # Group-level Depends on: italic line, immediately after Group heading.
+    # Format: _Depends on: Group N_  |  _Depends on: Group N (Name)_  |
+    #         _Depends on: Group N, Group M_  |  _Depends on: none_
+    # Only captured in the window between a Group heading and the first Track
+    # or Pre-flight marker (section="group", track_id empty).
+    if [ "$section" = "group" ] && [ -z "$track_id" ] && echo "$line" | grep -qiE '^_Depends on:'; then
+      local raw raw_trim
+      raw=$(echo "$line" | sed -E 's/^_Depends on:[[:space:]]*//; s/_[[:space:]]*$//')
+      raw_trim=$(_trim "$raw")
+      _GROUP_DEPS_RAW="${_GROUP_DEPS_RAW}${_GROUP_DEPS_RAW:+
+}${group_num}|${raw_trim}"
+      # Explicit "none" / em-dash / double-hyphen = parallel-safe from day one
+      if echo "$raw_trim" | grep -qiE '^(none|—|-+)$'; then
+        _GROUP_DEPS=$(_kv_set "$_GROUP_DEPS" "$group_num" "-")
+      else
+        local deps_list=""
+        local IFS_ORIG="$IFS"
+        IFS=','
+        for entry in $raw_trim; do
+          local entry_trim
+          entry_trim=$(_trim "$entry")
+          # Match: "Group N" or "Group N (Name)"
+          if echo "$entry_trim" | grep -qiE '^Group [0-9]+([[:space:]]*\(.+\))?$'; then
+            local dep_num dep_name
+            dep_num=$(echo "$entry_trim" | sed -E 's/^Group ([0-9]+).*/\1/')
+            dep_name=""
+            if echo "$entry_trim" | grep -qE '\(.+\)$'; then
+              dep_name=$(echo "$entry_trim" | sed -E 's/^Group [0-9]+[[:space:]]*\((.+)\)$/\1/')
+              dep_name=$(_trim "$dep_name")
+            fi
+            deps_list="${deps_list}${deps_list:+,}${dep_num}"
+            if [ -n "$dep_name" ]; then
+              _GROUP_DEP_ANCHORS="${_GROUP_DEP_ANCHORS}${_GROUP_DEP_ANCHORS:+
+}${group_num}|${dep_num}|${dep_name}"
+            fi
+          fi
+        done
+        IFS="$IFS_ORIG"
+        if [ -n "$deps_list" ]; then
+          _GROUP_DEPS=$(_kv_set "$_GROUP_DEPS" "$group_num" "$deps_list")
+        else
+          # Non-empty, non-"none" annotation that produced zero valid refs.
+          # Silent dropout would hide typos ("group 5", prose notes). Warn.
+          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}Group ${group_num}: _Depends on:_ annotation was unparseable (\"${raw_trim}\") — expected \"none\" or \"Group N[, Group M]\"\n"
+        fi
+      fi
       continue
     fi
 
@@ -1748,6 +1806,193 @@ check_collisions() {
   echo ""
 }
 
+# ─── Check: GROUP_DEPS ─────────────────────────────────────────
+#
+# Rev 0.14.0. Parses optional `_Depends on: Group N_` annotations after
+# Group headings, builds a Group-level DAG, and validates:
+#   - no cycles (Kahn's algorithm)
+#   - no forward references to nonexistent Groups
+#   - STALE_DEPS warns when a name-anchored ref `Group N (Name)` has drifted
+#     from the current Group heading name
+#
+# Semantics:
+#   - no annotation         → depends on immediately preceding Group (default)
+#   - `_Depends on: none_`  → parallel-safe, no deps
+#   - `_Depends on: Group N (Name), Group M_` → explicit deps, name optional
+#
+# Emits an adjacency list below the STATUS/FINDINGS block — always. This is
+# the useful artifact for humans and downstream tools.
+
+check_group_deps() {
+  echo "## GROUP_DEPS"
+  _parse_roadmap
+
+  if [ -z "$_GROUP_LIST" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No Groups in ROADMAP.md"
+    echo ""
+    return
+  fi
+
+  local groups_sorted
+  groups_sorted=$(echo "$_GROUP_LIST" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')
+
+  # Build effective dep map. Default rule: depends on immediately preceding Group.
+  local effective_deps=""
+  local prev_group=""
+  for g in $groups_sorted; do
+    local explicit
+    explicit=$(_kv_get "$_GROUP_DEPS" "$g")
+    if [ -z "$explicit" ]; then
+      if [ -n "$prev_group" ]; then
+        effective_deps=$(_kv_set "$effective_deps" "$g" "$prev_group")
+      else
+        effective_deps=$(_kv_set "$effective_deps" "$g" "")
+      fi
+    elif [ "$explicit" = "-" ]; then
+      effective_deps=$(_kv_set "$effective_deps" "$g" "")
+    else
+      effective_deps=$(_kv_set "$effective_deps" "$g" "$explicit")
+    fi
+    prev_group="$g"
+  done
+
+  local fail_findings=""
+  local warn_findings=""
+
+  # Forward-ref validation: every explicit dep must reference an existing Group.
+  for g in $groups_sorted; do
+    local raw_explicit
+    raw_explicit=$(_kv_get "$_GROUP_DEPS" "$g")
+    [ -z "$raw_explicit" ] && continue
+    [ "$raw_explicit" = "-" ] && continue
+    local IFS_ORIG="$IFS"
+    IFS=','
+    for d in $raw_explicit; do
+      if ! echo " $_GROUP_LIST " | grep -q " $d "; then
+        fail_findings="${fail_findings}- Group ${g} references nonexistent Group ${d} (forward reference)\n"
+      fi
+    done
+    IFS="$IFS_ORIG"
+  done
+
+  # Kahn's cycle detection on effective DAG (ignoring forward-ref phantoms).
+  local in_degrees=""
+  for g in $groups_sorted; do
+    in_degrees=$(_kv_set "$in_degrees" "$g" 0)
+  done
+  for g in $groups_sorted; do
+    local deps
+    deps=$(_kv_get "$effective_deps" "$g")
+    [ -z "$deps" ] && continue
+    local IFS_ORIG="$IFS"
+    IFS=','
+    local count=0
+    for d in $deps; do
+      if echo " $_GROUP_LIST " | grep -q " $d "; then
+        count=$((count + 1))
+      fi
+    done
+    IFS="$IFS_ORIG"
+    in_degrees=$(_kv_set "$in_degrees" "$g" "$count")
+  done
+
+  local processed=""
+  local changed=1
+  while [ "$changed" -eq 1 ]; do
+    changed=0
+    for g in $groups_sorted; do
+      if echo " $processed " | grep -q " $g "; then
+        continue
+      fi
+      local deg
+      deg=$(_kv_get "$in_degrees" "$g")
+      if [ "${deg:-0}" = "0" ]; then
+        processed="${processed}${processed:+ }${g}"
+        for g2 in $groups_sorted; do
+          local g2_deps
+          g2_deps=$(_kv_get "$effective_deps" "$g2")
+          [ -z "$g2_deps" ] && continue
+          if echo ",$g2_deps," | grep -q ",$g,"; then
+            local g2_deg
+            g2_deg=$(_kv_get "$in_degrees" "$g2")
+            in_degrees=$(_kv_set "$in_degrees" "$g2" $((g2_deg - 1)))
+          fi
+        done
+        changed=1
+      fi
+    done
+  done
+
+  local total_count
+  total_count=$(echo "$groups_sorted" | wc -w | tr -d ' ')
+  local processed_count
+  processed_count=$(echo "$processed" | wc -w | tr -d ' ')
+  if [ "$processed_count" -lt "$total_count" ]; then
+    local cycle_members=""
+    for g in $groups_sorted; do
+      if ! echo " $processed " | grep -q " $g "; then
+        cycle_members="${cycle_members}${cycle_members:+,}${g}"
+      fi
+    done
+    fail_findings="${fail_findings}- Cycle detected involving Groups: ${cycle_members}\n"
+  fi
+
+  # STALE_DEPS: name-anchored ref differs from current Group heading name.
+  if [ -n "$_GROUP_DEP_ANCHORS" ]; then
+    while IFS= read -r anchor_line; do
+      [ -z "$anchor_line" ] && continue
+      local src_g dep_g anchored_name current_name
+      src_g=$(echo "$anchor_line" | cut -d'|' -f1)
+      dep_g=$(echo "$anchor_line" | cut -d'|' -f2)
+      anchored_name=$(echo "$anchor_line" | cut -d'|' -f3-)
+      current_name=""
+      while IFS= read -r name_line; do
+        [ -z "$name_line" ] && continue
+        local nm_num nm_name
+        nm_num=$(echo "$name_line" | cut -d'|' -f1)
+        if [ "$nm_num" = "$dep_g" ]; then
+          nm_name=$(echo "$name_line" | cut -d'|' -f2-)
+          current_name="$nm_name"
+          break
+        fi
+      done <<< "$_GROUP_NAMES"
+      if [ -n "$current_name" ] && [ "$current_name" != "$anchored_name" ]; then
+        warn_findings="${warn_findings}- Group ${src_g} references \"Group ${dep_g} (${anchored_name})\" but Group ${dep_g} is now titled \"${current_name}\" — update the annotation\n"
+      fi
+    done <<< "$_GROUP_DEP_ANCHORS"
+  fi
+
+  if [ -n "$fail_findings" ]; then
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -en "$fail_findings"
+    [ -n "$warn_findings" ] && echo -en "$warn_findings"
+  elif [ -n "$warn_findings" ]; then
+    echo "STATUS: warn"
+    echo "FINDINGS:"
+    echo -en "$warn_findings"
+  else
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- All Group-level dependencies valid (${total_count} groups)"
+  fi
+
+  # Adjacency list — always emitted. The useful artifact regardless of status.
+  echo "ADJACENCY:"
+  for g in $groups_sorted; do
+    local deps
+    deps=$(_kv_get "$effective_deps" "$g")
+    if [ -z "$deps" ]; then
+      echo "- Group ${g} ← {}"
+    else
+      echo "- Group ${g} ← {${deps}}"
+    fi
+  done
+  echo ""
+}
+
 # ─── Check: STYLE_LINT ─────────────────────────────────────────
 # Warning (not fail) for intra-Group `Depends on: Track NA` references.
 # Tracks inside the same Group must be fully parallel-safe — if one
@@ -1755,6 +2000,24 @@ check_collisions() {
 check_style_lint() {
   echo "## STYLE_LINT"
   _parse_roadmap
+
+  # Redundant-backwards-adjacent: explicit `Depends on: Group N` on Group N+1
+  # (where N is the immediately-preceding Group in file order) duplicates
+  # the implicit default. Annotation is noise — recommend removal.
+  if [ -n "$_GROUP_LIST" ]; then
+    local groups_sorted_sl prev_sl=""
+    groups_sorted_sl=$(echo "$_GROUP_LIST" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')
+    for g_sl in $groups_sorted_sl; do
+      local explicit_sl
+      explicit_sl=$(_kv_get "$_GROUP_DEPS" "$g_sl")
+      if [ -n "$explicit_sl" ] && [ "$explicit_sl" != "-" ] && [ -n "$prev_sl" ]; then
+        if [ "$explicit_sl" = "$prev_sl" ]; then
+          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}Group ${g_sl}: _Depends on: Group ${prev_sl}_ is redundant (preceding Group is the default) — drop the annotation\n"
+        fi
+      fi
+      prev_sl="$g_sl"
+    done
+  fi
 
   if [ -z "$_STYLE_LINT_WARNINGS" ]; then
     echo "STATUS: pass"
@@ -1778,6 +2041,7 @@ check_taxonomy
 check_doc_location
 check_archive_candidates
 check_dependencies
+check_group_deps
 check_task_list
 check_structural_fitness
 check_size_caps
