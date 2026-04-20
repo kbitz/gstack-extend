@@ -2546,6 +2546,505 @@ else
   fail "security: path-traversal pattern not rejected" "$STDERR"
 fi
 
+echo ""
+echo "=== group_deps ==="
+
+# Fixture helper: multi-group roadmap with configurable Group bodies.
+# Args: name, then body string containing full Group 1..N markup.
+make_multi_group_fixture() {
+  local name="$1" body="$2"
+  local dir
+  dir=$(create_fixture "$name")
+  mkdir -p "$dir/docs"
+  {
+    echo "# Roadmap"
+    echo ""
+    printf '%s\n' "$body"
+    echo ""
+    echo "## Unprocessed"
+  } > "$dir/docs/ROADMAP.md"
+  echo "# TODOs" > "$dir/docs/TODOS.md"
+  cat > "$dir/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+  echo "$dir"
+}
+
+# 1. No annotations → default "preceding Group" rule; adjacency reflects linear chain
+DIR=$(make_multi_group_fixture "gd-default-linear" '## Group 1: First
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Second
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass" && echo "$GD" | grep -q "Group 2 ← {1}" && echo "$GD" | grep -q "Group 1 ← {}"; then
+  pass "group_deps: default linear chain (no annotations)"
+else
+  fail "group_deps: default linear chain failed" "$GD"
+fi
+
+# 2. Explicit _Depends on: none_ → empty adjacency
+DIR=$(make_multi_group_fixture "gd-explicit-none" '## Group 1: First
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Second
+_Depends on: none_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "Group 2 ← {}"; then
+  pass "group_deps: explicit 'none' = no deps"
+else
+  fail "group_deps: explicit 'none' failed" "$GD"
+fi
+
+# 3. Em-dash as "none"
+DIR=$(make_multi_group_fixture "gd-em-dash" '## Group 1: First
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Second
+_Depends on: —_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "Group 2 ← {}"; then
+  pass "group_deps: em-dash recognized as 'none'"
+else
+  fail "group_deps: em-dash failed" "$GD"
+fi
+
+# 4. Single explicit ref
+DIR=$(make_multi_group_fixture "gd-single-ref" '## Group 1: First
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Second
+_Depends on: none_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)
+
+## Group 3: Third
+_Depends on: Group 1_
+
+### Track 3A: A
+_1 task . low risk . [c]_
+_touches: c_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "Group 3 ← {1}"; then
+  pass "group_deps: single explicit ref"
+else
+  fail "group_deps: single explicit ref failed" "$GD"
+fi
+
+# 5. Multi-ref (DAG join)
+DIR=$(make_multi_group_fixture "gd-multi-ref" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+_Depends on: Group 1_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)
+
+## Group 3: C
+_Depends on: Group 1_
+
+### Track 3A: A
+_1 task . low risk . [c]_
+_touches: c_
+
+- **T** -- . (S)
+
+## Group 4: Join
+_Depends on: Group 2, Group 3_
+
+### Track 4A: A
+_1 task . low risk . [d]_
+_touches: d_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "Group 4 ← {2,3}" && echo "$GD" | grep -q "STATUS: pass"; then
+  pass "group_deps: multi-ref DAG join"
+else
+  fail "group_deps: multi-ref failed" "$GD"
+fi
+
+# 6. Name-anchored ref (matching current heading) → no STALE_DEPS warn
+DIR=$(make_multi_group_fixture "gd-name-anchor-ok" '## Group 1: Foundation
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Next
+_Depends on: Group 1 (Foundation)_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass" && ! echo "$GD" | grep -q "now titled"; then
+  pass "group_deps: name-anchor matches current heading"
+else
+  fail "group_deps: name-anchor should not warn when matching" "$GD"
+fi
+
+# 7. Name-anchored ref (drifted) → STALE_DEPS warn
+DIR=$(make_multi_group_fixture "gd-name-anchor-stale" '## Group 1: Renamed
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Next
+_Depends on: Group 1 (Old Name)_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: warn" && echo "$GD" | grep -q 'now titled "Renamed"'; then
+  pass "group_deps: STALE_DEPS warn on name drift"
+else
+  fail "group_deps: STALE_DEPS warn missing" "$GD"
+fi
+
+# 8. Cycle detection
+DIR=$(make_multi_group_fixture "gd-cycle" '## Group 1: A
+_Depends on: Group 2_
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+_Depends on: Group 1_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: fail" && echo "$GD" | grep -q "Cycle detected involving Groups: 1,2"; then
+  pass "group_deps: cycle detected"
+else
+  fail "group_deps: cycle not detected" "$GD"
+fi
+
+# 9. Forward reference to nonexistent Group
+DIR=$(make_multi_group_fixture "gd-forward-ref" '## Group 1: A
+_Depends on: Group 99_
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: fail" && echo "$GD" | grep -q "nonexistent Group 99"; then
+  pass "group_deps: forward reference fails"
+else
+  fail "group_deps: forward reference not caught" "$GD"
+fi
+
+# 10. Redundant backwards-adjacent → STYLE_LINT warn
+DIR=$(make_multi_group_fixture "gd-redundant-back" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+_Depends on: Group 1_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if echo "$SL" | grep -q "STATUS: warn" && echo "$SL" | grep -q "is redundant"; then
+  pass "group_deps: redundant backwards-adjacent warns"
+else
+  fail "group_deps: redundant-backwards warn missing" "$SL"
+fi
+
+# 11. Non-redundant explicit ref (skips preceding) → no redundancy warn
+DIR=$(make_multi_group_fixture "gd-nonredundant" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+_Depends on: none_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)
+
+## Group 3: C
+_Depends on: Group 1_
+
+### Track 3A: A
+_1 task . low risk . [c]_
+_touches: c_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if ! echo "$SL" | grep -q "is redundant"; then
+  pass "group_deps: explicit ref that skips preceding is not redundant"
+else
+  fail "group_deps: false-positive redundancy on non-adjacent ref" "$SL"
+fi
+
+# 12. Backward compat: legacy roadmap with no annotations still passes
+DIR=$(make_multi_group_fixture "gd-legacy-compat" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)
+
+## Group 3: C
+
+### Track 3A: A
+_1 task . low risk . [c]_
+_touches: c_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass" && echo "$GD" | grep -q "Group 3 ← {2}"; then
+  pass "group_deps: backward compat — no annotations still valid"
+else
+  fail "group_deps: backward compat broken" "$GD"
+fi
+
+# 13. Adjacency list always emitted (even on pass)
+DIR=$(make_multi_group_fixture "gd-adjacency-always" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "^ADJACENCY:" && echo "$GD" | grep -q "Group 1 ← {}"; then
+  pass "group_deps: adjacency list always emitted"
+else
+  fail "group_deps: adjacency list missing" "$GD"
+fi
+
+# 14. Empty roadmap (no groups) → skip
+DIR=$(create_fixture "gd-empty")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: skip" && echo "$GD" | grep -q "No Groups in ROADMAP.md"; then
+  pass "group_deps: empty roadmap → skip status"
+else
+  fail "group_deps: empty roadmap not skipped" "$GD"
+fi
+
+# 15. Own ROADMAP.md passes clean (regression)
+OUTPUT=$(GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" "$SCRIPT_DIR" 2>/dev/null || true)
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass"; then
+  pass "group_deps: own ROADMAP.md passes GROUP_DEPS"
+else
+  fail "group_deps: own ROADMAP.md fails GROUP_DEPS" "$GD"
+fi
+
+# 16. Group 1 with no preceding Group and no annotation → no deps (not a forward ref)
+DIR=$(make_multi_group_fixture "gd-first-group" '## Group 1: Only
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass" && echo "$GD" | grep -q "Group 1 ← {}"; then
+  pass "group_deps: Group 1 alone has no implicit dep"
+else
+  fail "group_deps: Group 1 implicit dep wrong" "$GD"
+fi
+
+# 17. Cycle-with-redundant: cycle takes precedence over redundancy warn
+DIR=$(make_multi_group_fixture "gd-cycle-priority" '## Group 1: A
+_Depends on: Group 2_
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: fail"; then
+  pass "group_deps: cycle via implicit default still detected"
+else
+  fail "group_deps: implicit cycle not detected" "$GD"
+fi
+
+# 18. Name-anchor syntax with spaces in name
+DIR=$(make_multi_group_fixture "gd-name-spaces" '## Group 1: Core App Ready
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: Next
+_Depends on: Group 1 (Core App Ready)_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+if echo "$GD" | grep -q "STATUS: pass" && ! echo "$GD" | grep -q "now titled"; then
+  pass "group_deps: name-anchor with spaces matches correctly"
+else
+  fail "group_deps: name-anchor with spaces mismatched" "$GD"
+fi
+
+# 19. Unparseable annotation → STYLE_LINT warn (no silent dropout)
+DIR=$(make_multi_group_fixture "gd-unparseable" '## Group 1: A
+
+### Track 1A: A
+_1 task . low risk . [a]_
+_touches: a_
+
+- **T** -- . (S)
+
+## Group 2: B
+_Depends on: whenever bolt is ready_
+
+### Track 2A: A
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if echo "$SL" | grep -q "STATUS: warn" && echo "$SL" | grep -q "unparseable"; then
+  pass "group_deps: unparseable annotation warns (no silent dropout)"
+else
+  fail "group_deps: unparseable annotation not warned" "$SL"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""
