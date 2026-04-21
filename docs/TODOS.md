@@ -2,6 +2,13 @@
 
 ## Unprocessed
 
+### [ship] Validate /test-plan v1 on first real Group post-v0.15.0
+Step 14 of the v0.15.0 /test-plan design plan ("run on one real Group before declaring v1 shipped") was deferred to post-merge — gstack-extend didn't have a fresh in-flight Group to test against pre-ship. On the next real Group (Group 3+), run `/test-plan run <group>` end-to-end, capture the extractor's JSON output against at least one review doc, and run `scripts/test-test-plan-extractor.sh --score <output.json>` to confirm the >=70% tolerant-match threshold holds on real prose. If below threshold, iterate the extractor prompt at `skills/test-plan.md:378`.
+- **Why:** close the v0.15.0 completeness loop. The 122-assertion test suite covers the deterministic surface; extractor output quality on real prose is the one thing we couldn't validate pre-merge.
+- **Depends on:** gstack-extend running a new Group with >=2 Tracks that have CEO/eng/design review docs generated. Not blocking v0.15.0 itself — this is verification work that retires the deferred plan item.
+- **Priority:** P1
+- **Effort:** S (human: ~30 min / CC: ~5 min)
+
 ### Follow-up perf audit of remaining per-line bash loops
 `count_todo_patterns` was rewritten single-pass awk in v0.9.0 (45s → 4s on the
 gstack-extend repo). Remaining per-line bash loops in `bin/roadmap-audit` may

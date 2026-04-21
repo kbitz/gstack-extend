@@ -7,7 +7,8 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Documentation restructuring | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
-| `/review-apparatus` | Project testing/debugging apparatus audit | Any project | New |
+| `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Stable |
+| `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | New |
 
 ## Installation
 
@@ -137,6 +138,48 @@ items for /roadmap to organize.
 Consumer skills (/pair-review, /qa, /investigate) pick up new apparatus organically
 once the helpers exist in the project. How they discover and invoke apparatus is a
 future, separate design.
+
+---
+
+## /test-plan — Group-Scoped Batched Test Plan
+
+Generates ONE coherent batched test plan for a whole roadmap Group (1-4 Tracks
+landing together), then hands off to /pair-review's Phase 2 execution loop. Harvests
+any CEO/eng/design review docs for every Track branch in the Group and turns their
+decisions into test items tagged with source — "verify the things we explicitly
+cared about" instead of "click around on the diff." Also auto-detects prior per-Track
+/pair-review sessions and carries forward their findings (skip PASSED, surface
+SKIPPED/DEFERRED/regression candidates, carry PARKED) so you don't re-test what
+you already tested.
+
+- **Batched, not per-PR** — one session covers a whole Group, eliminating duplicate testing across Tracks
+- **Review-doc harvesting** — /plan-ceo-review, /plan-eng-review, /plan-design-review outputs become test items automatically, with provenance
+- **Single integrated build** — /pair-review runs against ONE branch (main post-merge, preview deploy, integration branch); Track branches are provenance only
+- **Explicit Group→branch manifest** — `~/.gstack/projects/<slug>/groups/<group>/manifest.yaml` maps Tracks to branches; the skill prompts once, reuses thereafter
+- **Automated/manual split** — conservative heuristic classifier; ambiguous items default to manual. Automated items surface in the plan for a separate `/qa-only` pass (per-item execution is v2 work)
+- **Stable item IDs** — deterministic sha256 of `branch|doc|section|description` for cross-session dedup and future retro
+- **Soft-warn on incomplete Groups** — surfaces "<N> of <M> Tracks not DONE" so you don't accidentally bug-bash a half-shipped Group, but lets you proceed
+- **Passive /qa-only integration** — writes `-test-plan-batch-*.md` files to the project path that `/qa-only` auto-picks-up as test-plan context
+
+```
+/test-plan run <group>    # Build plan, write state, drop into /pair-review Phase 2
+/test-plan status <group> # Read-only dashboard of manifest + latest plan + pair-review state
+```
+
+### File format
+
+The artifact contract is owned by /test-plan and documented at
+`docs/designs/test-plan-artifact-contract.md`. Upstream consumers (/qa-only, /pair-review,
+/plan-eng-review) follow this contract. Breaking format changes bump the `schema` integer.
+
+### Documentation Taxonomy Update
+
+| Doc | Purpose | Written by |
+|-----|---------|------------|
+| TODOS.md | Inbox | /pair-review, /full-review, /investigate, /review-apparatus, /test-plan (via /pair-review handoff), manual |
+| ROADMAP.md | Execution plan | /roadmap |
+| `~/.gstack/projects/<slug>/groups/<group>/manifest.yaml` | Track→branch→review-doc mapping | /test-plan |
+| `~/.gstack/projects/<slug>/<user>-<branch>-test-plan-batch-*.md` | Batched test plan artifact | /test-plan |
 
 ---
 
