@@ -14,6 +14,7 @@ SKILLS=(
   roadmap
   full-review
   review-apparatus
+  test-plan
 )
 
 # Historical skills that prior releases installed. Still iterated on uninstall so
