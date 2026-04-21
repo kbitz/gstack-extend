@@ -43,7 +43,7 @@ fail() {
 
 # ─── skill protocol assertions ─────────────────────────────────
 
-SKILLS=(pair-review roadmap full-review review-apparatus)
+SKILLS=(pair-review roadmap full-review review-apparatus test-plan)
 
 REQUIRED_SECTIONS=(
   "## Completion Status Protocol"
