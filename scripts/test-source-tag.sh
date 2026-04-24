@@ -182,6 +182,22 @@ else
   fail "hash: wrong format" "$H1"
 fi
 
+# Empty-title hash still produces 12 hex chars (not zero-length).
+H_EMPTY=$(compute_dedup_hash "")
+if echo "$H_EMPTY" | grep -qE '^[0-9a-f]{12}$'; then
+  pass "hash: empty title produces 12 hex chars"
+else
+  fail "hash: empty title wrong format" "$H_EMPTY"
+fi
+
+# Short title produces 12 hex chars (regression test for the fallback bug).
+H_SHORT=$(compute_dedup_hash "a")
+if echo "$H_SHORT" | grep -qE '^[0-9a-f]{12}$'; then
+  pass "hash: single-char title produces 12 hex chars"
+else
+  fail "hash: single-char title wrong format" "$H_SHORT"
+fi
+
 # ─── validate_tag_expression ───────────────────────────────────
 
 echo ""

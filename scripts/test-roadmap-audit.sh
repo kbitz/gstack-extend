@@ -3431,6 +3431,136 @@ else
   fail "todo_format: untagged entries rejected" "$TF"
 fi
 
+# Malformed tag (unclosed bracket) flagged as MALFORMED_HEADING, NOT
+# silently accepted as untagged. Regression test for adversarial-review
+# finding: `### [pair-review:group=2 Unclosed` was previously bypassed.
+DIR=$(create_fixture "todo-format-unclosed-bracket")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [pair-review:group=2 Unclosed tag broken
+- **Why:** should flag, not silently become manual.
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "STATUS: fail" && echo "$TF" | grep -q "unclosed tag bracket"; then
+  pass "todo_format: unclosed tag bracket flagged MALFORMED_HEADING"
+else
+  fail "todo_format: unclosed bracket bypassed validation" "$TF"
+fi
+
+# Fence awareness: '### entry' inside a ``` fence inside ## Unprocessed
+# must NOT count as a real item, and '- [tag]' inside a fence must NOT
+# trigger MALFORMED_HEADING.
+DIR=$(create_fixture "todo-format-fence-aware")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [manual] Real entry
+- **Why:** this is a real item.
+- **Example:** the entry inside the fence below should be ignored:
+
+```markdown
+### [pair-review:group=999] Documentation example
+- [full-review] Legacy bullet inside a fence — should not be flagged
+```
+
+### [manual] Second real entry
+- **Why:** after the fence closes.
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+# UNPROCESSED counts ONLY the two real entries, not the fenced ones.
+if echo "$UNPROC" | grep -q "ITEMS: 2"; then
+  pass "fence-aware: ### entries inside fences not counted"
+else
+  fail "fence-aware: fenced ### miscounted" "$UNPROC"
+fi
+# TODO_FORMAT does NOT flag fenced content.
+if echo "$TF" | grep -q "STATUS: pass"; then
+  pass "fence-aware: TODO_FORMAT ignores fenced content"
+else
+  fail "fence-aware: TODO_FORMAT false positive in fence" "$TF"
+fi
+
+# Legacy bullet migration signal: bullet-form entries with zero heading
+# entries should produce STATUS: found (not empty) so /roadmap doesn't
+# early-exit "nothing to do" on an unmigrated inbox.
+DIR=$(create_fixture "todo-format-legacy-only")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+- [pair-review] Bug A
+- [manual] Todo B
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+if echo "$UNPROC" | grep -q "STATUS: found" && echo "$UNPROC" | grep -q "LEGACY_BULLETS: 2"; then
+  pass "legacy-bullets: bullet-only inbox signals found (not empty)"
+else
+  fail "legacy-bullets: bullet-only inbox mis-signaled" "$UNPROC"
+fi
+
+# DAG ordering consistency — check_in_flight_groups uses numeric sort.
+# Regression test for adversarial finding: doc order != numeric order
+# when Groups are manually reordered.
+DIR=$(create_fixture "in-flight-numeric-sort")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 10: Later-numbered but earlier in file
+
+### Track 10A: x
+_1 task . low risk . x_
+_touches: x_
+- **X** -- . (S)
+
+## Group 1: Earlier number, later in file ✓ Complete
+
+### Track 1A: a
+_1 task . low risk . a_
+_touches: a_
+- **A** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+# Group 10 depends (implicitly, numeric order) on Group 1. Group 1 is
+# complete, so Group 10 is in-flight.
+if echo "$IFG" | grep -q "IN_FLIGHT: 10"; then
+  pass "in_flight_topo: numeric-sorted implicit-prev (not doc order)"
+else
+  fail "in_flight_topo: doc order leaked in dep resolution" "$IFG"
+fi
+
+# Unknown deps: reference a nonexistent Group. Frontier should record
+# UNKNOWN_DEPS warning and exclude the Group from in-flight.
+DIR=$(create_fixture "in-flight-unknown-dep")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Points at a phantom
+
+_Depends on: Group 99_
+
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **X** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+if echo "$IFG" | grep -q "UNKNOWN_DEPS: 1→99"; then
+  pass "in_flight_topo: forward-ref emits UNKNOWN_DEPS warning"
+else
+  fail "in_flight_topo: forward-ref silent" "$IFG"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""

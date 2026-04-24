@@ -350,7 +350,7 @@ execution plan focused on what you're actually doing now.
 Before phase assignment, every inbox item passes through a one-by-one scrutiny
 gate. The gate's default recommendation per item is driven by its source tag
 (see `docs/source-tag-contract.md` for the canonical source-default routing
-matrix). This invert's CC's "add to backlog" reflex — aggressive full-review
+matrix). This inverts CC's "add to backlog" reflex — aggressive full-review
 findings and edge-case noise default toward kill, while observed bugs and
 user-written items default toward keep.
 
@@ -373,6 +373,8 @@ Items already in ROADMAP.md are already vetted (they're in the execution plan).
 | `[full-review:necessary]` | KEEP (real defect) |
 | `[full-review:nice-to-have]` | PROMPT — keep or defer |
 | `[full-review:edge-case]` | SUGGEST KILL (adversarial edge-case noise) |
+| `[full-review:important]` (legacy) | KEEP (treat as `necessary`) |
+| `[full-review:minor]` (legacy) | PROMPT (treat as `nice-to-have`) |
 | `[full-review]` (no severity — legacy) | PROMPT |
 | `[discovered:<path>]` | PROMPT (extracted from scattered doc) |
 | Unknown source | PROMPT |
@@ -398,12 +400,13 @@ reviewers. Keep the first (or the user-chosen one), drop the others.
    Same bug reported by two reviewers. Keep which?
    ```
    Options: "Keep #1, drop #2", "Keep #2, drop #1", "Keep both (not actually dupes)"
-4. On "Keep #N", log the decision to `.context/roadmap/dedupe-log.jsonl`:
+4. On "Keep #N", log the decision to `.context/roadmap/dedupe-log.jsonl`
+   (run `mkdir -p .context/roadmap` first if the directory doesn't exist —
+   `.context/` is gitignored at the repo root):
    ```json
    {"ts":"<ISO 8601>","hash":"abc123","action":"dropped","kept_source":"pair-review","dropped_source":"full-review","dropped_title":"NSNull crash — reply composer"}
    ```
-   Remove the dropped entry from TODOS.md immediately. `.context/roadmap/` is
-   gitignored.
+   Remove the dropped entry from TODOS.md immediately.
 5. On "Keep both", append a `keep_both=1` tombstone to the log and proceed.
 
 **Auto-suggest kills based on audit signals:**
@@ -514,6 +517,25 @@ Smart default algorithm:
   is immutable unless there's a reason to reopen).
 
 Options: ["Hotfix for Group N", "Fold into active Group", "Defer to Future"].
+
+**Hotfix subsection format.** When the user picks "Hotfix for Group N", append
+a Hotfix block to Group N's body, AFTER the `✓ Complete` heading annotation
+but BEFORE the next `## Group` heading. Reuse the Pre-flight shape so the
+audit and other consumers already know how to parse it:
+
+```
+## Group N: Name ✓ Complete
+
+Shipped as v0.9.17.3. All 3 Tracks completed.
+
+**Hotfix** (post-ship fixes; serial, one-at-a-time):
+- Arrow key double-move [pair-review:group=N,item=M] — _~20 lines_ (S)
+```
+
+Multiple hotfix items stack under the same `**Hotfix**` header (one per
+bullet). The Group stays `✓ Complete` — hotfixes are patch-version work, not
+a Group reopening. When the hotfix ships, delete its bullet (git has
+history).
 
 **Edge case:** If ALL items are assigned to Future, write ROADMAP.md with
 just the Future section (no Groups). Valid state.

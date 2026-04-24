@@ -767,31 +767,57 @@ check_unprocessed() {
 
   local has_section=0
   local item_count=0
+  local legacy_bullets=0
   local in_section=0
+  local in_fence=0
 
   while IFS= read -r line; do
-    if echo "$line" | grep -q '^## Unprocessed' 2>/dev/null; then
+    # Track fence state — lines inside ``` fences are literal content, never
+    # real items. Fence-close must match the same run-length; for our purposes
+    # a simple toggle on any ```-line is sufficient (TODOS.md rarely nests).
+    if echo "$line" | grep -qE '^[[:space:]]*```'; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+
+    if [ "$in_fence" -eq 0 ] && echo "$line" | grep -q '^## Unprocessed' 2>/dev/null; then
       has_section=1
       in_section=1
       continue
     fi
-    # Stop at the next ## heading.
-    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## ' 2>/dev/null; then
+    # Stop at the next ## heading (outside a fence).
+    if [ "$in_fence" -eq 0 ] && [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## ' 2>/dev/null; then
       in_section=0
       continue
     fi
-    # Count '### ' heading entries in the section. Each heading is one item.
-    if [ "$in_section" -eq 1 ] && echo "$line" | grep -qE '^### ' 2>/dev/null; then
-      item_count=$((item_count + 1))
+    # Count items inside the section, outside any fence.
+    if [ "$in_section" -eq 1 ] && [ "$in_fence" -eq 0 ]; then
+      if echo "$line" | grep -qE '^### ' 2>/dev/null; then
+        item_count=$((item_count + 1))
+      elif echo "$line" | grep -qE '^- \[' 2>/dev/null; then
+        # Legacy bullet form. Don't silently hide these — mark them so the
+        # skill knows the inbox has content that needs migration.
+        legacy_bullets=$((legacy_bullets + 1))
+      fi
     fi
   done < <(cat "$TODOS_FILE")
 
   echo "ITEMS: $item_count"
+  echo "LEGACY_BULLETS: $legacy_bullets"
 
   if [ "$has_section" -eq 1 ] && [ "$item_count" -gt 0 ]; then
     echo "STATUS: found"
     echo "FINDINGS:"
     echo "- ${item_count} unprocessed items awaiting triage"
+    if [ "$legacy_bullets" -gt 0 ]; then
+      echo "- ${legacy_bullets} legacy bullet-form entries (run /roadmap to migrate to rich format)"
+    fi
+  elif [ "$has_section" -eq 1 ] && [ "$legacy_bullets" -gt 0 ]; then
+    # Unmigrated inbox: bullet entries present but no rich-format items yet.
+    # Report as found so the skill doesn't early-exit "empty" and skip triage.
+    echo "STATUS: found"
+    echo "FINDINGS:"
+    echo "- ${legacy_bullets} legacy bullet-form entries awaiting migration + triage"
   elif [ "$has_section" -eq 1 ]; then
     echo "STATUS: empty"
     echo "FINDINGS:"
@@ -2096,22 +2122,26 @@ check_in_flight_groups() {
     return
   fi
 
-  local groups_in_order="$_GROUP_LIST"   # preserved from parse (doc order)
+  # Sort numerically to match check_group_deps' implicit-prev rule. If we
+  # used doc order here but numeric order there, a manually-reordered
+  # ROADMAP.md would produce inconsistent dependency graphs vs in-flight
+  # frontier — closure bias could then route to the wrong Group.
+  local groups_sorted
+  groups_sorted=$(echo "$_GROUP_LIST" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')
   local in_flight=""
-  local g deps dep_ok dep
+  local g deps dep_ok dep unknown_deps=""
 
-  for g in $groups_in_order; do
+  for g in $groups_sorted; do
     # Skip groups that are themselves complete.
     if echo " $_COMPLETE_GROUPS " | grep -q " $g "; then
       continue
     fi
-    # Get effective deps for g (explicit or default to previous group).
-    # Re-derive here rather than depending on check_group_deps side effects.
+    # Get effective deps for g (explicit or default to previous group by
+    # numeric order — matches check_group_deps).
     deps=$(_kv_get "$_GROUP_DEPS" "$g")
     if [ -z "$deps" ]; then
-      # Default rule: depends on immediately preceding group.
       local prev=""
-      for candidate in $groups_in_order; do
+      for candidate in $groups_sorted; do
         if [ "$candidate" = "$g" ]; then
           break
         fi
@@ -2123,11 +2153,20 @@ check_in_flight_groups() {
     fi
 
     # All deps must be in _COMPLETE_GROUPS for g to be in-flight.
+    # If a dep references a nonexistent Group, warn but don't silently stall
+    # the frontier — check_group_deps emits the authoritative forward-ref
+    # error; we just flag it here for visibility.
     dep_ok=1
     if [ -n "$deps" ]; then
       local IFS_ORIG="$IFS"
       IFS=','
       for dep in $deps; do
+        if ! echo " $_GROUP_LIST " | grep -q " $dep "; then
+          unknown_deps="${unknown_deps}${unknown_deps:+,}${g}→${dep}"
+          # Treat unknown deps as "unsatisfiable" — Group stays out of frontier.
+          dep_ok=0
+          break
+        fi
         if ! echo " $_COMPLETE_GROUPS " | grep -q " $dep "; then
           dep_ok=0
           break
@@ -2150,6 +2189,9 @@ check_in_flight_groups() {
   echo "IN_FLIGHT: $in_flight"
   echo "COMPLETE: $_COMPLETE_GROUPS"
   echo "PRIMARY: $primary"
+  if [ -n "$unknown_deps" ]; then
+    echo "UNKNOWN_DEPS: $unknown_deps"
+  fi
   echo ""
 }
 
@@ -2177,19 +2219,26 @@ check_origin_stats() {
   fi
 
   local in_section=0
+  local in_fence=0
   local total=0
   local by_group=""
 
   while IFS= read -r line; do
-    if echo "$line" | grep -q '^## Unprocessed'; then
+    # Fence tracking: ignore content inside ``` fences (prose/snippets).
+    if echo "$line" | grep -qE '^[[:space:]]*```'; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+    if [ "$in_fence" -eq 0 ] && echo "$line" | grep -q '^## Unprocessed'; then
       in_section=1
       continue
     fi
-    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
+    if [ "$in_fence" -eq 0 ] && [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
       in_section=0
       continue
     fi
     [ "$in_section" -eq 0 ] && continue
+    [ "$in_fence" -eq 1 ] && continue
 
     # Heading entry?
     if ! echo "$line" | grep -qE '^### '; then
@@ -2255,20 +2304,28 @@ check_todo_format() {
   fi
 
   local in_section=0
+  local in_fence=0
   local failures=""
   local legacy_bullets=0
   local heading_total=0
 
   while IFS= read -r line; do
-    if echo "$line" | grep -q '^## Unprocessed'; then
+    # Fence tracking: validator ignores content inside ``` fences — those are
+    # usage examples, not real entries.
+    if echo "$line" | grep -qE '^[[:space:]]*```'; then
+      in_fence=$((1 - in_fence))
+      continue
+    fi
+    if [ "$in_fence" -eq 0 ] && echo "$line" | grep -q '^## Unprocessed'; then
       in_section=1
       continue
     fi
-    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
+    if [ "$in_fence" -eq 0 ] && [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
       in_section=0
       continue
     fi
     [ "$in_section" -eq 0 ] && continue
+    [ "$in_fence" -eq 1 ] && continue
 
     # Legacy bullet form: '- [something] ...'
     if echo "$line" | grep -qE '^- \['; then
@@ -2287,8 +2344,19 @@ check_todo_format() {
       title_part=$(extract_title_from_heading "$line")
 
       if [ -z "$tag" ]; then
-        # Entries with no tag are permitted — treated as [manual] by the skill.
-        # Skip validation.
+        # No tag extracted. Two possibilities:
+        # (1) Truly untagged heading: "### Plain title" — permitted, treated
+        #     as [manual] by the skill.
+        # (2) Malformed tag: "### [pair-review:group=2 Unclosed" — the heading
+        #     STARTED a tag but didn't close the bracket. Silently routing
+        #     this as [manual] would mask data-entry errors. Flag it.
+        local heading_body
+        heading_body=$(echo "$line" | sed -E 's/^### //')
+        if echo "$heading_body" | grep -qE '^\['; then
+          local heading_excerpt
+          heading_excerpt=$(echo "$heading_body" | cut -c1-80)
+          failures="${failures}- MALFORMED_HEADING: unclosed tag bracket in '${heading_excerpt}' — heading starts with '[' but the tag is not properly closed (expected '### [source:key=val] Title')\n"
+        fi
         continue
       fi
 

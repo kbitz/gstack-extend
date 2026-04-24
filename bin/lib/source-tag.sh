@@ -150,22 +150,53 @@ normalize_title() {
 
 # compute_dedup_hash <title>
 #
-# Returns the first 12 hex characters of sha1(normalize_title(title)).
+# Returns 12 hex characters derived from normalize_title(title).
 # Short hash is sufficient for a per-repo dedup table (no cross-repo clashes).
+# Falls back through sha1 → md5 → cksum → padded-hex. All tiers produce
+# exactly 12 hex chars, so downstream dedup logic never sees variable-length
+# keys. Fallbacks emit a "WARN: dedup-fallback" line to stderr so the user
+# can detect degraded collision resistance.
 compute_dedup_hash() {
   local title="$1"
   local normalized
   normalized=$(normalize_title "$title")
-  # Prefer shasum (ships on macOS + Linux). Fall back to sha1sum on Linux-only.
+
+  # Tier 1: shasum (ships on macOS + Linux via Perl).
   if command -v shasum >/dev/null 2>&1; then
     printf '%s' "$normalized" | shasum -a 1 | cut -c1-12
-  elif command -v sha1sum >/dev/null 2>&1; then
-    printf '%s' "$normalized" | sha1sum | cut -c1-12
-  else
-    # Dumb fallback: xxd of the first 6 bytes of the title. Not collision
-    # resistant but avoids hard-crashing on exotic systems.
-    printf '%s' "$normalized" | cut -c1-12 | od -An -tx1 | tr -d ' \n' | cut -c1-12
+    return
   fi
+  # Tier 2: sha1sum (Linux coreutils).
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s' "$normalized" | sha1sum | cut -c1-12
+    return
+  fi
+  # Tier 3: md5 / md5sum.
+  if command -v md5sum >/dev/null 2>&1; then
+    echo "WARN: compute_dedup_hash falling back to md5sum" >&2
+    printf '%s' "$normalized" | md5sum | cut -c1-12
+    return
+  fi
+  if command -v md5 >/dev/null 2>&1; then
+    echo "WARN: compute_dedup_hash falling back to md5" >&2
+    printf '%s' "$normalized" | md5 | cut -c1-12
+    return
+  fi
+  # Tier 4: cksum (POSIX, ubiquitous). Produces a decimal CRC + size; zero-pad
+  # to ensure 12 chars. Much weaker than sha1 but deterministic.
+  if command -v cksum >/dev/null 2>&1; then
+    echo "WARN: compute_dedup_hash falling back to cksum (reduced collision resistance)" >&2
+    local cksum_out
+    cksum_out=$(printf '%s' "$normalized" | cksum | awk '{printf "%010d%s", $1, $2}')
+    printf '%s' "$cksum_out" | cut -c1-12
+    return
+  fi
+  # Tier 5: last-resort hex-of-normalized-bytes, zero-padded to 12 chars.
+  # Collides on long shared prefixes but ALWAYS produces 12 hex chars.
+  echo "WARN: compute_dedup_hash falling back to hex-of-title (NOT collision-resistant)" >&2
+  local hex
+  hex=$(printf '%s' "${normalized}000000000000" | od -An -tx1 | tr -d ' \n')
+  printf '%s' "$hex" | cut -c1-12
 }
 
 # validate_tag_expression <raw-string>
