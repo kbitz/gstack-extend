@@ -87,8 +87,52 @@ During doc discovery (Step 1.5), the skill may also: create spec files in docs/d
 (user-approved cleanup). All file modifications require explicit user approval.
 
 **File ownership:**
-- **TODOS.md** = inbox. Other skills write here (pair-review, investigate, manual). /roadmap reads and drains it.
+- **TODOS.md** = inbox. Other skills write here (pair-review, full-review, investigate, review-apparatus, test-plan, manual). /roadmap reads and drains it.
 - **ROADMAP.md** = structured execution plan. /roadmap owns this. Groups > Tracks > Tasks live here.
+
+**Source-tag contract:** Every inbox item carries a `[source:key=val]` tag that
+tells /roadmap who wrote it, which Group surfaced it, and (for /full-review)
+what severity the reviewer assigned. The canonical grammar, severity
+taxonomy, source-default routing matrix, and dedup rules live in
+`docs/source-tag-contract.md`. Writers (pair-review, full-review, review-apparatus,
+test-plan) reference that doc. The audit's `TODO_FORMAT` check validates every
+entry against it.
+
+**Closure culture:** /roadmap biases toward closing out in-flight Groups before
+accepting new work. Origin-tagged items (`[pair-review:group=N,item=M]`,
+`[test-plan:group=N,...]`) route back to the Group that surfaced them, not to
+Future. The closure dashboard (Step 1 output) makes open-origin debt visible
+every run. Completed Groups are marked `✓ Complete` in place — **numbers are
+stable**, never renumber on completion. Origin tags survive across the lifetime
+of the roadmap this way.
+
+## Execution Order
+
+Mode-agnostic high-level sequence. Each mode skips steps that don't apply.
+
+```
+Step 1   Audit + closure dashboard + (optional) auto-suggest closure walk
+Step 1.5 Doc discovery (if SCATTERED_TODOS found)
+Step 2   Triage:
+           2a  Scrutiny gate — keep/kill per source-default matrix
+                 · Overhaul: runs on ALL items
+                 · Triage/Update: runs on Unprocessed items only
+           2b  Phase assignment (current Group / Future) with closure bias
+Step 3   Build or update ROADMAP.md
+           3-pre  Structural assessment (triage/update only)
+           3a-f  Slot items into existing structure (triage/update)
+Step 3.5 Freshness scan — mark completed Groups ✓ Complete in place
+                          (triage/update only; runs BEFORE Step 2a scrutiny)
+Step 4   Update PROGRESS.md
+Step 5   Version recommendation
+Step 6   Commit
+```
+
+**Critical insertion point (triage/update):** The flow is
+`Step 1 → Step 1.5 → Step 3.5 (freshness) → Step 2a (scrutiny) → Step 2b →
+Step 3-pre → Step 3a-f → Step 4`. The freshness scan runs BEFORE scrutiny so
+that stale items get removed before we ask "keep or kill?" — otherwise scrutiny
+prompts waste cycles on already-done work.
 
 ## Step 1: Audit
 
@@ -115,6 +159,53 @@ Present the findings as a summary to the user. For each check that failed:
   shipped version. Suggest moving them to docs/archive/.
 - **DEPENDENCIES failures:** Report broken track references.
 - **UNPROCESSED found:** Report the number of items awaiting triage.
+- **TODO_FORMAT failures:** Malformed entries block triage. Offer to fix format
+  issues before proceeding (usually: rewrite legacy bullet-form entries to rich
+  `### [tag] Title` form per `docs/source-tag-contract.md`).
+
+### Closure Debt Dashboard
+
+After the audit summary, render a closure-debt dashboard at the top of the
+/roadmap run output. Read the audit's `IN_FLIGHT_GROUPS` and `ORIGIN_STATS`
+sections. Format:
+
+```
+Closure debt:
+  Group 2 (Draft Safety): 3 open-origin items
+  Group 3 (CLI Foundation): 1 open-origin item
+  Complete this session: 0
+```
+
+If `TOTAL_OPEN_ORIGIN: 0`, show nothing (no dashboard when there's no debt to
+surface — don't manufacture ceremony). If there's no in-flight Group (all
+Groups complete or none exist), also show nothing.
+
+### Auto-Suggest Closure Walk
+
+If the dashboard shows 1+ open-origin items on any in-flight Group, offer —
+not as a subcommand, integrated into the flow — to walk through them first.
+Use AskUserQuestion:
+
+```
+Group 2 has 3 open-origin items found during its own testing.
+Close them out first before triaging new items?
+```
+
+Options: A) Walk through them first (recommended), B) Skip — normal triage
+now, close later.
+
+On A: the scrutiny gate prioritizes origin-tagged items for the PRIMARY
+in-flight Group first (before any non-origin items, before Future items,
+before Unprocessed additions). Walk them one-by-one per the normal Step 2a
+loop. This is reordering, not a separate mode — the items still flow through
+the same keep/kill + phase assignment pipeline.
+
+On B: proceed with normal triage order. Dashboard stays visible at the top of
+the run output as a background reminder.
+
+**Don't cap the walk.** If a Group has 20 open-origin items, that's a
+different problem (broken Group or over-reporting from pair-review) and the
+user can Ctrl+C the walk. Ceremony to handle hypothetical large-N is YAGNI.
 
 ### Mode Detection
 
@@ -254,67 +345,114 @@ Before organizing anything into Groups > Tracks > Tasks, decide which TODOs to k
 and which phase they belong to. This prevents roadmapping dead weight and keeps the
 execution plan focused on what you're actually doing now.
 
-### Step 2a: Keep or Kill (overhaul mode only)
+### Step 2a: Scrutiny Gate (runs in ALL modes)
 
-**This step only runs in overhaul mode.** Triage and update modes skip keep/kill
-entirely — inbox items are fresh (just added by /pair-review, /investigate, or
-manually) and don't need keep/kill vetting. Triage/update modes go straight to
-Step 2b (Phase Assignment).
+Before phase assignment, every inbox item passes through a one-by-one scrutiny
+gate. The gate's default recommendation per item is driven by its source tag
+(see `docs/source-tag-contract.md` for the canonical source-default routing
+matrix). This inverts CC's "add to backlog" reflex — aggressive full-review
+findings and edge-case noise default toward kill, while observed bugs and
+user-written items default toward keep.
 
-**Triage/update mode early-skip:** If the Unprocessed section is empty in triage or
-update mode, skip Step 2 and Step 3 entirely and proceed to Step 3.5 (Freshness
-Scan). Neither triage nor update mode exits before the freshness scan runs.
+**In overhaul mode:** the gate runs on ALL items in TODOS.md.
 
-Read ALL items in TODOS.md (building the roadmap from scratch, so every item gets
-triaged).
+**In triage/update mode:** the gate runs on items in `## Unprocessed` only.
+Items already in ROADMAP.md are already vetted (they're in the execution plan).
 
-**Auto-suggest kills:** Before presenting the keep/kill table, check for items that
-are likely dead:
-1. Feed any STALENESS audit findings (from Step 1) as "suggest: kill" entries. These
-   are items marked DONE whose version tag exists — they should have been deleted.
-2. Read backtick-quoted file paths (`` `path/to/file` ``) from TODO descriptions. Run
-   `git ls-files` to check if referenced files still exist. Flag missing paths as
-   "suggest: kill (referenced file deleted)".
+**Source-default recommendations:**
 
-**One-by-one triage:** Present each item individually via AskUserQuestion. Never
-cluster or batch items — every item gets its own prompt with full context.
+| Source | Default recommendation |
+|---|---|
+| `[manual]`, missing tag | KEEP (user wrote it deliberately) |
+| `[ship]` | KEEP (deferred-from-ship, user decision) |
+| `[pair-review]` / `[pair-review:group=N,...]` | KEEP (observed bug) |
+| `[investigate]` | KEEP (observed bug from debugging) |
+| `[test-plan]` / `[test-plan:group=N,...]` | KEEP (bug from batched testing) |
+| `[review-apparatus]` | KEEP (real tooling need) |
+| `[full-review:critical]` | KEEP (ship-blocker) |
+| `[full-review:necessary]` | KEEP (real defect) |
+| `[full-review:nice-to-have]` | PROMPT — keep or defer |
+| `[full-review:edge-case]` | SUGGEST KILL (adversarial edge-case noise) |
+| `[full-review:important]` (legacy) | KEEP (treat as `necessary`) |
+| `[full-review:minor]` (legacy) | PROMPT (treat as `nice-to-have`) |
+| `[full-review]` (no severity — legacy) | PROMPT |
+| `[discovered:<path>]` | PROMPT (extracted from scattered doc) |
+| Unknown source | PROMPT |
+
+**Triage/update mode early-skip:** If the Unprocessed section is empty AND
+Step 3.5 found no completed tasks AND no Groups need marking ✓ Complete,
+exit: "Roadmap looks good. No unprocessed items and no stale tasks found."
+
+**Pre-scrutiny dedup pass (all modes):**
+
+Before running the gate, compute a dedup key for every item using the source-tag
+library's `compute_dedup_hash` (on the normalized title — NOT the source). If
+two items hash identically, they're the same bug surfaced by different
+reviewers. Keep the first (or the user-chosen one), drop the others.
+
+1. For each item, extract title and compute `compute_dedup_hash "$title"`.
+2. Group items by hash. Groups with >1 entry are dedup candidates.
+3. For each candidate group, ask via AskUserQuestion:
+   ```
+   **Duplicate detected:**
+     1. [pair-review:group=2,item=5] NSNull crash in reply composer
+     2. [full-review:necessary] NSNull crash — reply composer
+   Same bug reported by two reviewers. Keep which?
+   ```
+   Options: "Keep #1, drop #2", "Keep #2, drop #1", "Keep both (not actually dupes)"
+4. On "Keep #N", log the decision to `.context/roadmap/dedupe-log.jsonl`
+   (run `mkdir -p .context/roadmap` first if the directory doesn't exist —
+   `.context/` is gitignored at the repo root):
+   ```json
+   {"ts":"<ISO 8601>","hash":"abc123","action":"dropped","kept_source":"pair-review","dropped_source":"full-review","dropped_title":"NSNull crash — reply composer"}
+   ```
+   Remove the dropped entry from TODOS.md immediately.
+5. On "Keep both", append a `keep_both=1` tombstone to the log and proceed.
+
+**Auto-suggest kills based on audit signals:**
+
+1. Feed any STALENESS audit findings as "suggest: kill" entries. Items marked
+   DONE whose version tag exists should have been deleted.
+2. Read backtick-quoted file paths (`` `path/to/file` ``) from item descriptions.
+   Run `git ls-files` to check if referenced files still exist. Flag missing
+   paths as "suggest: kill (referenced file deleted)".
+
+**One-by-one triage:** Present each item individually via AskUserQuestion.
+Never cluster or batch — every item gets its own prompt with full context.
 
 For each item, before presenting:
-1. Extract a distinctive phrase from the item title (3-5 words).
-2. Run `git log -1 --format="%H %ai %s" -S "distinctive phrase" -- <TODOS-file-path>` to find
-   when the item was introduced. This outputs the commit hash, author date, and subject in one call.
-3. If the git log returns a result, extract the commit hash and date. Check the subject
-   for a PR number (e.g., `(#123)`). Format as:
-   `Introduced: <relative time ago> (<commit short hash>, PR #NNN)` — or without
-   the PR number if none was found.
-4. If the git log returns nothing, show `Provenance: unknown`.
-5. Extract file paths from the item description (backtick-quoted paths like `` `path/to/file` ``).
-   Skip entries that are clearly not file paths (flags, URLs, commands).
-6. For each valid file path, run:
+1. Parse the source tag to derive the default recommendation (matrix above).
+2. Extract a distinctive phrase from the item title (3-5 words).
+3. Run `git log -1 --format="%H %ai %s" -S "distinctive phrase" -- <TODOS-file-path>`.
+4. If a result, format as: `Introduced: <relative time ago> (<short hash>, PR #NNN)`.
+5. If no result, show `Provenance: unknown`.
+6. For each backtick-quoted file path in the description, run:
    `git log --oneline --after="<introduction-date>" -- <file-path>`
-   where `<introduction-date>` is the author date from step 2.
-7. If 2+ commits have landed on the item's files AFTER its introduction date,
-   add to the presentation: `⚠ Possibly resolved: N commits on [files] since introduction`
-8. If provenance is unknown (step 4), skip this file-activity check — cannot determine
-   temporal ordering without a known introduction date.
+7. If 2+ commits since introduction, add: `⚠ Possibly resolved: N commits on [files] since introduction`.
 
 Present each item via AskUserQuestion with this format:
 ```
-**Item [N]/[Total]: [item title]**
+**Item [N]/[Total]: [title]**  (source: [source], [severity if present])
 
-[Full item description from TODOS.md]
+[Full item description / Why / Effort / Context from the rich-format entry]
 [If auto-suggest kill: "⚠ Suggest kill: [reason]"]
-[Provenance line from step 3 above]
+[Provenance line]
+
+RECOMMENDATION: [matrix default] because [source/severity reasoning]
 ```
 
-Options: ["Keep", "Kill"]
+Options vary by default:
+- Default KEEP: `["Keep (recommended)", "Kill", "Defer to Future"]`
+- Default SUGGEST_KILL: `["Kill (recommended)", "Keep"]`
+- Default PROMPT: `["Keep", "Kill", "Defer to Future"]`
 
-Killed items get deleted — git has the history.
+Killed items get deleted — git has the history. Deferred items skip Step 2b's
+group/track placement and go straight to Future in Step 3.
 
-**Edge case:** If ALL items are killed, exit gracefully: "All items killed. No roadmap
-to build. TODOS.md cleaned." Skip to Step 4 (Update PROGRESS.md) and Step 6 (Commit).
+**Edge case:** If ALL items are killed, exit gracefully: "All items killed. No
+roadmap to build. TODOS.md cleaned." Skip to Step 4 and Step 6.
 
-### Step 2b: Phase Assignment
+### Step 2b: Phase Assignment (with closure bias)
 
 For each surviving item, assign it to the current phase or a future phase.
 
@@ -323,19 +461,84 @@ For each surviving item, assign it to the current phase or a future phase.
 - v1.x = "v1" phase
 - etc.
 
-Future items go into a single "Future" bucket (flat list in ROADMAP.md). Multi-phase
-roadmapping is deferred until phase transition detection ships.
+Future items go into a single "Future" bucket (flat list in ROADMAP.md).
 
-Present each surviving item with a recommended phase assignment. Use AskUserQuestion
-to confirm. Items assigned to the current phase proceed to Step 3 for full Groups >
-Tracks > Tasks treatment. Items assigned to future go directly to the `## Future`
-section in ROADMAP.md (flat list, not structured).
+**Closure bias** — the default recommendation is driven by the item's origin
+tag, not by file-overlap heuristics:
 
-**IMPORTANT:** Phase assignment happens BEFORE Group/Track placement. Future items
-skip Group/Track entirely. Only current-phase items get the structured treatment.
+1. Parse the item's source tag. If it includes `group=N` (pair-review,
+   test-plan items), check whether Group N is in `IN_FLIGHT_GROUPS` (audit
+   output):
+   - **If Group N is in-flight:** recommend current phase, placement into
+     Group N (covered in Step 3c). The bug gets folded back into the Group
+     that surfaced it.
+   - **If Group N is ✓ Complete:** Trigger the **reopen rule** (below) —
+     this is a bug for a Group that already shipped.
+   - **If Group N doesn't exist (renamed/deleted):** WARN. Fall through to
+     item-without-origin-tag logic.
 
-**Edge case:** If ALL items are assigned to "future," write ROADMAP.md with just the
-Future section (no Groups). This is a valid roadmap state.
+2. For items without an origin tag (or with `group=pre-test`):
+   - Default recommendation: current phase. Placement into the PRIMARY
+     in-flight Group's Pre-flight (covered in Step 3c).
+   - The user can override to Future via option.
+
+3. Legacy / explicit exceptions:
+   - `[ship]` items often encode deferred-from-ship decisions — default to
+     current phase unless the Why text indicates otherwise.
+   - `[manual]` items with no origin hints — default to current phase.
+
+Present each surviving item with the recommended phase assignment. Items
+assigned to current phase proceed to Step 3 for Group/Track placement.
+Items assigned to Future go directly to the `## Future` section in
+ROADMAP.md (flat list, not structured).
+
+**Reopen rule** (for origin-tagged items where Group N is ✓ Complete):
+
+Use AskUserQuestion:
+```
+[pair-review:group=2,item=5] Arrow key double-move
+Group 2 (Draft Safety) is already ✓ Complete.
+
+Smart default based on signals:
+  · Bug age: [provenance — git log lookup]
+  · Severity: [from tag, or 'unknown' for pair-review]
+  · File overlap with active Group [PRIMARY in-flight]: [yes/no]
+
+RECOMMENDATION: [algorithm below]
+```
+
+Smart default algorithm:
+- IF severity = `critical` → recommend "Hotfix for Group N" (creates a
+  Hotfix subsection under the ✓ Complete Group N).
+- ELSE IF the item's backtick-quoted file paths overlap the PRIMARY
+  in-flight Group's `_touches:_` set → recommend "Fold into active Group"
+  (route to primary in-flight Group, normal Step 3c placement).
+- ELSE → recommend "Defer to Future" (conservative default — shipped history
+  is immutable unless there's a reason to reopen).
+
+Options: ["Hotfix for Group N", "Fold into active Group", "Defer to Future"].
+
+**Hotfix subsection format.** When the user picks "Hotfix for Group N", append
+a Hotfix block to Group N's body, AFTER the `✓ Complete` heading annotation
+but BEFORE the next `## Group` heading. Reuse the Pre-flight shape so the
+audit and other consumers already know how to parse it:
+
+```
+## Group N: Name ✓ Complete
+
+Shipped as v0.9.17.3. All 3 Tracks completed.
+
+**Hotfix** (post-ship fixes; serial, one-at-a-time):
+- Arrow key double-move [pair-review:group=N,item=M] — _~20 lines_ (S)
+```
+
+Multiple hotfix items stack under the same `**Hotfix**` header (one per
+bullet). The Group stays `✓ Complete` — hotfixes are patch-version work, not
+a Group reopening. When the hotfix ships, delete its bullet (git has
+history).
+
+**Edge case:** If ALL items are assigned to Future, write ROADMAP.md with
+just the Future section (no Groups). Valid state.
 
 ### Step 2c: Triage Summary
 
@@ -679,18 +882,32 @@ If the user chooses B: proceed to Step 3c as normal.
 **Step 3c: Classify current-phase items against ROADMAP.md.** If ROADMAP.md is
 future-only (no Groups exist), create new Group/Track structure for the current-phase
 items (a mini-overhaul while preserving the Future section). Otherwise, for each item
-assigned to the current phase, determine:
-- Which existing Group in ROADMAP.md it belongs to (based on dependency position)
-- Which existing Track it fits in (based on file ownership overlap)
-- Whether it needs a new Track (no existing track touches those files)
-- Whether it's a Pre-flight item (trivial, < 30 min)
+assigned to the current phase, determine placement using this priority order:
 
-Use the source tag as a signal:
-- `[pair-review]` items are usually bugs, likely belong in a bug-fix group/track
-- `[manual]` items are feature requests or improvements, classify by area
-- `[investigate]` items are usually bugs found during debugging
-- `[discovered:<filepath>]` items were extracted from scattered docs, classify by content
-- `[review-apparatus]` items are tooling/bolt-on proposals from an apparatus audit — classify by which code area they support (e.g., an `inspect-db-row` proposal lines up with whichever track owns data access), or create a platform/tooling track if several accumulate
+1. **Origin tag wins** (closure bias). If the item has `[tag:group=N,item=M]`:
+   - Route to Group N's Pre-flight (if small/fix-shaped) or its relevant Track
+     (if the item description overlaps a Track's `_touches:_` set).
+   - Do NOT use file-overlap heuristics to route elsewhere — the origin tag is
+     the writer's explicit statement of where this belongs.
+   - For `group=pre-test` (pair-review bug parked before testing started):
+     route to the PRIMARY in-flight Group's Pre-flight.
+
+2. **Without origin tag** — use these signals:
+   - File footprint: if the item description mentions files in a Track's
+     `_touches:_` set, route to that Track.
+   - Source tag heuristics:
+     - `[pair-review]` without group= → PRIMARY in-flight Group's Pre-flight
+     - `[manual]` → classify by area or Pre-flight if trivial
+     - `[investigate]` → usually a bug, PRIMARY in-flight Group's Pre-flight
+     - `[discovered:<path>]` → classify by content
+     - `[review-apparatus]` → tooling/bolt-on; classify by supported code
+       area, or create a platform/tooling Track if several accumulate
+     - `[full-review:*]` → use file hints in the tag (`files=...`) when
+       present; otherwise classify by the finding's description
+
+3. **Whether it needs a new Track** — only if no existing Track touches those
+   files AND the item is larger than a Pre-flight fix (>30 min, or has its own
+   discrete scope).
 
 **Step 3d: Propose triage.** Present the proposed placement of each item via
 AskUserQuestion:
@@ -792,33 +1009,58 @@ For each flagged item, options:
 - **Completed items:** ["Mark done (remove from roadmap)", "Still in progress"]
 - **Unblocked items:** ["Remove blocker annotation", "Still blocked"]
 
-### Step 3.5d: Apply changes
+### Step 3.5d: Apply changes (stable Group IDs — no renumbering)
 
-Remove completed tasks from ROADMAP.md. Update track metadata (task counts, effort
-estimates). Remove resolved blocker annotations. If an entire Track is completed,
-remove the Track. If an entire Group is completed, remove the Group and renumber
-subsequent groups. When renumbering, also update:
+Remove completed TASKS from ROADMAP.md. Update track metadata (task counts,
+effort estimates). Remove resolved blocker annotations.
 
-- All Track-level "Depends on" and "blocked" annotations that reference old Track
-  identifiers (e.g., `Track 3A` becomes `Track 2A` if Group 2 was removed).
-- All **Group-level `_Depends on: Group N_`** annotations that reference old Group
-  numbers. Scan every Group's italic annotation line; for each `Group N` reference
-  where N was renumbered, rewrite to the new number. Preserve the name-anchor
-  `(Name)` if present — but update it to the Group's current heading name if the
-  renumbered Group has a different name than what the anchor recorded.
-- This pass must be boringly thorough: any downstream reader (other skills, future
-  `/roadmap` invocations, humans browsing git blame) assumes the numeric references
-  in ROADMAP.md are consistent with the current Group list at any point.
+**Track completion:** If every task in a Track is complete, the Track itself
+is complete. Collapse it to a single italic line under the Group heading:
+```
+_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._
+```
+This preserves the Track ID for origin-tag lookups forever, without bloating
+the active view with historical task detail. Alternatively, move completed
+Tracks to a `## Completed` section at the top of ROADMAP.md using the bolt
+project's pattern — the Track ID stays in history either way.
 
-If removals changed the Execution Map, regenerate it.
+**Group completion:** If every Track in a Group is complete (including
+Pre-flight), mark the Group `✓ Complete` **in place**:
+```
+## Group 2: Draft Safety ✓ Complete
+
+Shipped as v0.9.17.3. All 3 Tracks completed. See docs/PROGRESS.md for details.
+```
+
+**Do NOT renumber.** This is the load-bearing invariant for origin tags:
+
+- `[pair-review:group=2,item=5]` MUST continue to resolve to the same Group
+  forever. If you renumber, every stored origin tag rots silently.
+- Numbers are stable identifiers, not display ordinals. Treat them like
+  commit hashes — append-only, never reused, never reassigned.
+- Group-level `_Depends on: Group N_` annotations stay stable. Track-level
+  `Depends on:` annotations stay stable.
+- The audit's `_COMPLETE_GROUPS` list, emitted in `## IN_FLIGHT_GROUPS`,
+  tracks which Groups are complete without relying on renumbering.
+
+**Renumbering is permitted ONLY at explicit canonical reset points** —
+major version bumps with full restructures, or when the user explicitly
+requests it via a separate canonical-reset flow. Resets MUST be documented
+in ROADMAP.md's header (e.g., "Canonical numbering reset on 2026-04-18
+(v0.9.17.4): Groups 5-12 → 4-11."). Not in scope for /roadmap's normal
+triage/update runs.
+
+If the Execution Map rendered Groups in completion order, regenerate it to
+show in-flight Groups first with complete Groups at the bottom or in a
+"Complete" subsection — but Group numbers never change.
 
 ### Step 3.5e: Approval
 
 Present the modified ROADMAP.md for final approval via AskUserQuestion:
 
 ```
-Freshness scan applied: removed N tasks, M tracks, K groups.
-[Summary of what was removed and what was renumbered]
+Freshness scan applied: removed N tasks, collapsed M Tracks, marked K Groups ✓ Complete.
+[Summary of what was removed / collapsed / marked]
 ```
 
 Options:

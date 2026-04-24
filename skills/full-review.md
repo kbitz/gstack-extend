@@ -210,7 +210,15 @@ Prompt:
 > break in production or confuse a future maintainer.
 >
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|important|minor> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+>
+> SEVERITY semantics (see docs/source-tag-contract.md):
+>   critical     — ship-blocker, data loss, security, correctness
+>   necessary    — real defect, should fix in current or next Group
+>   nice-to-have — legitimate improvement, OK to defer
+>   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
+>                  by /full-review. Only report them for the record; they will not be
+>                  written to TODOS.md.
 >
 > If you find no issues, output: NO_FINDINGS
 >
@@ -243,7 +251,15 @@ Prompt:
 > Do NOT flag style issues handled by linters or formatters.
 >
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|important|minor> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+>
+> SEVERITY semantics (see docs/source-tag-contract.md):
+>   critical     — ship-blocker, data loss, security, correctness
+>   necessary    — real defect, should fix in current or next Group
+>   nice-to-have — legitimate improvement, OK to defer
+>   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
+>                  by /full-review. Only report them for the record; they will not be
+>                  written to TODOS.md.
 >
 > If you find no issues, output: NO_FINDINGS
 >
@@ -288,7 +304,15 @@ Prompt:
 > differences handled by a linter, one-off utilities with no parallel.
 >
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|important|minor> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+>
+> SEVERITY semantics (see docs/source-tag-contract.md):
+>   critical     — ship-blocker, data loss, security, correctness
+>   necessary    — real defect, should fix in current or next Group
+>   nice-to-have — legitimate improvement, OK to defer
+>   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
+>                  by /full-review. Only report them for the record; they will not be
+>                  written to TODOS.md.
 >
 > If you find no issues, output: NO_FINDINGS
 >
@@ -345,6 +369,12 @@ Combine all findings into a single list. For deduplication:
 - If two agents describe the same conceptual issue (e.g., both say "error handling
   is inconsistent in bin/"), merge into one finding with the combined context
 
+**Drop edge-case findings (A.11).** Before clustering, filter out every finding with
+`SEVERITY: edge-case`. These represent hypothetical or extreme-edge scenarios that
+downstream /roadmap triage would default-kill anyway. Filtering at source keeps
+TODOS.md focused on real defects. Count them as `edge_case_dropped: N` in the final
+report for visibility — `dropped`, not hidden.
+
 ### Step 2: Cluster by root cause
 
 Group findings using these heuristics:
@@ -358,7 +388,8 @@ that's fine.
 
 Each cluster gets:
 - **Theme:** descriptive name (e.g., "Error handling gaps in bin/")
-- **Severity:** highest severity among its members (critical > important > minor)
+- **Severity:** highest severity among its members
+  (critical > necessary > nice-to-have; edge-case findings were already dropped in Step 1)
 - **Count:** number of member findings
 - **Findings:** the individual findings with file, line, description, fix
 - **Action:** one-line summary of what fixing this cluster would involve
@@ -420,8 +451,15 @@ context). Find the first untriaged cluster.
 
 Present via AskUserQuestion:
 
-- **Question:** "[Action receipt]\n\n**Cluster [N]/[Total]: [Theme]** (severity: [severity], [count] findings)\n\n[List up to 3 example findings with file:line and description]\n\n[If pre_deduped: 'Already tracked in ROADMAP.md: [Group > Track] — recommend Reject']\n\n[If more than 3 findings: '...and [M] more']"
-- **Options:** ["Approve", "Reject", "Defer", "Done triaging — reject remaining"]
+- **Question:** "[Action receipt]\n\n**Cluster [N]/[Total]: [Theme]** (severity: [severity], [count] findings)\n\n[List up to 3 example findings with file:line and description]\n\n[If pre_deduped: 'Already tracked in ROADMAP.md: [Group > Track] — recommend Reject']\n\n[If more than 3 findings: '...and [M] more']\n\n**Severity check:** does this cluster's severity still feel right? (critical/necessary/nice-to-have). Approving writes it to TODOS.md with the severity tag; /roadmap's scrutiny gate uses it to set defaults."
+- **Options:** ["Approve", "Approve + reclassify severity", "Reject", "Defer", "Done triaging — reject remaining"]
+
+### On Approve + reclassify
+
+Offer a follow-up AskUserQuestion asking which severity the cluster should be
+written with (critical / necessary / nice-to-have). Edge-case is not an option —
+those are dropped at source before clustering. Update the cluster's severity
+before persistence.
 
 ### On Approve
 
@@ -474,13 +512,27 @@ create it at the end of the file.
 
 ### Step 3: Write approved findings
 
-For each approved cluster, write each finding as a new line under `## Unprocessed`:
+For each approved cluster, write each finding as a rich-format entry under
+`## Unprocessed`, following `docs/source-tag-contract.md`:
 
-```
-- [full-review] <title> (<severity>) — <description>. Found on branch <branch> (<date>)
+```markdown
+### [full-review:<severity>] <finding title>
+- **Why:** <description from the finding>
+- **Proposed fix:** <FIX text>
+- **Found in:** <file>:<line>
+- **Context:** From /full-review cluster "<theme>" on branch <branch> (<date>).
+- **Effort:** ? (user triages in /roadmap)
 ```
 
-Order within the section: critical items first, then important, then minor.
+If the finding's cluster has a single file (`files=` hint available), include
+it as a tag attribute for /roadmap's placement heuristic:
+
+```markdown
+### [full-review:<severity>,files=<path>] <finding title>
+```
+
+Order within the section: critical first, then necessary, then nice-to-have.
+(edge-case findings were dropped in Phase 2.)
 
 **IMPORTANT:** Append to the existing `## Unprocessed` section. Do NOT remove or
 modify existing items. Do NOT create new sections.
@@ -514,7 +566,8 @@ Commit: <short hash>
 - Consistency: <completed|failed|timeout> (<N> findings)
 
 ## Summary
-- Total findings: <N>
+- Total findings (post-edge-case-drop): <N>
+- Edge-case findings dropped at source (A.11): <N>
 - Clusters: <N>
 - Approved: <N> clusters (<M> findings)
 - Rejected: <N> clusters (<M> findings)

@@ -646,7 +646,20 @@ Tell the user once: "Plan generated. Entering /pair-review's execution loop on g
 
 Then delegate to Phase 2. From this point on, /pair-review's conventions apply —
 items presented one at a time (or in batch mode), pass/fail/skip/park as normal,
-parked bugs route to TODOS.md with `[test-plan]` source tag.
+parked bugs route to TODOS.md with the rich format per
+`docs/source-tag-contract.md`:
+
+```markdown
+### [test-plan:group=<group-slug>,item=<item-index>] <Bug title>
+- **Why:** <description>
+- **Noticed during:** <group> test-plan run, item <item>
+- **Context:** Found on branch <branch> (<date>). Parked during /test-plan → /pair-review.
+- **Effort:** ? (user triages in /roadmap)
+```
+
+The `group=<group-slug>` origin lets /roadmap's closure bias route the bug
+back to the Group that surfaced it. /pair-review's defer nudge applies here
+too — the UX should default toward fixing before the Group ships.
 
 When /pair-review completes (`/pair-review done`), it emits its normal session rollup
 report. /test-plan's work is complete at handoff; no further /test-plan action after

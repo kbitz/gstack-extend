@@ -568,8 +568,12 @@ For each parked bug from this group, the skill recommends a classification based
 whether the bug relates to the branch's changes or upcoming test groups. Present each
 bug via AskUserQuestion:
 
-- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']"
-- Options: ["Fix now", "Send to TODOS.md", "Stay parked"]
+- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
+- Options: ["Fix now (recommended)", "Send to TODOS.md", "Stay parked"]
+
+**Defer nudge (E4):** "Fix now" is listed first intentionally — the default
+framing biases toward closing out the Group that surfaced the bug. Deferral to
+TODOS.md is an escape hatch for genuinely cross-branch bugs, not the easy path.
 
 Behavior for each option:
 - **Fix now** — blocks upcoming groups or relates to current area.
@@ -583,18 +587,32 @@ Behavior for each option:
 - **Send to TODOS.md** — cross-branch bug, fix on another branch later.
   Append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
   whichever exists). If no `## Unprocessed` section exists, create it at the
-  end of the file. Use the source-tagged format:
+  end of the file. Use the rich format per `docs/source-tag-contract.md`:
+
   ```markdown
   ## Unprocessed
 
-  - [pair-review] <Bug title> — <description>. Found on branch <branch> (<date>)
+  ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
+  - **Why:** <description from parked-bugs.md>
+  - **Noticed during:** <group>, item <item>
+  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review.
+  - **Effort:** ? (user triages in /roadmap)
   ```
-  If the section already exists with other items, append the new item to it.
-  Do NOT attempt to classify or organize the bug into Groups/Tracks. That is
-  /roadmap's job during triage mode.
+
+  Where `<group-slug>` is the slug of the group the user is currently testing
+  (from session.yaml's `active_groups`). This origin tag lets /roadmap route
+  the bug back to the Group that surfaced it (closure bias). For bugs parked
+  BEFORE testing started (where there's no active group yet), use
+  `group=pre-test` — /roadmap interprets this as "route to PRIMARY in-flight
+  Group's Pre-flight."
+
+  If the section already exists with other items, append the new item to it
+  (new `###` heading block at the end). Do NOT attempt to classify or organize
+  the bug into Groups/Tracks — that is /roadmap's job during triage mode.
+
   Commit the TODOS.md change separately: stage the TODOS.md file you wrote to
   (root or docs/, whichever you used) then commit with
-  `git commit -m "chore: add parked bug to TODOS.md (<description>)"`
+  `git commit -m "chore: add parked bug to TODOS.md (<description>)"`.
   Update the bug's status to `DEFERRED_TO_TODOS`.
 - **Stay parked** — this-branch, non-blocking. Remains for Phase 2.5.
 
@@ -613,14 +631,22 @@ If none remain, skip to Phase 4.
 If parked bugs remain, present each via AskUserQuestion (same format as group-completion
 triage):
 
-- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]"
-- Options: ["Fix now", "Send to TODOS.md", "Skip"]
+- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
+- Options: ["Fix now (recommended for on-branch bugs)", "Send to TODOS.md", "Skip"]
 
 Behavior for each option:
 - **Fix now** — checkpoint, agent implements fix, commit, rebuild, user verifies, mark FIXED
 - **Send to TODOS.md** — cross-branch, append to `## Unprocessed` section of TODOS.md
-  using the source-tagged format: `- [pair-review] <title> — <description>. Found on branch <branch> (<date>)`.
-  Create the section if it doesn't exist. Commit separately, mark DEFERRED_TO_TODOS
+  using the rich format per `docs/source-tag-contract.md`:
+  ```markdown
+  ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
+  - **Why:** <description>
+  - **Noticed during:** <group>, item <item>
+  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review Phase 2.5.
+  - **Effort:** ? (user triages in /roadmap)
+  ```
+  Use `group=pre-test` for bugs parked before any group started.
+  Create the section if it doesn't exist. Commit separately, mark DEFERRED_TO_TODOS.
 - **Skip** — not worth fixing now, mark SKIPPED
 
 If a fix fails (build error), use the existing deploy error handling: present the
