@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2026-04-24
+
+### Added
+- **`setup --skills-dir <path>` flag.** Install skill symlinks into a custom directory instead of the default `~/.claude/skills/`. Enables per-project installs for users who want gstack-extend's skills scoped to a single project rather than globally. `setup --skills-dir ./project/.claude/skills` installs there; `setup --skills-dir ./project/.claude/skills --uninstall` removes from there. Flag order is flexible (`--uninstall --skills-dir` also works).
+- **15 new test assertions in `scripts/test-update.sh`** (59 total, was 44): custom-dir install produces correct symlinks (2 asserts), defense-in-depth check that `--skills-dir` does NOT touch the default dir, `--skills-dir` with no value is rejected with non-zero exit (2 asserts), `--skills-dir <flag-like-value>` (e.g. `--skills-dir --uninstall`) is rejected cleanly, `--skills-dir` relative path is rejected, known-limitation warning fires on custom dir and NOT on default (2 asserts), `--skills-dir` + `--uninstall` cleans the custom dir (2 asserts) and removes ALL 5 skills (not just pair-review), reversed flag order works, and `--skills-dir` with a path containing spaces installs correctly (2 asserts).
+- **Arg parsing hardening:** `--skills-dir` now rejects (a) missing values, (b) values starting with `-` (catches `setup --skills-dir --uninstall` and similar typos that would otherwise try `mkdir -p --uninstall` and fail noisily), and (c) relative paths (`./foo`, `bar/baz`) because they resolve against the invocation cwd and would make `setup --skills-dir` install-here / uninstall-elsewhere pairs silently diverge. Arg loop uses `while [ $# -gt 0 ]` so an empty-string `$1` doesn't short-circuit parsing. New tests lock these in under a mocked `$HOME` so a parse regression cannot touch the real `~/.claude/skills`.
+- **Known-limitation warning.** When `--skills-dir` != default, `setup` prints a stderr warning explaining that skill preambles still hardcode `~/.claude/skills/{name}/SKILL.md` for helper resolution (v0.16.0 scope). The install itself succeeds; the warning tells users that `update-check`, `config`, and `audit` calls in the preambles will silently no-op until Pre-flight 2 lands. Prevents the "I installed but nothing works" silent-success surprise.
+- **DRY cleanup in `setup`:** usage string extracted to a single `USAGE` constant, referenced from both error branches.
+
+### Known limitation (addressed in Pre-flight 2, next PR)
+Skill preambles still hardcode `readlink ~/.claude/skills/{name}/SKILL.md` to recover `$_EXTEND_ROOT`. Installs to a non-default `--skills-dir` path produce working symlinks but the preamble path-resolution silently fails (`_EXTEND_ROOT` empty, `$_EXTEND_ROOT/bin/...` calls no-op). Pre-flight 2 of Group 1 ships the probe-pattern fix. Until then, `--skills-dir` is the foundation but not the complete per-project install feature.
+
+First PR of Group 1 Install Pipeline per `docs/ROADMAP.md`. Locked order: 1 (this PR) → 2 → Track 1A → 3 → 4.
+
 ## [0.15.2] - 2026-04-25
 
 ### Added

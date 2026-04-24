@@ -17,20 +17,21 @@ touches cross-cutting files (`setup`, `bin/roadmap-audit`, `skills/*.md`),
 so it's batched into Pre-flight and runs serially. Only the truly isolated
 `bin/update-run` propagation remains as a parallel track.
 
-**Pre-flight** (shared-infra; serial, one-at-a-time):
-- Setup custom dir flag — Add `--skills-dir <path>` flag to `setup` script. Replace hardcoded `SKILLS_DIR="${HOME}/.claude/skills"` with flag-based override, defaulting to the current global path. `[setup], ~20 lines.` (S)
-- Preamble symlink resolution — Skill preambles resolve `$_EXTEND_ROOT` via `readlink` on `SKILL.md`. Verify this works when symlinks originate from a non-default directory (e.g., `./project/.claude/skills/`). Fix if broken. `[skills/*.md preambles], ~10 lines.` (S)
-- Layout scaffolding for new projects — Add a `/roadmap --init` or first-run mode that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and moves misplaced docs to their canonical locations automatically. `[setup, bin/roadmap-audit, skills/roadmap.md], ~50 lines.` (S)
-- Doc type detection heuristics — Teach `bin/roadmap-audit` to classify .md files by content patterns: has requirements/acceptance criteria -> spec, has timeline/phases -> plan, has TODO markers -> inbox, has architecture diagrams -> design doc. Report mismatches. `[bin/roadmap-audit], ~80 lines.` (M)
+**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 1 → 2 → Track 1A → 3 → 4:
+- **[1]** Setup custom dir flag — Add `--skills-dir <path>` flag to `setup` script. Replace hardcoded `SKILLS_DIR="${HOME}/.claude/skills"` with flag-based override, defaulting to the current global path. `[setup], ~20 lines.` (S)
+- **[2]** Preamble probe pattern — Skill preambles currently `readlink ~/.claude/skills/{name}/SKILL.md`, which silently breaks on non-default installs. Replace with gstack-core's probe pattern (`~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`). For truly-custom paths, honor `$GSTACK_EXTEND_ROOT` env var and fallback to `$HOME/.gstack-extend-rc` (written by setup). Also fix `skills/test-plan.md:632` to point at `$_EXTEND_ROOT/skills/pair-review.md`. `[skills/*.md preambles (5 files), setup], ~40 lines.` (S)
+- **[3]** Layout scaffolding for new projects — Add a `/roadmap init` subcommand that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and offers to git-mv misplaced docs (consumes `bin/roadmap-audit DOC_LOCATION` findings). On destination collisions, AskUserQuestion with diff + merge/skip/abort options. `[bin/roadmap-audit, skills/roadmap.md], ~50 lines.` (S)
+- **[4]** Doc type detection heuristic — Teach `bin/roadmap-audit` to emit `## DOC_TYPE_MISMATCH` for two strong-signal patterns: design-looking doc outside `docs/designs/` (mermaid/plantuml fence), inbox-looking doc outside `TODOS.md` (checkbox density >20%). Skip known ROOT_DOCS/DOCS_DIR_DOCS. Only emit rows where content disagrees with location. `[bin/roadmap-audit], ~40 lines.` (S)
 
 ### Track 1A: Update-Run Dir Propagation
-_1 task . ~15 min (human) / ~10 min (CC) . low risk . [bin/update-run]_
+_1 task . ~30 min (human) / ~15 min (CC) . low risk . [bin/update-run]_
 _touches: bin/update-run_
+_Depends on: Pre-flight 1 (requires `--skills-dir` flag to exist)._
 
 End-to-end support for custom install directories in the upgrade path. Partial
 support was removed in v0.6.2 to avoid half-baked behavior.
 
-- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Thread the custom dir from config or env so upgrades preserve per-project installs. _[bin/update-run], ~40 lines._ (S)
+- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Read `$GSTACK_EXTEND_ROOT` env var (set by user shell, populated by Pre-flight 2's rc-file fallback when available). If set, pass `--skills-dir "$GSTACK_EXTEND_ROOT"` to `./setup`. If unset, default behavior (matches pre-Group-1 semantics). Regression test: install with `--skills-dir /tmp/foo`, trigger upgrade, confirm skills still resolve at `/tmp/foo`. _[bin/update-run], ~40 lines._ (S)
 
 ---
 

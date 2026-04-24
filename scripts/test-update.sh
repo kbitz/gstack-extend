@@ -418,6 +418,169 @@ else
   fail "Should not install when flag is unknown"
 fi
 
+# Tests for --skills-dir isolate HOME so a parse regression cannot touch the
+# developer's real ~/.claude/skills.
+MOCK_HOME_SKILLS_DIR="$TMPDIR_BASE/mock-home-skills-dir"
+mkdir -p "$MOCK_HOME_SKILLS_DIR"
+
+# Test: --skills-dir installs to custom directory
+echo ""
+echo "--- --skills-dir custom directory ---"
+CUSTOM_DIR="$TMPDIR_BASE/custom-skills"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "$CUSTOM_DIR" 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -qE "Installed [0-9]+ skills into $CUSTOM_DIR"; then
+  pass "Installs to --skills-dir path"
+else
+  fail "Should install to --skills-dir path" "Got: $OUTPUT"
+fi
+
+if [ -L "$CUSTOM_DIR/pair-review/SKILL.md" ]; then
+  LINK_TARGET=$(readlink "$CUSTOM_DIR/pair-review/SKILL.md")
+  if [ "$LINK_TARGET" = "$SCRIPT_DIR/skills/pair-review.md" ]; then
+    pass "Custom-dir symlink points to correct source"
+  else
+    fail "Custom-dir symlink target wrong" "Got: $LINK_TARGET"
+  fi
+else
+  fail "Should create pair-review symlink in custom dir"
+fi
+
+# Defense-in-depth: confirm --skills-dir did not also touch the default path.
+if [ ! -L "$MOCK_HOME_SKILLS_DIR/.claude/skills/pair-review/SKILL.md" ]; then
+  pass "--skills-dir does not write to default ~/.claude/skills"
+else
+  fail "Default dir should be untouched when --skills-dir is set"
+fi
+
+# Test: --skills-dir with no value is rejected
+echo ""
+echo "--- --skills-dir with no value ---"
+RC=0
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir 2>&1) || RC=$?
+log "Output: $OUTPUT (rc=$RC)"
+
+if echo "$OUTPUT" | grep -q "requires a path argument"; then
+  pass "Rejects --skills-dir with no value"
+else
+  fail "Should reject --skills-dir with no value" "Got: $OUTPUT"
+fi
+
+if [ "$RC" -ne 0 ]; then
+  pass "Exits non-zero on --skills-dir with no value"
+else
+  fail "Should exit non-zero on --skills-dir with no value"
+fi
+
+# Test: --skills-dir followed by another flag (e.g., --uninstall) is rejected
+echo ""
+echo "--- --skills-dir <flag-like-value> ---"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir --uninstall 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "requires a path argument"; then
+  pass "Rejects --skills-dir when value looks like a flag"
+else
+  fail "Should reject --skills-dir followed by another flag" "Got: $OUTPUT"
+fi
+
+# Test: --skills-dir with a relative path is rejected
+echo ""
+echo "--- --skills-dir with relative path ---"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "relative/path" 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "requires an absolute path"; then
+  pass "Rejects --skills-dir with a relative path"
+else
+  fail "Should reject --skills-dir with a relative path" "Got: $OUTPUT"
+fi
+
+# Test: --skills-dir != default prints the known-limitation warning
+echo ""
+echo "--- --skills-dir default-mismatch warning ---"
+CUSTOM_DIR_WARN="$TMPDIR_BASE/custom-warn"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "$CUSTOM_DIR_WARN" 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "Skill preambles still hardcode"; then
+  pass "Warns when --skills-dir != default (known limitation)"
+else
+  fail "Should print known-limitation warning" "Got: $OUTPUT"
+fi
+
+# Default install should NOT print the warning
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" 2>&1 || true)
+if echo "$OUTPUT" | grep -q "Skill preambles still hardcode"; then
+  fail "Should NOT print known-limitation warning on default install"
+else
+  pass "No known-limitation warning when SKILLS_DIR equals default"
+fi
+# Clean up default install (we just ran it via mock HOME)
+HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --uninstall >/dev/null 2>&1 || true
+
+# Test: --skills-dir + --uninstall removes from custom dir
+echo ""
+echo "--- --skills-dir + --uninstall ---"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "$CUSTOM_DIR" --uninstall 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "Removed pair-review"; then
+  pass "Uninstalls from --skills-dir path"
+else
+  fail "Should uninstall from --skills-dir path" "Got: $OUTPUT"
+fi
+
+if [ ! -L "$CUSTOM_DIR/pair-review/SKILL.md" ]; then
+  pass "Custom-dir pair-review removed after uninstall"
+else
+  fail "Should remove pair-review from custom dir"
+fi
+
+# Defense-in-depth: verify EVERY skill got removed, not just pair-review
+REMOVED_COUNT=$(echo "$OUTPUT" | grep -c "^Removed " || true)
+if [ "$REMOVED_COUNT" -eq 5 ]; then
+  pass "All 5 skills removed from custom dir"
+else
+  fail "Should remove all 5 skills from custom dir" "Removed count: $REMOVED_COUNT"
+fi
+
+# Test: --uninstall --skills-dir (order reversed) also works
+echo ""
+echo "--- --uninstall --skills-dir (reversed order) ---"
+CUSTOM_DIR2="$TMPDIR_BASE/custom-skills-reversed"
+if ! HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "$CUSTOM_DIR2" >/dev/null 2>&1; then
+  fail "Pre-install for reversed-order test failed"
+fi
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --uninstall --skills-dir "$CUSTOM_DIR2" 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -q "Removed pair-review"; then
+  pass "Handles --uninstall --skills-dir in reversed order"
+else
+  fail "Should handle reversed flag order" "Got: $OUTPUT"
+fi
+
+# Test: --skills-dir handles paths that contain spaces
+echo ""
+echo "--- --skills-dir with spaces in path ---"
+CUSTOM_DIR_SPACE="$TMPDIR_BASE/with space/skills"
+OUTPUT=$(HOME="$MOCK_HOME_SKILLS_DIR" "$SCRIPT_DIR/setup" --skills-dir "$CUSTOM_DIR_SPACE" 2>&1 || true)
+log "Output: $OUTPUT"
+
+if echo "$OUTPUT" | grep -qE "Installed [0-9]+ skills into"; then
+  pass "Installs to --skills-dir path containing spaces"
+else
+  fail "Should handle path with spaces" "Got: $OUTPUT"
+fi
+
+if [ -L "$CUSTOM_DIR_SPACE/pair-review/SKILL.md" ]; then
+  pass "Symlink created at path-with-spaces location"
+else
+  fail "Should create symlink at path-with-spaces location"
+fi
+
 # ─── semver tests ─────────────────────────────────────────────
 
 echo ""
