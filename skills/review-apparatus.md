@@ -330,15 +330,16 @@ create it at the end of the file.
 
 ### Step 3: Write approved proposals
 
-For each approved proposal, write one line under `## Unprocessed`:
+For each approved proposal, write a rich-format entry under `## Unprocessed`
+per `docs/source-tag-contract.md`:
 
+```markdown
+### [review-apparatus] <proposal name>
+- **Why:** <what it does and why the current apparatus needs it>
+- **Where it would live:** <file path or module>
+- **Effort:** <S/M/L/XL with human + CC estimates>
+- **Context:** Surfaced by /review-apparatus on branch <branch> (<date>).
 ```
-- [review-apparatus] <proposal name> — <what it does + where it would live>. <rough effort>. Found on branch <branch> (<date>)
-```
-
-If a proposal needs more context than one line, wrap it across multiple lines with
-a continuation style matching other TODOs already in the file — check the existing
-items in `## Unprocessed` to mirror their format.
 
 **IMPORTANT:** Append to the existing `## Unprocessed` section. Do NOT remove or
 modify existing items. Do NOT create new sections.

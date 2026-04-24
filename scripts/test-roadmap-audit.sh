@@ -836,14 +836,24 @@ echo ""
 echo "=== unprocessed ==="
 
 # Unprocessed section with items (lives in TODOS.md, the inbox)
+# Rich format per docs/source-tag-contract.md (v0.15.1+).
 DIR=$(create_fixture "unproc-items")
 cat > "$DIR/TODOS.md" << 'EOF'
 # TODOs
 
 ## Unprocessed
-- [pair-review] Arrow key double-move on child messages (found 2026-04-06)
-- [pair-review] NSNull crash in batch response parsing
-- [manual] Add Cmd+Arrow page navigation
+
+### [pair-review:group=2,item=3] Arrow key double-move on child messages
+- **Why:** selection skips a row intermittently.
+- **Effort:** S
+
+### [pair-review:group=2,item=5] NSNull crash in batch response parsing
+- **Why:** crash on non-standard JSON payloads.
+- **Effort:** M
+
+### [manual] Add Cmd+Arrow page navigation
+- **Why:** power users expect this shortcut.
+- **Effort:** S
 EOF
 cat > "$DIR/ROADMAP.md" << 'EOF'
 # Roadmap
@@ -3043,6 +3053,512 @@ if echo "$SL" | grep -q "STATUS: warn" && echo "$SL" | grep -q "unparseable"; th
   pass "group_deps: unparseable annotation warns (no silent dropout)"
 else
   fail "group_deps: unparseable annotation not warned" "$SL"
+fi
+
+# ─── v0.15.1: source-tag contract + closure infrastructure ────
+
+echo ""
+echo "=== complete_groups ==="
+
+# Complete-group detection strips ' ✓ Complete' suffix and populates _COMPLETE_GROUPS.
+DIR=$(create_fixture "complete-groups-basic")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Shipped Work ✓ Complete
+
+Shipped as v0.5.0. All 2 tasks landed.
+
+### Track 1A: Done
+_1 task . low risk . a_
+_touches: a_
+- **Done task** -- . (S)
+
+## Group 2: Active Work
+
+### Track 2A: Ongoing
+_1 task . low risk . b_
+_touches: b_
+- **Active task** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+if echo "$IFG" | grep -q "COMPLETE: 1" && echo "$IFG" | grep -q "IN_FLIGHT: 2"; then
+  pass "complete_groups: heading-embedded ✓ Complete detected"
+else
+  fail "complete_groups: ✓ Complete not detected" "$IFG"
+fi
+if echo "$IFG" | grep -q "PRIMARY: 2"; then
+  pass "complete_groups: PRIMARY is first non-complete Group"
+else
+  fail "complete_groups: PRIMARY wrong" "$IFG"
+fi
+# STRUCTURAL_FITNESS excludes complete groups from active counts
+SF=$(echo "$OUTPUT" | sed -n '/^## STRUCTURAL_FITNESS$/,/^## /p')
+if echo "$SF" | grep -q "GROUP_COUNT: 1"; then
+  pass "complete_groups: STRUCTURAL_FITNESS excludes complete Groups"
+else
+  fail "complete_groups: STRUCTURAL_FITNESS leaked" "$SF"
+fi
+# TASK_LIST keeps complete Groups as ground truth, with complete=1 flag.
+# (files= is parsed from task-line italic [...], not track _touches:_, so
+# fixtures with no task-level files annotation emit files=.)
+TL=$(echo "$OUTPUT" | sed -n '/^## TASK_LIST$/,/^## /p')
+if echo "$TL" | grep -q "group=1|track=1A|title=Done task|effort=S|files=|complete=1"; then
+  pass "complete_groups: TASK_LIST emits complete=1 for shipped tasks"
+else
+  fail "complete_groups: TASK_LIST complete flag missing" "$TL"
+fi
+if echo "$TL" | grep -q "group=2|track=2A|title=Active task|effort=S|files=|complete=0"; then
+  pass "complete_groups: TASK_LIST emits complete=0 for active tasks"
+else
+  fail "complete_groups: TASK_LIST active flag wrong" "$TL"
+fi
+
+# Group names with the suffix don't pollute _GROUP_NAMES.
+DIR=$(create_fixture "complete-groups-name-strip")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: State Architecture ✓ Complete
+
+Shipped.
+
+### Track 1A: x
+_1 task . low risk . a_
+_touches: a_
+- **X** -- . (S)
+
+## Group 2: Foo
+
+_Depends on: Group 1 (State Architecture)_
+
+### Track 2A: y
+_1 task . low risk . b_
+_touches: b_
+- **Y** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+GD=$(echo "$OUTPUT" | sed -n '/^## GROUP_DEPS$/,/^## /p')
+# Name anchor should match "State Architecture", NOT "State Architecture ✓ Complete"
+if ! echo "$GD" | grep -q "STALE_DEPS"; then
+  pass "complete_groups: name-anchor matches stripped name (no STALE_DEPS)"
+else
+  fail "complete_groups: stripped name caused false STALE_DEPS" "$GD"
+fi
+
+# Multiple complete groups in a chain
+DIR=$(create_fixture "complete-groups-chain")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: A ✓ Complete
+
+### Track 1A: a
+_1 task . low risk . a_
+_touches: a_
+- **A** -- . (S)
+
+## Group 2: B ✓ Complete
+
+### Track 2A: b
+_1 task . low risk . b_
+_touches: b_
+- **B** -- . (S)
+
+## Group 3: C
+
+### Track 3A: c
+_1 task . low risk . c_
+_touches: c_
+- **C** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+if echo "$IFG" | grep -q "COMPLETE: 1 2" && echo "$IFG" | grep -q "IN_FLIGHT: 3" && echo "$IFG" | grep -q "PRIMARY: 3"; then
+  pass "complete_groups: chain of complete Groups, in-flight frontier correct"
+else
+  fail "complete_groups: chain detection wrong" "$IFG"
+fi
+
+echo ""
+echo "=== in_flight_topo ==="
+
+# DAG with _Depends on: none_ — Group 3 runnable even if Group 2 isn't.
+DIR=$(create_fixture "in-flight-dag")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Root ✓ Complete
+
+### Track 1A: a
+_1 task . low risk . a_
+_touches: a_
+- **A** -- . (S)
+
+## Group 2: Active On 1
+
+### Track 2A: b
+_1 task . low risk . b_
+_touches: b_
+- **B** -- . (S)
+
+## Group 3: Parallel Root
+
+_Depends on: none_
+
+### Track 3A: c
+_1 task . low risk . c_
+_touches: c_
+- **C** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+# Both Group 2 (deps met, Group 1 complete) AND Group 3 (no deps) are in-flight.
+if echo "$IFG" | grep -q "IN_FLIGHT: 2 3" && echo "$IFG" | grep -q "PRIMARY: 2"; then
+  pass "in_flight_topo: DAG multiple runnable Groups, doc-order tiebreaker for PRIMARY"
+else
+  fail "in_flight_topo: DAG topology wrong" "$IFG"
+fi
+
+# In-flight with unmet deps — Group depending on incomplete Group is NOT in-flight.
+DIR=$(create_fixture "in-flight-blocked")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Root
+
+### Track 1A: a
+_1 task . low risk . a_
+_touches: a_
+- **A** -- . (S)
+
+## Group 2: Blocked By 1
+
+### Track 2A: b
+_1 task . low risk . b_
+_touches: b_
+- **B** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+# Group 1 is the only in-flight Group (Group 2 depends on incomplete Group 1).
+if echo "$IFG" | grep -q "IN_FLIGHT: 1" && ! echo "$IFG" | grep -q "IN_FLIGHT: 1 2"; then
+  pass "in_flight_topo: Group with unmet deps excluded"
+else
+  fail "in_flight_topo: Group with unmet deps leaked" "$IFG"
+fi
+
+# No Groups → STATUS: skip
+DIR=$(create_fixture "in-flight-empty")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Future
+- **Some future thing** — future. _Deferred._
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+if echo "$IFG" | grep -q "STATUS: skip"; then
+  pass "in_flight_topo: no Groups → skip"
+else
+  fail "in_flight_topo: no Groups not skipped" "$IFG"
+fi
+
+echo ""
+echo "=== origin_stats ==="
+
+DIR=$(create_fixture "origin-stats-basic")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [pair-review:group=2,item=3] Bug A
+- **Why:** one.
+
+### [pair-review:group=2,item=5] Bug B
+- **Why:** two.
+
+### [pair-review:group=3,item=1] Bug C
+- **Why:** three.
+
+### [manual] Unrelated
+- **Why:** not origin-tagged.
+
+### [pair-review:group=pre-test] Pre-test bug
+- **Why:** non-numeric group — should not count.
+EOF
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 2: Active
+### Track 2A: x
+_1 task . low risk . x_
+_touches: x_
+- **X** -- . (S)
+
+## Group 3: Active2
+### Track 3A: y
+_1 task . low risk . y_
+_touches: y_
+- **Y** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+OS=$(echo "$OUTPUT" | sed -n '/^## ORIGIN_STATS$/,/^## /p')
+if echo "$OS" | grep -q "TOTAL_OPEN_ORIGIN: 3"; then
+  pass "origin_stats: counts numeric group-tagged items only"
+else
+  fail "origin_stats: wrong total" "$OS"
+fi
+if echo "$OS" | grep -q "BY_GROUP: 2=2,3=1"; then
+  pass "origin_stats: per-group counts correct"
+else
+  fail "origin_stats: per-group counts wrong" "$OS"
+fi
+
+# No TODOS file → skip
+DIR=$(create_fixture "origin-stats-no-todos")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: x
+### Track 1A: y
+_1 task . low risk . y_
+_touches: y_
+- **Y** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+OS=$(echo "$OUTPUT" | sed -n '/^## ORIGIN_STATS$/,/^## /p')
+if echo "$OS" | grep -q "STATUS: skip"; then
+  pass "origin_stats: no TODOS.md → skip"
+else
+  fail "origin_stats: no TODOS.md not skipped" "$OS"
+fi
+
+echo ""
+echo "=== todo_format ==="
+
+# Clean rich-format entries pass.
+DIR=$(create_fixture "todo-format-clean")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [manual] Good entry
+- **Why:** test.
+
+### [pair-review:group=1,item=2] Another good entry
+- **Why:** test.
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "STATUS: pass" && echo "$TF" | grep -q "HEADINGS: 2"; then
+  pass "todo_format: rich entries pass validator"
+else
+  fail "todo_format: rich entries should pass" "$TF"
+fi
+
+# Legacy bullet entries fail with MALFORMED_HEADING.
+DIR=$(create_fixture "todo-format-legacy-bullet")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+- [pair-review] Legacy bullet form
+- [manual] Another legacy bullet
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "STATUS: fail" && echo "$TF" | grep -qc "MALFORMED_HEADING"; then
+  pass "todo_format: legacy bullet entries flagged MALFORMED_HEADING"
+else
+  fail "todo_format: legacy bullets not flagged" "$TF"
+fi
+
+# Unknown source tag flagged.
+DIR=$(create_fixture "todo-format-unknown-source")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [made-up-source] Bogus tag
+- **Why:** should fail.
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "UNKNOWN_SOURCE"; then
+  pass "todo_format: unknown source flagged"
+else
+  fail "todo_format: unknown source not flagged" "$TF"
+fi
+
+# Injection attempt flagged.
+DIR=$(create_fixture "todo-format-injection")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [pair-review:group=1`rm -rf /`] Injection attempt
+- **Why:** should fail.
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "INJECTION_ATTEMPT\|MALFORMED_TAG"; then
+  pass "todo_format: injection chars rejected"
+else
+  fail "todo_format: injection not rejected" "$TF"
+fi
+
+# Missing tag is permitted (treated as manual by scrutiny gate).
+DIR=$(create_fixture "todo-format-untagged")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### Untagged entry
+- **Why:** still valid (treated as manual).
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "STATUS: pass"; then
+  pass "todo_format: untagged entries pass (treated as manual)"
+else
+  fail "todo_format: untagged entries rejected" "$TF"
+fi
+
+# Malformed tag (unclosed bracket) flagged as MALFORMED_HEADING, NOT
+# silently accepted as untagged. Regression test for adversarial-review
+# finding: `### [pair-review:group=2 Unclosed` was previously bypassed.
+DIR=$(create_fixture "todo-format-unclosed-bracket")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [pair-review:group=2 Unclosed tag broken
+- **Why:** should flag, not silently become manual.
+EOF
+OUTPUT=$(run_audit "$DIR")
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$TF" | grep -q "STATUS: fail" && echo "$TF" | grep -q "unclosed tag bracket"; then
+  pass "todo_format: unclosed tag bracket flagged MALFORMED_HEADING"
+else
+  fail "todo_format: unclosed bracket bypassed validation" "$TF"
+fi
+
+# Fence awareness: '### entry' inside a ``` fence inside ## Unprocessed
+# must NOT count as a real item, and '- [tag]' inside a fence must NOT
+# trigger MALFORMED_HEADING.
+DIR=$(create_fixture "todo-format-fence-aware")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [manual] Real entry
+- **Why:** this is a real item.
+- **Example:** the entry inside the fence below should be ignored:
+
+```markdown
+### [pair-review:group=999] Documentation example
+- [full-review] Legacy bullet inside a fence — should not be flagged
+```
+
+### [manual] Second real entry
+- **Why:** after the fence closes.
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+# UNPROCESSED counts ONLY the two real entries, not the fenced ones.
+if echo "$UNPROC" | grep -q "ITEMS: 2"; then
+  pass "fence-aware: ### entries inside fences not counted"
+else
+  fail "fence-aware: fenced ### miscounted" "$UNPROC"
+fi
+# TODO_FORMAT does NOT flag fenced content.
+if echo "$TF" | grep -q "STATUS: pass"; then
+  pass "fence-aware: TODO_FORMAT ignores fenced content"
+else
+  fail "fence-aware: TODO_FORMAT false positive in fence" "$TF"
+fi
+
+# Legacy bullet migration signal: bullet-form entries with zero heading
+# entries should produce STATUS: found (not empty) so /roadmap doesn't
+# early-exit "nothing to do" on an unmigrated inbox.
+DIR=$(create_fixture "todo-format-legacy-only")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+- [pair-review] Bug A
+- [manual] Todo B
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+if echo "$UNPROC" | grep -q "STATUS: found" && echo "$UNPROC" | grep -q "LEGACY_BULLETS: 2"; then
+  pass "legacy-bullets: bullet-only inbox signals found (not empty)"
+else
+  fail "legacy-bullets: bullet-only inbox mis-signaled" "$UNPROC"
+fi
+
+# DAG ordering consistency — check_in_flight_groups uses numeric sort.
+# Regression test for adversarial finding: doc order != numeric order
+# when Groups are manually reordered.
+DIR=$(create_fixture "in-flight-numeric-sort")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 10: Later-numbered but earlier in file
+
+### Track 10A: x
+_1 task . low risk . x_
+_touches: x_
+- **X** -- . (S)
+
+## Group 1: Earlier number, later in file ✓ Complete
+
+### Track 1A: a
+_1 task . low risk . a_
+_touches: a_
+- **A** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+# Group 10 depends (implicitly, numeric order) on Group 1. Group 1 is
+# complete, so Group 10 is in-flight.
+if echo "$IFG" | grep -q "IN_FLIGHT: 10"; then
+  pass "in_flight_topo: numeric-sorted implicit-prev (not doc order)"
+else
+  fail "in_flight_topo: doc order leaked in dep resolution" "$IFG"
+fi
+
+# Unknown deps: reference a nonexistent Group. Frontier should record
+# UNKNOWN_DEPS warning and exclude the Group from in-flight.
+DIR=$(create_fixture "in-flight-unknown-dep")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Points at a phantom
+
+_Depends on: Group 99_
+
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **X** -- . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+if echo "$IFG" | grep -q "UNKNOWN_DEPS: 1→99"; then
+  pass "in_flight_topo: forward-ref emits UNKNOWN_DEPS warning"
+else
+  fail "in_flight_topo: forward-ref silent" "$IFG"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────
