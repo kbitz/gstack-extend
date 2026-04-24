@@ -68,3 +68,54 @@ work is safe when it isn't.
   is inherited from full-review.md and fixing only review-apparatus would create
   inconsistency. Worth a dedicated cleanup PR. Source: `[review]`.
 
+### Codex host support in `setup`
+gstack core's `setup` script supports `--host codex` to install skills where the
+Codex CLI can discover them. gstack-extend's `setup` currently targets only
+Claude Code's `~/.claude/skills/` tree, so Codex users can't consume
+`/pair-review`, `/roadmap`, `/full-review`, `/review-apparatus`, or `/test-plan`.
+Add a `--host codex` flag (and matching uninstall path) that mirrors gstack's
+layout, then regression-test via `scripts/test-update.sh` with both hosts.
+- **Why:** parity with gstack. Extend's skills are supposed to compose with the
+  same agents gstack already supports; Codex-only users currently see a cliff
+  where core works but extend doesn't.
+- **Depends on:** nothing — current install logic is small enough to fork.
+  Confirm gstack's codex path layout before coding so the two stay in sync.
+- **Effort:** M (human: ~half day / CC: ~45 min) — setup script changes, new
+  test fixtures in `scripts/test-update.sh`, README install matrix update.
+
+### Skill-file simplification pass (v0.10–v0.15 accrual)
+Five releases (v0.10.0 → v0.15.0) added cross-cutting protocol grafts
+(Completion Status, Confusion Protocol, GSTACK REVIEW REPORT table, Group-level
+deps, test-plan composition) into the skill files. The grafts were appended
+rather than woven in, so skills have grown noticeably. Do a deliberate
+simplification pass across `skills/pair-review.md`, `skills/roadmap.md`,
+`skills/full-review.md`, `skills/review-apparatus.md`, `skills/test-plan.md` —
+collapse duplicated guidance, consolidate repeated JSON schemas / output
+contracts, and identify any section that's gone stale since its graft. Must
+not drop functionality — gate on `scripts/test-skill-protocols.sh` passing
+unchanged (currently 5-skill coverage).
+- **Why:** skill files are the user-facing instruction surface; bloat degrades
+  routing accuracy and makes each new graft harder. Also the natural precursor
+  to the deferred `SKILL.md.tmpl` work above — can't promote shared patterns
+  into a template until we see which patterns actually rhyme across skills.
+- **Depends on:** stable skill surface (no planned grafts in flight).
+- **Effort:** L (human: ~1 day / CC: ~1 hour) — mostly reading + careful
+  trimming; risk is regressions in protocol assertions, which the test suite
+  catches.
+
+### `/full-review` pass on `scripts/`
+The test harnesses under `scripts/` (test-roadmap-audit, test-update,
+test-skill-protocols, test-test-plan*, test-test-plan-extractor,
+test-test-plan-e2e) have grown to hundreds of assertions each, mostly by
+accretion during skill development. Run `/full-review` scoped to `scripts/`
+only — reviewer/hygiene/consistency-auditor agents against the bash suites —
+to surface dead fixtures, DRY violations across the five test files, and
+inconsistent assertion patterns (some use `grep -q`, some use counted matches,
+some use fixture-diffing).
+- **Why:** the test suites are the safety net for every other simplification
+  we're planning (skill file trim, codex host support). If the net has holes
+  or drift, downstream refactors land blind.
+- **Depends on:** nothing — `/full-review` already supports path-scoped runs.
+- **Effort:** S to kick off (~10 min); M to action findings (human: ~half day /
+  CC: ~30 min) depending on cluster count.
+
