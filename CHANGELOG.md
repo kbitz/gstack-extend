@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.2] - 2026-04-25
+
+### Added
+- **Drift-proof shared graft enforcement.** `scripts/test-skill-protocols.sh` now asserts that four cross-skill protocol fragments (Completion Status Protocol enum, Escalation opener, Escalation format, Confusion Protocol head) are byte-identical across all 5 skills. Edits become a deliberate two-step: change canonical text in the test script, watch tests fail, propagate to all 5. Test suite grows from 102 to 122 assertions. Drift detection verified via manual mutation against one skill.
+- **`<!-- SHARED:<block-name> -->` HTML marker system.** 40 marker pairs (4 per skill × 5 skills) bracket the shared graft fragments. Invisible to LLMs reading the prose; explicit signal to humans maintaining shared content. Pre-stages the deferred `SKILL.md.tmpl` TODO for trivial mechanical extraction later.
+
+### Changed
+- **`/full-review`: removed redundant `## Error Handling` section** (-36 lines). All 8 sub-entries (agent timeout/failure, malformed agent output, missing TODOS.md, missing ROADMAP.md, session interrupted, empty results, git not available, clean working tree at commit) verified inline-covered in their respective Phases. Summary pointer section wasn't adding signal on sequential read.
+- **`/review-apparatus`: removed redundant "Ambiguity rule" subsection.** It was a pointer to the Patterns section immediately below, which already covers the named patterns (Ask-why-on-ambiguity, Duplicate-TODOS handling, Skip-gap-when-no-cheap-answer) with specifics.
+- **`/pair-review`: removed redundant State path restatements** in the Paths section (the intro paragraph already states the single source of truth); fixed a duplicate `---` separator before Error Handling.
+- **`/roadmap`: removed redundant footer restatement of subcommand auto-detect behavior** (the first bullet of Subcommands already covers it).
+- **`/test-plan`: fixed duplicate `groups/` heading** in the workspace-scoped state diagram (was visually confusing as two parallel directories).
+- **`docs/TODOS.md`: rebalanced Codex host + Skill-file simplification TODOs** per `/plan-ceo-review` + `/plan-eng-review` decisions (2026-04-24). Codex-specific gates (description ≤ 1024 chars, env-var preamble pattern) moved back to the Codex host TODO where they belong. Simplification TODO codified scope discipline (only obvious dups), shared-fragment canonicalization strategy, execution order (Lane A serial then Lanes B-F parallel), and regression-surface trade explicitly accepted.
+
+Scope discipline per /plan-eng-review: only literally duplicated content removed. Prose rewrites for style/concision on non-duplicated content, consolidation of distinct-but-similar sections, and cross-skill JSON contract consolidation explicitly deferred. Net change -11 lines; real value is the 20 new verbatim-block assertions that make future simplification and the deferred `SKILL.md.tmpl` work mechanical.
+
 ## [0.15.1] - 2026-04-24
 
 ### Added

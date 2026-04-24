@@ -140,6 +140,86 @@ for skill in "${SKILLS[@]}"; do
   fi
 done
 
+# ─── verbatim graft blocks (shared across all 5 skills) ───────
+# These fragments must appear byte-identical in every skill file. They represent
+# the shared parts of cross-skill protocol grafts (Completion Status Protocol enum,
+# Escalation opener, Escalation format, Confusion Protocol head). Per-skill
+# customization lives OUTSIDE these fragments, not inside them. Updates to a
+# shared fragment are a deliberate two-step: edit the expected block below,
+# run tests (they fail), propagate the new text to all 5 skills.
+#
+# The <!-- SHARED:... --> HTML markers are part of each block — they're invisible
+# to agents reading the prose but make the shared-ness legible to humans and set
+# up the deferred SKILL.md.tmpl TODO for trivial extraction later.
+
+read -r -d '' BLOCK_COMPLETION_STATUS_ENUM <<'BLOCK' || true
+<!-- SHARED:completion-status-enum -->
+## Completion Status Protocol
+
+When completing a skill workflow, report status using one of:
+
+- **DONE** — All steps completed successfully. Evidence provided for each claim.
+- **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
+- **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
+- **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
+BLOCK
+
+read -r -d '' BLOCK_ESCALATION_OPENER <<'BLOCK' || true
+<!-- SHARED:escalation-opener -->
+### Escalation
+
+It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
+BLOCK
+
+read -r -d '' BLOCK_ESCALATION_FORMAT <<'BLOCK' || true
+<!-- SHARED:escalation-format -->
+Escalation format:
+
+```
+STATUS: BLOCKED | NEEDS_CONTEXT
+REASON: [1-2 sentences]
+ATTEMPTED: [what you tried]
+RECOMMENDATION: [what the user should do next]
+```
+<!-- /SHARED:escalation-format -->
+BLOCK
+
+read -r -d '' BLOCK_CONFUSION_HEAD <<'BLOCK' || true
+<!-- SHARED:confusion-head -->
+## Confusion Protocol
+
+When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
+BLOCK
+
+# Pairs of "var_name:label" for reporting. Var names reference the heredoc vars above.
+VERBATIM_BLOCKS=(
+  "BLOCK_COMPLETION_STATUS_ENUM:completion-status-enum"
+  "BLOCK_ESCALATION_OPENER:escalation-opener"
+  "BLOCK_ESCALATION_FORMAT:escalation-format"
+  "BLOCK_CONFUSION_HEAD:confusion-head"
+)
+
+echo ""
+echo "═══ verbatim graft blocks ═══"
+for skill in "${SKILLS[@]}"; do
+  file="$SCRIPT_DIR/skills/${skill}.md"
+  [ -f "$file" ] || continue
+  haystack=$(<"$file")
+  for pair in "${VERBATIM_BLOCKS[@]}"; do
+    var_name="${pair%%:*}"
+    label="${pair##*:}"
+    expected="${!var_name}"
+    if [[ "$haystack" == *"$expected"* ]]; then
+      pass "$skill contains verbatim block: $label"
+    else
+      fail "$skill missing verbatim block: $label" "drift or missing markers — propagate canonical text from scripts/test-skill-protocols.sh"
+    fi
+  done
+done
+
 # pair-review additionally must describe BOTH a per-group mini-table AND a session-done
 # rollup, since its multi-group model is the reason the table renders more than once.
 echo ""

@@ -77,8 +77,6 @@ Parse the invocation arguments to determine the subcommand:
   completed/stale tasks, and update PROGRESS.md. Like triage, always runs the
   freshness scan first. Does NOT exit early when the Unprocessed section is empty.
 
-If no argument is provided, auto-detect as before (overhaul or triage).
-
 **HARD GATE:** This skill produces documentation changes ONLY. Never modify source code,
 configs, or CI files. The only files this skill writes to are ROADMAP.md, TODOS.md
 (to drain the inbox), PROGRESS.md, and (indirectly via recommendation) VERSION.
@@ -1172,6 +1170,7 @@ The `discovered` tag includes the source file path for traceability
 
 ---
 
+<!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 
 When completing a skill workflow, report status using one of:
@@ -1180,6 +1179,7 @@ When completing a skill workflow, report status using one of:
 - **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
 - **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
 
 For /roadmap specifically: map the `bin/roadmap-audit` output plus the current run's
 work (triage decisions, ROADMAP.md updates, PROGRESS.md appends) to the session-level
@@ -1190,14 +1190,17 @@ enum. Rollup rule:
 - Audit returned blockers (SIZE cap violations, COLLISIONS, STRUCTURE errors, VOCAB_LINT errors, VERSION errors) that could not be resolved in this run → **BLOCKED**
 - Required inputs missing (no ROADMAP.md yet, conflicting TODOS.md states, ambiguous dependency graph) → **NEEDS_CONTEXT**
 
+<!-- SHARED:escalation-opener -->
 ### Escalation
 
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
 
 - If you have attempted a restructure 3 times and the audit still fails, STOP and escalate.
 - If you are uncertain whether a TODO is stale or active and the freshness scan is ambiguous, STOP and escalate.
 - If the scope of reorganization exceeds what you can verify against the current code state, STOP and escalate.
 
+<!-- SHARED:escalation-format -->
 Escalation format:
 
 ```
@@ -1206,10 +1209,13 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
+<!-- /SHARED:escalation-format -->
 
+<!-- SHARED:confusion-head -->
 ## Confusion Protocol
 
 When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
 
 - Two plausible interpretations of a TODO or design doc, with different Group/Track placements.
 - A request that contradicts the existing structure (e.g., user wants to merge two tracks that the audit flags as a PARALLEL collision).

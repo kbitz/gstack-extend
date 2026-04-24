@@ -145,7 +145,6 @@ groups/
 session.yaml                           # written by test-plan, then owned by pair-review
 groups/
   <group-slug>.md                      # written by test-plan, then owned by pair-review
-groups/
   <group-slug>-archived-<ts>.md        # prior groups file on re-run
 deploy.md                              # written by pair-review (not us)
 parked-bugs.md                         # written by pair-review (not us)
@@ -753,6 +752,7 @@ When ambiguous about which Group, ask via AskUserQuestion.
 
 ---
 
+<!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 
 When completing a skill workflow, report status using one of:
@@ -761,6 +761,7 @@ When completing a skill workflow, report status using one of:
 - **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
 - **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
 
 For /test-plan specifically: the handoff-to-pair-review moment is where /test-plan
 itself completes. pair-review's own Completion Status covers the session after that.
@@ -775,14 +776,17 @@ Rollup rule for /test-plan's handoff status:
 - `/test-plan status` invoked with no prior manifest, or /test-plan run invoked with
   missing CLI arguments → **NEEDS_CONTEXT**
 
+<!-- SHARED:escalation-opener -->
 ### Escalation
 
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
 
 - If extractor consistently fails to produce valid JSON on a specific doc format, STOP and escalate — ask the user to skip that doc or fix its structure.
 - If you are uncertain whether an item should be automated vs manual and the signal is weak, default to manual (per Phase 5 rule) — but if the doc has many such ambiguous items, surface the issue as DONE_WITH_CONCERNS.
 - If you cannot resolve branch names for several Tracks, STOP and escalate — the manifest is the load-bearing artifact; guessing produces silent wrong plans.
 
+<!-- SHARED:escalation-format -->
 Escalation format:
 
 ```
@@ -791,10 +795,13 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
+<!-- /SHARED:escalation-format -->
 
+<!-- SHARED:confusion-head -->
 ## Confusion Protocol
 
 When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
 
 - Two Groups in ROADMAP.md have the same title slug (shouldn't happen under
   /roadmap's rules, but real files drift).

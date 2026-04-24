@@ -645,42 +645,6 @@ If `/full-review resume`, continue from the current phase.
 
 ---
 
-## Error Handling
-
-### Agent timeout/failure
-Proceed with remaining agents' findings. Note the gap in the report. If 2+ agents
-fail, ask user via AskUserQuestion whether to proceed with partial results or retry.
-If all 3 fail, suggest scoping to a specific directory.
-
-### Malformed agent output
-If an agent returns prose instead of the structured `FILE: | LINE: | SEVERITY: |
-DESCRIPTION: | FIX:` format, extract what you can and annotate those findings with
-`(unstructured)` in the description.
-
-### TODOS.md missing
-If no TODOS.md exists in root or docs/, create `docs/TODOS.md` with a
-`## Unprocessed` section.
-
-### ROADMAP.md missing
-Skip dedup phase silently. All clusters proceed to triage.
-
-### Session interrupted
-State is checkpointed after each phase. On resume, pick up from the last completed
-phase using the Resume Flow above.
-
-### Empty results
-If all agents return 0 findings: "Clean bill of health. No findings from any of
-the 3 review agents." Skip triage and persist phases.
-
-### Git not available
-If `git log` fails (not a git repo), skip the scoping step and let agents explore
-freely. Skip the commit step in Phase 5.
-
-### Clean working tree at commit
-If `git commit` fails because there's nothing to commit, skip silently and continue.
-
----
-
 ## Conversational Interface
 
 The primary interface is AskUserQuestion with explicit options. When the user types
@@ -695,6 +659,7 @@ free-text (via "Other" or as a direct message), map natural language:
 
 ---
 
+<!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 
 When completing a skill workflow, report status using one of:
@@ -703,6 +668,7 @@ When completing a skill workflow, report status using one of:
 - **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
 - **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
 
 For /full-review specifically: map the six session phases (`dispatch_complete`,
 `clusters_complete`, `dedup_complete`, `triage_complete`, `complete`) and per-agent
@@ -713,14 +679,17 @@ outcomes to the session-level enum at `/full-review done` time. Rollup rule:
 - One or more agents timed out, crashed, or returned no usable output AND no fallback path succeeded → **BLOCKED**
 - Session interrupted or state files are missing/malformed on resume → **NEEDS_CONTEXT**
 
+<!-- SHARED:escalation-opener -->
 ### Escalation
 
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
 
 - If an agent has been retried 3 times without producing usable output, STOP and escalate.
 - If you are uncertain whether a cluster represents a real issue or a false positive, STOP and present the evidence.
 - If the scope of findings exceeds what can be sensibly triaged in one session, STOP and escalate (offer to split into multiple sessions).
 
+<!-- SHARED:escalation-format -->
 Escalation format:
 
 ```
@@ -729,10 +698,13 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
+<!-- /SHARED:escalation-format -->
 
+<!-- SHARED:confusion-head -->
 ## Confusion Protocol
 
 When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
 
 - Two plausible root-cause framings for the same set of findings (different clusterings lead to different remediations).
 - A request that contradicts the existing triage record (e.g., user wants to approve a cluster already marked rejected).
