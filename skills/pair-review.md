@@ -153,10 +153,6 @@ the single source of truth. No external state directories.
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 ```
 
-**State path:** `.context/pair-review/`
-
-On every state change, write to `.context/pair-review/` immediately.
-
 ### File Format
 
 ```
@@ -799,8 +795,6 @@ mv .context/pair-review .context/pair-review-archived-$(date -u +%Y%m%d-%H%M%S)
 
 ---
 
----
-
 ## Error Handling
 
 ### Deploy fails
@@ -870,6 +864,7 @@ Map natural language to the appropriate action. When ambiguous, ask.
 
 ---
 
+<!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 
 When completing a skill workflow, report status using one of:
@@ -878,6 +873,7 @@ When completing a skill workflow, report status using one of:
 - **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
 - **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
 
 For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`) and per-group statuses to the session-level enum at `/pair-review done` time. Rollup rule:
 
@@ -886,14 +882,17 @@ For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `FAILED
 - A group cannot proceed (deploy broken, can't reach the app, missing credentials) → **BLOCKED**
 - Session interrupted or resumed without required context (lost `.context/pair-review/` state, for example) → **NEEDS_CONTEXT**
 
+<!-- SHARED:escalation-opener -->
 ### Escalation
 
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
 
 - If you have attempted a fix 3 times without success, STOP and escalate (park the bug, move on, surface at group rollup).
 - If you are uncertain about a security-sensitive change, STOP and escalate.
 - If the scope of work exceeds what you can verify, STOP and escalate.
 
+<!-- SHARED:escalation-format -->
 Escalation format:
 
 ```
@@ -902,10 +901,13 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
+<!-- /SHARED:escalation-format -->
 
+<!-- SHARED:confusion-head -->
 ## Confusion Protocol
 
 When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
 
 - Two plausible interpretations of a user request, with different outcomes (e.g., "fix it" could mean patch the current bug or re-derive the test from scratch).
 - A request that contradicts the existing session plan and you're unsure which to follow.

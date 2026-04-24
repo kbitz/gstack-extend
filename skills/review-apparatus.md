@@ -228,12 +228,6 @@ Prisma, the right proposals are different from a Go service with PostgreSQL or a
 Rails monolith with ActiveRecord. Don't propose against a template; propose against
 this project.
 
-### Ambiguity rule
-
-If you detect ambiguity that changes what to propose — e.g., two email libraries
-used concurrently, two ORMs, both `docs/TODOS.md` and `TODOS.md` existing — ask
-the user WHY. Their answer shapes the proposal. See "Patterns" below.
-
 ### Patterns
 
 **Ask-why-on-ambiguity.** When the inventory reveals two tools doing the same job
@@ -396,6 +390,7 @@ repo. /review-apparatus needs a git repo so apparatus helpers have a stable path
 
 ---
 
+<!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 
 When completing a skill workflow, report status using one of:
@@ -404,6 +399,7 @@ When completing a skill workflow, report status using one of:
 - **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
 - **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+<!-- /SHARED:completion-status-enum -->
 
 For /review-apparatus specifically: map the session phases (`inventory_complete`,
 `gaps_identified`, `proposals_ready`, `approved`, `written`) to the session-level
@@ -414,14 +410,17 @@ enum at the end of each run. Rollup rule:
 - Manifest file unreadable, not in a git repo, or pair-review session conflict unresolved → **BLOCKED**
 - Required state missing (e.g., user invoked `/review-apparatus status` with no prior session on record) → **NEEDS_CONTEXT**
 
+<!-- SHARED:escalation-opener -->
 ### Escalation
 
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
+<!-- /SHARED:escalation-opener -->
 
 - If your judgment produces proposals that don't feel bolt-on (keep drifting toward refactors), STOP and escalate — ask the user whether to scope down or skip the category.
 - If you are uncertain whether a proposal would cause new bugs, STOP and escalate.
 - If the project structure is too foreign to form a confident inventory, STOP and escalate.
 
+<!-- SHARED:escalation-format -->
 Escalation format:
 
 ```
@@ -430,10 +429,13 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
+<!-- /SHARED:escalation-format -->
 
+<!-- SHARED:confusion-head -->
 ## Confusion Protocol
 
 When you encounter high-stakes ambiguity during this workflow:
+<!-- /SHARED:confusion-head -->
 
 - Two tools in the same apparatus category present in the inventory (e.g., two email libraries, two ORMs, two queue clients) and the proposal depends on which one to target.
 - Both `docs/TODOS.md` and `TODOS.md` exist at repo root, with different contents.
