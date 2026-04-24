@@ -2,6 +2,13 @@
 
 ## Unprocessed
 
+### [review] Harden setup against attacker-controlled symlink components at the install target
+`setup` install/uninstall paths do not check whether `$SKILLS_DIR/{skill}` is itself a symlink before `ln -snf` / `rm -f` / `rmdir` touch `$SKILLS_DIR/{skill}/SKILL.md`. If a user (or attacker with write access to their home dir) has created a symlink at that path pointing elsewhere, install writes into / uninstall removes from the pointed-to directory, outside the intended skills tree. Raised by codex adversarial review of Pre-flight 1 (branch `kbitz/eng-review-g1`, 2026-04-24).
+- **Why:** defense-in-depth against symlink-component trust boundary violations. Unusual in practice (users don't normally create symlinks at those exact paths), but the fix is small and closes a real-if-narrow attack surface. Becomes more relevant once `--skills-dir` is used in shared / semi-trusted directories.
+- **Proposed fix:** before `ln -snf` in the install loop, assert `[ ! -L "$target" ]` (the directory itself, not `$target/SKILL.md`) — fail with a clear error if the path component is a symlink. Same check in the uninstall loop before `readlink`/`rm`. Add targeted tests that create a symlink at `$CUSTOM_DIR/pair-review` pointing elsewhere and assert install/uninstall refuse with a clean message.
+- **Effort:** S (human: ~30 min / CC: ~10 min) — mechanical, two sites, ~15 lines plus tests.
+- **Depends on:** nothing.
+
 ### [ship] Validate /test-plan v1 on first real Group post-v0.15.0
 Step 14 of the v0.15.0 /test-plan design plan ("run on one real Group before declaring v1 shipped") was deferred to post-merge — gstack-extend didn't have a fresh in-flight Group to test against pre-ship. On the next real Group (Group 3+), run `/test-plan run <group>` end-to-end, capture the extractor's JSON output against at least one review doc, and run `scripts/test-test-plan-extractor.sh --score <output.json>` to confirm the >=70% tolerant-match threshold holds on real prose. If below threshold, iterate the extractor prompt at `skills/test-plan.md:378`.
 - **Why:** close the v0.15.0 completeness loop. The 122-assertion test suite covers the deterministic surface; extractor output quality on real prose is the one thing we couldn't validate pre-merge.
@@ -166,20 +173,26 @@ parameterized by host.
      Either way, add a description-length assertion to
      `scripts/test-skill-protocols.sh` (or `test-update.sh` — whichever owns
      the Codex install gate) so future grafts can't regress.
-  2. **Env-var preamble pattern (current preambles use
-     `readlink ~/.claude/skills/{skill}/SKILL.md` — Claude-only).** Options:
-     (a) sed-rewrite at install time (per-host SKILL.md variants), or (b)
-     adopt gstack core's env-var pattern — preamble sets `EXTEND_ROOT` (and
-     `GSTACK_ROOT` for gstack-core deps) at the top, every reference becomes
-     `$EXTEND_ROOT/bin/update-check`, `$GSTACK_ROOT/bin/gstack-slug`, etc.
-     Reference implementation: `~/.claude/skills/gstack/.agents/skills/gstack-pair-agent/SKILL.md:19-23`.
-     Option (b) is strictly cleaner (one SKILL.md works on both hosts, fixes
-     a latent bug where current `readlink` breaks on non-standard skills-dir
-     installs). Bundle (b) into this work.
-  3. **Cross-skill references in `skills/test-plan.md:233` (`gstack-slug`
-     under `~/.claude/skills/gstack/bin/`) and `skills/test-plan.md:633`
-     (Reads `~/.claude/skills/pair-review/SKILL.md`)** get rewritten to use
-     the env vars from gate 2.
+  2. **Preamble path resolution — RESOLVED by Group 1 Pre-flight 2 (probe
+     pattern + rc-file fallback).** Previous TODO proposed env-var injection
+     via install-time sed. Rejected after /plan-eng-review + codex outside
+     voice (2026-04-24): generated-copy deploy is a maintenance trap (loses
+     symlink live-edit, weak sentinel ownership). Probe pattern matches
+     gstack core exactly (`~/.claude/skills/{name}/SKILL.md || .claude/skills/{name}/SKILL.md`)
+     and keeps symlinks. Truly-custom `--skills-dir` paths rely on
+     `$GSTACK_EXTEND_ROOT` env var + `$HOME/.gstack-extend-rc` fallback
+     written by setup.
+     **Codex-side work remaining:** Codex's install layout
+     (`~/.codex/skills/{name}/SKILL.md`) adds a third probe fallthrough
+     in the preambles. One extra `||` clause per preamble, ~5 lines × 5 skills.
+  3. **Cross-skill references in `skills/test-plan.md:232` (`gstack-slug`
+     under `~/.claude/skills/gstack/bin/`) and `skills/test-plan.md:632`
+     (Reads `~/.claude/skills/pair-review/SKILL.md`)** — line 632 fixed by
+     Group 1 Pre-flight 2 (points at `$_EXTEND_ROOT/skills/pair-review.md`,
+     the source, bypassing the deployed path). Line 232 depends on upstream
+     gstack's own install layout — if Codex-side gstack install is at
+     `~/.codex/skills/gstack/bin/gstack-slug`, this line needs the same
+     probe fallthrough treatment.
 - **Effort:** S-M (human: ~3-5 hours / CC: ~30-45 min) depending on how much
   description trimming is needed post-simplification. Mechanical core (flag
   handling + path table + test parameterization) is ~30 min CC.
