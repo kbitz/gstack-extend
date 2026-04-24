@@ -210,6 +210,10 @@ The artifact contract is owned by /test-plan and documented at
 
 Source of truth: `VERSION` file. Tags created automatically on merge to main.
 
+## Acknowledgments
+
+Built by [@kbitz](https://github.com/kbitz) with assistance from [Claude Code](https://claude.com/claude-code) (Anthropic).
+
 ## License
 
 [MIT](LICENSE)
