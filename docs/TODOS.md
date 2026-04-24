@@ -68,40 +68,126 @@ work is safe when it isn't.
   is inherited from full-review.md and fixing only review-apparatus would create
   inconsistency. Worth a dedicated cleanup PR. Source: `[review]`.
 
-### Codex host support in `setup`
-gstack core's `setup` script supports `--host codex` to install skills where the
-Codex CLI can discover them. gstack-extend's `setup` currently targets only
-Claude Code's `~/.claude/skills/` tree, so Codex users can't consume
-`/pair-review`, `/roadmap`, `/full-review`, `/review-apparatus`, or `/test-plan`.
-Add a `--host codex` flag (and matching uninstall path) that mirrors gstack's
-layout, then regression-test via `scripts/test-update.sh` with both hosts.
-- **Why:** parity with gstack. Extend's skills are supposed to compose with the
-  same agents gstack already supports; Codex-only users currently see a cliff
-  where core works but extend doesn't.
-- **Depends on:** nothing — current install logic is small enough to fork.
-  Confirm gstack's codex path layout before coding so the two stay in sync.
-- **Effort:** M (human: ~half day / CC: ~45 min) — setup script changes, new
-  test fixtures in `scripts/test-update.sh`, README install matrix update.
-
 ### Skill-file simplification pass (v0.10–v0.15 accrual)
 Five releases (v0.10.0 → v0.15.0) added cross-cutting protocol grafts
 (Completion Status, Confusion Protocol, GSTACK REVIEW REPORT table, Group-level
 deps, test-plan composition) into the skill files. The grafts were appended
 rather than woven in, so skills have grown noticeably. Do a deliberate
-simplification pass across `skills/pair-review.md`, `skills/roadmap.md`,
-`skills/full-review.md`, `skills/review-apparatus.md`, `skills/test-plan.md` —
+simplification pass across `skills/pair-review.md` (970 lines),
+`skills/roadmap.md` (1253 lines), `skills/full-review.md` (775 lines),
+`skills/review-apparatus.md` (478 lines), `skills/test-plan.md` (850 lines) —
 collapse duplicated guidance, consolidate repeated JSON schemas / output
 contracts, and identify any section that's gone stale since its graft. Must
 not drop functionality — gate on `scripts/test-skill-protocols.sh` passing
-unchanged (currently 5-skill coverage).
+unchanged.
 - **Why:** skill files are the user-facing instruction surface; bloat degrades
   routing accuracy and makes each new graft harder. Also the natural precursor
   to the deferred `SKILL.md.tmpl` work above — can't promote shared patterns
   into a template until we see which patterns actually rhyme across skills.
-- **Depends on:** stable skill surface (no planned grafts in flight).
+- **Scope discipline (enforced via review, added via /plan-eng-review 2026-04-24):**
+  Only remove content that is (a) literally duplicated within a single skill,
+  (b) word-level redundancy ("X is important because Y, so we must do X"
+  → collapse to one statement), (c) obviously stale (refs to removed
+  features like `/browse-native`, refs to versions/sections that no longer
+  exist), (d) dead cross-references. OUT of scope: prose rewrites for style
+  on non-duplicated content, consolidation of distinct-but-similar sections
+  with subtle differences, section reordering within skills.
+- **Shared graft handling (locked 2026-04-24):** The 3 graft sections
+  (`## Completion Status Protocol`, `## Confusion Protocol`,
+  `## GSTACK REVIEW REPORT`) have shared fragments (verbatim-identical across
+  skills) and per-skill fragments (legitimate customization — rollup rules
+  map unique phases per skill). The shared fragments are promoted to
+  canonical text and copied verbatim into all 5 skills. Mark with
+  `<!-- SHARED: <block-name> -->` HTML comments (invisible to agents reading
+  prose) to signal shared-ness for future `SKILL.md.tmpl` extraction. Per-skill
+  fragments stay free-form.
+  - Shared fragments to lock verbatim: (1) the 4-bullet DONE/DONE_WITH_CONCERNS/
+    BLOCKED/NEEDS_CONTEXT enum, (2) "It is always OK to stop..." paragraph
+    under `### Escalation`, (3) the Escalation format code block, (4) equivalent
+    shared fragments under `## Confusion Protocol` (inspect during implementation),
+    (5) GSTACK REVIEW REPORT table header structure (already asserted).
+  - Canonical source: read all 5 skills' variants of each shared fragment,
+    pick the tightest, promote — don't rewrite from scratch. Earns "best of 5"
+    without introducing untested new prose.
+- **Test harness extension (locked 2026-04-24):** Add a `REQUIRED_VERBATIM_BLOCKS`
+  assertion block to `scripts/test-skill-protocols.sh`. Each block is the
+  canonical shared-fragment text, inlined as a bash heredoc in the test script.
+  Harness asserts every skill contains the exact fragment byte-for-byte. Updates
+  to shared fragments become a deliberate two-step (edit fixture → run tests
+  fail → propagate to all 5) instead of silent drift.
+- **Execution order:**
+  - Lane A (serial, first): inspect 5 skills, extract canonical shared fragments,
+    add `REQUIRED_VERBATIM_BLOCKS` assertions to `scripts/test-skill-protocols.sh`.
+  - Lanes B-F (parallel, after A): trim one skill each. If running serial,
+    start with `review-apparatus.md` (smallest, 478 lines) to calibrate the
+    discipline before tackling `roadmap.md` (largest, 1253 lines).
+- **Regression surface explicitly accepted:** Prose edits to live skills can
+  silently change agent behavior in ways the test harness won't catch. Mitigation
+  is strict scope discipline (above), not post-hoc behavioral testing —
+  evaluated at /plan-eng-review and accepted as the right trade.
+- **Depends on:** stable skill surface (no planned grafts in flight) — met
+  as of v0.15.1.
 - **Effort:** L (human: ~1 day / CC: ~1 hour) — mostly reading + careful
   trimming; risk is regressions in protocol assertions, which the test suite
   catches.
+
+### Codex host support in `setup`
+gstack core's `setup` script supports `--host codex` to install skills where the
+Codex CLI can discover them. gstack-extend's `setup` currently targets only
+Claude Code's `~/.claude/skills/` tree, so Codex users can't consume
+`/pair-review`, `/roadmap`, `/full-review`, `/review-apparatus`, or `/test-plan`.
+Add a `--host claude|codex|auto` flag (and matching uninstall path) that
+mirrors gstack's layout, then regression-test via `scripts/test-update.sh`
+parameterized by host.
+- **Why:** parity with gstack for Codex users. Extend's skills are supposed to
+  compose with the same agents gstack already supports; Codex-only users
+  currently see a cliff where core works but extend doesn't. Not chasing full
+  host-matrix parity (Kiro/Factory/OpenCode) — Codex only.
+- **Depends on:** nothing hard — can be worked at any time. But running the
+  Skill-file simplification pass above first is recommended: it tends to trim
+  descriptions naturally, and whatever gates still need explicit action will
+  be measurable rather than speculative.
+- **Scope:**
+  - `--host claude|codex|auto` flag parsing (`auto` = install into every
+    detected host via `command -v claude` / `command -v codex`).
+  - Codex install layout: `~/.codex/skills/{skill-name}/SKILL.md` (flat names,
+    not `gstack-` prefixed — extend's skills aren't gstack's). Symlink target
+    is `$REPO/skills/{skill-name}.md`, same as Claude.
+  - Uninstall path updated to handle both `~/.claude/skills/` and
+    `~/.codex/skills/` trees.
+  - `scripts/test-update.sh` parameterized by host: happy-path install +
+    uninstall + re-install + flag-rejection for each.
+- **Codex-specific gates to evaluate post-simplification:**
+  1. **Frontmatter `description:` ≤ 1024 chars (Codex `descriptionLimit` hard
+     error).** Measurements taken 2026-04-24 pre-simplification: pair-review
+     1010 (barely under), roadmap 1295, full-review 1030, review-apparatus
+     1183, test-plan 1342 — 4 of 5 fail today. Re-measure after simplification
+     lands. If any still > 1024, trim descriptions as a small follow-up.
+     Either way, add a description-length assertion to
+     `scripts/test-skill-protocols.sh` (or `test-update.sh` — whichever owns
+     the Codex install gate) so future grafts can't regress.
+  2. **Env-var preamble pattern (current preambles use
+     `readlink ~/.claude/skills/{skill}/SKILL.md` — Claude-only).** Options:
+     (a) sed-rewrite at install time (per-host SKILL.md variants), or (b)
+     adopt gstack core's env-var pattern — preamble sets `EXTEND_ROOT` (and
+     `GSTACK_ROOT` for gstack-core deps) at the top, every reference becomes
+     `$EXTEND_ROOT/bin/update-check`, `$GSTACK_ROOT/bin/gstack-slug`, etc.
+     Reference implementation: `~/.claude/skills/gstack/.agents/skills/gstack-pair-agent/SKILL.md:19-23`.
+     Option (b) is strictly cleaner (one SKILL.md works on both hosts, fixes
+     a latent bug where current `readlink` breaks on non-standard skills-dir
+     installs). Bundle (b) into this work.
+  3. **Cross-skill references in `skills/test-plan.md:233` (`gstack-slug`
+     under `~/.claude/skills/gstack/bin/`) and `skills/test-plan.md:633`
+     (Reads `~/.claude/skills/pair-review/SKILL.md`)** get rewritten to use
+     the env vars from gate 2.
+- **Effort:** S-M (human: ~3-5 hours / CC: ~30-45 min) depending on how much
+  description trimming is needed post-simplification. Mechanical core (flag
+  handling + path table + test parameterization) is ~30 min CC.
+- **Context:** Evaluated via /plan-ceo-review on 2026-04-24 (branch
+  `kbitz/codex-host-todo`). Strategic framing: upstreaming the 5 skills into
+  gstack core would have been the 10-star move (zero ongoing host-matrix tax),
+  but upstream isn't accepting. Bash-only Codex-specific support is the
+  right-sized choice given "Codex only" scope + extend's bash ethos.
 
 ### `/full-review` pass on `scripts/`
 The test harnesses under `scripts/` (test-roadmap-audit, test-update,
