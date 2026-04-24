@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.16.0] - 2026-04-24
+## [0.15.1] - 2026-04-24
 
 ### Added
 - **Source-tag contract.** New `docs/source-tag-contract.md` defines the canonical schema for TODOS.md entries: `### [source:key=val] Title` heading + attribute child bullets. Source-default routing matrix, severity taxonomy, dedup semantics, and validator behavior all specified. Every producer skill references this doc; the audit validates against it.

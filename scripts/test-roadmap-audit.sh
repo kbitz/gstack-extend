@@ -836,7 +836,7 @@ echo ""
 echo "=== unprocessed ==="
 
 # Unprocessed section with items (lives in TODOS.md, the inbox)
-# Rich format per docs/source-tag-contract.md (v0.16.0+).
+# Rich format per docs/source-tag-contract.md (v0.15.1+).
 DIR=$(create_fixture "unproc-items")
 cat > "$DIR/TODOS.md" << 'EOF'
 # TODOs
@@ -3055,7 +3055,7 @@ else
   fail "group_deps: unparseable annotation not warned" "$SL"
 fi
 
-# ─── v0.16.0: source-tag contract + closure infrastructure ────
+# ─── v0.15.1: source-tag contract + closure infrastructure ────
 
 echo ""
 echo "=== complete_groups ==="

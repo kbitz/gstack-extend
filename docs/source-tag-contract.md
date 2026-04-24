@@ -159,7 +159,7 @@ in `## Unprocessed` against this contract. Failures emit `STATUS: fail` with
 per-entry findings:
 
 - `MALFORMED_HEADING` — entry doesn't match `^### ` or is a bare bullet
-  `- [source] ...` (legacy format dropped in v0.16.0).
+  `- [source] ...` (legacy format dropped in v0.15.1).
 - `UNKNOWN_SOURCE_TAG` — tag source is not in the registered list above.
 - `MALFORMED_TAG` — `[source:key=value]` expression failed the grammar.
 - `INJECTION_ATTEMPT` — tag value contains `[`, `]`, `;`, or newlines.
