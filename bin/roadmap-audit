@@ -19,6 +19,7 @@ REPO_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 source "$(dirname "$0")/lib/semver.sh"
 EXTEND_DIR="$EXTEND_DIR" source "$(dirname "$0")/lib/effort.sh"
+source "$(dirname "$0")/lib/source-tag.sh"
 
 # ─── Helpers ──────────────────────────────────────────────────
 
@@ -747,6 +748,11 @@ check_dependencies() {
 }
 
 # ─── Check 7: Unprocessed Section + Mode Detection ───────────
+#
+# Items in ## Unprocessed are '### [source:tag] Title' heading entries (the
+# canonical rich format, see docs/source-tag-contract.md). Bullet-format
+# entries ('- [source:tag] ...') are legacy and no longer counted; they are
+# flagged by check_todo_format as MALFORMED_HEADING so writers migrate.
 
 check_unprocessed() {
   echo "## UNPROCESSED"
@@ -759,7 +765,6 @@ check_unprocessed() {
     return
   fi
 
-  # Check if ## Unprocessed section exists
   local has_section=0
   local item_count=0
   local in_section=0
@@ -770,13 +775,13 @@ check_unprocessed() {
       in_section=1
       continue
     fi
-    # Stop at the next ## heading
+    # Stop at the next ## heading.
     if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## ' 2>/dev/null; then
       in_section=0
       continue
     fi
-    # Count non-empty lines starting with - in the section
-    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^- ' 2>/dev/null; then
+    # Count '### ' heading entries in the section. Each heading is one item.
+    if [ "$in_section" -eq 1 ] && echo "$line" | grep -qE '^### ' 2>/dev/null; then
       item_count=$((item_count + 1))
     fi
   done < <(cat "$TODOS_FILE")
@@ -845,6 +850,11 @@ detect_mode() {
 check_task_list() {
   echo "## TASK_LIST"
 
+  # Ensure _COMPLETE_GROUPS is populated — TASK_LIST stays ground truth for
+  # reorg (complete Groups are kept as TASK entries with complete=1 flag;
+  # consumers decide whether to filter).
+  _parse_roadmap
+
   local roadmap
   roadmap=$(find_doc "ROADMAP.md")
   if [ -z "$roadmap" ]; then
@@ -867,7 +877,7 @@ check_task_list() {
   echo "STATUS: info"
 
   while IFS= read -r line; do
-    # Group heading: ## Group N: Name
+    # Group heading: ## Group N: Name  (with optional ✓ Complete suffix)
     if echo "$line" | grep -qE '^## Group [0-9]+:'; then
       group_num=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
       section="group"
@@ -940,8 +950,12 @@ check_task_list() {
 
       local g="${group_num:-0}"
       local t="${track_id:-none}"
+      local is_complete=0
+      if echo " $_COMPLETE_GROUPS " | grep -q " $g "; then
+        is_complete=1
+      fi
 
-      echo "TASK: group=${g}|track=${t}|title=${title}|effort=${effort}|files=${files}"
+      echo "TASK: group=${g}|track=${t}|title=${title}|effort=${effort}|files=${files}|complete=${is_complete}"
       total_tasks=$((total_tasks + 1))
       if [ "$section" = "future" ]; then
         total_future=$((total_future + 1))
@@ -955,8 +969,12 @@ check_task_list() {
     if [ "$in_preflight" -eq 1 ] && echo "$line" | grep -qE '^- [^*]'; then
       local title
       title=$(echo "$line" | sed 's/^- //')
+      local is_complete=0
+      if echo " $_COMPLETE_GROUPS " | grep -q " ${group_num:-0} "; then
+        is_complete=1
+      fi
 
-      echo "TASK: group=${group_num:-0}|track=preflight|title=${title}|effort=S|files="
+      echo "TASK: group=${group_num:-0}|track=preflight|title=${title}|effort=S|files=|complete=${is_complete}"
       total_tasks=$((total_tasks + 1))
       total_current=$((total_current + 1))
       continue
@@ -980,6 +998,9 @@ check_task_list() {
 check_structural_fitness() {
   echo "## STRUCTURAL_FITNESS"
 
+  # Ensure _COMPLETE_GROUPS is populated before we count.
+  _parse_roadmap
+
   local roadmap
   roadmap=$(find_doc "ROADMAP.md")
   if [ -z "$roadmap" ]; then
@@ -995,17 +1016,22 @@ check_structural_fitness() {
   local current_track=""
   local section="none"
   local in_preflight=0
+  local skip_group=0
 
-  # Bash 3-compatible key=value storage (no associative arrays)
-  # Format: "key1=val1 key2=val2 ..."
-  # _kv_get/_kv_set/_kv_keys are defined at module scope — see Check 13.
   local group_task_counts=""
   local track_task_counts=""
 
   while IFS= read -r line; do
-    # Group heading
+    # Group heading — ✓ Complete Groups are excluded from active counts
+    # (their tasks/tracks are historical, not active workload).
     if echo "$line" | grep -qE '^## Group [0-9]+:'; then
       current_group=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
+      if echo " $_COMPLETE_GROUPS " | grep -q " $current_group "; then
+        skip_group=1
+        section="none"
+        continue
+      fi
+      skip_group=0
       group_count=$((group_count + 1))
       group_task_counts=$(_kv_set "$group_task_counts" "$current_group" 0)
       section="group"
@@ -1016,6 +1042,7 @@ check_structural_fitness() {
 
     # Track heading
     if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
+      [ "$skip_group" -eq 1 ] && continue
       current_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
       track_count=$((track_count + 1))
       track_task_counts=$(_kv_set "$track_task_counts" "$current_track" 0)
@@ -1026,6 +1053,7 @@ check_structural_fitness() {
 
     # Pre-flight
     if echo "$line" | grep -qiE '^\*\*Pre-flight\*\*'; then
+      [ "$skip_group" -eq 1 ] && continue
       in_preflight=1
       section="preflight"
       continue
@@ -1037,7 +1065,7 @@ check_structural_fitness() {
     fi
 
     # Task line (bold title)
-    if [ "$section" != "none" ] && echo "$line" | grep -qE '^- \*\*'; then
+    if [ "$skip_group" -eq 0 ] && [ "$section" != "none" ] && echo "$line" | grep -qE '^- \*\*'; then
       task_count=$((task_count + 1))
       if [ -n "$current_group" ]; then
         local cur=$(_kv_get "$group_task_counts" "$current_group")
@@ -1051,7 +1079,7 @@ check_structural_fitness() {
     fi
 
     # Pre-flight task (no bold)
-    if [ "$in_preflight" -eq 1 ] && echo "$line" | grep -qE '^- [^*]'; then
+    if [ "$skip_group" -eq 0 ] && [ "$in_preflight" -eq 1 ] && echo "$line" | grep -qE '^- [^*]'; then
       task_count=$((task_count + 1))
       if [ -n "$current_group" ]; then
         local cur=$(_kv_get "$group_task_counts" "$current_group")
@@ -1232,6 +1260,7 @@ _TRACK_LOC=""            # kv: "1A=250 1B=150"
 _TRACK_FILES_COUNT=""    # kv: "1A=2 1B=3" (count of files in touches)
 _TRACK_LEGACY=""         # kv: "1A=0 1B=1" (1 = no _touches:_ line)
 _GROUP_LIST=""           # space-sep group numbers: "1 2"
+_COMPLETE_GROUPS=""      # space-sep group numbers marked '✓ Complete' in heading
 _GROUP_TRACKS=""         # kv: "1=1A,1B 2=2A"
 _GROUP_NAMES=""          # newline-sep "N|Group heading name" (names may contain spaces, can't use kv)
 _GROUP_DEPS=""           # kv: "1=2,3 4=2" (dep group numbers only; "-" = explicit none)
@@ -1288,16 +1317,26 @@ _parse_roadmap() {
       continue
     fi
 
-    # Group heading: ## Group N: Name
+    # Group heading: ## Group N: Name  [optional ' ✓ Complete' suffix]
+    # See docs/source-tag-contract.md for the canonical grammar.
     if echo "$line" | grep -qE '^## Group [0-9]+:'; then
       group_num=$(echo "$line" | sed -E 's/^## Group ([0-9]+):.*/\1/')
-      local group_name
+      local group_name is_complete=0
       group_name=$(echo "$line" | sed -E 's/^## Group [0-9]+:[[:space:]]*//')
+      # Detect and strip the ✓ Complete suffix (central strip — consumers
+      # never see it in _GROUP_NAMES or anywhere else).
+      if echo "$group_name" | grep -qE '[[:space:]]✓[[:space:]]Complete[[:space:]]*$'; then
+        is_complete=1
+        group_name=$(echo "$group_name" | sed -E 's/[[:space:]]+✓[[:space:]]+Complete[[:space:]]*$//')
+      fi
       group_name=$(_trim "$group_name")
       if ! echo " $_GROUP_LIST " | grep -q " $group_num "; then
         _GROUP_LIST="${_GROUP_LIST}${_GROUP_LIST:+ }${group_num}"
         _GROUP_NAMES="${_GROUP_NAMES}${_GROUP_NAMES:+
 }${group_num}|${group_name}"
+        if [ "$is_complete" -eq 1 ]; then
+          _COMPLETE_GROUPS="${_COMPLETE_GROUPS}${_COMPLETE_GROUPS:+ }${group_num}"
+        fi
       fi
       section="group"
       track_id=""
@@ -2031,6 +2070,249 @@ check_style_lint() {
   echo ""
 }
 
+# ─── Check: IN_FLIGHT_GROUPS ─────────────────────────────────
+#
+# Emits the execution frontier of the Group DAG: Groups whose dependencies
+# are all ✓ Complete AND which themselves have at least one incomplete
+# Track. Consumer skills (closure dashboard, auto-suggest closure, default
+# placement routing) read this to know "what's running right now."
+#
+# Output:
+#   STATUS: info | skip
+#   IN_FLIGHT: N1 N2 ...     (space-sep, empty string if none)
+#   COMPLETE:  N1 N2 ...     (mirrors _COMPLETE_GROUPS for debugging)
+#   PRIMARY:   N             (first in_flight group by doc order — tiebreaker)
+
+check_in_flight_groups() {
+  echo "## IN_FLIGHT_GROUPS"
+  _parse_roadmap
+
+  if [ -z "$_GROUP_LIST" ]; then
+    echo "STATUS: skip"
+    echo "IN_FLIGHT:"
+    echo "COMPLETE:"
+    echo "PRIMARY:"
+    echo ""
+    return
+  fi
+
+  local groups_in_order="$_GROUP_LIST"   # preserved from parse (doc order)
+  local in_flight=""
+  local g deps dep_ok dep
+
+  for g in $groups_in_order; do
+    # Skip groups that are themselves complete.
+    if echo " $_COMPLETE_GROUPS " | grep -q " $g "; then
+      continue
+    fi
+    # Get effective deps for g (explicit or default to previous group).
+    # Re-derive here rather than depending on check_group_deps side effects.
+    deps=$(_kv_get "$_GROUP_DEPS" "$g")
+    if [ -z "$deps" ]; then
+      # Default rule: depends on immediately preceding group.
+      local prev=""
+      for candidate in $groups_in_order; do
+        if [ "$candidate" = "$g" ]; then
+          break
+        fi
+        prev="$candidate"
+      done
+      deps="$prev"
+    elif [ "$deps" = "-" ]; then
+      deps=""
+    fi
+
+    # All deps must be in _COMPLETE_GROUPS for g to be in-flight.
+    dep_ok=1
+    if [ -n "$deps" ]; then
+      local IFS_ORIG="$IFS"
+      IFS=','
+      for dep in $deps; do
+        if ! echo " $_COMPLETE_GROUPS " | grep -q " $dep "; then
+          dep_ok=0
+          break
+        fi
+      done
+      IFS="$IFS_ORIG"
+    fi
+
+    if [ "$dep_ok" -eq 1 ]; then
+      in_flight="${in_flight}${in_flight:+ }${g}"
+    fi
+  done
+
+  local primary=""
+  if [ -n "$in_flight" ]; then
+    primary=$(echo "$in_flight" | awk '{print $1}')
+  fi
+
+  echo "STATUS: info"
+  echo "IN_FLIGHT: $in_flight"
+  echo "COMPLETE: $_COMPLETE_GROUPS"
+  echo "PRIMARY: $primary"
+  echo ""
+}
+
+# ─── Check: ORIGIN_STATS ─────────────────────────────────────
+#
+# Per-group open-origin counts. Reads items in ## Unprocessed and counts
+# how many carry an origin tag ('[pair-review:group=N,...]', '[test-plan:
+# group=N,...]'). Emits a per-group tally so the closure dashboard can
+# show "Group 2 has 3 open-origin items."
+#
+# Output:
+#   STATUS: info | skip
+#   TOTAL_OPEN_ORIGIN: N
+#   BY_GROUP: 1=2,2=3    (kv, comma-sep)
+
+check_origin_stats() {
+  echo "## ORIGIN_STATS"
+
+  if [ -z "$TODOS_FILE" ]; then
+    echo "STATUS: skip"
+    echo "TOTAL_OPEN_ORIGIN: 0"
+    echo "BY_GROUP:"
+    echo ""
+    return
+  fi
+
+  local in_section=0
+  local total=0
+  local by_group=""
+
+  while IFS= read -r line; do
+    if echo "$line" | grep -q '^## Unprocessed'; then
+      in_section=1
+      continue
+    fi
+    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
+      in_section=0
+      continue
+    fi
+    [ "$in_section" -eq 0 ] && continue
+
+    # Heading entry?
+    if ! echo "$line" | grep -qE '^### '; then
+      continue
+    fi
+
+    local tag
+    tag=$(extract_tag_from_heading "$line")
+    [ -z "$tag" ] && continue
+
+    # Parse — silent on failure. Only interested in items that have a group= key.
+    local parsed group_val
+    if ! parsed=$(parse_source_tag "$tag" 2>/dev/null); then
+      continue
+    fi
+    # grep returns exit 1 on no match; wrap to keep pipefail happy.
+    group_val=$(echo "$parsed" | { grep '^group=' || true; } | sed -E 's/^group=//')
+    [ -z "$group_val" ] && continue
+    # Only count numeric group IDs (pre-test, etc. are not targetable).
+    if ! echo "$group_val" | grep -qE '^[0-9]+$'; then
+      continue
+    fi
+
+    total=$((total + 1))
+    local cur
+    cur=$(_kv_get "$by_group" "$group_val")
+    by_group=$(_kv_set "$by_group" "$group_val" $(( ${cur:-0} + 1 )))
+  done < "$TODOS_FILE"
+
+  local by_group_csv=""
+  for g in $(_kv_keys "$by_group" | sort -n); do
+    local v
+    v=$(_kv_get "$by_group" "$g")
+    [ -n "$by_group_csv" ] && by_group_csv="${by_group_csv},"
+    by_group_csv="${by_group_csv}${g}=${v}"
+  done
+
+  echo "STATUS: info"
+  echo "TOTAL_OPEN_ORIGIN: $total"
+  echo "BY_GROUP: $by_group_csv"
+  echo ""
+}
+
+# ─── Check: TODO_FORMAT ──────────────────────────────────────
+#
+# Validates every item in ## Unprocessed against the source-tag contract
+# (see docs/source-tag-contract.md). Emits per-entry findings for:
+#   MALFORMED_HEADING — entry doesn't match '^### ' or uses legacy bullet form
+#   MALFORMED_TAG     — tag expression fails parse_source_tag grammar
+#   UNKNOWN_SOURCE    — source not in registry
+#   INJECTION_ATTEMPT — tag value contains dangerous chars
+# STATUS: pass | fail.
+
+check_todo_format() {
+  echo "## TODO_FORMAT"
+
+  if [ -z "$TODOS_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No TODOS.md found"
+    echo ""
+    return
+  fi
+
+  local in_section=0
+  local failures=""
+  local legacy_bullets=0
+  local heading_total=0
+
+  while IFS= read -r line; do
+    if echo "$line" | grep -q '^## Unprocessed'; then
+      in_section=1
+      continue
+    fi
+    if [ "$in_section" -eq 1 ] && echo "$line" | grep -q '^## '; then
+      in_section=0
+      continue
+    fi
+    [ "$in_section" -eq 0 ] && continue
+
+    # Legacy bullet form: '- [something] ...'
+    if echo "$line" | grep -qE '^- \['; then
+      legacy_bullets=$((legacy_bullets + 1))
+      local bullet_excerpt
+      bullet_excerpt=$(echo "$line" | cut -c1-80)
+      failures="${failures}- MALFORMED_HEADING: legacy bullet entry '${bullet_excerpt}' — rewrite as '### [tag] Title' per docs/source-tag-contract.md\n"
+      continue
+    fi
+
+    # Heading entry: extract and validate tag.
+    if echo "$line" | grep -qE '^### '; then
+      heading_total=$((heading_total + 1))
+      local tag title_part
+      tag=$(extract_tag_from_heading "$line")
+      title_part=$(extract_title_from_heading "$line")
+
+      if [ -z "$tag" ]; then
+        # Entries with no tag are permitted — treated as [manual] by the skill.
+        # Skip validation.
+        continue
+      fi
+
+      local reason
+      if ! reason=$(validate_tag_expression "$tag" 2>&1); then
+        failures="${failures}- ${reason}: '${tag}' in entry '${title_part}'\n"
+      fi
+    fi
+  done < "$TODOS_FILE"
+
+  echo "HEADINGS: $heading_total"
+  echo "LEGACY_BULLETS: $legacy_bullets"
+  if [ -z "$failures" ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -en "$failures"
+  fi
+  echo ""
+}
+
 # ─── Run all checks ──────────────────────────────────────────
 
 check_vocab_lint
@@ -2044,10 +2326,13 @@ check_dependencies
 check_group_deps
 check_task_list
 check_structural_fitness
+check_in_flight_groups
+check_origin_stats
 check_size_caps
 check_collisions
 check_style_lint
 check_doc_inventory
 check_scattered_todos
 check_unprocessed
+check_todo_format
 detect_mode
