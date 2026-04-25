@@ -111,7 +111,42 @@ TODOS_FILE=$(find_doc "TODOS.md")
 ROADMAP_FILE=$(find_doc "ROADMAP.md")
 PROGRESS_FILE=$(find_doc "PROGRESS.md")
 VERSION_FILE="$REPO_ROOT/VERSION"
+PYPROJECT_FILE="$REPO_ROOT/pyproject.toml"
 CHANGELOG_FILE="$REPO_ROOT/CHANGELOG.md"
+
+# read_pyproject_version
+#
+# Emits the project version from pyproject.toml on stdout. Matches a top-level
+# `version = "X.Y.Z"` (or `X.Y.Z.W`) line — covers PEP 621 ([project]) and the
+# older [tool.poetry] convention. Returns 0 on hit, 1 otherwise.
+read_pyproject_version() {
+  [ -f "$PYPROJECT_FILE" ] || return 1
+  local v
+  v=$(grep -m1 -E '^[[:space:]]*version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?"' "$PYPROJECT_FILE" 2>/dev/null \
+      | sed -E 's/^[^"]*"//; s/".*$//')
+  [ -n "$v" ] || return 1
+  echo "$v"
+}
+
+# read_current_version
+#
+# Emits "<version>|<source>" on stdout. Source is "VERSION" or "pyproject.toml".
+# Returns 1 if no version source is available.
+read_current_version() {
+  if [ -f "$VERSION_FILE" ]; then
+    local v
+    v=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$v" ] || return 1
+    echo "${v}|VERSION"
+    return 0
+  fi
+  local v
+  if v=$(read_pyproject_version); then
+    echo "${v}|pyproject.toml"
+    return 0
+  fi
+  return 1
+}
 
 # ─── Check 1: Vocabulary Lint ────────────────────────────────
 
@@ -214,7 +249,13 @@ check_vocab_lint() {
     echo "FINDINGS:"
     echo "- (none)"
   else
-    echo "STATUS: fail"
+    # VOCAB_LINT is a style check, not a correctness check. Emit as advisory
+    # (warn) — the skill can override with a one-sentence rationale when a
+    # flagged usage is a false positive in context (e.g. "items cluster
+    # around X" where "cluster" is a verb, not a structural synonym for
+    # Group). See skills/roadmap.md "Interpreting audit findings" for the
+    # override protocol.
+    echo "STATUS: warn"
     echo "FINDINGS:"
     echo -e "$findings"
   fi
@@ -337,8 +378,9 @@ check_staleness() {
   # Look for completed-item markers with version patterns
   # Patterns: ~~text~~ DONE (vX.Y.Z), ✓ DONE (vX.Y.Z), ✅ Done, Completed
   local current_version=""
-  if [ -f "$VERSION_FILE" ]; then
-    current_version=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+  local _ver_pair
+  if _ver_pair=$(read_current_version); then
+    current_version="${_ver_pair%%|*}"
   fi
 
   # Collect all git tags
@@ -403,23 +445,28 @@ check_version() {
   local findings=""
   local found=0
 
-  # Read current version
-  local current=""
-  if [ -f "$VERSION_FILE" ]; then
-    current=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+  # Read current version. VERSION file wins; fall back to pyproject.toml so
+  # Python projects whose source of truth is `[project] version = "..."` aren't
+  # forced to maintain a duplicate VERSION file.
+  local current="" source=""
+  local _ver_pair
+  if _ver_pair=$(read_current_version); then
+    current="${_ver_pair%%|*}"
+    source="${_ver_pair#*|}"
   else
     echo "STATUS: skip"
     echo "FINDINGS:"
-    echo "- No VERSION file found"
+    echo "- No VERSION file or pyproject.toml version found"
     echo ""
     return
   fi
 
   echo "CURRENT: $current"
+  echo "SOURCE: $source"
 
   # Check for invalid version format (3 or 4 segments: X.Y.Z or X.Y.Z.W)
   if ! echo "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-    findings="${findings}- VERSION \"${current}\" is not valid (expected X.Y.Z or X.Y.Z.W)\n"
+    findings="${findings}- version \"${current}\" (from ${source}) is not valid (expected X.Y.Z or X.Y.Z.W)\n"
     found=1
   fi
 
@@ -431,7 +478,7 @@ check_version() {
     local tag_ver
     tag_ver=$(echo "$latest_tag" | sed 's/^v//')
     if [ "$current" != "$tag_ver" ]; then
-      findings="${findings}- VERSION (${current}) does not match latest tag (${latest_tag})\n"
+      findings="${findings}- ${source} version (${current}) does not match latest tag (${latest_tag})\n"
       found=1
     fi
   else
@@ -510,8 +557,8 @@ check_taxonomy() {
     findings="${findings}- PROGRESS.md: missing\n"
     found=1
   fi
-  if [ ! -f "$VERSION_FILE" ]; then
-    findings="${findings}- VERSION: missing\n"
+  if [ ! -f "$VERSION_FILE" ] && ! read_pyproject_version >/dev/null; then
+    findings="${findings}- VERSION: missing (no VERSION file and no pyproject.toml \`version = \"...\"\` field)\n"
     found=1
   fi
 
@@ -627,17 +674,17 @@ check_archive_candidates() {
   local findings=""
   local found=0
 
-  # Need VERSION to compare against
-  if [ ! -f "$VERSION_FILE" ]; then
+  # Need a current version to compare against (VERSION file or pyproject.toml).
+  local current_ver _ver_pair
+  if _ver_pair=$(read_current_version); then
+    current_ver="${_ver_pair%%|*}"
+  else
     echo "STATUS: skip"
     echo "FINDINGS:"
-    echo "- No VERSION file — cannot detect archive candidates"
+    echo "- No version source (VERSION file or pyproject.toml) — cannot detect archive candidates"
     echo ""
     return
   fi
-
-  local current_ver
-  current_ver=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
 
   # Need docs/designs/ to scan
   if [ ! -d "$REPO_ROOT/docs/designs" ]; then
@@ -768,6 +815,7 @@ check_unprocessed() {
   local has_section=0
   local item_count=0
   local legacy_bullets=0
+  local compact_bullets=0
   local in_section=0
   local in_fence=0
 
@@ -794,6 +842,11 @@ check_unprocessed() {
     if [ "$in_section" -eq 1 ] && [ "$in_fence" -eq 0 ]; then
       if echo "$line" | grep -qE '^### ' 2>/dev/null; then
         item_count=$((item_count + 1))
+      elif echo "$line" | grep -qE '^- \*\*\[' 2>/dev/null; then
+        # Compact bold form: `- **[tag] Title** — body`. Not part of the
+        # canonical contract but writers sometimes emit it. Count separately
+        # so STATUS=found surfaces and check_todo_format can flag for migration.
+        compact_bullets=$((compact_bullets + 1))
       elif echo "$line" | grep -qE '^- \[' 2>/dev/null; then
         # Legacy bullet form. Don't silently hide these — mark them so the
         # skill knows the inbox has content that needs migration.
@@ -804,6 +857,9 @@ check_unprocessed() {
 
   echo "ITEMS: $item_count"
   echo "LEGACY_BULLETS: $legacy_bullets"
+  echo "COMPACT_BULLETS: $compact_bullets"
+
+  local non_canonical=$((legacy_bullets + compact_bullets))
 
   if [ "$has_section" -eq 1 ] && [ "$item_count" -gt 0 ]; then
     echo "STATUS: found"
@@ -812,12 +868,20 @@ check_unprocessed() {
     if [ "$legacy_bullets" -gt 0 ]; then
       echo "- ${legacy_bullets} legacy bullet-form entries (run /roadmap to migrate to rich format)"
     fi
-  elif [ "$has_section" -eq 1 ] && [ "$legacy_bullets" -gt 0 ]; then
+    if [ "$compact_bullets" -gt 0 ]; then
+      echo "- ${compact_bullets} compact bold-form entries (\`- **[tag] Title**\`) — rewrite as \`### [tag] Title\` per docs/source-tag-contract.md"
+    fi
+  elif [ "$has_section" -eq 1 ] && [ "$non_canonical" -gt 0 ]; then
     # Unmigrated inbox: bullet entries present but no rich-format items yet.
     # Report as found so the skill doesn't early-exit "empty" and skip triage.
     echo "STATUS: found"
     echo "FINDINGS:"
-    echo "- ${legacy_bullets} legacy bullet-form entries awaiting migration + triage"
+    if [ "$legacy_bullets" -gt 0 ]; then
+      echo "- ${legacy_bullets} legacy bullet-form entries awaiting migration + triage"
+    fi
+    if [ "$compact_bullets" -gt 0 ]; then
+      echo "- ${compact_bullets} compact bold-form entries awaiting migration + triage (rewrite as \`### [tag] Title\`)"
+    fi
   elif [ "$has_section" -eq 1 ]; then
     echo "STATUS: empty"
     echo "FINDINGS:"
@@ -1292,6 +1356,9 @@ _GROUP_NAMES=""          # newline-sep "N|Group heading name" (names may contain
 _GROUP_DEPS=""           # kv: "1=2,3 4=2" (dep group numbers only; "-" = explicit none)
 _GROUP_DEPS_RAW=""       # newline-sep "N|raw annotation text" (for diagnostics)
 _GROUP_DEP_ANCHORS=""    # newline-sep "group_num|dep_num|anchored_name_at_annotation_time"
+_GROUP_SERIALIZE=""      # kv: "5=1" — Group opts into in-order Track execution via `_serialize: true_`
+_TRACK_DEPS=""           # kv: "1B=1A 1C=1B,1A" — direct intra-group track deps (comma-sep); _serialize expands into this too
+_TRACK_DEP_CYCLES=""     # newline-sep cycle descriptions detected during closure
 _SIZE_LABEL_MISMATCHES=""  # newline-sep "TrackID|title|effort|declared|expected"
 _STYLE_LINT_WARNINGS=""    # newline-sep "TrackID: depends on TrackYY (same Group N)"
 
@@ -1397,13 +1464,17 @@ _parse_roadmap() {
         for entry in $raw_trim; do
           local entry_trim
           entry_trim=$(_trim "$entry")
-          # Match: "Group N" or "Group N (Name)"
-          if echo "$entry_trim" | grep -qiE '^Group [0-9]+([[:space:]]*\(.+\))?$'; then
+          # Match: "Group N", "Group N (Name)", or either followed by trailing
+          # human-readable prose ("Group 5 (Auto-command bugs) landing first").
+          # The dependency identity is the leading "Group N"; everything after
+          # the optional parenthetical is commentary — preserved in
+          # _GROUP_DEPS_RAW for display, ignored for parsing.
+          if echo "$entry_trim" | grep -qiE '^Group [0-9]+([[:space:]]*\([^)]*\))?([[:space:]].*)?$'; then
             local dep_num dep_name
             dep_num=$(echo "$entry_trim" | sed -E 's/^Group ([0-9]+).*/\1/')
             dep_name=""
-            if echo "$entry_trim" | grep -qE '\(.+\)$'; then
-              dep_name=$(echo "$entry_trim" | sed -E 's/^Group [0-9]+[[:space:]]*\((.+)\)$/\1/')
+            if echo "$entry_trim" | grep -qE '\([^)]*\)'; then
+              dep_name=$(echo "$entry_trim" | sed -E 's/^Group [0-9]+[[:space:]]*\(([^)]*)\).*$/\1/')
               dep_name=$(_trim "$dep_name")
             fi
             deps_list="${deps_list}${deps_list:+,}${dep_num}"
@@ -1421,6 +1492,19 @@ _parse_roadmap() {
           # Silent dropout would hide typos ("group 5", prose notes). Warn.
           _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}Group ${group_num}: _Depends on:_ annotation was unparseable (\"${raw_trim}\") — expected \"none\" or \"Group N[, Group M]\"\n"
         fi
+      fi
+      continue
+    fi
+
+    # Group-level `_serialize: true_` escape hatch. When set, the Group's Tracks
+    # are executed in-order (the listed sequence IS the dependency chain). This
+    # exists for cohesive batches of work on a single monolithic file where
+    # file-granular COLLISIONS would otherwise force an artificial Group split.
+    # Must appear in the Group header window (before any Track or Pre-flight),
+    # same window as _Depends on:_.
+    if [ "$section" = "group" ] && [ -z "$track_id" ] && echo "$line" | grep -qiE '^_serialize:[[:space:]]*true_[[:space:]]*$'; then
+      if [ -n "$group_num" ]; then
+        _GROUP_SERIALIZE=$(_kv_set "$_GROUP_SERIALIZE" "$group_num" "1")
       fi
       continue
     fi
@@ -1508,9 +1592,12 @@ _parse_roadmap() {
         continue
       fi
 
-      # Same-group Depends on: Track NA — style lint (warning, not fail).
-      # Match any "Depends on: Track <ID>" in the track body. Flag if that
-      # referenced ID starts with the same group digits.
+      # Intra-group Depends on: Track NX is now the canonical serialization
+      # signal. Record it in _TRACK_DEPS so COLLISIONS can skip pairs with a
+      # dependency path between them. STYLE_LINT only warns on self-reference
+      # (typo) or cycles (detected after parse). Cross-group Depends on: is
+      # allowed informally but not tracked here — Group-level _Depends on:_
+      # owns inter-group dependency structure.
       if echo "$line" | grep -qiE 'Depends on:[[:space:]]*Track [0-9]+[A-Z]'; then
         local dep_id
         dep_id=$(echo "$line" | grep -oiE 'Track [0-9]+[A-Z]' | head -1 | sed -E 's/^Track //')
@@ -1522,7 +1609,17 @@ _parse_roadmap() {
           local track_group
           track_group=$(echo "$track_id" | grep -oE '^[0-9]+')
           if [ -n "$dep_group" ] && [ "$dep_group" = "$track_group" ]; then
-            _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: Depends on Track ${dep_id} (same Group ${track_group}) — tracks in a Group must be fully parallel-safe; move to next Group\n"
+            # Record the edge. Append so multiple Depends on: lines on one
+            # track combine (e.g. "Depends on: Track 1A, Track 1B" split
+            # across lines).
+            local existing
+            existing=$(_kv_get "$_TRACK_DEPS" "$track_id")
+            # De-duplicate — don't double-add the same dep.
+            if [ -z "$existing" ]; then
+              _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "$dep_id")
+            elif ! echo ",${existing}," | grep -q ",${dep_id},"; then
+              _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "${existing},${dep_id}")
+            fi
           fi
         fi
       fi
@@ -1562,6 +1659,126 @@ _parse_roadmap() {
     fi
 
   done < "$roadmap"
+
+  # Post-parse: expand `_serialize: true_` into implicit intra-group edges so
+  # the collision + cycle logic is uniform (DAG-based, annotation-agnostic).
+  # For a serialized Group with tracks [A, B, C] in document order, add
+  # B→A and C→B if those edges don't already exist.
+  local g_ser
+  for g_ser in $(_kv_keys "$_GROUP_SERIALIZE"); do
+    if [ "$(_kv_get "$_GROUP_SERIALIZE" "$g_ser")" != "1" ]; then
+      continue
+    fi
+    local g_tracks_csv
+    g_tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g_ser")
+    [ -z "$g_tracks_csv" ] && continue
+    local prev_t="" cur_t
+    local IFS_ORIG="$IFS"
+    IFS=','
+    for cur_t in $g_tracks_csv; do
+      if [ -n "$prev_t" ]; then
+        local existing_deps
+        existing_deps=$(_kv_get "$_TRACK_DEPS" "$cur_t")
+        if [ -z "$existing_deps" ]; then
+          _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$cur_t" "$prev_t")
+        elif ! echo ",${existing_deps}," | grep -q ",${prev_t},"; then
+          _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$cur_t" "${existing_deps},${prev_t}")
+        fi
+      fi
+      prev_t="$cur_t"
+    done
+    IFS="$IFS_ORIG"
+  done
+
+  # Post-parse: cycle detection on the intra-group dep DAG. A cycle here is
+  # a real bug — "Track 1B Depends on 1A, Track 1A Depends on 1B" has no
+  # valid execution order. Walk from each track; if we revisit a node we're
+  # already on the current path, we've found a cycle.
+  _detect_track_dep_cycles
+}
+
+# _detect_track_dep_cycles
+# DFS over _TRACK_DEPS; any back-edge into the current stack signals a cycle.
+# Emits one line per detected cycle into _TRACK_DEP_CYCLES. Complexity is
+# O(V+E) per Group; V ≤ max_tracks_per_group so this is cheap.
+_detect_track_dep_cycles() {
+  local root
+  for root in $(_kv_keys "$_TRACK_DEPS"); do
+    local stack="|${root}|"
+    _walk_track_deps "$root" "$stack"
+  done
+}
+
+_walk_track_deps() {
+  local node="$1"
+  local stack="$2"
+  local deps_csv
+  deps_csv=$(_kv_get "$_TRACK_DEPS" "$node")
+  [ -z "$deps_csv" ] && return 0
+  local dep
+  local IFS_ORIG="$IFS"
+  IFS=','
+  for dep in $deps_csv; do
+    if echo "$stack" | grep -q "|${dep}|"; then
+      # Cycle: extract the path from where dep first appears to the end.
+      local cycle_path
+      cycle_path=$(echo "$stack" | sed -E "s/.*\|(${dep}\|.*)\$/\1/")
+      cycle_path="${cycle_path}${node}|→|${dep}|"
+      # Normalize display: "1A → 1B → 1A".
+      local rendered
+      rendered=$(echo "$cycle_path" | sed 's/|→|/ → /g; s/^|//; s/|$//; s/|/ → /g')
+      if ! echo "$_TRACK_DEP_CYCLES" | grep -qF "$rendered"; then
+        _TRACK_DEP_CYCLES="${_TRACK_DEP_CYCLES}${rendered}
+"
+      fi
+      continue
+    fi
+    _walk_track_deps "$dep" "${stack}${dep}|"
+  done
+  IFS="$IFS_ORIG"
+}
+
+# _track_depends_on
+# Returns 0 if track $1 transitively depends on $2 (via _TRACK_DEPS closure),
+# 1 otherwise. Cycle-safe — bounded by visited set.
+_track_depends_on() {
+  local from="$1"
+  local to="$2"
+  local visited="|"
+  local frontier="$from"
+  local next
+  while [ -n "$frontier" ]; do
+    next=""
+    local node
+    local IFS_ORIG="$IFS"
+    IFS=' '
+    for node in $frontier; do
+      if echo "$visited" | grep -q "|${node}|"; then
+        continue
+      fi
+      visited="${visited}${node}|"
+      local deps_csv
+      deps_csv=$(_kv_get "$_TRACK_DEPS" "$node")
+      [ -z "$deps_csv" ] && continue
+      local dep
+      local IFS_DEP="$IFS"
+      IFS=','
+      for dep in $deps_csv; do
+        if [ "$dep" = "$to" ]; then
+          IFS="$IFS_DEP"
+          IFS="$IFS_ORIG"
+          return 0
+        fi
+        if ! echo "$visited" | grep -q "|${dep}|"; then
+          next="${next}${next:+ }${dep}"
+        fi
+      done
+      IFS="$IFS_DEP"
+    done
+    IFS="$IFS_ORIG"
+    frontier="$next"
+  done
+  return 1
 }
 
 # load_shared_infra
@@ -1782,6 +1999,7 @@ check_collisions() {
   local max_tracks_per_group
   max_tracks_per_group=$(ceiling max_tracks_per_group)
   local group_size_warnings=""
+  local serialized_notes=""
 
   local g
   for g in $_GROUP_LIST; do
@@ -1805,18 +2023,31 @@ check_collisions() {
     done
     IFS="$IFS_ORIG"
 
-    # Enforce max tracks per Group cap.
+    # Enforce max tracks per Group cap (applies regardless of serialization —
+    # a 7-track serialized Group is still unwieldy).
     if [ ${#tracks[@]} -gt "$max_tracks_per_group" ]; then
       group_size_warnings="${group_size_warnings}- Group ${g}: ${#tracks[@]} modern tracks exceeds max_tracks_per_group=${max_tracks_per_group}\n"
       found=1
     fi
 
-    # Pairwise intersection check.
+    # If the Group is `_serialize: true_`, surface it — the per-pair dep-skip
+    # below still does the actual collision-skip work (serialize was expanded
+    # into implicit edges during parse).
+    if [ "$(_kv_get "$_GROUP_SERIALIZE" "$g")" = "1" ] && [ ${#tracks[@]} -ge 2 ]; then
+      serialized_notes="${serialized_notes}- Group ${g}: ${#tracks[@]} tracks declared serial (\`_serialize: true_\`)\n"
+    fi
+
+    # Pairwise intersection check. A pair is skipped when one track depends
+    # on the other (direct or transitive) — the dependency IS the
+    # serialization signal, so overlap between serialized tracks is expected.
     local i j
     for (( i=0; i<${#tracks[@]}; i++ )); do
       for (( j=i+1; j<${#tracks[@]}; j++ )); do
         local a="${tracks[$i]}"
         local b="${tracks[$j]}"
+        if _track_depends_on "$a" "$b" || _track_depends_on "$b" "$a"; then
+          continue
+        fi
         local a_touches b_touches
         a_touches=$(_kv_get "$_TRACK_TOUCHES" "$a")
         b_touches=$(_kv_get "$_TRACK_TOUCHES" "$b")
@@ -1865,6 +2096,10 @@ check_collisions() {
   if [ -n "$group_size_warnings" ]; then
     echo "GROUP_SIZE_WARNINGS:"
     echo -e "$group_size_warnings"
+  fi
+  if [ -n "$serialized_notes" ]; then
+    echo "SERIALIZED_GROUPS:"
+    echo -e "$serialized_notes"
   fi
   echo "MAX_TRACKS_PER_GROUP: $max_tracks_per_group"
   echo "SHARED_INFRA_STATUS: $_SHARED_INFRA_STATUS"
@@ -2059,12 +2294,22 @@ check_group_deps() {
 }
 
 # ─── Check: STYLE_LINT ─────────────────────────────────────────
-# Warning (not fail) for intra-Group `Depends on: Track NA` references.
-# Tracks inside the same Group must be fully parallel-safe — if one
-# depends on another, the dependent belongs in a later Group.
+# Advisory warnings for style-level issues that don't affect correctness.
+# Intra-group `Depends on: Track NX` is now a valid DAG expression (it
+# declares serialization, which lets COLLISIONS skip the pair); STYLE_LINT
+# only flags self-reference, dep cycles, and Group-level redundancies.
 check_style_lint() {
   echo "## STYLE_LINT"
   _parse_roadmap
+
+  # Intra-group dep cycles: detected during parse, surfaced here.
+  if [ -n "$_TRACK_DEP_CYCLES" ]; then
+    local cyc_line
+    while IFS= read -r cyc_line; do
+      [ -z "$cyc_line" ] && continue
+      _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}Dep cycle in intra-Group track graph: ${cyc_line} — remove or invert one edge to break the cycle\n"
+    done <<< "$_TRACK_DEP_CYCLES"
+  fi
 
   # Redundant-backwards-adjacent: explicit `Depends on: Group N` on Group N+1
   # (where N is the immediately-preceding Group in file order) duplicates
@@ -2307,6 +2552,7 @@ check_todo_format() {
   local in_fence=0
   local failures=""
   local legacy_bullets=0
+  local compact_bullets=0
   local heading_total=0
 
   while IFS= read -r line; do
@@ -2326,6 +2572,18 @@ check_todo_format() {
     fi
     [ "$in_section" -eq 0 ] && continue
     [ "$in_fence" -eq 1 ] && continue
+
+    # Compact bold form: '- **[tag] Title** — body'. Check before the legacy
+    # `- [` form — compact also starts with `- ` and would match `- \[` once
+    # the bold prefix is stripped. Surfacing as MALFORMED_HEADING ensures the
+    # skill cannot exit "no unprocessed items" while real items sit unparsed.
+    if echo "$line" | grep -qE '^- \*\*\['; then
+      compact_bullets=$((compact_bullets + 1))
+      local bullet_excerpt
+      bullet_excerpt=$(echo "$line" | cut -c1-80)
+      failures="${failures}- MALFORMED_HEADING: compact bold-form entry '${bullet_excerpt}' — rewrite as '### [tag] Title' per docs/source-tag-contract.md\n"
+      continue
+    fi
 
     # Legacy bullet form: '- [something] ...'
     if echo "$line" | grep -qE '^- \['; then
@@ -2369,6 +2627,7 @@ check_todo_format() {
 
   echo "HEADINGS: $heading_total"
   echo "LEGACY_BULLETS: $legacy_bullets"
+  echo "COMPACT_BULLETS: $compact_bullets"
   if [ -z "$failures" ]; then
     echo "STATUS: pass"
     echo "FINDINGS:"

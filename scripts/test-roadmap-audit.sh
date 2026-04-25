@@ -2120,7 +2120,7 @@ fi
 echo ""
 echo "=== style_lint ==="
 
-# Same-Group Depends on: → warn
+# Same-Group Depends on: → valid DAG expression (no warn under v0.16.2+)
 DIR=$(create_fixture "style-same-group")
 mkdir -p "$DIR/docs"
 cat > "$DIR/docs/ROADMAP.md" << 'EOF'
@@ -2151,10 +2151,11 @@ cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
 | 0.1.0 | 2026-01-01 | Init |
 PROGEOF
 OUTPUT=$(run_audit "$DIR")
-if echo "$OUTPUT" | grep -q "1B: Depends on Track 1A (same Group 1)"; then
-  pass "style_lint: same-Group Depends on warns"
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if ! echo "$SL" | grep -q "same Group"; then
+  pass "style_lint: intra-Group Depends on is valid DAG (no warn)"
 else
-  fail "style_lint: same-Group Depends on warns" "$(echo "$OUTPUT" | grep -A3 '^## STYLE_LINT')"
+  fail "style_lint: intra-Group Depends on should not warn" "$SL"
 fi
 
 # Cross-Group Depends on: → silent
@@ -3559,6 +3560,396 @@ if echo "$IFG" | grep -q "UNKNOWN_DEPS: 1→99"; then
   pass "in_flight_topo: forward-ref emits UNKNOWN_DEPS warning"
 else
   fail "in_flight_topo: forward-ref silent" "$IFG"
+fi
+
+# ─── Compact bullet form (v0.16.1) ────────────────────────────
+#
+# Regression: the '- **[tag] Title** — body' compact form was silently ignored
+# by both the UNPROCESSED item counter and the TODO_FORMAT validator, letting
+# real items sit in the inbox while the audit reported "0 unprocessed." Both
+# passes must now flag it.
+
+echo "=== compact-bullet form ==="
+
+DIR=$(create_fixture "compact-bullet-only")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+- **[pair-review] Compact bug** — body text explaining what and why.
+- **[manual] Second compact** — another one.
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$UNPROC" | grep -q "STATUS: found" && echo "$UNPROC" | grep -q "COMPACT_BULLETS: 2"; then
+  pass "compact-bullet: UNPROCESSED surfaces status=found + count"
+else
+  fail "compact-bullet: UNPROCESSED missed compact form" "$UNPROC"
+fi
+if echo "$TF" | grep -q "STATUS: fail" && echo "$TF" | grep -q "compact bold-form entry"; then
+  pass "compact-bullet: TODO_FORMAT flags MALFORMED_HEADING"
+else
+  fail "compact-bullet: TODO_FORMAT missed compact form" "$TF"
+fi
+
+# Mixed inbox: compact + rich + legacy all counted and flagged separately.
+DIR=$(create_fixture "compact-bullet-mixed")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [manual] Rich entry
+- **Why:** baseline.
+
+- **[pair-review] Compact entry** — body.
+
+- [full-review] Legacy entry
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$UNPROC" | grep -q "ITEMS: 1" \
+   && echo "$UNPROC" | grep -q "COMPACT_BULLETS: 1" \
+   && echo "$UNPROC" | grep -q "LEGACY_BULLETS: 1"; then
+  pass "compact-bullet: mixed inbox counts each form separately"
+else
+  fail "compact-bullet: mixed inbox miscounted" "$UNPROC"
+fi
+if echo "$TF" | grep -q "STATUS: fail" \
+   && echo "$TF" | grep -q "compact bold-form" \
+   && echo "$TF" | grep -q "legacy bullet entry"; then
+  pass "compact-bullet: TODO_FORMAT flags both compact and legacy"
+else
+  fail "compact-bullet: TODO_FORMAT missed one form" "$TF"
+fi
+
+# Compact form inside a ``` fence is ignored (documentation example).
+DIR=$(create_fixture "compact-bullet-fence")
+cat > "$DIR/TODOS.md" << 'EOF'
+# TODOs
+
+## Unprocessed
+
+### [manual] Real entry
+- **Why:** real.
+
+```markdown
+- **[pair-review] Example in docs** — this is just a docs example.
+```
+EOF
+OUTPUT=$(run_audit "$DIR")
+UNPROC=$(echo "$OUTPUT" | sed -n '/^## UNPROCESSED$/,/^## /p')
+TF=$(echo "$OUTPUT" | sed -n '/^## TODO_FORMAT$/,/^## /p')
+if echo "$UNPROC" | grep -q "COMPACT_BULLETS: 0" && echo "$TF" | grep -q "STATUS: pass"; then
+  pass "compact-bullet: fenced compact examples ignored"
+else
+  fail "compact-bullet: fence leaked into count or validator" "UNPROC:$UNPROC TF:$TF"
+fi
+
+# ─── pyproject.toml as version source (v0.16.1) ───────────────
+#
+# Python projects whose source of truth is pyproject.toml's `version =` field
+# should not be forced to maintain a parallel VERSION file. The audit must
+# accept either source, and report which it read via a SOURCE: field.
+
+echo "=== pyproject version source ==="
+
+DIR=$(create_fixture "pyproject-only")
+# Remove the VERSION file created by create_fixture.
+rm -f "$DIR/VERSION"
+cat > "$DIR/pyproject.toml" << 'EOF'
+[project]
+name = "example"
+version = "1.2.3"
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "pyproject" --quiet
+OUTPUT=$(run_audit "$DIR")
+VER=$(echo "$OUTPUT" | sed -n '/^## VERSION$/,/^## /p')
+TAX=$(echo "$OUTPUT" | sed -n '/^## TAXONOMY$/,/^## /p')
+if echo "$VER" | grep -q "CURRENT: 1.2.3" && echo "$VER" | grep -q "SOURCE: pyproject.toml"; then
+  pass "pyproject: VERSION check reads from pyproject.toml"
+else
+  fail "pyproject: VERSION check didn't pick up pyproject.toml" "$VER"
+fi
+if ! echo "$TAX" | grep -q "VERSION: missing"; then
+  pass "pyproject: TAXONOMY doesn't fail when pyproject version exists"
+else
+  fail "pyproject: TAXONOMY still flags VERSION as missing" "$TAX"
+fi
+
+# VERSION file wins when both exist.
+DIR=$(create_fixture "pyproject-and-version")
+echo "2.0.0" > "$DIR/VERSION"
+cat > "$DIR/pyproject.toml" << 'EOF'
+[project]
+name = "example"
+version = "9.9.9"
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "both" --quiet
+OUTPUT=$(run_audit "$DIR")
+VER=$(echo "$OUTPUT" | sed -n '/^## VERSION$/,/^## /p')
+if echo "$VER" | grep -q "CURRENT: 2.0.0" && echo "$VER" | grep -q "SOURCE: VERSION"; then
+  pass "pyproject: VERSION file wins when both sources present"
+else
+  fail "pyproject: fallback precedence wrong" "$VER"
+fi
+
+# Neither source present — still skips with an informative message.
+DIR=$(create_fixture "pyproject-neither")
+rm -f "$DIR/VERSION"
+OUTPUT=$(run_audit "$DIR")
+VER=$(echo "$OUTPUT" | sed -n '/^## VERSION$/,/^## /p')
+TAX=$(echo "$OUTPUT" | sed -n '/^## TAXONOMY$/,/^## /p')
+if echo "$VER" | grep -q "STATUS: skip" && echo "$VER" | grep -q "No VERSION file or pyproject.toml"; then
+  pass "pyproject: neither source → skip with informative message"
+else
+  fail "pyproject: missing both sources mis-signaled" "$VER"
+fi
+if echo "$TAX" | grep -q "VERSION: missing"; then
+  pass "pyproject: TAXONOMY flags missing when neither source present"
+else
+  fail "pyproject: TAXONOMY silent when neither source present" "$TAX"
+fi
+
+# ─── STYLE_LINT: Depends on: trailing prose tolerance (v0.16.1) ─
+#
+# Human-readable parentheticals and trailing clauses are valid:
+# "_Depends on: Group 5 (Auto-command) landing first before Group 7_"
+# The parser captures dep_num=5 and dep_name="Auto-command" for anchoring;
+# everything after must not cause the annotation to be dropped as unparseable.
+
+echo "=== depends_on trailing prose ==="
+
+DIR=$(create_fixture "deps-trailing-prose")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Foundation
+
+### Track 1A: setup
+_1 task . low risk . a_
+_touches: a_
+- **A** — . (S)
+
+## Group 2: Builds on foundation
+
+_Depends on: Group 1 (Foundation) landing first before anything else_
+
+### Track 2A: follow-up
+_1 task . low risk . b_
+_touches: b_
+- **B** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+IFG=$(echo "$OUTPUT" | sed -n '/^## IN_FLIGHT_GROUPS$/,/^## /p')
+# No "unparseable" warning — prose is tolerated.
+if ! echo "$SL" | grep -q "unparseable"; then
+  pass "depends-on: trailing prose accepted (no unparseable warning)"
+else
+  fail "depends-on: trailing prose rejected as unparseable" "$SL"
+fi
+# Dep still resolves — in_flight sees Group 2 depending on Group 1.
+if echo "$IFG" | grep -q "UNKNOWN_DEPS"; then
+  fail "depends-on: trailing prose broke dep resolution" "$IFG"
+else
+  pass "depends-on: trailing prose resolves dep cleanly"
+fi
+
+# ─── Track-dep DAG + serialize (v0.16.2) ──────────────────────
+#
+# Intra-group `Depends on: Track NX` is the canonical serialization signal.
+# COLLISIONS skips pairs where one depends on the other (direct or transitive);
+# STYLE_LINT no longer warns on intra-group deps (they're valid DAG expressions);
+# cycles in the intra-group graph are detected + warned.
+# `_serialize: true_` survives as shorthand for "every Track depends on its
+# predecessor in document order" — equivalent to writing `Depends on:` on each
+# non-first Track.
+
+echo "=== track-dep DAG + serialize ==="
+
+# Two tracks touch the same file with NO Depends on: → COLLISIONS fails.
+# This is the real collision case the DAG logic must still catch.
+DIR=$(create_fixture "dag-no-deps-collides")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Real collision
+
+### Track 1A: region one
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region one** — . (S)
+
+### Track 1B: region two
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region two** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+COL=$(echo "$OUTPUT" | sed -n '/^## COLLISIONS$/,/^## /p')
+if echo "$COL" | grep -q "STATUS: fail" && echo "$COL" | grep -q "1A-1B"; then
+  pass "dag: no-deps overlap still fails COLLISIONS"
+else
+  fail "dag: no-deps overlap missed by COLLISIONS" "$COL"
+fi
+
+# Track 1B Depends on 1A → COLLISIONS skips (valid DAG expression),
+# STYLE_LINT silent on intra-group deps.
+DIR=$(create_fixture "dag-direct-dep")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Declared serial
+
+### Track 1A: region one
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region one** — . (S)
+
+### Track 1B: region two
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+Depends on: Track 1A
+- **Fix region two** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+COL=$(echo "$OUTPUT" | sed -n '/^## COLLISIONS$/,/^## /p')
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if echo "$COL" | grep -q "STATUS: pass"; then
+  pass "dag: direct intra-group Depends on auto-serializes (COLLISIONS pass)"
+else
+  fail "dag: direct intra-group Depends on didn't skip pair" "$COL"
+fi
+if ! echo "$SL" | grep -q "same Group"; then
+  pass "dag: intra-group Depends on no longer warns (valid DAG)"
+else
+  fail "dag: STYLE_LINT still complaining about intra-group dep" "$SL"
+fi
+
+# Transitive deps: 1C → 1B → 1A, all three touch the same file → COLLISIONS
+# must skip all three pairs (1A-1B, 1A-1C, 1B-1C).
+DIR=$(create_fixture "dag-transitive")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Three-track chain
+
+### Track 1A: region one
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region one** — . (S)
+
+### Track 1B: region two
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+Depends on: Track 1A
+- **Fix region two** — . (S)
+
+### Track 1C: region three
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+Depends on: Track 1B
+- **Fix region three** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+COL=$(echo "$OUTPUT" | sed -n '/^## COLLISIONS$/,/^## /p')
+if echo "$COL" | grep -q "STATUS: pass"; then
+  pass "dag: transitive deps skip all pairs (A→B→C covers A-C)"
+else
+  fail "dag: transitive closure not covering A-C pair" "$COL"
+fi
+
+# `_serialize: true_` is shorthand — expands to implicit Depends on chain in
+# document order. Same-file overlap across all tracks must pass COLLISIONS.
+DIR=$(create_fixture "dag-serialize-shorthand")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Mono-file batch
+
+_serialize: true_
+
+### Track 1A: region one
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region one** — . (S)
+
+### Track 1B: region two
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region two** — . (S)
+
+### Track 1C: region three
+_2 tasks . low risk . cli.py_
+_touches: cli.py_
+- **Fix region three** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+COL=$(echo "$OUTPUT" | sed -n '/^## COLLISIONS$/,/^## /p')
+if echo "$COL" | grep -q "STATUS: pass" && echo "$COL" | grep -q "SERIALIZED_GROUPS:"; then
+  pass "dag: _serialize: true_ shorthand expands into implicit chain"
+else
+  fail "dag: _serialize: true_ shorthand didn't work" "$COL"
+fi
+
+# Cycle detection: 1A Depends on 1B, 1B Depends on 1A → STYLE_LINT warns.
+DIR=$(create_fixture "dag-cycle")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Broken chain
+
+### Track 1A: first
+_2 tasks . low risk . a.py_
+_touches: a.py_
+Depends on: Track 1B
+- **A** — . (S)
+
+### Track 1B: second
+_2 tasks . low risk . b.py_
+_touches: b.py_
+Depends on: Track 1A
+- **B** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+if echo "$SL" | grep -q "STATUS: warn" && echo "$SL" | grep -q "Dep cycle"; then
+  pass "dag: intra-group cycle detected + warned"
+else
+  fail "dag: cycle not flagged" "$SL"
+fi
+
+# ─── VOCAB_LINT severity (v0.16.2) ────────────────────────────
+#
+# VOCAB_LINT is a style check, not a correctness check. Violations emit
+# STATUS: warn (advisory) so the skill can override with rationale when a
+# flagged usage is a false positive in context (e.g. "cluster" as verb).
+
+echo "=== vocab_lint severity ==="
+
+DIR=$(create_fixture "vocab-severity")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+
+## Group 1: Legitimate work
+
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **Work** — items cluster around the first-pull session. (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+VL=$(echo "$OUTPUT" | sed -n '/^## VOCAB_LINT$/,/^## /p')
+if echo "$VL" | grep -q "STATUS: warn" && echo "$VL" | grep -q "cluster"; then
+  pass "vocab_lint: violations emit advisory (warn), not fail"
+else
+  fail "vocab_lint: still emitting fail for style issue" "$VL"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────
