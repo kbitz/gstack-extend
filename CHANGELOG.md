@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.2] - 2026-04-24
+
+### Fixed (post-/review polish)
+- **Cycle render duplicated the closing node** (`1A → 1B → 1B → 1A` instead of `1A → 1B → 1A`). Stack already ended at the current node; appending `${node}|→|${dep}|` repeated it. Cosmetic only — detection still fired — but the rendered string was misleading.
+- **Same cycle reported under multiple rotations.** A 2-node cycle 1A↔1B emitted both `1A → 1B → 1A` and `1B → 1A → 1B` because DFS started from every root. New `_canonicalize_cycle` helper rotates the node list to lex-smallest-first before dedup, so all rotations of one cycle map to one canonical entry. Direction is preserved (3-node cycle 1A→1C→1B→1A stays 1A→1C→1B→1A, not the reverse).
+- **Empty VERSION file emitted misleading diagnostic** (`No VERSION file or pyproject.toml version found` — the file exists). `read_current_version` now returns exit code 2 for the empty-file case; `check_version` emits a distinct `VERSION file exists but is empty` message with the recovery hint. No silent fallback to pyproject — the user clearly intended VERSION as the source, so misconfiguration must be visible.
+- **`set -e` interaction**: callers of `read_current_version` use the `_ver_pair=$(...) || _rc=$?` idiom so a non-zero return doesn't abort the script under `set -euo pipefail`.
+
+### Changed
+- **Intra-group `Depends on: Track NX` is now the canonical serialization signal (full fix for #3 from the roadmap-skill feedback).** COLLISIONS skips any pair (A, B) where one Track transitively depends on the other; STYLE_LINT no longer warns on intra-group `Depends on:` (it's a valid DAG expression, not a structural bug). Authors can now write three `cli.py` Tracks with pair-wise `Depends on: Track 1A` / `Depends on: Track 1B` and have COLLISIONS accept it without needing a Group-level annotation. `_serialize: true_` survives as shorthand for "every Track depends on its predecessor in document order" — equivalent to writing `Depends on:` on each non-first Track, expanded into implicit edges at parse time. Replaces the v0.16.1 opt-in-only escape hatch with full DAG semantics.
+- **VOCAB_LINT demoted from blocker (`STATUS: fail`) to advisory (`STATUS: warn`) — issue #5.** VOCAB_LINT is a style check, not a correctness check. Emitting `fail` made the skill treat style nitpicks as indistinguishable from real correctness bugs (missing docs, malformed headings, cycles), and CC rewrote prose to conform rather than overriding obvious false positives like "items cluster around X" (cluster-as-verb, not the nominal ban). Advisory findings can be overridden with a one-sentence rationale in the commit message or PR description — the run is `DONE_WITH_CONCERNS`, not `BLOCKED`. Severity-rollup in skills/roadmap.md updated: VOCAB_LINT moved from the blocker list to the advisory list.
+
+### Added
+- **`_TRACK_DEPS` parser state + transitive closure (`_track_depends_on`) + cycle detection (`_detect_track_dep_cycles`).** Intra-group `Depends on: Track NX` is stored as directed edges; `_serialize: true_` is expanded into implicit edges so downstream logic is annotation-agnostic. Cycles surface in `STYLE_LINT` (`Dep cycle in intra-Group track graph: 1A → 1B → 1A — remove or invert one edge to break the cycle`). DFS-based with a bounded visited set (max_tracks_per_group makes this cheap).
+- **Advisory-override guidance in `skills/roadmap.md`.** New "Advisory vs blocking" block under "Interpreting audit findings" documents that `STATUS: warn` findings can be overridden with rationale (concrete example: cluster-as-verb false positive), not slavishly fixed. Closes the meta-issue behind #5 — the skill didn't clearly communicate that advisory checks are not hard gates.
+
+### Tests
+- `scripts/test-roadmap-audit.sh` grows 182 → 185 assertions. v0.16.1's `serialize-baseline` fixture (two tracks with `Depends on:` both on `cli.py`, asserted COLLISIONS fail) was semantically wrong under the new DAG rules — rewritten into a proper suite: `dag-no-deps-collides` (real collision, COLLISIONS fails), `dag-direct-dep` (intra-group Depends on auto-serializes), `dag-transitive` (A → B → C covers A-C pair), `dag-serialize-shorthand` (`_serialize: true_` still works), `dag-cycle` (cycle detection warns). The `style_lint: same-Group Depends on warns` test flipped to `style_lint: intra-Group Depends on is valid DAG (no warn)`. New `vocab_lint: violations emit advisory (warn), not fail` test locks in the severity demotion.
+
+## [0.16.1] - 2026-04-24
+
+### Fixed
+- **Compact bold-form entries (`- **[tag] Title** — body`) silently ignored by `/roadmap`.** Both UNPROCESSED and TODO_FORMAT now count and flag the compact form. Near-miss: an 11-item inbox written in this shape would have reported "0 unprocessed" and exited with no action. Compact entries surface as `MALFORMED_HEADING: compact bold-form entry ... — rewrite as '### [tag] Title'` and drive `STATUS: found` on UNPROCESSED so the skill can't early-exit "empty".
+- **STYLE_LINT rejecting `_Depends on:_` annotations with trailing prose.** `_Depends on: Group 5 (Auto-command) landing first before anything else_` is now accepted — the parser captures the leading `Group N (Name)` for identity + anchor and treats trailing clauses as commentary. Previously the audit dropped the annotation as "unparseable" and surfaced a false STYLE_LINT warning.
+
+### Added
+- **`pyproject.toml` as a version source.** For Python projects whose source of truth is `[project] version = "..."` (or `[tool.poetry] version`), the audit reads the version directly from `pyproject.toml` — no parallel VERSION file required. The VERSION section now emits a `SOURCE:` line (`VERSION` or `pyproject.toml`) and TAXONOMY stops flagging `VERSION: missing` when a pyproject version is present. VERSION file still wins when both exist. Helper: `read_current_version` emits `<version>|<source>` with consistent fallback across VERSION/TAXONOMY/ARCHIVE_CANDIDATES/STALENESS.
+- **`_serialize: true_` Group-level escape hatch.** Cohesive batches of Tracks on a single monolithic file (e.g. three non-conflicting `cli.py` fixes from one debugging session) can annotate the Group header with `_serialize: true_` to opt into in-order Track execution. COLLISIONS skips pairwise overlap checks for serialized Groups (surfaced via `SERIALIZED_GROUPS:` so the skip is visible, not silent). STYLE_LINT permits intra-group `Depends on: Track NX` for serialized Groups (it IS the serialization signal). `max_tracks_per_group` cap still applies. Prevents the "split one cohesive batch into 5 → 6 → 7 single-Track chain to satisfy file-granular COLLISIONS" bureaucracy.
+
+### Changed
+- **`/roadmap` scrutiny gate: batched-triage mode for inboxes ≥ 7 items.** Single AskUserQuestion renders the full recommendation table (title, source, recommendation, provenance); options are "Approve all recommendations" / "I want to override some". Override path parses free-form syntax (`"3 keep, 7 kill, 9 defer"`). One-by-one remains the default for ≤ 6 items. Previously the 11-item triage session required 11 sequential modals for no added rigor.
+- **`/roadmap` lightweight fast-path** when audit is clean + Unprocessed ≤ 3 + no closure debt + mode would be triage/update: skip rendering structural-assessment and closure-dashboard ceremony; emit a one-line summary and go straight to scrutiny + drain + commit.
+- **`/roadmap` rule 3b** documents the `_serialize: true_` annotation alongside the existing intra-group Depends-on warning so the skill teaches the escape hatch rather than forcing a Group split.
+- **`/roadmap` Step 3.5d**: preserve existing completion-style formatting conventions (inline `✅` markers, custom `## Shipped` sections, etc.). Surface a choice via AskUserQuestion before rewriting to canonical form instead of silently replacing.
+- **`/roadmap` Step 2a**: adversarial-flagged items (Codex challenges, `[full-review:critical]`, `[full-review:necessary]`, `[investigate]` with incident trace) cannot be batch-deferred — they must surface individually for explicit KEEP/KILL/DEFER even in batched-triage mode.
+
+### Tests
+- `scripts/test-roadmap-audit.sh` grows from 170 to 182 assertions: compact-bullet form (3 tests — UNPROCESSED count, TODO_FORMAT flagging, mixed inbox accounting, fence awareness), pyproject version source (5 tests — read, precedence when both present, source-skip message, taxonomy gating), Depends on: trailing prose (2 tests — no unparseable warning, dep still resolves), `_serialize: true_` escape hatch (4 tests — baseline fail, annotated pass, intra-group Depends on: permitted, SERIALIZED_GROUPS surfaced).
+
 ## [0.16.0] - 2026-04-24
 
 ### Added

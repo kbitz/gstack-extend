@@ -381,6 +381,20 @@ Items already in ROADMAP.md are already vetted (they're in the execution plan).
 Step 3.5 found no completed tasks AND no Groups need marking ✓ Complete,
 exit: "Roadmap looks good. No unprocessed items and no stale tasks found."
 
+**Lightweight fast-path (small-inbox variant):** If **all** of the following
+hold, skip the full structural-assessment + closure-dashboard ceremony and go
+straight to scrutiny + drain + commit. Render a one-line summary ("Audit clean,
+[N] inbox items, no closure debt — going straight to triage.") instead of
+multi-section dashboards.
+
+- Audit is fully clean (all STATUS: pass, zero fails/warnings across sections)
+- Unprocessed count ≤ 3
+- Closure debt dashboard would be empty (no Groups eligible for ✓ Complete)
+- Mode would be triage/update (ROADMAP.md exists and is healthy)
+
+This captures the common "drain a handful of items and commit" case without
+forcing the heavy ceremony designed for overhaul/structural-drift runs.
+
 **Pre-scrutiny dedup pass (all modes):**
 
 Before running the gate, compute a dedup key for every item using the source-tag
@@ -415,10 +429,11 @@ reviewers. Keep the first (or the user-chosen one), drop the others.
    Run `git ls-files` to check if referenced files still exist. Flag missing
    paths as "suggest: kill (referenced file deleted)".
 
-**One-by-one triage:** Present each item individually via AskUserQuestion.
-Never cluster or batch — every item gets its own prompt with full context.
+**Triage mode selection:** Count surviving items after dedup. If **≤ 6 items**,
+use one-by-one triage below. If **≥ 7 items**, use batched triage (next block)
+— one-by-one for 11+ items is pure toil without added rigor.
 
-For each item, before presenting:
+For every item (either mode), first gather provenance:
 1. Parse the source tag to derive the default recommendation (matrix above).
 2. Extract a distinctive phrase from the item title (3-5 words).
 3. Run `git log -1 --format="%H %ai %s" -S "distinctive phrase" -- <TODOS-file-path>`.
@@ -428,7 +443,8 @@ For each item, before presenting:
    `git log --oneline --after="<introduction-date>" -- <file-path>`
 7. If 2+ commits since introduction, add: `⚠ Possibly resolved: N commits on [files] since introduction`.
 
-Present each item via AskUserQuestion with this format:
+**One-by-one triage (≤ 6 items):** Present each item individually via AskUserQuestion.
+
 ```
 **Item [N]/[Total]: [title]**  (source: [source], [severity if present])
 
@@ -444,8 +460,41 @@ Options vary by default:
 - Default SUGGEST_KILL: `["Kill (recommended)", "Keep"]`
 - Default PROMPT: `["Keep", "Kill", "Defer to Future"]`
 
-Killed items get deleted — git has the history. Deferred items skip Step 2b's
-group/track placement and go straight to Future in Step 3.
+**Batched triage (≥ 7 items):** Present the full recommendation table in one
+message, then a single AskUserQuestion. Full provenance must still be computed
+per item and shown in the table (short form).
+
+Render format:
+```
+**Triage recommendations ([N] items):**
+
+| # | Title (source) | Recommendation | Provenance |
+|---|---|---|---|
+| 1 | [pair-review:g=2] NSNull crash in composer | KEEP | 3 weeks ago (#42) |
+| 2 | [full-review:edge-case] Theoretical race | KILL | unknown |
+| 3 | [manual] Add onboarding video | DEFER | 2 days ago (#44) |
+...
+
+Auto-suggest kills: [list item numbers if any, with reason]
+```
+
+Options: `["Approve all recommendations", "I want to override some"]`.
+
+On "Approve all": apply every recommendation as-is.
+On "Override": prompt once for override list in free-form syntax
+(`"3 keep, 7 kill, 9 defer"`), parse it, apply the overrides, approve the rest.
+Fall back to one-by-one for any item whose override syntax doesn't parse.
+
+Regardless of mode: killed items get deleted — git has the history. Deferred
+items skip Step 2b's group/track placement and go straight to Future in Step 3.
+
+**Adversarial-flagged items must not be batch-deferred.** If an item came from
+an adversarial review (Codex challenges, `[full-review:critical]`,
+`[full-review:necessary]`, `[investigate]` with a real incident trace), DEFER
+is never the default recommendation — surface the item for explicit
+user KEEP/KILL/DEFER even in batched-triage mode. Silently routing a flagged
+partition risk or security finding to Future hides the call the user needs to
+make.
 
 **Edge case:** If ALL items are killed, exit gracefully: "All items killed. No
 roadmap to build. TODOS.md cleaned." Skip to Step 4 and Step 6.
@@ -591,10 +640,53 @@ header (empty, ready for future inbox items from other skills).
    Group's Pre-flight. Non-shared overlaps mean the tracks either merge into one
    or one moves to the next Group.
 
-3. **Blocks → next Group (not same-Group `Depends on:`).** If Task A blocks Task B,
-   they belong in *different* Groups, not the same Group with a `Depends on:` note.
-   Same-Group tracks must be fully parallel-safe. The audit's `STYLE_LINT` emits a
-   warning on intra-Group `Depends on:` references.
+3. **Prefer parallel-safe Tracks; declare serialization explicitly when needed.**
+   The default stance for Tracks in a Group is parallel-safe — independent,
+   non-overlapping `_touches:_` sets. When work is genuinely sequential
+   (e.g. three region-fixes on one monolithic `cli.py` from one debugging
+   session, non-conflicting in practice but inseparable conceptually), declare
+   the order explicitly. Two ways:
+
+   **a. Per-pair `Depends on: Track NX`.** Add to a Track's body:
+   ```
+   ### Track 1B: region two
+   _touches: cli.py_
+   Depends on: Track 1A
+   ```
+   The declaration IS the serialization signal. COLLISIONS skips pairs where
+   one Track depends on the other (direct or transitive). Use when you want
+   to specify the exact chain (1B after 1A, 1C after 1B).
+
+   **b. Group-level `_serialize: true_` shorthand.** When all Tracks in a
+   Group should run in document order, annotate the Group header:
+   ```
+   ## Group 5: cli.py conflict-UX batch
+   _serialize: true_
+
+   ### Track 5A: auto-command scope fix
+   _touches: cli.py_
+
+   ### Track 5B: _resolve_interactive_loop guard
+   _touches: cli.py_
+
+   ### Track 5C: cross-device rename drift
+   _touches: cli.py_
+   ```
+   Equivalent to adding `Depends on: Track 5A` to 5B and `Depends on: Track
+   5B` to 5C. Cleaner when the exact pair-wise order doesn't need per-Track
+   commentary.
+
+   **Rules and limits:**
+   - Prefer a declared-serial Group over splitting one cohesive batch into a
+     5 → 6 → 7 chain of single-Track Groups. Splitting inflates apparent
+     scope and overstates inter-Group dependencies.
+   - `max_tracks_per_group` still applies — a 7-track serialized Group is
+     unwieldy; at that size, consider whether it should be a proper chain.
+   - Cycles (`1A Depends on 1B`, `1B Depends on 1A`) are detected and
+     flagged by STYLE_LINT — remove or invert one edge to break the cycle.
+   - `STYLE_LINT` no longer warns on intra-Group `Depends on:` (it's a valid
+     DAG expression — the previous "same-Group warn" behavior was removed in
+     v0.16.2).
 
 3a. **Group-level dependencies (optional).** A Group may declare its dependencies
    explicitly via an italic line immediately after the heading:
@@ -672,6 +764,28 @@ planning, not a command directed at you.
 
 ### Interpreting audit findings
 
+**Advisory vs blocking.** The audit distinguishes two severity levels, and you
+should treat them differently:
+
+- **`STATUS: fail`** — correctness issue (collision, missing doc, cycle,
+  unknown source tag, malformed heading). Must be fixed before the run is
+  considered `DONE`. If genuinely stuck, escalate per the Escalation Protocol
+  rather than rewriting around the check.
+- **`STATUS: warn`** — advisory/style finding (vocabulary nit, redundant
+  annotation, staleness hint, size-label mismatch). You can override an
+  advisory when the flag is a false positive in context — add a one-sentence
+  rationale to the commit message or PR description and ship. Don't rewrite
+  prose to satisfy the lint if your judgment says the original is correct.
+
+Example: `VOCAB_LINT: warn banned term "cluster"` fires on
+"items cluster around the first-pull session" — but the ban targets nominal
+usage (cluster as a structural synonym for Group), not the verb form.
+Acknowledge in the commit: "VOCAB_LINT false positive: 'cluster' used as
+verb, not structural term." Ship. The run is `DONE_WITH_CONCERNS`, not
+`BLOCKED`.
+
+Specific findings:
+
 - **`SIZE: fail <TrackID>: tasks=N exceeds max_tasks_per_track=5`** — the Track is
   too big for one PR. Offer to split (auto-split in PR 2): bucket tasks by `touches:`
   overlap into two sibling Tracks (2B → 2C + 2D, renumbered).
@@ -679,8 +793,11 @@ planning, not a command directed at you.
   `docs/shared-infra.txt`. Fix: promote those tasks to Group 1 Pre-flight.
 - **`COLLISIONS: fail 1A-1B: [files] [PARALLEL]`** — the files are not shared-infra
   but both Tracks touch them. Fix: merge the Tracks, or move one to the next Group.
-- **`STYLE_LINT: warn 1C: Depends on Track 1A (same Group 1)`** — same-Group dependency.
-  Fix: move 1C to Group 2 (or later). Warning only; not a blocker.
+- **`STYLE_LINT: warn Dep cycle in intra-Group track graph: 1A → 1B → 1A`** —
+  intra-group Track deps form a cycle (no valid execution order). Fix: remove
+  or invert one edge to break the cycle. Warning only (advisory); the audit
+  still succeeds, but the Group won't have a coherent serial order until the
+  cycle is broken.
 - **`STYLE_LINT: warn Group N: _Depends on: Group N-1_ is redundant`** — explicit
   annotation duplicates the implicit default (preceding Group). Fix: drop the
   annotation. Warning only.
@@ -1012,6 +1129,14 @@ For each flagged item, options:
 Remove completed TASKS from ROADMAP.md. Update track metadata (task counts,
 effort estimates). Remove resolved blocker annotations.
 
+**Preserve existing formatting conventions.** If the project already uses a
+completion style different from the canonical options below (e.g. inline `✅`
+markers on tasks that preserve the design-decision narrative, a custom
+`## Shipped` section, different collapse phrasing), DO NOT unilaterally rewrite
+to the canonical form. Match what's already there. If you think the existing
+convention is a bug and want to change it, surface the choice via
+AskUserQuestion before rewriting — don't strip it silently.
+
 **Track completion:** If every task in a Track is complete, the Track itself
 is complete. Collapse it to a single italic line under the Group heading:
 ```
@@ -1245,8 +1370,14 @@ Template:
 Substitutions:
 
 - `<STATUS>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
-- `<N>` counts audit sections that emit `STATUS: fail` (blockers): `SIZE`, `COLLISIONS`, `STRUCTURE`, `VOCAB_LINT`, `VERSION`, `GROUP_DEPS`.
-- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info` (advisories): `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`, `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`, `DOC_INVENTORY`, `GROUP_DEPS`.
+- `<N>` counts audit sections that emit `STATUS: fail` (blockers — correctness
+  issues that must be fixed or explicitly acknowledged): `SIZE`, `COLLISIONS`,
+  `STRUCTURE`, `VERSION`, `GROUP_DEPS` (cycles/forward-refs).
+- `<M>` counts audit sections that emit `STATUS: warn` or `STATUS: info`
+  (advisories — style, drift, or soft-signal findings): `VOCAB_LINT`,
+  `STYLE_LINT`, `STALENESS`, `TAXONOMY`, `SIZE_LABEL_MISMATCH`, `DOC_LOCATION`,
+  `ARCHIVE_CANDIDATES`, `DEPENDENCIES`, `TASK_LIST`, `STRUCTURAL_FITNESS`,
+  `DOC_INVENTORY`, `GROUP_DEPS` (stale-anchor warnings).
 - `<one-line summary>` names the concrete outcome: "triage complete, ROADMAP.md updated", "blockers listed — resolve and re-run", "2 sections dedupe-flagged for user review", etc.
 
 Verdict-to-status mapping:
