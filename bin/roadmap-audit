@@ -131,12 +131,18 @@ read_pyproject_version() {
 # read_current_version
 #
 # Emits "<version>|<source>" on stdout. Source is "VERSION" or "pyproject.toml".
-# Returns 1 if no version source is available.
+# Returns 0 on hit, 1 if no source is available, 2 if VERSION exists but is
+# empty (distinct so callers can emit a clear "VERSION file is empty"
+# diagnostic instead of "no VERSION file" — the file IS there). Refusing to
+# silently fall back to pyproject when VERSION is empty makes misconfiguration
+# visible: the user clearly intended VERSION as the source.
 read_current_version() {
   if [ -f "$VERSION_FILE" ]; then
     local v
     v=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
-    [ -n "$v" ] || return 1
+    if [ -z "$v" ]; then
+      return 2
+    fi
     echo "${v}|VERSION"
     return 0
   fi
@@ -447,19 +453,33 @@ check_version() {
 
   # Read current version. VERSION file wins; fall back to pyproject.toml so
   # Python projects whose source of truth is `[project] version = "..."` aren't
-  # forced to maintain a duplicate VERSION file.
+  # forced to maintain a duplicate VERSION file. Empty VERSION file is treated
+  # as a misconfiguration (distinct diagnostic, not silent fallback).
   local current="" source=""
-  local _ver_pair
-  if _ver_pair=$(read_current_version); then
-    current="${_ver_pair%%|*}"
-    source="${_ver_pair#*|}"
-  else
-    echo "STATUS: skip"
-    echo "FINDINGS:"
-    echo "- No VERSION file or pyproject.toml version found"
-    echo ""
-    return
-  fi
+  local _ver_pair="" _rc=0
+  # `|| _rc=$?` keeps `set -e` from aborting when read_current_version
+  # signals a non-zero status (1 = no source, 2 = empty VERSION file).
+  _ver_pair=$(read_current_version) || _rc=$?
+  case "$_rc" in
+    0)
+      current="${_ver_pair%%|*}"
+      source="${_ver_pair#*|}"
+      ;;
+    2)
+      echo "STATUS: skip"
+      echo "FINDINGS:"
+      echo "- VERSION file exists but is empty (write a version like \`echo 0.1.0 > VERSION\`, or delete the file to fall back to pyproject.toml)"
+      echo ""
+      return
+      ;;
+    *)
+      echo "STATUS: skip"
+      echo "FINDINGS:"
+      echo "- No VERSION file or pyproject.toml version found"
+      echo ""
+      return
+      ;;
+  esac
 
   echo "CURRENT: $current"
   echo "SOURCE: $source"
@@ -1709,6 +1729,42 @@ _detect_track_dep_cycles() {
   done
 }
 
+# _canonicalize_cycle
+# Input: "<n1>|<n2>|...|<nK>|" — pipe-delimited unique nodes of a cycle (the
+# closing edge back to <n1> is implicit). Rotates the node list so the
+# lex-smallest node is first, then renders as "n1 → n2 → ... → nK → n1".
+# Two rotations of the same cycle render to the same string.
+_canonicalize_cycle() {
+  local raw="$1"
+  # Strip trailing pipe, split on pipes.
+  local trimmed="${raw%|}"
+  local IFS_ORIG="$IFS"
+  IFS='|'
+  local -a nodes=()
+  for n in $trimmed; do
+    [ -n "$n" ] && nodes+=("$n")
+  done
+  IFS="$IFS_ORIG"
+  local count=${#nodes[@]}
+  [ "$count" -eq 0 ] && { echo ""; return 0; }
+  # Find lex-smallest node's index.
+  local min_idx=0 i=1
+  while [ "$i" -lt "$count" ]; do
+    if [ "${nodes[$i]}" \< "${nodes[$min_idx]}" ]; then
+      min_idx=$i
+    fi
+    i=$((i + 1))
+  done
+  # Rotate so nodes[min_idx] is first, render with closing edge back to it.
+  local out="" i=0
+  while [ "$i" -lt "$count" ]; do
+    local idx=$(( (min_idx + i) % count ))
+    out="${out}${out:+ → }${nodes[$idx]}"
+    i=$((i + 1))
+  done
+  echo "${out} → ${nodes[$min_idx]}"
+}
+
 _walk_track_deps() {
   local node="$1"
   local stack="$2"
@@ -1720,13 +1776,18 @@ _walk_track_deps() {
   IFS=','
   for dep in $deps_csv; do
     if echo "$stack" | grep -q "|${dep}|"; then
-      # Cycle: extract the path from where dep first appears to the end.
+      # Cycle: extract the path from where dep first appears to the current
+      # stack tip, then close by linking tip → dep. The stack already ends at
+      # the current node, so we don't re-append $node — doing so would render
+      # "1A → 1B → 1B → 1A" with a duplicated node.
       local cycle_path
       cycle_path=$(echo "$stack" | sed -E "s/.*\|(${dep}\|.*)\$/\1/")
-      cycle_path="${cycle_path}${node}|→|${dep}|"
-      # Normalize display: "1A → 1B → 1A".
+      # cycle_path is now "<dep>|...|<tip>|" — the cycle's nodes between |.
+      # Canonicalize via lex-smallest rotation so the same cycle reached from
+      # different DFS roots dedups to one entry. e.g. "1A → 1B → 1A" and
+      # "1B → 1A → 1B" both canonicalize to "1A → 1B → 1A".
       local rendered
-      rendered=$(echo "$cycle_path" | sed 's/|→|/ → /g; s/^|//; s/|$//; s/|/ → /g')
+      rendered=$(_canonicalize_cycle "$cycle_path")
       if ! echo "$_TRACK_DEP_CYCLES" | grep -qF "$rendered"; then
         _TRACK_DEP_CYCLES="${_TRACK_DEP_CYCLES}${rendered}
 "

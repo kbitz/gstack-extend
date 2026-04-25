@@ -3924,6 +3924,99 @@ if echo "$SL" | grep -q "STATUS: warn" && echo "$SL" | grep -q "Dep cycle"; then
 else
   fail "dag: cycle not flagged" "$SL"
 fi
+# Lock in the cycle render format — previously emitted "1A → 1B → 1B → 1A"
+# with a spurious duplicated node. The path should close cleanly: tip → dep.
+if echo "$SL" | grep -qE '1A → 1B → 1A|1B → 1A → 1B'; then
+  pass "dag: cycle render closes tip → dep without node duplication"
+else
+  fail "dag: cycle render malformed" "$SL"
+fi
+# Cycle dedup via canonical rotation: a 2-node cycle should emit exactly ONE
+# warning, not two ("1A → 1B → 1A" AND "1B → 1A → 1B"). DFS visits both roots
+# but lex-smallest rotation maps both walks to the same canonical string.
+CYCLE_LINES=$(echo "$SL" | grep -c "Dep cycle" || true)
+if [ "$CYCLE_LINES" = "1" ]; then
+  pass "dag: cycle dedup — one warning per cycle (canonical rotation)"
+else
+  fail "dag: cycle dedup — got $CYCLE_LINES warnings, expected 1" "$SL"
+fi
+# 3-node cycle preserves direction in canonical form.
+DIR=$(create_fixture "dag-cycle-three")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: Three-node cycle
+
+### Track 1A: a
+_2 tasks . low risk . a.py_
+_touches: a.py_
+Depends on: Track 1C
+- **A** — . (S)
+
+### Track 1B: b
+_2 tasks . low risk . b.py_
+_touches: b.py_
+Depends on: Track 1A
+- **B** — . (S)
+
+### Track 1C: c
+_2 tasks . low risk . c.py_
+_touches: c.py_
+Depends on: Track 1B
+- **C** — . (S)
+EOF
+OUTPUT=$(run_audit "$DIR")
+SL=$(echo "$OUTPUT" | sed -n '/^## STYLE_LINT$/,/^## /p')
+CYCLE_LINES=$(echo "$SL" | grep -c "Dep cycle" || true)
+# 3-node cycle: 1A→1C→1B→1A. DFS roots may produce three rotations; canonical
+# (lex-smallest first) collapses them to one entry. Direction is preserved.
+if [ "$CYCLE_LINES" = "1" ] && echo "$SL" | grep -qE '1A → 1C → 1B → 1A'; then
+  pass "dag: 3-node cycle dedups + renders in canonical direction"
+else
+  fail "dag: 3-node cycle dedup or render off — got $CYCLE_LINES warnings" "$SL"
+fi
+
+# ─── Empty VERSION file diagnostic (v0.16.2) ──────────────────
+#
+# An empty VERSION file is a misconfiguration, not "no version source." The
+# audit must distinguish from absent VERSION + absent pyproject so the user
+# sees a clear "VERSION file is empty" message rather than the misleading
+# "no VERSION file or pyproject.toml version found."
+
+echo "=== empty VERSION diagnostic ==="
+
+DIR=$(create_fixture "version-empty-file")
+# create_fixture writes "0.1.0" to VERSION. Truncate to empty.
+: > "$DIR/VERSION"
+# No pyproject.toml — this is the pure "VERSION exists but empty" case.
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "empty version" --quiet
+OUTPUT=$(run_audit "$DIR")
+VER=$(echo "$OUTPUT" | sed -n '/^## VERSION$/,/^## /p')
+if echo "$VER" | grep -q "STATUS: skip" && echo "$VER" | grep -q "VERSION file exists but is empty"; then
+  pass "version: empty VERSION emits distinct diagnostic"
+else
+  fail "version: empty VERSION still misdiagnosed" "$VER"
+fi
+
+# Empty VERSION should NOT silently fall back to pyproject — the user clearly
+# intended VERSION as the source. Misconfiguration must be visible.
+DIR=$(create_fixture "version-empty-with-pyproject")
+: > "$DIR/VERSION"
+cat > "$DIR/pyproject.toml" << 'EOF'
+[project]
+name = "example"
+version = "9.9.9"
+EOF
+git -C "$DIR" add -A
+git -C "$DIR" commit -m "empty + pyproject" --quiet
+OUTPUT=$(run_audit "$DIR")
+VER=$(echo "$OUTPUT" | sed -n '/^## VERSION$/,/^## /p')
+if echo "$VER" | grep -q "STATUS: skip" && echo "$VER" | grep -q "empty"; then
+  pass "version: empty VERSION wins over pyproject (no silent fallback)"
+else
+  fail "version: empty VERSION silently fell back to pyproject" "$VER"
+fi
 
 # ─── VOCAB_LINT severity (v0.16.2) ────────────────────────────
 #
