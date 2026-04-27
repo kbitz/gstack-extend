@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# roadmap-route — classify a source-tagged inbox item into KEEP / KILL / PROMPT.
+#
+# Replaces the source-default routing matrix that used to live as a markdown
+# table inside skills/roadmap.md. Skill prose now calls this and presents the
+# recommendation.
+#
+# Usage:
+#   bin/roadmap-route <source-tag>
+#   bin/roadmap-route '[full-review:edge-case]'
+#   bin/roadmap-route '[pair-review:group=2,item=5]'
+#
+# Output (KEY=VALUE on stdout):
+#   action=KEEP|KILL|PROMPT
+#   reason=<one-line rationale>
+#   source=<parsed source>
+#   severity=<full-review severity if present>
+#
+# Exit code: 0 on success, 1 on malformed input.
+
+set -euo pipefail
+
+source "$(dirname "$0")/lib/source-tag.sh"
+
+if [ $# -lt 1 ]; then
+  echo "usage: roadmap-route <source-tag>" >&2
+  exit 1
+fi
+
+RAW="$1"
+
+# Missing tag → treat as manual (user wrote it deliberately).
+if [ -z "$RAW" ] || [ "$RAW" = "[]" ]; then
+  echo "action=KEEP"
+  echo "reason=missing source tag — defaults to manual (user-written)"
+  echo "source=manual"
+  exit 0
+fi
+
+# Parse via the canonical library.
+PARSED=$(parse_source_tag "$RAW" 2>/dev/null) || {
+  # Malformed — treat as unknown, prompt.
+  echo "action=PROMPT"
+  echo "reason=malformed source tag — surface for explicit user decision"
+  echo "source=unknown"
+  exit 0
+}
+
+SOURCE=$(echo "$PARSED" | grep -E '^source=' | head -1 | cut -d= -f2)
+SEVERITY=$(echo "$PARSED" | grep -E '^severity=' | head -1 | cut -d= -f2 || true)
+
+case "$SOURCE" in
+  manual|ship)
+    echo "action=KEEP"
+    echo "reason=user-written deliberate item"
+    echo "source=$SOURCE"
+    ;;
+  pair-review|test-plan|investigate|review-apparatus)
+    echo "action=KEEP"
+    echo "reason=observed bug or real tooling need"
+    echo "source=$SOURCE"
+    ;;
+  full-review)
+    case "$SEVERITY" in
+      critical|necessary)
+        echo "action=KEEP"
+        echo "reason=full-review $SEVERITY — ship-blocker or real defect"
+        ;;
+      important)
+        echo "action=KEEP"
+        echo "reason=legacy severity 'important' — treated as 'necessary'"
+        ;;
+      nice-to-have|minor)
+        echo "action=PROMPT"
+        echo "reason=full-review $SEVERITY — keep or defer is a judgment call"
+        ;;
+      edge-case)
+        echo "action=KILL"
+        echo "reason=full-review edge-case — adversarial-review noise, default to drop"
+        ;;
+      *)
+        echo "action=PROMPT"
+        echo "reason=full-review without severity (legacy) — surface for explicit decision"
+        ;;
+    esac
+    echo "source=$SOURCE"
+    [ -n "$SEVERITY" ] && echo "severity=$SEVERITY"
+    ;;
+  discovered)
+    echo "action=PROMPT"
+    echo "reason=extracted from a scattered doc — confirm before incorporating"
+    echo "source=$SOURCE"
+    ;;
+  *)
+    echo "action=PROMPT"
+    echo "reason=unknown source tag '$SOURCE' — surface for explicit decision"
+    echo "source=$SOURCE"
+    ;;
+esac

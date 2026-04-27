@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# roadmap-place — decide where a kept inbox item belongs.
+#
+# Replaces the closure-bias phase-assignment + reopen-rule decision tree that
+# used to live as pseudocode inside skills/roadmap.md. Skill prose now calls
+# this and presents the recommendation, then performs the file edit.
+#
+# Inputs (flags; everything optional except --tag):
+#   --tag <source-tag>           e.g. '[pair-review:group=2,item=5]'
+#   --in-flight "1 2"            space-sep list of in-flight Group numbers
+#   --complete "3"               space-sep list of ✓ Complete Group numbers
+#   --primary "1"                primary in-flight Group (first by doc order)
+#   --severity critical          override severity (else parsed from tag)
+#   --files "auth.ts,api.ts"     comma-sep file paths from item description
+#   --primary-touches "ui/**,api.ts"  comma-sep _touches:_ of primary in-flight Group
+#
+# Output (KEY=VALUE on stdout):
+#   target=current|future|hotfix
+#   group=N            (current or hotfix; absent for future)
+#   slot=preflight|track   (current only — preflight for items with no group=hint)
+#   reason=<one-line rationale>
+#
+# Exit code: 0 always (the skill decides what to do with the result).
+
+set -euo pipefail
+
+source "$(dirname "$0")/lib/source-tag.sh"
+
+TAG=""
+IN_FLIGHT=""
+COMPLETE=""
+PRIMARY=""
+SEVERITY_OVERRIDE=""
+FILES=""
+PRIMARY_TOUCHES=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tag) TAG="${2:-}"; shift 2 ;;
+    --in-flight) IN_FLIGHT="${2:-}"; shift 2 ;;
+    --complete) COMPLETE="${2:-}"; shift 2 ;;
+    --primary) PRIMARY="${2:-}"; shift 2 ;;
+    --severity) SEVERITY_OVERRIDE="${2:-}"; shift 2 ;;
+    --files) FILES="${2:-}"; shift 2 ;;
+    --primary-touches) PRIMARY_TOUCHES="${2:-}"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Parse the tag for group hint and severity.
+GROUP_HINT=""
+SEVERITY=""
+SOURCE=""
+if [ -n "$TAG" ] && [ "$TAG" != "[]" ]; then
+  PARSED=$(parse_source_tag "$TAG" 2>/dev/null) || true
+  SOURCE=$(echo "$PARSED" | grep -E '^source=' | head -1 | cut -d= -f2 || true)
+  GROUP_HINT=$(echo "$PARSED" | grep -E '^group=' | head -1 | cut -d= -f2 || true)
+  SEVERITY=$(echo "$PARSED" | grep -E '^severity=' | head -1 | cut -d= -f2 || true)
+fi
+[ -n "$SEVERITY_OVERRIDE" ] && SEVERITY="$SEVERITY_OVERRIDE"
+
+_in_list() {
+  local needle="$1"; local hay="$2"
+  echo " $hay " | grep -q " $needle "
+}
+
+# Origin-tagged item (group=N hint present): route back to its origin Group.
+if [ -n "$GROUP_HINT" ]; then
+  if _in_list "$GROUP_HINT" "$IN_FLIGHT"; then
+    echo "target=current"
+    echo "group=$GROUP_HINT"
+    echo "slot=track"
+    echo "reason=origin Group $GROUP_HINT is in-flight — fold back into the Group that surfaced this item"
+    exit 0
+  fi
+  if _in_list "$GROUP_HINT" "$COMPLETE"; then
+    # Reopen rule for items whose origin Group already shipped.
+    if [ "$SEVERITY" = "critical" ]; then
+      echo "target=hotfix"
+      echo "group=$GROUP_HINT"
+      echo "reason=critical severity on shipped Group — append as hotfix to Group $GROUP_HINT"
+      exit 0
+    fi
+    # File-overlap check against primary in-flight Group's touches.
+    if [ -n "$PRIMARY" ] && [ -n "$FILES" ] && [ -n "$PRIMARY_TOUCHES" ]; then
+      local_overlap=0
+      IFS=','
+      for f in $FILES; do
+        f_trim=$(echo "$f" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        for pt in $PRIMARY_TOUCHES; do
+          pt_trim=$(echo "$pt" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          if [ "$f_trim" = "$pt_trim" ]; then
+            local_overlap=1; break
+          fi
+        done
+        [ "$local_overlap" -eq 1 ] && break
+      done
+      unset IFS
+      if [ "$local_overlap" -eq 1 ]; then
+        echo "target=current"
+        echo "group=$PRIMARY"
+        echo "slot=track"
+        echo "reason=item files overlap primary in-flight Group $PRIMARY — fold into active work"
+        exit 0
+      fi
+    fi
+    # No critical, no overlap → defer.
+    echo "target=future"
+    echo "reason=origin Group $GROUP_HINT shipped, severity not critical, files don't overlap active Group — shipped history is immutable, defer"
+    exit 0
+  fi
+  # Group hint references a Group that doesn't exist (renamed/deleted).
+  echo "target=future"
+  echo "reason=origin Group $GROUP_HINT not found in current roadmap (renamed/deleted) — defer to Future for explicit re-classification"
+  exit 0
+fi
+
+# No origin hint: default to current phase, primary in-flight Group's Pre-flight.
+if [ -n "$PRIMARY" ]; then
+  echo "target=current"
+  echo "group=$PRIMARY"
+  echo "slot=preflight"
+  echo "reason=no origin tag — placed into primary in-flight Group $PRIMARY's Pre-flight"
+  exit 0
+fi
+
+# No in-flight Groups at all (drained roadmap or future-only state).
+echo "target=future"
+echo "reason=no in-flight Group available to place item — defer to Future for next overhaul"

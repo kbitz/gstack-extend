@@ -9,10 +9,30 @@
 #
 # Usage:
 #   bin/roadmap-audit [REPO_ROOT]
+#   bin/roadmap-audit --classify-state [--prompt "..."] [REPO_ROOT]
+#
+# --classify-state emits a JSON object describing which /roadmap operations
+# should run (REVISE, FRESHNESS, CLOSURE, TRIAGE, GREENFIELD, DRAINED) based
+# on current ROADMAP+TODOS state, last-run.json, and the user's prompt.
+# Single source of truth for state — skill prose consumes the JSON, no
+# separate classifier script needed.
 #
 # Env overrides (for testing):
 #   GSTACK_EXTEND_DIR — override auto-detected gstack-extend root
 set -euo pipefail
+
+# ─── Argument parsing ────────────────────────────────────────
+CLASSIFY_STATE=0
+USER_PROMPT=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --classify-state) CLASSIFY_STATE=1; shift ;;
+    --prompt) USER_PROMPT="${2:-}"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$(dirname "$0")/.." && pwd -P)}"
 REPO_ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -795,7 +815,7 @@ check_dependencies() {
         findings="${findings}- line ${lineno}: references \"${ref}\" but no such track exists\n"
         found=1
       fi
-    done < <(echo "$text" | grep -oE 'Track [0-9]+[A-Z]' || true)
+    done < <(echo "$text" | grep -oE 'Track [0-9]+[A-Z](\.[0-9]+)?' || true)
   done < <(grep -n 'Depends on:' "$ROADMAP_FILE" 2>/dev/null || true)
 
   if [ "$has_deps" -eq 0 ]; then
@@ -1004,9 +1024,9 @@ check_task_list() {
       continue
     fi
 
-    # Track heading: ### Track NA: Name
-    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
-      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+    # Track heading: ### Track NA: Name (optional .M suffix for split children)
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
+      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
       section="track"
       in_preflight=0
       continue
@@ -1150,10 +1170,10 @@ check_structural_fitness() {
       continue
     fi
 
-    # Track heading
-    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
+    # Track heading (optional .M suffix for split children)
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
       [ "$skip_group" -eq 1 ] && continue
-      current_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+      current_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
       track_count=$((track_count + 1))
       track_task_counts=$(_kv_set "$track_task_counts" "$current_track" 0)
       section="track"
@@ -1378,6 +1398,7 @@ _GROUP_DEPS_RAW=""       # newline-sep "N|raw annotation text" (for diagnostics)
 _GROUP_DEP_ANCHORS=""    # newline-sep "group_num|dep_num|anchored_name_at_annotation_time"
 _GROUP_SERIALIZE=""      # kv: "5=1" — Group opts into in-order Track execution via `_serialize: true_`
 _TRACK_DEPS=""           # kv: "1B=1A 1C=1B,1A" — direct intra-group track deps (comma-sep); _serialize expands into this too
+_TRACK_DEPS_FREETEXT=""  # kv: "2A=1" — track has _Depends on:_ line but no parseable Track IDs (excluded from structured dep analysis)
 _TRACK_DEP_CYCLES=""     # newline-sep cycle descriptions detected during closure
 _SIZE_LABEL_MISMATCHES=""  # newline-sep "TrackID|title|effort|declared|expected"
 _STYLE_LINT_WARNINGS=""    # newline-sep "TrackID: depends on TrackYY (same Group N)"
@@ -1537,8 +1558,8 @@ _parse_roadmap() {
     fi
 
     # Track heading: ### Track NA: Name
-    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z]:'; then
-      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z]):.*/\1/')
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
+      track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
       if echo " $_TRACK_LIST " | grep -q " $track_id "; then
         # Duplicate track ID — earlier state gets stomped by kv_set. Warn.
         _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: duplicate track ID (another track earlier in ROADMAP.md also uses '${track_id}') — rename one; track IDs must be globally unique\n"
@@ -1618,29 +1639,43 @@ _parse_roadmap() {
       # (typo) or cycles (detected after parse). Cross-group Depends on: is
       # allowed informally but not tracked here — Group-level _Depends on:_
       # owns inter-group dependency structure.
-      if echo "$line" | grep -qiE 'Depends on:[[:space:]]*Track [0-9]+[A-Z]'; then
-        local dep_id
-        dep_id=$(echo "$line" | grep -oiE 'Track [0-9]+[A-Z]' | head -1 | sed -E 's/^Track //')
-        if [ "$dep_id" = "$track_id" ]; then
-          _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: Depends on itself (Track ${dep_id}) — typo or stale reference?\n"
-        else
-          local dep_group
-          dep_group=$(echo "$dep_id" | grep -oE '^[0-9]+')
-          local track_group
-          track_group=$(echo "$track_id" | grep -oE '^[0-9]+')
-          if [ -n "$dep_group" ] && [ "$dep_group" = "$track_group" ]; then
-            # Record the edge. Append so multiple Depends on: lines on one
-            # track combine (e.g. "Depends on: Track 1A, Track 1B" split
-            # across lines).
-            local existing
-            existing=$(_kv_get "$_TRACK_DEPS" "$track_id")
-            # De-duplicate — don't double-add the same dep.
-            if [ -z "$existing" ]; then
-              _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "$dep_id")
-            elif ! echo ",${existing}," | grep -q ",${dep_id},"; then
-              _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "${existing},${dep_id}")
+      #
+      # Free-text Depends on: (e.g. "Depends on: Pre-flight 1" or "Depends on:
+      # at least one major version bump") is valid but excludes the track from
+      # structured dep analysis (PARALLELIZABLE_FUTURE, dep cycles, COLLISIONS
+      # dep-skip). Surfaced as a STYLE_LINT info so the exclusion is visible.
+      if echo "$line" | grep -qiE '^_?Depends on:'; then
+        if echo "$line" | grep -qiE 'Depends on:[[:space:]]*Track [0-9]+[A-Z](\.[0-9]+)?'; then
+          local dep_id
+          dep_id=$(echo "$line" | grep -oiE 'Track [0-9]+[A-Z](\.[0-9]+)?' | head -1 | sed -E 's/^Track //')
+          if [ "$dep_id" = "$track_id" ]; then
+            _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: Depends on itself (Track ${dep_id}) — typo or stale reference?\n"
+          else
+            local dep_group
+            dep_group=$(echo "$dep_id" | grep -oE '^[0-9]+')
+            local track_group
+            track_group=$(echo "$track_id" | grep -oE '^[0-9]+')
+            if [ -n "$dep_group" ] && [ "$dep_group" = "$track_group" ]; then
+              # Record the edge. Append so multiple Depends on: lines on one
+              # track combine (e.g. "Depends on: Track 1A, Track 1B" split
+              # across lines).
+              local existing
+              existing=$(_kv_get "$_TRACK_DEPS" "$track_id")
+              # De-duplicate — don't double-add the same dep.
+              if [ -z "$existing" ]; then
+                _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "$dep_id")
+              elif ! echo ",${existing}," | grep -q ",${dep_id},"; then
+                _TRACK_DEPS=$(_kv_set "$_TRACK_DEPS" "$track_id" "${existing},${dep_id}")
+              fi
             fi
           fi
+        else
+          # `_Depends on:_` line present but no Track ID — record exclusion.
+          # PARALLELIZABLE_FUTURE and dep-cycle checks treat tracks without a
+          # _TRACK_DEPS entry as having no structured deps; this flag lets
+          # consumers distinguish "no deps declared" from "deps declared but
+          # unparseable for structured analysis."
+          _TRACK_DEPS_FREETEXT=$(_kv_set "$_TRACK_DEPS_FREETEXT" "$track_id" 1)
         fi
       fi
     fi
@@ -1938,11 +1973,79 @@ _is_shared_infra() {
   echo "$_SHARED_INFRA_FILES" | grep -Fxq -- "$1"
 }
 
+# ─── Helper: split-suggestion for oversized tracks ───────────
+# Reads the track's tasks from ROADMAP.md and clusters them by the first
+# backtick-quoted file path in each task description. If 2+ clusters of
+# >=2 tasks each exist, emits a "split suggestion" line. Returns empty
+# string if no useful clustering found.
+_size_split_suggestion() {
+  local target_track="$1"
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  [ -z "$roadmap" ] && return
+
+  local in_target=0
+  local clusters=""  # space-sep "path|count" pairs
+  while IFS= read -r line || [ -n "$line" ]; do
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
+      local tid
+      tid=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
+      [ "$tid" = "$target_track" ] && in_target=1 || in_target=0
+      continue
+    fi
+    [ "$in_target" -eq 0 ] && continue
+    if echo "$line" | grep -qE '^## '; then
+      in_target=0
+      continue
+    fi
+    if echo "$line" | grep -qE '^- \*\*'; then
+      # First backtick-quoted path in the task line.
+      local path
+      path=$(echo "$line" | grep -oE '`[^`]+`' | head -1 | tr -d '`')
+      [ -z "$path" ] && path="(misc)"
+      # Normalize: take the directory or top file segment.
+      local key
+      if echo "$path" | grep -q '/'; then
+        key=$(echo "$path" | cut -d/ -f1-2)
+      else
+        key="$path"
+      fi
+      # Update cluster count.
+      local existing_count
+      existing_count=$(echo " $clusters " | grep -oE " ${key}\|[0-9]+ " | grep -oE '[0-9]+$' || true)
+      if [ -n "$existing_count" ]; then
+        local new_count=$((existing_count + 1))
+        clusters=$(echo "$clusters" | sed "s|${key}|${existing_count}|${key}|${new_count}|")
+      else
+        clusters="${clusters}${clusters:+ }${key}|1"
+      fi
+    fi
+  done < "$roadmap"
+
+  # Count clusters with >=2 tasks.
+  local big_clusters=""
+  local big_count=0
+  for entry in $clusters; do
+    local key count
+    key=$(echo "$entry" | cut -d'|' -f1)
+    count=$(echo "$entry" | cut -d'|' -f2)
+    if [ "$count" -ge 2 ]; then
+      big_clusters="${big_clusters}${big_clusters:+, }${key} (${count})"
+      big_count=$((big_count + 1))
+    fi
+  done
+
+  if [ "$big_count" -ge 2 ]; then
+    echo "  Split suggestion for ${target_track}: tasks cluster by file path into ${big_count} groups [${big_clusters}]. Consider splitting along these lines."
+  fi
+}
+
 # ─── Check: SIZE ──────────────────────────────────────────────
 # Enforces per-track size caps on modern tracks (those with _touches:_).
 # Legacy tracks are skipped with a banner. Also emits SIZE_LABEL_MISMATCH
 # warnings for tasks whose declared `~N lines` diverges from their
-# effort tier's LOC mapping by >3x.
+# effort tier's LOC mapping by >3x. When a track exceeds caps, emits a
+# split-suggestion line clustering its tasks by primary file path.
 check_size_caps() {
   echo "## SIZE"
   _parse_roadmap
@@ -1984,17 +2087,29 @@ check_size_caps() {
     loc=${loc:-0}
     files=${files:-0}
 
+    local oversized=0
     if [ "$tasks" -gt "$max_tasks" ]; then
       findings="${findings}- ${t}: tasks=${tasks} exceeds max_tasks_per_track=${max_tasks}\n"
       found=1
+      oversized=1
     fi
     if [ "$loc" -gt "$max_loc" ]; then
       findings="${findings}- ${t}: loc=${loc} exceeds max_loc_per_track=${max_loc}\n"
       found=1
+      oversized=1
     fi
     if [ "$files" -gt "$max_files" ]; then
       findings="${findings}- ${t}: files=${files} exceeds max_files_per_track=${max_files}\n"
       found=1
+      oversized=1
+    fi
+    # Split suggestion: cluster oversized track's tasks by primary file path.
+    if [ "$oversized" -eq 1 ]; then
+      local suggestion
+      suggestion=$(_size_split_suggestion "$t")
+      if [ -n "$suggestion" ]; then
+        findings="${findings}${suggestion}\n"
+      fi
     fi
   done
 
@@ -2501,6 +2616,326 @@ check_in_flight_groups() {
   echo ""
 }
 
+# ─── Helper: in_flight_group_list ────────────────────────────
+# Returns space-separated list of Groups that are (a) not ✓ Complete and
+# (b) have all their declared deps in _COMPLETE_GROUPS. Mirrors
+# check_in_flight_groups computation; factored out so PARALLELISM_BUDGET
+# and PARALLELIZABLE_FUTURE can reuse it without recomputing.
+_compute_in_flight_groups() {
+  _parse_roadmap
+  if [ -z "$_GROUP_LIST" ]; then
+    echo ""
+    return
+  fi
+  local groups_sorted in_flight=""
+  groups_sorted=$(echo "$_GROUP_LIST" | tr ' ' '\n' | sort -n | tr '\n' ' ' | sed 's/ $//')
+  local g deps dep_ok dep
+  for g in $groups_sorted; do
+    if echo " $_COMPLETE_GROUPS " | grep -q " $g "; then
+      continue
+    fi
+    deps=$(_kv_get "$_GROUP_DEPS" "$g")
+    if [ -z "$deps" ]; then
+      local prev=""
+      for candidate in $groups_sorted; do
+        [ "$candidate" = "$g" ] && break
+        prev="$candidate"
+      done
+      deps="$prev"
+    elif [ "$deps" = "-" ]; then
+      deps=""
+    fi
+    dep_ok=1
+    if [ -n "$deps" ]; then
+      local IFS_ORIG="$IFS"
+      IFS=','
+      for dep in $deps; do
+        if ! echo " $_GROUP_LIST " | grep -q " $dep " || ! echo " $_COMPLETE_GROUPS " | grep -q " $dep "; then
+          dep_ok=0
+          break
+        fi
+      done
+      IFS="$IFS_ORIG"
+    fi
+    if [ "$dep_ok" -eq 1 ]; then
+      in_flight="${in_flight}${in_flight:+ }${g}"
+    fi
+  done
+  echo "$in_flight"
+}
+
+# ─── Helper: read parallelism cap ────────────────────────────
+# Reads `<!-- roadmap:parallelism_cap=N -->` from project CLAUDE.md if
+# present; falls back to default of 4. Used by PARALLELISM_BUDGET and
+# PARALLELIZABLE_FUTURE.
+_parallelism_cap() {
+  local default=4
+  local claude_md
+  claude_md=$(find_doc "CLAUDE.md")
+  if [ -n "$claude_md" ] && [ -f "$claude_md" ]; then
+    local cap
+    cap=$(grep -oE 'roadmap:parallelism_cap=[0-9]+' "$claude_md" 2>/dev/null | head -1 | cut -d= -f2)
+    if [ -n "$cap" ] && [ "$cap" -gt 0 ] 2>/dev/null; then
+      echo "$cap"
+      return
+    fi
+  fi
+  echo "$default"
+}
+
+# ─── Check: PARALLELISM_BUDGET ───────────────────────────────
+#
+# Counts in-flight tracks across all in-flight Groups. Flags if total
+# exceeds the project's parallelism cap (default 4, override via CLAUDE.md
+# `<!-- roadmap:parallelism_cap=N -->` comment). The cap reflects how many
+# parallel sessions the user actually runs; busting it means the roadmap
+# is asking for more concurrency than is operationally sustainable.
+#
+# Output:
+#   STATUS: pass | fail | skip
+#   IN_FLIGHT_TRACKS: N
+#   CAP: N
+#   FINDINGS: per-group track counts when fail
+
+check_parallelism_budget() {
+  echo "## PARALLELISM_BUDGET"
+  _parse_roadmap
+
+  local in_flight_groups
+  in_flight_groups=$(_compute_in_flight_groups)
+  local cap
+  cap=$(_parallelism_cap)
+
+  if [ -z "$in_flight_groups" ]; then
+    echo "STATUS: skip"
+    echo "IN_FLIGHT_TRACKS: 0"
+    echo "CAP: $cap"
+    echo "FINDINGS:"
+    echo "- No in-flight Groups"
+    echo ""
+    return
+  fi
+
+  local total=0
+  local per_group=""
+  local g
+  for g in $in_flight_groups; do
+    local tracks_csv count
+    tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g")
+    if [ -z "$tracks_csv" ]; then
+      count=0
+    else
+      count=$(echo "$tracks_csv" | tr ',' '\n' | grep -c '.' || true)
+    fi
+    total=$((total + count))
+    per_group="${per_group}${per_group:+ }${g}=${count}"
+  done
+
+  echo "IN_FLIGHT_TRACKS: $total"
+  echo "CAP: $cap"
+  echo "PER_GROUP: $per_group"
+  if [ "$total" -gt "$cap" ]; then
+    echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo "- ${total} in-flight tracks exceeds parallelism cap of ${cap}. Consider deferring tracks to a future Group, splitting work across more sequential Groups, or raising the cap via \`<!-- roadmap:parallelism_cap=N -->\` in CLAUDE.md."
+  else
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  fi
+  echo ""
+}
+
+# ─── Check: PARALLELIZABLE_FUTURE ────────────────────────────
+#
+# Scans the ## Future section for tracks formatted as `### Track NA: Name`
+# with parseable `_touches:_` and `_Depends on:_` metadata. A Future track is
+# a candidate if (a) all referenced deps are in _COMPLETE_GROUPS or are
+# completed in-flight tracks, (b) its touches don't overlap any in-flight
+# track's touches, and (c) the parallelism budget has headroom.
+#
+# Future items in plain bullet form (no `### Track` heading) are ignored —
+# this is opt-in: format a Future item as a full Track with metadata to
+# make it eligible for promotion.
+#
+# Output:
+#   STATUS: pass | info | skip
+#   CANDIDATES: comma-sep IDs (or empty)
+#   FINDINGS: per-candidate explanation
+
+check_parallelizable_future() {
+  echo "## PARALLELIZABLE_FUTURE"
+  _parse_roadmap
+
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  if [ -z "$roadmap" ]; then
+    echo "STATUS: skip"
+    echo "CANDIDATES:"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md"
+    echo ""
+    return
+  fi
+
+  local in_flight_groups
+  in_flight_groups=$(_compute_in_flight_groups)
+  local cap
+  cap=$(_parallelism_cap)
+  local in_flight_count=0
+  local g
+  for g in $in_flight_groups; do
+    local tracks_csv
+    tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g")
+    if [ -n "$tracks_csv" ]; then
+      local n
+      n=$(echo "$tracks_csv" | tr ',' '\n' | grep -c '.' || true)
+      in_flight_count=$((in_flight_count + n))
+    fi
+  done
+
+  if [ "$in_flight_count" -ge "$cap" ]; then
+    echo "STATUS: skip"
+    echo "CANDIDATES:"
+    echo "FINDINGS:"
+    echo "- Parallelism budget at capacity (${in_flight_count}/${cap}); no headroom to surface candidates"
+    echo ""
+    return
+  fi
+
+  # Aggregate touches across all in-flight tracks for overlap detection.
+  local in_flight_touches=""
+  for g in $in_flight_groups; do
+    local tracks_csv
+    tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g")
+    [ -z "$tracks_csv" ] && continue
+    local IFS_ORIG="$IFS"
+    IFS=','
+    for tid in $tracks_csv; do
+      local t_touches
+      t_touches=$(_kv_get "$_TRACK_TOUCHES" "$tid")
+      [ -n "$t_touches" ] && in_flight_touches="${in_flight_touches}${in_flight_touches:+,}${t_touches}"
+    done
+    IFS="$IFS_ORIG"
+  done
+  local in_flight_touches_sorted
+  in_flight_touches_sorted=$(echo "$in_flight_touches" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u | grep -v '^$' || true)
+
+  # Localized parse of ## Future section for Track headings + metadata.
+  local in_future=0
+  local f_track="" f_touches="" f_deps_csv="" f_legacy=1
+  local candidates=""
+  local findings=""
+
+  # Helper to evaluate the just-finished Future track.
+  _eval_future_track() {
+    [ -z "$f_track" ] && return
+    if [ "$f_legacy" -eq 1 ] || [ -z "$f_touches" ] || [ -z "$f_deps_csv" ]; then
+      f_track=""; f_touches=""; f_deps_csv=""; f_legacy=1
+      return
+    fi
+    # Check deps satisfied: each dep must be a Track in a Complete Group, or a
+    # Complete Group itself (we accept "Group N" or "Track NA").
+    local IFS_ORIG="$IFS"
+    IFS=','
+    local dep deps_ok=1
+    for dep in $f_deps_csv; do
+      dep=$(_trim "$dep")
+      # Strip "Track " or "Group " prefix; accept either form.
+      local dep_clean
+      dep_clean=$(echo "$dep" | sed -E 's/^(Track|Group)[[:space:]]+//')
+      if echo "$dep_clean" | grep -qE '^[0-9]+[A-Z](\.[0-9]+)?$'; then
+        # Track ID — its Group must be Complete.
+        local dep_group
+        dep_group=$(echo "$dep_clean" | grep -oE '^[0-9]+')
+        if ! echo " $_COMPLETE_GROUPS " | grep -q " $dep_group "; then
+          deps_ok=0
+          break
+        fi
+      elif echo "$dep_clean" | grep -qE '^[0-9]+$'; then
+        # Group ID — must be Complete.
+        if ! echo " $_COMPLETE_GROUPS " | grep -q " $dep_clean "; then
+          deps_ok=0
+          break
+        fi
+      else
+        # Free-text — exclude from analysis.
+        deps_ok=0
+        break
+      fi
+    done
+    IFS="$IFS_ORIG"
+
+    if [ "$deps_ok" -eq 0 ]; then
+      f_track=""; f_touches=""; f_deps_csv=""; f_legacy=1
+      return
+    fi
+
+    # Touches overlap check: any path in f_touches overlapping any in-flight
+    # touches path = not parallelizable.
+    local f_touches_sorted
+    f_touches_sorted=$(echo "$f_touches" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sort -u | grep -v '^$' || true)
+    local intersection=""
+    if [ -n "$in_flight_touches_sorted" ] && [ -n "$f_touches_sorted" ]; then
+      intersection=$(comm -12 <(echo "$f_touches_sorted") <(echo "$in_flight_touches_sorted") || true)
+    fi
+    if [ -z "$intersection" ]; then
+      candidates="${candidates}${candidates:+,}${f_track}"
+      findings="${findings}- ${f_track}: deps satisfied, touches don't overlap in-flight (${f_touches_sorted//$'\n'/,}) — eligible for promotion to current Group\n"
+    fi
+    f_track=""; f_touches=""; f_deps_csv=""; f_legacy=1
+  }
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    if echo "$line" | grep -qiE '^## Future'; then
+      in_future=1
+      continue
+    fi
+    if [ "$in_future" -eq 1 ] && echo "$line" | grep -qE '^## '; then
+      _eval_future_track
+      in_future=0
+      continue
+    fi
+    [ "$in_future" -eq 0 ] && continue
+
+    if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
+      _eval_future_track
+      f_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
+      f_touches=""; f_deps_csv=""; f_legacy=1
+      continue
+    fi
+    [ -z "$f_track" ] && continue
+
+    if echo "$line" | grep -qiE '^_touches:'; then
+      f_touches=$(echo "$line" | sed -E 's/^_touches:[[:space:]]*//; s/_[[:space:]]*$//')
+      f_legacy=0
+      continue
+    fi
+    if echo "$line" | grep -qiE '^_Depends on:'; then
+      local raw
+      raw=$(echo "$line" | sed -E 's/^_Depends on:[[:space:]]*//; s/_[[:space:]]*$//')
+      f_deps_csv="$raw"
+      continue
+    fi
+  done < "$roadmap"
+  _eval_future_track
+
+  if [ -z "$candidates" ]; then
+    echo "STATUS: pass"
+    echo "CANDIDATES:"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: info"
+    echo "CANDIDATES: $candidates"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo "IN_FLIGHT_COUNT: $in_flight_count"
+  echo "CAP: $cap"
+  echo ""
+}
+
 # ─── Check: ORIGIN_STATS ─────────────────────────────────────
 #
 # Per-group open-origin counts. Reads items in ## Unprocessed and counts
@@ -2701,6 +3136,199 @@ check_todo_format() {
   echo ""
 }
 
+# ─── Classify-state mode ─────────────────────────────────────
+# Emit JSON of triggered /roadmap operations based on current state +
+# last-run.json + user prompt. Skill prose consumes the JSON and runs
+# the corresponding sections in fixed precedence order.
+#
+# Hand-rolled JSON (no jq dependency). Schema kept flat — string fields,
+# simple arrays — so quoting stays trivial and tests can assert with grep.
+
+if [ "$CLASSIFY_STATE" -eq 1 ]; then
+  # Wordlists for prompt intent detection. Single-quoted to avoid apostrophe issues.
+  CLOSURE_WORDS='close out|close-out|finish|wrap up|fully done|fully close'
+  ANTI_DEFER_WORDS="don't defer|do not defer|no future|ship now|ship it all|no more future"
+  SPLIT_WORDS='split|break up|break apart|too big|decompose'
+  NEGATORS="don't|do not|not|never|unless|instead of"
+
+  # Negation guard: returns 0 (true) if pattern fires AND no negator within
+  # 5 words preceding the trigger. Returns 1 otherwise.
+  _intent_fires() {
+    local prompt_lc="$1"
+    local pattern="$2"
+    # Extract each match position; for each, check the 5 words preceding it.
+    # awk: split on the pattern, examine the last 5 tokens of each non-final
+    # segment. If none of those tokens is a negator, the intent fires.
+    echo "$prompt_lc" | awk -v pat="$pattern" -v neg="$NEGATORS" '
+      BEGIN { fired = 0 }
+      {
+        n = split($0, parts, " ")
+        # Build a lowercase token stream we can scan with the negation window.
+        # Match patterns greedily — accept if ANY occurrence has a clean window.
+        full = $0
+        # For each segment ending right before pattern, look at last 5 tokens.
+        # Split on pattern using a sentinel.
+        split_re = pat
+        nseg = split(full, segs, split_re)
+        if (nseg < 2) exit 1
+        for (i = 1; i < nseg; i++) {
+          seg = segs[i]
+          ntok = split(seg, toks, " ")
+          start = ntok - 5
+          if (start < 1) start = 1
+          neg_found = 0
+          for (j = start; j <= ntok; j++) {
+            t = toks[j]
+            # strip trailing punctuation
+            sub(/[[:punct:]]+$/, "", t)
+            if (t ~ "^(" neg ")$") { neg_found = 1; break }
+          }
+          if (neg_found == 0) { fired = 1; break }
+        }
+        exit (fired == 1 ? 0 : 1)
+      }
+    '
+  }
+
+  # Lowercase prompt for case-insensitive matching.
+  PROMPT_LC=$(echo "${USER_PROMPT}" | tr '[:upper:]' '[:lower:]')
+
+  HAS_CLOSURE=0
+  HAS_SPLIT=0
+  HAS_TRACK_REF=0
+  TRACK_REF=""
+  if [ -n "$PROMPT_LC" ]; then
+    if _intent_fires "$PROMPT_LC" "$CLOSURE_WORDS"; then
+      HAS_CLOSURE=1
+    fi
+    if _intent_fires "$PROMPT_LC" "$SPLIT_WORDS"; then
+      HAS_SPLIT=1
+    fi
+    if echo "$USER_PROMPT" | grep -qE 'Track [0-9]+[A-Z](\.[0-9]+)?'; then
+      HAS_TRACK_REF=1
+      TRACK_REF=$(echo "$USER_PROMPT" | grep -oE 'Track [0-9]+[A-Z](\.[0-9]+)?' | head -1 | sed -E 's/^Track //')
+    fi
+  fi
+
+  # Check for ROADMAP.md presence.
+  ROADMAP=$(find_doc "ROADMAP.md")
+  if [ -z "$ROADMAP" ]; then
+    cat <<EOF
+{
+  "exclusive_state": "GREENFIELD",
+  "ops": [],
+  "needs_clarification": false,
+  "intents": {"closure": ${HAS_CLOSURE}, "split": ${HAS_SPLIT}, "track_ref": "${TRACK_REF}"}
+}
+EOF
+    exit 0
+  fi
+
+  # Run audit checks silently to gather state signals. Capture key outputs.
+  AUDIT_OUT=$(
+    check_vocab_lint
+    check_structure
+    check_staleness
+    check_version
+    check_taxonomy
+    check_doc_location
+    check_archive_candidates
+    check_dependencies
+    check_group_deps
+    check_task_list
+    check_structural_fitness
+    check_in_flight_groups
+    check_origin_stats
+    check_size_caps
+    check_collisions
+    check_parallelism_budget
+    check_parallelizable_future
+    check_style_lint
+    check_doc_inventory
+    check_scattered_todos
+    check_unprocessed
+    check_todo_format
+    detect_mode
+  )
+
+  # Extract signals from audit output. Use awk with explicit flag for section
+  # extraction (range patterns terminate immediately when start regex matches
+  # end regex, e.g., "## UNPROCESSED" matches both "^## " patterns).
+  _section_grab() {
+    local out="$1" section="$2" prefix="$3"
+    echo "$out" | awk -v sec="## $section" -v pre="^${prefix}:" '
+      $0 == sec { in_sec = 1; next }
+      in_sec && /^## [A-Z]/ { in_sec = 0 }
+      in_sec && $0 ~ pre { sub(pre, ""); sub(/^[[:space:]]+/, ""); print; exit }
+    '
+  }
+  STALENESS_FAIL=0
+  if [ "$(_section_grab "$AUDIT_OUT" "STALENESS" "STATUS")" = "fail" ]; then
+    STALENESS_FAIL=1
+  fi
+  UNPROCESSED_COUNT=$(_section_grab "$AUDIT_OUT" "UNPROCESSED" "ITEMS")
+  UNPROCESSED_COUNT=${UNPROCESSED_COUNT:-0}
+  IN_FLIGHT_GROUPS=$(_section_grab "$AUDIT_OUT" "IN_FLIGHT_GROUPS" "IN_FLIGHT")
+  ORIGIN_TOTAL=$(_section_grab "$AUDIT_OUT" "ORIGIN_STATS" "TOTAL_OPEN_ORIGIN")
+  ORIGIN_TOTAL=${ORIGIN_TOTAL:-0}
+
+  # Detect zero-open-tracks in any in-flight Group (closure trigger).
+  # Read PER_GROUP from PARALLELISM_BUDGET output: "1=1 2=0" → group 2 has zero.
+  PER_GROUP=$(_section_grab "$AUDIT_OUT" "PARALLELISM_BUDGET" "PER_GROUP")
+  HAS_ZERO_OPEN_GROUP=0
+  for entry in $PER_GROUP; do
+    count="${entry#*=}"
+    if [ "${count:-0}" = "0" ]; then
+      HAS_ZERO_OPEN_GROUP=1
+      break
+    fi
+  done
+
+  # Build ops list in fixed precedence order: REVISE, FRESHNESS, CLOSURE, TRIAGE.
+  OPS=()
+  if [ "$HAS_SPLIT" -eq 1 ]; then
+    OPS+=("REVISE")
+  fi
+  if [ "$STALENESS_FAIL" -eq 1 ]; then
+    OPS+=("FRESHNESS")
+  fi
+  if [ "$HAS_ZERO_OPEN_GROUP" -eq 1 ] || [ "$HAS_CLOSURE" -eq 1 ]; then
+    OPS+=("CLOSURE")
+  fi
+  if [ "${UNPROCESSED_COUNT:-0}" -gt 0 ]; then
+    OPS+=("TRIAGE")
+  fi
+
+  # Ambiguity: CLOSURE + TRIAGE both present, no prompt closure signal.
+  NEEDS_CLAR=false
+  HAS_CLOSURE_OP=0
+  HAS_TRIAGE_OP=0
+  for op in "${OPS[@]+"${OPS[@]}"}"; do
+    [ "$op" = "CLOSURE" ] && HAS_CLOSURE_OP=1
+    [ "$op" = "TRIAGE" ] && HAS_TRIAGE_OP=1
+  done
+  if [ "$HAS_CLOSURE_OP" -eq 1 ] && [ "$HAS_TRIAGE_OP" -eq 1 ] && [ "$HAS_CLOSURE" -eq 0 ]; then
+    NEEDS_CLAR=true
+  fi
+
+  # Emit JSON.
+  ops_json=""
+  for op in "${OPS[@]+"${OPS[@]}"}"; do
+    ops_json="${ops_json}${ops_json:+,}\"${op}\""
+  done
+
+  cat <<EOF
+{
+  "exclusive_state": null,
+  "ops": [${ops_json}],
+  "needs_clarification": ${NEEDS_CLAR},
+  "intents": {"closure": ${HAS_CLOSURE}, "split": ${HAS_SPLIT}, "track_ref": "${TRACK_REF}"},
+  "signals": {"unprocessed_count": ${UNPROCESSED_COUNT}, "in_flight_groups": "${IN_FLIGHT_GROUPS}", "origin_total": ${ORIGIN_TOTAL}}
+}
+EOF
+  exit 0
+fi
+
 # ─── Run all checks ──────────────────────────────────────────
 
 check_vocab_lint
@@ -2718,6 +3346,8 @@ check_in_flight_groups
 check_origin_stats
 check_size_caps
 check_collisions
+check_parallelism_budget
+check_parallelizable_future
 check_style_lint
 check_doc_inventory
 check_scattered_todos
