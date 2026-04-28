@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1] - 2026-04-28
+
+### Fixed
+- **`bin/roadmap-audit` `_size_split_suggestion` malformed sed corrupted cluster state.** Line 2018 used `sed "s|${key}|${existing_count}|${key}|${new_count}|"` — `|` was both the `s` delimiter and embedded in the data, so sed parsed everything after the first `${existing_count}` as garbage flags and errored with `unknown option to 's'`. Under `set -euo pipefail` the failed command-substitution silently returned empty, blanking `clusters` on every duplicate-key hit. Effect: oversized tracks with multiple path clusters never emitted the `Split suggestion for NX:` line because `big_count` could never reach 2. The neighboring `grep -oE` lookup at line 2015 had a related fragility — regex metachars in path keys like `(misc)` would also misbehave. Both replaced with a single-pass shell loop using literal-string equality. Surfaced dogfooding `/roadmap` on bolt where Track 12A's 18 tasks always tripped the duplicate path. Regression test: `size: split suggestion fires across 2 path clusters`.
+
+### Changed (FRESHNESS scope expansion)
+- **`git_inferred_freshness` now relaxes the 2-commit floor to 1 when the commit message references the enclosing `Track NX`** (case-insensitive, dot in `7A.1`-style IDs escaped). The original 2-commit threshold filtered out the most common ship pattern: a whole Track landing in a single bundled PR shows as 1 commit on each touched file. Surfaced dogfooding `/roadmap` on bolt: Track 7A's bridge-hygiene sweep landed in commit `ceb1593` ("Track 7A bridge-hygiene sweep: dead code, dedupe, document focusBody") on `compose-editor.js`, but the freshness scan reported nothing because there was only one commit since intro. The Track-ID match is high-precision (commit messages that name a Track are almost always shipping that Track), so the false-positive guard isn't needed. Unannotated commits still need 2+ to fire. Updates `skills/roadmap.md` Op: FRESHNESS to enumerate both triggers.
+
+### Added (in-place Track completion marker)
+- **`### Track NX: Name ✓ Complete`** is now a recognized Track-completion path, symmetric with the long-standing `## Group N: Name ✓ Complete` Group convention. Parser populates a new `_COMPLETE_TRACKS` state; PARALLELISM_BUDGET (and PARALLELIZABLE_FUTURE), SIZE caps, COLLISIONS, and `max_tracks_per_group` all subtract completed Tracks from their counts and pairings. The collapse-to-italic FRESHNESS step is no longer the only completion path — it's now the *later* lifecycle stage (when the whole Group winds down). Surfaced dogfooding `/roadmap` on bolt: PARALLELISM_BUDGET reported 9 in-flight Tracks against a cap of 4, then suggested "collapse Tracks 12A/12B/12C/12D bodies" as the fix. That conflated a doc-hygiene op (FRESHNESS collapse) with a real concurrency-reduction op — completed Tracks aren't load, and forcing a doc edit before the budget can pass is the wrong remediation. Now: mark them ✓ Complete in place, audit reflects actual concurrency, and the LLM stops generating cosmetic-edit suggestions as budget fixes. PARALLELISM_BUDGET also emits a new `COMPLETE_TRACKS:` line so the exclusion is visible. The `bin/roadmap-audit:2751` advisory line gains a fourth remediation option ("marking shipped Tracks `✓ Complete` (in-place) so they stop counting"). Skill prose at `skills/roadmap.md:205` updated to enumerate both completion paths with guidance on when to use each.
+
+### Tests
+- 216 passing (was 209 → 210 with the SIZE regression test → 211 with two new `scan-state: 1 commit + Track-ID match` cases → 216 with five new `track ✓ complete` cases: max_tracks_per_group exclusion, IN_FLIGHT_TRACKS subtraction, COMPLETE_TRACKS line emission, SIZE-cap silent skip, COLLISIONS pairing skip).
+
 ## [0.17.0] - 2026-04-28
 
 ### Changed (signal-vs-verdict redesign)

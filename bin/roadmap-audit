@@ -1391,6 +1391,7 @@ _TRACK_FILES_COUNT=""    # kv: "1A=2 1B=3" (count of files in touches)
 _TRACK_LEGACY=""         # kv: "1A=0 1B=1" (1 = no _touches:_ line)
 _GROUP_LIST=""           # space-sep group numbers: "1 2"
 _COMPLETE_GROUPS=""      # space-sep group numbers marked '✓ Complete' in heading
+_COMPLETE_TRACKS=""      # space-sep track IDs marked '✓ Complete' in heading
 _GROUP_TRACKS=""         # kv: "1=1A,1B 2=2A"
 _GROUP_NAMES=""          # newline-sep "N|Group heading name" (names may contain spaces, can't use kv)
 _GROUP_DEPS=""           # kv: "1=2,3 4=2" (dep group numbers only; "-" = explicit none)
@@ -1557,9 +1558,20 @@ _parse_roadmap() {
       continue
     fi
 
-    # Track heading: ### Track NA: Name
+    # Track heading: ### Track NA: Name [optional ' ✓ Complete' suffix]
+    # In-place ✓ Complete is the symmetric Track-level analogue of the Group
+    # convention at line ~1462 — lets a Track be marked done without forcing
+    # the immediate FRESHNESS collapse-to-italic step. Downstream checks
+    # (PARALLELISM_BUDGET, SIZE, COLLISIONS) skip completed Tracks so the
+    # audit reflects actual concurrency load, not lifecycle paperwork.
     if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
       track_id=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
+      # Detect ✓ Complete suffix in the track name (everything after the colon).
+      if echo "$line" | grep -qE '[[:space:]]✓[[:space:]]Complete[[:space:]]*$'; then
+        if ! echo " $_COMPLETE_TRACKS " | grep -q " $track_id "; then
+          _COMPLETE_TRACKS="${_COMPLETE_TRACKS}${_COMPLETE_TRACKS:+ }${track_id}"
+        fi
+      fi
       if echo " $_TRACK_LIST " | grep -q " $track_id "; then
         # Duplicate track ID — earlier state gets stomped by kv_set. Warn.
         _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}${track_id}: duplicate track ID (another track earlier in ROADMAP.md also uses '${track_id}') — rename one; track IDs must be globally unique\n"
@@ -2010,15 +2022,26 @@ _size_split_suggestion() {
       else
         key="$path"
       fi
-      # Update cluster count.
-      local existing_count
-      existing_count=$(echo " $clusters " | grep -oE " ${key}\|[0-9]+ " | grep -oE '[0-9]+$' || true)
-      if [ -n "$existing_count" ]; then
-        local new_count=$((existing_count + 1))
-        clusters=$(echo "$clusters" | sed "s|${key}|${existing_count}|${key}|${new_count}|")
-      else
-        clusters="${clusters}${clusters:+ }${key}|1"
+      # Update cluster count. Use literal-string equality (not regex) so
+      # path keys with metachars like "(misc)" or "a.b" work. Single pass:
+      # rebuild the list with the matching entry incremented; append a new
+      # "key|1" entry if no match was found.
+      local found=0
+      local new_clusters=""
+      local entry
+      for entry in $clusters; do
+        if [ "${entry%|*}" = "$key" ]; then
+          local cur=${entry##*|}
+          new_clusters="${new_clusters}${new_clusters:+ }${key}|$((cur + 1))"
+          found=1
+        else
+          new_clusters="${new_clusters}${new_clusters:+ }${entry}"
+        fi
+      done
+      if [ "$found" -eq 0 ]; then
+        new_clusters="${new_clusters}${new_clusters:+ }${key}|1"
       fi
+      clusters="$new_clusters"
     fi
   done < "$roadmap"
 
@@ -2071,6 +2094,11 @@ check_size_caps() {
 
   local t
   for t in $_TRACK_LIST; do
+    # Completed Tracks shipped what they shipped — caps are advice for
+    # in-flight work. Skip silently.
+    if echo " $_COMPLETE_TRACKS " | grep -q " $t "; then
+      continue
+    fi
     local is_legacy
     is_legacy=$(_kv_get "$_TRACK_LEGACY" "$t")
     if [ "${is_legacy:-1}" = "1" ]; then
@@ -2190,6 +2218,10 @@ check_collisions() {
     IFS=','
     local -a tracks=()
     for tid in $tracks_csv; do
+      # Skip completed Tracks — they aren't running, so they can't collide.
+      if echo " $_COMPLETE_TRACKS " | grep -q " $tid "; then
+        continue
+      fi
       # Only include modern tracks (legacy excluded from pairing).
       local is_legacy
       is_legacy=$(_kv_get "$_TRACK_LEGACY" "$tid")
@@ -2718,6 +2750,7 @@ check_parallelism_budget() {
 
   local total=0
   local per_group=""
+  local excluded_complete=0
   local g
   for g in $in_flight_groups; do
     local tracks_csv count
@@ -2725,7 +2758,21 @@ check_parallelism_budget() {
     if [ -z "$tracks_csv" ]; then
       count=0
     else
-      count=$(echo "$tracks_csv" | tr ',' '\n' | grep -c '.' || true)
+      # Count only Tracks that are NOT marked ✓ Complete in-place. Completed
+      # Tracks aren't load — counting them would force a FRESHNESS collapse
+      # before the budget could pass, which is doc paperwork, not real
+      # concurrency reduction.
+      count=0
+      local IFS_ORIG="$IFS"
+      IFS=','
+      for tid in $tracks_csv; do
+        if echo " $_COMPLETE_TRACKS " | grep -q " $tid "; then
+          excluded_complete=$((excluded_complete + 1))
+        else
+          count=$((count + 1))
+        fi
+      done
+      IFS="$IFS_ORIG"
     fi
     total=$((total + count))
     per_group="${per_group}${per_group:+ }${g}=${count}"
@@ -2734,10 +2781,13 @@ check_parallelism_budget() {
   echo "IN_FLIGHT_TRACKS: $total"
   echo "CAP: $cap"
   echo "PER_GROUP: $per_group"
+  if [ -n "$_COMPLETE_TRACKS" ]; then
+    echo "COMPLETE_TRACKS: $_COMPLETE_TRACKS"
+  fi
   if [ "$total" -gt "$cap" ]; then
     echo "STATUS: fail"
     echo "FINDINGS:"
-    echo "- ${total} in-flight tracks exceeds parallelism cap of ${cap}. Consider deferring tracks to a future Group, splitting work across more sequential Groups, or raising the cap via \`<!-- roadmap:parallelism_cap=N -->\` in CLAUDE.md."
+    echo "- ${total} in-flight tracks exceeds parallelism cap of ${cap}. Consider deferring tracks to a future Group, splitting work across more sequential Groups, marking shipped Tracks \`✓ Complete\` (in-place) so they stop counting, or raising the cap via \`<!-- roadmap:parallelism_cap=N -->\` in CLAUDE.md."
   else
     echo "STATUS: pass"
     echo "FINDINGS:"
@@ -2788,9 +2838,15 @@ check_parallelizable_future() {
     local tracks_csv
     tracks_csv=$(_kv_get "$_GROUP_TRACKS" "$g")
     if [ -n "$tracks_csv" ]; then
-      local n
-      n=$(echo "$tracks_csv" | tr ',' '\n' | grep -c '.' || true)
-      in_flight_count=$((in_flight_count + n))
+      # Match PARALLELISM_BUDGET: completed Tracks aren't load.
+      local IFS_ORIG="$IFS"
+      IFS=','
+      for tid in $tracks_csv; do
+        if ! echo " $_COMPLETE_TRACKS " | grep -q " $tid "; then
+          in_flight_count=$((in_flight_count + 1))
+        fi
+      done
+      IFS="$IFS_ORIG"
     fi
   done
 
@@ -2804,6 +2860,8 @@ check_parallelizable_future() {
   fi
 
   # Aggregate touches across all in-flight tracks for overlap detection.
+  # Completed Tracks excluded — they aren't running, so their files don't
+  # block a Future track from being promoted.
   local in_flight_touches=""
   for g in $in_flight_groups; do
     local tracks_csv
@@ -2812,6 +2870,9 @@ check_parallelizable_future() {
     local IFS_ORIG="$IFS"
     IFS=','
     for tid in $tracks_csv; do
+      if echo " $_COMPLETE_TRACKS " | grep -q " $tid "; then
+        continue
+      fi
       local t_touches
       t_touches=$(_kv_get "$_TRACK_TOUCHES" "$tid")
       [ -n "$t_touches" ] && in_flight_touches="${in_flight_touches}${in_flight_touches:+,}${t_touches}"
@@ -3307,8 +3368,13 @@ EOF
   # Catches the common "shipped without updating ROADMAP.md" case that the
   # explicit STALENESS check misses. STALENESS only fires on items with a
   # version-tag annotation; this scans every active task bullet against git
-  # history. If 2+ commits landed on a referenced file since the task was
-  # introduced to ROADMAP.md, treat it as a freshness candidate.
+  # history. Two-tier trigger:
+  #   - 2+ commits on a referenced file since the task was introduced to
+  #     ROADMAP.md → fire (conservative, filters unrelated refactors).
+  #   - 1 commit whose message references the enclosing "Track NX" → fire
+  #     (catches single-bundled-PR Tracks, which the 2-commit floor would
+  #     otherwise miss; the Track-ID match is high-precision so the
+  #     false-positive guard isn't needed).
   #
   # Cost is bounded: O(active_tasks × files_per_task) git log calls. Each is
   # fast (<50ms). Skipped entirely when ROADMAP.md is unreadable or git is
@@ -3321,12 +3387,20 @@ EOF
       # Use the absolute ROADMAP path directly with `git -C`. Git accepts
       # absolute paths within the working tree, so no relative-path dance.
       _gid_in_active=1
+      _gid_track=""
       while IFS= read -r line; do
         case "$line" in
           "## Future"*|"## Unprocessed"*|"## Execution Map"*) _gid_in_active=0 ;;
           "## Group"*) _gid_in_active=1 ;;
         esac
         [ "$_gid_in_active" -eq 0 ] && continue
+
+        # Capture the enclosing Track ID so the 1-commit relaxation below
+        # can attribute work back to "Track NX" mentions in commit messages.
+        if echo "$line" | grep -qE '^### Track [0-9]+[A-Z](\.[0-9]+)?:'; then
+          _gid_track=$(echo "$line" | sed -E 's/^### Track ([0-9]+[A-Z](\.[0-9]+)?):.*/\1/')
+          continue
+        fi
 
         case "$line" in
           "- **"*)
@@ -3353,10 +3427,20 @@ EOF
 
             for _gid_f in $_gid_files; do
               [ -z "$_gid_f" ] && continue
-              _gid_n=$(git -C "$_gid_repo_root" log --oneline --after="$_gid_intro" -- "$_gid_f" 2>/dev/null | wc -l | tr -d ' ')
+              _gid_log=$(git -C "$_gid_repo_root" log --format="%s" --after="$_gid_intro" -- "$_gid_f" 2>/dev/null || true)
+              _gid_n=$(printf '%s\n' "$_gid_log" | { grep -c . || true; })
               if [ "${_gid_n:-0}" -ge 2 ]; then
                 GIT_INFERRED_FRESHNESS=$((GIT_INFERRED_FRESHNESS + 1))
                 break
+              fi
+              # 1-commit Track-ID relaxation: dot in track ID (e.g. 7A.1) is
+              # escaped so the regex matches literally.
+              if [ "${_gid_n:-0}" -ge 1 ] && [ -n "$_gid_track" ]; then
+                _gid_track_esc=$(printf '%s' "$_gid_track" | sed 's/\./\\./g')
+                if printf '%s\n' "$_gid_log" | grep -iqE "track ${_gid_track_esc}([^a-z0-9]|$)"; then
+                  GIT_INFERRED_FRESHNESS=$((GIT_INFERRED_FRESHNESS + 1))
+                  break
+                fi
               fi
             done
             ;;

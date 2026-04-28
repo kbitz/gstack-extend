@@ -2,6 +2,20 @@
 
 ## Unprocessed
 
+### [manual] FRESHNESS skipped because prose conflated `STALENESS: pass` with "no recency check needed"
+Dogfooding `/roadmap` on bolt: I read v0.16.2's `STALENESS: pass` and prematurely concluded "skip FRESHNESS." That was the bigger error than the 2-commit threshold — even with the threshold raised, FRESHNESS would still surface candidates if the op actually ran. `STALENESS` only fires on items with explicit `(shipped vN.N.N)`-style version-tag annotations; it cannot pass-or-fail the broader "is this still active?" question. The skill prose at `skills/roadmap.md:105` lists `staleness_fail OR git_inferred_freshness >= 1` as the FRESHNESS trigger — correct on paper, but the names are close enough that prose readers (including me) confuse them.
+- **Why:** the gap is less helper logic, more naming + reader-orientation. STALENESS reads like a superset of FRESHNESS. A model reading "STALENESS: pass" naturally infers the freshness question is settled.
+- **Proposed fix:** two complementary moves. (1) Rename `STALENESS` audit check to `VERSION_TAG_STALENESS` (or similar) so the scope is explicit in the section name itself. (2) Add a one-line clarifier in `skills/roadmap.md` Interpreting Audit Findings: "`STALENESS: pass` only means no version-tag-annotated items are stale. It does not mean the roadmap is fresh — that's `FRESHNESS`'s job."
+- **Effort:** S (human: ~30 min / CC: ~10 min) — mechanical rename in `bin/roadmap-audit` + tests + skill prose blurb.
+- **Depends on:** nothing.
+
+### [manual] FRESHNESS scan never looks at TODOS.md — shipped items rot indefinitely
+Dogfooding `/roadmap` on bolt: the JMAP destroy-notFound TODO shipped in `v0.11.1.0` (commit `c5bd72a`, PR #168) but stayed in TODOS.md unmarked because (a) the freshness scan only walks ROADMAP.md, (b) the item's title doesn't include the shipped version, and (c) nobody added a `(shipped v0.11.1.0)` annotation to the TODO when the work landed. TRIAGE's auto-suggest-kill checks STALENESS findings + missing-file references; neither fires on a TODO whose referenced files still exist and have no version tag.
+- **Why:** TODOS.md is the inbox for everything that's not yet promoted to a Track — long-tail items live there for months. Nothing prevents them from rotting after they ship.
+- **Proposed fix:** extend the freshness scan to walk TODOS.md items in `## Unprocessed` using the same heuristic (extract referenced file paths from `Proposed fix` / prose, run the per-file commit-since-introduction lookup). Apply the same Track-ID-or-title-fuzzy-match rule from the bundled-PR fix. Surface candidates in the same FRESHNESS AskUserQuestion flow with options "Mark shipped (remove)" / "Still relevant".
+- **Effort:** M (human: ~3 hrs / CC: ~45 min) — new `_inferred_freshness_for_todo` function in `bin/roadmap-audit`, fixture tests, prose update in `skills/roadmap.md` Op: FRESHNESS to mention TODOS.md sweeping.
+- **Depends on:** Track-ID-match relaxation (✓ shipped in v0.17.1) so single-bundled-PR TODOs also fire, not just 2+-commit churn.
+
 ### [review] Harden setup against attacker-controlled symlink components at the install target
 `setup` install/uninstall paths do not check whether `$SKILLS_DIR/{skill}` is itself a symlink before `ln -snf` / `rm -f` / `rmdir` touch `$SKILLS_DIR/{skill}/SKILL.md`. If a user (or attacker with write access to their home dir) has created a symlink at that path pointing elsewhere, install writes into / uninstall removes from the pointed-to directory, outside the intended skills tree. Raised by codex adversarial review of Pre-flight 1 (branch `kbitz/eng-review-g1`, 2026-04-24).
 - **Why:** defense-in-depth against symlink-component trust boundary violations. Unusual in practice (users don't normally create symlinks at those exact paths), but the fix is small and closes a real-if-narrow attack surface. Becomes more relevant once `--skills-dir` is used in shared / semi-trusted directories.

@@ -1652,6 +1652,27 @@ else
   fail "size: tasks cap blocks" "$(echo "$OUTPUT" | grep -A3 '^## SIZE')"
 fi
 
+# Split suggestion fires on oversized track with multiple path clusters.
+# Regression: v0.17.0 had a malformed sed in _size_split_suggestion that
+# blanked the cluster state on every duplicate-key hit, so big_count
+# never reached 2 and the suggestion line never emitted.
+DIR=$(make_modern_fixture "size-split-suggestion" '### Track 1A: Big
+_6 tasks . low risk . [src/foo, src/bar]_
+_touches: src/foo/a.py, src/foo/b.py, src/foo/c.py, src/bar/x.py, src/bar/y.py, src/bar/z.py_
+
+- **T1** -- edit `src/foo/a.py`. (S)
+- **T2** -- edit `src/foo/b.py`. (S)
+- **T3** -- edit `src/foo/c.py`. (S)
+- **T4** -- edit `src/bar/x.py`. (S)
+- **T5** -- edit `src/bar/y.py`. (S)
+- **T6** -- edit `src/bar/z.py`. (S)')
+OUTPUT=$(run_audit "$DIR")
+if echo "$OUTPUT" | grep -q "Split suggestion for 1A: tasks cluster by file path into 2 groups"; then
+  pass "size: split suggestion fires across 2 path clusters"
+else
+  fail "size: split suggestion fires across 2 path clusters" "$(echo "$OUTPUT" | grep -A6 '^## SIZE')"
+fi
+
 # Fails on LOC (2 XL = 1000)
 DIR=$(make_modern_fixture "size-loc-fail" '### Track 1A: Heavy
 _2 tasks . low risk . [a]_
@@ -2280,6 +2301,125 @@ if echo "$OUTPUT" | grep -q "9 modern tracks exceeds max_tracks_per_group=8"; th
   pass "group cap: 9 tracks flagged"
 else
   fail "group cap: 9 tracks flagged"
+fi
+
+echo ""
+echo "=== track ✓ complete (in-place) ==="
+
+# In-place ✓ Complete excludes the Track from max_tracks_per_group cap
+# (symmetric with the Group ✓ Complete convention). Same 9-track fixture
+# as above, but 3 marked complete → only 6 modern in-flight → passes.
+DIR=$(create_fixture "track-complete-group-cap")
+mkdir -p "$DIR/docs"
+{
+  echo "# Roadmap"
+  echo ""
+  echo "## Group 1: G"
+  echo ""
+  i=0
+  for letter in A B C D E F G H I; do
+    if [ "$i" -lt 3 ]; then
+      echo "### Track 1${letter}: T${letter} ✓ Complete"
+    else
+      echo "### Track 1${letter}: T${letter}"
+    fi
+    echo "_1 task . low risk . [f${letter}]_"
+    echo "_touches: f${letter}_"
+    echo ""
+    echo "- **T1** -- . (S)"
+    echo ""
+    i=$((i + 1))
+  done
+  echo "## Unprocessed"
+} > "$DIR/docs/ROADMAP.md"
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if ! echo "$OUTPUT" | grep -q "modern tracks exceeds max_tracks_per_group"; then
+  pass "track complete: 3 of 9 marked ✓ Complete keeps Group under cap"
+else
+  fail "track complete: ✓ Complete tracks should not count toward Group cap" "$(echo "$OUTPUT" | grep -A3 '^## COLLISIONS')"
+fi
+
+# PARALLELISM_BUDGET subtracts in-place ✓ Complete Tracks. Cap=4 (default);
+# 6 Tracks total, 3 ✓ Complete → 3 in-flight → passes.
+if echo "$OUTPUT" | grep -qE '^IN_FLIGHT_TRACKS: 6$'; then
+  pass "track complete: 3 of 9 ✓ Complete → IN_FLIGHT_TRACKS=6 (subtracted)"
+else
+  fail "track complete: IN_FLIGHT_TRACKS should be 6 after subtracting ✓ Complete" "$(echo "$OUTPUT" | grep -A4 '^## PARALLELISM_BUDGET')"
+fi
+
+# COMPLETE_TRACKS line is emitted when any Track is marked complete.
+if echo "$OUTPUT" | grep -qE '^COMPLETE_TRACKS: 1A 1B 1C$'; then
+  pass "track complete: PARALLELISM_BUDGET emits COMPLETE_TRACKS line"
+else
+  fail "track complete: COMPLETE_TRACKS line missing or wrong" "$(echo "$OUTPUT" | grep -A5 '^## PARALLELISM_BUDGET')"
+fi
+
+# SIZE caps don't apply to ✓ Complete Tracks — the work shipped, caps are
+# advice for in-flight. 6-task complete Track + 1-task active Track →
+# active Track passes, complete Track skipped silently, overall SIZE pass.
+DIR=$(make_modern_fixture "track-complete-size" '### Track 1A: TooManyButDone ✓ Complete
+_6 tasks . low risk . [a]_
+_touches: a_
+
+- **T1** -- . (S)
+- **T2** -- . (S)
+- **T3** -- . (S)
+- **T4** -- . (S)
+- **T5** -- . (S)
+- **T6** -- . (S)
+
+### Track 1B: Active
+_1 task . low risk . [b]_
+_touches: b_
+
+- **T1** -- . (S)')
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "SIZE" | grep -q "pass"; then
+  pass "track complete: ✓ Complete excludes Track from SIZE caps"
+else
+  fail "track complete: ✓ Complete should exclude from SIZE caps" "$(echo "$OUTPUT" | grep -A4 '^## SIZE')"
+fi
+
+# COLLISIONS: two Tracks with overlapping touches normally fail; if one is
+# ✓ Complete, the pair shouldn't collide (the completed Track isn't running).
+DIR=$(create_fixture "track-complete-collisions")
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap
+
+## Group 1: G
+
+### Track 1A: Active
+_1 task . low risk . [shared.py]_
+_touches: shared.py_
+
+- **T1** -- . (S)
+
+### Track 1B: Done ✓ Complete
+_1 task . low risk . [shared.py]_
+_touches: shared.py_
+
+- **T1** -- . (S)
+
+## Unprocessed
+EOF
+echo "# TODOs" > "$DIR/docs/TODOS.md"
+cat > "$DIR/docs/PROGRESS.md" << 'PROGEOF'
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.1.0 | 2026-01-01 | Init |
+PROGEOF
+OUTPUT=$(run_audit "$DIR")
+if section_status "$OUTPUT" "COLLISIONS" | grep -q "pass"; then
+  pass "track complete: ✓ Complete excludes Track from COLLISIONS pairing"
+else
+  fail "track complete: ✓ Complete should not collide with active Track" "$(echo "$OUTPUT" | grep -A6 '^## COLLISIONS')"
 fi
 
 echo ""
@@ -4233,6 +4373,84 @@ if echo "$OUT" | grep -qE '"git_inferred_freshness": 0'; then
   pass "scan-state: git_inferred_freshness=0 when no follow-up commits"
 else
   fail "scan-state: git_inferred_freshness should be 0" "$OUT"
+fi
+
+# Track-ID relaxation: 1 commit since intro fires inferred-freshness
+# IF the commit message references "Track NX". Catches single-bundled-PR
+# Tracks that the 2-commit floor would otherwise miss. The referenced
+# file is created in the follow-up commit (not the initial roadmap
+# commit) so `--after=<intro>` boundary semantics can't accidentally
+# count the initial commit toward the 2-commit floor.
+DIR=$(create_fixture "scan-track-id-1commit")
+git -C "$DIR" init -q
+git -C "$DIR" config user.email "test@test.test"
+git -C "$DIR" config user.name "test"
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 7: Editor
+### Track 7A: Cmd-V paste handler
+_1 task . low risk . [compose-editor.js]_
+_touches: compose-editor.js_
+- **Cmd-V paste handler** -- intercept paste. _[compose-editor.js], ~50 lines._ (M)
+EOF
+echo "## Unprocessed" > "$DIR/docs/TODOS.md"
+echo "0.1.0" > "$DIR/VERSION"
+cat > "$DIR/CHANGELOG.md" << 'EOF'
+# Changelog
+
+## v0.1.0 - 2026-04-28
+- initial
+EOF
+git -C "$DIR" add docs/ROADMAP.md docs/TODOS.md VERSION CHANGELOG.md
+git -C "$DIR" commit -q -m "initial roadmap with Cmd-V paste handler task"
+# Sleep ensures the follow-up commit has a strictly later second-resolution
+# timestamp than the intro, so `--after=<intro>` returns exactly 1 commit.
+sleep 1
+echo "first" > "$DIR/compose-editor.js"
+git -C "$DIR" add compose-editor.js
+git -C "$DIR" commit -q -m "Track 7A bridge-hygiene sweep: dead code, dedupe"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -qE '"git_inferred_freshness": [1-9]'; then
+  pass "scan-state: 1 commit + Track-ID match fires inferred-freshness"
+else
+  fail "scan-state: 1 commit + Track-ID match should fire" "$OUT"
+fi
+
+# Negative control: 1 commit on the file but message doesn't reference
+# the Track. The 2-commit floor still applies, so signal stays at 0.
+DIR=$(create_fixture "scan-track-id-1commit-no-ref")
+git -C "$DIR" init -q
+git -C "$DIR" config user.email "test@test.test"
+git -C "$DIR" config user.name "test"
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 7: Editor
+### Track 7A: Cmd-V paste handler
+_1 task . low risk . [compose-editor.js]_
+_touches: compose-editor.js_
+- **Cmd-V paste handler** -- intercept paste. _[compose-editor.js], ~50 lines._ (M)
+EOF
+echo "## Unprocessed" > "$DIR/docs/TODOS.md"
+echo "0.1.0" > "$DIR/VERSION"
+cat > "$DIR/CHANGELOG.md" << 'EOF'
+# Changelog
+
+## v0.1.0 - 2026-04-28
+- initial
+EOF
+git -C "$DIR" add docs/ROADMAP.md docs/TODOS.md VERSION CHANGELOG.md
+git -C "$DIR" commit -q -m "initial roadmap with Cmd-V paste handler task"
+sleep 1
+echo "first" > "$DIR/compose-editor.js"
+git -C "$DIR" add compose-editor.js
+git -C "$DIR" commit -q -m "unrelated refactor on compose-editor"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -qE '"git_inferred_freshness": 0'; then
+  pass "scan-state: 1 commit without Track-ID stays below 2-commit floor"
+else
+  fail "scan-state: 1 commit without Track-ID should not fire" "$OUT"
 fi
 
 # ─── roadmap-place (ranked candidates) ───────────────────────
