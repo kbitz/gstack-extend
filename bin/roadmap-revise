@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+# roadmap-revise — mechanics-only revision operations on ROADMAP.md.
+#
+# Skill prose makes the semantic decisions (which child IDs, which Future
+# track to extend with a deferred task, etc.) and calls this helper for the
+# deterministic file-surgery. Each subcommand returns 0 on success or
+# non-zero with a stderr error message.
+#
+# Subcommands:
+#
+#   split-track --from <track-id> --child '<id>|<name>|<task-indices-csv>' [--child ...]
+#     Split a track into N children. Each child gets a subset of the parent's
+#     tasks (1-indexed). The parent's heading line is annotated with a
+#     "(split into IDs — retired)" suffix; children inherit the parent's
+#     metadata and _touches:_ lines (the user refines per-child afterward).
+#
+#   defer-task --track <track-id> --index <N> --target-future-bullet <text>
+#     Detach task N from the track and append a new bullet to ## Future.
+#     Skill prose passes the bullet text it wants written.
+#
+# Usage examples:
+#   bin/roadmap-revise split-track --from 2A --child '2A.1|Auth flow|1,2' --child '2A.2|Rendering|3'
+#   bin/roadmap-revise defer-task --track 2A --index 2 --target-future-bullet '**Email export** — _Deferred because: low priority._'
+
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "usage: roadmap-revise <split-track|defer-task> [args...]" >&2
+  exit 1
+fi
+
+SUBCMD="$1"
+shift
+
+# Locate ROADMAP.md (root or docs/).
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -f "$REPO_ROOT/ROADMAP.md" ]; then
+  ROADMAP="$REPO_ROOT/ROADMAP.md"
+elif [ -f "$REPO_ROOT/docs/ROADMAP.md" ]; then
+  ROADMAP="$REPO_ROOT/docs/ROADMAP.md"
+else
+  echo "error: ROADMAP.md not found in repo root or docs/" >&2
+  exit 1
+fi
+
+# Helper: extract Track ID from a heading line via POSIX awk match() + substr.
+# Echoes the captured ID (e.g., "2A" or "2A.1") or empty string.
+_extract_track_id() {
+  echo "$1" | awk '
+    match($0, /^### Track [0-9]+[A-Z](\.[0-9]+)?:/) {
+      hdr = substr($0, RSTART, RLENGTH)
+      sub(/^### Track /, "", hdr)
+      sub(/:$/, "", hdr)
+      print hdr
+    }
+  '
+}
+
+case "$SUBCMD" in
+  split-track)
+    FROM=""
+    CHILDREN=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --from) FROM="${2:-}"; shift 2 ;;
+        --child) CHILDREN+=("${2:-}"); shift 2 ;;
+        *) echo "unknown arg: $1" >&2; exit 1 ;;
+      esac
+    done
+    if [ -z "$FROM" ] || [ "${#CHILDREN[@]}" -lt 1 ]; then
+      echo "split-track requires --from <id> and at least one --child '<id>|<name>|<indices>'" >&2
+      exit 1
+    fi
+
+    # Build child list for retirement annotation.
+    child_ids=""
+    for spec in "${CHILDREN[@]}"; do
+      cid=$(echo "$spec" | cut -d'|' -f1)
+      child_ids="${child_ids}${child_ids:+, }${cid}"
+    done
+
+    # Write children spec to a temp file (one spec per line) so awk reads
+    # via getline rather than -v (which mangles newlines).
+    children_file=$(mktemp)
+    for spec in "${CHILDREN[@]}"; do
+      echo "$spec" >> "$children_file"
+    done
+
+    tmpfile=$(mktemp)
+    awk -v from="$FROM" \
+        -v child_ids="$child_ids" \
+        -v children_file="$children_file" \
+        '
+      function emit_children(    n_children, i, line, p_n, cid, cname, cindices, t, ntoks, idxs, idx) {
+        # Read all child specs from file.
+        n_children = 0
+        while ((getline line < children_file) > 0) {
+          n_children++
+          kids[n_children] = line
+        }
+        close(children_file)
+        for (i = 1; i <= n_children; i++) {
+          p_n = split(kids[i], p, "|")
+          cid = p[1]; cname = p[2]; cindices = p[3]
+          print "### Track " cid ": " cname
+          if (parent_meta != "") print parent_meta
+          if (parent_touches != "") print parent_touches
+          if (parent_depends != "") print parent_depends
+          print ""
+          ntoks = split(cindices, idxs, ",")
+          for (t = 1; t <= ntoks; t++) {
+            idx = idxs[t] + 0
+            if (idx >= 1 && idx <= ntasks) {
+              print tasks[idx]
+            }
+          }
+          print ""
+        }
+      }
+      BEGIN {
+        in_parent = 0
+        parent_meta = ""
+        parent_touches = ""
+        parent_depends = ""
+        ntasks = 0
+        emitted = 0
+      }
+      /^### Track / {
+        if (in_parent == 1) {
+          emit_children()
+          in_parent = 0
+          emitted = 1
+        }
+        # Extract this trackʼs ID via POSIX match.
+        if (match($0, /^### Track [0-9]+[A-Z](\.[0-9]+)?:/)) {
+          hdr = substr($0, RSTART, RLENGTH)
+          sub(/^### Track /, "", hdr); sub(/:$/, "", hdr)
+          if (hdr == from) {
+            print $0 " (split into " child_ids " — retired)"
+            in_parent = 1
+            parent_meta = ""; parent_touches = ""; parent_depends = ""
+            ntasks = 0
+            next
+          }
+        }
+        print
+        next
+      }
+      /^## / {
+        if (in_parent == 1) {
+          emit_children()
+          in_parent = 0
+          emitted = 1
+        }
+        print
+        next
+      }
+      in_parent == 1 {
+        if (parent_meta == "" && $0 ~ /^_[0-9]+ task/) { parent_meta = $0; next }
+        if (parent_touches == "" && $0 ~ /^_touches:/) { parent_touches = $0; next }
+        if (parent_depends == "" && tolower($0) ~ /^_?depends on:/) { parent_depends = $0; next }
+        if ($0 ~ /^- \*\*/) { ntasks++; tasks[ntasks] = $0; next }
+        # Drop blank lines and prose inside parent block.
+        next
+      }
+      { print }
+      END {
+        if (in_parent == 1 && emitted == 0) {
+          emit_children()
+        }
+      }
+    ' "$ROADMAP" > "$tmpfile"
+
+    rm -f "$children_file"
+
+    if ! diff -q "$ROADMAP" "$tmpfile" > /dev/null; then
+      mv "$tmpfile" "$ROADMAP"
+      echo "split-track: $FROM → $child_ids"
+      exit 0
+    else
+      rm -f "$tmpfile"
+      echo "error: parent track '$FROM' not found in $ROADMAP" >&2
+      exit 1
+    fi
+    ;;
+
+  defer-task)
+    TRACK=""
+    INDEX=""
+    BULLET=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --track) TRACK="${2:-}"; shift 2 ;;
+        --index) INDEX="${2:-}"; shift 2 ;;
+        --target-future-bullet) BULLET="${2:-}"; shift 2 ;;
+        *) echo "unknown arg: $1" >&2; exit 1 ;;
+      esac
+    done
+    if [ -z "$TRACK" ] || [ -z "$INDEX" ] || [ -z "$BULLET" ]; then
+      echo "defer-task requires --track <id>, --index <N>, --target-future-bullet '<text>'" >&2
+      exit 1
+    fi
+
+    tmpfile=$(mktemp)
+    awk -v track="$TRACK" -v target_idx="$INDEX" -v bullet="$BULLET" '
+      BEGIN { in_track = 0; in_future = 0; task_count = 0; removed = 0; appended = 0 }
+      /^### Track / {
+        if (match($0, /^### Track [0-9]+[A-Z](\.[0-9]+)?:/)) {
+          hdr = substr($0, RSTART, RLENGTH)
+          sub(/^### Track /, "", hdr); sub(/:$/, "", hdr)
+          in_track = (hdr == track) ? 1 : 0
+        } else {
+          in_track = 0
+        }
+        in_future = 0
+        task_count = 0
+        print
+        next
+      }
+      /^## Future/ { in_track = 0; in_future = 1; print; next }
+      /^## / {
+        if (in_future == 1 && appended == 0) {
+          print "- " bullet
+          print ""
+          appended = 1
+        }
+        in_track = 0; in_future = 0
+        print
+        next
+      }
+      in_track == 1 && /^- \*\*/ {
+        task_count++
+        if (task_count == target_idx + 0) {
+          removed = 1
+          next
+        }
+        print
+        next
+      }
+      { print }
+      END {
+        if (in_future == 1 && appended == 0) {
+          print "- " bullet
+          appended = 1
+        }
+      }
+    ' "$ROADMAP" > "$tmpfile"
+
+    if ! diff -q "$ROADMAP" "$tmpfile" > /dev/null; then
+      if ! grep -qF "$BULLET" "$tmpfile"; then
+        rm -f "$tmpfile"
+        echo "error: defer-task did not append the Future bullet (no ## Future section?)" >&2
+        exit 1
+      fi
+      mv "$tmpfile" "$ROADMAP"
+      echo "defer-task: $TRACK[$INDEX] → Future"
+      exit 0
+    else
+      rm -f "$tmpfile"
+      echo "error: source track '$TRACK' or task index $INDEX not found" >&2
+      exit 1
+    fi
+    ;;
+
+  *)
+    echo "unknown subcommand: $SUBCMD" >&2
+    echo "usage: roadmap-revise <split-track|defer-task> [args...]" >&2
+    exit 1
+    ;;
+esac

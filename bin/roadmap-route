@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# roadmap-route — classify a source-tagged inbox item into KEEP / KILL / PROMPT.
+#
+# Thin CLI wrapper around route_source_tag in bin/lib/source-tag.sh. The library
+# function holds the canonical source-default routing matrix; this binary just
+# parses argv and emits the same output. Keeps the matrix in one place so the
+# contract doc, helper, and any other consumer share one source of truth.
+#
+# Usage:
+#   bin/roadmap-route <source-tag>
+#   bin/roadmap-route '[full-review:edge-case]'
+#   bin/roadmap-route '[pair-review:group=2,item=5]'
+#
+# Output (KEY=VALUE on stdout):
+#   action=KEEP|KILL|PROMPT
+#   reason=<one-line rationale>
+#   source=<parsed source>
+#   severity=<severity if present>
+#
+# Exit code: 0 always (PROMPT is a valid action for unknown/malformed input).
+
+set -euo pipefail
+
+source "$(dirname "$0")/lib/source-tag.sh"
+
+if [ $# -lt 1 ]; then
+  echo "usage: roadmap-route <source-tag>" >&2
+  exit 1
+fi
+
+route_source_tag "$1"

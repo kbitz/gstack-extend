@@ -65,7 +65,7 @@ on triage; not parsed.
 ```
 
 - `<source>` is the originating skill: `pair-review`, `full-review`,
-  `review-apparatus`, `test-plan`, `investigate`, `ship`, `manual`.
+  `review`, `review-apparatus`, `test-plan`, `investigate`, `ship`, `manual`.
 - `<key>=<value>` pairs provide structured metadata. Order does not matter.
 - Keys MUST be lowercase, `[a-z-]+`.
 - Values MUST NOT contain `[]`, `,`, or `;`. Values containing these should be
@@ -77,7 +77,7 @@ on triage; not parsed.
 |---|---|---|---|
 | `group` | pair-review, test-plan | integer, or `pre-test` | Roadmap Group that surfaced this item |
 | `item` | pair-review, test-plan | integer | Test-plan item index within the group |
-| `severity` | full-review | `critical` \| `necessary` \| `nice-to-have` \| `edge-case` | Reviewer's severity classification |
+| `severity` | full-review, review | `critical` \| `necessary` \| `nice-to-have` \| `edge-case` | Reviewer's severity classification |
 | `files` | full-review (when single-cluster) | pipe-separated paths | File paths the finding references |
 
 ### Source-default routing matrix (used by /roadmap scrutiny gate)
@@ -95,6 +95,7 @@ on triage; not parsed.
 | `full-review:nice-to-have` | PROMPT | Non-essential improvement |
 | `full-review:edge-case` | SUGGEST_KILL | Edge or hypothetical — bias toward drop |
 | `full-review` (no severity, legacy) | PROMPT | Legacy tag without taxonomy |
+| `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. |
 | `discovered:<path>` | PROMPT | Extracted from scattered doc, may be out of context |
 | `<unknown>` / missing | PROMPT | Unrecognized — ask user |
 

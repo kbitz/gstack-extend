@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0] - 2026-04-28
+
+### Changed (signal-vs-verdict redesign)
+- **`/roadmap` skill rewritten around the signal-vs-verdict boundary.** The 1390-line skill is now 510 lines. Helpers (`bin/roadmap-audit`, `bin/roadmap-place`, `bin/roadmap-route`, `bin/roadmap-revise`) emit raw signals only; skill prose composes ops and owns judgment. The previous design pulled too much decision logic into rigid bash — a rule-table emit fed prose that pretended to be neutral but was actually constrained by what the helper had already classified.
+- **`bin/roadmap-audit --scan-state`** emits structured signal JSON (`unprocessed_count`, `in_flight_groups`, `origin_total`, `staleness_fail`, `git_inferred_freshness`, `has_zero_open_group` + intent flags). Skill prose composes the ops list (REVISE → FRESHNESS → CLOSURE → TRIAGE) using a 4-row markdown rule table that's visible, overrideable, and easy to change at runtime when the LLM has context the helper doesn't.
+- **`bin/roadmap-place` rewritten to emit ranked candidates with a `needs_judgment` flag.** Three patterns: 1 candidate / unambiguous → use directly; 1 candidate / `needs_judgment=1` → sanity-check on-topic-ness; 2+ candidates → judgment-required (typically origin-shipped + non-critical). Prose decides via semantic file-overlap reading instead of literal string equality (the v0.16.x version couldn't see that `components/auth/LoginForm.tsx` overlaps `ui/auth/**`).
+- **Track-ref regex made case-insensitive + normalized** in `--scan-state` intent parsing. "track 2a" now matches and emits `track_ref=2A`.
+
+### Added (dogfood-driven framework fixes)
+- **`route_source_tag` library function** in `bin/lib/source-tag.sh` — single source of truth for the source-default routing matrix (`KEEP|KILL|PROMPT`). `bin/roadmap-route` is now a thin CLI wrapper around it. Eliminates the previous duplication where the matrix lived in both `docs/source-tag-contract.md` (human-readable) and the helper's `case "$SOURCE" in` block (executable). Updates to either now propagate via the library.
+- **`signals.git_inferred_freshness`** in `--scan-state` output — counts active ROADMAP.md tasks where 2+ commits landed on referenced files since the task was introduced. Catches the common "shipped without updating ROADMAP.md" case that the explicit `STALENESS` check missed (`STALENESS` only fires on items with explicit version-tag annotations). The dispatcher rules now OR `staleness_fail` with `git_inferred_freshness >= 1` to trigger the FRESHNESS op. The signal is intentionally a coarse trigger; the per-item user-confirmation gate filters precisely.
+- **`[review]` registered as a source tag** for the `/review` skill (pre-landing adversarial review by Claude subagent + codex). Default: KEEP, like `full-review:necessary`. Optional `severity=critical|necessary|nice-to-have|edge-case` mirrors the `full-review` taxonomy. Documented in `docs/source-tag-contract.md`.
+
+### Changed (skill prose convention clarifications)
+- **Track-or-Pre-flight completion convention made explicit** in the FRESHNESS op. Pre-flight is structurally a Track-equivalent within a Group, so the same collapse rule applies: when every bullet is done, collapse to a single italic line under the Group heading. Individual task completion (one bullet within an active Track or Pre-flight, siblings still open): delete the bullet and update parent metadata; git log + CHANGELOG/PROGRESS.md preserve the history. The v0.16.x prose was silent on individual task handling, leaving the convention ambiguous.
+
+### Fixed
+- **`scripts/test-roadmap-audit.sh` test isolation flake.** The "size: loc cap blocks" assertion hard-coded `=300` but read from the user's `~/.gstack-extend/config`, so anyone with `roadmap_max_loc_per_track=800` saw the test fail. Tests now export `GSTACK_EXTEND_STATE_DIR` to an isolated tmp dir at script start, so user-level config can't bleed into fixtures.
+- **Pre-flight 1 (`setup --skills-dir`) removed from ROADMAP.md** (shipped in v0.16.0). FRESHNESS scan proof point — the inferred-freshness signal correctly detected the shipped work; per-item review confirmed via git log inference.
+- **`docs/designs/roadmap-revamp-smart-dispatcher.md` archived** to `docs/archive/` (v0.8.4 reference, current v0.17.0). ARCHIVE_CANDIDATES audit recommendation honored.
+
+### Tests
+- 376 passing total (was 327 at v0.16.2): 46/46 source-tag (was 37, +9 for `route_source_tag` matrix coverage and `[review]` parse), 208/208 audit (was 206, +2 for `git_inferred_freshness` fires/doesn't), 122/122 protocols.
+
 ## [0.16.2] - 2026-04-24
 
 ### Fixed (post-/review polish)
