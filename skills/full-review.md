@@ -552,17 +552,23 @@ For each approved cluster, write each finding as a rich-format entry under
 
 ```markdown
 ### [full-review:<severity>] <finding title>
-- **Why:** <description from the finding>
+- **Description:** <DESCRIPTION text from the finding — the reviewer agent's framing of what's wrong>
 - **Hypothesis (untested):** <HYPOTHESIS text> — re-investigate before implementing; the reviewer agent did not verify this direction.
 - **Found in:** <file>:<line>
 - **Context:** From /full-review cluster "<theme>" on branch <branch> (<date>).
 - **Effort:** ? (user triages in /roadmap)
 ```
 
-The "Hypothesis (untested)" framing is load-bearing: it tells the future
-implementer that the suggested direction is speculation, not a verified fix.
-Do not rename this field to "Proposed fix" or "Fix" — that framing is what
-created the tunnel-vision problem this skill exists to avoid.
+Two framing choices are load-bearing:
+- `**Description:**` (not `**Why:**`) signals the reviewer's analytical
+  framing of the issue — neither verified causation nor a direct observation.
+  The implementer should read it as "here's what the reviewer thinks is wrong"
+  and re-verify before acting.
+- `**Hypothesis (untested):**` (not `**Proposed fix:**` or `**Fix:**`) signals
+  that the suggested direction is speculation, not a verified fix.
+
+Do not rename either field back to verified-sounding language — that framing
+is what created the tunnel-vision problem this skill exists to avoid.
 
 If the finding's cluster has a single file (`files=` hint available), include
 it as a tag attribute for /roadmap's placement heuristic:

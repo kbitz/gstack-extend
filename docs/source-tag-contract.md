@@ -14,7 +14,8 @@ attribute bullets, optionally followed by prose paragraphs.
 
 ```
 ### [source:tag] Title
-- **Why:** description of the problem or value
+- **Why:** problem statement or value (manual, ship)
+- **Description:** reviewer's analytical framing of the issue (full-review, review)
 - **Symptom:** observed behavior (pair-review, investigate)
 - **Repro:** numbered steps to reproduce (pair-review, investigate)
 - **Effort:** S (human: ~X / CC: ~Y)
@@ -26,26 +27,44 @@ attribute bullets, optionally followed by prose paragraphs.
 Optional free-form prose paragraphs here.
 ```
 
+The lead field varies by source so the framing matches the writer's epistemic
+posture:
+- **manual** / **ship**: `**Why:**` — the user authored this and stands behind it.
+- **pair-review** / **investigate** (observation-source): `**Symptom:**` +
+  `**Repro:**` — what was seen, with steps to re-verify before fixing.
+- **full-review** / **review** (reviewer-source): `**Description:**` — the
+  reviewer agent's framing of the issue, neither verified causation nor direct
+  observation. Pairs with `**Hypothesis (untested):**` for the suggested fix
+  direction. See *Speculation framing* below.
+
 ### Speculation framing
 
-Two field names are intentionally hedged to prevent tunnel vision when the
+Three field names are intentionally hedged to prevent tunnel vision when the
 item is fixed later:
 
 - `**Symptom:**` — what was observed, not what's wrong. The item may turn
   out to be a misread of the user's environment, a flake, or already-fixed.
   The implementer should re-verify per `**Repro:**` before fixing. If it
   doesn't reproduce, close as resolved instead of guessing at a fix.
+- `**Description:**` — the reviewer agent's framing of the issue, neither
+  verified causation nor direct observation. The implementer should read it
+  as "here's what the reviewer thinks is wrong" and re-verify before acting.
+  Avoids the trap of `**Why:**`, which reads as a verified problem statement.
 - `**Hypothesis (untested):**` — a direction to investigate, not a fix to
   apply. Reviewer agents (full-review, review) emit one-sentence hypotheses
   that were not verified against the running code. The implementer should
   treat them as starting points for investigation, expect to discard or
   refine them, and prefer subtraction over addition where both work.
 
-These fields replace the older `**Description:**` (now `**Symptom:**` for
-observation-source skills) and `**Proposed fix:**` (now `**Hypothesis
-(untested):**` for reviewer-source skills). Legacy entries using the old
-field names remain valid — parsers do not enforce field names — but new
-writes from updated skills use the hedged framing.
+These fields replace earlier framings:
+- Observation-source skills (pair-review, investigate) used `**Why:**`; now
+  use `**Symptom:**` + `**Repro:**`.
+- Reviewer-source skills (full-review, review) used `**Why:**` +
+  `**Proposed fix:**`; now use `**Description:**` + `**Hypothesis (untested):**`.
+
+Legacy entries using the old field names remain valid — no parser inspects
+field names, so the values pass through verbatim — but new writes from
+updated skills use the hedged framing.
 
 ### Heading anatomy
 
@@ -71,16 +90,22 @@ Parsers tolerate their absence. Recommended fields:
   that explain why this item exists.
 - `- **Priority:**` P1 | P2 | P3 — optional priority. Drives display ordering.
 - `- **Symptom:**` ... — observed behavior (used by pair-review, investigate).
-  Pairs with `**Repro:**`. Replaces the older "Description" / "Why" framing
-  for observation-source items.
+  Pairs with `**Repro:**`. Replaces the older `Why:` framing for
+  observation-source items.
 - `- **Repro:**` ... — numbered steps to reproduce. Used by observation-source
   skills so the implementer can re-verify the bug before fixing.
+- `- **Description:**` ... — reviewer's analytical framing of the issue (used
+  by full-review, review). Replaces the older `Why:` framing for reviewer-
+  source items so the implementer reads it as "what the reviewer thinks is
+  wrong" rather than as verified causation.
 - `- **Hypothesis (untested):**` ... — reviewer's guess at a direction to
   investigate. Used by full-review and review. Framed as untested to prevent
   the implementer from treating it as a prescription.
 - `- **Proposed fix:**` ... — legacy field, equivalent to "Hypothesis
-  (untested)". Tolerated on read for backwards compatibility; new writes
-  should use "Hypothesis (untested)" instead.
+  (untested)". Field names are not parsed — values pass through verbatim
+  — so legacy entries remain valid and renderable. New writes from
+  updated skills should use "Hypothesis (untested)" so the speculative
+  framing is preserved.
 
 Skills MAY add additional `- **Key:** value` bullets. Unknown keys are
 preserved by the parser but not acted on.
@@ -151,13 +176,13 @@ on triage; not parsed.
 - **Context:** surfaced during Group 2 pair-review on kbitz/threading (2026-04-20). Re-verify per repro steps before fixing.
 
 ### [full-review:critical] SQL injection in user lookup
-- **Why:** `User.where("email = '#{params[:email]}'")` is concatenated, not parameterized. Direct exploitation path.
+- **Description:** `User.where("email = '#{params[:email]}'")` is concatenated, not parameterized. Direct exploitation path.
 - **Hypothesis (untested):** swap to `User.where(email: params[:email])` — verify the column exists and the param shape matches before applying.
 - **Effort:** S (human: ~1 hour / CC: ~10 min)
 - **Found in:** app/controllers/users_controller.rb:47
 
 ### [full-review:nice-to-have,files=app/services/cache.ts] Cache TTL tunable via config
-- **Why:** hardcoded 60s doesn't fit all query types.
+- **Description:** hardcoded 60s TTL doesn't fit all query types.
 - **Hypothesis (untested):** consider whether the TTL should be removed entirely (cache-busting on write) before adding configurability — adding a config knob is the additive direction.
 - **Effort:** M (human: ~1 day / CC: ~30 min)
 

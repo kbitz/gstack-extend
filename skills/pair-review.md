@@ -495,6 +495,13 @@ a bug that is clearly unrelated to the current test item:
    steps. If they push back ("can't repro reliably" / "saw it once"), accept
    that and record `Repro: not reliably reproducible — verify before fixing`.
    Do NOT insist past one nudge.
+
+   **Ambiguous-response fallback:** if after one nudge the response is still
+   vague, contradictory, or you genuinely cannot extract numbered steps,
+   record what you have for `Symptom:` and write `Repro: not reliably
+   reproducible — verify before fixing` for the repro. Move on. The
+   re-verify guidance in the promoted TODO will surface the gap later if
+   the bug ever needs to be fixed.
 2. Append a new entry to `.context/pair-review/parked-bugs.md`.
    Determine N by reading the file and incrementing the highest existing number
    (or 1 if the file is empty/new).
@@ -583,7 +590,7 @@ For each parked bug from this group, the skill recommends a classification based
 whether the bug relates to the branch's changes or upcoming test groups. Present each
 bug via AskUserQuestion:
 
-- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
+- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
 - Options: ["Fix now (recommended)", "Send to TODOS.md", "Stay parked"]
 
 **Defer nudge (E4):** "Fix now" is listed first intentionally — the default
@@ -647,7 +654,7 @@ If none remain, skip to Phase 4.
 If parked bugs remain, present each via AskUserQuestion (same format as group-completion
 triage):
 
-- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
+- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
 - Options: ["Fix now (recommended for on-branch bugs)", "Send to TODOS.md", "Skip"]
 
 Behavior for each option:
