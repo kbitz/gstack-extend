@@ -15,14 +15,37 @@ attribute bullets, optionally followed by prose paragraphs.
 ```
 ### [source:tag] Title
 - **Why:** description of the problem or value
+- **Symptom:** observed behavior (pair-review, investigate)
+- **Repro:** numbered steps to reproduce (pair-review, investigate)
 - **Effort:** S (human: ~X / CC: ~Y)
 - **Depends on:** optional prerequisite
 - **Context:** optional background
 - **Priority:** P1 | P2 | P3
-- **Proposed fix:** optional
+- **Hypothesis (untested):** optional reviewer guess at direction (full-review, review)
 
 Optional free-form prose paragraphs here.
 ```
+
+### Speculation framing
+
+Two field names are intentionally hedged to prevent tunnel vision when the
+item is fixed later:
+
+- `**Symptom:**` — what was observed, not what's wrong. The item may turn
+  out to be a misread of the user's environment, a flake, or already-fixed.
+  The implementer should re-verify per `**Repro:**` before fixing. If it
+  doesn't reproduce, close as resolved instead of guessing at a fix.
+- `**Hypothesis (untested):**` — a direction to investigate, not a fix to
+  apply. Reviewer agents (full-review, review) emit one-sentence hypotheses
+  that were not verified against the running code. The implementer should
+  treat them as starting points for investigation, expect to discard or
+  refine them, and prefer subtraction over addition where both work.
+
+These fields replace the older `**Description:**` (now `**Symptom:**` for
+observation-source skills) and `**Proposed fix:**` (now `**Hypothesis
+(untested):**` for reviewer-source skills). Legacy entries using the old
+field names remain valid — parsers do not enforce field names — but new
+writes from updated skills use the hedged framing.
 
 ### Heading anatomy
 
@@ -47,7 +70,17 @@ Parsers tolerate their absence. Recommended fields:
 - `- **Context:**` ... — any provenance, branch reference, or prior decisions
   that explain why this item exists.
 - `- **Priority:**` P1 | P2 | P3 — optional priority. Drives display ordering.
-- `- **Proposed fix:**` ... — if known. Optional.
+- `- **Symptom:**` ... — observed behavior (used by pair-review, investigate).
+  Pairs with `**Repro:**`. Replaces the older "Description" / "Why" framing
+  for observation-source items.
+- `- **Repro:**` ... — numbered steps to reproduce. Used by observation-source
+  skills so the implementer can re-verify the bug before fixing.
+- `- **Hypothesis (untested):**` ... — reviewer's guess at a direction to
+  investigate. Used by full-review and review. Framed as untested to prevent
+  the implementer from treating it as a prescription.
+- `- **Proposed fix:**` ... — legacy field, equivalent to "Hypothesis
+  (untested)". Tolerated on read for backwards compatibility; new writes
+  should use "Hypothesis (untested)" instead.
 
 Skills MAY add additional `- **Key:** value` bullets. Unknown keys are
 preserved by the parser but not acted on.
@@ -112,18 +145,20 @@ on triage; not parsed.
 
 ```markdown
 ### [pair-review:group=2,item=5] Arrow key double-move on thread list
-- **Why:** user hits Up/Down and selection skips a row intermittently. Makes keyboard navigation unreliable.
+- **Symptom:** user hits Up/Down and selection skips a row intermittently. Makes keyboard navigation unreliable.
+- **Repro:** 1. open thread list, 2. press Down arrow rapidly 5x, 3. observe selection jumps 2 rows on the 3rd or 4th press.
 - **Effort:** S (human: ~2 hours / CC: ~15 min)
-- **Context:** surfaced during Group 2 pair-review on kbitz/threading (2026-04-20). Related to SelectionState cascade.
+- **Context:** surfaced during Group 2 pair-review on kbitz/threading (2026-04-20). Re-verify per repro steps before fixing.
 
 ### [full-review:critical] SQL injection in user lookup
 - **Why:** `User.where("email = '#{params[:email]}'")` is concatenated, not parameterized. Direct exploitation path.
+- **Hypothesis (untested):** swap to `User.where(email: params[:email])` — verify the column exists and the param shape matches before applying.
 - **Effort:** S (human: ~1 hour / CC: ~10 min)
-- **Proposed fix:** swap to `User.where(email: params[:email])`.
 - **Found in:** app/controllers/users_controller.rb:47
 
 ### [full-review:nice-to-have,files=app/services/cache.ts] Cache TTL tunable via config
 - **Why:** hardcoded 60s doesn't fit all query types.
+- **Hypothesis (untested):** consider whether the TTL should be removed entirely (cache-busting on write) before adding configurability — adding a config knob is the additive direction.
 - **Effort:** M (human: ~1 day / CC: ~30 min)
 
 ### [manual] Explore webhook outbound events for v1.1
