@@ -209,6 +209,18 @@ else
   fail "validate: valid tag rejected"
 fi
 
+if validate_tag_expression '[review]' 2>/dev/null; then
+  pass "validate: bare review tag passes"
+else
+  fail "validate: bare review tag rejected"
+fi
+
+if validate_tag_expression '[review:critical]' 2>/dev/null; then
+  pass "validate: review with severity passes"
+else
+  fail "validate: review with severity rejected"
+fi
+
 REASON=$(validate_tag_expression '[pair-review:group=1;rm]' 2>&1 || true)
 if [ "$REASON" = "INJECTION_ATTEMPT" ]; then
   pass "validate: semicolon → INJECTION_ATTEMPT"
@@ -243,6 +255,74 @@ if [ "$REASON" = "INJECTION_ATTEMPT" ] || [ "$REASON" = "MALFORMED_TAG" ]; then
   pass "validate: backtick injection rejected"
 else
   fail "validate: backtick not rejected" "$REASON"
+fi
+
+# ─── route_source_tag ──────────────────────────────────────────
+
+echo ""
+echo "=== route_source_tag ==="
+
+OUT=$(route_source_tag '[manual]')
+if echo "$OUT" | grep -qxF 'action=KEEP' && echo "$OUT" | grep -qxF 'source=manual'; then
+  pass "route: manual → KEEP"
+else
+  fail "route: manual → KEEP" "$OUT"
+fi
+
+OUT=$(route_source_tag '[review]')
+if echo "$OUT" | grep -qxF 'action=KEEP' && echo "$OUT" | grep -qxF 'source=review'; then
+  pass "route: bare review → KEEP"
+else
+  fail "route: bare review → KEEP" "$OUT"
+fi
+
+OUT=$(route_source_tag '[review:critical]')
+if echo "$OUT" | grep -qxF 'action=KEEP' && echo "$OUT" | grep -qxF 'severity=critical'; then
+  pass "route: review:critical → KEEP with severity"
+else
+  fail "route: review:critical" "$OUT"
+fi
+
+OUT=$(route_source_tag '[review:edge-case]')
+if echo "$OUT" | grep -qxF 'action=KILL'; then
+  pass "route: review:edge-case → KILL (mirrors full-review)"
+else
+  fail "route: review:edge-case → KILL" "$OUT"
+fi
+
+OUT=$(route_source_tag '[full-review:edge-case]')
+if echo "$OUT" | grep -qxF 'action=KILL'; then
+  pass "route: full-review:edge-case → KILL"
+else
+  fail "route: full-review:edge-case" "$OUT"
+fi
+
+OUT=$(route_source_tag '[full-review:nice-to-have]')
+if echo "$OUT" | grep -qxF 'action=PROMPT'; then
+  pass "route: full-review:nice-to-have → PROMPT"
+else
+  fail "route: full-review:nice-to-have" "$OUT"
+fi
+
+OUT=$(route_source_tag '[pair-review:group=2,item=5]')
+if echo "$OUT" | grep -qxF 'action=KEEP' && echo "$OUT" | grep -qxF 'source=pair-review'; then
+  pass "route: pair-review with metadata → KEEP"
+else
+  fail "route: pair-review with metadata" "$OUT"
+fi
+
+OUT=$(route_source_tag '[madeup]')
+if echo "$OUT" | grep -qxF 'action=PROMPT'; then
+  pass "route: unknown source → PROMPT"
+else
+  fail "route: unknown source" "$OUT"
+fi
+
+OUT=$(route_source_tag '')
+if echo "$OUT" | grep -qxF 'action=KEEP' && echo "$OUT" | grep -qxF 'source=manual'; then
+  pass "route: empty input → manual KEEP"
+else
+  fail "route: empty input" "$OUT"
 fi
 
 # ─── extract_tag_from_heading / extract_title_from_heading ─────

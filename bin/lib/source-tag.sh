@@ -7,13 +7,14 @@
 #   parse_source_tag <string>    -- emits KEY=VALUE lines (source, severity, group, item, files)
 #   normalize_title <string>     -- emits the dedup-normalized title to stdout
 #   compute_dedup_hash <title>   -- emits the dedup hash (first 12 hex chars of sha1)
+#   route_source_tag <string>    -- emits action/reason/source/severity per the source-default matrix
 #   validate_tag_expression <s>  -- returns 0 if valid, 1 otherwise; emits error reason to stderr
 #
 # No side effects. Pure string transforms.
 
 # Registered source skills. Anything not on this list will be flagged as
 # UNKNOWN_SOURCE_TAG by the validator.
-_SOURCE_TAG_REGISTRY="pair-review full-review review-apparatus test-plan investigate ship manual discovered"
+_SOURCE_TAG_REGISTRY="pair-review full-review review review-apparatus test-plan investigate ship manual discovered"
 
 # parse_source_tag <raw-string>
 #
@@ -71,10 +72,11 @@ parse_source_tag() {
   # Parse key=value[,key=value]*
   [ -z "$rest" ] && return 0
 
-  # Special short-form for full-review: [full-review:critical] is shorthand
-  # for [full-review:severity=critical]. Detect when rest has no '=' before
-  # any ',' and is a recognized severity.
-  if [ "$source" = "full-review" ] && echo "$rest" | grep -qvE '='; then
+  # Special short-form for full-review/review: [full-review:critical] is
+  # shorthand for [full-review:severity=critical]. Same shorthand applies to
+  # [review:critical]. Detect when rest has no '=' before any ',' and is a
+  # recognized severity.
+  if { [ "$source" = "full-review" ] || [ "$source" = "review" ]; } && echo "$rest" | grep -qvE '='; then
     case "$rest" in
       critical|necessary|nice-to-have|edge-case|important|minor)
         echo "severity=$rest"
@@ -83,8 +85,8 @@ parse_source_tag() {
     esac
   fi
 
-  # Combined short-form: [full-review:critical,files=...]
-  if [ "$source" = "full-review" ]; then
+  # Combined short-form: [full-review:critical,files=...] or [review:critical,...]
+  if [ "$source" = "full-review" ] || [ "$source" = "review" ]; then
     local first
     first=$(echo "$rest" | cut -d, -f1)
     case "$first" in
@@ -197,6 +199,96 @@ compute_dedup_hash() {
   local hex
   hex=$(printf '%s' "${normalized}000000000000" | od -An -tx1 | tr -d ' \n')
   printf '%s' "$hex" | cut -c1-12
+}
+
+# route_source_tag <raw-tag>
+#
+# Apply the source-default routing matrix from docs/source-tag-contract.md.
+# Single source of truth for KEEP / KILL / PROMPT decisions — bin/roadmap-route
+# is a thin CLI wrapper around this function.
+#
+# Output (KEY=VALUE on stdout):
+#   action=KEEP|KILL|PROMPT
+#   reason=<one-line rationale>
+#   source=<parsed source>
+#   severity=<severity if present>
+#
+# Returns 0 always (PROMPT is a valid action for unknown/malformed input).
+route_source_tag() {
+  local raw="$1"
+  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
+    echo "action=KEEP"
+    echo "reason=missing source tag — defaults to manual (user-written)"
+    echo "source=manual"
+    return 0
+  fi
+
+  local parsed
+  if ! parsed=$(parse_source_tag "$raw" 2>/dev/null); then
+    echo "action=PROMPT"
+    echo "reason=malformed source tag — surface for explicit user decision"
+    echo "source=unknown"
+    return 0
+  fi
+
+  local source severity
+  source=$(echo "$parsed" | grep -E '^source=' | head -1 | cut -d= -f2)
+  severity=$(echo "$parsed" | grep -E '^severity=' | head -1 | cut -d= -f2 || true)
+
+  case "$source" in
+    manual|ship)
+      echo "action=KEEP"
+      echo "reason=user-written deliberate item"
+      echo "source=$source"
+      ;;
+    pair-review|test-plan|investigate|review-apparatus)
+      echo "action=KEEP"
+      echo "reason=observed bug or real tooling need"
+      echo "source=$source"
+      ;;
+    full-review|review)
+      case "$severity" in
+        critical|necessary)
+          echo "action=KEEP"
+          echo "reason=$source $severity — ship-blocker or real defect"
+          ;;
+        important)
+          echo "action=KEEP"
+          echo "reason=legacy severity 'important' — treated as 'necessary'"
+          ;;
+        nice-to-have|minor)
+          echo "action=PROMPT"
+          echo "reason=$source $severity — keep or defer is a judgment call"
+          ;;
+        edge-case)
+          echo "action=KILL"
+          echo "reason=$source edge-case — adversarial-review noise, default to drop"
+          ;;
+        *)
+          if [ "$source" = "review" ]; then
+            echo "action=KEEP"
+            echo "reason=review (no severity) — pre-landing adversarial finding, default keep like full-review:necessary"
+          else
+            echo "action=PROMPT"
+            echo "reason=full-review without severity (legacy) — surface for explicit decision"
+          fi
+          ;;
+      esac
+      echo "source=$source"
+      [ -n "$severity" ] && echo "severity=$severity"
+      ;;
+    discovered)
+      echo "action=PROMPT"
+      echo "reason=extracted from a scattered doc — confirm before incorporating"
+      echo "source=$source"
+      ;;
+    *)
+      echo "action=PROMPT"
+      echo "reason=unknown source tag '$source' — surface for explicit decision"
+      echo "source=$source"
+      ;;
+  esac
+  return 0
 }
 
 # validate_tag_expression <raw-string>

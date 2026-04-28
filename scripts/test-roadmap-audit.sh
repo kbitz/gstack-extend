@@ -16,6 +16,12 @@ FAILED=0
 TOTAL=0
 TMPDIR_BASE=$(mktemp -d /tmp/gstack-test-audit-XXXXXXXX)
 
+# Test isolation: point bin/config at an empty state dir so user-level
+# overrides (~/.gstack-extend/config) cannot leak into fixtures and
+# affect cap-default assertions like "max_loc_per_track=300".
+export GSTACK_EXTEND_STATE_DIR="$TMPDIR_BASE/state"
+mkdir -p "$GSTACK_EXTEND_STATE_DIR"
+
 if [ "${1:-}" = "--verbose" ]; then
   VERBOSE=true
 fi
@@ -4077,6 +4083,7 @@ if echo "$OUT" | grep -q '"signals":' \
    && echo "$OUT" | grep -q '"intents":' \
    && echo "$OUT" | grep -q '"unprocessed_count":' \
    && echo "$OUT" | grep -q '"staleness_fail":' \
+   && echo "$OUT" | grep -q '"git_inferred_freshness":' \
    && echo "$OUT" | grep -q '"has_zero_open_group":'; then
   pass "scan-state: emits required signal keys"
 else
@@ -4153,6 +4160,79 @@ if echo "$OUT" | grep -qE '"unprocessed_count": 3'; then
   pass "scan-state: signals.unprocessed_count reflects inbox size"
 else
   fail "scan-state: unprocessed_count wrong" "$OUT"
+fi
+
+# Signal: git_inferred_freshness fires when a referenced file has 2+ commits
+# since the task was introduced to ROADMAP.md. Catches the common
+# "shipped without updating the roadmap" case that staleness_fail misses.
+DIR=$(create_fixture "scan-git-freshness")
+git -C "$DIR" init -q
+git -C "$DIR" config user.email "test@test.test"
+git -C "$DIR" config user.name "test"
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 1: A
+### Track 1A: x
+_1 task . low risk . [setup]_
+_touches: setup_
+- **Setup custom dir flag** -- Add --skills-dir flag. _[setup], ~20 lines._ (S)
+EOF
+echo "## Unprocessed" > "$DIR/docs/TODOS.md"
+echo "0.1.0" > "$DIR/VERSION"
+cat > "$DIR/CHANGELOG.md" << 'EOF'
+# Changelog
+
+## v0.1.0 - 2026-04-28
+- initial
+EOF
+echo "" > "$DIR/setup"
+git -C "$DIR" add docs/ROADMAP.md docs/TODOS.md VERSION CHANGELOG.md setup
+git -C "$DIR" commit -q -m "initial roadmap with Setup custom dir flag task"
+# Two commits to setup AFTER the roadmap was introduced — should fire signal.
+echo "first" > "$DIR/setup"
+git -C "$DIR" add setup
+git -C "$DIR" commit -q -m "first change to setup"
+echo "second" > "$DIR/setup"
+git -C "$DIR" add setup
+git -C "$DIR" commit -q -m "second change to setup"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -qE '"git_inferred_freshness": [1-9]'; then
+  pass "scan-state: git_inferred_freshness fires when referenced file churned"
+else
+  fail "scan-state: git_inferred_freshness should fire" "$OUT"
+fi
+
+# Negative: roadmap with no commit churn → signal stays at 0
+DIR=$(create_fixture "scan-no-churn")
+git -C "$DIR" init -q
+git -C "$DIR" config user.email "test@test.test"
+git -C "$DIR" config user.name "test"
+mkdir -p "$DIR/docs"
+cat > "$DIR/docs/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 1: A
+### Track 1A: x
+_1 task . low risk . [other_file]_
+_touches: other_file_
+- **Some task** -- description here. _[other_file], ~20 lines._ (S)
+EOF
+echo "## Unprocessed" > "$DIR/docs/TODOS.md"
+echo "0.1.0" > "$DIR/VERSION"
+cat > "$DIR/CHANGELOG.md" << 'EOF'
+# Changelog
+
+## v0.1.0 - 2026-04-28
+- initial
+EOF
+echo "" > "$DIR/other_file"
+git -C "$DIR" add docs/ROADMAP.md docs/TODOS.md VERSION CHANGELOG.md other_file
+git -C "$DIR" commit -q -m "initial — no follow-up commits"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -qE '"git_inferred_freshness": 0'; then
+  pass "scan-state: git_inferred_freshness=0 when no follow-up commits"
+else
+  fail "scan-state: git_inferred_freshness should be 0" "$OUT"
 fi
 
 # ─── roadmap-place (ranked candidates) ───────────────────────

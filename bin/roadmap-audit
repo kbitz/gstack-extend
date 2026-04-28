@@ -3303,6 +3303,68 @@ EOF
     fi
   done
 
+  # ─── git_inferred_freshness ──────────────────────────────────
+  # Catches the common "shipped without updating ROADMAP.md" case that the
+  # explicit STALENESS check misses. STALENESS only fires on items with a
+  # version-tag annotation; this scans every active task bullet against git
+  # history. If 2+ commits landed on a referenced file since the task was
+  # introduced to ROADMAP.md, treat it as a freshness candidate.
+  #
+  # Cost is bounded: O(active_tasks × files_per_task) git log calls. Each is
+  # fast (<50ms). Skipped entirely when ROADMAP.md is unreadable or git is
+  # unavailable. The signal is a count, not a verdict — skill prose still
+  # invokes the full FRESHNESS scan for per-item user confirmation.
+  GIT_INFERRED_FRESHNESS=0
+  if [ -r "$ROADMAP" ] && command -v git >/dev/null 2>&1; then
+    _gid_repo_root=$(git -C "$(dirname "$ROADMAP")" rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$_gid_repo_root" ]; then
+      # Use the absolute ROADMAP path directly with `git -C`. Git accepts
+      # absolute paths within the working tree, so no relative-path dance.
+      _gid_in_active=1
+      while IFS= read -r line; do
+        case "$line" in
+          "## Future"*|"## Unprocessed"*|"## Execution Map"*) _gid_in_active=0 ;;
+          "## Group"*) _gid_in_active=1 ;;
+        esac
+        [ "$_gid_in_active" -eq 0 ] && continue
+
+        case "$line" in
+          "- **"*)
+            # Pull a 4-word phrase from the task title for git -S. Strip the
+            # "- **" prefix, anything after the closing "**", and any leading
+            # "[N]" Pre-flight numbering.
+            _gid_title=$(echo "$line" | sed -E 's/^- \*\*//; s/\*\*.*//; s/^\[[0-9]+\][[:space:]]*//')
+            _gid_phrase=$(echo "$_gid_title" | awk '{ for (i=1;i<=4 && i<=NF;i++) printf "%s%s", (i>1?" ":""), $i }')
+            [ -z "$_gid_phrase" ] && continue
+
+            # Files come from italic _[a, b, c]_ metadata or backticked paths
+            # in the task body. Backticks are filtered to ones that look like
+            # paths (contain "/" or "."), to skip flag names like `--foo`.
+            # Each grep tolerates no-match (|| true) — the audit runs under
+            # set -e and pipefail, so unguarded grep failures would abort.
+            _gid_files=$({ echo "$line" | grep -oE '_\[[^]]+\]' || true; } | head -1 | sed -E 's/^_\[//; s/\]$//; s/,/ /g')
+            _gid_bt=$({ echo "$line" | grep -oE '`[^`]+`' || true; } | tr -d '`' | { grep -E '/|\.' || true; })
+            _gid_files="$_gid_files $_gid_bt"
+            _gid_files=$(echo "$_gid_files" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+            [ -z "${_gid_files// /}" ] && continue
+
+            _gid_intro=$(git -C "$_gid_repo_root" log -1 --format="%ai" -S "$_gid_phrase" -- "$ROADMAP" 2>/dev/null || true)
+            [ -z "$_gid_intro" ] && continue
+
+            for _gid_f in $_gid_files; do
+              [ -z "$_gid_f" ] && continue
+              _gid_n=$(git -C "$_gid_repo_root" log --oneline --after="$_gid_intro" -- "$_gid_f" 2>/dev/null | wc -l | tr -d ' ')
+              if [ "${_gid_n:-0}" -ge 2 ]; then
+                GIT_INFERRED_FRESHNESS=$((GIT_INFERRED_FRESHNESS + 1))
+                break
+              fi
+            done
+            ;;
+        esac
+      done < "$ROADMAP"
+    fi
+  fi
+
   # Emit signals JSON. No ops list, no needs_clarification — skill prose
   # composes those from the signals using readable rules.
   cat <<EOF
@@ -3314,6 +3376,7 @@ EOF
     "in_flight_groups": "${IN_FLIGHT_GROUPS}",
     "origin_total": ${ORIGIN_TOTAL},
     "staleness_fail": ${STALENESS_FAIL},
+    "git_inferred_freshness": ${GIT_INFERRED_FRESHNESS},
     "has_zero_open_group": ${HAS_ZERO_OPEN_GROUP}
   }
 }
