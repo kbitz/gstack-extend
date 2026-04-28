@@ -4045,6 +4045,207 @@ else
   fail "vocab_lint: still emitting fail for style issue" "$VL"
 fi
 
+# ─── --scan-state (signals only, no verdict) ─────────────────
+
+echo "=== scan-state ==="
+
+# scan-state emits SIGNALS only; skill prose composes ops list. These tests
+# assert the schema (signal fields present, no verdict fields) and that intent
+# detection with negation guard still works as before.
+
+run_scan() {
+  local dir="$1"
+  local prompt="${2:-}"
+  GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-audit" --scan-state --prompt "$prompt" "$dir" 2>/dev/null || true
+}
+
+# Signal schema: required keys present, no ops/needs_clarification leak
+DIR=$(create_fixture "scan-shape")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+
+## Group 1: A
+
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **T** -- . (S)
+EOF
+echo "## Unprocessed" > "$DIR/TODOS.md"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -q '"signals":' \
+   && echo "$OUT" | grep -q '"intents":' \
+   && echo "$OUT" | grep -q '"unprocessed_count":' \
+   && echo "$OUT" | grep -q '"staleness_fail":' \
+   && echo "$OUT" | grep -q '"has_zero_open_group":'; then
+  pass "scan-state: emits required signal keys"
+else
+  fail "scan-state: missing signal keys" "$OUT"
+fi
+if echo "$OUT" | grep -qE '"ops":|"needs_clarification":'; then
+  fail "scan-state: still emitting verdict keys (ops/needs_clarification)" "$OUT"
+else
+  pass "scan-state: no verdict keys (ops/needs_clarification removed)"
+fi
+
+# Greenfield short-circuit: ROADMAP missing → exclusive_state=GREENFIELD, signals=null
+DIR=$(create_fixture "scan-greenfield")
+echo "## Unprocessed" > "$DIR/TODOS.md"
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -q '"exclusive_state": "GREENFIELD"' && echo "$OUT" | grep -q '"signals": null'; then
+  pass "scan-state: GREENFIELD short-circuit when ROADMAP missing"
+else
+  fail "scan-state: GREENFIELD short-circuit broken" "$OUT"
+fi
+
+# Intent: closure detection
+DIR=$(create_fixture "scan-closure")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 1: A
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **T** -- . (S)
+EOF
+echo "## Unprocessed" > "$DIR/TODOS.md"
+OUT=$(run_scan "$DIR" "let's close out group 2")
+if echo "$OUT" | grep -q '"closure": 1'; then
+  pass "scan-state: detects closure intent"
+else
+  fail "scan-state: closure intent not detected" "$OUT"
+fi
+
+# Intent: negation guard fires (don't close out)
+OUT=$(run_scan "$DIR" "don't close out anything yet")
+if echo "$OUT" | grep -q '"closure": 0'; then
+  pass "scan-state: negation guard blocks closure intent"
+else
+  fail "scan-state: negation guard failed for closure" "$OUT"
+fi
+
+# Intent: split detection
+OUT=$(run_scan "$DIR" "split track 2A please")
+if echo "$OUT" | grep -q '"split": 1' && echo "$OUT" | grep -q '"track_ref": "2A"'; then
+  pass "scan-state: detects split intent + track_ref"
+else
+  fail "scan-state: split/track_ref not detected" "$OUT"
+fi
+
+# Signal: unprocessed_count reflects inbox
+DIR=$(create_fixture "scan-unprocessed")
+cat > "$DIR/ROADMAP.md" << 'EOF'
+# Roadmap — Phase 1
+## Group 1: A
+### Track 1A: x
+_1 task . low risk . x_
+_touches: x_
+- **T** -- . (S)
+EOF
+cat > "$DIR/TODOS.md" << 'EOF'
+## Unprocessed
+### Item one [manual]
+### Item two [manual]
+### Item three [manual]
+EOF
+OUT=$(run_scan "$DIR" "")
+if echo "$OUT" | grep -qE '"unprocessed_count": 3'; then
+  pass "scan-state: signals.unprocessed_count reflects inbox size"
+else
+  fail "scan-state: unprocessed_count wrong" "$OUT"
+fi
+
+# ─── roadmap-place (ranked candidates) ───────────────────────
+
+echo "=== roadmap-place ==="
+
+run_place() {
+  GSTACK_EXTEND_DIR="$SCRIPT_DIR" "$SCRIPT_DIR/bin/roadmap-place" "$@" 2>/dev/null || true
+}
+
+# Origin in-flight → 1 candidate, no judgment needed
+OUT=$(run_place --tag '[pair-review:group=2,item=5]' --in-flight "1 2" --primary "1")
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=current" \
+   && echo "$OUT" | grep -q "group=2" \
+   && echo "$OUT" | grep -q "needs_judgment=0"; then
+  pass "place: origin in-flight → 1 candidate, no judgment"
+else
+  fail "place: origin in-flight broken" "$OUT"
+fi
+
+# Origin complete + critical → hotfix, 1 candidate
+OUT=$(run_place --tag '[full-review:group=2,severity=critical]' --in-flight "1" --complete "2" --primary "1")
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=hotfix" \
+   && echo "$OUT" | grep -q "group=2" \
+   && echo "$OUT" | grep -q "needs_judgment=0"; then
+  pass "place: complete+critical → 1 hotfix candidate"
+else
+  fail "place: complete+critical broken" "$OUT"
+fi
+
+# Origin complete + non-critical → 2 candidates with needs_judgment=1 (the redesign)
+OUT=$(run_place --tag '[full-review:group=2,severity=high]' --in-flight "1" --complete "2" --primary "1" --files "auth.ts" --primary-touches "ui/**")
+if echo "$OUT" | grep -q "candidates=2"; then
+  pass "place: complete+non-critical → 2 candidates (judgment-required)"
+else
+  fail "place: complete+non-critical should emit 2 candidates" "$OUT"
+fi
+NEEDS_JUDGE_COUNT=$(echo "$OUT" | grep -c "needs_judgment=1" || true)
+if [ "$NEEDS_JUDGE_COUNT" = "2" ]; then
+  pass "place: both candidates flag needs_judgment=1"
+else
+  fail "place: needs_judgment flag not set on both candidates" "$OUT"
+fi
+if echo "$OUT" | grep -q "rank=1" && echo "$OUT" | grep -q "rank=2" \
+   && echo "$OUT" | grep -q "target=current" && echo "$OUT" | grep -q "target=future"; then
+  pass "place: candidates include both current (rank-1) and future (rank-2)"
+else
+  fail "place: ranked candidates missing current/future pair" "$OUT"
+fi
+
+# Complete + non-critical with NO primary in-flight → 1 candidate (defer-only)
+OUT=$(run_place --tag '[full-review:group=2,severity=high]' --complete "2")
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=future" \
+   && echo "$OUT" | grep -q "needs_judgment=0"; then
+  pass "place: complete+non-critical+no-primary → defer-only"
+else
+  fail "place: complete+non-critical+no-primary broken" "$OUT"
+fi
+
+# No origin tag + primary → preflight, needs_judgment=1 (off-topic check)
+OUT=$(run_place --tag '[manual]' --in-flight "1" --primary "1")
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=current" \
+   && echo "$OUT" | grep -q "slot=preflight" \
+   && echo "$OUT" | grep -q "needs_judgment=1"; then
+  pass "place: no-origin+primary → preflight default, needs_judgment=1 (off-topic check)"
+else
+  fail "place: no-origin+primary broken" "$OUT"
+fi
+
+# Drained: no in-flight → defer to future
+OUT=$(run_place --tag '[manual]')
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=future" \
+   && echo "$OUT" | grep -q "needs_judgment=0"; then
+  pass "place: drained → defer to Future"
+else
+  fail "place: drained broken" "$OUT"
+fi
+
+# Stale group hint (renamed/deleted): future + needs_judgment=1
+OUT=$(run_place --tag '[full-review:group=99]' --in-flight "1" --primary "1")
+if echo "$OUT" | grep -q "candidates=1" \
+   && echo "$OUT" | grep -q "target=future" \
+   && echo "$OUT" | grep -q "needs_judgment=1"; then
+  pass "place: stale group hint → future, needs_judgment=1"
+else
+  fail "place: stale group hint broken" "$OUT"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────
 
 echo ""

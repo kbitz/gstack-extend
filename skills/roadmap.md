@@ -72,30 +72,45 @@ This skill maintains ROADMAP.md as a Groups > Tracks > Tasks execution plan. Log
 
 ## Step 1: Dispatch
 
-Run the audit's state classifier with the user's prompt:
+Run the audit's state scanner with the user's prompt:
 
 ```bash
-"$_EXTEND_ROOT/bin/roadmap-audit" --classify-state --prompt "$USER_PROMPT" > /tmp/roadmap-state.json
+"$_EXTEND_ROOT/bin/roadmap-audit" --scan-state --prompt "$USER_PROMPT" > /tmp/roadmap-state.json
 ```
 
-The output is JSON with the operations to run, in fixed precedence order. Schema:
+The output is JSON of state SIGNALS — no verdict. Schema:
 
 ```json
 {
   "exclusive_state": null | "GREENFIELD",
-  "ops": ["REVISE", "FRESHNESS", "CLOSURE", "TRIAGE"],
-  "needs_clarification": false | true,
   "intents": {"closure": 0|1, "split": 0|1, "track_ref": "<id-or-empty>"},
-  "signals": {"unprocessed_count": N, "in_flight_groups": "1 2", "origin_total": N}
+  "signals": {
+    "unprocessed_count": N,
+    "in_flight_groups": "1 2",
+    "origin_total": N,
+    "staleness_fail": 0|1,
+    "has_zero_open_group": 0|1
+  }
 }
 ```
 
+**Compose the ops list from signals.** Apply these rules in fixed precedence order — REVISE → FRESHNESS → CLOSURE → TRIAGE:
+
+| Op | Trigger |
+|---|---|
+| `REVISE` | `intents.split == 1` |
+| `FRESHNESS` | `signals.staleness_fail == 1` |
+| `CLOSURE` | `signals.has_zero_open_group == 1` OR `intents.closure == 1` |
+| `TRIAGE` | `signals.unprocessed_count > 0` |
+
+The rules are simple lookups, but you (the LLM) own them — if context warrants overriding (e.g., user says "I just want to triage, ignore the staleness for now"), drop the corresponding op and note the override.
+
 **Branching:**
 - `exclusive_state == "GREENFIELD"` → run **Step 2: Greenfield Overhaul**, skip everything else.
-- `ops == []` → roadmap is drained. Print "Roadmap looks good. No unprocessed items, no closure debt, no staleness." Skip to Step 6 (commit; nothing changed → no-op).
-- Otherwise → run each op in `ops` order, then continue to Step 6.
+- Composed ops list is empty → roadmap is drained. Print "Roadmap looks good. No unprocessed items, no closure debt, no staleness." Skip to Step 6 (commit; nothing changed → no-op).
+- Otherwise → run each composed op in fixed precedence order, then continue to Step 6.
 
-**Ambiguity prompt** (only fires if `needs_clarification == true`): both CLOSURE and TRIAGE are in `ops` and the user prompt didn't signal closure intent. Ask one question:
+**Ambiguity prompt** — fires when CLOSURE and TRIAGE are both in the composed ops list AND `intents.closure == 0` (the prompt didn't signal closure):
 
 > AskUserQuestion: "You have closure work on in-flight Group(s) AND unprocessed inbox items. Which first?"
 > A) Close out first (recommended — clear what's already in flight before adding more)
@@ -203,11 +218,16 @@ Read the audit's `IN_FLIGHT_GROUPS` and `ORIGIN_STATS` outputs. For each in-flig
      --files "<paths-from-description>" \
      --primary-touches "<primary-Group-touches-from-audit>"
    ```
-   The helper returns:
+   The helper emits ranked candidates with a `needs_judgment` flag per candidate. **You own the final placement decision** — the helper does feature engineering, you apply judgment. Three patterns:
+   - **One candidate, `needs_judgment=0`** → unambiguous (origin in-flight, critical-hotfix, drained-defer). Use directly.
+   - **One candidate, `needs_judgment=1`** → likely right but sanity-check on-topic-ness against the destination Group. The "no origin tag → primary Pre-flight" default is the common case here; if the item is clearly off-topic for the primary Group, override to `target=future` and note why.
+   - **Two+ candidates** → judgment-required. Common case: origin Group shipped + non-critical. Read the item's files alongside the candidate-1 reason (which lists primary's `_touches:_`) and decide via **semantic** overlap, not literal string match. "components/auth/LoginForm.tsx" semantically overlaps "ui/auth/**" even though the strings don't equal. If overlap → use rank-1; if off-topic → use rank-2 (defer).
+
+   Targets:
    - `target=current group=X slot=track` → fold the item into Group X (active).
    - `target=hotfix group=N` → append to Group N's `**Hotfix**` subsection (Group stays ✓ Complete).
    - `target=future` → move to `## Future`.
-3. Present each placement via AskUserQuestion before writing. Default to the helper's recommendation.
+3. Present each placement via AskUserQuestion before writing. Default to your chosen candidate; show the rejected alternative when there were 2+.
 
 **Hotfix subsection format:**
 ```
@@ -253,7 +273,7 @@ Drain the `## Unprocessed` section into ROADMAP.md.
      --in-flight "<list>" --complete "<list>" --primary "<primary>" \
      --files "<paths>" --primary-touches "<touches>"
    ```
-   The helper returns target/group/slot. Present via AskUserQuestion when the placement is non-obvious (e.g., reopen rule fired). Default to the helper's recommendation.
+   The helper emits ranked candidates with `needs_judgment` flags. Apply LLM judgment per the patterns described in the **CLOSURE** op above (semantic file-overlap for ranked alternatives; on-topic-ness check for `needs_judgment=1`). Present via AskUserQuestion when placement is non-obvious (reopen rule fired with two candidates, or off-topic override).
 
 5. **Apply.** Move items from `## Unprocessed` (TODOS.md) to their targets in ROADMAP.md. Update Track metadata (task counts, effort estimates) when items land in existing Tracks. Killed items are deleted; deferred items go to `## Future`.
 

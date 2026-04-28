@@ -9,25 +9,25 @@
 #
 # Usage:
 #   bin/roadmap-audit [REPO_ROOT]
-#   bin/roadmap-audit --classify-state [--prompt "..."] [REPO_ROOT]
+#   bin/roadmap-audit --scan-state [--prompt "..."] [REPO_ROOT]
 #
-# --classify-state emits a JSON object describing which /roadmap operations
-# should run (REVISE, FRESHNESS, CLOSURE, TRIAGE, GREENFIELD, DRAINED) based
-# on current ROADMAP+TODOS state, last-run.json, and the user's prompt.
-# Single source of truth for state — skill prose consumes the JSON, no
-# separate classifier script needed.
+# --scan-state emits a JSON object of state SIGNALS — no verdict.
+# Skill prose composes the ops list (REVISE/FRESHNESS/CLOSURE/TRIAGE) from
+# these signals using readable rules. Helper does feature engineering;
+# prose owns the decision. This keeps the single source of truth for
+# signals without forcing prose to defer judgment to compressed bash rules.
 #
 # Env overrides (for testing):
 #   GSTACK_EXTEND_DIR — override auto-detected gstack-extend root
 set -euo pipefail
 
 # ─── Argument parsing ────────────────────────────────────────
-CLASSIFY_STATE=0
+SCAN_STATE=0
 USER_PROMPT=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --classify-state) CLASSIFY_STATE=1; shift ;;
+    --scan-state) SCAN_STATE=1; shift ;;
     --prompt) USER_PROMPT="${2:-}"; shift 2 ;;
     *) ARGS+=("$1"); shift ;;
   esac
@@ -3144,8 +3144,10 @@ check_todo_format() {
 # Hand-rolled JSON (no jq dependency). Schema kept flat — string fields,
 # simple arrays — so quoting stays trivial and tests can assert with grep.
 
-if [ "$CLASSIFY_STATE" -eq 1 ]; then
+if [ "$SCAN_STATE" -eq 1 ]; then
   # Wordlists for prompt intent detection. Single-quoted to avoid apostrophe issues.
+  # These are MECHANICAL pattern matches with negation guards; the verdict
+  # ("which ops to run") lives in skill prose, not here.
   CLOSURE_WORDS='close out|close-out|finish|wrap up|fully done|fully close'
   ANTI_DEFER_WORDS="don't defer|do not defer|no future|ship now|ship it all|no more future"
   SPLIT_WORDS='split|break up|break apart|too big|decompose'
@@ -3204,9 +3206,27 @@ if [ "$CLASSIFY_STATE" -eq 1 ]; then
     if _intent_fires "$PROMPT_LC" "$SPLIT_WORDS"; then
       HAS_SPLIT=1
     fi
-    if echo "$USER_PROMPT" | grep -qE 'Track [0-9]+[A-Z](\.[0-9]+)?'; then
+    if echo "$USER_PROMPT" | grep -qiE 'Track [0-9]+[A-Z](\.[0-9]+)?'; then
       HAS_TRACK_REF=1
-      TRACK_REF=$(echo "$USER_PROMPT" | grep -oE 'Track [0-9]+[A-Z](\.[0-9]+)?' | head -1 | sed -E 's/^Track //')
+      # Normalize: strip "Track " prefix, uppercase the suffix letter so callers
+      # can compare against canonical track IDs without re-casing.
+      TRACK_REF=$(echo "$USER_PROMPT" | grep -oiE 'Track [0-9]+[A-Z](\.[0-9]+)?' | head -1 | sed -E 's/^[Tt]rack //' | awk '{
+        # uppercase the letter in 2a → 2A
+        match($0, /[0-9]+[a-zA-Z]/)
+        prefix = substr($0, 1, RSTART - 1)
+        core = substr($0, RSTART, RLENGTH)
+        rest = substr($0, RSTART + RLENGTH)
+        # Find the letter inside core
+        n = length(core)
+        for (i = n; i >= 1; i--) {
+          c = substr(core, i, 1)
+          if (c ~ /[a-zA-Z]/) {
+            core = substr(core, 1, i - 1) toupper(c) substr(core, i + 1)
+            break
+          }
+        }
+        print prefix core rest
+      }')
     fi
   fi
 
@@ -3216,9 +3236,8 @@ if [ "$CLASSIFY_STATE" -eq 1 ]; then
     cat <<EOF
 {
   "exclusive_state": "GREENFIELD",
-  "ops": [],
-  "needs_clarification": false,
-  "intents": {"closure": ${HAS_CLOSURE}, "split": ${HAS_SPLIT}, "track_ref": "${TRACK_REF}"}
+  "intents": {"closure": ${HAS_CLOSURE}, "split": ${HAS_SPLIT}, "track_ref": "${TRACK_REF}"},
+  "signals": null
 }
 EOF
     exit 0
@@ -3272,7 +3291,7 @@ EOF
   ORIGIN_TOTAL=$(_section_grab "$AUDIT_OUT" "ORIGIN_STATS" "TOTAL_OPEN_ORIGIN")
   ORIGIN_TOTAL=${ORIGIN_TOTAL:-0}
 
-  # Detect zero-open-tracks in any in-flight Group (closure trigger).
+  # Detect zero-open-tracks in any in-flight Group (signal, not verdict).
   # Read PER_GROUP from PARALLELISM_BUDGET output: "1=1 2=0" → group 2 has zero.
   PER_GROUP=$(_section_grab "$AUDIT_OUT" "PARALLELISM_BUDGET" "PER_GROUP")
   HAS_ZERO_OPEN_GROUP=0
@@ -3284,46 +3303,19 @@ EOF
     fi
   done
 
-  # Build ops list in fixed precedence order: REVISE, FRESHNESS, CLOSURE, TRIAGE.
-  OPS=()
-  if [ "$HAS_SPLIT" -eq 1 ]; then
-    OPS+=("REVISE")
-  fi
-  if [ "$STALENESS_FAIL" -eq 1 ]; then
-    OPS+=("FRESHNESS")
-  fi
-  if [ "$HAS_ZERO_OPEN_GROUP" -eq 1 ] || [ "$HAS_CLOSURE" -eq 1 ]; then
-    OPS+=("CLOSURE")
-  fi
-  if [ "${UNPROCESSED_COUNT:-0}" -gt 0 ]; then
-    OPS+=("TRIAGE")
-  fi
-
-  # Ambiguity: CLOSURE + TRIAGE both present, no prompt closure signal.
-  NEEDS_CLAR=false
-  HAS_CLOSURE_OP=0
-  HAS_TRIAGE_OP=0
-  for op in "${OPS[@]+"${OPS[@]}"}"; do
-    [ "$op" = "CLOSURE" ] && HAS_CLOSURE_OP=1
-    [ "$op" = "TRIAGE" ] && HAS_TRIAGE_OP=1
-  done
-  if [ "$HAS_CLOSURE_OP" -eq 1 ] && [ "$HAS_TRIAGE_OP" -eq 1 ] && [ "$HAS_CLOSURE" -eq 0 ]; then
-    NEEDS_CLAR=true
-  fi
-
-  # Emit JSON.
-  ops_json=""
-  for op in "${OPS[@]+"${OPS[@]}"}"; do
-    ops_json="${ops_json}${ops_json:+,}\"${op}\""
-  done
-
+  # Emit signals JSON. No ops list, no needs_clarification — skill prose
+  # composes those from the signals using readable rules.
   cat <<EOF
 {
   "exclusive_state": null,
-  "ops": [${ops_json}],
-  "needs_clarification": ${NEEDS_CLAR},
   "intents": {"closure": ${HAS_CLOSURE}, "split": ${HAS_SPLIT}, "track_ref": "${TRACK_REF}"},
-  "signals": {"unprocessed_count": ${UNPROCESSED_COUNT}, "in_flight_groups": "${IN_FLIGHT_GROUPS}", "origin_total": ${ORIGIN_TOTAL}}
+  "signals": {
+    "unprocessed_count": ${UNPROCESSED_COUNT},
+    "in_flight_groups": "${IN_FLIGHT_GROUPS}",
+    "origin_total": ${ORIGIN_TOTAL},
+    "staleness_fail": ${STALENESS_FAIL},
+    "has_zero_open_group": ${HAS_ZERO_OPEN_GROUP}
+  }
 }
 EOF
   exit 0
