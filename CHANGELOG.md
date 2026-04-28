@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.1.1] - 2026-04-28
+
+### Changed (docs)
+- **`docs/ROADMAP.md` Group 1 restructured into 3 thematic Tracks.** Replaces a 6-item Pre-flight serial chain that mixed install-pipeline, `/roadmap` onboarding, and audit-recency themes. New Track 1A "Install Path Resolution" (3 tasks: preamble probe pattern, propagate dir to update-run, harden `setup` symlink), Track 1B "Roadmap Onboarding Helpers" (2 tasks: `/roadmap init` scaffolding, doc-type detection — `Depends on: Track 1A` for `skills/roadmap.md` overlap), Track 1C "Audit Recency Polish" (2 tasks: STALENESS rename + clarifier, extend FRESHNESS scan to TODOS.md — `Depends on: Track 1B` for shared `bin/roadmap-audit` surface area). Old solo-task Track 1A folded into the new Track 1A as one of three tasks. Pre-flight section removed.
+- **11 unprocessed inbox items triaged.** 5 into Group 1 (per the Track restructure above), 7 deferred to Future (bash perf audit, CLAUDE.md cleanup skill, `SKILL.md.tmpl` evaluation, git-commit failure handling across `/full-review`/`/pair-review`/`/review-apparatus`, skill-file simplification scope-narrowed since `roadmap.md` already trimmed in v0.17.0, Codex host support in `setup`, `/full-review` pass on `scripts/`), 1 killed (validate `/test-plan` v1 — won't bother). `docs/TODOS.md` Unprocessed drained 11 → 0.
+- **`docs/PROGRESS.md` backfilled** with v0.17.0 (signal-vs-verdict redesign) and v0.17.1 (3 dogfood-driven `bin/roadmap-audit` fixes from bolt) entries that shipped in PRs #47 and #48 but hadn't made it to the version table.
+
 ## [0.17.1] - 2026-04-28
 
 ### Fixed
