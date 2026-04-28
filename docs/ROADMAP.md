@@ -17,8 +17,7 @@ touches cross-cutting files (`setup`, `bin/roadmap-audit`, `skills/*.md`),
 so it's batched into Pre-flight and runs serially. Only the truly isolated
 `bin/update-run` propagation remains as a parallel track.
 
-**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 1 → 2 → Track 1A → 3 → 4:
-- **[1]** Setup custom dir flag — Add `--skills-dir <path>` flag to `setup` script. Replace hardcoded `SKILLS_DIR="${HOME}/.claude/skills"` with flag-based override, defaulting to the current global path. `[setup], ~20 lines.` (S)
+**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 2 → Track 1A → 3 → 4:
 - **[2]** Preamble probe pattern — Skill preambles currently `readlink ~/.claude/skills/{name}/SKILL.md`, which silently breaks on non-default installs. Replace with gstack-core's probe pattern (`~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`). For truly-custom paths, honor `$GSTACK_EXTEND_ROOT` env var and fallback to `$HOME/.gstack-extend-rc` (written by setup). Also fix `skills/test-plan.md:632` to point at `$_EXTEND_ROOT/skills/pair-review.md`. `[skills/*.md preambles (5 files), setup], ~40 lines.` (S)
 - **[3]** Layout scaffolding for new projects — Add a `/roadmap init` subcommand that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and offers to git-mv misplaced docs (consumes `bin/roadmap-audit DOC_LOCATION` findings). On destination collisions, AskUserQuestion with diff + merge/skip/abort options. `[bin/roadmap-audit, skills/roadmap.md], ~50 lines.` (S)
 - **[4]** Doc type detection heuristic — Teach `bin/roadmap-audit` to emit `## DOC_TYPE_MISMATCH` for two strong-signal patterns: design-looking doc outside `docs/designs/` (mermaid/plantuml fence), inbox-looking doc outside `TODOS.md` (checkbox density >20%). Skip known ROOT_DOCS/DOCS_DIR_DOCS. Only emit rows where content disagrees with location. `[bin/roadmap-audit], ~40 lines.` (S)
@@ -26,7 +25,7 @@ so it's batched into Pre-flight and runs serially. Only the truly isolated
 ### Track 1A: Update-Run Dir Propagation
 _1 task . ~30 min (human) / ~15 min (CC) . low risk . [bin/update-run]_
 _touches: bin/update-run_
-_Depends on: Pre-flight 1 (requires `--skills-dir` flag to exist)._
+_Depends on: Pre-flight 2 (requires the `$GSTACK_EXTEND_ROOT` env-var infrastructure). Pre-flight 1 (the `--skills-dir` flag itself) shipped in v0.16.0._
 
 End-to-end support for custom install directories in the upgrade path. Partial
 support was removed in v0.6.2 to avoid half-baked behavior.
@@ -54,7 +53,7 @@ Depends on: at least one major version bump (0.x -> 1.x) to validate against.
 
 ```
 Group 1: Install Pipeline
-  Pre-flight (shared-infra, serial) ... 4 items
+  Pre-flight (shared-infra, serial) ... 3 items
   +-- Track 1A ..................... ~10 min ... 1 task
 
                   |
@@ -63,7 +62,7 @@ Group 2: Distribution Infrastructure
   +-- Track 2A ..................... ~20 min ... 1 task  (blocked: major version bump)
 ```
 
-**Total: 2 groups . 2 tracks . 6 tasks (4 Pre-flight + 2 track tasks)**
+**Total: 2 groups . 2 tracks . 5 tasks (3 Pre-flight + 2 track tasks)**
 
 ---
 
