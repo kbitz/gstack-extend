@@ -95,7 +95,7 @@ The output is JSON of state SIGNALS — no verdict. Schema:
 }
 ```
 
-`staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped. `git_inferred_freshness` is the broader signal: a count of active tasks where 2+ commits landed on referenced files since the task was introduced to ROADMAP.md — catches the common "shipped without updating the roadmap" case.
+`staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped. `git_inferred_freshness` is the broader signal: a count of active tasks where 2+ commits landed on referenced files since the task was introduced to ROADMAP.md, OR 1 commit landed whose message references the enclosing "Track NX" — catches the common "shipped without updating the roadmap" case (including the single-bundled-PR case where the whole Track lands as one commit).
 
 **Compose the ops list from signals.** Apply these rules in fixed precedence order — REVISE → FRESHNESS → CLOSURE → TRIAGE:
 
@@ -190,6 +190,7 @@ Goal: keep the roadmap reflecting what's actually true.
    - For each valid file path, run `git log --oneline --after="<introduction-date>" -- <file-path>`.
    - If the provenance lookup fails (rare), fall back to `git log --oneline --since="4 weeks ago" -- <file-path>`.
    - 2+ commits on a task's files since introduction → flag as **potentially done**.
+   - 1 commit since introduction whose message references the enclosing `Track NX` (case-insensitive) → flag as **potentially done** (single-bundled-PR case).
    - Tasks whose referenced files no longer exist (`git ls-files`) → flag as **likely done or obsoleted**.
 
 2. Also check tasks/tracks with `Depends on:` annotations — if the blocker condition has changed, flag as **potentially unblocked**.
@@ -201,7 +202,9 @@ Goal: keep the roadmap reflecting what's actually true.
 4. Apply changes:
    - **Stable IDs.** Never renumber Groups or Tracks. Origin tags (`[pair-review:group=N,item=M]`) must continue to resolve forever. Numbers are commit-hash-like — append-only, never reused. Renumbering is permitted ONLY at explicit canonical resets (major version bumps, user-requested via separate flow, documented in ROADMAP.md header).
    - **Individual task completion** (one bullet within an active Track or Pre-flight, siblings still open): delete the bullet from ROADMAP.md and update the parent's task count + effort metadata. Git log + CHANGELOG/PROGRESS.md preserve the history; an active-view ROADMAP shouldn't bloat with shipped detail.
-   - **Track or Pre-flight completion** (every task in a Track, or every bullet in a Pre-flight, is done): collapse to a single italic line under the Group heading: `_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._` or `_Pre-flight — ✓ Complete (v0.16.0–v0.16.2). 4 items shipped._`. Or move to a `## Completed` section. Either way the Track ID stays in history.
+   - **Track or Pre-flight completion** (every task in a Track, or every bullet in a Pre-flight, is done): two paths.
+     - **In-place ✓ Complete** (Track stays visible): `### Track 2B: Draft Safety ✓ Complete`. The body remains under the heading. Useful during a wind-down phase when the Group still has open Tracks — completed Tracks stop counting toward PARALLELISM_BUDGET, SIZE caps, and COLLISIONS, so the audit reflects actual concurrency load. Symmetric with the Group-level `## Group N: Name ✓ Complete` convention.
+     - **Collapse to italic line** under the Group heading: `_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._` or `_Pre-flight — ✓ Complete (v0.16.0–v0.16.2). 4 items shipped._`. Or move to a `## Completed` section. Use this when the Group is winding down and the Track body is no longer informative for active work. Either way the Track ID stays in history.
    - **Group completion** (every Track in a Group is done, including Pre-flight): mark `## Group N: Name ✓ Complete` in place. Add a one-line shipped note ("Shipped as v0.9.17.3").
    - **Preserve existing conventions.** If the project already uses inline `✅` markers or a custom `## Shipped` section, don't unilaterally rewrite — match what's there.
 
