@@ -1,0 +1,154 @@
+## VOCAB_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STRUCTURE
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+CURRENT: 0.1.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+PROGRESS_LATEST: 0.1.0
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No Depends on: lines found
+
+## GROUP_DEPS
+STATUS: pass
+FINDINGS:
+- All Group-level dependencies valid (2 groups)
+ADJACENCY:
+- Group 1 ← {}
+- Group 2 ← {1}
+
+## TASK_LIST
+STATUS: info
+TASK: group=1|track=1A|title=T1|effort=S|files=|complete=0
+TASK: group=1|track=1B|title=T1|effort=S|files=|complete=0
+TASK: group=2|track=2A|title=T1|effort=S|files=|complete=0
+TOTAL_TASKS: 3
+TOTAL_CURRENT: 3
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 2
+TRACK_COUNT: 3
+TASK_COUNT: 3
+GROUP_SIZES: 1=2,2=1
+TRACK_SIZES: 1A=1,1B=1,2A=1
+IMBALANCE_RATIO: 2.00
+
+## IN_FLIGHT_GROUPS
+STATUS: info
+IN_FLIGHT: 1
+COMPLETE: 
+PRIMARY: 1
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TASKS_PER_TRACK: 5
+MAX_LOC_PER_TRACK: 300
+MAX_FILES_PER_TRACK: 8
+
+## COLLISIONS
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TRACKS_PER_GROUP: 8
+SHARED_INFRA_STATUS: missing
+
+## PARALLELISM_BUDGET
+IN_FLIGHT_TRACKS: 2
+CAP: 4
+PER_GROUP: 1=2
+STATUS: pass
+FINDINGS:
+- (none)
+
+## PARALLELIZABLE_FUTURE
+STATUS: pass
+CANDIDATES:
+FINDINGS:
+- (none)
+IN_FLIGHT_COUNT: 2
+CAP: 4
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- README.md: 0 TODO patterns (root doc)
+- docs/PROGRESS.md: 0 TODO patterns (project doc)
+- docs/ROADMAP.md: 3 TODO patterns (project doc)
+- docs/TODOS.md: 1 TODO patterns (project doc)
+
+TOTAL_FILES: 4
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: none
+FINDINGS:
+- No Unprocessed section
+
+## TODO_FORMAT
+HEADINGS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: pass
+FINDINGS:
+- (none)
+
+## MODE
+DETECTED: triage
+REASON: Valid Groups > Tracks structure found (2 groups)

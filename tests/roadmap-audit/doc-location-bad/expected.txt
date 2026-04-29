@@ -1,0 +1,137 @@
+## VOCAB_LINT
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STRUCTURE
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STALENESS
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## VERSION
+CURRENT: 0.1.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+PROGRESS_LATEST: 0.1.0
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- ROADMAP.md: missing (run /roadmap to create from TODOS.md)
+
+
+## DOC_LOCATION
+STATUS: fail
+FINDINGS:
+- TODOS.md is in root — should be in docs/
+- PROGRESS.md is in root — should be in docs/
+- README.md is in docs/ — should be in root (tools/platforms expect it there)
+
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: skip
+TOTAL_TASKS: 0
+TOTAL_CURRENT: 0
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: skip
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: skip
+FINDINGS:
+- No tracks found
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 4
+FINDINGS:
+- No in-flight Groups
+
+## PARALLELIZABLE_FUTURE
+STATUS: skip
+CANDIDATES:
+FINDINGS:
+- No ROADMAP.md
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- PROGRESS.md: 0 TODO patterns (project doc)
+- TODOS.md: 1 TODO patterns (project doc)
+- docs/README.md: 0 TODO patterns (root doc)
+
+TOTAL_FILES: 3
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: none
+FINDINGS:
+- No Unprocessed section
+
+## TODO_FORMAT
+HEADINGS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: pass
+FINDINGS:
+- (none)
+
+## MODE
+DETECTED: overhaul
+REASON: No ROADMAP.md found

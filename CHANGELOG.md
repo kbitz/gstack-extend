@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1] - 2026-04-28
+
+### Changed (test infrastructure)
+- **`/ship` test phase: 5–7 minutes → ~50 seconds.** `scripts/test-roadmap-audit.sh` was a 4,554-line bash file with 436 hand-written grep assertions over `bin/roadmap-audit`. It dominated `/ship` runtime (~5–7 min just for that one suite). Replaced with a 124-line snapshot test runner and 14 fixture directories under `tests/roadmap-audit/`. Each fixture is `files/` (committed test inputs) + optional `args` (extra flags) + `expected.txt` (canonical audit stdout, path-normalized to `<TMPDIR>`). The runner cps fixtures into a tmp git repo, runs `bin/roadmap-audit`, and diffs against `expected.txt`. To accept intentional behavior changes: `UPDATE_SNAPSHOTS=1 ./scripts/test-roadmap-audit.sh`, then review the diff in `git diff tests/roadmap-audit/`.
+- **Coverage gain, not loss.** Snapshots capture the full audit output (every section, every finding, every status), so any change to any check shows up as a snapshot diff in PR review. Hand-written grep assertions only covered what someone thought to assert. The old design fought the implementation — bash markdown parsing breaks on edge cases, so 436 assertions were the safety net. Snapshot diffs replace that net with a finer one.
+- **Failure modes verified.** Drift is reported as a unified diff with a `run UPDATE_SNAPSHOTS=1 to accept` hint. Missing `expected.txt` reports a clear seed instruction. Both paths exit 1.
+
+### Added
+- `tests/roadmap-audit/` — 14 fixture directories covering empty repo, canonical good roadmap, vocab violations (state-machine parse, Phase whitelist, strikethrough exemption, case insensitivity), structure violations, size + collisions, scattered TODOs, doc-location, dependencies DAG, in-flight active work, closure-ready (✓ Complete), version staleness, todo-format validation, and `--scan-state` JSON output (with and without `--prompt`).
+- `## [manual] Port bin/roadmap-audit out of bash` TODO in `docs/TODOS.md`. Audit is 3,495 lines of bash with ~272 command substitutions per run and a `git log -S` loop in the freshness scan; on this repo's own ROADMAP.md it takes ~70s. Subsumes the existing per-line bash-loop perf TODO. Now a pure binary-perf improvement (snapshot redesign already mitigated the test pain).
+
 ## [0.18.0] - 2026-04-28
 
 ### Changed (`/roadmap` reassessment redesign)

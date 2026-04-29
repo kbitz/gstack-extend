@@ -1,0 +1,137 @@
+## VOCAB_LINT
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STRUCTURE
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STALENESS
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## VERSION
+CURRENT: 0.1.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+PROGRESS_LATEST: 0.1.0
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- ROADMAP.md: missing (run /roadmap to create from TODOS.md)
+
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: skip
+TOTAL_TASKS: 0
+TOTAL_CURRENT: 0
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: skip
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: skip
+FINDINGS:
+- No tracks found
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 4
+FINDINGS:
+- No in-flight Groups
+
+## PARALLELIZABLE_FUTURE
+STATUS: skip
+CANDIDATES:
+FINDINGS:
+- No ROADMAP.md
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- README.md: 0 TODO patterns (root doc)
+- docs/PROGRESS.md: 0 TODO patterns (project doc)
+- docs/TODOS.md: 1 TODO patterns (project doc)
+
+TOTAL_FILES: 3
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 2
+LEGACY_BULLETS: 2
+COMPACT_BULLETS: 0
+STATUS: found
+FINDINGS:
+- 2 unprocessed items awaiting triage
+- 2 legacy bullet-form entries (run /roadmap to migrate to rich format)
+
+## TODO_FORMAT
+HEADINGS: 2
+LEGACY_BULLETS: 2
+COMPACT_BULLETS: 0
+STATUS: fail
+FINDINGS:
+- UNKNOWN_SOURCE: '[made-up-source]' in entry 'Unknown source tag'
+- MALFORMED_HEADING: legacy bullet entry '- [pair-review] Legacy bullet form' — rewrite as '### [tag] Title' per docs/source-tag-contract.md
+- MALFORMED_HEADING: legacy bullet entry '- [manual] Another legacy bullet' — rewrite as '### [tag] Title' per docs/source-tag-contract.md
+
+## MODE
+DETECTED: overhaul
+REASON: No ROADMAP.md found
