@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.5.1] - 2026-04-29
+
+### Added (`docs/TODOS.md`)
+- **TODO: `/gstack-extend-upgrade` skill mirroring `/gstack-upgrade`.** Detect install type, fetch latest from gstack-extend remote, run setup, run migrations, write upgrade marker, summarize What's New from CHANGELOG. Same auto-upgrade / snooze / "never ask again" UX as `/gstack-upgrade`, including the inline-upgrade flow other gstack-extend skill preambles can call when they detect `UPGRADE_AVAILABLE`. Open question: share `gstack-config` with gstack proper or ship a parallel `gstack-extend-config`.
+- **TODO: telemetry parity with gstack so retro can crawl gstack-extend usage.** Today the five gstack-extend skills emit nothing. gstack writes per-skill activations + outcomes to `~/.gstack/analytics/skill-usage.jsonl` and `/retro` reads it (see `~/.claude/skills/gstack/retro/SKILL.md` lines 60, 905, 913). Plan: write to the same dir with a matching schema (plus a `source: "gstack-extend"` field or skill-name prefix to disambiguate) so one retro pass aggregates both toolchains without a reader change. Per-skill preamble + completion block, optional `gstack-extend-telemetry` helper, optional eureka logging. Gates on the same `gstack-config get telemetry` setting once the config-sharing decision lands.
+
 ## [0.18.5] - 2026-04-29
 
 ### Added (`bin/roadmap-audit`)
