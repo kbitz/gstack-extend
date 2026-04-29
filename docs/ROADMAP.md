@@ -7,12 +7,12 @@ collide on files. Within a Group, Tracks must be fully parallel-safe
 (set-disjoint `_touches:_` footprints). Each track is one plan + implement
 session.
 
-**Active priority:** Groups 1 → 2 → 3 → 4 (bun + TypeScript test
-infrastructure, per `docs/designs/bun-test-architecture.md`). Groups 5 and
-6 (formerly 1 and 2) carry over the install-pipeline and distribution work
-that was in flight before this re-prioritization; both pause behind the
-test-infra chain because Group 5's Pre-flight 3 + 4 and Group 6's Track 6A
-all touch `bin/roadmap-audit`, which would collide mid-port.
+Execution order follows the adjacency list in the Execution Map below.
+Groups 1–4 (bun + TypeScript test infrastructure, per
+`docs/designs/bun-test-architecture.md`) sequence first; Groups 5 and 6
+(install pipeline, distribution) follow because both touch
+`bin/roadmap-audit` and would collide mid-port if they ran in parallel
+with the test-infra chain.
 
 ---
 
@@ -146,12 +146,11 @@ behavior tests pass.
 
 ---
 
-## Group 5: Install Pipeline ⏸ Paused
+## Group 5: Install Pipeline
 
-⏸ Paused — resumes after Group 4 ships. The `--skills-dir` flag (originally
-this Group's first Pre-flight item) shipped in v0.16.0; the rest is paused
-on the test-infra chain because Pre-flight 3, Pre-flight 4, and any future
-Group 6 work all touch `bin/roadmap-audit` mid-port.
+The `--skills-dir` flag (originally this Group's first Pre-flight item)
+shipped in v0.16.0; the rest follows Group 4 because Pre-flight 3, 4, and
+Group 6 all touch `bin/roadmap-audit`, which is being ported in Group 2.
 
 Make the install system flexible enough for per-project usage and polish the
 roadmap first-run experience. Most of this Group is shared-infra work that
@@ -199,8 +198,8 @@ Adjacency list:
 - Group 2 ← {1}
 - Group 3 ← {2}
 - Group 4 ← {3}
-- Group 5 ← {4}  (paused; resumes after migration)
-- Group 6 ← {5}  (parked; awaits major version bump)
+- Group 5 ← {4}
+- Group 6 ← {5}  (Track 6A also waits for an external 0.x → 1.x bump)
 ```
 
 Track detail per group:
@@ -220,12 +219,12 @@ Group 4: Test Leverage Patterns
   +-- Track 4C ..................... ~3 hr CC ... 1 task
   +-- Track 4D ..................... ~2 hr CC ... 1 task
 
-Group 5: Install Pipeline ⏸ Paused
+Group 5: Install Pipeline
   Pre-flight (shared-infra, serial) ... 3 items
   +-- Track 5A ..................... ~15 min CC ... 1 task
 
 Group 6: Distribution Infrastructure
-  +-- Track 6A ..................... ~20 min CC ... 1 task  (blocked: major version bump)
+  +-- Track 6A ..................... ~20 min CC ... 1 task  (waits for 0.x → 1.x bump)
 ```
 
 **Total: 6 groups . 8 tracks . 13 tasks (3 Pre-flight + 10 track tasks)**

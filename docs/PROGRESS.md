@@ -54,6 +54,6 @@ Built the `/browse-native` skill against real macOS apps. Beta never left beta; 
 
 ## Roadmap
 
-- **Current: bun + TypeScript test infrastructure (Groups 1–4)** — Bootstrap bun toolchain, port `bin/roadmap-audit` from 3,495 lines of bash to TypeScript, migrate test runners, adopt gstack proper's leverage patterns (touchfiles, eval persistence, LLM-judge, audit-compliance). See `docs/designs/bun-test-architecture.md`.
-- **Paused: install pipeline + distribution (Groups 5–6)** — Per-project install support, roadmap onboarding, version transition detection. Resumes after Group 4 completes.
+- **Groups 1–4: bun + TypeScript test infrastructure** — Bootstrap bun toolchain, port `bin/roadmap-audit` from 3,495 lines of bash to TypeScript, migrate test runners, adopt gstack proper's leverage patterns (touchfiles, eval persistence, LLM-judge, audit-compliance). See `docs/designs/bun-test-architecture.md`.
+- **Groups 5–6: install pipeline + distribution** — Per-project install support, roadmap onboarding, version transition detection. Sequenced after Groups 1–4 (file collisions on `bin/roadmap-audit`).
 - **Future: multi-agent test orchestration** — Parallel testing across Conductor agents
