@@ -41,29 +41,27 @@ bash and bun suites until later Groups retire bash.
 
 The big one. Replace 3,495 lines of bash with `src/audit/{cli,parsers,
 checks,lib}/*.ts`, compiled via `bun build --compile`. Snapshot suite is
-the byte-for-byte oracle. Pre-flight tightens the oracle before the port
-starts.
-
-**Pre-flight** (shared-infra; serial, one-at-a-time):
-- **[1]** Coverage-gap audit fixtures — Walk v0.10–v0.18 CHANGELOG entries that added test cases to `scripts/test-roadmap-audit.sh`, identify edge cases not represented in the 14 snapshot fixtures (DAG cycles, name-anchor with spaces, `_serialize: true_` variants, compact-bullet form, `Depends on:` trailing prose, `complete_groups` detection, `in_flight_topo` doc-order tiebreaker). Add fixtures for any gaps. `[tests/roadmap-audit/**], ~5–10 new fixtures.` (S)
+the byte-for-byte oracle — Track 2A's first task tightens that oracle
+before the port itself begins.
 
 ### Track 2A: Port `bin/roadmap-audit` to TypeScript
-_1 task . ~3–5 days (human) / ~half-day (CC) . high risk . [src/audit/, bin/roadmap-audit, tests/]_
-_touches: src/audit/**, bin/roadmap-audit, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts, tests/lib-source-tag.test.ts_
-_Depends on: Pre-flight [1]._
+_2 tasks . ~3–5 days (human) / ~half-day (CC) . high risk . [src/audit/, bin/roadmap-audit, tests/]_
+_touches: src/audit/**, bin/roadmap-audit, tests/roadmap-audit/**, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts, tests/lib-source-tag.test.ts_
 
 Behavior-preserving port against all `expected.txt` fixtures byte-for-byte.
-Split into `parsers/` (roadmap.ts, todos.ts, progress.ts), `checks/` (one
-file per `## SECTION`, ~22 sections), `lib/` (semver.ts, source-tag.ts,
-effort.ts). Compile via `bun build --compile src/audit/cli.ts --outfile
-bin/roadmap-audit`. Snapshot runner stays bash for this Track — it just
-retargets the new binary. The freshness `git log -S` scan stays as a
-shell-out (the one place where shelling is right). Add unit tests for
-parsers and lib modules — currently only tested via full-audit snapshot
-runs. **Targets:** real-repo audit <5s (vs 70s), binary <2,000 lines TS
-(vs 3,495 bash), snapshot suite <5s (vs ~25s). XL track — accepted size
-warning; bounded by snapshot oracle.
+First task adds coverage-gap fixtures to tighten the oracle; second task
+does the port itself. Split the TS into `parsers/` (roadmap.ts, todos.ts,
+progress.ts), `checks/` (one file per `## SECTION`, ~22 sections), `lib/`
+(semver.ts, source-tag.ts, effort.ts). Compile via `bun build --compile
+src/audit/cli.ts --outfile bin/roadmap-audit`. Snapshot runner stays bash
+for this Track — it just retargets the new binary. The freshness
+`git log -S` scan stays as a shell-out (the one place where shelling is
+right). Add unit tests for parsers and lib modules — currently only
+tested via full-audit snapshot runs. **Targets:** real-repo audit <5s
+(vs 70s), binary <2,000 lines TS (vs 3,495 bash), snapshot suite <5s
+(vs ~25s). XL track — accepted size warning; bounded by snapshot oracle.
 
+- **Coverage-gap audit fixtures** -- walk v0.10–v0.18 CHANGELOG entries that added test cases to `scripts/test-roadmap-audit.sh`, identify edge cases not represented in the 14 snapshot fixtures (DAG cycles, name-anchor with spaces, `_serialize: true_` variants, compact-bullet form, `Depends on:` trailing prose, `complete_groups` detection, `in_flight_topo` doc-order tiebreaker). Add fixtures for any gaps before the port starts so the oracle is tight. _[tests/roadmap-audit/**], ~5–10 new fixtures (~30 lines)._ (S)
 - **Behavior-preserving TS port of `bin/roadmap-audit`** -- write `src/audit/{cli,parsers,checks,lib}/*.ts`, compile to `bin/roadmap-audit` via `bun build --compile`, verify all snapshot fixtures pass byte-for-byte, add parser/lib unit tests. _[src/audit/**, bin/roadmap-audit, tests/audit-parsers.test.ts, tests/lib-*.test.ts], ~1,500–2,000 lines new + 3,495 lines deleted._ (XL)
 
 ---
@@ -211,8 +209,7 @@ Group 1: Bun Test Toolchain
   +-- Track 1A ..................... ~1 hr CC ... 1 task
 
 Group 2: TypeScript Port of bin/roadmap-audit
-  Pre-flight (shared-infra, serial) ... 1 item
-  +-- Track 2A ..................... ~half-day CC ... 1 task (XL)
+  +-- Track 2A ..................... ~half-day CC ... 2 tasks (S + XL)
 
 Group 3: Test Runner Migration + Invariants
   +-- Track 3A ..................... ~2 hr CC ... 1 task
@@ -231,7 +228,7 @@ Group 6: Distribution Infrastructure
   +-- Track 6A ..................... ~20 min CC ... 1 task  (blocked: major version bump)
 ```
 
-**Total: 6 groups . 8 tracks . 13 tasks (4 Pre-flight + 9 track tasks)**
+**Total: 6 groups . 8 tracks . 13 tasks (3 Pre-flight + 10 track tasks)**
 
 ---
 
