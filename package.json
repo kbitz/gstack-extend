@@ -8,5 +8,5 @@
   "scripts": {
     "test": "bun test tests/"
   },
-  "version": "0.18.3.0"
+  "version": "0.18.4.0"
 }
