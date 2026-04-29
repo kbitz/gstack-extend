@@ -4,8 +4,11 @@
  * For every fixture in tests/roadmap-audit/, runs both bash audit
  * (`bin/roadmap-audit`) and TS audit (`bun run src/audit/cli.ts`)
  * against the same prepared repo, then asserts byte equality of every
- * section listed in PORTED_SECTIONS. Sections not in the set are skipped
- * (PR 2 ports 12 of 24; PR 3 ports the rest and shrinks/deletes this set).
+ * emitted section. PR 3 brought the TS port to full parity, so this no
+ * longer needs an allowlist — diffs run against the full output.
+ *
+ * `--scan-state` fixtures are diffed as plain JSON output (no section
+ * extraction, since they emit a single JSON object).
  *
  * Runtime: ~2× the snapshot suite (we run both engines per fixture). PR-3
  * Track 4A's "touchfiles" optimization will skip work when nothing changed.
@@ -25,21 +28,6 @@ const ROOT = join(import.meta.dir, '..');
 const FIXTURES_DIR = join(ROOT, 'tests', 'roadmap-audit');
 const BASH_AUDIT = join(ROOT, 'bin', 'roadmap-audit');
 const TS_AUDIT = join(ROOT, 'src', 'audit', 'cli.ts');
-
-const PORTED_SECTIONS = new Set([
-  'VOCAB_LINT',
-  'STRUCTURE',
-  'PHASES',
-  'PHASE_INVARIANTS',
-  'STALENESS',
-  'VERSION',
-  'TAXONOMY',
-  'DOC_LOCATION',
-  'ARCHIVE_CANDIDATES',
-  'DEPENDENCIES',
-  'GROUP_DEPS',
-  'TASK_LIST',
-]);
 
 // Section heading regex: lines starting `## SECTION_NAME` where
 // SECTION_NAME is upper-snake. Mirrors bash output and matches both
@@ -166,24 +154,31 @@ describe('audit shadow parity (D8)', () => {
   });
 
   for (const fix of loadFixtures()) {
-    // Skip --scan-state fixtures: they emit JSON, not section blocks. The
-    // bash snapshot suite still covers them; PR 3 will fold scan-state
-    // parity into a separate test once all 24 checks land.
-    if (fix.args.includes('--scan-state')) continue;
-
-    // Per-test timeout: 20s. Bash + TS together typically run in 2-4s, but
-    // CI cold-cache or busy machines can spike. Tighter than the snapshot
-    // suite's implicit timeout because PR-3 Track 4A's touchfile cache
-    // brings this back under 1s once it lands.
+    // Per-test timeout: 60s. Each test spawns 2 subprocesses (bash + bun
+    // run) — under bun's default test parallelism the spawn waves
+    // contend for CPU and individual cases occasionally exceed 20s.
+    // PR-3 Track 4A's touchfile cache will bring this back under 1s.
     test(fix.name, () => {
       const repo = setupRepo(fix.dir, baseTmp);
       const bashOut = runBash(repo, fix.args, stateDir);
       const tsOut = runTs(repo, fix.args, stateDir);
 
+      // --scan-state mode emits a JSON object — diff as plain text.
+      if (fix.args.includes('--scan-state')) {
+        if (bashOut.trim() !== tsOut.trim()) {
+          throw new Error(
+            `[${fix.name}] scan-state drift:\n--- bash (oracle)\n${bashOut}\n--- ts (actual)\n${tsOut}`,
+          );
+        }
+        expect(true).toBe(true);
+        return;
+      }
+
       const bashSections = extractSections(bashOut);
       const tsSections = extractSections(tsOut);
+      const allSections = new Set([...bashSections.keys(), ...tsSections.keys()]);
 
-      for (const section of PORTED_SECTIONS) {
+      for (const section of allSections) {
         const b = trimTrailingBlanks(bashSections.get(section) ?? '');
         const t = trimTrailingBlanks(tsSections.get(section) ?? '');
         if (b !== t) {
@@ -193,6 +188,6 @@ describe('audit shadow parity (D8)', () => {
         }
       }
       expect(true).toBe(true);
-    }, 20000);
+    }, 60000);
   }
 });

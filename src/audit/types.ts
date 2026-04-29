@@ -47,6 +47,8 @@ export type CheckStatus =
   | 'skip'
   | 'found'
   | 'none'
+  | 'empty'
+  | 'skip-legacy-all'
   | 'error';
 
 export type CheckResult = {
@@ -137,6 +139,22 @@ export type DesignDoc = {
 // checks). For glob paths, value is true iff at least one match expanded.
 export type ScaffoldResolution = Map<string, boolean>;
 
+// `.md` file walk for DOC_INVENTORY / SCATTERED_TODOS. cli.ts pre-reads
+// every file's content into the array (maxdepth 2, excluding excluded
+// dirs); checks then count patterns and classify without touching fs.
+export type MdFileSnapshot = {
+  abs: string;
+  rel: string;
+  content: string;
+};
+
+// Resolved shared-infra config (see lib/shared-infra.ts). cli.ts loads
+// once and passes through; check_collisions consumes it for SHARED_INFRA
+// classification.
+export type SharedInfraSnapshot =
+  | { status: 'missing' }
+  | { status: 'loaded'; files: Set<string> };
+
 export type AuditCtx = {
   repoRoot: string;
   extendDir: string;
@@ -147,6 +165,10 @@ export type AuditCtx = {
   exists: AuditFileExists;
   designs: DesignDoc[];
   scaffoldExists: ScaffoldResolution;
+  mdFiles: MdFileSnapshot[];
+  sharedInfra: SharedInfraSnapshot;
+  parallelismCap: number;
+  claudeMd: string; // CLAUDE.md content (empty when missing). For parallelism cap + future overrides.
   roadmap: ParserResult<ParsedRoadmap>;
   phases: ParserResult<ParsedPhases>;
   todos: ParserResult<ParsedTodos>;
