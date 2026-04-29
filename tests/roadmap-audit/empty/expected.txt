@@ -1,0 +1,123 @@
+## VOCAB_LINT
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STRUCTURE
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## STALENESS
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## VERSION
+STATUS: skip
+FINDINGS:
+- No VERSION file or pyproject.toml version found
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- TODOS.md: missing (inbox for unprocessed items)
+- ROADMAP.md: missing (run /roadmap to create from TODOS.md)
+- PROGRESS.md: missing
+- VERSION: missing (no VERSION file and no pyproject.toml `version = "..."` field)
+
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: skip
+FINDINGS:
+- No version source (VERSION file or pyproject.toml) — cannot detect archive candidates
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: skip
+TOTAL_TASKS: 0
+TOTAL_CURRENT: 0
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: skip
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: skip
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP:
+
+## SIZE
+STATUS: skip
+FINDINGS:
+- No tracks found
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 4
+FINDINGS:
+- No in-flight Groups
+
+## PARALLELIZABLE_FUTURE
+STATUS: skip
+CANDIDATES:
+FINDINGS:
+- No ROADMAP.md
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- (none)
+TOTAL_FILES: 0
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+STATUS: skip
+ITEMS: 0
+FINDINGS:
+- No TODOS.md found
+
+## TODO_FORMAT
+STATUS: skip
+FINDINGS:
+- No TODOS.md found
+
+## MODE
+DETECTED: overhaul
+REASON: No ROADMAP.md found

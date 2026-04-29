@@ -1,0 +1,148 @@
+## VOCAB_LINT
+STATUS: warn
+FINDINGS:
+- line 3: banned term "workstream" found
+- line 11: banned term "milestone" found
+- line 9: banned term "phase" found
+
+
+## STRUCTURE
+STATUS: fail
+FINDINGS:
+- No Group headings found (expected ## Group N: Name)
+
+
+## STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+CURRENT: 0.1.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+PROGRESS_LATEST: 0.1.0
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No Depends on: lines found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: info
+TASK: group=0|track=1A|title=Do A|effort=S|files=|complete=0
+TASK: group=0|track=1A|title=Track milestone goal|effort=S|files=|complete=0
+TOTAL_TASKS: 2
+TOTAL_CURRENT: 2
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 0
+TRACK_COUNT: 1
+TASK_COUNT: 2
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TASKS_PER_TRACK: 5
+MAX_LOC_PER_TRACK: 300
+MAX_FILES_PER_TRACK: 8
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 4
+FINDINGS:
+- No in-flight Groups
+
+## PARALLELIZABLE_FUTURE
+STATUS: pass
+CANDIDATES:
+FINDINGS:
+- (none)
+IN_FLIGHT_COUNT: 0
+CAP: 4
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- README.md: 0 TODO patterns (root doc)
+- docs/PROGRESS.md: 0 TODO patterns (project doc)
+- docs/ROADMAP.md: 2 TODO patterns (project doc)
+- docs/TODOS.md: 1 TODO patterns (project doc)
+
+TOTAL_FILES: 4
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: none
+FINDINGS:
+- No Unprocessed section
+
+## TODO_FORMAT
+HEADINGS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: pass
+FINDINGS:
+- (none)
+
+## MODE
+DETECTED: overhaul
+REASON: No Groups > Tracks structure found

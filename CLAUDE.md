@@ -8,7 +8,16 @@ Extension skills for gstack.
 
 ## Testing
 
-Run the test suites under `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`).
+Run the suites under `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`). The full set runs in ~65 seconds and is what `/ship` executes.
+
+`test-roadmap-audit.sh` is snapshot-based: each fixture under `tests/roadmap-audit/<name>/files/` is run through `bin/roadmap-audit`, and the output is diffed against `expected.txt`. To accept intentional behavior changes:
+
+```sh
+UPDATE_SNAPSHOTS=1 ./scripts/test-roadmap-audit.sh
+git diff tests/roadmap-audit/   # review what audit behavior changed
+```
+
+Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`.
 
 ## Skill routing
 
