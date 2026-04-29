@@ -175,7 +175,8 @@ You judge when hierarchical mode is needed; no numeric threshold. The structured
 
 ### Constraints
 
-- **Stable IDs.** Track 1A is Track 1A forever. Renumbering is forbidden outside canonical resets. New work gets new IDs (Track 2C, Group 5).
+- **Stable IDs for completed work.** Once a Track or Group ships (`✓ Complete`), its ID is locked forever — CHANGELOG, PROGRESS.md, commit messages, and downstream skills reference it. Upcoming work (anything not yet `✓ Complete`) is *not* ID-stable: when priority shifts, renumber the upcoming Groups/Tracks to match the new execution order rather than slotting the new initiative at the bottom. Renumbering must keep cross-references in sync — `_Depends on:_` annotations, adjacency list, intra-body Track references — and the post-apply audit will flag breakage. New work added at the active tail gets the next available ID.
+- **No Pre-flight in single-Track Groups.** Pre-flight exists to serialize shared-infra work *before* parallel Tracks within the same Group. A Group with one Track has nothing to parallelize against, so a Pre-flight subsection is artificial separation — fold the work into the single Track instead (as additional tasks if needed). If a second Track is added later, that's the moment to consider extracting shared-infra back into Pre-flight.
 - **Mid-flight Group reopening is forbidden.** A ✓ Complete Group stays ✓ Complete. Post-ship work appends to the Group's **Hotfix** subsection — Hotfix is the only post-ship primitive.
 - **HARD GATE.** Documentation only. ROADMAP.md, TODOS.md, PROGRESS.md, design/archive reorganization. Never code, configs, CI files. Recommend a VERSION bump but never write VERSION (`/ship` does that).
 - **Don't over-restructure trivial volume.** A 2-item triage with no closure debt is a placement-only run. Reassessment proposing a new Track for 2 unrelated items is over-engineering.
@@ -255,7 +256,7 @@ Apply the user's approved diff to ROADMAP.md and TODOS.md.
   ```
   Refresh per-child metadata (task counts, `_touches:_`) as direct file edits after the helper runs.
 - **All other operations** (extend Track, add Track, mark ✓ Complete, append to Hotfix, defer to Future, kill) are direct ROADMAP.md / TODOS.md edits.
-- **Stable ID rules apply.** Never renumber. New work gets new IDs.
+- **Stable ID rules apply.** Completed (`✓ Complete`) Tracks and Groups never renumber. Upcoming work can be renumbered when priority shifts; keep all cross-references (`_Depends on:_` annotations, adjacency list, intra-body Track refs) in sync, then re-run audit to catch any drift.
 - **Hotfix subsection format** for post-ship items in ✓ Complete Groups:
   ```
   ## Group N: Name ✓ Complete

@@ -30,44 +30,6 @@ Step 14 of the v0.15.0 /test-plan design plan ("run on one real Group before dec
 - **Priority:** P1
 - **Effort:** S (human: ~30 min / CC: ~5 min)
 
-### Follow-up perf audit of remaining per-line bash loops
-`count_todo_patterns` was rewritten single-pass awk in v0.9.0 (45s → 4s on the
-gstack-extend repo). Remaining per-line bash loops in `bin/roadmap-audit` may
-still dominate on larger projects: the state-machine parse in `_parse_roadmap`
-for each ROADMAP.md line forks multiple `grep`s, and `check_vocab_lint` /
-`check_structure` / `check_staleness` each do per-line scans. On repos with
-ROADMAP.md >500 lines this matters.
-- **Why:** keep audit interactive (<1s) even as projects scale.
-- **Effort:** M (human: ~2 days / CC: ~30 min).
-
-### [manual] Port `bin/roadmap-audit` out of bash
-The script is 3,495 lines of bash doing markdown parsing, ROADMAP topology
-analysis, and JSON emission. A single audit run on this repo's own ROADMAP.md
-takes ~70s; on a tiny fixture, ~2s. Profile shows ~272 command substitutions
-per run plus an `O(active_tasks × git_history)` `git log -S` loop in the
-freshness scan.
-- **Why:** the language is wrong for the job. Audit is the brain of `/roadmap`
-  — slow audit = sluggish skill. A real language with real string/JSON
-  primitives would cut runtime by an order of magnitude. Subsumes the
-  per-line bash-loop perf TODO above. The test pain that originally
-  motivated this TODO has been mitigated by the snapshot redesign at
-  `tests/roadmap-audit/` (~25s for full coverage), so this is a pure
-  binary-perf improvement now, not a test fix.
-- **Proposed approach:** Python (no new deps in gstack context) or pure-stdlib
-  Node. Port behavior-preserving against the snapshot suite — every existing
-  `expected.txt` becomes a golden file the new binary must reproduce
-  byte-for-byte. Once green, retire the bash impl. The snapshot harness
-  itself (`scripts/test-roadmap-audit.sh`) doesn't change; it shells out to
-  whatever `bin/roadmap-audit` is.
-- **Targets after port:** real-repo audit <5s (vs 70s now), audit binary
-  <800 lines (vs 3,495), snapshot suite <5s (vs 25s now).
-- **Risk:** the freshness `git log -S` scan is the one place where shelling
-  out is genuinely the right call — port should keep that pattern, just stop
-  paying it 272× per run for unrelated string ops.
-- **Depends on:** nothing.
-- **Effort:** L (human: ~3-5 days / CC: ~half-day session). Big diff but
-  bounded — the snapshot suite is the test oracle.
-
 ### CLAUDE.md cleanup skill
 New skill (`/claude-md-cleanup` or similar) that audits a project's CLAUDE.md for
 bloat: duplicated info that already exists in README or other docs, stale references

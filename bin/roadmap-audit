@@ -1393,6 +1393,7 @@ _GROUP_LIST=""           # space-sep group numbers: "1 2"
 _COMPLETE_GROUPS=""      # space-sep group numbers marked '✓ Complete' in heading
 _COMPLETE_TRACKS=""      # space-sep track IDs marked '✓ Complete' in heading
 _GROUP_TRACKS=""         # kv: "1=1A,1B 2=2A"
+_GROUP_HAS_PREFLIGHT=""  # kv: "1=1 5=1" — Group N declares a **Pre-flight** subsection
 _GROUP_NAMES=""          # newline-sep "N|Group heading name" (names may contain spaces, can't use kv)
 _GROUP_DEPS=""           # kv: "1=2,3 4=2" (dep group numbers only; "-" = explicit none)
 _GROUP_DEPS_RAW=""       # newline-sep "N|raw annotation text" (for diagnostics)
@@ -1555,6 +1556,9 @@ _parse_roadmap() {
     if echo "$line" | grep -qiE '^\*\*Pre-flight\*\*'; then
       section="preflight"
       track_id=""
+      if [ -n "$group_num" ]; then
+        _GROUP_HAS_PREFLIGHT=$(_kv_set "$_GROUP_HAS_PREFLIGHT" "$group_num" "1")
+      fi
       continue
     fi
 
@@ -2534,6 +2538,30 @@ check_style_lint() {
         fi
       fi
       prev_sl="$g_sl"
+    done
+  fi
+
+  # Pre-flight in single-Track Groups: Pre-flight exists to serialize
+  # shared-infra *before* parallel Tracks within a Group. A Group with
+  # only one Track has nothing to parallelize against, so a Pre-flight
+  # subsection is artificial separation — fold the work into the single
+  # Track instead. Skip ✓ Complete Groups (historical structure, not
+  # actionable). Skip 0-Track Groups (a different problem — STRUCTURE
+  # already handles "Group with no Tracks").
+  if [ -n "$_GROUP_HAS_PREFLIGHT" ]; then
+    local g_pf has_pf tracks_csv_pf track_count_pf
+    for g_pf in $(_kv_keys "$_GROUP_HAS_PREFLIGHT"); do
+      has_pf=$(_kv_get "$_GROUP_HAS_PREFLIGHT" "$g_pf")
+      [ "$has_pf" = "1" ] || continue
+      if echo " $_COMPLETE_GROUPS " | grep -q " $g_pf "; then
+        continue
+      fi
+      tracks_csv_pf=$(_kv_get "$_GROUP_TRACKS" "$g_pf")
+      [ -n "$tracks_csv_pf" ] || continue
+      track_count_pf=$(echo "$tracks_csv_pf" | tr ',' '\n' | wc -l | tr -d ' ')
+      if [ "$track_count_pf" -eq 1 ]; then
+        _STYLE_LINT_WARNINGS="${_STYLE_LINT_WARNINGS}Group ${g_pf}: Pre-flight subsection in a single-Track Group is artificial separation — fold into Track ${tracks_csv_pf} (Pre-flight exists to serialize shared-infra before parallel Tracks)\n"
+      fi
     done
   fi
 

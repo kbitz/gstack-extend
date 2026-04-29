@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2] - 2026-04-29
+
+### Changed (`/roadmap` skill prose)
+- **Stable IDs scoped to completed work.** Old prose said "Track 1A is Track 1A forever. Renumbering is forbidden outside canonical resets" — too absolute, and "canonical resets" was undefined. The actual rule is narrower: only ✓ Complete work has locked IDs (CHANGELOG, PROGRESS, commit references are load-bearing). Upcoming work is renumberable when priority shifts. Without this scoping, /roadmap left stale upcoming Groups in place and appended new priorities at the bottom — visually misleading vs execution order. Surfaced dogfooding the bun-test-architecture restructure on this repo: when the user said "prioritize this ahead of everything else", the skill's response was to add Groups 3–6 and pause Groups 1–2, then needed correction to renumber. Fixed at `skills/roadmap.md:178` and `:259`.
+- **Pre-flight banned in single-Track Groups.** New constraint: Pre-flight exists to serialize shared-infra *before* parallel Tracks within a Group. A single-Track Group has nothing to parallelize against — fold the work into the single Track instead. If a second Track is added later, that's the moment to consider re-extracting shared-infra into Pre-flight. Surfaced same restructure run: an initial Group 2 had `Pre-flight [1] (coverage-gap fixtures) + Track 2A (TS port)`, which is the exact anti-pattern.
+- **"Paused" state removed.** Earlier session prose invented a "⏸ Paused" status for Groups whose execution was deferred behind another chain. Not a real state in the model — a Group is either active (runs when DAG deps are met), ✓ Complete (shipped), or in Future (deferred to a later phase). Sequencing comes from the adjacency list, not from status labels. ROADMAP.md and PROGRESS.md cleaned up to reflect this.
+
+### Added (audit)
+- **`STYLE_LINT` advisory: Pre-flight in single-Track Groups.** Encodes the new skill rule into `bin/roadmap-audit` so future restructures get caught at apply-time instead of relying on the prose getting read. New parser state `_GROUP_HAS_PREFLIGHT` (kv: "1=1 5=1") set when a Group's `**Pre-flight**` subsection is seen during `_parse_roadmap`. Check skips ✓ Complete Groups (historical structure, not actionable) and 0-Track Groups (already covered by STRUCTURE). Emits: "Group N: Pre-flight subsection in a single-Track Group is artificial separation — fold into Track NA". New snapshot fixture `tests/roadmap-audit/preflight-single-track/` covers positive (single-Track + Pre-flight → warn) and negative (multi-Track + Pre-flight → no warn) cases in one ROADMAP. Existing 14 fixtures unchanged (none used Pre-flight previously). 15 snapshot tests pass.
+- **`docs/designs/bun-test-architecture.md`.** Captures the toolchain decision (bun + TypeScript, not Python), goal-state layout, four-phase migration, and risks. Drives the next chunk of execution work as Groups 1–4 in the roadmap (port `bin/roadmap-audit` from 3,495 lines of bash to compiled bun binary; migrate `scripts/test-*.sh` to `tests/*.test.ts` under `bun test --concurrent`; adopt gstack proper's leverage patterns — touchfiles diff selection, eval persistence + budget regression, LLM-as-judge, audit-compliance).
+
+### Changed (roadmap restructure)
+- **Active priority becomes Groups 1–4: bun + TypeScript test infrastructure.** Per the design doc, four sequential Groups (toolchain bootstrap → TS port of `bin/roadmap-audit` → test runner migration + invariants → leverage patterns). Existing install-pipeline and distribution work renumbered to Groups 5–6 (file collisions on `bin/roadmap-audit` would block them mid-port if they ran in parallel). 13 tasks total across 6 groups, 8 tracks. KILLs the "per-line bash loops perf" TODO (subsumed by Group 2's TS port).
+
 ## [0.18.1] - 2026-04-28
 
 ### Changed (test infrastructure)
