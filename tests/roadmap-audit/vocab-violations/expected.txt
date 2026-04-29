@@ -12,6 +12,16 @@ FINDINGS:
 - No Group headings found (expected ## Group N: Name)
 
 
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
 ## STALENESS
 STATUS: pass
 FINDINGS:

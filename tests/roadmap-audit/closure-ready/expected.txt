@@ -8,6 +8,16 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
 ## STALENESS
 STATUS: pass
 FINDINGS:

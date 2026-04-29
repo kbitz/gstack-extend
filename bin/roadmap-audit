@@ -184,22 +184,23 @@ check_vocab_lint() {
   #                 │ Phase: BAN  │
   #                 │ (unless     │
   #                 │  title line)│
-  #                 └──┬──────┬───┘
-  #                    │      │
-  #           ^## Group│      │ ^## Future
-  #                    ▼      ▼
-  #            ┌──────────┐  ┌──────────┐
-  #            │  GROUP    │  │  FUTURE   │
-  #            │ Phase:BAN │  │ Phase:OK  │
-  #            └──┬───┬────┘  └─────┬─────┘
-  #               │   │             │
-  #      ^## Group│   │^## other    │ ^## other
-  #       (stay)  │   │(→TOPLEVEL)  │ (→TOPLEVEL)
-  #               ▼   ▼             ▼
+  #                 └──┬──┬───┬───┘
+  #                    │  │   │
+  #           ^## Group│  │   │ ^## Future        ^## Phase N:
+  #                    ▼  │   ▼                          │
+  #            ┌──────────┐│┌──────────┐    ┌──────────┐ │
+  #            │  GROUP    ││  FUTURE   │   │  PHASE    │◄┘
+  #            │ Phase:BAN │││ Phase:OK │   │ Phase:OK  │
+  #            └──┬───┬────┘└─────┬─────┘   └─────┬─────┘
+  #               │   │           │               │
+  #      ^## Group│   │^## other  │ ^## other     │ ^## other
+  #       (stay)  │   │(→TOPLEVEL)│ (→TOPLEVEL)   │ (→TOPLEVEL)
+  #               ▼   ▼           ▼               ▼
   #
   # Phase whitelist (allowed regardless of state):
   #   1. Line matches ^# .*[Pp]hase (ROADMAP.md title)
   #   2. State is FUTURE (inside ## Future section)
+  #   3. State is PHASE (inside a ## Phase N: ... block)
   # Phase is BANNED everywhere else.
 
   echo "## VOCAB_LINT"
@@ -237,7 +238,9 @@ check_vocab_lint() {
 
     # State transitions on ## headings
     if echo "$line" | grep -q '^## ' 2>/dev/null; then
-      if echo "$line" | grep -qi '^## Group' 2>/dev/null; then
+      if echo "$line" | grep -qE '^## Phase [0-9]+:' 2>/dev/null; then
+        state="PHASE"
+      elif echo "$line" | grep -qi '^## Group' 2>/dev/null; then
         state="GROUP"
       elif echo "$line" | grep -qiE '^## Future($| \()' 2>/dev/null; then
         state="FUTURE"
@@ -261,6 +264,11 @@ check_vocab_lint() {
 
       # Whitelist check 2: inside FUTURE state
       if [ "$state" = "FUTURE" ]; then
+        continue
+      fi
+
+      # Whitelist check 3: inside PHASE state (the Phase block itself)
+      if [ "$state" = "PHASE" ]; then
         continue
       fi
 
@@ -380,6 +388,232 @@ check_structure() {
     echo "- (none)"
   else
     echo "STATUS: fail"
+    echo "FINDINGS:"
+    echo -e "$findings"
+  fi
+  echo ""
+}
+
+# ─── Check: Phases ────────────────────────────────────────────
+#
+# Emits one row per declared `## Phase N: Title` H2 block. Phase state is
+# derived from Group ✓ Complete markers (in_flight | complete). When no
+# Phases are declared the section still emits with STATUS: skip and a
+# `(none declared)` body so post-bun-port audit-invariants tests can keep
+# asserting "every section has a STATUS line" without special-casing.
+
+check_phases() {
+  echo "## PHASES"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  _parse_roadmap
+  _parse_phases
+
+  if [ -z "$_PHASE_LIST" ]; then
+    echo "STATUS: skip"
+    echo "PHASES:"
+    echo "- (none declared)"
+    echo ""
+    return
+  fi
+
+  echo "STATUS: pass"
+  echo "PHASES:"
+  for phase in $_PHASE_LIST; do
+    local title groups state current_group scaffolding_decls
+    title=$(printf '%s\n' "$_PHASE_TITLES" | { grep "^${phase}|" || true; } | head -1 | sed -E "s/^${phase}\|//")
+    groups=$(_kv_get "$_PHASE_GROUPS" "$phase")
+    scaffolding_decls=$(printf '%s\n' "$_PHASE_SCAFFOLDS" | { grep -c "^${phase}|" || true; })
+
+    # Derive state from Group statuses.
+    state="in_flight"
+    current_group=""
+    if [ -n "$groups" ]; then
+      local all_complete=1
+      local IFS_ORIG="$IFS"
+      IFS=','
+      for g in $groups; do
+        if ! echo " $_COMPLETE_GROUPS " | grep -q " $g "; then
+          all_complete=0
+          [ -z "$current_group" ] && current_group="$g"
+        fi
+      done
+      IFS="$IFS_ORIG"
+      [ "$all_complete" -eq 1 ] && state="complete"
+    fi
+
+    # Format groups list as [1,2,3,4]
+    local groups_fmt
+    groups_fmt=$(echo "$groups" | sed 's/,/, /g')
+    [ -n "$groups_fmt" ] && groups_fmt="[${groups_fmt}]" || groups_fmt="[]"
+
+    if [ "$state" = "complete" ]; then
+      echo "- phase=${phase} title=\"${title}\" groups=${groups_fmt} state=${state} scaffolding_decls=${scaffolding_decls}"
+    else
+      echo "- phase=${phase} title=\"${title}\" groups=${groups_fmt} state=${state} current_group=${current_group:-?} scaffolding_decls=${scaffolding_decls}"
+    fi
+  done
+  echo ""
+}
+
+# ─── Check: Phase Invariants ──────────────────────────────────
+#
+# Validates declared Phase blocks. Emits warn (not fail) for malformed
+# Phases — the audit should still complete and surface other findings.
+# Skipped (with `(none declared)`) when no Phases exist, so the section
+# always emits a STATUS line (canonical section order).
+#
+# Checks:
+# - Phase declares ≥2 Groups in `Groups:` line.
+# - Each listed Group exists as a `## Group N` heading.
+# - Listed Groups are sequential integers (no gaps, ascending).
+# - No Group number is claimed by two Phases.
+# - Each scaffolding-contract path exists on the current branch.
+# - Malformed Phase blocks (missing `End-state:` or `Groups:`) → one warn
+#   per missing field.
+
+check_phase_invariants() {
+  echo "## PHASE_INVARIANTS"
+  if [ -z "$ROADMAP_FILE" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- No ROADMAP.md found"
+    echo ""
+    return
+  fi
+
+  _parse_roadmap
+  _parse_phases
+
+  if [ -z "$_PHASE_LIST" ]; then
+    echo "STATUS: skip"
+    echo "FINDINGS:"
+    echo "- (none declared)"
+    echo ""
+    return
+  fi
+
+  local findings=""
+  local found=0
+
+  # Track Group → list of Phases that claim it (for double-claim detection).
+  local claimed=""  # newline-sep "groupNum|phaseNum"
+
+  for phase in $_PHASE_LIST; do
+    local head_line groups has_endstate has_groups
+    head_line=$(_kv_get "$_PHASE_HEAD_LINES" "$phase")
+    groups=$(_kv_get "$_PHASE_GROUPS" "$phase")
+    has_endstate=$(_kv_get "$_PHASE_HAS_ENDSTATE" "$phase")
+    has_groups=$(_kv_get "$_PHASE_HAS_GROUPS" "$phase")
+
+    # Malformed: missing fields.
+    if [ "$has_endstate" != "1" ]; then
+      findings="${findings}- Phase ${phase} (line ${head_line}): missing **End-state:** field\n"
+      found=1
+    fi
+    if [ "$has_groups" != "1" ]; then
+      findings="${findings}- Phase ${phase} (line ${head_line}): missing **Groups:** field\n"
+      found=1
+      # Without a Groups list, remaining checks are moot for this Phase.
+      continue
+    fi
+
+    # ≥2 Groups.
+    local group_count
+    group_count=$(echo "$groups" | tr ',' '\n' | { grep -c . || true; })
+    if [ "$group_count" -lt 2 ]; then
+      findings="${findings}- Phase ${phase} (line ${head_line}): declares ${group_count} group(s); a Phase requires ≥2 Groups\n"
+      found=1
+    fi
+
+    # Each listed Group exists; track for double-claim.
+    local nums prev=""
+    nums=$(echo "$groups" | tr ',' ' ')
+    for g in $nums; do
+      [ -z "$g" ] && continue
+      if ! echo " $_GROUP_LIST " | grep -q " $g "; then
+        findings="${findings}- Phase ${phase} (line ${head_line}): listed Group ${g} has no \`## Group ${g}\` heading\n"
+        found=1
+      fi
+      claimed="${claimed}${claimed:+
+}${g}|${phase}"
+    done
+
+    # Sequential ascending integers, no gaps.
+    local first=""
+    local expected=""
+    local seq_ok=1
+    for g in $nums; do
+      [ -z "$g" ] && continue
+      if [ -z "$first" ]; then
+        first="$g"
+        expected=$((g + 1))
+        continue
+      fi
+      if [ "$g" -ne "$expected" ]; then
+        seq_ok=0
+        break
+      fi
+      expected=$((g + 1))
+    done
+    if [ "$seq_ok" -eq 0 ]; then
+      findings="${findings}- Phase ${phase} (line ${head_line}): Groups list is not sequential (got ${groups})\n"
+      found=1
+    fi
+
+    # Scaffolding contract: each declared file must exist (lightweight test -f;
+    # globs expanded if path contains \`*\`).
+    while IFS= read -r row; do
+      [ -z "$row" ] && continue
+      local rphase rpath
+      rphase=$(echo "$row" | cut -d'|' -f1)
+      rpath=$(echo "$row" | cut -d'|' -f2-)
+      [ "$rphase" = "$phase" ] || continue
+      [ -z "$rpath" ] && continue
+      local abs="$REPO_ROOT/$rpath"
+      if echo "$rpath" | grep -q '\*'; then
+        # Glob — match if at least one file expands.
+        local matches
+        # shellcheck disable=SC2086,SC2046
+        matches=$(compgen -G "$abs" 2>/dev/null || true)
+        if [ -z "$matches" ]; then
+          findings="${findings}- Phase ${phase} (line ${head_line}): scaffolding path \`${rpath}\` matches no files\n"
+          found=1
+        fi
+      else
+        if [ ! -e "$abs" ]; then
+          findings="${findings}- Phase ${phase} (line ${head_line}): scaffolding path \`${rpath}\` does not exist\n"
+          found=1
+        fi
+      fi
+    done <<< "$_PHASE_SCAFFOLDS"
+  done
+
+  # Double-claim check: a Group number listed in more than one Phase.
+  if [ -n "$claimed" ]; then
+    local dup_groups
+    dup_groups=$(printf '%s\n' "$claimed" | cut -d'|' -f1 | sort | uniq -d)
+    for g in $dup_groups; do
+      [ -z "$g" ] && continue
+      local owners
+      owners=$(printf '%s\n' "$claimed" | { grep "^${g}|" || true; } | cut -d'|' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
+      findings="${findings}- Group ${g}: claimed by multiple Phases (${owners})\n"
+      found=1
+    done
+  fi
+
+  if [ "$found" -eq 0 ]; then
+    echo "STATUS: pass"
+    echo "FINDINGS:"
+    echo "- (none)"
+  else
+    echo "STATUS: warn"
     echo "FINDINGS:"
     echo -e "$findings"
   fi
@@ -1405,6 +1639,17 @@ _TRACK_DEP_CYCLES=""     # newline-sep cycle descriptions detected during closur
 _SIZE_LABEL_MISMATCHES=""  # newline-sep "TrackID|title|effort|declared|expected"
 _STYLE_LINT_WARNINGS=""    # newline-sep "TrackID: depends on TrackYY (same Group N)"
 
+# Phase parser state (populated by _parse_phases, separate from _parse_roadmap
+# so projects without any Phase blocks pay no parse cost).
+_PHASES_PARSED=0
+_PHASE_LIST=""           # space-sep phase numbers in document order: "1 2"
+_PHASE_TITLES=""         # newline-sep "N|title"
+_PHASE_HEAD_LINES=""     # kv: "1=10 2=42" (heading line numbers, for findings)
+_PHASE_GROUPS=""         # kv: "1=1,2,3,4 2=5,6" (group numbers as listed)
+_PHASE_HAS_ENDSTATE=""   # kv: "1=1 2=0"
+_PHASE_HAS_GROUPS=""     # kv: "1=1 2=0"
+_PHASE_SCAFFOLDS=""      # newline-sep "phaseN|filepath" — one row per declared file
+
 # kv helpers — promoted to module scope for reuse across checks.
 # Format: "key1=val1 key2=val2 ...". Bash 3 compatible (no assoc arrays).
 # Trailing `|| true` so that a no-match grep doesn't kill the script under
@@ -1766,6 +2011,102 @@ _parse_roadmap() {
   # valid execution order. Walk from each track; if we revisit a node we're
   # already on the current path, we've found a cycle.
   _detect_track_dep_cycles
+}
+
+# _parse_phases
+# Single-pass scan of ROADMAP.md to populate _PHASE_* state. Idempotent.
+# Scans for `## Phase N: Title` H2 blocks; for each, captures lines until the
+# next `## ` heading and extracts End-state, Groups, and Scaffolding contract.
+# Lightweight by design — no field validation here; check_phase_invariants
+# does that. Bold (**Field:**) and plain (Field:) prefixes both accepted.
+_parse_phases() {
+  if [ "$_PHASES_PARSED" -eq 1 ]; then
+    return 0
+  fi
+  _PHASES_PARSED=1
+
+  local roadmap
+  roadmap=$(find_doc "ROADMAP.md")
+  if [ -z "$roadmap" ]; then
+    return 0
+  fi
+
+  local lineno=0
+  local in_phase=0
+  local cur_phase=""
+  local cur_title=""
+  local in_scaffolding=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+
+    # Phase heading: ^## Phase N: Title
+    if echo "$line" | grep -qE '^## Phase [0-9]+:' 2>/dev/null; then
+      in_phase=1
+      in_scaffolding=0
+      cur_phase=$(echo "$line" | sed -E 's/^## Phase ([0-9]+):.*/\1/')
+      cur_title=$(echo "$line" | sed -E 's/^## Phase [0-9]+:[[:space:]]*//')
+      cur_title=$(_trim "$cur_title")
+      _PHASE_LIST="${_PHASE_LIST}${_PHASE_LIST:+ }${cur_phase}"
+      _PHASE_TITLES="${_PHASE_TITLES}${_PHASE_TITLES:+
+}${cur_phase}|${cur_title}"
+      _PHASE_HEAD_LINES=$(_kv_set "$_PHASE_HEAD_LINES" "$cur_phase" "$lineno")
+      _PHASE_HAS_ENDSTATE=$(_kv_set "$_PHASE_HAS_ENDSTATE" "$cur_phase" "0")
+      _PHASE_HAS_GROUPS=$(_kv_set "$_PHASE_HAS_GROUPS" "$cur_phase" "0")
+      continue
+    fi
+
+    # Any other ## heading exits the Phase block.
+    if echo "$line" | grep -qE '^## ' 2>/dev/null; then
+      in_phase=0
+      in_scaffolding=0
+      cur_phase=""
+      continue
+    fi
+
+    [ "$in_phase" -eq 1 ] || continue
+
+    # End-state line — match **End-state:** or End-state:
+    if echo "$line" | grep -qiE '^\*?\*?End-state:\*?\*?' 2>/dev/null; then
+      _PHASE_HAS_ENDSTATE=$(_kv_set "$_PHASE_HAS_ENDSTATE" "$cur_phase" "1")
+      in_scaffolding=0
+      continue
+    fi
+
+    # Groups line — match **Groups:** N, M, ... or Groups: N, M, ...
+    if echo "$line" | grep -qiE '^\*?\*?Groups:\*?\*?' 2>/dev/null; then
+      _PHASE_HAS_GROUPS=$(_kv_set "$_PHASE_HAS_GROUPS" "$cur_phase" "1")
+      in_scaffolding=0
+      local raw nums
+      raw=$(echo "$line" | sed -E 's/^\*?\*?Groups:\*?\*?[[:space:]]*//')
+      # Strip any parenthetical and trailing punctuation; keep digits + commas.
+      raw=$(echo "$raw" | sed -E 's/\(.*\)//; s/[^0-9,]//g; s/,+$//')
+      nums=$(_trim "$raw")
+      _PHASE_GROUPS=$(_kv_set "$_PHASE_GROUPS" "$cur_phase" "$nums")
+      continue
+    fi
+
+    # Scaffolding contract block — bold heading line opens it; bullets follow.
+    if echo "$line" | grep -qiE '^\*?\*?Scaffolding contract:\*?\*?' 2>/dev/null; then
+      in_scaffolding=1
+      continue
+    fi
+
+    # Scaffolding bullets — extract every backtick-quoted token. Continuation
+    # lines (no leading bullet) still count while we're inside the block.
+    if [ "$in_scaffolding" -eq 1 ]; then
+      # Blank line ends the block.
+      if [ -z "$(_trim "$line")" ]; then
+        in_scaffolding=0
+        continue
+      fi
+      # Every `path` token on the line.
+      while IFS= read -r path; do
+        [ -z "$path" ] && continue
+        _PHASE_SCAFFOLDS="${_PHASE_SCAFFOLDS}${_PHASE_SCAFFOLDS:+
+}${cur_phase}|${path}"
+      done < <(echo "$line" | grep -oE '`[^`]+`' | sed 's/^`//; s/`$//' || true)
+    fi
+  done < "$roadmap"
 }
 
 # _detect_track_dep_cycles
@@ -3336,6 +3677,8 @@ EOF
   AUDIT_OUT=$(
     check_vocab_lint
     check_structure
+    check_phases
+    check_phase_invariants
     check_staleness
     check_version
     check_taxonomy
@@ -3500,6 +3843,8 @@ fi
 
 check_vocab_lint
 check_structure
+check_phases
+check_phase_invariants
 check_staleness
 check_version
 check_taxonomy

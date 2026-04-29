@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.5] - 2026-04-29
+
+### Added (`bin/roadmap-audit`)
+- **`## PHASES` section** emits one row per declared `## Phase N: Title` block (`phase=N title="..." groups=[...] state=in_flight|complete current_group=M scaffolding_decls=N`). State derives from `✓ Complete` markers on the listed Groups: every Group Complete → `complete`; otherwise `in_flight` with the lowest-numbered open Group as `current_group`. Always emits — projects without any Phase block see `STATUS: skip` and a `(none declared)` body, so the canonical section order stays stable and the post-bun-port `audit-invariants` test can keep asserting "every section has a STATUS line."
+- **`## PHASE_INVARIANTS` check** validates declared Phases without crashing on malformed input. Rules: Phase declares ≥2 Groups; each listed Group has a matching `## Group N` heading; the Group list is sequential ascending integers (no gaps); no Group number is claimed by two Phases; each scaffolding-contract path resolves with `test -f` (or glob match for paths containing `*`). Malformed Phase blocks (missing `**End-state:**` or `**Groups:**`) emit one warn per missing field rather than failing the audit. All findings are `STATUS: warn` — informative, not gating.
+- **Vocab-lint PHASE state** — fourth state in the existing `check_vocab_lint` machine alongside TOPLEVEL/GROUP/FUTURE. Entered by `^## Phase \d+:`, exited by the next `## ` heading. Inside PHASE state the word "phase" is allowed; everywhere else it remains banned (the strict ban is the whole point — it stops "phase" from creeping back in as project-management noise).
+- **Phase 1 declared in `docs/ROADMAP.md`** — wraps Groups 1-4 (Bun Test Migration) with end-state, sequential Groups list, and scaffolding contract. Groups 5-6 stay standalone (no shared end-state).
+- **8 new audit snapshot fixtures** under `tests/roadmap-audit/`: `phase-happy/`, `phase-no-phases/`, `phase-malformed-missing-endstate/`, `phase-malformed-missing-groups/`, `phase-listed-group-missing/`, `phase-double-claimed-group/`, `phase-scaffolding-missing-file/`, `vocab-phase-banned/`. Existing 14 fixtures gained the new `## PHASES STATUS: skip` block via mass `UPDATE_SNAPSHOTS=1` regen — diff is a constant ~10 lines per fixture.
+
+### Changed (`/roadmap` skill prose)
+- **Phase added to vocabulary section.** Notes the audit's `check_phases` and `check_phase_invariants` validate declared Phases and points readers to `docs/designs/roadmap-phases.md` for grammar. Most projects don't need Phases — declare one only when 2+ sequential Groups together deliver one named end-state no single Group ships.
+- **Init/restructure asks "do these Groups deliver one feature?"** When a structural proposal includes 2+ sequential Groups, one extra AskUserQuestion confirms whether a Phase wraps them. Default no Phase. Sequential Groups linked only by file collision (e.g., Groups 5→6) are not a Phase.
+- **Phase-context hint at the top of every `/roadmap` run.** When the audit's PHASES row reports `state=in_flight`, prose prints one line: "Phase N (Title) in flight: current_group=M, all_groups=[...]. Mid-Phase ships default to PATCH; when the last Group lands, /ship will recommend MINOR." When `state=complete`, the line tells the user that the next `/ship` is phase-closing and to pick MINOR at Step 12.
+- **Step 6 Version Recommendation gains a Phase-aware default.** Phase-closing → recommend MINOR; mid-Phase → recommend PATCH. Both defaults are overridable — phase that ends in cleanup/migration may still be PATCH; mid-Phase Group with independent user-visible value can be MINOR. The 4-digit version scheme is unchanged; this only nudges the recommendation surface.
+
 ## [0.18.4] - 2026-04-29
 
 ### Added (Group 1, Track 1A — Bun Test Toolchain)
