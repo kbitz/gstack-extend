@@ -37,6 +37,24 @@ Step 14 of the v0.15.0 /test-plan design plan ("run on one real Group before dec
 - **Priority:** P1
 - **Effort:** S (human: ~30 min / CC: ~5 min)
 
+### New skill: `/gstack-extend-upgrade` mirroring `/gstack-upgrade`
+Add a new skill that does for gstack-extend exactly what `/gstack-upgrade` does for gstack: detect install type (global git clone vs vendored), fetch the latest from the gstack-extend remote, run `./setup` (or this repo's equivalent), run any pending migrations, write a "just-upgraded-from" marker, and summarize What's New from `CHANGELOG.md` between old and new version. Should support the same auto-upgrade / snooze / "never ask again" UX as `/gstack-upgrade`, including the inline-upgrade flow that other gstack-extend skill preambles can call when they detect `UPGRADE_AVAILABLE`.
+- **Why:** gstack-extend has its own version + release cadence and currently has no first-class upgrade path. Users either run git pull manually or stay stale. A parallel skill keeps the UX consistent with gstack and lets future skill preambles surface `UPGRADE_AVAILABLE` the same way.
+- **Proposed fix:** copy `~/.claude/skills/gstack-upgrade/SKILL.md` as the starting template, swap `gstack` → `gstack-extend` in install-detection paths, repo URL, config helper paths (`gstack-config` → whatever gstack-extend uses, or add one), and migrations directory. Decide whether to share `gstack-config` with gstack or ship a parallel `gstack-extend-config`. Wire it into the skill registry / setup so `/gstack-extend-upgrade` is invocable.
+- **Effort:** M (human: ~half day / CC: ~30 min) — mostly mechanical mirroring; the interesting work is deciding config-helper sharing and whether the inline-upgrade flow belongs in a shared template.
+- **Depends on:** nothing blocking; cleaner if the SKILL.md.tmpl shared-template work below has landed first so both upgrade skills can share the inline flow.
+
+### Telemetry parity with gstack so retro / mind-meld can crawl gstack-extend usage
+gstack-extend skills (`/roadmap`, `/pair-review`, `/full-review`, `/review-apparatus`, `/test-plan`) currently emit nothing. gstack writes per-skill activations + outcomes to `~/.gstack/analytics/skill-usage.jsonl` (and `eureka.jsonl`, `spec-review.jsonl`), and `/retro` reads those files to produce its summary (see `~/.claude/skills/gstack/retro/SKILL.md` lines 60, 905, 913). Without parity, the mind-meld retro flying over a project sees gstack activity but is blind to all gstack-extend skill runs — no signal on which extension skills are used, how long they take, or what their outcomes are.
+- **Why:** the retro skill is the load-bearing consumer here. We want one retro pass to cover both toolchains, not two. Same shape of jsonl line, same directory, so existing `/retro` aggregation Just Works without a code change on the retro side. Opt-in remote telemetry is a stretch goal; local jsonl is the must-have.
+- **Proposed fix:**
+  1. Add a tiny `bin/gstack-extend-telemetry` (or reuse gstack's `gstack-telemetry-log` if available) that appends one JSON line per skill activation to `~/.gstack/analytics/skill-usage.jsonl`. Schema must match gstack's: `{"skill":"...","duration_s":"...","outcome":"...","session":"...","ts":"...","repo":"..."}`. Mark gstack-extend lines either via skill-name prefix (`extend:roadmap`) or an explicit `"source":"gstack-extend"` field — pick one and document it so retro filters can group/dedup.
+  2. Append a tiny preamble + completion block to each gstack-extend skill (`skills/*.md`) following gstack's pattern at `retro/SKILL.md:58-65` and the end-of-skill block at `:631-650`. Gate on the same `~/.gstack/.telemetry-prompted` / `gstack-config get telemetry` if we're sharing the config helper, or ship a parallel one (see the `/gstack-extend-upgrade` TODO above — same config-sharing decision).
+  3. Optional: log eureka moments / blocking-question events to `~/.gstack/analytics/eureka.jsonl` so retro's eureka section picks them up too.
+  4. Update `/retro` skill prose (in gstack) only if needed — ideally the existing reader works as-is once we match schema.
+- **Effort:** M (human: ~half day / CC: ~30 min) — mostly mechanical: one helper script + a per-skill block. Skill-template work (see SKILL.md.tmpl TODO) reduces this to ~20 min if the shared template lands first.
+- **Depends on:** clean decision on shared `~/.gstack/analytics/` directory + gstack-config sharing vs a parallel `gstack-extend-config`. No code blocker.
+
 ### CLAUDE.md cleanup skill
 New skill (`/claude-md-cleanup` or similar) that audits a project's CLAUDE.md for
 bloat: duplicated info that already exists in README or other docs, stale references
