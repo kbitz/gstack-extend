@@ -60,7 +60,7 @@ Handle responses the same way as /pair-review (see pair-review.md inline upgrade
 
 # /roadmap — Documentation Restructuring
 
-This skill maintains ROADMAP.md as a Groups > Tracks > Tasks execution plan. Logic lives in `bin/roadmap-audit`, `bin/roadmap-route`, `bin/roadmap-place`, and `bin/roadmap-revise`. The skill prose orchestrates: it asks the helpers what to do, presents recommendations, and performs file edits the helpers can't make.
+This skill maintains ROADMAP.md as a Groups > Tracks > Tasks execution plan. Helpers (`bin/roadmap-audit`, `bin/roadmap-route`, `bin/roadmap-revise`) emit feature-engineered signals; the skill prose holds the whole picture in mind and proposes a plan diff. Every run is plan reassessment, not inbox drainage.
 
 **HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md, PROGRESS.md, and (during overhaul cleanup) `docs/designs/`/`docs/archive/` reorganization. Never modify code, configs, or CI files. VERSION is recommended but never written by /roadmap (that's /ship's job).
 
@@ -70,15 +70,16 @@ This skill maintains ROADMAP.md as a Groups > Tracks > Tasks execution plan. Log
 
 **Source-tag contract:** Every inbox item carries a `[source:key=val]` tag. The canonical grammar, severity taxonomy, and dedup rules live in `docs/source-tag-contract.md`. The audit's `TODO_FORMAT` check validates entries against it.
 
-## Step 1: Dispatch
+## Step 1: Gather
 
-Run the audit's state scanner with the user's prompt:
+Read everything before deciding anything. Reassessment can't see what it doesn't load.
 
 ```bash
+"$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
 "$_EXTEND_ROOT/bin/roadmap-audit" --scan-state --prompt "$USER_PROMPT" > /tmp/roadmap-state.json
 ```
 
-The output is JSON of state SIGNALS — no verdict. Schema:
+State signals JSON schema:
 
 ```json
 {
@@ -95,198 +96,201 @@ The output is JSON of state SIGNALS — no verdict. Schema:
 }
 ```
 
-`staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped. `git_inferred_freshness` is the broader signal: a count of active tasks where 2+ commits landed on referenced files since the task was introduced to ROADMAP.md, OR 1 commit landed whose message references the enclosing "Track NX" — catches the common "shipped without updating the roadmap" case (including the single-bundled-PR case where the whole Track lands as one commit).
+`staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped. `git_inferred_freshness` counts active tasks where 2+ commits landed on referenced files since intro, OR 1 commit referenced the enclosing `Track NX` (the single-bundled-PR case).
 
-**Compose the ops list from signals.** Apply these rules in fixed precedence order — REVISE → FRESHNESS → CLOSURE → TRIAGE:
+Read in addition: `TODOS.md ## Unprocessed` (with source-tag pre-classification per below), `ROADMAP.md` (full structure), and recent git log scoped to ROADMAP-referenced files.
 
-| Op | Trigger |
-|---|---|
-| `REVISE` | `intents.split == 1` |
-| `FRESHNESS` | `signals.staleness_fail == 1` OR `signals.git_inferred_freshness >= 1` |
-| `CLOSURE` | `signals.has_zero_open_group == 1` OR `intents.closure == 1` |
-| `TRIAGE` | `signals.unprocessed_count > 0` |
+**LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
-The rules are simple lookups, but you (the LLM) own them — if context warrants overriding (e.g., user says "I just want to triage, ignore the staleness for now"), drop the corresponding op and note the override.
+**Recent commits on referenced files** (null-safe; tolerate deleted/renamed paths and large arg lists):
 
-**Branching:**
-- `exclusive_state == "GREENFIELD"` → run **Step 2: Greenfield Overhaul**, skip everything else.
-- Composed ops list is empty → roadmap is drained. Print "Roadmap looks good. No unprocessed items, no closure debt, no staleness." Skip to Step 6 (commit; nothing changed → no-op).
-- Otherwise → run each composed op in fixed precedence order, then continue to Step 6.
+```bash
+git log --since="$LAST_ROADMAP_RUN" --oneline -- docs/ROADMAP.md
+extract_referenced_files_from_roadmap | tr '\n' '\0' | xargs -0 -I {} \
+  git log --since="$LAST_ROADMAP_RUN" --pretty='%h %s' -- {} 2>/dev/null
+```
 
-**Ambiguity prompt** — fires when CLOSURE and TRIAGE are both in the composed ops list AND `intents.closure == 0` (the prompt didn't signal closure):
+**Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each:
 
-> AskUserQuestion: "You have closure work on in-flight Group(s) AND unprocessed inbox items. Which first?"
-> A) Close out first (recommended — clear what's already in flight before adding more)
-> B) Triage new items first
+```bash
+source "$_EXTEND_ROOT/bin/lib/source-tag.sh"
+for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
+# also: compute_dedup_hash "<title>" for dedup
+```
 
-Default: A. The answer reorders ops if needed.
+`route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before reassessment sees them.
 
 **Detected-intent prints** (visible to user, no decisions): if the JSON's intents show non-zero, print one line each so the user can correct on the next prompt:
-- `intents.closure == 1` → "Detected closure intent in your prompt — surfacing in-flight Groups first."
-- `intents.split == 1` → "Detected split intent in your prompt — REVISE state will run before triage."
-- `intents.track_ref != ""` → "Detected reference to Track {ID} — operations will scope to that track when relevant."
+- `intents.closure == 1` → "Detected closure intent in your prompt."
+- `intents.split == 1` → "Detected split intent in your prompt."
+- `intents.track_ref != ""` → "Detected reference to Track {ID}."
+- prompt contains a minimal cue ("just triage", "don't restructure", "small pass", "quick cleanup", "no rework", or similar) → "Detected minimal-cue — will skip structural proposals; correctness signals (closure debt, freshness) still surfaced."
 
-If the user replies "ignore that" before the next prompt, drop the bias and proceed neutrally.
+If the user replies "ignore that" before the next prompt, drop the bias.
 
-## Step 2: Greenfield Overhaul (no ROADMAP.md exists)
+## Step 2: Fast-path
 
-Build ROADMAP.md from scratch. Read TODOS.md, recent git history, and existing project docs. Organize all items into Groups > Tracks > Tasks following the **Output Format** below.
+Skip reassessment entirely when ALL of these hold:
 
-For each item in TODOS.md:
-1. Run `bin/roadmap-route '<source-tag>'` → KEEP / KILL / PROMPT.
-2. KEEP and PROMPT(approved) items proceed; KILL items are dropped (git has the history).
-3. Use semantic judgment to assign Groups (dependency-ordered) and Tracks within each Group (parallel-safe by file ownership).
+- Audit returned `STATUS: pass` for every blocker check (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET).
+- `## Unprocessed` is empty.
+- `signals.has_zero_open_group == 0` AND no in-flight Group has inbox items that look like closure debt (file overlap with the Group's `_touches:_` or `[source:group=N]` matches).
+- `signals.staleness_fail == 0` AND `signals.git_inferred_freshness == 0` (this is the codex guard — no in-flight Track has files with shipped activity since intro; otherwise the plan is stale and reassessment must run).
+- User prompt has no `intents.split`, `intents.closure`, or structural keyword cue (e.g., "review the plan", "restructure", "reorganize").
 
-After writing ROADMAP.md, clean TODOS.md: remove all organized items, leave only the empty `## Unprocessed` section header.
+If all conditions hold, print: **`Plan looks current. No changes.`** Exit before Step 3. No commit.
 
-**Approval (overhaul mode):**
+If any condition fails, run reassessment.
 
-> AskUserQuestion: "Proposed structure: N groups, M tracks, K tasks. [What changed]. Approve?"
-> A) Approve restructured ROADMAP.md
-> B) Revise (specify which sections)
-> C) Revert to original (no changes written)
+## Step 3: Reassess
 
-Then proceed to Step 6 (commit).
+This is the LLM-owned step. Hold the full picture in mind and propose a plan diff. Don't iterate item-by-item; that's exactly the failure mode this redesign exists to fix.
 
-## Step 3: Run Operations
+### What to look at, holistically
 
-For each op in the JSON's `ops` array, run the corresponding section. Operations execute in this fixed order regardless of the JSON's listing: REVISE → FRESHNESS → CLOSURE → TRIAGE.
+Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
-### Op: REVISE (user requested split / merge / reorder)
+- **Is each existing Group/Track's current state correct given new evidence?** A Track whose files have shipped activity might be secretly done. A Group whose Pre-flight items have all landed might be ready for ✓ Complete. A Track whose `_touches:_` no longer reflects its actual scope might need re-scoping or splitting.
+- **Are inbox items proving an in-flight Group's scope was incomplete?** Items tagged `[pair-review:group=N]` or referencing files in Group N's `_touches:_` are closure debt for Group N. Real closure means resolving those — extend an existing Track, add a closing Track, or (for ✓ Complete Groups) append to **Hotfix** — *not* dumping them into Pre-flight or Future.
+- **Are there themes in the inbox set that warrant new Tracks or a new Group?** A new Track makes sense when the work is cohesive enough to ship in one plan+implement session, has a coherent file footprint, and has a bounded estimate. **No item-count rules.** 10 tiny bugs in the same area can be one Track. One large-scope task can be its own Track. Three unrelated items don't form a Track even if they share a source tag. The judgment is "is this scope cohesive?", not "are there ≥N items?"
+- **Are there stale items in ROADMAP.md?** Files no longer in `git ls-files`, version-tagged tasks where the version has shipped, items the freshness scan flagged.
+- **Does the user's prompt intent reshape the proposal?** A minimal cue skips structural proposals but still surfaces closure debt and freshness — correctness can't be overridden by a minimal cue. An explicit `intents.split` proposal does the split AND surfaces other necessary changes.
 
-The intents JSON tells you which revision the user wants. For v1, split-track is the only auto-routed revision; merge/reorder are manual edits.
+### Adversarial-flagged items have priority
 
-If `intents.split == 1`:
-1. If `intents.track_ref` is empty: ask which track to split.
+Items from `[full-review:severity=critical|necessary]` or `[investigate]` are signals that something is genuinely wrong. They drive structural and closure decisions, not just batch-deferral exemption:
 
-   > AskUserQuestion: "Which track do you want to split? (e.g., 2A)"
-   > Options: list current in-flight track IDs.
+- A critical pair-review finding for Group N is closure debt; Group N can't ship until it's resolved.
+- An investigate finding referencing Track 2A's files probably means Track 2A's scope was wrong; reassess the Track.
+- Surface adversarial items individually in the AskUserQuestion presentation (see Cluster types below).
 
-2. Read the track's tasks and metadata from ROADMAP.md.
-3. Propose a split: cluster tasks by primary file path. If `bin/roadmap-audit` already emitted a SIZE finding with a "Split suggestion" line, use that. Otherwise propose 2 children based on file ownership.
-4. Ask the user to confirm child IDs and names:
+### Hierarchical reassessment for large input
 
-   > AskUserQuestion: "Split Track {parent} into N children. Proposed: {child specs}. Approve?"
-   > A) Approve as proposed
-   > B) Revise child names / task allocation
+If the combined input (`unprocessed_count + active_track_count + active_task_count`) feels large enough that single-pass reasoning would be sloppy — themes don't naturally cluster on first read, or your draft proposal has internal contradictions — split into two passes against the **full** picture (not Group-scoped; that loses cross-Group themes):
 
-5. On approval, execute:
-   ```bash
-   "$_EXTEND_ROOT/bin/roadmap-revise" split-track \
-     --from {parent} \
-     --child '{child1-id}|{child1-name}|{indices}' \
-     --child '{child2-id}|{child2-name}|{indices}'
-   ```
-6. After split, refresh each child track's metadata to reflect its actual task count. (The helper inherits the parent's metadata verbatim; the per-child task counts and `_touches:_` need user-aware refinement — do this as direct file edits after the helper runs.)
+- **Pass 1 — Structure.** Identify only structural changes: themes warranting new Tracks, Tracks/Groups secretly done, lopsided structure, closure-debt clusters. Output a structure proposal with no per-item placements yet. User approves/revises via AskUserQuestion.
+- **Pass 2 — Placement.** Given the agreed structure, do per-item placement into the now-stable target. Output placements + deferrals.
 
-### Op: FRESHNESS (audit found stale items)
+You judge when hierarchical mode is needed; no numeric threshold. The structured proposal artifact (below) records both passes for audit.
 
-Goal: keep the roadmap reflecting what's actually true.
+### Constraints
 
-1. Run the freshness scan against ROADMAP.md tasks:
-   - For each task in ROADMAP.md (including Pre-flight), extract file paths from the metadata `[brackets]` and from backtick-quoted ``` `paths` ``` in the description.
-   - Extract a distinctive phrase from the task title (3-5 words).
-   - Run `git log -1 --format="%H %ai" -S "<phrase>" -- <ROADMAP-path>` to find when the task was introduced.
-   - For each valid file path, run `git log --oneline --after="<introduction-date>" -- <file-path>`.
-   - If the provenance lookup fails (rare), fall back to `git log --oneline --since="4 weeks ago" -- <file-path>`.
-   - 2+ commits on a task's files since introduction → flag as **potentially done**.
-   - 1 commit since introduction whose message references the enclosing `Track NX` (case-insensitive) → flag as **potentially done** (single-bundled-PR case).
-   - Tasks whose referenced files no longer exist (`git ls-files`) → flag as **likely done or obsoleted**.
+- **Stable IDs.** Track 1A is Track 1A forever. Renumbering is forbidden outside canonical resets. New work gets new IDs (Track 2C, Group 5).
+- **Mid-flight Group reopening is forbidden.** A ✓ Complete Group stays ✓ Complete. Post-ship work appends to the Group's **Hotfix** subsection — Hotfix is the only post-ship primitive.
+- **HARD GATE.** Documentation only. ROADMAP.md, TODOS.md, PROGRESS.md, design/archive reorganization. Never code, configs, CI files. Recommend a VERSION bump but never write VERSION (`/ship` does that).
+- **Don't over-restructure trivial volume.** A 2-item triage with no closure debt is a placement-only run. Reassessment proposing a new Track for 2 unrelated items is over-engineering.
+- **Vocabulary discipline.** Audit's `check_vocab_lint` owns this — don't introduce banned terms.
 
-2. Also check tasks/tracks with `Depends on:` annotations — if the blocker condition has changed, flag as **potentially unblocked**.
+### Structured proposal artifact
 
-3. Present findings via AskUserQuestion. Per item:
-   - Completed: "Mark done (remove from roadmap)" / "Still in progress"
-   - Unblocked: "Remove blocker annotation" / "Still blocked"
+Before any AskUserQuestion or apply, write the proposal to **`.context/roadmap/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target.
 
-4. Apply changes:
-   - **Stable IDs.** Never renumber Groups or Tracks. Origin tags (`[pair-review:group=N,item=M]`) must continue to resolve forever. Numbers are commit-hash-like — append-only, never reused. Renumbering is permitted ONLY at explicit canonical resets (major version bumps, user-requested via separate flow, documented in ROADMAP.md header).
-   - **Individual task completion** (one bullet within an active Track or Pre-flight, siblings still open): delete the bullet from ROADMAP.md and update the parent's task count + effort metadata. Git log + CHANGELOG/PROGRESS.md preserve the history; an active-view ROADMAP shouldn't bloat with shipped detail.
-   - **Track or Pre-flight completion** (every task in a Track, or every bullet in a Pre-flight, is done): two paths.
-     - **In-place ✓ Complete** (Track stays visible): `### Track 2B: Draft Safety ✓ Complete`. The body remains under the heading. Useful during a wind-down phase when the Group still has open Tracks — completed Tracks stop counting toward PARALLELISM_BUDGET, SIZE caps, and COLLISIONS, so the audit reflects actual concurrency load. Symmetric with the Group-level `## Group N: Name ✓ Complete` convention.
-     - **Collapse to italic line** under the Group heading: `_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._` or `_Pre-flight — ✓ Complete (v0.16.0–v0.16.2). 4 items shipped._`. Or move to a `## Completed` section. Use this when the Group is winding down and the Track body is no longer informative for active work. Either way the Track ID stays in history.
-   - **Group completion** (every Track in a Group is done, including Pre-flight): mark `## Group N: Name ✓ Complete` in place. Add a one-line shipped note ("Shipped as v0.9.17.3").
-   - **Preserve existing conventions.** If the project already uses inline `✅` markers or a custom `## Shipped` section, don't unilaterally rewrite — match what's there.
+Format:
 
-5. After freshness changes, assess whether the remaining structure still makes sense (lopsided Groups, orphans). If broken, offer reorganization (extract all tasks → re-triage Future → apply overhaul rules).
+```markdown
+# Roadmap reassessment proposal — <ISO timestamp>
 
-### Op: CLOSURE (in-flight Group has zero open Tracks, OR user signaled closure intent)
+## Structural changes
+- NEW Track 1B "Audit polish" — N tasks from inbox items <ids>
+- EXTEND Track 2A — add closing-bug tasks from inbox items <ids>
+- ✓ Complete Track 1A — files have N commits since intro
 
-Read the audit's `IN_FLIGHT_GROUPS` and `ORIGIN_STATS` outputs. For each in-flight Group with zero open Tracks (all Tracks complete):
+## Placements
+- Item <id> → Group N Pre-flight (off-topic for Track 2A)
+- Item <id> → Future (defer; no in-flight Group fits)
+- Item <id> → KILL (referenced files no longer exist)
 
-1. Mark the Group ✓ Complete (per Group completion rules in FRESHNESS above).
-2. Walk any open-origin items for that Group. For each:
-   ```bash
-   "$_EXTEND_ROOT/bin/roadmap-place" \
-     --tag '<source-tag>' \
-     --in-flight "<list>" --complete "<Group N>" \
-     --primary "<primary-id>" \
-     --severity "<severity-from-tag-or-blank>" \
-     --files "<paths-from-description>" \
-     --primary-touches "<primary-Group-touches-from-audit>"
-   ```
-   The helper emits ranked candidates with a `needs_judgment` flag per candidate. **You own the final placement decision** — the helper does feature engineering, you apply judgment. Three patterns:
-   - **One candidate, `needs_judgment=0`** → unambiguous (origin in-flight, critical-hotfix, drained-defer). Use directly.
-   - **One candidate, `needs_judgment=1`** → likely right but sanity-check on-topic-ness against the destination Group. The "no origin tag → primary Pre-flight" default is the common case here; if the item is clearly off-topic for the primary Group, override to `target=future` and note why.
-   - **Two+ candidates** → judgment-required. Common case: origin Group shipped + non-critical. Read the item's files alongside the candidate-1 reason (which lists primary's `_touches:_`) and decide via **semantic** overlap, not literal string match. "components/auth/LoginForm.tsx" semantically overlaps "ui/auth/**" even though the strings don't equal. If overlap → use rank-1; if off-topic → use rank-2 (defer).
+## Closure proposals
+- Group N → ✓ Complete (after closing-Track ships)
 
-   Targets:
-   - `target=current group=X slot=track` → fold the item into Group X (active).
-   - `target=hotfix group=N` → append to Group N's `**Hotfix**` subsection (Group stays ✓ Complete).
-   - `target=future` → move to `## Future`.
-3. Present each placement via AskUserQuestion before writing. Default to your chosen candidate; show the rejected alternative when there were 2+.
-
-**Hotfix subsection format:**
-```
-## Group N: Name ✓ Complete
-
-Shipped as v0.9.17.3. All 3 Tracks completed.
-
-**Hotfix** (post-ship fixes; serial, one-at-a-time):
-- Arrow key double-move [pair-review:group=N,item=M] — _~20 lines_ (S)
+## Hierarchical mode
+<only present in hierarchical mode>
+- Pass 1 ran: structure proposed at <ts>
+- Pass 2 ran: placement proposed at <ts>
 ```
 
-When the hotfix ships, delete its bullet (git has history). The Group stays ✓ Complete — hotfixes are patch-version work, not a Group reopening.
+Sections that have no entries can be omitted. Path is `.context/roadmap/proposal-{ts}.md` — accumulates audit-trail history.
 
-### Op: TRIAGE (Unprocessed has items)
+### AskUserQuestion clusters
 
-Drain the `## Unprocessed` section into ROADMAP.md.
+Present the diff as clusters in this order: structural → closure → placement batch → deferral/kill batch. The user's responses produce the *applied* diff (may be a subset).
 
-1. **Pre-scrutiny dedup.** Compute dedup hashes for every Unprocessed item via the source-tag library:
-   ```bash
-   source "$_EXTEND_ROOT/bin/lib/source-tag.sh"
-   # for each item: compute_dedup_hash "<title>"
-   ```
-   Group items by hash. Groups with >1 entry are duplicates of the same bug surfaced by different reviewers. Ask the user which to keep, drop the others. Log dedup decisions to `.context/roadmap/dedupe-log.jsonl`.
+**Cluster 1 — Structural proposal** (one per structural change):
 
-2. **Per-item routing.** For each surviving item:
-   ```bash
-   "$_EXTEND_ROOT/bin/roadmap-route" '<source-tag>'
-   ```
-   Returns `action=KEEP|KILL|PROMPT` plus reason. Use this to drive the user-facing recommendation.
+> AskUserQuestion: "<one-line theme summary>. I'd <extract/extend/split/merge> ... Approve?"
+>
+> A) Approve as proposed
+> B) Revise (specify what to change)
+> C) Hold scope — fold into existing structure instead
 
-3. **Triage UI.** If ≤6 items, present one-by-one via AskUserQuestion. If ≥7, present a batched table with the helper's recommendations and a single "Approve all / Override" prompt. Override accepts free-form syntax like `"3 keep, 7 kill, 9 defer"`.
+**Cluster 2 — Closure proposal** (one per closure):
 
-   **Adversarial-flagged items must not be batch-deferred.** If the helper returns `source=full-review severity=critical|necessary` or `source=investigate`, force one-by-one for that item even in batched mode. Silently routing a flagged finding to Future hides the call the user needs to make.
+> AskUserQuestion: "<Track or Group> shows N commits since intro including <ref> — propose marking ✓ Complete in place. Approve?"
+>
+> A) Mark Complete
+> B) Still in progress
 
-   **Auto-suggest kills** based on audit signals:
-   - STALENESS findings (item references a shipped version)
-   - Backtick-quoted paths in description that no longer exist (`git ls-files` check)
+**Cluster 3 — Placement batch** (single batched table for all per-item placements, with reassessment's recommendation per item; user approves all or overrides selectively). Adversarial-flagged items break out individually in this batch with their own context.
 
-4. **Per-item placement** (for KEEP / approved-PROMPT items):
-   ```bash
-   "$_EXTEND_ROOT/bin/roadmap-place" \
-     --tag '<tag>' \
-     --in-flight "<list>" --complete "<list>" --primary "<primary>" \
-     --files "<paths>" --primary-touches "<touches>"
-   ```
-   The helper emits ranked candidates with `needs_judgment` flags. Apply LLM judgment per the patterns described in the **CLOSURE** op above (semantic file-overlap for ranked alternatives; on-topic-ness check for `needs_judgment=1`). Present via AskUserQuestion when placement is non-obvious (reopen rule fired with two candidates, or off-topic override).
+**Cluster 4 — Deferral / kill batch** (single batched approval for items reassessment recommends deferring or killing, with reasons).
 
-5. **Apply.** Move items from `## Unprocessed` (TODOS.md) to their targets in ROADMAP.md. Update Track metadata (task counts, effort estimates) when items land in existing Tracks. Killed items are deleted; deferred items go to `## Future`.
+**Cluster 5 — Ambiguity** (genuine uncertainty between two equally plausible proposals): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
 
-6. **Triage summary.** Print: "Triaged N items: kept M, killed K. Assigned X to current phase, Y to future."
+If reassessment produces only placements (no structural / closure changes), it should feel like a batched triage. Structural changes always present first.
 
-## Step 4: Update PROGRESS.md
+### Greenfield (no ROADMAP.md exists)
+
+Greenfield is reassessment with an empty current plan. Read TODOS.md and recent git history; propose Groups/Tracks/Tasks following the **Output Format** below; present via Cluster 1 (one structural proposal covering the entire ROADMAP). After approval, clean TODOS.md to leave only the empty `## Unprocessed` header.
+
+## Step 4: Apply
+
+Apply the user's approved diff to ROADMAP.md and TODOS.md.
+
+- **Split-track** operations use the helper:
+  ```bash
+  "$_EXTEND_ROOT/bin/roadmap-revise" split-track \
+    --from {parent} \
+    --child '{child1-id}|{child1-name}|{indices}' \
+    --child '{child2-id}|{child2-name}|{indices}'
+  ```
+  Refresh per-child metadata (task counts, `_touches:_`) as direct file edits after the helper runs.
+- **All other operations** (extend Track, add Track, mark ✓ Complete, append to Hotfix, defer to Future, kill) are direct ROADMAP.md / TODOS.md edits.
+- **Stable ID rules apply.** Never renumber. New work gets new IDs.
+- **Hotfix subsection format** for post-ship items in ✓ Complete Groups:
+  ```
+  ## Group N: Name ✓ Complete
+
+  Shipped as v0.9.17.3. All 3 Tracks completed.
+
+  **Hotfix** (post-ship fixes; serial, one-at-a-time):
+  - Arrow key double-move [pair-review:group=N,item=M] — _~20 lines_ (S)
+  ```
+- **Track / Group completion conventions.** Two paths:
+  - **In-place ✓ Complete** (Track stays visible): `### Track 2B: Draft Safety ✓ Complete`. Body remains under the heading. Completed Tracks stop counting toward PARALLELISM_BUDGET, SIZE caps, COLLISIONS.
+  - **Collapse to italic line** under Group heading: `_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._` Use when winding down and the Track body is no longer informative.
+  - **Group**: `## Group N: Name ✓ Complete` in place; one-line shipped note.
+  - **Preserve project conventions.** If the project already uses inline `✅` markers or a custom `## Shipped` section, match what's there.
+- **Individual task completion** (one bullet, siblings still open): delete the bullet, update parent task count + effort. Git log + CHANGELOG/PROGRESS preserve history.
+
+### Audit-after-apply
+
+Run the audit immediately after writing edits:
+
+```bash
+"$_EXTEND_ROOT/bin/roadmap-audit"
+```
+
+If any blocker check fires (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET), escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+
+### TODOS.md drain orphan check
+
+Before commit, assert that every item the proposal said to move/kill/defer is gone from `## Unprocessed`. Any orphan = something didn't apply. Escalate with the orphan list and current diff state.
+
+### Apply summary
+
+Print a one-line summary of what shipped: "Reassessed roadmap: <closures> closed, <new-tracks> added, <triaged> placed."
+
+## Step 5: Update PROGRESS.md
 
 Check if a version was bumped since the last PROGRESS.md entry.
 
@@ -297,7 +301,7 @@ If PROGRESS.md exists:
 
 If PROGRESS.md doesn't exist: create with a single row for the current VERSION (or v0.1.0 if no VERSION file).
 
-## Step 5: Version Recommendation
+## Step 6: Version Recommendation
 
 Based on changes since the last tag (or VERSION baseline if no tags):
 
@@ -310,14 +314,15 @@ Based on changes since the last tag (or VERSION baseline if no tags):
 
 /roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user: "I recommend bumping to vX.Y.Z. Run `/ship` to execute the bump." If no bump needed, say so.
 
-## Step 6: Commit
+## Step 7: Commit
 
 Stage only documentation files: ROADMAP.md, TODOS.md (cleaned inbox), PROGRESS.md (if modified).
 
 Commit message reflects what ran. Examples:
 - Greenfield: `docs: restructure roadmap (Groups > Tracks > Tasks)`
-- Triage only: `docs: triage unprocessed items into roadmap`
-- Freshness + triage: `docs: freshen and triage into roadmap`
+- Reassessment with structure changes: `docs: reassess roadmap — added Track 1B, closed Group 2, triaged 6 items`
+- Placements only: `docs: triage unprocessed items into roadmap`
+- Freshness sweep: `docs: freshen roadmap (mark shipped Tracks ✓ Complete)`
 - Closure + triage: `docs: close out Group {N} and triage new items`
 - Revise (split): `docs: split Track {parent} into {children}`
 

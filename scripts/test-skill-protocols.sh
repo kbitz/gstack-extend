@@ -202,6 +202,29 @@ VERBATIM_BLOCKS=(
   "BLOCK_CONFUSION_HEAD:confusion-head"
 )
 
+# ─── roadmap-only verbatim assertions (v0.18.0 reassessment redesign) ─
+# These strings live in skills/roadmap.md only. They're load-bearing for
+# skill behavior (fast-path output) and test fixtures (proposal artifact
+# format). Drift here means dogfood fixtures stop matching.
+
+read -r -d '' BLOCK_ROADMAP_FAST_PATH <<'BLOCK' || true
+Plan looks current. No changes.
+BLOCK
+
+read -r -d '' BLOCK_ROADMAP_PROPOSAL_PATH <<'BLOCK' || true
+.context/roadmap/proposal-
+BLOCK
+
+read -r -d '' BLOCK_ROADMAP_CLUSTER_STRUCTURAL <<'BLOCK' || true
+Hold scope — fold into existing structure instead
+BLOCK
+
+ROADMAP_VERBATIM_BLOCKS=(
+  "BLOCK_ROADMAP_FAST_PATH:fast-path-output"
+  "BLOCK_ROADMAP_PROPOSAL_PATH:proposal-artifact-path"
+  "BLOCK_ROADMAP_CLUSTER_STRUCTURAL:cluster-structural-hold-scope"
+)
+
 echo ""
 echo "═══ verbatim graft blocks ═══"
 for skill in "${SKILLS[@]}"; do
@@ -219,6 +242,23 @@ for skill in "${SKILLS[@]}"; do
     fi
   done
 done
+
+echo ""
+echo "═══ roadmap verbatim blocks ═══"
+ROADMAP_FILE="$SCRIPT_DIR/skills/roadmap.md"
+if [ -f "$ROADMAP_FILE" ]; then
+  haystack=$(<"$ROADMAP_FILE")
+  for pair in "${ROADMAP_VERBATIM_BLOCKS[@]}"; do
+    var_name="${pair%%:*}"
+    label="${pair##*:}"
+    expected="${!var_name}"
+    if [[ "$haystack" == *"$expected"* ]]; then
+      pass "roadmap contains verbatim block: $label"
+    else
+      fail "roadmap missing verbatim block: $label" "drift in skills/roadmap.md — propagate canonical text from scripts/test-skill-protocols.sh"
+    fi
+  done
+fi
 
 # pair-review additionally must describe BOTH a per-group mini-table AND a session-done
 # rollup, since its multi-group model is the reason the table renders more than once.

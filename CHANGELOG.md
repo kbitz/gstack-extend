@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-04-28
+
+### Changed (`/roadmap` reassessment redesign)
+- **`/roadmap` is now plan reassessment, not inbox drainage.** The four-op precedence chain (REVISE → FRESHNESS → CLOSURE → TRIAGE) is replaced by a single LLM-owned reassessment step that holds the whole picture in mind and proposes a plan diff. v0.17.0 kept judgment in prose but the prose was structured per-op with narrow scope; per-item placement loops never zoomed out to ask "should this set of items reshape the structure?" Dogfood evidence: `/roadmap` on bolt dumped 11 inbox items into a 6-item Pre-flight serial chain mixing 3 distinct themes. Reassessment replaces that with: read everything, identify themes via qualitative judgment (cohesive scope? coherent files? bounded estimate? — no item-count rules), propose a plan diff covering structural changes + closures + placements, present in clusters via AskUserQuestion. The four ops become *kinds of changes the reassessment can propose*, not separate code paths. Greenfield is reassessment with an empty current plan. Closure debt (inbox items tagged `[pair-review:group=N]` or referencing in-flight Track files) blocks ✓ Complete in the same run — Real Done means resolving them first.
+- **Hierarchical reassessment for large input.** When the LLM judges the input unwieldy (themes don't cluster on first read, draft proposal has internal contradictions), reassessment splits into Pass 1 Structure → Pass 2 Placement on the *full* picture (not Group-scoped — that loses cross-Group themes). LLM judges when to engage; no numeric threshold.
+- **Adversarial-flagged items drive structural decisions.** `[full-review:severity=critical|necessary]` and `[investigate]` items aren't just exempt from batch deferral — they're a strong signal that closure debt exists or that an active Track's scope was wrong. Surface individually in the AskUserQuestion presentation and prioritize in structural/closure proposals.
+- **Mid-flight Group reopening forbidden.** A ✓ Complete Group stays ✓ Complete. Hotfix is the only post-ship primitive. Stable IDs and PROGRESS history depend on this.
+
+### Added
+- **Structured proposal artifact** at `.context/roadmap/proposal-{ts}.md` — reassessment writes its diff proposal to a markdown file before AskUserQuestion. Three purposes: preview UX (user sees what will be applied), parseable test surface (dogfood fixtures grep section names + counts), audit trail (history of every reassessment in `.context/roadmap/`). Format prose-generated, not bash-emitted — judgment stays in prose.
+- **Tightened fast-path predicate.** Fast-path now requires no in-flight Track has files with shipped activity since intro (`signals.git_inferred_freshness == 0`) — guards against the codex-flagged case where clean audit + empty inbox could rubber-stamp a stale plan.
+- **Audit-after-apply backstop.** After Step 4 writes ROADMAP.md edits, the audit reruns; if any blocker fires (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET), escalate per Escalation Protocol with the diff intact.
+- **TODOS.md drain orphan check.** Pre-commit assertion that every item the proposal said to move/kill/defer is gone from `## Unprocessed`. Catches "applied wrong" failure mode.
+- **Minimal-cue prompt parsing.** "just triage", "don't restructure", "small pass", "quick cleanup" and synonyms skip structural proposals but still surface closure debt and freshness — correctness can't be overridden by a minimal cue.
+- **`scripts/test-skill-protocols.sh` ROADMAP_VERBATIM_BLOCKS.** Three new assertions (fast-path output, proposal artifact path, structural-cluster Hold-scope template) catch drift in load-bearing skill prose.
+
+### Removed
+- **`bin/roadmap-place`** deleted. Per-item ranking is no longer on the critical path; reassessment owns placement holistically. Tests removed (the eight roadmap-place test cases in `scripts/test-roadmap-audit.sh`). `roadmap-route` (KEEP/KILL/PROMPT pre-classification) is retained — that's pure mechanics.
+- **`bin/roadmap-revise defer-task`** removed. Reassessment uses direct file edits for the trivial defer-to-Future case. `split-track` retained (genuinely complex helper logic worth keeping).
+
+### Notes
+- `bin/roadmap-audit` and `bin/roadmap-route` interfaces unchanged.
+- Source-tag contract unchanged.
+- Stable ID rules, vocabulary discipline, hotfix subsection mechanics, trust boundary on extracted strings — all preserved.
+
 ## [0.17.1] - 2026-04-28
 
 ### Fixed
