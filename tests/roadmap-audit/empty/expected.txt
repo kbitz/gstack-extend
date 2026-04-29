@@ -8,6 +8,16 @@ STATUS: skip
 FINDINGS:
 - No ROADMAP.md found
 
+## PHASES
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
 ## STALENESS
 STATUS: skip
 FINDINGS:

@@ -16,6 +16,26 @@ with the test-infra chain.
 
 ---
 
+## Phase 1: Bun Test Migration
+
+**End-state:** all `scripts/test-*.sh` deleted; `bun test` is the sole
+test entry point; `bin/roadmap-audit` is a compiled bun binary; the
+4 leverage patterns from gstack proper (touchfiles, eval persistence,
+LLM-as-judge, audit-compliance) are adopted.
+
+**Groups:** 1, 2, 3, 4 (sequential).
+
+**Scaffolding contract:**
+- Group 1 landed `src/audit/lib/source-tag.ts` and `tests/source-tag.test.ts`
+  in v0.18.4 — the source-tag library is the seed module the rest of the TS
+  port consumes.
+- Group 2 lands the rest of `src/audit/lib/*.ts` (semver, effort) plus the
+  TS port itself; some helpers are unit-tested in Group 2 but not yet
+  wired into checks until the Group 3 test-runner migration references
+  them directly.
+
+---
+
 ## Group 1: Bun Test Toolchain ✓ Complete
 
 Bootstrap the bun test toolchain in isolation, prove the pattern on the
