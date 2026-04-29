@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.3] - 2026-04-29
+
+### Added
+- **`docs/designs/roadmap-phases.md`.** Optional outer envelope for sequential Groups that together deliver one named end-state (e.g. "all bash test scripts deleted; bun is sole runner" across Groups 1–4 of `bun-test-architecture.md`). Reviewer-facing legibility fix: PR review tools were over-flagging dead-code between Group PRs because they couldn't see future Groups; declaring a Phase + scaffolding contract in ROADMAP.md makes intentional forward-references visible. Single-source affiliation (Phase block lists `Groups: ...`; no per-Group tag), audit emits a new `## PHASES` section + `PHASE_INVARIANTS` check (≥2 Groups, listed Groups exist, sequentiality, no double-claim, scaffolding `test -f`, malformed-block warns). Vocab-lint gains a fourth state (`PHASE`) so the existing "phase" ban stays strict outside structured Phase declarations. Versioning gets a *recommendation* surface only — `/roadmap` freshness scan suggests MINOR on phase exit and PATCH mid-Phase; no rule becomes mechanical, human confirms at `/ship` time. Implementation deferred to a future Track; `[design]` TODO captured for direct state-machine unit tests post-bun-port. Single-repo scope: `bin/roadmap-audit` and `skills/roadmap.md` only — `/ship`, `/review`, `/plan-eng-review` (gstack proper) untouched. Reviewed via `/plan-eng-review` with codex outside voice; review report embedded at the bottom of the design doc.
+
 ## [0.18.2] - 2026-04-29
 
 ### Changed (`/roadmap` skill prose)

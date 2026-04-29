@@ -2,6 +2,13 @@
 
 ## Unprocessed
 
+### [design] Direct state-machine tests for `check_phases` / `check_phase_invariants` after bun port
+The `roadmap-phases` design (`docs/designs/roadmap-phases.md`) ships its two new audit checks covered by snapshot fixtures only — no bash-level unit tests. State-machine logic (PHASE state in vocab-lint, Groups-list parsing, sequentiality check, double-claim check, scaffolding `test -f`) is exercised end-to-end through `expected.txt` diffs but not directly. Once the bun port lands (Phase 1 of `bun-test-architecture.md`, Group 2 of current ROADMAP), add `tests/audit-checks/phases.test.ts` that imports the TS check functions and asserts directly on inputs/outputs.
+- **Why:** snapshot indirection makes failures harder to debug — a state-machine bug shows up as a diff in 8 fixtures, not as a single failed assertion. Direct tests pinpoint the broken transition. Codex outside-voice flagged this as a sequencing risk during `/plan-eng-review` of the design (2026-04-29).
+- **Proposed fix:** after Group 2 (TS port of `bin/roadmap-audit`) lands, the audit's checks become importable TS modules. Write `tests/audit-checks/phases.test.ts` covering each PHASE_INVARIANTS rule (≥2 Groups, listed Groups exist, sequentiality, no double-claim, scaffolding test-f, malformed-block warns) and the vocab-lint PHASE state transitions. Snapshot fixtures stay; unit tests are additive coverage.
+- **Effort:** S (human: ~1 hr / CC: ~20 min) — once the TS modules exist, test wiring is mechanical.
+- **Depends on:** Group 2 of ROADMAP (`Behavior-preserving TS port of bin/roadmap-audit`) shipped.
+
 ### [manual] FRESHNESS skipped because prose conflated `STALENESS: pass` with "no recency check needed"
 Dogfooding `/roadmap` on bolt: I read v0.16.2's `STALENESS: pass` and prematurely concluded "skip FRESHNESS." That was the bigger error than the 2-commit threshold — even with the threshold raised, FRESHNESS would still surface candidates if the op actually ran. `STALENESS` only fires on items with explicit `(shipped vN.N.N)`-style version-tag annotations; it cannot pass-or-fail the broader "is this still active?" question. The skill prose at `skills/roadmap.md:105` lists `staleness_fail OR git_inferred_freshness >= 1` as the FRESHNESS trigger — correct on paper, but the names are close enough that prose readers (including me) confuse them.
 - **Why:** the gap is less helper logic, more naming + reader-orientation. STALENESS reads like a superset of FRESHNESS. A model reading "STALENESS: pass" naturally infers the freshness question is settled.
