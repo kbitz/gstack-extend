@@ -2,6 +2,69 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.6.0] - 2026-04-29
+
+### Added (Group 2, Track 2A — TypeScript port of `bin/roadmap-audit`, dark code)
+
+The whole audit pipeline ported to TypeScript across three commits (PR 1: lib +
+parsers, PR 2: cli + first 12 checks, PR 3: remaining 12 checks + scan-state).
+Output is byte-equivalent with the existing bash audit on every fixture.
+`bin/roadmap-audit` is unchanged — the cutover (compile via `bun build --compile`,
+gated by the cold-start benchmark) is the next step in Track 2A and lands separately.
+
+- **`src/audit/cli.ts` orchestrator.** Parses argv (`--scan-state`, `--prompt`,
+  `[REPO_ROOT]`), resolves the repo root via the git gateway, builds an
+  `AuditCtx` once, dispatches all 24 checks in canonical order, renders each
+  section in the bash-equivalent format. PARSE_ERRORS is emitted only when the
+  parsers' aggregated errors are non-empty (T1 contract). `--scan-state`
+  computes the full signal set (`unprocessed_count`, `in_flight_groups`,
+  `origin_total`, `staleness_fail`, `git_inferred_freshness`,
+  `has_zero_open_group`) and the intent envelope (`closure`, `split`,
+  `track_ref`) with the bash 5-token negation window.
+- **`src/audit/checks/*.ts` — 24 pure check ports.** One file per `## SECTION`,
+  each `(ctx: AuditCtx) => CheckResult`. `vocab-lint`, `structure`, `phases`,
+  `phase-invariants`, `staleness`, `version`, `taxonomy`, `doc-location`,
+  `archive-candidates`, `dependencies`, `group-deps`, `task-list`,
+  `structural-fitness`, `in-flight-groups`, `origin-stats`, `size-caps`,
+  `collisions`, `parallelism-budget`, `parallelizable-future`, `style-lint`,
+  `doc-inventory`, `scattered-todos`, `unprocessed`, `todo-format`. `mode` is
+  special — no STATUS line; rendered via `renderMode()`.
+- **`src/audit/parsers/{roadmap,phases,todos,progress}.ts`.** Single-pass scans
+  returning `ParserResult<T> = {value, errors[]}`. Roadmap parser handles
+  Groups, Tracks, `_touches:_`, intra-group dep cycles, `_serialize: true_`
+  expansion, `✓ Complete` suffix, and Phase block discovery in one walk.
+- **`src/audit/lib/*.ts` — pure helpers.** `git.ts` is the sole subprocess
+  gateway under `src/audit/**` (`tests/audit-no-stray-shellouts.test.ts`
+  enforces this contract). `semver.ts` ports the 4-digit comparator,
+  `effort.ts` ports the env > config > default ceiling lookup, `source-tag.ts`
+  was ported in v0.18.4 and is now consumed by todo-format/origin-stats.
+  New in PR 3: `todo-patterns.ts` (count_todo_patterns awk replacement),
+  `parallelism-cap.ts` (CLAUDE.md `<!-- roadmap:parallelism_cap=N -->` parsing),
+  `shared-infra.ts` (docs/shared-infra.txt loader with hand-rolled brace
+  expansion — no eval, expand-cap defense), `md-walk.ts` (maxdepth-2 .md
+  file walker matching bash exclusions), `in-flight.ts` (Group frontier
+  computation shared by IN_FLIGHT_GROUPS / PARALLELISM_BUDGET /
+  PARALLELIZABLE_FUTURE).
+- **`tests/audit-shadow.test.ts` — D8 cutover safety net.** Runs both bash
+  audit and `bun run src/audit/cli.ts` on every fixture, diffs each section
+  byte-for-byte, plus `--scan-state` JSON parity. 23 fixtures pass.
+- **Per-check unit tests** for the high-judgment cases that snapshot fixtures
+  don't isolate cleanly: `check-group-deps.test.ts` (DAG validation, cycles,
+  STALE_DEPS), `check-staleness.test.ts` (mocked GitGateway for tag/log
+  injection), `lib-todo-patterns.test.ts` (fence handling, no double-counting),
+  `lib-parallelism-cap.test.ts` (override + invalid-value fallback),
+  `lib-in-flight.test.ts` (default-prev rule, unknown deps, numeric ordering).
+- **D3 contract test** — `tests/audit-no-stray-shellouts.test.ts` fails if
+  `Bun.spawn` / `child_process` / `execSync` appears anywhere under
+  `src/audit/**` outside `lib/git.ts`. Single auditable subprocess surface.
+- **TODO-2 contract test** — `tests/audit-locale-safety.test.ts` fails if
+  `localeCompare` / `Intl.*` / `.sort()` without comparator appears under
+  `src/audit/**` without an inline `// LC_ALL=C: <reason>` waiver.
+
+Test gates: 318 bun tests across 16 files (was 257 before Group 2 work).
+Bash snapshot suite still 23/23 green. `bin/roadmap-audit` byte-identical
+to its pre-port output across all fixtures.
+
 ## [0.18.5.1] - 2026-04-29
 
 ### Added (`docs/TODOS.md`)
