@@ -209,8 +209,18 @@ Prompt:
 > Do NOT flag style issues. Do NOT suggest new features. Focus on what would
 > break in production or confuse a future maintainer.
 >
+> **Subtraction first.** Before proposing a hypothesis that adds code (new
+> validation, new helper, new error handling layer), consider whether deletion
+> or simplification gets to the same place. Often the right move is to remove
+> the caller that violates the assumption rather than make the callee defend
+> against it. Only suggest additive directions when subtraction won't work.
+>
+> Your hypothesis is a starting point for investigation, not a prescription.
+> Frame it as one possible direction; the implementer will re-verify the
+> problem and choose the actual fix.
+>
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
 > SEVERITY semantics (see docs/source-tag-contract.md):
 >   critical     — ship-blocker, data loss, security, correctness
@@ -250,8 +260,21 @@ Prompt:
 >
 > Do NOT flag style issues handled by linters or formatters.
 >
+> **Subtraction first.** This agent's whole purpose is finding waste — your
+> default hypothesis should be deletion. For DRY violations, prefer "delete
+> one of the duplicates" over "extract a shared helper" unless the
+> duplication is genuinely load-bearing. For partially-refactored functions,
+> prefer "finish the migration and remove the old pattern" over "make both
+> patterns coexist." For complex functions, decomposition is fine but ask
+> whether the function should exist at all. Adding a helper to consolidate
+> three call sites is often worse than the duplication.
+>
+> Your hypothesis is a starting point for investigation, not a prescription.
+> Frame it as one possible direction; the implementer will re-verify the
+> problem and choose the actual fix.
+>
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
 > SEVERITY semantics (see docs/source-tag-contract.md):
 >   critical     — ship-blocker, data loss, security, correctness
@@ -303,8 +326,20 @@ Prompt:
 > Ignore: intentional deviations documented in comments or CLAUDE.md, style
 > differences handled by a linter, one-off utilities with no parallel.
 >
+> **Subtraction first.** When 8 of 10 modules do it one way and 2 diverge,
+> the conformance hypothesis is "make the 2 match the 8" — but ask first
+> whether the 2 should be deleted, merged into another module, or whether
+> the divergence is actually correct (the 8 might be the wrong pattern).
+> Don't reflexively propose making the deviating modules conform; that's
+> how codebases grow. Suggest the smallest change that resolves the
+> inconsistency, including deletion.
+>
+> Your hypothesis is a starting point for investigation, not a prescription.
+> Frame it as one possible direction; the implementer will re-verify the
+> problem and choose the actual fix.
+>
 > Output EVERY finding in this exact format, one per line:
-> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | FIX: <one-sentence suggested fix>
+> FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
 > SEVERITY semantics (see docs/source-tag-contract.md):
 >   critical     — ship-blocker, data loss, security, correctness
@@ -517,12 +552,23 @@ For each approved cluster, write each finding as a rich-format entry under
 
 ```markdown
 ### [full-review:<severity>] <finding title>
-- **Why:** <description from the finding>
-- **Proposed fix:** <FIX text>
+- **Description:** <DESCRIPTION text from the finding — the reviewer agent's framing of what's wrong>
+- **Hypothesis (untested):** <HYPOTHESIS text> — re-investigate before implementing; the reviewer agent did not verify this direction.
 - **Found in:** <file>:<line>
 - **Context:** From /full-review cluster "<theme>" on branch <branch> (<date>).
 - **Effort:** ? (user triages in /roadmap)
 ```
+
+Two framing choices are load-bearing:
+- `**Description:**` (not `**Why:**`) signals the reviewer's analytical
+  framing of the issue — neither verified causation nor a direct observation.
+  The implementer should read it as "here's what the reviewer thinks is wrong"
+  and re-verify before acting.
+- `**Hypothesis (untested):**` (not `**Proposed fix:**` or `**Fix:**`) signals
+  that the suggested direction is speculation, not a verified fix.
+
+Do not rename either field back to verified-sounding language — that framing
+is what created the tunnel-vision problem this skill exists to avoid.
 
 If the finding's cluster has a single file (`files=` hint available), include
 it as a tag attribute for /roadmap's placement heuristic:

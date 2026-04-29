@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.2] - 2026-04-28
+
+### Changed (review-skill TODO framing — kill tunnel vision)
+
+- **`/full-review` and `/pair-review` write TODOs in hedged language** so future implementers re-investigate before fixing instead of treating the original write as gospel. Two failure modes this addresses: (1) parked bugs from `/pair-review` get fixed weeks later from a one-line description ("the spinner is stuck") with no repro path, and the implementer fixes the written symptom rather than the actual bug; (2) `/full-review` reviewer agents emit speculative fixes that read as prescriptions, which then get applied verbatim — and because the agents naturally suggest additive fixes (new validation, new helpers, conformance), the codebase grows on every full review. Both are fixed at the writer side, where it's cheap; downstream `/roadmap` triage and the implementer don't need new behavior.
+- **`/pair-review` park flow now captures `Symptom:` + numbered `Repro:` steps** when a bug is parked, with a graceful one-nudge fallback if the user can't reproduce reliably (records `Repro: not reliably reproducible — verify before fixing`). When the bug is promoted to TODOS.md, both fields plus a "re-verify before implementing a fix; if it no longer reproduces, close as resolved" line are written into the entry's Context. The `parked-bugs.md` schema switches `Description:` → `Symptom:` + `Repro:` to match. Triage AskUserQuestion templates in group-completion + Phase 2.5 updated to interpolate `[Bug title]` + the Symptom (the old `[description]` placeholder no longer resolved against the new schema).
+- **`/full-review` reviewer-agent prompts gain "subtraction first" guidance** tailored to each agent's bias: the reviewer agent is told to prefer removing the violating caller over making the callee defend; the hygiene agent is told to delete duplicates before extracting helpers; the consistency-auditor is told to consider whether the deviating modules should be deleted before forcing them to conform. Each prompt also frames its output as a starting point for investigation, not a prescription.
+- **Agent output field renamed `FIX:` → `HYPOTHESIS:`** in all three `/full-review` reviewer agents. TODOS write template renames `**Proposed fix:**` → `**Hypothesis (untested):**` with an explicit "re-investigate before implementing; the reviewer agent did not verify this direction" trailer. Renames `**Why:**` → `**Description:**` in the same template — "Why" reads as verified causation when read alongside the hedged hypothesis, while "Description" is tonally neutral and matches the agent's actual DESCRIPTION output field.
+
+### Changed (source-tag contract)
+
+- **`docs/source-tag-contract.md` registers `Symptom`, `Repro`, `Description`, and `Hypothesis (untested)`** as recommended attribute bullets, with per-source guidance: observation-source skills (`pair-review`, `investigate`) use `Symptom:` + `Repro:`; reviewer-source skills (`full-review`, `review`) use `Description:` + `Hypothesis (untested):`; manual / `/ship` entries continue to use `Why:`. New "Speculation framing" section documents the rationale (the framing is the fix; field-name parsing is unchanged). Legacy `Why:` and `Proposed fix:` field names remain valid on read since no parser inspects field names — the values pass through verbatim, so old TODOs.md content stays renderable. Examples and grammar updated to match.
+
+### Tests
+
+- All 7 test suites pass: 547+ assertions across `test-roadmap-audit` (216), `test-skill-protocols` (122), `test-test-plan` (61), `test-update` (59), `test-source-tag` (46), `test-test-plan-e2e` (43), and `test-test-plan-extractor`. Field-name renames touch only markdown writer templates and contract documentation; parsers and audit logic are unchanged so no test fixture updates were required.
+
 ## [0.17.1] - 2026-04-28
 
 ### Fixed

@@ -484,15 +484,33 @@ Available anytime during Phase 2 (testing loop) and FIX NOW flows. When the user
 says something like "park this", "note a bug", "not related but...", or describes
 a bug that is clearly unrelated to the current test item:
 
-1. If the user didn't include a description, ask: "What's the bug?"
+1. If the user didn't include a description, ask via AskUserQuestion:
+   - Question: "**What's the bug, and how do you reproduce it?** A short
+     symptom + numbered repro steps. Repro is what makes this fixable later
+     without re-deriving the bug from a vague memory."
+   - Options: ["Let me describe it"]
+
+   The user's response should give you both a symptom and repro steps. If
+   they only describe the symptom (no repro), gently ask once more for the
+   steps. If they push back ("can't repro reliably" / "saw it once"), accept
+   that and record `Repro: not reliably reproducible — verify before fixing`.
+   Do NOT insist past one nudge.
+
+   **Ambiguous-response fallback:** if after one nudge the response is still
+   vague, contradictory, or you genuinely cannot extract numbered steps,
+   record what you have for `Symptom:` and write `Repro: not reliably
+   reproducible — verify before fixing` for the repro. Move on. The
+   re-verify guidance in the promoted TODO will surface the gap later if
+   the bug ever needs to be fixed.
 2. Append a new entry to `.context/pair-review/parked-bugs.md`.
    Determine N by reading the file and incrementing the highest existing number
    (or 1 if the file is empty/new).
    ```markdown
-   ## <N>. <Bug description>
+   ## <N>. <Bug title — short phrase>
    - Noticed during: <current group slug>, item <current item number>
    - Timestamp: <ISO 8601 UTC>
-   - Description: <user's full description>
+   - Symptom: <what the user observed — one or two sentences>
+   - Repro: <numbered steps, or "not reliably reproducible — verify before fixing">
    - Status: PARKED
    ```
    If `parked-bugs.md` doesn't exist yet, create it with a `# Parked Bugs` header.
@@ -503,6 +521,14 @@ a bug that is clearly unrelated to the current test item:
    read: "Parked bug #N." followed by the current test item or fix prompt.
 
 **Do NOT classify the bug at park time.** Classification happens at group completion.
+
+**Why Symptom + Repro (not Description):** parked bugs often get fixed days
+or weeks later, on a different branch, after the original context has faded.
+A bare description ("the spinner is stuck") becomes the spec for the future
+fix and creates tunnel vision — the implementer fixes what was written, not
+what's actually broken. Capturing repro steps at park time lets the future
+implementer re-verify the bug before guessing at a fix; if it doesn't repro,
+they close it instead of inventing a fix for a stale symptom.
 
 ### On BATCH
 
@@ -564,7 +590,7 @@ For each parked bug from this group, the skill recommends a classification based
 whether the bug relates to the branch's changes or upcoming test groups. Present each
 bug via AskUserQuestion:
 
-- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
+- Question: "[Receipt from prior triage action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification reasoning — e.g. 'This looks like a cross-branch issue because...' or 'This relates to upcoming testing in the [group] group because...']\n\n**This bug surfaced during [group] testing. Fixing before [group] ships keeps the Group closure tight. Defer only if it's truly cross-branch.**"
 - Options: ["Fix now (recommended)", "Send to TODOS.md", "Stay parked"]
 
 **Defer nudge (E4):** "Fix now" is listed first intentionally — the default
@@ -589,9 +615,10 @@ Behavior for each option:
   ## Unprocessed
 
   ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
-  - **Why:** <description from parked-bugs.md>
+  - **Symptom:** <Symptom field from parked-bugs.md>
+  - **Repro:** <Repro field from parked-bugs.md, verbatim>
   - **Noticed during:** <group>, item <item>
-  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review.
+  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review. Re-verify the bug per the repro steps before implementing a fix; if it no longer reproduces, close as resolved instead of guessing at a fix.
   - **Effort:** ? (user triages in /roadmap)
   ```
 
@@ -627,7 +654,7 @@ If none remain, skip to Phase 4.
 If parked bugs remain, present each via AskUserQuestion (same format as group-completion
 triage):
 
-- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [description]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
+- Question: "[Receipt from prior action if any]\n\n**Parked bug #N:** [Bug title]\n[Symptom from parked-bugs.md, one line]\nNoticed during: [group], item [item]\n\nRecommendation: [agent's classification]\n\n**Deferring this bug keeps it in the roadmap's closure debt for [group]. Fix now if it's on-branch or blocks the current Group's ship.**"
 - Options: ["Fix now (recommended for on-branch bugs)", "Send to TODOS.md", "Skip"]
 
 Behavior for each option:
@@ -636,9 +663,10 @@ Behavior for each option:
   using the rich format per `docs/source-tag-contract.md`:
   ```markdown
   ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
-  - **Why:** <description>
+  - **Symptom:** <Symptom field from parked-bugs.md>
+  - **Repro:** <Repro field from parked-bugs.md, verbatim>
   - **Noticed during:** <group>, item <item>
-  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review Phase 2.5.
+  - **Context:** Found on branch <branch> (<date>). Parked during /pair-review Phase 2.5. Re-verify the bug per the repro steps before implementing a fix; if it no longer reproduces, close as resolved instead of guessing at a fix.
   - **Effort:** ? (user triages in /roadmap)
   ```
   Use `group=pre-test` for bugs parked before any group started.
