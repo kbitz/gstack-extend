@@ -7,21 +7,22 @@ collide on files. Within a Group, Tracks must be fully parallel-safe
 (set-disjoint `_touches:_` footprints). Each track is one plan + implement
 session.
 
-**Active priority:** Groups 3 → 4 → 5 → 6 (bun + TypeScript test
-infrastructure, per `docs/designs/bun-test-architecture.md`). Group 1's
-remaining Pre-flight items and Track 1A are paused pending Group 6;
-resume after the migration completes. Group 2 stays parked.
+**Active priority:** Groups 1 → 2 → 3 → 4 (bun + TypeScript test
+infrastructure, per `docs/designs/bun-test-architecture.md`). Groups 5 and
+6 (formerly 1 and 2) carry over the install-pipeline and distribution work
+that was in flight before this re-prioritization; both pause behind the
+test-infra chain because Group 5's Pre-flight 3 + 4 and Group 6's Track 6A
+all touch `bin/roadmap-audit`, which would collide mid-port.
 
 ---
 
-## Group 3: Bun Test Toolchain
+## Group 1: Bun Test Toolchain
+
 Bootstrap the bun test toolchain in isolation, prove the pattern on the
 smallest existing bash test. Single-PR scope; lays the foundation for
-Groups 4–6. Both bash and bun test suites coexist after this Group ships.
+Groups 2–4. Both bash and bun test suites coexist after this Group ships.
 
-_Depends on: none_
-
-### Track 3A: Bootstrap bun + port test-source-tag.sh
+### Track 1A: Bootstrap bun + port test-source-tag.sh
 _1 task . ~1 day (human) / ~1 hour (CC) . low risk . [package.json, tsconfig.json, bunfig.toml, tests/]_
 _touches: package.json, tsconfig.json, bunfig.toml, tests/helpers/run-bin.ts, tests/source-tag.test.ts_
 
@@ -36,7 +37,8 @@ bash and bun suites until later Groups retire bash.
 
 ---
 
-## Group 4: TypeScript Port of `bin/roadmap-audit`
+## Group 2: TypeScript Port of `bin/roadmap-audit`
+
 The big one. Replace 3,495 lines of bash with `src/audit/{cli,parsers,
 checks,lib}/*.ts`, compiled via `bun build --compile`. Snapshot suite is
 the byte-for-byte oracle. Pre-flight tightens the oracle before the port
@@ -45,7 +47,7 @@ starts.
 **Pre-flight** (shared-infra; serial, one-at-a-time):
 - **[1]** Coverage-gap audit fixtures — Walk v0.10–v0.18 CHANGELOG entries that added test cases to `scripts/test-roadmap-audit.sh`, identify edge cases not represented in the 14 snapshot fixtures (DAG cycles, name-anchor with spaces, `_serialize: true_` variants, compact-bullet form, `Depends on:` trailing prose, `complete_groups` detection, `in_flight_topo` doc-order tiebreaker). Add fixtures for any gaps. `[tests/roadmap-audit/**], ~5–10 new fixtures.` (S)
 
-### Track 4A: Port `bin/roadmap-audit` to TypeScript
+### Track 2A: Port `bin/roadmap-audit` to TypeScript
 _1 task . ~3–5 days (human) / ~half-day (CC) . high risk . [src/audit/, bin/roadmap-audit, tests/]_
 _touches: src/audit/**, bin/roadmap-audit, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts, tests/lib-source-tag.test.ts_
 _Depends on: Pre-flight [1]._
@@ -66,12 +68,13 @@ warning; bounded by snapshot oracle.
 
 ---
 
-## Group 5: Test Runner Migration + Invariants
+## Group 3: Test Runner Migration + Invariants
+
 Now that the audit is TypeScript, replace the remaining bash test runners
 with `bun test` equivalents and add the structural-invariants safety net.
 After this Group ships, no bash test scripts remain.
 
-### Track 5A: Migrate test runners + invariants test
+### Track 3A: Migrate test runners + invariants test
 _1 task . ~1 day (human) / ~2 hours (CC) . medium risk . [tests/, scripts/test-*.sh deleted]_
 _touches: tests/audit-snapshots.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/test-plan-extractor.test.ts, tests/test-plan-e2e.test.ts, tests/audit-invariants.test.ts_
 
@@ -91,12 +94,13 @@ runtime ~50s → ~10s.
 
 ---
 
-## Group 6: Test Leverage Patterns
+## Group 4: Test Leverage Patterns
+
 Adopt gstack proper's higher-leverage test patterns once the foundation is
 in place. The four sub-tasks are independent (different file footprints) —
-parallel-safe within Group 6. Pull each in based on actual pain.
+parallel-safe within Group 4. Pull each in based on actual pain.
 
-### Track 6A: Touchfiles diff selection
+### Track 4A: Touchfiles diff selection
 _1 task . ~1 day (human) / ~1 hour (CC) . low risk . [tests/helpers/touchfiles.ts]_
 _touches: tests/helpers/touchfiles.ts, tests/audit-snapshots.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/source-tag.test.ts_
 
@@ -107,7 +111,7 @@ runtime — most PRs only touch one area.
 
 - **Diff-based test selection** -- port `touchfiles.ts` from gstack proper, declare per-test source-file globs, integrate with `bun test` selection. _[tests/helpers/touchfiles.ts, tests/*.test.ts], ~150 lines._ (M)
 
-### Track 6B: Eval persistence + budget regression
+### Track 4B: Eval persistence + budget regression
 _1 task . ~2 days (human) / ~2 hours (CC) . medium risk . [tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts]_
 _touches: tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts, ~/.gstack/projects/<slug>/evals/_
 
@@ -118,7 +122,7 @@ turns. Free, gate-tier — no LLM cost; pure comparison.
 
 - **Eval persistence + budget regression test** -- port `eval-store.ts` and `skill-budget-regression.test.ts` from gstack proper, share `~/.gstack/projects/<slug>/evals/` dir. _[tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts], ~300 lines._ (M)
 
-### Track 6C: LLM-as-judge for skill prose
+### Track 4C: LLM-as-judge for skill prose
 _1 task . ~2 days (human) / ~3 hours (CC) . medium risk . [tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts]_
 _touches: tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts_
 
@@ -129,7 +133,7 @@ behind `EVALS=1` (paid). Cost: ~$0.05–0.15 per run.
 
 - **LLM-as-judge for skill prose quality** -- port `llm-judge.ts` from gstack proper, write `tests/skill-llm-eval.test.ts` scoring the three skills, gate via `EVALS=1`. _[tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts], ~250 lines._ (M)
 
-### Track 6D: Audit-compliance test for gstack-extend invariants
+### Track 4D: Audit-compliance test for gstack-extend invariants
 _1 task . ~1 day (human) / ~2 hours (CC) . low risk . [tests/audit-compliance.test.ts]_
 _touches: tests/audit-compliance.test.ts_
 
@@ -144,14 +148,12 @@ behavior tests pass.
 
 ---
 
-## Group 1: Install Pipeline ⏸ Paused
+## Group 5: Install Pipeline ⏸ Paused
 
-_Depends on: Group 6_
-
-⏸ Paused — resumes after Group 6 ships. Pre-flight 1 (the `--skills-dir`
-flag itself) shipped in v0.16.0; the rest of this Group is paused on the
-Group 3–6 chain because Pre-flight 3, Pre-flight 4, and any future Track
-2A work would collide on `bin/roadmap-audit` mid-port.
+⏸ Paused — resumes after Group 4 ships. The `--skills-dir` flag (originally
+this Group's first Pre-flight item) shipped in v0.16.0; the rest is paused
+on the test-infra chain because Pre-flight 3, Pre-flight 4, and any future
+Group 6 work all touch `bin/roadmap-audit` mid-port.
 
 Make the install system flexible enough for per-project usage and polish the
 roadmap first-run experience. Most of this Group is shared-infra work that
@@ -159,12 +161,12 @@ touches cross-cutting files (`setup`, `bin/roadmap-audit`, `skills/*.md`),
 so it's batched into Pre-flight and runs serially. Only the truly isolated
 `bin/update-run` propagation remains as a parallel track.
 
-**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 2 → Track 1A → 3 → 4:
+**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 2 → Track 5A → 3 → 4:
 - **[2]** Preamble probe pattern — Skill preambles currently `readlink ~/.claude/skills/{name}/SKILL.md`, which silently breaks on non-default installs. Replace with gstack-core's probe pattern (`~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`). For truly-custom paths, honor `$GSTACK_EXTEND_ROOT` env var and fallback to `$HOME/.gstack-extend-rc` (written by setup). Also fix `skills/test-plan.md:632` to point at `$_EXTEND_ROOT/skills/pair-review.md`. `[skills/*.md preambles (5 files), setup], ~40 lines.` (S)
 - **[3]** Layout scaffolding for new projects — Add a `/roadmap init` subcommand that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and offers to git-mv misplaced docs (consumes `bin/roadmap-audit DOC_LOCATION` findings). On destination collisions, AskUserQuestion with diff + merge/skip/abort options. `[bin/roadmap-audit, skills/roadmap.md], ~50 lines.` (S)
 - **[4]** Doc type detection heuristic — Teach `bin/roadmap-audit` to emit `## DOC_TYPE_MISMATCH` for two strong-signal patterns: design-looking doc outside `docs/designs/` (mermaid/plantuml fence), inbox-looking doc outside `TODOS.md` (checkbox density >20%). Skip known ROOT_DOCS/DOCS_DIR_DOCS. Only emit rows where content disagrees with location. `[bin/roadmap-audit], ~40 lines.` (S)
 
-### Track 1A: Update-Run Dir Propagation
+### Track 5A: Update-Run Dir Propagation
 _1 task . ~30 min (human) / ~15 min (CC) . low risk . [bin/update-run]_
 _touches: bin/update-run_
 _Depends on: Pre-flight 2 (requires the `$GSTACK_EXTEND_ROOT` env-var infrastructure). Pre-flight 1 (the `--skills-dir` flag itself) shipped in v0.16.0._
@@ -172,16 +174,16 @@ _Depends on: Pre-flight 2 (requires the `$GSTACK_EXTEND_ROOT` env-var infrastruc
 End-to-end support for custom install directories in the upgrade path. Partial
 support was removed in v0.6.2 to avoid half-baked behavior.
 
-- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Read `$GSTACK_EXTEND_ROOT` env var (set by user shell, populated by Pre-flight 2's rc-file fallback when available). If set, pass `--skills-dir "$GSTACK_EXTEND_ROOT"` to `./setup`. If unset, default behavior (matches pre-Group-1 semantics). Regression test: install with `--skills-dir /tmp/foo`, trigger upgrade, confirm skills still resolve at `/tmp/foo`. _[bin/update-run], ~40 lines._ (S)
+- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Read `$GSTACK_EXTEND_ROOT` env var (set by user shell, populated by Pre-flight 2's rc-file fallback when available). If set, pass `--skills-dir "$GSTACK_EXTEND_ROOT"` to `./setup`. If unset, default behavior (matches pre-Group-5 semantics). Regression test: install with `--skills-dir /tmp/foo`, trigger upgrade, confirm skills still resolve at `/tmp/foo`. _[bin/update-run], ~40 lines._ (S)
 
 ---
 
-## Group 2: Distribution Infrastructure
+## Group 6: Distribution Infrastructure
 
 Improvements to how /roadmap handles version transitions. Independent of
-Group 1 but blocked on a major version bump to validate against.
+Group 5 but blocked on a major version bump to validate against.
 
-### Track 2A: Major Version Transition Detection
+### Track 6A: Major Version Transition Detection
 _1 task . ~1 day (human) / ~20 min (CC) . medium risk . [bin/roadmap-audit, skills/roadmap.md]_
 _touches: bin/roadmap-audit, skills/roadmap.md_
 
@@ -195,38 +197,38 @@ Depends on: at least one major version bump (0.x -> 1.x) to validate against.
 
 Adjacency list:
 ```
-- Group 3 ← {}
+- Group 1 ← {}
+- Group 2 ← {1}
+- Group 3 ← {2}
 - Group 4 ← {3}
-- Group 5 ← {4}
-- Group 6 ← {5}
-- Group 1 ← {6}  (paused; resumes after migration)
-- Group 2 ← {1}  (parked; awaits major version bump)
+- Group 5 ← {4}  (paused; resumes after migration)
+- Group 6 ← {5}  (parked; awaits major version bump)
 ```
 
 Track detail per group:
 ```
-Group 3: Bun Test Toolchain
-  +-- Track 3A ..................... ~1 hr CC ... 1 task
+Group 1: Bun Test Toolchain
+  +-- Track 1A ..................... ~1 hr CC ... 1 task
 
-Group 4: TypeScript Port of bin/roadmap-audit
+Group 2: TypeScript Port of bin/roadmap-audit
   Pre-flight (shared-infra, serial) ... 1 item
-  +-- Track 4A ..................... ~half-day CC ... 1 task (XL)
+  +-- Track 2A ..................... ~half-day CC ... 1 task (XL)
 
-Group 5: Test Runner Migration + Invariants
-  +-- Track 5A ..................... ~2 hr CC ... 1 task
+Group 3: Test Runner Migration + Invariants
+  +-- Track 3A ..................... ~2 hr CC ... 1 task
 
-Group 6: Test Leverage Patterns
-  +-- Track 6A ..................... ~1 hr CC ... 1 task
-  +-- Track 6B ..................... ~2 hr CC ... 1 task
-  +-- Track 6C ..................... ~3 hr CC ... 1 task
-  +-- Track 6D ..................... ~2 hr CC ... 1 task
+Group 4: Test Leverage Patterns
+  +-- Track 4A ..................... ~1 hr CC ... 1 task
+  +-- Track 4B ..................... ~2 hr CC ... 1 task
+  +-- Track 4C ..................... ~3 hr CC ... 1 task
+  +-- Track 4D ..................... ~2 hr CC ... 1 task
 
-Group 1: Install Pipeline ⏸ Paused
+Group 5: Install Pipeline ⏸ Paused
   Pre-flight (shared-infra, serial) ... 3 items
-  +-- Track 1A ..................... ~15 min CC ... 1 task
+  +-- Track 5A ..................... ~15 min CC ... 1 task
 
-Group 2: Distribution Infrastructure
-  +-- Track 2A ..................... ~20 min CC ... 1 task  (blocked: major version bump)
+Group 6: Distribution Infrastructure
+  +-- Track 6A ..................... ~20 min CC ... 1 task  (blocked: major version bump)
 ```
 
 **Total: 6 groups . 8 tracks . 13 tasks (4 Pre-flight + 9 track tasks)**
