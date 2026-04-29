@@ -1,0 +1,12 @@
+{
+  "name": "gstack-extend",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "scripts": {
+    "test": "bun test tests/"
+  },
+  "version": "0.18.3.0"
+}
