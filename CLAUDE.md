@@ -8,7 +8,12 @@ Extension skills for gstack.
 
 ## Testing
 
-Run the suites under `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`). The full set runs in ~65 seconds and is what `/ship` executes.
+Two suites run side by side:
+
+- **Bash** — `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`, `test-source-tag.sh`).
+- **Bun** — `bun run test` (which invokes `bun test tests/`). New unit tests under `tests/*.test.ts` use `bun:test`.
+
+`/ship` runs both. Together the full set runs in ~65 seconds.
 
 `test-roadmap-audit.sh` is snapshot-based: each fixture under `tests/roadmap-audit/<name>/files/` is run through `bin/roadmap-audit`, and the output is diffed against `expected.txt`. To accept intentional behavior changes:
 
@@ -18,6 +23,13 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 ```
 
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`.
+
+To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` semantics change):
+
+```sh
+./scripts/regen-source-tag-corpus.sh
+git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
+```
 
 ## Skill routing
 

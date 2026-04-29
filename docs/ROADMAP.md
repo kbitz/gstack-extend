@@ -16,24 +16,27 @@ with the test-infra chain.
 
 ---
 
-## Group 1: Bun Test Toolchain
+## Group 1: Bun Test Toolchain ✓ Complete
 
 Bootstrap the bun test toolchain in isolation, prove the pattern on the
 smallest existing bash test. Single-PR scope; lays the foundation for
 Groups 2–4. Both bash and bun test suites coexist after this Group ships.
 
-### Track 1A: Bootstrap bun + port test-source-tag.sh
-_1 task . ~1 day (human) / ~1 hour (CC) . low risk . [package.json, tsconfig.json, bunfig.toml, tests/]_
-_touches: package.json, tsconfig.json, bunfig.toml, tests/helpers/run-bin.ts, tests/source-tag.test.ts_
+### Track 1A: Bootstrap bun + port source-tag lib + tests ✓ Complete
 
-Add `package.json` (engines.bun >=1.0, no runtime deps), `tsconfig.json`
-(strict ESM), `bunfig.toml` (test config). Write
-`tests/helpers/run-bin.ts` for invoking shell binaries from tests. Port
-`scripts/test-source-tag.sh` (75 assertions, 352 LOC, standalone) to
-`tests/source-tag.test.ts` as the proof-of-concept. `/ship` runs both
-bash and bun suites until later Groups retire bash.
-
-- **Bootstrap bun test toolchain** -- add `package.json`, `tsconfig.json`, `bunfig.toml`, `tests/helpers/run-bin.ts`, and port `scripts/test-source-tag.sh` to `tests/source-tag.test.ts` with parity. _[package.json, tsconfig.json, bunfig.toml, tests/], ~150 lines._ (S)
+Shipped in v0.18.3 (2026-04-29). `package.json` (engines.bun >=1.0,
+`scripts.test = "bun test tests/"`) and `tsconfig.json` (strict ESM,
+`types: ["bun"]`) bootstrap the bun toolchain. `bunfig.toml` and
+`tests/helpers/run-bin.ts` were dropped during /plan-eng-review —
+defaults sufficed and there's nothing to shell out to (Track 2A's TS
+port supersedes the run-bin helper). Track scope expanded under
+adversarial review to include the source-tag library port itself
+(`src/audit/lib/source-tag.ts`, 7 pure functions, `Result<T, Reason>`)
+plus `tests/source-tag.test.ts` (118 tests / 216 expects, full coverage)
+and `tests/fixtures/source-tag-hash-corpus.json` (30 byte-exact bash
+parity fixtures). Whitespace-squeeze regression caught pre-merge — bash
+`tr -s '[:space:]'` only collapses runs of *identical* whitespace, not
+mixed; locked in by 7 corpus fixtures with internal control chars.
 
 ---
 
@@ -46,7 +49,7 @@ before the port itself begins.
 
 ### Track 2A: Port `bin/roadmap-audit` to TypeScript
 _2 tasks . ~3–5 days (human) / ~half-day (CC) . high risk . [src/audit/, bin/roadmap-audit, tests/]_
-_touches: src/audit/**, bin/roadmap-audit, tests/roadmap-audit/**, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts, tests/lib-source-tag.test.ts_
+_touches: src/audit/**, bin/roadmap-audit, tests/roadmap-audit/**, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts_
 
 Behavior-preserving port against all `expected.txt` fixtures byte-for-byte.
 First task adds coverage-gap fixtures to tighten the oracle; second task
@@ -205,7 +208,7 @@ Adjacency list:
 Track detail per group:
 ```
 Group 1: Bun Test Toolchain
-  +-- Track 1A ..................... ~1 hr CC ... 1 task
+  +-- Track 1A ..................... ✓ Complete (v0.18.3)
 
 Group 2: TypeScript Port of bin/roadmap-audit
   +-- Track 2A ..................... ~half-day CC ... 2 tasks (S + XL)

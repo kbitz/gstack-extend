@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.4] - 2026-04-29
+
+### Added (Group 1, Track 1A — Bun Test Toolchain)
+- **`bun test` now runs alongside the existing bash suites.** `package.json` declares `engines.bun >=1.0` and `scripts.test = "bun test tests/"`. `tsconfig.json` configures strict ESM + `types: ["bun"]` for IDE/typecheck. `/ship` runs both bash and bun suites together; the full set still completes in ~65 seconds. Run `bun run test` for the bun-only entry point during local development.
+- **`src/audit/lib/source-tag.ts` (NEW) — TypeScript port of `bin/lib/source-tag.sh`.** Seven pure-function string transforms: `parseSourceTag`, `normalizeTitle`, `computeDedupHash`, `routeSourceTag`, `validateTagExpression`, `extractTagFromHeading`, `extractTitleFromHeading`. Flat camelCase named exports, `Result<T, Reason>` discriminated union for parse and validate failures (preserves the bash `MALFORMED_TAG` / `UNKNOWN_SOURCE` / `INJECTION_ATTEMPT` security taxonomy). The TS port runs ~10× faster than the bash original and unblocks the Group 2 TypeScript port of `bin/roadmap-audit`. The bash version stays in place — Track 2A retires it once `bin/roadmap-audit` consumes the TS module.
+- **`tests/source-tag.test.ts` (NEW) — 118 tests / 216 expects, full coverage.** Includes 11 parse, 9 normalize, 5 hash, 7 validate, and 7 extractor ports of the existing bash assertions, plus a 25-row table-driven routing matrix covering all 24 canonical (source, severity) tuples per `docs/source-tag-contract.md`, plus tightened `INJECTION_ATTEMPT` vs `MALFORMED_TAG` reason-code asserts (now requires the specific reason, not "either"), plus 30 byte-exact bash-parity hash fixtures.
+- **`tests/fixtures/source-tag-hash-corpus.json` (NEW) — REGRESSION-CRITICAL byte-exact bash parity oracle.** 30 inputs (ASCII, em-dashes, smart quotes, CJK / Cyrillic / Arabic, trailing-metadata sentinels, edge boundaries, internal control chars `\t`/`\n`/`\r`/`\v`/`\f`) each paired with the bash `compute_dedup_hash` output. The TS port asserts byte-exact match. Manifest header records `bash --version`, `uname`, `LC_ALL=C`, the byte-input contract (`Buffer.from(normalized, 'utf8')` for `printf '%s'` parity), and the generator command — so any future regen on a different machine is auditable.
+- **`scripts/regen-source-tag-corpus.sh` (NEW).** Forces `LC_ALL=C` before sourcing `bin/lib/source-tag.sh` so corpus regeneration on a non-C locale can't embed locale-dependent hashes. Idempotent — re-run after touching either implementation, then `git diff tests/fixtures/` shows hash drift.
+
+### Fixed (`src/audit/lib/source-tag.ts` — bash parity)
+- **`normalizeTitle` now matches bash byte-for-byte on inputs containing internal whitespace control chars.** First implementation collapsed `[\t\n\v\f\r ]+` to a single space, but bash `tr -s '[:space:]'` only squeezes runs of *identical* whitespace chars (`\t \t` stays as `\t \t`), and `sed` is line-based so leading/trailing trim runs per newline-separated segment, not over the whole string. Adversarial review caught the divergence pre-merge: `"line1\nline2"` was hashing differently in TS vs bash. Three-part fix: (1) sentinel-strip regexes use the `m` flag and exclude `\n` from the whitespace class, so per-line semantics match `sed`; (2) whitespace squeeze keys off a backref (`/([\t\n\v\f\r ])\1+/g`) instead of a flat alternation; (3) trailing newlines are stripped from the final output to mirror bash `$(...)` command-substitution semantics. Locked in by 7 new corpus fixtures with internal control chars.
+- **Stale comment in `scripts/regen-source-tag-corpus.sh`.** Header claimed "pure bash + python3 fallback" but the script always shells out to `python3` for JSON escaping. Comment now says what the code actually does.
+
+### Changed (CLAUDE.md)
+- **`## Testing` section names both suites explicitly.** Spells out that `/ship` runs `./scripts/test-*.sh` AND `bun run test`. Documents `./scripts/regen-source-tag-corpus.sh` as the procedure for regenerating the byte-exact bash hash corpus when `bin/lib/source-tag.sh` semantics change.
+
 ## [0.18.3] - 2026-04-29
 
 ### Added
