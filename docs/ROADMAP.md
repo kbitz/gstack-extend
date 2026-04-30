@@ -96,22 +96,40 @@ with `bun test` equivalents and add the structural-invariants safety net.
 After this Group ships, no bash test scripts remain.
 
 ### Track 3A: Migrate test runners + invariants test
-_1 task . ~1 day (human) / ~2 hours (CC) . medium risk . [tests/, scripts/test-*.sh deleted]_
-_touches: tests/audit-snapshots.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/test-plan-extractor.test.ts, tests/test-plan-e2e.test.ts, tests/audit-invariants.test.ts_
+_1 task . ~1 day (human) / ~3 hours (CC) . medium risk . [tests/, scripts/test-*.sh deleted]_
+_touches: tests/audit-snapshots.test.ts, tests/audit-invariants.test.ts, tests/audit-cli-contract.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/test-plan-extractor.test.ts, tests/test-plan-e2e.test.ts, tests/score-extractor.test.ts, tests/parsers-group-tracks.test.ts, tests/parsers-pair-review-session.test.ts, tests/helpers/fixture-repo.ts, tests/helpers/run-bin.ts, src/audit/sections.ts, src/test-plan/parsers.ts, scripts/score-extractor.ts, scripts/verify-migration-parity.sh, tests/fixtures/extractor-corpus/_
 
-Migrate `scripts/test-roadmap-audit.sh` → `tests/audit-snapshots.test.ts`
-(~50 lines), `test-update.sh` → `tests/update.test.ts`,
-`test-skill-protocols.sh` → `tests/skill-protocols.test.ts`,
-`test-test-plan*.sh` → `tests/test-plan*.test.ts`. Add
-`tests/audit-invariants.test.ts` — walks every `expected.txt`, asserts
-every `## SECTION` has a `STATUS:` line, STATUS is in the canonical set
-(`pass / fail / warn / info / skip / found / none`), MODE is the last
-section, section order matches a canonical list. ~30 lines. Trips on
-rubber-stamp `UPDATE_SNAPSHOTS=1` even when 14 fixtures all pass.
-Concurrent execution is free with `bun test`. **Target:** `/ship` test
-runtime ~50s → ~10s.
+Migrate 7 bash test scripts → bun test files. NEW
+`tests/audit-invariants.test.ts` walks every `expected.txt`, asserts every
+`## SECTION` has a `STATUS:` line, STATUS is in `CANONICAL_STATUSES`
+(`pass / fail / warn / info / skip / found / none`), MODE is last,
+section order matches `CANONICAL_SECTIONS` exported from
+`src/audit/sections.ts` (with a fixture-lock invariant: const must match
+observed fixture order). NEW `tests/audit-cli-contract.test.ts` locks
+exit-code + stderr behavior beyond stdout (codex-flagged CLI contract gap).
 
-- **Migrate bash test runners to bun + add invariants test** -- 1:1 migration of all `scripts/test-*.sh` to `tests/*.test.ts`, plus `tests/audit-invariants.test.ts`. Delete the bash scripts after parity. _[tests/, scripts/test-*.sh deleted], ~250 lines new + ~3,000 lines deleted._ (M)
+Two awk pipelines from `test-test-plan-e2e.sh` lifted to pure functions
+in `src/test-plan/parsers.ts` (parseGroupTracks, scanPairReviewSession),
+each with ≥3 ugly-input unit tests. `--score` mode of
+`test-test-plan-extractor.sh` extracted to `scripts/score-extractor.ts`
+(documented exit codes 0/1/2, --help, 15-test unit suite). Extractor
+corpus vendored to `tests/fixtures/extractor-corpus/` with provenance
+headers (was `$HOME`-relative, kb-only).
+
+`scripts/verify-migration-parity.sh` is the one-shot PR gate:
+informational count check + BLOCKING named-scenario check (every
+required describe in TS port). After merge, the gate is dead code (bash
+files don't exist).
+
+`tests/helpers/{fixture-repo.ts, run-bin.ts}` consolidate spawn-env
+isolation; `audit-shadow.test.ts` refactored to consume them.
+
+**Target:** `/ship` test runtime ~50s → ~30s after this Track lands; the
+full ~10s arrives only when Track 2A's compile-binary cutover replaces
+the bash `bin/roadmap-audit` (separate Track) and `audit-shadow.test.ts`
+becomes obsolete.
+
+- **Migrate bash test runners to bun + add invariants test + CLI contract test** -- 1:1 named-scenario parity of all 7 `scripts/test-*.sh` to `tests/*.test.ts`, plus `audit-invariants.test.ts` (NEW, fixture-locked) and `audit-cli-contract.test.ts` (NEW, exit-code + stderr). Helpers, parsers, scorer, and parity gate added. Delete bash scripts after gate passes. _[tests/, src/audit/sections.ts, src/test-plan/parsers.ts, scripts/{score-extractor.ts, verify-migration-parity.sh}, tests/fixtures/extractor-corpus/, scripts/test-*.sh deleted], ~1,400 lines new + ~3,000 lines deleted._ (L)
 
 ---
 

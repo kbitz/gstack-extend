@@ -8,19 +8,16 @@ Extension skills for gstack.
 
 ## Testing
 
-Two suites run side by side:
+`bun run test` runs the full suite (`bun test tests/`). All tests live in `tests/*.test.ts` using `bun:test`. `/ship` runs them.
 
-- **Bash** — `./scripts/test-*.sh` (e.g. `test-roadmap-audit.sh`, `test-update.sh`, `test-source-tag.sh`).
-- **Bun** — `bun run test` (which invokes `bun test tests/`). New unit tests under `tests/*.test.ts` use `bun:test`.
-
-`/ship` runs both. Together the full set runs in ~65 seconds.
-
-`test-roadmap-audit.sh` is snapshot-based: each fixture under `tests/roadmap-audit/<name>/files/` is run through `bin/roadmap-audit`, and the output is diffed against `expected.txt`. To accept intentional behavior changes:
+`tests/audit-snapshots.test.ts` is snapshot-based: each fixture under `tests/roadmap-audit/<name>/files/` is run through `bin/roadmap-audit`, and stdout is diffed against `expected.txt` (path-normalized, trailing-newline normalized). Stderr is asserted empty. To accept intentional behavior changes:
 
 ```sh
-UPDATE_SNAPSHOTS=1 ./scripts/test-roadmap-audit.sh
+UPDATE_SNAPSHOTS=1 bun test tests/audit-snapshots.test.ts
 git diff tests/roadmap-audit/   # review what audit behavior changed
 ```
+
+`tests/audit-invariants.test.ts` is a structural-invariants safety net (NEW Track 3A). It walks every `expected.txt` and asserts every section has a `STATUS:` line, status values are in `CANONICAL_STATUSES`, MODE is last, and section order matches `CANONICAL_SECTIONS` (exported from `src/audit/sections.ts`). It trips on rubber-stamp `UPDATE_SNAPSHOTS=1` runs that scramble or drop sections.
 
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`.
 
@@ -30,6 +27,8 @@ To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` 
 ./scripts/regen-source-tag-corpus.sh
 git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
 ```
+
+`scripts/score-extractor.ts` is a manual harness for scoring `/test-plan` extractor JSON output against vendored fixtures (`tests/fixtures/extractor-corpus/`). Run via `bun scripts/score-extractor.ts --help`.
 
 ## Skill routing
 
