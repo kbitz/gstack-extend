@@ -2,6 +2,87 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.7.0] - 2026-04-30
+
+### Added (Group 3, Track 3A — Migrate test runners + invariants test)
+
+Replace 7 bash test runners (~2,800 LOC) with bun:test files (~1,400 LOC TS),
+add a structural-invariants safety net, and pin the audit's CLI contract beyond
+stdout. The headline win is **maintainability**, not raw speed: bash is the
+wrong language for markdown-shaped state-machine tests, and the TS port lets
+parsers + helpers + scorer be unit-tested directly. The full /ship speedup
+(~50s → ~10s) arrives when Track 2A's compile-binary cutover replaces the
+bash `bin/roadmap-audit`; Track 3A alone takes /ship to ~50s → ~30s while
+`audit-shadow.test.ts` keeps both engines honest.
+
+- **`tests/audit-invariants.test.ts` (NEW)** walks every fixture's
+  `expected.txt` and asserts: every `## SECTION` has a `STATUS:` line,
+  STATUS values are in the canonical set (`pass/fail/warn/info/skip/found/
+  none`), MODE is last, section order matches `CANONICAL_SECTIONS`. The
+  list is exported from `src/audit/sections.ts` (a side-effect-free spec
+  module — codex flagged that importing constants from `cli.ts` risks
+  pulling argv parsing on module load). A fixture-lock invariant ties the
+  const to observed fixture output: drift in either fails the test.
+- **`tests/audit-cli-contract.test.ts` (NEW)** locks the lenient
+  exit-code-0 + empty-stderr contract for `bin/roadmap-audit` against
+  bogus flags, missing repos, files-not-dirs, malformed ROADMAPs, and
+  empty `--scan-state`. Snapshot tests cover stdout; this covers
+  everything else.
+- **6 migrated test files**: `tests/audit-snapshots.test.ts` (was
+  `test-roadmap-audit.sh`), `tests/skill-protocols.test.ts`,
+  `tests/test-plan.test.ts`, `tests/test-plan-extractor.test.ts`,
+  `tests/test-plan-e2e.test.ts`, `tests/update.test.ts`. Plus
+  `scripts/test-source-tag.sh` retired (`tests/source-tag.test.ts` had
+  full bun parity since v0.18.4).
+- **`tests/helpers/fixture-repo.ts` and `tests/helpers/run-bin.ts`**
+  consolidate per-test mkdtemp + git init + spawn-env scoping. Five
+  callers benefit immediately (audit-shadow, audit-snapshots,
+  audit-cli-contract, update, parsers tests). `runBin()` REQUIRES an
+  explicit `home` parameter — no defaulting to `process.env.HOME` —
+  so concurrent test files can't pollute each other's mock $HOME.
+- **`src/test-plan/parsers.ts`** lifts two awk pipelines from the bash
+  e2e test into pure functions: `parseGroupTracks(roadmap)` (range
+  pattern that bounded `## Group N:` ↦ `## non-G`) and
+  `scanPairReviewSession(dir, branch)` (markdown state-machine across
+  `groups/*.md` + `parked-bugs.md`). Each has 8+ ugly-input unit tests
+  covering Unicode, completion suffixes (`✓ Complete`), sub-track IDs
+  (`2A.1`), branch mismatch, missing files. Codex flagged
+  awk-to-regex translation as a known silent-drift surface; testing the
+  parsers in isolation closes that risk.
+- **`scripts/score-extractor.ts`** extracts the `--score` developer
+  harness from the bash extractor test. Documented exit codes (0=pass,
+  1=below threshold, 2=parse/arg error), `--help` and `--list-fixtures`
+  modes, 15-test unit suite covering parse-error + scoring-math +
+  threshold-edge cases. Drops the python3 dependency (bash version
+  shelled out for JSON parsing).
+- **`tests/fixtures/extractor-corpus/`** vendors the two design docs
+  the bash test referenced as `$HOME`-relative paths (kb-only). Each
+  doc opens with a provenance comment block (original path, vendoring
+  date, expected keyword set, privacy note).
+- **`scripts/verify-migration-parity.sh`** is a one-shot PR gate: count
+  check (informational, undercounts dynamic table-driven tests) +
+  named-scenario check (BLOCKING — every required describe in the TS
+  port must be present). Codex pushed back on a count-only gate as
+  "theater" because table-driven tests can collapse 40 bash assertions
+  into 1 weak loop. After merge the gate is dead code (bash files
+  don't exist) and can be retired.
+- **Refactor: `tests/audit-shadow.test.ts`** uses the new helpers,
+  dropping ~50 LOC of duplicated fixture/repo plumbing.
+
+Eng-review surfaced 13 decisions (5 architectural, 2 code-quality, 1
+testing, 1 performance, 4 cross-model with Codex, 2 follow-up TODOs).
+All 9 user-facing decisions chose the complete option (lake score 9/11).
+
+Test count: 771 tests passing across 27 test files.
+
+### Removed
+
+- `scripts/test-roadmap-audit.sh`, `scripts/test-update.sh`,
+  `scripts/test-skill-protocols.sh`, `scripts/test-test-plan.sh`,
+  `scripts/test-test-plan-extractor.sh`, `scripts/test-test-plan-e2e.sh`,
+  `scripts/test-source-tag.sh` — all migrated; named-scenario parity
+  gate verified before deletion.
+
 ## [0.18.6.0] - 2026-04-29
 
 ### Added (Group 2, Track 2A — TypeScript port of `bin/roadmap-audit`, dark code)
