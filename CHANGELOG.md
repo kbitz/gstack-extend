@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.12.0] - 2026-05-04
+
+### Changed (install enforces bun)
+
+`setup` now fails fast with install instructions if `bun` is not on PATH —
+mirrors gstack's pattern. The check runs before any work, so users get a
+clear error instead of confusing "command not found" failures later. This
+makes the project's existing bun dependency (already required for tests
+and scripts) explicit at install time.
+
+### Added
+
+- `bun run setup` script alias in `package.json` — equivalent to `./setup`,
+  for users who prefer driving install through the bun CLI.
+
+### Docs
+
+- `README.md` Installation section lists Bun v1.0+ as a requirement upfront
+  alongside Claude Code and Git, and shows the `bun --cwd … run setup`
+  invocation alongside the direct `./setup` form.
+- Fixed stale roadmap reference: per-project install support points to
+  `Group 5 Pre-flight 2 and Track 5A` (was `Group 1 Pre-flight 2 and
+  Track 1A`, which referred to an older roadmap structure). The actual
+  preamble path resolution + upgrade propagation work lives in Group 5
+  per `docs/ROADMAP.md`.
+
 ## [0.18.11.0] - 2026-05-04
 
 ### Changed (Track 2B — bin/roadmap-audit cutover to TS)
