@@ -96,6 +96,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'skills/**',
     'setup',
   ],
+  'tests/audit-compliance.test.ts': [
+    'skills/**',
+    'setup',
+    'docs/source-tag-contract.md',
+  ],
   'tests/test-plan.test.ts': [
     'skills/test-plan.md',
   ],

@@ -89,7 +89,7 @@ tested via full-audit snapshot runs. **Targets:** real-repo audit <5s
 
 ### Track 2B: Cut `bin/roadmap-audit` over to TS implementation ✓ Complete
 
-Shipped in v0.18.10.0 (2026-05-04). Track 2A landed the TS port at
+Shipped in v0.18.11.0 (2026-05-04). Track 2A landed the TS port at
 `src/audit/**` as "dark code" — full byte-parity verified by
 `tests/audit-shadow.test.ts`, but the binary at `bin/roadmap-audit` was
 never wired up, so the shadow test ran every fixture twice (bash + TS) and
@@ -191,7 +191,7 @@ Bumped from M (~150 LOC) to L (~630 LOC) post-codex.
 _1 task . ~1 hour (human) / ~30 min (CC) . low risk . [4-fixture corpus + CLAUDE.md routing rule]_
 _touches: tests/fixtures/skill-prose-corpus/, CLAUDE.md, docs/PROGRESS.md, CHANGELOG.md_
 
-Shipped in v0.18.10.0 (2026-05-04). The eng-review (kbitz/llm-judge-skill-prose,
+Shipped in v0.18.11.0 (2026-05-04). The eng-review (kbitz/llm-judge-skill-prose,
 2026-05-03) originally locked an SDK-driven path: `callJudge<T>(prompt, validator)`
 helper, mocked unit tests, and a paid `tests/skill-llm-eval.test.ts` gated on
 `EVALS=1` + `ANTHROPIC_API_KEY`. The plan was implemented end-to-end and reviewed
@@ -217,7 +217,12 @@ ecological payoff. The SDK path was deleted before merge. Final shape:
   judge-floor tightening 3 → 4) are obsolete in this shape — they assumed a
   scheduled paid run that no longer exists.
 
-### Track 4D: Audit-compliance test for gstack-extend invariants
+### Track 4D: Audit-compliance test for gstack-extend invariants ✓ Complete
+
+Shipped in v0.18.10.0 (PR #62, 2026-05-04). `tests/audit-compliance.test.ts` (23 tests) covers (A) frontmatter sanity for every `skills/*.md`, (B) `setup` ↔ `skills/*.md` symmetry, (C) source-tag registry consistency. Adds the `REGISTERED_SOURCES` export to `src/audit/lib/source-tag.ts`. Also: `discovered` added to `docs/source-tag-contract.md` grammar list; one TODO retagged `[design]` → `[review]`.
+
+<details><summary>Original plan</summary>
+
 _1 task . ~1 day (human) / ~2 hours (CC) . low risk . [3 describes + REGISTERED_SOURCES export]_
 _touches: tests/audit-compliance.test.ts, src/audit/lib/source-tag.ts, docs/source-tag-contract.md, docs/TODOS.md_
 
@@ -234,6 +239,8 @@ entry to `[review]`. Adds the `REGISTERED_SOURCES` export to
 (audit fail-taxonomy calibration, SKILLS list dedup helper).
 
 - **Audit-compliance test for structural invariants** -- write `tests/audit-compliance.test.ts` with the three describes above; export `REGISTERED_SOURCES` from `src/audit/lib/source-tag.ts`; add `discovered` to grammar list in `docs/source-tag-contract.md`; retag one existing TODO entry. _[tests/audit-compliance.test.ts, src/audit/lib/source-tag.ts, docs/source-tag-contract.md, docs/TODOS.md], ~150 lines._ (M)
+
+</details>
 
 ---
 
