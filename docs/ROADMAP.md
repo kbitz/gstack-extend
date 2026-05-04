@@ -87,6 +87,24 @@ tested via full-audit snapshot runs. **Targets:** real-repo audit <5s
 - **Coverage-gap audit fixtures** -- walk v0.10–v0.18 CHANGELOG entries that added test cases to `scripts/test-roadmap-audit.sh`, identify edge cases not represented in the 14 snapshot fixtures (DAG cycles, name-anchor with spaces, `_serialize: true_` variants, compact-bullet form, `Depends on:` trailing prose, `complete_groups` detection, `in_flight_topo` doc-order tiebreaker). Add fixtures for any gaps before the port starts so the oracle is tight. _[tests/roadmap-audit/**], ~5–10 new fixtures (~30 lines)._ (S)
 - **Behavior-preserving TS port of `bin/roadmap-audit`** -- write `src/audit/{cli,parsers,checks,lib}/*.ts`, compile to `bin/roadmap-audit` via `bun build --compile`, verify all snapshot fixtures pass byte-for-byte, add parser/lib unit tests. _[src/audit/**, bin/roadmap-audit, tests/audit-parsers.test.ts, tests/lib-*.test.ts], ~1,500–2,000 lines new + 3,495 lines deleted._ (XL)
 
+### Track 2B: Cut `bin/roadmap-audit` over to TS implementation ✓ Complete
+
+Shipped in v0.18.10.0 (2026-05-04). Track 2A landed the TS port at
+`src/audit/**` as "dark code" — full byte-parity verified by
+`tests/audit-shadow.test.ts`, but the binary at `bin/roadmap-audit` was
+never wired up, so the shadow test ran every fixture twice (bash + TS) and
+the snapshot suite still paid the bash cost. This Track makes the cutover:
+`bin/roadmap-audit` becomes a 7-line POSIX-sh shim
+(`exec bun "$(dirname "$0")/../src/audit/cli.ts" "$@"`), the parity check
+`tests/audit-shadow.test.ts` is deleted (oracle and runner are now the
+same code), and the manual touchfile entries for the audit tests gain
+`src/audit/**` so audit code edits retrigger the snapshot suite.
+**Measured impact:** `tests/audit-snapshots.test.ts` 111s → 7.3s (~15×),
+full suite 113s → 32s (~3.5×). Phase 1's stated end-state ("`bin/roadmap-
+audit` is a compiled bun binary") is met (shim, not `--compile` artifact —
+trivially equivalent, simpler to deploy). Bash binary preserved in git
+history at commit `e4f883b` (PR #58) for archaeology.
+
 ---
 
 ## Group 3: Test Runner Migration + Invariants

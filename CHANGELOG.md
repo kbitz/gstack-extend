@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [0.18.10.0] - 2026-05-04
 
+### Changed (Track 2B — bin/roadmap-audit cutover to TS)
+
+`bin/roadmap-audit` is now a 7-line POSIX-sh shim that invokes
+`src/audit/cli.ts` via `bun`. Track 2A (v0.18.6.0) shipped the TS port
+with full byte-parity verified by `tests/audit-shadow.test.ts` but never
+wired the binary up — the test ran every snapshot fixture twice (bash
+oracle + TS shadow) and the snapshot suite continued paying bash cost.
+The cutover makes the TS implementation the single source of truth.
+`tests/audit-shadow.test.ts` is deleted (parity check is obsolete: oracle
+and runner are now the same code). Manual touchfile entries for
+`tests/audit-snapshots.test.ts` and `tests/audit-cli-contract.test.ts`
+gain `src/audit/**` so audit code edits retrigger the snapshot suite via
+diff selection. The 3,868-line bash binary is preserved in git history
+at commit `e4f883b` (PR #58) for archaeology — no recovery path needed
+since parity was verified at the time of port.
+
+**Measured impact on a 2-core MacBook:**
+`tests/audit-snapshots.test.ts` 111s → 7.3s (~15×). Full suite via
+`bun run test:full` 113s → 32s (~3.5×). Phase 1's stated end-state
+("`bin/roadmap-audit` is a compiled bun binary") is met (shim form, not
+`bun build --compile` artifact — equivalent semantics, simpler deploy:
+no per-platform binary, source is grep-able at `src/audit/**`). The
+remaining ~32s suite is dominated by `tests/update.test.ts` (~11s,
+shells out to `bin/update-{check,run}` and the bash `setup` script) —
+that's the next leverage point but lives in Group 5's install pipeline
+scope, not Group 2.
+
 ### Added (Track 4C — LLM-as-judge for skill prose)
 
 `tests/helpers/llm-judge.ts` exposes `callJudge<T>(prompt, validator)` — an
