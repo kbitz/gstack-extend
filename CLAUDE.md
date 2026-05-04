@@ -34,6 +34,8 @@ git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
 
 `scripts/score-extractor.ts` is a manual harness for scoring `/test-plan` extractor JSON output against vendored fixtures (`tests/fixtures/extractor-corpus/`). Run via `bun scripts/score-extractor.ts --help`.
 
+`tests/skill-llm-eval.test.ts` is paid: gated on `EVALS=1` (exact match — truthy values like `EVALS=true` are skipped). Sends each fixture in `tests/fixtures/skill-prose-corpus/` to Claude as an LLM judge scoring three axes (clarity, completeness, actionability, 1–5 each). Positive fixtures must score ≥3 on every axis; the negative-control fixture must score ≤2 on at least one axis. Default `bun run test` skips it; `EVALS=1 ANTHROPIC_API_KEY=... bun test tests/skill-llm-eval.test.ts` runs it. Cost ~$0.05–0.15 per run on the pinned Sonnet model.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

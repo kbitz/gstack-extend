@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.10.0] - 2026-05-04
+
+### Added (Track 4C — LLM-as-judge for skill prose)
+
+`tests/helpers/llm-judge.ts` exposes `callJudge<T>(prompt, validator)` — an
+Anthropic SDK wrapper that sends a prompt to Claude, expects a single JSON
+object back, validates it, and returns the typed result with token usage.
+Hardened against the failure modes the eng-review surfaced: `maxRetries: 0`
+on the client (so the SDK's exponential retry can't compound with our explicit
+retry), one explicit 1× 429 retry with a 1s pause, `stop_reason !== 'end_turn'`
+rejected before the regex extract (truncation/refusal would otherwise feed
+malformed JSON into the parser), validator baked into the call signature
+(every caller has its own shape — there's no default-correct), and a strict
+`isJudgeScore` predicate that rejects `NaN`, `Infinity`, decimals, `0`, `6`,
+`null`, wrong types, and empty/whitespace-only `reasoning`. Pinned model +
+`temperature: 0` + `max_tokens: 1024` (Anthropic doesn't guarantee determinism
+at temp 0, so the messaging frames it as "low variance").
+
+`tests/llm-judge.test.ts` runs 13 mocked-Anthropic-client unit tests covering
+every helper branch: happy path returns parsed data + usage, `stop_reason`
+mismatch is rejected before regex extract, no-JSON-in-response throws, JSON
+parse failure surfaces the raw match, validator rejection surfaces the parsed
+object, 429 retries once and succeeds, non-429 errors are re-thrown without
+retry. Plus 6 `isJudgeScore` cases covering integer in-range, out-of-range
+(0/6), decimals/NaN/Infinity, wrong types and missing axes, empty reasoning,
+and non-object input.
+
+`tests/skill-llm-eval.test.ts` is the paid evaluation, gated on
+`process.env.EVALS === '1'` (exact match — `EVALS=true` is correctly skipped)
+and a strict `ANTHROPIC_API_KEY` check that throws if EVALS=1 without a key.
+Sequential `test.each` over four fixtures in `tests/fixtures/skill-prose-corpus/`
+(three positive — `1-roadmap-reassessment`, `2-test-plan-extraction`,
+`3-pair-review-test-list` — plus one shallow `4-shallow-control` negative
+control). Each fixture is markdown with YAML frontmatter carrying provenance:
+source skill commit, repo commit, input prompt that produced the prose,
+generation model, UTC timestamp, and worktree state. The judge scores each
+on three axes (clarity, completeness, actionability), 1–5 each, with a
+non-empty reasoning field. Positive fixtures must score ≥3 on every axis;
+the negative control must score ≤2 on at least one axis (catches the failure
+mode where the judge rewards plausible-sounding prose over substance). 60s
+per-test timeout (bun:test's 5s default would interrupt mid-call). Cost
+~$0.05–0.15 per `EVALS=1` run.
+
+### Changed
+
+`bun run test` (default) skips the eval test cleanly via `test.skip` — no
+API calls, no spend, ~120ms. The wrapper's existing `EVALS_ALL=1` bypass is
+unrelated to `EVALS=1`; both can coexist. Touchfiles map gains
+`tests/skill-llm-eval.test.ts → tests/fixtures/skill-prose-corpus/**` so
+fixture edits select only the eval test (no false full-runs from refreshing
+provenance fields). `CLAUDE.md ## Testing` documents the EVALS=1 contract.
+
+`@anthropic-ai/sdk` added as a `devDependencies` entry. `bun.lock` committed
+alongside (lockfile, pins resolved versions). `node_modules/` added to
+`.gitignore` (was previously leaking into untracked file lists).
+
 ## [0.18.9.0] - 2026-05-04
 
 ### Added (Track 4A — Touchfiles diff selection)
