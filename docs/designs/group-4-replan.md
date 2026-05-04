@@ -188,6 +188,25 @@ triage them into the right place at the right time.
     fan-out isn't narrowing anything; selection's complexity doesn't
     match its benefit. Half-day stays in the bank.
 
+  **Result (2026-05-04, kbitz/track-4a-audit):** 3 most recent merged PRs
+  all force run-all because every PR in this repo bumps `package.json`
+  (a locked GLOBAL touchfile carrying the project version). Empirical
+  median: 0% saved.
+  - PR #60 (docs Group 4 re-plan) — touches `package.json` → global → 0%
+  - PR #59 (Track 3A migration) — touches `tests/helpers/fixture-repo.ts`
+    + `package.json` (both global) → 0%
+  - PR #58 (Track 2A port) — touches `package.json` → global → 0%
+
+  **Greenlit anyway** at the user's direction. The 3-PR sample is
+  atypically infrastructure-heavy (Tracks 2A + 3A are by-design broad);
+  Group 4/5/6 PRs should be smaller. The selection infrastructure ships
+  with all 4 fallbacks intact, so selection is correctness-safe even
+  when the GLOBAL_TOUCHFILES design over-triggers. Revisit the 40%
+  threshold once 5+ post-Group-3 steady-state PRs have landed; if median
+  is still <40%, candidate moves include narrowing `package.json` from
+  GLOBAL to per-test (only tests that consume `scripts.*`), or
+  introducing a `[no-test-impact]` PR-description waiver.
+
 ### Group 4 Tracks (3 parallel, file-disjoint)
 
 | Track | Scope | Effort | Files |

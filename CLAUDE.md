@@ -8,7 +8,11 @@ Extension skills for gstack.
 
 ## Testing
 
-`bun run test` runs the full suite (`bun test tests/`). All tests live in `tests/*.test.ts` using `bun:test`. `/ship` runs them.
+`bun run test` runs `scripts/select-tests.ts`, which narrows by `git diff` against the detected base branch (`origin/main` → `origin/master` → `main` → `master`, override with `TOUCHFILES_BASE=<ref>`). Every `tests/*.test.ts` declares its dependencies via the static TS import graph plus a small manual map in `tests/helpers/touchfiles.ts` for non-TS deps (shell binaries, fixture trees, skill files, the `setup` script). Four safety fallbacks force a full run: empty diff, missing base, any global touchfile hit (`package.json`, `tsconfig.json`, `tests/helpers/{touchfiles,fixture-repo,run-bin}.ts`), and any non-empty diff that selects zero tests. User-supplied argv (`bun test --watch foo`) and `EVALS_ALL=1` bypass selection entirely. To skip the wrapper unconditionally: `bun run test:full`. `/ship` invokes `bun run test`.
+
+`tests/touchfiles.test.ts` locks the selection contract — units, three structural invariants (every glob matches ≥1 file; every test reachable via import graph or manual map; every manual key resolves), and seven wrapper E2E scenarios. When adding a test that consumes a non-TS file (shell bin, fixture tree, markdown), add an entry to `MANUAL_TOUCHFILES`; the I2 invariant catches the omission.
+
+All tests live in `tests/*.test.ts` using `bun:test`.
 
 `tests/audit-snapshots.test.ts` is snapshot-based: each fixture under `tests/roadmap-audit/<name>/files/` is run through `bin/roadmap-audit`, and stdout is diffed against `expected.txt` (path-normalized, trailing-newline normalized). Stderr is asserted empty. To accept intentional behavior changes:
 
