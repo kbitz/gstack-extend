@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.8.1] - 2026-05-03
+
+### Added (Group 4 implementer artifacts)
+
+`docs/designs/group-4/` directory with locked plan files extracted from the
+three remaining Track eng-review sessions (4A from bogota, 4C from valletta,
+4D from richmond). Each file captures the full final scope, all locked
+decisions, codex catches batch-applied, cross-model tensions resolved, and
+failure modes — everything implementers need to ship without re-running
+`/plan-eng-review`. New workspaces (any machine, any Conductor reset) can
+bootstrap by reading three files: `docs/designs/group-4-replan.md`,
+`docs/ROADMAP.md` Track 4X entry, and `docs/designs/group-4/track-4X-plan.md`.
+Plans get deleted as each Track ships; directory disappears when Group 4
+closes. README.md in the directory documents the workflow.
+
 ## [0.18.8.0] - 2026-05-03
 
 ### Changed (Group 4 re-plan)
