@@ -53,7 +53,9 @@ export type RouteOutcome = {
 
 // Registered source skills. Anything not on this list will be flagged as
 // UNKNOWN_SOURCE by validateTagExpression. Mirrors bash _SOURCE_TAG_REGISTRY.
-const SOURCE_TAG_REGISTRY: ReadonlySet<string> = new Set([
+// Single source of truth; tests/audit-compliance.test.ts asserts that
+// docs/source-tag-contract.md's grammar list matches this set exactly.
+export const REGISTERED_SOURCES: ReadonlySet<string> = new Set([
   'pair-review',
   'full-review',
   'review',
@@ -386,7 +388,7 @@ function routeReviewSeverity(
  * Validate that the expression conforms to the source-tag grammar AND that
  * the source is registered. Returns Result<void, ValidateReason>:
  *   - MALFORMED_TAG: bracket/grammar violation
- *   - UNKNOWN_SOURCE: source not in SOURCE_TAG_REGISTRY
+ *   - UNKNOWN_SOURCE: source not in REGISTERED_SOURCES
  *   - INJECTION_ATTEMPT: dangerous chars (nested brackets, semicolons,
  *     backticks, command substitution)
  */
@@ -403,7 +405,7 @@ export function validateTagExpression(raw: string): Result<void, ValidateReason>
     return { ok: false, reason: 'MALFORMED_TAG' };
   }
 
-  if (!SOURCE_TAG_REGISTRY.has(parsed.value.source)) {
+  if (!REGISTERED_SOURCES.has(parsed.value.source)) {
     return { ok: false, reason: 'UNKNOWN_SOURCE' };
   }
 

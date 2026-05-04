@@ -123,7 +123,8 @@ on triage; not parsed.
 ```
 
 - `<source>` is the originating skill: `pair-review`, `full-review`,
-  `review`, `review-apparatus`, `test-plan`, `investigate`, `ship`, `manual`.
+  `review`, `review-apparatus`, `test-plan`, `investigate`, `ship`, `manual`,
+  `discovered`.
 - `<key>=<value>` pairs provide structured metadata. Order does not matter.
 - Keys MUST be lowercase, `[a-z-]+`.
 - Values MUST NOT contain `[]`, `,`, or `;`. Values containing these should be

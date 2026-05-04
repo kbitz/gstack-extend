@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.10.0] - 2026-05-04
+
+### Added (Track 4D — Audit-compliance test for gstack-extend invariants)
+
+`tests/audit-compliance.test.ts` (23 tests) catches three classes of structural
+drift before they ship:
+
+(A) **Frontmatter sanity** — every `skills/*.md` opens with a `---` fence, has a
+`name:` field that matches its filename, a non-empty `description:` (inline or
+block-literal), and an `allowed-tools:` field. Catches accidental skill-file
+breakage (missing frontmatter, mistyped name, dropped allowed-tools) at test
+time instead of at first invocation.
+
+(B) **`setup` ↔ `skills/*.md` symmetric** — every entry in `setup`'s `SKILLS=( …
+)` array has a corresponding `skills/<name>.md`, and every `skills/*.md` is
+listed in the array. Adding a skill file without registering it (or vice
+versa) trips the test with the exact orphan name. The array is parsed via a
+single regex per the locked plan — codex flagged a bun-require approach as
+overengineered for 5 names.
+
+(C) **Source-tag registry consistency** — imports the new `REGISTERED_SOURCES`
+export from `src/audit/lib/source-tag.ts` and asserts that the grammar bullet
+in `docs/source-tag-contract.md` lists the exact same set. Drift in either
+direction (source added in code but not docs, or vice versa) fails the test
+with both deltas spelled out.
+
+### Changed
+
+`src/audit/lib/source-tag.ts`: the previously private `SOURCE_TAG_REGISTRY`
+constant is now exported as `REGISTERED_SOURCES` — the single source of truth
+that the (C) describe consumes. Internal callers (`validateTagExpression`)
+updated; the `SOURCE_TAG_REGISTRY` name disappears (only the bash sibling
+keeps it).
+
+### Fixed (docs/data)
+
+- `docs/source-tag-contract.md`: added `discovered` to the source list in the
+  grammar bullet — the source tag exists in `REGISTERED_SOURCES` (and was
+  parsed by `parseSourceTag` since the bash port) but had been missing from
+  the grammar prose. (codex finding 10 from the Track 4D /plan-eng-review.)
+- `docs/TODOS.md`: retagged the `### [design]` entry on direct state-machine
+  tests to `### [review]` so it conforms to the canonical source-tag set.
+
 ## [0.18.9.0] - 2026-05-04
 
 ### Added (Track 4A — Touchfiles diff selection)
