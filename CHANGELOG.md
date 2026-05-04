@@ -31,59 +31,44 @@ shells out to `bin/update-{check,run}` and the bash `setup` script) —
 that's the next leverage point but lives in Group 5's install pipeline
 scope, not Group 2.
 
-### Added (Track 4C — LLM-as-judge for skill prose)
+### Added (Track 4C — Skill prose corpus + in-session judging routing rule)
 
-`tests/helpers/llm-judge.ts` exposes `callJudge<T>(prompt, validator)` — an
-Anthropic SDK wrapper that sends a prompt to Claude, expects a single JSON
-object back, validates it, and returns the typed result with token usage.
-Hardened against the failure modes the eng-review surfaced: `maxRetries: 0`
-on the client (so the SDK's exponential retry can't compound with our explicit
-retry), one explicit 1× 429 retry with a 1s pause, `stop_reason !== 'end_turn'`
-rejected before the regex extract (truncation/refusal would otherwise feed
-malformed JSON into the parser), validator baked into the call signature
-(every caller has its own shape — there's no default-correct), and a strict
-`isJudgeScore` predicate that rejects `NaN`, `Infinity`, decimals, `0`, `6`,
-`null`, wrong types, and empty/whitespace-only `reasoning`. Pinned model +
-`temperature: 0` + `max_tokens: 1024` (Anthropic doesn't guarantee determinism
-at temp 0, so the messaging frames it as "low variance").
+`tests/fixtures/skill-prose-corpus/` ships 4 markdown fixtures with rich
+YAML-frontmatter provenance: 3 positive examples representing what good
+output looks like for `/roadmap` reassessment, `/test-plan` extraction,
+and `/pair-review` test-list generation, plus a `4-shallow-control`
+negative example that's deliberately vague and generic. Each fixture
+records its source skill commit, the repo commit at capture time, the
+input prompt that produced the prose, the generation model, a UTC
+timestamp, and the worktree state — so future replacements with
+real-captured runs can match the structural contract.
 
-`tests/llm-judge.test.ts` runs 13 mocked-Anthropic-client unit tests covering
-every helper branch: happy path returns parsed data + usage, `stop_reason`
-mismatch is rejected before regex extract, no-JSON-in-response throws, JSON
-parse failure surfaces the raw match, validator rejection surfaces the parsed
-object, 429 retries once and succeeds, non-429 errors are re-thrown without
-retry. Plus 6 `isJudgeScore` cases covering integer in-range, out-of-range
-(0/6), decimals/NaN/Infinity, wrong types and missing axes, empty reasoning,
-and non-object input.
+The corpus is **reference material, not a test fixture.** There is no
+automated judge running under `bun test`. The eng-review's original SDK
++ `EVALS=1` + `ANTHROPIC_API_KEY` pattern was reconsidered during /ship
+and dropped: the test only runs on machines that already have `claude`
+authenticated (it never runs in CI), so requiring a separate API key
+plus a separate Anthropic SDK dependency was setup friction with no
+ecological payoff. Instead, `CLAUDE.md ## Testing` adds a routing rule:
+when `skills/*.md` is edited in a session, Claude proactively recommends
+judging the changed prose against the corpus and the three-axis rubric
+(clarity / completeness / actionability, 1–5 each, ≥3 expected on
+positives, ≤2 expected on at least one axis for the control) in-session.
+Cost is whatever the existing Claude Code session is paying anyway with
+prompt caching across fixtures; cadence is opportunistic (only on real
+prose changes), not scheduled.
 
-`tests/skill-llm-eval.test.ts` is the paid evaluation, gated on
-`process.env.EVALS === '1'` (exact match — `EVALS=true` is correctly skipped)
-and a strict `ANTHROPIC_API_KEY` check that throws if EVALS=1 without a key.
-Sequential `test.each` over four fixtures in `tests/fixtures/skill-prose-corpus/`
-(three positive — `1-roadmap-reassessment`, `2-test-plan-extraction`,
-`3-pair-review-test-list` — plus one shallow `4-shallow-control` negative
-control). Each fixture is markdown with YAML frontmatter carrying provenance:
-source skill commit, repo commit, input prompt that produced the prose,
-generation model, UTC timestamp, and worktree state. The judge scores each
-on three axes (clarity, completeness, actionability), 1–5 each, with a
-non-empty reasoning field. Positive fixtures must score ≥3 on every axis;
-the negative control must score ≤2 on at least one axis (catches the failure
-mode where the judge rewards plausible-sounding prose over substance). 60s
-per-test timeout (bun:test's 5s default would interrupt mid-call). Cost
-~$0.05–0.15 per `EVALS=1` run.
+This shape moves the workflow from "rare paid test that nobody runs" to
+"automatic prompt at the moment that warrants it" while keeping the
+fixtures + rubric as the calibration anchor. The two follow-ups the
+eng-review deferred to `Future` (tool-use migration, judge-floor
+tightening 3 → 4) are obsolete in this shape: there's no judge code to
+migrate and no scheduled run to retune.
 
 ### Changed
 
-`bun run test` (default) skips the eval test cleanly via `test.skip` — no
-API calls, no spend, ~120ms. The wrapper's existing `EVALS_ALL=1` bypass is
-unrelated to `EVALS=1`; both can coexist. Touchfiles map gains
-`tests/skill-llm-eval.test.ts → tests/fixtures/skill-prose-corpus/**` so
-fixture edits select only the eval test (no false full-runs from refreshing
-provenance fields). `CLAUDE.md ## Testing` documents the EVALS=1 contract.
-
-`@anthropic-ai/sdk` added as a `devDependencies` entry. `bun.lock` committed
-alongside (lockfile, pins resolved versions). `node_modules/` added to
-`.gitignore` (was previously leaking into untracked file lists).
+`node_modules/` added to `.gitignore` (was previously leaking into
+untracked file lists during /ship cycles).
 
 ## [0.18.9.0] - 2026-05-04
 

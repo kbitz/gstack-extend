@@ -187,25 +187,35 @@ Bumped from M (~150 LOC) to L (~630 LOC) post-codex.
 
 - **Diff-based test selection (hybrid import graph)** -- port `matchGlob` from gstack proper, add `analyzeTestImports` (TS AST walk → resolved src paths), `computeTestSelection` (graph + manual map + globals), `detectBaseBranch`, `getChangedFiles` (--name-status with rename pairs), MANUAL_TOUCHFILES (~10 entries) + GLOBAL_TOUCHFILES (5 entries). Wrapper script with 4 fallbacks, argv passthrough, signal propagation. Test suite: units + invariants + 7 E2E scenarios. Wire `package.json scripts.test` + `scripts.test:full`; document in CLAUDE.md + README. Inlines `makeEmptyRepo` hardening. _[tests/helpers/touchfiles.ts, tests/helpers/fixture-repo.ts, scripts/select-tests.ts, tests/touchfiles.test.ts, package.json, CLAUDE.md, README.md], ~630 lines._ (L)
 
-### Track 4C: LLM-as-judge for skill prose
-_1 task . ~2 days (human) / ~3 hours (CC) . medium risk . [callJudge helper + units + EVALS=1 fixture suite]_
-_touches: tests/helpers/llm-judge.ts, tests/helpers/llm-judge.test.ts, tests/skill-llm-eval.test.ts, tests/fixtures/skill-prose-corpus/, package.json, CLAUDE.md, docs/PROGRESS.md_
-_Depends on: Track 4A (additive overlap on `package.json` + `CLAUDE.md ## Testing`; serializes the merge, not the work). If Pre-flight `4A-audit` kills 4A, drop this dependency — the collision goes away._
+### Track 4C: Skill prose corpus + in-session judging routing rule ✓ Complete
+_1 task . ~1 hour (human) / ~30 min (CC) . low risk . [4-fixture corpus + CLAUDE.md routing rule]_
+_touches: tests/fixtures/skill-prose-corpus/, CLAUDE.md, docs/PROGRESS.md, CHANGELOG.md_
 
-/plan-eng-review (kbitz/llm-judge-skill-prose, 2026-05-03) locked: callJudge
-with baked-in validator + `maxRetries:0` + explicit 1× 429 retry +
-stop_reason check before regex extract; sequential `test.each` (not
-parallel — codex caught Promise.all losing per-fixture granularity);
-`process.env.EVALS === '1'` exact gate + ANTHROPIC_API_KEY check; per-test
-`{ timeout: 60_000 }`; 3+1 captured-prose fixtures (3 positive +
-1 negative-control) with rich provenance (source skill commit + repo
-commit + prompt/input + model + UTC timestamp + worktree state). Per-axis
-floor `>=3` for positive fixtures; `<=2` ceiling on at least one axis for
-the negative control. Self-gates via EVALS=1; no cross-Track tier
-dependency on 4A. Tool-use migration deferred to Future (regex+validator
-in v1). Cost: ~$0.05–0.15 per `EVALS=1` run.
+Shipped in v0.18.10.0 (2026-05-04). The eng-review (kbitz/llm-judge-skill-prose,
+2026-05-03) originally locked an SDK-driven path: `callJudge<T>(prompt, validator)`
+helper, mocked unit tests, and a paid `tests/skill-llm-eval.test.ts` gated on
+`EVALS=1` + `ANTHROPIC_API_KEY`. The plan was implemented end-to-end and reviewed
+during /ship — and reconsidered: the test only runs on machines that already
+have `claude` authenticated (it never runs in CI), so requiring a separate API
+key plus a separate Anthropic SDK dependency was setup friction with no
+ecological payoff. The SDK path was deleted before merge. Final shape:
 
-- **LLM-as-judge for skill prose quality** -- port `callJudge` from gstack proper with codex-locked hardening (validator baked in, `maxRetries:0`, stop_reason guard, isJudgeScore strict predicate rejecting NaN/Infinity/decimals/0/6/null). `tests/helpers/llm-judge.test.ts` (6 mocked-Anthropic-client units). `tests/skill-llm-eval.test.ts` runs sequentially over 4 fixtures gated on `EVALS=1`. Add `@anthropic-ai/sdk` to devDependencies. Document EVALS=1 contract in `CLAUDE.md ## Testing`. _[tests/helpers/llm-judge.ts, tests/helpers/llm-judge.test.ts, tests/skill-llm-eval.test.ts, tests/fixtures/skill-prose-corpus/ (4 files), package.json, CLAUDE.md, docs/PROGRESS.md], ~370 lines._ (M)
+- 4-fixture corpus at `tests/fixtures/skill-prose-corpus/` (3 positive examples
+  for `/roadmap` reassessment, `/test-plan` extraction, `/pair-review` test-list
+  output, plus one shallow negative control). Each fixture carries rich
+  provenance (source skill commit + repo commit + input prompt + generation
+  model + UTC timestamp + worktree state) so future replacements with real
+  captures preserve the structural contract.
+- Routing rule in `CLAUDE.md ## Testing`: when `skills/*.md` is edited in a
+  session, Claude proactively recommends judging the changed prose against
+  the corpus and the three-axis rubric (clarity / completeness / actionability,
+  1–5 each, ≥3 expected on positives, ≤2 expected on at least one axis for the
+  control) in-session. No new code, no new dependency, no new env var, no
+  separate billing — uses the existing Claude Code session with prompt caching
+  across fixtures.
+- The two follow-up Future entries the SDK path required (tool-use migration,
+  judge-floor tightening 3 → 4) are obsolete in this shape — they assumed a
+  scheduled paid run that no longer exists.
 
 ### Track 4D: Audit-compliance test for gstack-extend invariants
 _1 task . ~1 day (human) / ~2 hours (CC) . low risk . [3 describes + REGISTERED_SOURCES export]_
@@ -325,8 +335,6 @@ Will be promoted to the current phase and structured when their time comes.
 - **Eval dir retention / pruning policy** — Time-based ('drop files >30 days'), count-based ('keep last N per branch + tier'), or scenario-indexed ('prune older runs of the same {skill, scenario, model}') pruning of `~/.gstack/projects/<slug>/evals/`. _Deferred because: no eval-write rate exists yet to design against; pairs with the eval-persistence Track above. S–M effort (~2–4 hrs)._
 - **Audit fail-taxonomy calibration** — Review `bin/roadmap-audit` STATUS emit decisions; downgrade `ARCHIVE_CANDIDATES` to warn; design narrow waiver mechanism for `SIZE` (per-track + reason + optional expiry, NOT vague italic markers). Surfaced during Track 4D /plan-eng-review when audit emitted 3 `STATUS: fail` sections, only 1 of which was real structural drift. _Deferred because: a separate /plan-eng-review on the audit's policy surface, not Group 4 scope. M effort (~3 hrs)._
 - **Deduplicate SKILLS list across `setup` + `tests/skill-protocols.test.ts`** — Once Track 4D's setup-parser ships, extract to `tests/helpers/parse-setup-skills.ts` and consume from `tests/skill-protocols.test.ts`. Closes the third drift channel for the canonical skill list. _Deferred because: depends on Track 4D landing first. S effort (~30 min)._
-- **Migrate `callJudge` from regex+validator to Anthropic tool-use forced JSON** — Internal rewrite of `tests/helpers/llm-judge.ts`: switch to `tools: [{ name: 'judge_score', input_schema: { ... } }]` + `tool_choice: { type: 'tool', name: 'judge_score' }`; response shape becomes `response.content[0].input` (already structured) instead of regex-extracted text. Public `callJudge<T>(prompt, validator)` signature stays the same. _Deferred because: codex flagged regex extraction as "the wrong primitive" but v1 hadn't earned the migration cost. Trigger: 2nd consumer of `callJudge` lands, OR the regex-extract path produces a real bug. S effort (~30 min)._
-- **Raise the Track 4C judge floor from `>=3` to `>=4` once 5–10 EVALS runs accumulate** — Track 4C ships with floor=3 as a calibration smoke test. After ~5–10 `EVALS=1` runs, look at the score distribution; if real fixtures consistently score 4–5 and the negative control consistently scores 1–2, raise the floor to >=4 and the negative-control ceiling to <=1. _Deferred because: needs data first. S effort (~30 min)._
 
 ---
 

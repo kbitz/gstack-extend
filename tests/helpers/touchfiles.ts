@@ -115,9 +115,6 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/update-run',
     'setup',
   ],
-  'tests/skill-llm-eval.test.ts': [
-    'tests/fixtures/skill-prose-corpus/**',
-  ],
 };
 
 /**
