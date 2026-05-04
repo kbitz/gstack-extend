@@ -136,54 +136,76 @@ becomes obsolete.
 ## Group 4: Test Leverage Patterns
 
 Adopt gstack proper's higher-leverage test patterns once the foundation is
-in place. The four sub-tasks are independent (different file footprints) —
-parallel-safe within Group 4. Pull each in based on actual pain.
+in place. After /plan-eng-review re-plan (`docs/designs/group-4-replan.md`,
+2026-05-03): three Tracks (4A/4C/4D) plus a Pre-flight gate for 4A. The
+original Track 4B (eval persistence + regression) was dropped to Future
+because no Track in this codebase currently produces eval-store data. The
+three remaining Tracks are file-disjoint and parallel-safe within Group 4
+(modulo trivial additive merges on `package.json` + `CLAUDE.md ## Testing`).
+
+**Pre-flight** (1 item, no code, ~30 min):
+- **[4A-audit]** Timing + dependency audit for Track 4A — pick 3 recent merged PRs; for each, walk the import graph that 4A would build to compute which subset of tests selection would run; estimate saved wall-clock as `(1 − selected/27) × 117s − 5s wrapper overhead` (suite measured at 117s on 2026-05-03). Median across 3 PRs is the metric. **Greenlight** ≥40% saved (≥45s); **judgment** 25–40%; **kill** <25%. Result recorded inline in `docs/designs/group-4-replan.md` or PROGRESS.md before Track 4A starts. _[no code], ~0 lines._ (S)
 
 ### Track 4A: Touchfiles diff selection
-_1 task . ~1 day (human) / ~1 hour (CC) . low risk . [tests/helpers/touchfiles.ts]_
-_touches: tests/helpers/touchfiles.ts, tests/audit-snapshots.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/source-tag.test.ts_
+_1 task . ~3–4 days (human) / ~half-day (CC) . medium risk . [hybrid TS import graph + manual map; ~630 lines]_
+_touches: tests/helpers/touchfiles.ts, tests/helpers/fixture-repo.ts, scripts/select-tests.ts, tests/touchfiles.test.ts, package.json, CLAUDE.md, README.md_
+_Depends on: Pre-flight `4A-audit` greenlight. Killable cheap if audit fails._
 
-Copy gstack proper's `touchfiles.ts` pattern. Each test declares source
-dependencies as glob patterns; `git diff` against base branch selects
-which subset to run; `EVALS_ALL=1` overrides. Highest leverage for `/ship`
-runtime — most PRs only touch one area.
+/plan-eng-review (kbitz/groups-2-3-status, 2026-05-03) shifted approach
+from manual touchfiles globs to a hybrid: static TS import graph for
+`tests/*.test.ts` → `src/**/*.ts` edges plus a small manual map for non-TS
+deps (shell bins, fixtures, skills, docs, configs). Wrapper is
+`scripts/select-tests.ts` with 4 safety fallbacks (empty diff / no base /
+global hit / non-empty-but-zero-selected → all run all), argv passthrough
+(`bun test --watch foo` bypasses selection), signal forwarding,
+`TOUCHFILES_BASE` env override for stacked branches, `--name-status` git
+diff so renames track both sides. Three invariants in
+`tests/touchfiles.test.ts`: every glob in MANUAL/GLOBAL touchfiles matches
+≥1 file; every test reachable via import graph or manual map; every
+manual key resolves to an existing path. Pre-task hardens
+`tests/helpers/fixture-repo.ts` `makeEmptyRepo` with spawn exit-code
+checks (codex C3) — inlined into the Track, no separate Pre-flight.
+Bumped from M (~150 LOC) to L (~630 LOC) post-codex.
 
-- **Diff-based test selection** -- port `touchfiles.ts` from gstack proper, declare per-test source-file globs, integrate with `bun test` selection. _[tests/helpers/touchfiles.ts, tests/*.test.ts], ~150 lines._ (M)
-
-### Track 4B: Eval persistence + budget regression
-_1 task . ~2 days (human) / ~2 hours (CC) . medium risk . [tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts]_
-_touches: tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts, ~/.gstack/projects/<slug>/evals/_
-
-Persist skill-run eval data to `~/.gstack/projects/<slug>/evals/` (share
-gstack proper's directory). Add `tests/skill-budget-regression.test.ts`
-that fails when latest run >2× prior on the same branch in tool calls or
-turns. Free, gate-tier — no LLM cost; pure comparison.
-
-- **Eval persistence + budget regression test** -- port `eval-store.ts` and `skill-budget-regression.test.ts` from gstack proper, share `~/.gstack/projects/<slug>/evals/` dir. _[tests/helpers/eval-store.ts, tests/skill-budget-regression.test.ts], ~300 lines._ (M)
+- **Diff-based test selection (hybrid import graph)** -- port `matchGlob` from gstack proper, add `analyzeTestImports` (TS AST walk → resolved src paths), `computeTestSelection` (graph + manual map + globals), `detectBaseBranch`, `getChangedFiles` (--name-status with rename pairs), MANUAL_TOUCHFILES (~10 entries) + GLOBAL_TOUCHFILES (5 entries). Wrapper script with 4 fallbacks, argv passthrough, signal propagation. Test suite: units + invariants + 7 E2E scenarios. Wire `package.json scripts.test` + `scripts.test:full`; document in CLAUDE.md + README. Inlines `makeEmptyRepo` hardening. _[tests/helpers/touchfiles.ts, tests/helpers/fixture-repo.ts, scripts/select-tests.ts, tests/touchfiles.test.ts, package.json, CLAUDE.md, README.md], ~630 lines._ (L)
 
 ### Track 4C: LLM-as-judge for skill prose
-_1 task . ~2 days (human) / ~3 hours (CC) . medium risk . [tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts]_
-_touches: tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts_
+_1 task . ~2 days (human) / ~3 hours (CC) . medium risk . [callJudge helper + units + EVALS=1 fixture suite]_
+_touches: tests/helpers/llm-judge.ts, tests/helpers/llm-judge.test.ts, tests/skill-llm-eval.test.ts, tests/fixtures/skill-prose-corpus/, package.json, CLAUDE.md, docs/PROGRESS.md_
+_Depends on: Track 4A (additive overlap on `package.json` + `CLAUDE.md ## Testing`; serializes the merge, not the work). If Pre-flight `4A-audit` kills 4A, drop this dependency — the collision goes away._
 
-Copy gstack proper's `callJudge<T>` helper. Score `/roadmap` reassessment,
-`/test-plan` extraction, `/pair-review` test list quality on
-`clarity / completeness / actionability` (1–5 each) using Sonnet. Gate
-behind `EVALS=1` (paid). Cost: ~$0.05–0.15 per run.
+/plan-eng-review (kbitz/llm-judge-skill-prose, 2026-05-03) locked: callJudge
+with baked-in validator + `maxRetries:0` + explicit 1× 429 retry +
+stop_reason check before regex extract; sequential `test.each` (not
+parallel — codex caught Promise.all losing per-fixture granularity);
+`process.env.EVALS === '1'` exact gate + ANTHROPIC_API_KEY check; per-test
+`{ timeout: 60_000 }`; 3+1 captured-prose fixtures (3 positive +
+1 negative-control) with rich provenance (source skill commit + repo
+commit + prompt/input + model + UTC timestamp + worktree state). Per-axis
+floor `>=3` for positive fixtures; `<=2` ceiling on at least one axis for
+the negative control. Self-gates via EVALS=1; no cross-Track tier
+dependency on 4A. Tool-use migration deferred to Future (regex+validator
+in v1). Cost: ~$0.05–0.15 per `EVALS=1` run.
 
-- **LLM-as-judge for skill prose quality** -- port `llm-judge.ts` from gstack proper, write `tests/skill-llm-eval.test.ts` scoring the three skills, gate via `EVALS=1`. _[tests/helpers/llm-judge.ts, tests/skill-llm-eval.test.ts], ~250 lines._ (M)
+- **LLM-as-judge for skill prose quality** -- port `callJudge` from gstack proper with codex-locked hardening (validator baked in, `maxRetries:0`, stop_reason guard, isJudgeScore strict predicate rejecting NaN/Infinity/decimals/0/6/null). `tests/helpers/llm-judge.test.ts` (6 mocked-Anthropic-client units). `tests/skill-llm-eval.test.ts` runs sequentially over 4 fixtures gated on `EVALS=1`. Add `@anthropic-ai/sdk` to devDependencies. Document EVALS=1 contract in `CLAUDE.md ## Testing`. _[tests/helpers/llm-judge.ts, tests/helpers/llm-judge.test.ts, tests/skill-llm-eval.test.ts, tests/fixtures/skill-prose-corpus/ (4 files), package.json, CLAUDE.md, docs/PROGRESS.md], ~370 lines._ (M)
 
 ### Track 4D: Audit-compliance test for gstack-extend invariants
-_1 task . ~1 day (human) / ~2 hours (CC) . low risk . [tests/audit-compliance.test.ts]_
-_touches: tests/audit-compliance.test.ts_
+_1 task . ~1 day (human) / ~2 hours (CC) . low risk . [3 describes + REGISTERED_SOURCES export]_
+_touches: tests/audit-compliance.test.ts, src/audit/lib/source-tag.ts, docs/source-tag-contract.md, docs/TODOS.md_
 
-Mirror gstack proper's `audit-compliance.test.ts` pattern, but for
-gstack-extend invariants: skill files have correct frontmatter, every
-skill listed in `setup` has a corresponding `skills/*.md`, no
-`[source-tag]` bracket appears outside the documented set in
-`docs/source-tag-contract.md`. Catches structural regressions even when
-behavior tests pass.
+/plan-eng-review (kbitz/audit-invariants-test, 2026-05-03) locked: three
+describes — (A) frontmatter sanity (4 checks per skill: `---` fence,
+`name === filename`, `description:` present, `allowed-tools:` present);
+(B) `setup` ↔ `skills/*.md` symmetric (forward + reverse); (C) source-tag
+registry consistency (imports `REGISTERED_SOURCES` from
+`src/audit/lib/source-tag.ts`, asserts `docs/source-tag-contract.md`
+matches). Doc fix: add `discovered` to `source-tag-contract.md` grammar
+list (codex finding 10). Data fix: retag the existing `### [design]` TODO
+entry to `[review]`. Adds the `REGISTERED_SOURCES` export to
+`src/audit/lib/source-tag.ts`. Two follow-up TODOs deferred to Future
+(audit fail-taxonomy calibration, SKILLS list dedup helper).
 
-- **Audit-compliance test for structural invariants** -- write `tests/audit-compliance.test.ts` with the gstack-extend-specific assertions above. _[tests/audit-compliance.test.ts], ~150 lines._ (M)
+- **Audit-compliance test for structural invariants** -- write `tests/audit-compliance.test.ts` with the three describes above; export `REGISTERED_SOURCES` from `src/audit/lib/source-tag.ts`; add `discovered` to grammar list in `docs/source-tag-contract.md`; retag one existing TODO entry. _[tests/audit-compliance.test.ts, src/audit/lib/source-tag.ts, docs/source-tag-contract.md, docs/TODOS.md], ~150 lines._ (M)
 
 ---
 
@@ -255,8 +277,8 @@ Group 3: Test Runner Migration + Invariants
   +-- Track 3A ..................... ~2 hr CC ... 1 task
 
 Group 4: Test Leverage Patterns
-  +-- Track 4A ..................... ~1 hr CC ... 1 task
-  +-- Track 4B ..................... ~2 hr CC ... 1 task
+  Pre-flight (gate, no code) ......... 1 item (4A-audit)
+  +-- Track 4A ..................... ~half-day CC ... 1 task (gated)
   +-- Track 4C ..................... ~3 hr CC ... 1 task
   +-- Track 4D ..................... ~2 hr CC ... 1 task
 
@@ -268,7 +290,7 @@ Group 6: Distribution Infrastructure
   +-- Track 6A ..................... ~20 min CC ... 1 task  (waits for 0.x → 1.x bump)
 ```
 
-**Total: 6 groups . 8 tracks . 13 tasks (3 Pre-flight + 10 track tasks)**
+**Total: 6 groups . 7 tracks . 13 tasks (4 Pre-flight + 9 track tasks)**
 
 ---
 
@@ -280,6 +302,13 @@ Will be promoted to the current phase and structured when their time comes.
 - **Multi-agent test orchestration** — Each test group assigned to a separate Conductor agent. session.yaml as coordination point, groups as independent files so agents don't conflict. Parallel testing for large suites (15-20 items). _Deferred because: depends on /pair-review v1 proven reliable and Conductor agent API maturity. L effort (~2 weeks human / ~2 hours CC)._
 - **Shared-infra auto-detect from git history** — Compute the shared-infra list automatically by scanning the last 20 merged PRs for files modified in ≥40% of them. Replaces `docs/shared-infra.txt` hand-maintenance. _Deferred because: ships hand-curated list first; revisit after 4+ weeks of cohort usage. M effort (~1 day human / ~30 min CC)._
 - **Cohort retrospective telemetry** — Log per-cohort merge outcomes (parallel tracks merged clean? hotfix count? mid-flight splits?) to `~/.gstack/analytics/cohort-outcomes.jsonl`. Data-driven tuning of the size-cap ceilings. _Deferred because: requires 10+ real cohorts of usage data before signal emerges. Pairs with `bin/config` ceiling overrides. M effort (~1 day human / ~40 min CC)._
+- **Eval persistence + reader + comparator + regression gate** (full original Track 4B scope) — Port `tests/helpers/eval-store.ts` from gstack proper (types, `getProjectEvalDir` with lazy memoization + design-doc fallback, transcript writer); reader (`findPreviousRun`, `compareEvalResults`, `extractToolSummary`, `totalToolCount`, `findBudgetRegressions`, `assertNoBudgetRegression`, `runBudgetCheck`); active `tests/skill-budget-regression.test.ts`. Lift the locked decisions D3/D6/D7/D8/D9/D10/D11/D14 from the original 4B /plan-eng-review. _Deferred because: no Track in this codebase currently produces eval-store data; shipping types + a skipped test alone would just bury infrastructure under a permanently-skipped test. Unblocks the day a Track that captures skill transcripts exists. M effort (~400–500 LOC including active tests)._
+- **gbrain-sync allowlist for `~/.gstack/projects/*/evals/`** — Once a transcript producer exists, add the evals dir to gbrain-sync's allowlist (or denylist) in gstack proper so transcripts don't auto-sync to a private GitHub repo. _Deferred because: requires the producer to land first so the privacy surface is observable; cross-repo (gstack proper, not gstack-extend). S effort (~30 min)._
+- **Eval dir retention / pruning policy** — Time-based ('drop files >30 days'), count-based ('keep last N per branch + tier'), or scenario-indexed ('prune older runs of the same {skill, scenario, model}') pruning of `~/.gstack/projects/<slug>/evals/`. _Deferred because: no eval-write rate exists yet to design against; pairs with the eval-persistence Track above. S–M effort (~2–4 hrs)._
+- **Audit fail-taxonomy calibration** — Review `bin/roadmap-audit` STATUS emit decisions; downgrade `ARCHIVE_CANDIDATES` to warn; design narrow waiver mechanism for `SIZE` (per-track + reason + optional expiry, NOT vague italic markers). Surfaced during Track 4D /plan-eng-review when audit emitted 3 `STATUS: fail` sections, only 1 of which was real structural drift. _Deferred because: a separate /plan-eng-review on the audit's policy surface, not Group 4 scope. M effort (~3 hrs)._
+- **Deduplicate SKILLS list across `setup` + `tests/skill-protocols.test.ts`** — Once Track 4D's setup-parser ships, extract to `tests/helpers/parse-setup-skills.ts` and consume from `tests/skill-protocols.test.ts`. Closes the third drift channel for the canonical skill list. _Deferred because: depends on Track 4D landing first. S effort (~30 min)._
+- **Migrate `callJudge` from regex+validator to Anthropic tool-use forced JSON** — Internal rewrite of `tests/helpers/llm-judge.ts`: switch to `tools: [{ name: 'judge_score', input_schema: { ... } }]` + `tool_choice: { type: 'tool', name: 'judge_score' }`; response shape becomes `response.content[0].input` (already structured) instead of regex-extracted text. Public `callJudge<T>(prompt, validator)` signature stays the same. _Deferred because: codex flagged regex extraction as "the wrong primitive" but v1 hadn't earned the migration cost. Trigger: 2nd consumer of `callJudge` lands, OR the regex-extract path produces a real bug. S effort (~30 min)._
+- **Raise the Track 4C judge floor from `>=3` to `>=4` once 5–10 EVALS runs accumulate** — Track 4C ships with floor=3 as a calibration smoke test. After ~5–10 `EVALS=1` runs, look at the score distribution; if real fixtures consistently score 4–5 and the negative control consistently scores 1–2, raise the floor to >=4 and the negative-control ceiling to <=1. _Deferred because: needs data first. S effort (~30 min)._
 
 ---
 

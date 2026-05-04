@@ -2,6 +2,64 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.8.0] - 2026-05-03
+
+### Changed (Group 4 re-plan)
+
+`docs/designs/group-4-replan.md` (NEW, 295 lines) audits the four parallel
+`/plan-eng-review` plans for Group 4 (Tracks 4A/4B/4C/4D) and eliminates the
+defensive workarounds the parallel-review topology produced — phantom
+`eval-store.ts` collisions, sibling-Track name collisions, premature
+TEST_TIERS deferrals, and a "scaffolding pretending to be a gate" 4B
+reduction. Diagnoses each workaround, proposes a clean re-division, and
+pins the Pre-flight 4A-audit threshold (≥40% wall-clock saved on the median
+of 3 recent PRs against a measured 117s baseline; <25% kills the Track).
+
+`docs/ROADMAP.md` Group 4 reshaped per the design doc:
+- **Track 4B dropped to `Future`** — the original eval persistence + reader +
+  regression gate scope is preserved verbatim in the `Future` section,
+  deferred until a Track that produces eval-store data exists. Shipping
+  types + a permanently-skipped test was infrastructure with no consumer.
+- **Pre-flight `4A-audit` added** — kill-cheap timing measurement gate for
+  Track 4A. ≥40% saved → greenlight; 25–40% → judgment; <25% → kill.
+- **Track 4A bumped M → L (~150 → ~630 LOC)** — codex flipped the approach
+  from manual touchfiles globs to a hybrid TS import graph + small manual
+  map. Adds 4 safety fallbacks (empty diff / no base / global hit /
+  non-empty-but-zero-selected), argv passthrough with signal forwarding,
+  `TOUCHFILES_BASE` env override for stacked branches, `--name-status` git
+  diff for rename-safety, three structural invariants, inlined
+  `makeEmptyRepo` hardening (codex C3). Gated on `4A-audit` greenlight.
+- **Track 4C bumped ~250 → ~370 LOC** — locked: callJudge with baked-in
+  validator, `maxRetries:0`, stop_reason guard, isJudgeScore strict
+  predicate, sequential `test.each`, `process.env.EVALS === '1'` exact
+  gate, per-test 60s timeout, 3+1 captured-prose fixtures with rich
+  provenance. Self-gates on EVALS=1; no TEST_TIERS dependency on 4A.
+- **Track 4C `_Depends on: Track 4A_`** — declares the additive merge
+  overlap on `package.json` + `CLAUDE.md ## Testing` so the audit's
+  COLLISIONS check passes. Serializes the merge order, not the work. If
+  Pre-flight kills 4A, drop the dep line.
+- **Track 4D unchanged in scope** — three describes (frontmatter sanity,
+  `setup` ↔ `skills/*.md` symmetric, source-tag registry consistency).
+  `_touches:_` extended to include `src/audit/lib/source-tag.ts` (new
+  `REGISTERED_SOURCES` export) and the prose data fix in
+  `docs/source-tag-contract.md` + `docs/TODOS.md` retag.
+
+`Future` section gains seven items lifted from the four eng-reviews: the
+deferred eval-persistence Track (full original 4B scope), gbrain-sync
+allowlist for `~/.gstack/projects/*/evals/`, eval dir retention/pruning
+policy, audit fail-taxonomy calibration (downgrade `ARCHIVE_CANDIDATES` to
+warn, design narrow `SIZE` waiver), SKILLS-list dedup helper extraction,
+`callJudge` migration to Anthropic tool-use forced JSON (trigger: 2nd
+consumer or first regex bug), and judge-floor tightening 3 → 4 after 5–10
+EVALS runs accumulate.
+
+Group 4 totals: 4 tracks → 3 tracks (+ 1 Pre-flight gate). 13 tasks
+unchanged (4 Pre-flight + 9 track tasks). The four eng-review session
+plans (bogota/dalat-v1/valletta/richmond) stay valid as implementation
+input — implementers consume them directly without re-review. Mechanics
+for execution documented in Phase 0–4 sequence in the design doc's "Next
+steps" section.
+
 ## [0.18.7.0] - 2026-04-30
 
 ### Added (Group 3, Track 3A — Migrate test runners + invariants test)
