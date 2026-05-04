@@ -12,11 +12,20 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 
 ## Installation
 
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
+
 Clone and run setup:
 
 ```bash
 git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
 ~/.claude/skills/gstack-extend/setup
+```
+
+Equivalently, if you prefer driving install through bun:
+
+```bash
+git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-extend
+bun --cwd ~/.claude/skills/gstack-extend run setup
 ```
 
 This installs all skills into `~/.claude/skills/`.
@@ -32,7 +41,7 @@ Install skills into a project-local directory instead of the global one:
 
 Note: as of v0.16.0 skill preambles still resolve their helper scripts from
 the default `~/.claude/skills/` path. Full per-project support (preamble path
-resolution + upgrade propagation) lands in Group 1 Pre-flight 2 and Track 1A —
+resolution + upgrade propagation) lands in Group 5 Pre-flight 2 and Track 5A —
 see `docs/ROADMAP.md`.
 
 ---
