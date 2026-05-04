@@ -85,15 +85,17 @@ function runGit(repo: string, args: string[]): void {
 /**
  * Create a fresh empty repo at `baseTmp/<random>` with anonymous git config
  * and an empty initial commit. Caller writes files + commits as needed.
+ *
+ * Exit codes are checked on every spawn — silent git failures (xcrun trip on
+ * first run, missing git binary, OOM during commit) used to produce confusing
+ * downstream errors. Surface the spawn failure here instead.
  */
 export function makeEmptyRepo(baseTmp: string): string {
   const repo = mkdtempSync(join(baseTmp, 'repo-'));
-  spawnSync('git', ['-C', repo, 'init', '--quiet', '--initial-branch=main'], { encoding: 'utf8' });
-  spawnSync('git', ['-C', repo, 'config', 'user.email', 't@t.com'], { encoding: 'utf8' });
-  spawnSync('git', ['-C', repo, 'config', 'user.name', 'T'], { encoding: 'utf8' });
-  spawnSync('git', ['-C', repo, 'commit', '--allow-empty', '-m', 'init', '--quiet'], {
-    encoding: 'utf8',
-  });
+  runGit(repo, ['init', '--quiet', '--initial-branch=main']);
+  runGit(repo, ['config', 'user.email', 't@t.com']);
+  runGit(repo, ['config', 'user.name', 'T']);
+  runGit(repo, ['commit', '--allow-empty', '-m', 'init', '--quiet']);
   return repo;
 }
 

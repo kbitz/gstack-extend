@@ -6,7 +6,8 @@
     "bun": ">=1.0.0"
   },
   "scripts": {
-    "test": "bun test tests/"
+    "test": "bun scripts/select-tests.ts",
+    "test:full": "bun test tests/"
   },
-  "version": "0.18.8.1"
+  "version": "0.18.9.0"
 }

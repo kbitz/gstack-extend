@@ -2,6 +2,68 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.9.0] - 2026-05-04
+
+### Added (Track 4A — Touchfiles diff selection)
+
+`bun run test` now narrows the suite by `git diff` against the detected base
+branch. Selection is built from a static TypeScript import graph for every
+`tests/*.test.ts`, supplemented by a small `MANUAL_TOUCHFILES` map in
+`tests/helpers/touchfiles.ts` for non-TS deps (shell binaries, fixture trees,
+skill files, the `setup` script). Four safety fallbacks force a full run on
+empty diff, missing base ref, any GLOBAL_TOUCHFILES hit (`package.json`,
+`tsconfig.json`, `tests/helpers/{touchfiles,fixture-repo,run-bin}.ts`), or any
+non-empty diff that selects zero tests. User-supplied argv (`bun test --watch
+foo`) and `EVALS_ALL=1` bypass selection entirely; `bun run test:full` runs
+everything unconditionally.
+
+`scripts/select-tests.ts` is the wrapper. It exposes a pure
+`planWrapperAction({ argv, env, cwd })` for testability — the spawn,
+exit-code propagation, and SIGINT/SIGTERM forwarding are thin glue around
+it. Base detection precedence: `TOUCHFILES_BASE` env override → `origin/main`
+→ `origin/master` → `main` → `master`. `git diff --name-status` keeps both
+sides of every rename so refactors track on either path.
+
+`tests/touchfiles.test.ts` (44 tests) locks the selection contract: 6
+`matchGlob` units, 6 `parseDiffNameStatus` units (modify/add/delete/rename/
+copy with similarity scores), 5 `analyzeTestImports` units (value, type-only,
+re-exports, dynamic, externals), 8 `computeTestSelection` units covering all
+4 fallbacks + multi-hit + self-trigger + global precedence, 5
+`detectBaseBranch` units (no-base, probe order, env override valid/invalid/
+empty), 4 `getChangedFiles` units (incl. rename pair propagation), 3
+structural invariants (every glob matches ≥1 file; every test reachable via
+import graph or manual map; every manual key resolves), and 7 wrapper E2E
+scenarios via `fixture-repo` (happy / EVALS_ALL=1 / empty-diff / no-base /
+global / args-passthrough / rename).
+
+Type-only imports are tracked alongside value imports — `Bun.Transpiler.scanImports`
+erases `import type` lines (they vanish at runtime), so a regex supplement in
+`analyzeTestImports` catches them. Otherwise tests that consume types from a
+src module would be silently skipped when the type shape changed.
+
+`tests/helpers/fixture-repo.ts` `makeEmptyRepo` now checks every `git` spawn
+exit code via the same `runGit` helper `setupRepo` uses (codex C3) — silent
+git failures used to surface as confusing audit-side errors instead of where
+they originated.
+
+### Changed
+
+`package.json scripts.test` now invokes `bun scripts/select-tests.ts`;
+`scripts.test:full` is the unconditional bypass. CLAUDE.md ##Testing and
+README.md gained matching paragraphs documenting the contract and the env
+overrides.
+
+### Pre-flight 4A-audit (recorded inline)
+
+Empirical median saved on the 3 most recent merged PRs (#60/#59/#58): 0% —
+every PR in this repo bumps `package.json` (a locked GLOBAL touchfile
+carrying the project version), forcing run-all on every changeset. The
+3-PR sample is also atypically infrastructure-heavy (Tracks 2A + 3A are
+by-design broad). Greenlit anyway at user direction; the selection
+infrastructure ships with all 4 fallbacks intact, so selection is
+correctness-safe even when GLOBAL_TOUCHFILES over-triggers. Revisit the
+40% threshold once 5+ post-Group-3 steady-state PRs have landed.
+
 ## [0.18.8.1] - 2026-05-03
 
 ### Added (Group 4 implementer artifacts)

@@ -210,6 +210,25 @@ The artifact contract is owned by /test-plan and documented at
 
 Source of truth: `VERSION` file. Tags created automatically on merge to main.
 
+## Testing
+
+```bash
+bun run test        # diff-narrowed: only runs tests whose deps changed vs origin/main
+bun run test:full   # everything (use when something feels off, or for /ship)
+EVALS_ALL=1 bun test tests/   # bypass selection inline
+TOUCHFILES_BASE=feature bun run test   # base override for stacked branches
+```
+
+The wrapper at `scripts/select-tests.ts` builds a static TS import graph for every
+`tests/*.test.ts`, supplemented by a small manual map for non-TS deps (shell binaries,
+fixture trees, skill files). It falls back to running the full suite on empty diff,
+missing base ref, any global touchfile hit, or any non-empty diff that selects zero
+tests. User-supplied argv (`bun test --watch foo`) bypasses selection entirely.
+
+When adding a new test that consumes a non-TS file, register it in
+`tests/helpers/touchfiles.ts` `MANUAL_TOUCHFILES` — `tests/touchfiles.test.ts`
+invariants will fail otherwise.
+
 ## Acknowledgments
 
 Built by [@kbitz](https://github.com/kbitz) with assistance from [Claude Code](https://claude.com/claude-code) (Anthropic).
