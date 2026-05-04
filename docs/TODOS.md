@@ -2,7 +2,7 @@
 
 ## Unprocessed
 
-### [design] Direct state-machine tests for `check_phases` / `check_phase_invariants` after bun port
+### [review] Direct state-machine tests for `check_phases` / `check_phase_invariants` after bun port
 The `roadmap-phases` design (`docs/designs/roadmap-phases.md`) ships its two new audit checks covered by snapshot fixtures only — no bash-level unit tests. State-machine logic (PHASE state in vocab-lint, Groups-list parsing, sequentiality check, double-claim check, scaffolding `test -f`) is exercised end-to-end through `expected.txt` diffs but not directly. Once the bun port lands (Phase 1 of `bun-test-architecture.md`, Group 2 of current ROADMAP), add `tests/audit-checks/phases.test.ts` that imports the TS check functions and asserts directly on inputs/outputs.
 - **Why:** snapshot indirection makes failures harder to debug — a state-machine bug shows up as a diff in 8 fixtures, not as a single failed assertion. Direct tests pinpoint the broken transition. Codex outside-voice flagged this as a sequencing risk during `/plan-eng-review` of the design (2026-04-29).
 - **Proposed fix:** after Group 2 (TS port of `bin/roadmap-audit`) lands, the audit's checks become importable TS modules. Write `tests/audit-checks/phases.test.ts` covering each PHASE_INVARIANTS rule (≥2 Groups, listed Groups exist, sequentiality, no double-claim, scaffolding test-f, malformed-block warns) and the vocab-lint PHASE state transitions. Snapshot fixtures stay; unit tests are additive coverage.
