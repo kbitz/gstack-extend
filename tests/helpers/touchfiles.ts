@@ -73,17 +73,12 @@ export function matchGlob(file: string, pattern: string): boolean {
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/audit-snapshots.test.ts': [
     'bin/roadmap-audit',
-    'bin/lib/**',
-    'tests/roadmap-audit/**',
-  ],
-  'tests/audit-shadow.test.ts': [
-    'bin/roadmap-audit',
-    'bin/lib/**',
+    'src/audit/**',
     'tests/roadmap-audit/**',
   ],
   'tests/audit-cli-contract.test.ts': [
     'bin/roadmap-audit',
-    'bin/lib/**',
+    'src/audit/**',
   ],
   'tests/audit-invariants.test.ts': [
     'tests/roadmap-audit/**',
@@ -100,6 +95,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols.test.ts': [
     'skills/**',
     'setup',
+  ],
+  'tests/audit-compliance.test.ts': [
+    'skills/**',
+    'setup',
+    'docs/source-tag-contract.md',
   ],
   'tests/test-plan.test.ts': [
     'skills/test-plan.md',
