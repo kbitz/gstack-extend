@@ -61,7 +61,9 @@ Built the `/browse-native` skill against real macOS apps. Beta never left beta; 
 
 ## Roadmap
 
-- **Group 1: Bun test toolchain** — ✓ Complete (v0.18.3). Bootstrap, source-tag library port, byte-exact bash parity oracle.
-- **Groups 2–4: bun + TypeScript test infrastructure** — Port `bin/roadmap-audit` from 3,495 lines of bash to TypeScript, migrate test runners, adopt gstack proper's leverage patterns (touchfiles, eval persistence, LLM-judge, audit-compliance). See `docs/designs/bun-test-architecture.md`.
-- **Groups 5–6: install pipeline + distribution** — Per-project install support, roadmap onboarding, version transition detection. Sequenced after Groups 1–4 (file collisions on `bin/roadmap-audit`).
-- **Future: multi-agent test orchestration** — Parallel testing across Conductor agents
+- **Phase 1 (Groups 1–4): Bun Test Migration** — ✓ Complete (v0.18.3 → v0.18.11.0). `bun test` is the sole entry point; `bin/roadmap-audit` is a 7-line shim invoking `src/audit/cli.ts`; touchfiles diff selection + audit-compliance + skill prose corpus shipped. Suite 113s → 32s; audit snapshots 124s → 7.3s.
+- **Group 5: Install Pipeline** — Single Track 5A "Install pipeline polish" with 5 tasks (preamble probe, layout scaffolding, doc type detection, update-run dir propagation, setup symlink hardening).
+- **Group 6: Distribution Infrastructure** — Track 6A: auto-detect major version boundary (waits for an external 0.x → 1.x bump).
+- **Group 7: Audit Polish** — Track 7A with 3 tasks: direct phase-check tests, STALENESS rename, FRESHNESS scan extends to TODOS.md.
+- **Groups 8 → 12: Skill ecosystem polish chain** — 5 sequentially-dependent Groups, each shipping one Track: 8A git commit failure handling → 9A `/gstack-extend-upgrade` skill → 10A telemetry parity → 11A `/claude-md-cleanup` skill → 12A skill-file simplification + SKILL.md.tmpl.
+- **Future** — Eval persistence + reader (waits for a producer Track), multi-agent test orchestration, shared-infra auto-detect, Codex host support, audit fail-taxonomy calibration, etc.

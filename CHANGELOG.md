@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.12.1] - 2026-05-05
+
+### Docs (roadmap reassessment — Phase 1 closes)
+
+`/roadmap` reassessment closes 8 items (Tracks 2A/3A/4A + Pre-flight 4A-audit + Groups 2/3/4 + Phase 1) that shipped in v0.18.6.0/0.18.7.0/0.18.9.0 but never got marked Complete in `docs/ROADMAP.md`. Phase 1 (Bun Test Migration) now reports `state=complete`. The next code-shipping `/ship` will recommend MINOR per the phase-aware default.
+
+Triaged the 14 inbox items: 3 killed (slow tests resolved by Track 2B; `/full-review` on `scripts/` obsolete after Track 3A's bash-script deletion; `/test-plan` validation deprioritized post-Group-4), 1 deferred to Future (Codex host support — gates need re-measurement after the Track 12 simplification settles description lengths), and 10 promoted to Tracks across new active scope.
+
+New active scope:
+- **Track 5A** "Install pipeline polish" — folded the 3 Pre-flight items into a single 5-task Track per the single-Track Group rule, plus the `setup` symlink-component hardening surfaced during /review of Pre-flight 1.
+- **Group 7: Audit Polish** — Track 7A with 3 tasks (direct phase-check tests, STALENESS rename, FRESHNESS scan extends to TODOS.md `## Unprocessed`).
+- **Groups 8 → 12: Skill ecosystem polish chain** — sequentially-dependent so concurrency stays under the parallelism budget while preserving scope: 8A git commit failure handling (3 skills), 9A `/gstack-extend-upgrade` skill, 10A telemetry parity with gstack, 11A `/claude-md-cleanup` skill, 12A-12E skill-file simplification per-skill (parallel-safe within Group 12 after the Pre-flight canonical fragment extraction) plus SKILL.md.tmpl promotion.
+
+Mechanical doc fixes: added metadata lines to ✓ Complete Tracks 1A/2B/4D so the audit's STRUCTURE check passes; archived `docs/designs/{bun-test-architecture,roadmap-phases}.md` (both reference shipped versions); deleted `docs/designs/group-4/` implementer plans per their own design (removed when Group 4 closes). Updated `tests/parsers-{phases,roadmap}.test.ts` real-ROADMAP assertions to reflect the new state (Phase 1 title, Track 2A complete, Group `_Depends on: none_` annotations parse as `kind: 'none'`).
+
+Audit final state: STRUCTURE pass, PHASES pass + state=complete, COLLISIONS pass, GROUP_DEPS pass (12 groups), SIZE pass, PARALLELISM_BUDGET pass (3 in-flight vs cap 4), STYLE_LINT pass. VOCAB_LINT warns × 4 are legitimate body-prose references to "Phase 1" outside the Phase block (override per advisory rules). VERSION fail (0.18.12.0 vs latest tag v0.18.7.0) is git-tag drift from recent /ship runs without /land-and-deploy tagging — separate concern, unchanged by this commit.
+
 ## [0.18.12.0] - 2026-05-04
 
 ### Changed (install enforces bun)

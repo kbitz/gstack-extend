@@ -8,31 +8,31 @@ collide on files. Within a Group, Tracks must be fully parallel-safe
 session.
 
 Execution order follows the adjacency list in the Execution Map below.
-Groups 1–4 (bun + TypeScript test infrastructure, per
-`docs/designs/bun-test-architecture.md`) sequence first; Groups 5 and 6
-(install pipeline, distribution) follow because both touch
-`bin/roadmap-audit` and would collide mid-port if they ran in parallel
-with the test-infra chain.
+Phase 1 (Groups 1–4, bun + TypeScript test infrastructure per
+`docs/archive/bun-test-architecture.md`) shipped across v0.18.3 → v0.18.11.0.
+Active scope is Group 5 (install pipeline), Group 6 (distribution), Group 7
+(audit polish), and Group 8 (skill ecosystem polish, serialized internally).
 
 ---
 
-## Phase 1: Bun Test Migration
+## Phase 1: Bun Test Migration ✓ Complete
 
-**End-state:** all `scripts/test-*.sh` deleted; `bun test` is the sole
-test entry point; `bin/roadmap-audit` is a compiled bun binary; the
-4 leverage patterns from gstack proper (touchfiles, eval persistence,
-LLM-as-judge, audit-compliance) are adopted.
+**End-state:** `bun test` is the sole test entry point, all `scripts/test-*.sh`
+retired, `bin/roadmap-audit` is a 7-line POSIX-sh shim invoking `src/audit/cli.ts`,
+and the 4 leverage patterns (touchfiles, skill prose corpus + in-session judging,
+audit-compliance, eval persistence — last deferred to Future) are adopted.
 
 **Groups:** 1, 2, 3, 4 (sequential).
 
+Shipped across v0.18.3 → v0.18.11.0. Full suite went 113s → 32s; audit
+snapshot suite 124s → 7.3s.
+
 **Scaffolding contract:**
 - Group 1 landed `src/audit/lib/source-tag.ts` and `tests/source-tag.test.ts`
-  in v0.18.4 — the source-tag library is the seed module the rest of the TS
-  port consumes.
-- Group 2 lands the rest of `src/audit/lib/*.ts` (semver, effort) plus the
-  TS port itself; some helpers are unit-tested in Group 2 but not yet
-  wired into checks until the Group 3 test-runner migration references
-  them directly.
+  in v0.18.4 — the source-tag library was the seed module the rest of the TS
+  port consumed.
+- Group 2 landed the rest of `src/audit/lib/*.ts` (semver, effort) plus the
+  TS port itself in v0.18.6.0 (dark code) and the cutover in v0.18.11.0.
 
 ---
 
@@ -43,6 +43,8 @@ smallest existing bash test. Single-PR scope; lays the foundation for
 Groups 2–4. Both bash and bun test suites coexist after this Group ships.
 
 ### Track 1A: Bootstrap bun + port source-tag lib + tests ✓ Complete
+_1 task . ~half-day (CC) . medium risk . [bootstrap + source-tag lib port]_
+_touches: package.json, tsconfig.json, src/audit/lib/source-tag.ts, tests/source-tag.test.ts, tests/fixtures/source-tag-hash-corpus.json, scripts/regen-source-tag-corpus.sh_
 
 Shipped in v0.18.3 (2026-04-29). `package.json` (engines.bun >=1.0,
 `scripts.test = "bun test tests/"`) and `tsconfig.json` (strict ESM,
@@ -60,14 +62,11 @@ mixed; locked in by 7 corpus fixtures with internal control chars.
 
 ---
 
-## Group 2: TypeScript Port of `bin/roadmap-audit`
+## Group 2: TypeScript Port of `bin/roadmap-audit` ✓ Complete
 
-The big one. Replace 3,495 lines of bash with `src/audit/{cli,parsers,
-checks,lib}/*.ts`, compiled via `bun build --compile`. Snapshot suite is
-the byte-for-byte oracle — Track 2A's first task tightens that oracle
-before the port itself begins.
+Shipped as v0.18.6.0 (Track 2A — TS port as dark code, full byte-parity verified by `tests/audit-shadow.test.ts`) + v0.18.11.0 (Track 2B — `bin/roadmap-audit` cutover to a 7-line POSIX-sh shim invoking `src/audit/cli.ts`; shadow test deleted; snapshot suite 111s → 7.3s, full suite 113s → 32s). The 3,868-line bash binary lives in git history at `e4f883b` for archaeology.
 
-### Track 2A: Port `bin/roadmap-audit` to TypeScript
+### Track 2A: Port `bin/roadmap-audit` to TypeScript ✓ Complete
 _2 tasks . ~3–5 days (human) / ~half-day (CC) . high risk . [src/audit/, bin/roadmap-audit, tests/]_
 _touches: src/audit/**, bin/roadmap-audit, tests/roadmap-audit/**, tests/audit-parsers.test.ts, tests/lib-semver.test.ts, tests/lib-effort.test.ts_
 
@@ -88,6 +87,8 @@ tested via full-audit snapshot runs. **Targets:** real-repo audit <5s
 - **Behavior-preserving TS port of `bin/roadmap-audit`** -- write `src/audit/{cli,parsers,checks,lib}/*.ts`, compile to `bin/roadmap-audit` via `bun build --compile`, verify all snapshot fixtures pass byte-for-byte, add parser/lib unit tests. _[src/audit/**, bin/roadmap-audit, tests/audit-parsers.test.ts, tests/lib-*.test.ts], ~1,500–2,000 lines new + 3,495 lines deleted._ (XL)
 
 ### Track 2B: Cut `bin/roadmap-audit` over to TS implementation ✓ Complete
+_1 task . ~30 min (CC) . low risk . [bin/roadmap-audit shim + audit-shadow delete]_
+_touches: bin/roadmap-audit, tests/audit-shadow.test.ts, tests/helpers/touchfiles.ts_
 
 Shipped in v0.18.11.0 (2026-05-04). Track 2A landed the TS port at
 `src/audit/**` as "dark code" — full byte-parity verified by
@@ -107,13 +108,11 @@ history at commit `e4f883b` (PR #58) for archaeology.
 
 ---
 
-## Group 3: Test Runner Migration + Invariants
+## Group 3: Test Runner Migration + Invariants ✓ Complete
 
-Now that the audit is TypeScript, replace the remaining bash test runners
-with `bun test` equivalents and add the structural-invariants safety net.
-After this Group ships, no bash test scripts remain.
+Shipped as v0.18.7.0 (Track 3A). 7 bash test scripts → bun:test files (~2,800 LOC bash deleted, ~1,400 LOC TS added); structural-invariants safety net (`tests/audit-invariants.test.ts`) and CLI-contract test (`tests/audit-cli-contract.test.ts`) added. `/ship` test runtime ~50s → ~30s post-cutover.
 
-### Track 3A: Migrate test runners + invariants test
+### Track 3A: Migrate test runners + invariants test ✓ Complete
 _1 task . ~1 day (human) / ~3 hours (CC) . medium risk . [tests/, scripts/test-*.sh deleted]_
 _touches: tests/audit-snapshots.test.ts, tests/audit-invariants.test.ts, tests/audit-cli-contract.test.ts, tests/update.test.ts, tests/skill-protocols.test.ts, tests/test-plan.test.ts, tests/test-plan-extractor.test.ts, tests/test-plan-e2e.test.ts, tests/score-extractor.test.ts, tests/parsers-group-tracks.test.ts, tests/parsers-pair-review-session.test.ts, tests/helpers/fixture-repo.ts, tests/helpers/run-bin.ts, src/audit/sections.ts, src/test-plan/parsers.ts, scripts/score-extractor.ts, scripts/verify-migration-parity.sh, tests/fixtures/extractor-corpus/_
 
@@ -151,20 +150,13 @@ becomes obsolete.
 
 ---
 
-## Group 4: Test Leverage Patterns
+## Group 4: Test Leverage Patterns ✓ Complete
 
-Adopt gstack proper's higher-leverage test patterns once the foundation is
-in place. After /plan-eng-review re-plan (`docs/designs/group-4-replan.md`,
-2026-05-03): three Tracks (4A/4C/4D) plus a Pre-flight gate for 4A. The
-original Track 4B (eval persistence + regression) was dropped to Future
-because no Track in this codebase currently produces eval-store data. The
-three remaining Tracks are file-disjoint and parallel-safe within Group 4
-(modulo trivial additive merges on `package.json` + `CLAUDE.md ## Testing`).
+Shipped as v0.18.9.0 (4A — touchfiles diff selection + invariants) + v0.18.10.0 (4D — audit-compliance) + v0.18.11.0 (4C — skill prose corpus + in-session judging routing rule). Pre-flight `4A-audit` greenlit Track 4A. Original Track 4B (eval persistence + regression) deferred to Future; pairs with the next Track that produces eval-store data.
 
-**Pre-flight** (1 item, no code, ~30 min):
-- **[4A-audit]** Timing + dependency audit for Track 4A — pick 3 recent merged PRs; for each, walk the import graph that 4A would build to compute which subset of tests selection would run; estimate saved wall-clock as `(1 − selected/27) × 117s − 5s wrapper overhead` (suite measured at 117s on 2026-05-03). Median across 3 PRs is the metric. **Greenlight** ≥40% saved (≥45s); **judgment** 25–40%; **kill** <25%. Result recorded inline in `docs/designs/group-4-replan.md` or PROGRESS.md before Track 4A starts. _[no code], ~0 lines._ (S)
+_Pre-flight (4A-audit) — ✓ Complete. Greenlit Track 4A._
 
-### Track 4A: Touchfiles diff selection
+### Track 4A: Touchfiles diff selection ✓ Complete
 _1 task . ~3–4 days (human) / ~half-day (CC) . medium risk . [hybrid TS import graph + manual map; ~630 lines]_
 _touches: tests/helpers/touchfiles.ts, tests/helpers/fixture-repo.ts, scripts/select-tests.ts, tests/touchfiles.test.ts, package.json, CLAUDE.md, README.md_
 _Depends on: Pre-flight `4A-audit` greenlight. Killable cheap if audit fails._
@@ -218,6 +210,8 @@ ecological payoff. The SDK path was deleted before merge. Final shape:
   scheduled paid run that no longer exists.
 
 ### Track 4D: Audit-compliance test for gstack-extend invariants ✓ Complete
+_1 task . ~1 day (human) / ~2 hours (CC) . low risk . [3 describes + REGISTERED_SOURCES export]_
+_touches: tests/audit-compliance.test.ts, src/audit/lib/source-tag.ts, docs/source-tag-contract.md, docs/TODOS.md_
 
 Shipped in v0.18.10.0 (PR #62, 2026-05-04). `tests/audit-compliance.test.ts` (23 tests) covers (A) frontmatter sanity for every `skills/*.md`, (B) `setup` ↔ `skills/*.md` symmetry, (C) source-tag registry consistency. Adds the `REGISTERED_SOURCES` export to `src/audit/lib/source-tag.ts`. Also: `discovered` added to `docs/source-tag-contract.md` grammar list; one TODO retagged `[design]` → `[review]`.
 
@@ -247,29 +241,28 @@ entry to `[review]`. Adds the `REGISTERED_SOURCES` export to
 ## Group 5: Install Pipeline
 
 The `--skills-dir` flag (originally this Group's first Pre-flight item)
-shipped in v0.16.0; the rest follows Group 4 because Pre-flight 3, 4, and
-Group 6 all touch `bin/roadmap-audit`, which is being ported in Group 2.
+shipped in v0.16.0.
 
-Make the install system flexible enough for per-project usage and polish the
-roadmap first-run experience. Most of this Group is shared-infra work that
-touches cross-cutting files (`setup`, `bin/roadmap-audit`, `skills/*.md`),
-so it's batched into Pre-flight and runs serially. Only the truly isolated
-`bin/update-run` propagation remains as a parallel track.
+After Phase 1 closure the remaining install/setup work is a single serial
+Track touching cross-cutting install files. Per the single-Track
+Pre-flight rule, the previous Pre-flight items are folded into Track 5A
+as additional tasks, plus the `setup` symlink-component hardening surfaced
+during /review of Pre-flight 1.
 
-**Pre-flight** (shared-infra; serial, one-at-a-time). Order: 2 → Track 5A → 3 → 4:
-- **[2]** Preamble probe pattern — Skill preambles currently `readlink ~/.claude/skills/{name}/SKILL.md`, which silently breaks on non-default installs. Replace with gstack-core's probe pattern (`~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`). For truly-custom paths, honor `$GSTACK_EXTEND_ROOT` env var and fallback to `$HOME/.gstack-extend-rc` (written by setup). Also fix `skills/test-plan.md:632` to point at `$_EXTEND_ROOT/skills/pair-review.md`. `[skills/*.md preambles (5 files), setup], ~40 lines.` (S)
-- **[3]** Layout scaffolding for new projects — Add a `/roadmap init` subcommand that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and offers to git-mv misplaced docs (consumes `bin/roadmap-audit DOC_LOCATION` findings). On destination collisions, AskUserQuestion with diff + merge/skip/abort options. `[bin/roadmap-audit, skills/roadmap.md], ~50 lines.` (S)
-- **[4]** Doc type detection heuristic — Teach `bin/roadmap-audit` to emit `## DOC_TYPE_MISMATCH` for two strong-signal patterns: design-looking doc outside `docs/designs/` (mermaid/plantuml fence), inbox-looking doc outside `TODOS.md` (checkbox density >20%). Skip known ROOT_DOCS/DOCS_DIR_DOCS. Only emit rows where content disagrees with location. `[bin/roadmap-audit], ~40 lines.` (S)
+### Track 5A: Install pipeline polish
+_5 tasks . ~2 days (human) / ~2 hours (CC) . medium risk . [setup, skill preambles, src/audit/, bin/update-run]_
+_touches: setup, skills/*.md, src/audit/cli.ts, src/audit/checks/, bin/update-run_
 
-### Track 5A: Update-Run Dir Propagation
-_1 task . ~30 min (human) / ~15 min (CC) . low risk . [bin/update-run]_
-_touches: bin/update-run_
-_Depends on: Pre-flight 2 (requires the `$GSTACK_EXTEND_ROOT` env-var infrastructure). Pre-flight 1 (the `--skills-dir` flag itself) shipped in v0.16.0._
+End-to-end install / upgrade ergonomics: per-project install resolution
+(preamble probe), roadmap onboarding scaffolding, doc-location heuristics,
+custom-dir propagation through upgrade, and symlink-component hardening
+at the install target.
 
-End-to-end support for custom install directories in the upgrade path. Partial
-support was removed in v0.6.2 to avoid half-baked behavior.
-
-- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Read `$GSTACK_EXTEND_ROOT` env var (set by user shell, populated by Pre-flight 2's rc-file fallback when available). If set, pass `--skills-dir "$GSTACK_EXTEND_ROOT"` to `./setup`. If unset, default behavior (matches pre-Group-5 semantics). Regression test: install with `--skills-dir /tmp/foo`, trigger upgrade, confirm skills still resolve at `/tmp/foo`. _[bin/update-run], ~40 lines._ (S)
+- **Preamble probe pattern** -- Skill preambles currently `readlink ~/.claude/skills/{name}/SKILL.md`, which silently breaks on non-default installs. Replace with gstack-core's probe pattern (`~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`). For truly-custom paths, honor `$GSTACK_EXTEND_ROOT` env var and fallback to `$HOME/.gstack-extend-rc` (written by setup). Also fix `skills/test-plan.md:632` to point at `$_EXTEND_ROOT/skills/pair-review.md`. _[skills/*.md preambles (5 files), setup], ~40 lines._ (S)
+- **Layout scaffolding for new projects** -- Add a `/roadmap init` subcommand that creates the correct directory structure (`docs/`, `docs/designs/`, `docs/archive/`) and offers to git-mv misplaced docs (consumes `bin/roadmap-audit DOC_LOCATION` findings). On destination collisions, AskUserQuestion with diff + merge/skip/abort options. _[src/audit/cli.ts, skills/roadmap.md], ~50 lines._ (S)
+- **Doc type detection heuristic** -- Teach `bin/roadmap-audit` to emit `## DOC_TYPE_MISMATCH` for two strong-signal patterns: design-looking doc outside `docs/designs/` (mermaid/plantuml fence), inbox-looking doc outside `TODOS.md` (checkbox density >20%). Skip known ROOT_DOCS/DOCS_DIR_DOCS. Only emit rows where content disagrees with location. _[src/audit/checks/], ~40 lines._ (S)
+- **Propagate dir to update-run** -- `bin/update-run` calls `setup` without passing through any custom dir. Read `$GSTACK_EXTEND_ROOT` env var (set by user shell, populated by the preamble probe pattern's rc-file fallback when available). If set, pass `--skills-dir "$GSTACK_EXTEND_ROOT"` to `./setup`. If unset, default behavior (matches pre-Group-5 semantics). Regression test: install with `--skills-dir /tmp/foo`, trigger upgrade, confirm skills still resolve at `/tmp/foo`. _[bin/update-run], ~40 lines._ (S)
+- **Harden setup against attacker-controlled symlink components at install target** -- `setup` install/uninstall paths do not check whether `$SKILLS_DIR/{skill}` is itself a symlink before `ln -snf` / `rm -f` / `rmdir` touch `$SKILLS_DIR/{skill}/SKILL.md`. Before `ln -snf` in the install loop, assert `[ ! -L "$target" ]` (the directory itself, not `$target/SKILL.md`) — fail with a clear error if the path component is a symlink. Same check in the uninstall loop before `readlink`/`rm`. Add targeted tests that create a symlink at `$CUSTOM_DIR/pair-review` pointing elsewhere and assert install/uninstall refuse with a clean message. _[setup], ~30 lines._ (S)
 
 ---
 
@@ -288,48 +281,212 @@ Depends on: at least one major version bump (0.x -> 1.x) to validate against.
 
 ---
 
+## Group 7: Audit Polish
+
+_Depends on: none_
+
+Audit-related ergonomics and coverage gaps surfaced dogfooding `/roadmap`
+on bolt and on extend itself. All three tasks touch `src/audit/**` plus
+`skills/roadmap.md`, so they ship as one Track.
+
+### Track 7A: Audit polish + FRESHNESS coverage
+_3 tasks . ~1 day (human) / ~1 hour (CC) . low risk . [src/audit/checks/, tests/audit-checks/, skills/roadmap.md]_
+_touches: src/audit/checks/, tests/audit-checks/, tests/audit-snapshots.test.ts, skills/roadmap.md_
+
+- **Direct state-machine tests for `check_phases` / `check_phase_invariants`** -- write `tests/audit-checks/phases.test.ts` covering each PHASE_INVARIANTS rule (≥2 Groups, listed Groups exist, sequentiality, no double-claim, scaffolding test-f, malformed-block warns) and the vocab-lint PHASE state transitions. Snapshot fixtures stay; unit tests are additive coverage that pinpoint state-machine regressions instead of cascading across 8 fixtures. _[tests/audit-checks/phases.test.ts], ~150 lines._ (S)
+- **Rename STALENESS → VERSION_TAG_STALENESS + skill prose clarifier** -- mechanical rename in `src/audit/checks/staleness.ts` (+ expected.txt fixtures), plus a one-line clarifier in `skills/roadmap.md` Interpreting Audit Findings: "VERSION_TAG_STALENESS only fires on items with explicit (shipped vN.N.N) annotations; broader recency belongs to FRESHNESS." Closes the dogfood-noted misread that `STALENESS: pass` settles the freshness question. _[src/audit/checks/, tests/, skills/roadmap.md], ~30 lines._ (S)
+- **Extend FRESHNESS scan to TODOS.md `## Unprocessed`** -- new `_inferred_freshness_for_todo` walks Unprocessed items, extracts referenced file paths from prose, runs the same per-file commit-since-introduction lookup as the ROADMAP scan (incl. Track-ID-or-title-fuzzy-match relaxation from v0.17.1). Surfaces shipped-but-unclosed inbox items in the FRESHNESS AskUserQuestion flow. _[src/audit/checks/freshness.ts, tests/], ~120 lines._ (M)
+
+---
+
+## Group 8: Tighten `git commit` failure handling
+
+_Depends on: none_
+
+All three review skills currently treat any non-zero exit from `git commit`
+as "nothing to commit, that's fine — continue." Silently swallows
+pre-commit hook rejections, missing `user.email`, detached-HEAD refusal —
+data-loss risk because the skill reports a commit that didn't land.
+
+### Track 8A: Snapshot staged state + escalate on real failure
+_1 task . ~2 hours (human) / ~20 min (CC) . low risk . [3 skill files]_
+_touches: skills/full-review.md, skills/pair-review.md, skills/review-apparatus.md_
+
+- **Snapshot staged state + escalate on real failure** -- before commit, snapshot `git diff --cached --quiet; _HAS_STAGED=$?`. Run `git commit` only if `_HAS_STAGED` is 1. On non-zero exit with staged content present, escalate as BLOCKED with the stderr tail rather than swallowing silently. Apply identically to all three skills to preserve parity. _[skills/full-review.md:498, skills/pair-review.md (parked-bug + fix-flow commits), skills/review-apparatus.md:346], ~30 lines (3 small edits)._ (S)
+
+---
+
+## Group 9: New skill `/gstack-extend-upgrade`
+
+Mirror `/gstack-upgrade` for gstack-extend so users have a first-class
+upgrade path instead of `git pull` archaeology. Sequenced after Group 8
+because the new skill file inherits the corrected commit-handling pattern
+from Track 8A.
+
+### Track 9A: Mirror `/gstack-upgrade` as `/gstack-extend-upgrade`
+_1 task . ~half day (human) / ~30 min (CC) . low risk . [new skill + setup wiring]_
+_touches: skills/gstack-extend-upgrade.md, setup, bin/_
+
+Detect install type (global git clone vs vendored), fetch latest, run
+`./setup`, run pending migrations, summarize What's New from `CHANGELOG.md`
+between old/new. Same auto-upgrade / snooze / "never ask again" UX as
+`/gstack-upgrade`, including the inline-upgrade flow that other
+gstack-extend skill preambles already call when they detect
+`UPGRADE_AVAILABLE`.
+
+- **Mirror `/gstack-upgrade` as `/gstack-extend-upgrade`** -- copy `~/.claude/skills/gstack-upgrade/SKILL.md` as the starting template; swap `gstack` → `gstack-extend` in install-detection paths, repo URL, config helper paths, and migrations directory; decide config-helper sharing (gstack-config vs parallel `gstack-extend-config`); wire into setup's SKILLS array. _[skills/gstack-extend-upgrade.md, setup, bin/], ~250 lines (mostly mechanical mirror)._ (M)
+
+---
+
+## Group 10: Telemetry parity with gstack
+
+gstack-extend skills currently emit nothing. gstack writes per-skill
+activations + outcomes to `~/.gstack/analytics/skill-usage.jsonl`; `/retro`
+reads them. Without parity, mind-meld retro flying over a project sees
+gstack activity but is blind to all gstack-extend skill runs. Sequenced
+after Group 9 because the telemetry helper consumes the same config
+helper decision Track 9A makes (gstack-config sharing vs parallel
+`gstack-extend-config`).
+
+### Track 10A: Add `bin/gstack-extend-telemetry` + per-skill emit blocks
+_1 task . ~half day (human) / ~30 min (CC) . low risk . [new helper + per-skill blocks]_
+_touches: bin/gstack-extend-telemetry, skills/*.md_
+
+- **Add helper + per-skill emit blocks** -- helper appends one JSON line per activation to `~/.gstack/analytics/skill-usage.jsonl` matching gstack's schema (`{"skill","duration_s","outcome","session","ts","repo"}`); mark via skill-name prefix (`extend:roadmap`) or `"source":"gstack-extend"`. Append preamble + completion block to each gstack-extend skill following gstack's pattern at `retro/SKILL.md:58-65` and `:631-650`. Gate on `~/.gstack/.telemetry-prompted` / `gstack-config get telemetry`. _[bin/gstack-extend-telemetry, skills/*.md (5 files)], ~200 lines._ (M)
+
+---
+
+## Group 11: New skill `/claude-md-cleanup`
+
+Audits a project's CLAUDE.md for bloat: duplicated info that already
+exists in README or other docs, stale references to files or features
+that no longer exist, sections that should be pointers instead of inline
+content. Sequenced after Group 10 because the new skill file should
+include the same telemetry block other skills get in 10A.
+
+### Track 11A: `/claude-md-cleanup` skill
+_1 task . ~half day (human) / ~30 min (CC) . low risk . [new skill]_
+_touches: skills/claude-md-cleanup.md, setup_
+
+- **`/claude-md-cleanup` skill** -- detect duplication against README, TESTING.md, CONTRIBUTING.md; flag stale file references via `git ls-files`; flag long inline content that could be a pointer; produce diff with summary + per-section recommendation. Wire into setup's SKILLS array. _[skills/claude-md-cleanup.md, setup], ~250 lines._ (M)
+
+---
+
+## Group 12: Skill-file simplification pass + SKILL.md.tmpl
+
+Five releases (v0.10.0 → v0.15.0) appended cross-cutting protocol grafts
+to skill files. The grafts were appended rather than woven in, so skills
+have grown noticeably (pair-review 1000, full-review 793, review-apparatus
+480, test-plan 857 — only roadmap was trimmed in v0.17.0: 1253 → 541).
+Sequenced last so all preceding skill grafts (8A commit handling, 10A
+telemetry blocks) are settled before the simplification pass identifies
+which patterns rhyme.
+
+**Pre-flight** (Lane A — canonical fragment extraction; serial, before parallel skill trims):
+- **Inspect 4 skills + extract canonical shared fragments + add REQUIRED_VERBATIM_BLOCKS** -- read the appended graft sections across the 4 skills, identify byte-identical fragments (Completion Status Protocol enum, Escalation opener, Escalation format, Confusion Protocol head, GSTACK REVIEW REPORT table header), pick the tightest variant of each as canonical, add per-fragment assertions to `scripts/test-skill-protocols.sh` so future drift is caught. _[scripts/test-skill-protocols.sh], ~80 lines._ (S)
+
+### Track 12A: Trim `pair-review.md`
+_1 task . ~half day (human) / ~20 min (CC) . low risk . [pair-review skill file]_
+_touches: skills/pair-review.md_
+
+- **Duplication-only trim per scope discipline** -- only remove (a) literal duplication within the skill, (b) word-level redundancy, (c) obviously stale refs (e.g., removed features), (d) dead cross-references. Gate on `scripts/test-skill-protocols.sh` passing unchanged. _[skills/pair-review.md], ~100 lines (deletions)._ (M)
+
+### Track 12B: Trim `full-review.md`
+_1 task . ~half day (human) / ~20 min (CC) . low risk . [full-review skill file]_
+_touches: skills/full-review.md_
+
+- **Duplication-only trim per scope discipline** -- same rules as 12A, applied to full-review.md. _[skills/full-review.md], ~80 lines._ (M)
+
+### Track 12C: Trim `review-apparatus.md`
+_1 task . ~2 hours (human) / ~15 min (CC) . low risk . [review-apparatus skill file]_
+_touches: skills/review-apparatus.md_
+
+- **Duplication-only trim per scope discipline** -- same rules as 12A, applied to review-apparatus.md (smallest skill, calibration target). _[skills/review-apparatus.md], ~50 lines._ (S)
+
+### Track 12D: Trim `test-plan.md`
+_1 task . ~half day (human) / ~20 min (CC) . low risk . [test-plan skill file]_
+_touches: skills/test-plan.md_
+
+- **Duplication-only trim per scope discipline** -- same rules as 12A, applied to test-plan.md. _[skills/test-plan.md], ~80 lines._ (M)
+
+### Track 12E: Promote shared fragments to SKILL.md.tmpl
+_1 task . ~half day (human) / ~30 min (CC) . low risk . [shared template]_
+_touches: .claude/skills/SKILL.md.tmpl, setup_
+
+- **Promote canonical fragments into a shared template** -- once Tracks 12A-12D have trimmed the skill files and Pre-flight extraction has identified which fragments rhyme, promote them into `.claude/skills/SKILL.md.tmpl`. New skills inherit automatically; cross-cutting protocol additions become single-source instead of N-skill grafts. _[.claude/skills/SKILL.md.tmpl, setup integration], ~150 lines._ (M)
+
+---
+
 ## Execution Map
 
 Adjacency list:
 ```
-- Group 1 ← {}
-- Group 2 ← {1}
-- Group 3 ← {2}
-- Group 4 ← {3}
+- Group 1 ← {}                  ✓ Complete
+- Group 2 ← {1}                 ✓ Complete
+- Group 3 ← {2}                 ✓ Complete
+- Group 4 ← {3}                 ✓ Complete
 - Group 5 ← {4}
-- Group 6 ← {5}  (Track 6A also waits for an external 0.x → 1.x bump)
+- Group 6 ← {5}                 (Track 6A also waits for an external 0.x → 1.x bump)
+- Group 7 ← none
+- Group 8 ← none
+- Group 9 ← {8}
+- Group 10 ← {9}
+- Group 11 ← {10}
+- Group 12 ← {11}
 ```
 
 Track detail per group:
 ```
-Group 1: Bun Test Toolchain
+Group 1: Bun Test Toolchain ✓ Complete
   +-- Track 1A ..................... ✓ Complete (v0.18.3)
 
-Group 2: TypeScript Port of bin/roadmap-audit
-  +-- Track 2A ..................... ~half-day CC ... 2 tasks (S + XL)
+Group 2: TypeScript Port of bin/roadmap-audit ✓ Complete
+  +-- Track 2A ..................... ✓ Complete (v0.18.6.0)
+  +-- Track 2B ..................... ✓ Complete (v0.18.11.0)
 
-Group 3: Test Runner Migration + Invariants
-  +-- Track 3A ..................... ~2 hr CC ... 1 task
+Group 3: Test Runner Migration + Invariants ✓ Complete
+  +-- Track 3A ..................... ✓ Complete (v0.18.7.0)
 
-Group 4: Test Leverage Patterns
-  Pre-flight (gate, no code) ......... 1 item (4A-audit)
-  +-- Track 4A ..................... ~half-day CC ... 1 task (gated)
-  +-- Track 4C ..................... ~3 hr CC ... 1 task
-  +-- Track 4D ..................... ~2 hr CC ... 1 task
+Group 4: Test Leverage Patterns ✓ Complete
+  +-- Track 4A ..................... ✓ Complete (v0.18.9.0)
+  +-- Track 4C ..................... ✓ Complete (v0.18.11.0)
+  +-- Track 4D ..................... ✓ Complete (v0.18.10.0)
 
 Group 5: Install Pipeline
-  Pre-flight (shared-infra, serial) ... 3 items
-  +-- Track 5A ..................... ~15 min CC ... 1 task
+  +-- Track 5A ..................... ~2 hr CC ... 5 tasks
 
 Group 6: Distribution Infrastructure
   +-- Track 6A ..................... ~20 min CC ... 1 task  (waits for 0.x → 1.x bump)
+
+Group 7: Audit Polish
+  +-- Track 7A ..................... ~1 hr CC ... 3 tasks
+
+Group 8: Tighten git commit failure handling
+  +-- Track 8A ..................... ~20 min CC ... 1 task
+
+Group 9: New skill /gstack-extend-upgrade
+  +-- Track 9A ..................... ~30 min CC ... 1 task
+
+Group 10: Telemetry parity with gstack
+  +-- Track 10A .................... ~30 min CC ... 1 task
+
+Group 11: New skill /claude-md-cleanup
+  +-- Track 11A .................... ~30 min CC ... 1 task
+
+Group 12: Skill-file simplification + SKILL.md.tmpl
+  Pre-flight (Lane A canonical extraction) ..... 1 item
+  +-- Track 12A .................... ~20 min CC ... 1 task (trim pair-review)
+  +-- Track 12B .................... ~20 min CC ... 1 task (trim full-review)
+  +-- Track 12C .................... ~15 min CC ... 1 task (trim review-apparatus)
+  +-- Track 12D .................... ~20 min CC ... 1 task (trim test-plan)
+  +-- Track 12E .................... ~30 min CC ... 1 task (promote SKILL.md.tmpl)
 ```
 
-**Total: 6 groups . 7 tracks . 13 tasks (4 Pre-flight + 9 track tasks)**
+**Total: 12 groups (4 ✓ Complete) . 16 tracks (7 ✓ Complete) . 19 tasks (12 active + 7 shipped)**
 
 ---
 
-## Future (Phase 1.x+)
+## Future (post-Phase 1)
 
 Items triaged but deferred to a future phase. Not organized into Groups/Tracks.
 Will be promoted to the current phase and structured when their time comes.
@@ -341,7 +498,8 @@ Will be promoted to the current phase and structured when their time comes.
 - **gbrain-sync allowlist for `~/.gstack/projects/*/evals/`** — Once a transcript producer exists, add the evals dir to gbrain-sync's allowlist (or denylist) in gstack proper so transcripts don't auto-sync to a private GitHub repo. _Deferred because: requires the producer to land first so the privacy surface is observable; cross-repo (gstack proper, not gstack-extend). S effort (~30 min)._
 - **Eval dir retention / pruning policy** — Time-based ('drop files >30 days'), count-based ('keep last N per branch + tier'), or scenario-indexed ('prune older runs of the same {skill, scenario, model}') pruning of `~/.gstack/projects/<slug>/evals/`. _Deferred because: no eval-write rate exists yet to design against; pairs with the eval-persistence Track above. S–M effort (~2–4 hrs)._
 - **Audit fail-taxonomy calibration** — Review `bin/roadmap-audit` STATUS emit decisions; downgrade `ARCHIVE_CANDIDATES` to warn; design narrow waiver mechanism for `SIZE` (per-track + reason + optional expiry, NOT vague italic markers). Surfaced during Track 4D /plan-eng-review when audit emitted 3 `STATUS: fail` sections, only 1 of which was real structural drift. _Deferred because: a separate /plan-eng-review on the audit's policy surface, not Group 4 scope. M effort (~3 hrs)._
-- **Deduplicate SKILLS list across `setup` + `tests/skill-protocols.test.ts`** — Once Track 4D's setup-parser ships, extract to `tests/helpers/parse-setup-skills.ts` and consume from `tests/skill-protocols.test.ts`. Closes the third drift channel for the canonical skill list. _Deferred because: depends on Track 4D landing first. S effort (~30 min)._
+- **Deduplicate SKILLS list across `setup` + `tests/skill-protocols.test.ts`** — Once Track 4D's setup-parser ships, extract to `tests/helpers/parse-setup-skills.ts` and consume from `tests/skill-protocols.test.ts`. Closes the third drift channel for the canonical skill list. _Deferred because: depends on Track 4D landing first (now unblocked — Track 4D shipped v0.18.10.0); pairs naturally with Track 8E. S effort (~30 min)._
+- **Codex host support in `setup`** — `setup --host claude|codex|auto` flag (and matching uninstall path) targeting `~/.codex/skills/{skill}/SKILL.md` so Codex CLI users can consume `/pair-review`, `/roadmap`, `/full-review`, `/review-apparatus`, `/test-plan`. Pre-existing TODOS work captures Codex-specific gates: frontmatter `description:` ≤ 1024 chars (4 of 5 skills exceed today; re-measure after Track 8E simplification), preamble probe path fallthrough (one extra `||` per preamble × 5 skills), cross-skill reference fix at `skills/test-plan.md:232` (depends on upstream gstack's Codex install layout). Mechanical core (flag handling + path table + test parameterization) is ~30 min CC; description trimming follow-up depends on what Track 8E leaves. _Deferred because: best deferred until after Track 8E simplification settles description lengths so the "trim if needed" follow-up can be measured rather than speculative. S-M effort (~3-5 hours human / ~30-45 min CC)._
 
 ---
 

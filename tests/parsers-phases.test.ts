@@ -154,7 +154,7 @@ describe('parsePhases — real ROADMAP.md', () => {
     const r = parsePhases(content);
     expect(r.value.phases).toHaveLength(1);
     expect(r.value.phases[0]!.num).toBe('1');
-    expect(r.value.phases[0]!.title).toBe('Bun Test Migration');
+    expect(r.value.phases[0]!.title).toBe('Bun Test Migration ✓ Complete');
     expect(r.value.phases[0]!.hasEndState).toBe(true);
     expect(r.value.phases[0]!.hasGroups).toBe(true);
     expect(r.value.phases[0]!.groupNums).toEqual(['1', '2', '3', '4']);
