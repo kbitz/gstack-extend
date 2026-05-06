@@ -48,6 +48,11 @@ FINDINGS:
 - README.md is in docs/ — should be in root (tools/platforms expect it there)
 
 
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
 ## ARCHIVE_CANDIDATES
 STATUS: pass
 FINDINGS:

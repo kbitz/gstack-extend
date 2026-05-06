@@ -32,6 +32,7 @@ import { runCheckCollisions } from './checks/collisions.ts';
 import { runCheckDependencies } from './checks/dependencies.ts';
 import { runCheckDocInventory } from './checks/doc-inventory.ts';
 import { runCheckDocLocation } from './checks/doc-location.ts';
+import { runCheckDocType } from './checks/doc-type.ts';
 import { runCheckGroupDeps } from './checks/group-deps.ts';
 import { runCheckInFlightGroups } from './checks/in-flight-groups.ts';
 import { detectMode, type ModeResult } from './checks/mode.ts';
@@ -352,8 +353,10 @@ export function renderCheckResult(r: CheckResult): string {
 
 // ─── Run ──────────────────────────────────────────────────────────────
 
-// All 24 checks in the canonical order bash emits at L3842-3868.
+// All 25 checks in the canonical order bash emits at L3842-3868.
 // MODE is special (no STATUS line) — rendered via renderMode at the end.
+// DOC_TYPE_MISMATCH (Track 5A) lives adjacent to DOC_LOCATION; both are
+// "doc-in-the-right-place?" checks that share doc-walk context.
 const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckVocabLint,
   runCheckStructure,
@@ -363,6 +366,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckVersion,
   runCheckTaxonomy,
   runCheckDocLocation,
+  runCheckDocType,
   runCheckArchiveCandidates,
   runCheckDependencies,
   runCheckGroupDeps,
