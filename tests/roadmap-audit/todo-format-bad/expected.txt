@@ -45,6 +45,11 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
 ## ARCHIVE_CANDIDATES
 STATUS: pass
 FINDINGS:

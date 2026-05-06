@@ -1,8 +1,7 @@
 ## VOCAB_LINT
-STATUS: warn
+STATUS: pass
 FINDINGS:
-- line 5: banned term "phase" found
-
+- (none)
 
 ## STRUCTURE
 STATUS: pass
@@ -28,8 +27,6 @@ FINDINGS:
 CURRENT: 0.1.0
 SOURCE: VERSION
 LATEST_TAG: (none)
-PROGRESS_LATEST: 0.1.0
-CHANGELOG_LATEST: 0.1.0
 RECOMMEND: none
 STATUS: fail
 FINDINGS:
@@ -47,9 +44,13 @@ FINDINGS:
 - (none)
 
 ## DOC_TYPE_MISMATCH
-STATUS: pass
+STATUS: warn
 FINDINGS:
-- (none)
+- docs/architecture-sketch.md: looks like a design doc (mermaid/plantuml fence) but is outside docs/designs/
+  Suggested: mkdir -p 'docs/designs' && git mv -- 'docs/architecture-sketch.md' 'docs/designs/architecture-sketch.md'
+- docs/inbox-notes.md: looks like a TODO inbox (checkbox density >= 0.5) but is outside TODOS.md
+  Suggested: review and move (no automated suggestion — destination ambiguous)
+
 
 ## ARCHIVE_CANDIDATES
 STATUS: pass
@@ -133,19 +134,21 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- CHANGELOG.md: 0 TODO patterns (root doc)
 - README.md: 0 TODO patterns (root doc)
 - docs/PROGRESS.md: 0 TODO patterns (project doc)
 - docs/ROADMAP.md: 1 TODO patterns (project doc)
 - docs/TODOS.md: 1 TODO patterns (project doc)
+- docs/architecture-sketch.md: 0 TODO patterns (unknown)
+- docs/inbox-notes.md: 6 TODO patterns (unknown)
 
-TOTAL_FILES: 5
+TOTAL_FILES: 6
 
 ## SCATTERED_TODOS
-STATUS: pass
+STATUS: found
 FINDINGS:
-- (none)
-TOTAL_SCATTERED: 0
+- docs/inbox-notes.md: 6 items
+
+TOTAL_SCATTERED: 6
 
 ## UNPROCESSED
 ITEMS: 0
