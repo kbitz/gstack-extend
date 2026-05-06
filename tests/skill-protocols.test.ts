@@ -234,3 +234,57 @@ describe('pair-review multi-table templates', () => {
     expect(content).toContain('GSTACK REVIEW REPORT — session rollup');
   });
 });
+
+// ─── Track 5A: skill preamble two-path probe (drift-lock) ────────────
+//
+// Each skill preamble probes path 1 (~/.claude/skills/{name}/SKILL.md)
+// then path 2 (.claude/skills/{name}/SKILL.md) as a vendored-install
+// fallback. The two-line readlink is identical-shaped across all 5 skills
+// — assert presence here so a future PR can't drop the path-2 fallthrough
+// from one skill while keeping it in the others.
+//
+// Mirrors gstack core's preamble probe pattern. See CHANGELOG v0.18.14.
+
+describe('Track 5A two-path preamble probe (path-2 fallthrough)', () => {
+  for (const skill of SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    test(`${skill} preamble probes ~/.claude/skills/${skill}/SKILL.md (path 1)`, () => {
+      expect(content).toContain(`readlink ~/.claude/skills/${skill}/SKILL.md 2>/dev/null`);
+    });
+    test(`${skill} preamble falls back to .claude/skills/${skill}/SKILL.md (path 2)`, () => {
+      expect(content).toContain(`readlink .claude/skills/${skill}/SKILL.md 2>/dev/null`);
+    });
+  }
+});
+
+// ─── Track 5A: cross-skill inline-Read in test-plan.md ───────────────
+//
+// skills/test-plan.md Phase 8 reads pair-review.md inline. The original
+// hardcoded `~/.claude/skills/pair-review/SKILL.md` path silently breaks
+// on vendored installs. The prose was updated to instruct the agent to
+// try path 1 first, fall back to path 2. Lock the prose change so a
+// future edit can't drop the fallback.
+
+describe('Track 5A test-plan.md cross-skill probe (Phase 8 inline-Read)', () => {
+  const file = join(ROOT, 'skills', 'test-plan.md');
+  const content = readFileSync(file, 'utf8');
+
+  test('Phase 8 inline pair-review read mentions both probe paths', () => {
+    // Path 1: the standard global install location.
+    expect(content).toContain('~/.claude/skills/pair-review/SKILL.md');
+    // Path 2: the vendored install fallback.
+    expect(content).toContain('.claude/skills/pair-review/SKILL.md');
+  });
+
+  test('Phase 8 prose explicitly instructs the agent to fall back', () => {
+    // Lock the actionable verb so future edits don't reduce this to a
+    // single-path read by accident.
+    expect(content).toMatch(/fall back to.+\.claude\/skills\/pair-review\/SKILL\.md/);
+  });
+});

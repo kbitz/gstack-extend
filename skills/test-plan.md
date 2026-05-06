@@ -26,7 +26,8 @@ allowed-tools:
 ## Preamble (run first)
 
 ```bash
-_SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null)
+_SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/test-plan/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
@@ -629,7 +630,9 @@ Action receipt: "Pair-review state staged. <N> items in <group> group. Handing o
 
 The skill's final action is to hand execution to /pair-review's Phase 2 loop.
 
-Read `~/.claude/skills/pair-review/SKILL.md` using the Read tool.
+Read the pair-review skill — try `~/.claude/skills/pair-review/SKILL.md`
+first, fall back to `.claude/skills/pair-review/SKILL.md` (vendored
+install) — using the Read tool.
 
 Skip these sections (already handled by /test-plan):
 - Preamble

@@ -23,7 +23,8 @@ allowed-tools:
 ## Preamble (run first)
 
 ```bash
-_SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null)
+_SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/full-review/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
