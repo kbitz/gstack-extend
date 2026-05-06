@@ -566,15 +566,17 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     // Track 1A is ✓ Complete.
     const t1a = r.value.tracks.find((t) => t.id === '1A');
     expect(t1a?.isComplete).toBe(true);
-    // Track 2A is the TS port we're working on — not complete.
+    // Track 2A (TS port) shipped in v0.18.6.0; closed by /roadmap reassessment.
     const t2a = r.value.tracks.find((t) => t.id === '2A');
     expect(t2a).toBeDefined();
-    expect(t2a!.isComplete).toBe(false);
-    // gstack-extend ROADMAP.md doesn't use _Depends on:_ annotations on
-    // Groups (the Execution Map block at the bottom is human documentation,
-    // not parser input). All Groups should parse as kind: unspecified.
+    expect(t2a!.isComplete).toBe(true);
+    // Groups parse with kind: unspecified by default; Groups that explicitly
+    // declare `_Depends on: none_` (Groups 7 and 8 post-Phase-1) parse as
+    // kind: none. No Group should depend on a specific other Group via the
+    // _Depends on: Group N_ form (the Execution Map block at the bottom is
+    // human documentation, not parser input).
     for (const g of r.value.groups) {
-      expect(g.deps.kind).toBe('unspecified');
+      expect(['unspecified', 'none']).toContain(g.deps.kind);
     }
     // Sanity: at least 6 groups, several tracks (real-repo shape).
     expect(r.value.groups.length).toBeGreaterThanOrEqual(6);
