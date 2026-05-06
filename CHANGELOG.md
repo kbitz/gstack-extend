@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.13.0] - 2026-05-05
+
+### Added (auto-release on VERSION change)
+
+`.github/workflows/auto-tag.yml` now creates a GitHub Release after pushing the
+annotated tag. Release notes come from the matching `## [X.Y.Z]` section in
+`CHANGELOG.md` via the new `scripts/extract-changelog-section.sh`. If the
+section is missing, the workflow falls back to gh's `--generate-notes` (commit
+list) and emits a `::warning::` so the gap is visible in the Actions log.
+
+The new script is reusable: it accepts a version (no `v` prefix), prints the
+section body to stdout, and falls back to a trailing-`.0` trim (e.g. `0.18.5.0`
+finds `## [0.18.5]`) for older CHANGELOG entries that predate the 4-digit
+format. Exits 1 with a stderr message if no section matches.
+
+Backfill: every existing tag (53 total, `v0.1.1` through `v0.18.12.1`) now has
+a corresponding GitHub Release. `v0.18.12.1` is marked as the latest release.
+The two oldest tags (`v0.1.1`, `v0.1.2`) had no CHANGELOG entry and got a
+placeholder note.
+
+The release step is idempotent on both axes: re-running the workflow on an
+unchanged commit skips both the tag (`git rev-parse "$TAG"`) and the release
+(`gh release view "$TAG"`).
+
 ## [0.18.12.1] - 2026-05-05
 
 ### Docs (roadmap reassessment — Phase 1 closes)
