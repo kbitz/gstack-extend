@@ -2,10 +2,12 @@
 # gstack-extend setup — install skill symlinks.
 #
 # Usage:
-#   ./setup                              # Install to ~/.claude/skills/
-#   ./setup --skills-dir <path>          # Install to a custom directory
-#   ./setup --uninstall                  # Remove symlinks from default dir
-#   ./setup --skills-dir <path> --uninstall
+#   ./setup                                       # Install to ~/.claude/skills/
+#   ./setup --uninstall                           # Remove symlinks from default dir
+#   ./setup --skills-dir <path> --uninstall       # Remove symlinks from a custom dir
+#                                                 # (legacy escape hatch for v0.16.0
+#                                                 #  installs; --skills-dir is no
+#                                                 #  longer accepted for install)
 set -euo pipefail
 
 # bun is the project runtime — required for tests, scripts, and the audit
@@ -24,8 +26,13 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 SKILLS_DIR="${HOME}/.claude/skills"
+SKILLS_DIR_GIVEN=0
 UNINSTALL=0
-USAGE="Usage: ./setup [--skills-dir <path>] [--uninstall]"
+USAGE="Usage: ./setup [--uninstall] [--skills-dir <path> --uninstall]"
+
+# Source install-safety helpers (is_safe_install_path, is_safe_target_path).
+# shellcheck source=bin/lib/install-safety.sh
+. "$SCRIPT_DIR/bin/lib/install-safety.sh"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,6 +61,7 @@ while [ $# -gt 0 ]; do
         exit 1
       fi
       SKILLS_DIR="$2"
+      SKILLS_DIR_GIVEN=1
       shift 2
       ;;
     *)
@@ -63,6 +71,23 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# --skills-dir is now uninstall-only. Pairing it with install was retired
+# in Track 5A: skill preambles only probe ~/.claude/skills/{name}/ and
+# .claude/skills/{name}/, so symlinks at custom paths are never found.
+# Preserved for cleaning up v0.16.0 leftovers via:
+#   ./setup --skills-dir <old-custom-dir> --uninstall
+if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
+  echo "Error: --skills-dir is no longer accepted for install." >&2
+  echo "  Skill preambles probe ~/.claude/skills/{name}/ and .claude/skills/{name}/." >&2
+  echo "  Symlinks at any other path will not be discovered." >&2
+  echo "" >&2
+  echo "  To clean up a v0.16.0-era custom install, use:" >&2
+  echo "    ./setup --skills-dir <old-path> --uninstall" >&2
+  echo "" >&2
+  echo "$USAGE" >&2
+  exit 1
+fi
 
 SKILLS=(
   pair-review
@@ -78,10 +103,31 @@ LEGACY_SKILLS=(
   browse-native
 )
 
+# ─── Uninstall path ────────────────────────────────────────────
+#
+# Per-target safety guard: refuse if $target is a symlink to refuse
+# operating on a path an attacker may have planted. Uninstalls only the
+# symlinks we created (where SKILL.md points at our $SCRIPT_DIR/skills/).
 if [ "$UNINSTALL" -eq 1 ]; then
   for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
     target="$SKILLS_DIR/$skill"
-    if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
+    # Per-target safety: refuse to operate on a symlinked or non-dir
+    # $target. Visible skip rather than hard exit so other skills can
+    # still uninstall cleanly. is_safe_target_path prints stderr.
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      if [ -L "$target" ]; then
+        echo "Skipped $skill (target is a symlink — refusing to operate on it)"
+        continue
+      fi
+      if [ ! -d "$target" ]; then
+        echo "Skipped $skill (target exists but is not a directory)"
+        continue
+      fi
+    else
+      # Target doesn't exist at all; nothing to uninstall.
+      continue
+    fi
+    if [ -L "$target/SKILL.md" ]; then
       link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
       expected="$SCRIPT_DIR/skills/${skill}.md"
       if [ "$link_target" = "$expected" ]; then
@@ -97,35 +143,49 @@ if [ "$UNINSTALL" -eq 1 ]; then
   exit 0
 fi
 
-mkdir -p "$SKILLS_DIR"
-
-# Known limitation (v0.16.0): skill preambles resolve their helper scripts
-# from the hardcoded default ~/.claude/skills/ path. Installs to a custom
-# --skills-dir produce working symlinks but the preambles silently no-op
-# their update check, config lookup, and audit calls. Pre-flight 2 of
-# Group 1 (see docs/ROADMAP.md) ships the probe pattern + rc-file fallback
-# that fixes this. Until then, warn loudly so users don't think silence
-# means success.
-DEFAULT_SKILLS_DIR="${HOME}/.claude/skills"
-if [ "$SKILLS_DIR" != "$DEFAULT_SKILLS_DIR" ]; then
-  echo "Warning: --skills-dir != default. Skill preambles still hardcode" >&2
-  echo "  ~/.claude/skills/{name}/SKILL.md for helper resolution (v0.16.0)." >&2
-  echo "  Symlinks will be created at $SKILLS_DIR but skill preambles will" >&2
-  echo "  silently skip update-check, config, and audit calls until Group 1" >&2
-  echo "  Pre-flight 2 ships. Full per-project support is tracked in" >&2
-  echo "  docs/ROADMAP.md." >&2
+# ─── Install path ──────────────────────────────────────────────
+#
+# Preflight: validate ALL targets before mutating ANY (E8). If skill 3
+# fails the safety check, skills 1 and 2 must not be already-installed
+# in a partial state.
+#
+# Layer 1: $SKILLS_DIR (or its nearest existing ancestor) resolves to a
+# user-owned, in-$HOME, non-world-writable path. Defends against an
+# attacker planting a symlink at ~/.claude/skills.
+if ! is_safe_install_path "$SKILLS_DIR"; then
+  echo "$USAGE" >&2
+  exit 1
 fi
 
-installed=0
+# Layer 2: each $SKILLS_DIR/{skill} target is either non-existent or a
+# regular directory — never a symlink, never a regular file/FIFO.
 for skill in "${SKILLS[@]}"; do
+  target="$SKILLS_DIR/$skill"
   src="$SCRIPT_DIR/skills/${skill}.md"
   if [ ! -f "$src" ]; then
     echo "Warning: $src not found, skipping" >&2
     continue
   fi
-  target="$SKILLS_DIR/$skill"
+  if ! is_safe_target_path "$target"; then
+    echo "$USAGE" >&2
+    exit 1
+  fi
   if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
     echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
+    continue
+  fi
+done
+
+mkdir -p "$SKILLS_DIR"
+
+installed=0
+for skill in "${SKILLS[@]}"; do
+  src="$SCRIPT_DIR/skills/${skill}.md"
+  if [ ! -f "$src" ]; then
+    continue
+  fi
+  target="$SKILLS_DIR/$skill"
+  if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
     continue
   fi
   mkdir -p "$target"

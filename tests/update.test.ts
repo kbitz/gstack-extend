@@ -8,10 +8,11 @@
  *      non-main-branch auto-switch + restore, dirty-worktree + branch-switch,
  *      diverged-main ff-only failure.
  *   2. setup: default install (5 skills), --with-native rejected, --uninstall,
- *      foreign-symlink preserved, --bogus rejected, --skills-dir custom dir,
- *      --skills-dir validation (missing-value, flag-as-value, relative-path),
- *      --skills-dir default-mismatch warning, --skills-dir + --uninstall,
- *      reversed flag order, --skills-dir-with-spaces.
+ *      foreign-symlink preserved, --bogus rejected, install-time safety
+ *      (symlink at $target / regular file at $target / world-writable
+ *      $SKILLS_DIR / outside-$HOME), --skills-dir arg validation,
+ *      --skills-dir install path REJECTED (Track 5A), --skills-dir +
+ *      --uninstall preserved (legacy v0.16.0 cleanup contract).
  *   3. semver (4-digit): version_gt for >, ==, <. Tests bin/lib/semver.sh
  *      via bash shell-out — the bash lib stays live until Track 2A cutover.
  *      Independent TS coverage in tests/lib-semver.test.ts.
@@ -22,15 +23,16 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
@@ -370,20 +372,19 @@ describe('setup unknown flag rejection', () => {
   });
 });
 
-describe('setup --skills-dir', () => {
-  test('installs to custom dir + symlink targets repo source', () => {
-    const home = join(baseTmp, 'sd-home1');
-    mkdirSync(home, { recursive: true });
-    const customDir = join(baseTmp, 'sd-custom');
-    const r = runSetup(['--skills-dir', customDir], home);
-    expect(/Installed [0-9]+ skills into /.test(r.stdout + r.stderr)).toBe(true);
-    const link = join(customDir, 'pair-review', 'SKILL.md');
-    expect(lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(link)).toBe(join(ROOT, 'skills', 'pair-review.md'));
-    // Default home untouched.
-    expect(existsSync(join(home, '.claude', 'skills', 'pair-review'))).toBe(false);
-  });
+// ─── --skills-dir is now uninstall-only ──────────────────────────────
+//
+// Track 5A retired --skills-dir as an install path: skill preambles only
+// probe ~/.claude/skills/{name}/ and .claude/skills/{name}/, so symlinks
+// at custom paths are never discovered. The flag is preserved ONLY when
+// paired with --uninstall, as a one-way escape hatch for cleaning up
+// v0.16.0-era installs (codex T1 catch, D12).
+//
+// The contract-preservation tests below seed the custom-install layout
+// directly via fs APIs (mkdirSync + symlinkSync) instead of running the
+// retired install path. They still assert the same uninstall contract.
 
+describe('setup --skills-dir (arg validation, applies to uninstall path)', () => {
   test('rejects --skills-dir with no value', () => {
     const home = join(baseTmp, 'sd-home2');
     mkdirSync(home, { recursive: true });
@@ -402,30 +403,43 @@ describe('setup --skills-dir', () => {
   test('rejects --skills-dir with relative path', () => {
     const home = join(baseTmp, 'sd-home4');
     mkdirSync(home, { recursive: true });
-    const r = runSetup(['--skills-dir', 'relative/path'], home);
+    const r = runSetup(['--skills-dir', 'relative/path', '--uninstall'], home);
     expect(r.stdout + r.stderr).toContain('requires an absolute path');
   });
+});
 
-  test('--skills-dir != default prints known-limitation warning', () => {
-    const home = join(baseTmp, 'sd-home5');
+describe('setup --skills-dir for install path is rejected (Track 5A retirement)', () => {
+  test('--skills-dir without --uninstall exits 1 with migration message', () => {
+    const home = join(baseTmp, 'sd-reject-home');
     mkdirSync(home, { recursive: true });
-    const customDir = join(baseTmp, 'sd-warn-custom');
+    const customDir = join(baseTmp, 'sd-reject-custom');
     const r = runSetup(['--skills-dir', customDir], home);
-    expect(r.stdout + r.stderr).toContain('Skill preambles still hardcode');
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('--skills-dir is no longer accepted for install');
+    expect(r.stderr).toContain('--uninstall');
+    // No symlinks should have been created.
+    expect(existsSync(join(customDir, 'pair-review'))).toBe(false);
   });
+});
 
-  test('default install does NOT print known-limitation warning', () => {
-    const home = join(baseTmp, 'sd-home6');
-    mkdirSync(home, { recursive: true });
-    const r = runSetup([], home);
-    expect(r.stdout + r.stderr).not.toContain('Skill preambles still hardcode');
-  });
+// Manually seed a v0.16.0-era custom install layout: 5 skill dirs, each
+// with SKILL.md as a symlink to the corresponding skills/{name}.md in
+// the gstack-extend repo. Mirrors what setup --skills-dir <path> would
+// have produced before Track 5A.
+function seedCustomInstall(customDir: string): void {
+  for (const skill of ['pair-review', 'roadmap', 'full-review', 'review-apparatus', 'test-plan']) {
+    const target = join(customDir, skill);
+    mkdirSync(target, { recursive: true });
+    symlinkSync(join(ROOT, 'skills', `${skill}.md`), join(target, 'SKILL.md'));
+  }
+}
 
+describe('setup --skills-dir + --uninstall (legacy v0.16.0 cleanup path)', () => {
   test('--skills-dir + --uninstall removes from custom dir (5 skills)', () => {
     const home = join(baseTmp, 'sd-home7');
     mkdirSync(home, { recursive: true });
     const customDir = join(baseTmp, 'sd-uninstall-custom');
-    runSetup(['--skills-dir', customDir], home);
+    seedCustomInstall(customDir);
     const r = runSetup(['--skills-dir', customDir, '--uninstall'], home);
     expect(r.stdout + r.stderr).toContain('Removed pair-review');
     expect(existsSync(join(customDir, 'pair-review', 'SKILL.md'))).toBe(false);
@@ -437,18 +451,197 @@ describe('setup --skills-dir', () => {
     const home = join(baseTmp, 'sd-home8');
     mkdirSync(home, { recursive: true });
     const customDir = join(baseTmp, 'sd-reversed-custom');
-    runSetup(['--skills-dir', customDir], home);
+    seedCustomInstall(customDir);
     const r = runSetup(['--uninstall', '--skills-dir', customDir], home);
     expect(r.stdout + r.stderr).toContain('Removed pair-review');
   });
 
-  test('--skills-dir handles paths with spaces', () => {
+  test('--skills-dir + --uninstall handles paths with spaces', () => {
     const home = join(baseTmp, 'sd-home9');
     mkdirSync(home, { recursive: true });
     const customDir = join(baseTmp, 'with space', 'skills');
-    const r = runSetup(['--skills-dir', customDir], home);
-    expect(/Installed [0-9]+ skills into/.test(r.stdout + r.stderr)).toBe(true);
-    expect(lstatSync(join(customDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+    seedCustomInstall(customDir);
+    const r = runSetup(['--skills-dir', customDir, '--uninstall'], home);
+    expect(r.stdout + r.stderr).toContain('Removed pair-review');
+  });
+});
+
+// ─── Track 5A: install-time safety hardening (D6 expanded coverage) ──
+//
+// Codex round 2 (E2): the eng-review test seam ("happy path only +
+// simulated ownership") missed bugs likely to ship. These integration
+// tests exercise real fs reject paths that don't need sudo:
+//   - $SKILLS_DIR is world-writable (chmod 0777)
+//   - $SKILLS_DIR is a symlink to OUTSIDE the resolved $HOME
+//   - per-skill $target is a symlink (T4 + Z layered hardening)
+//   - per-skill $target exists as a regular file (FIFO, char-device too)
+//   - $SKILLS_DIR is a user-owned symlink to an in-$HOME target (legit
+//     dotfiles/sync pattern; MUST succeed)
+
+describe('setup install-time safety: $SKILLS_DIR layer', () => {
+  test('refuses install if $SKILLS_DIR resolves outside $HOME', () => {
+    const home = join(baseTmp, 'safety-outside-home');
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    // Symlink ~/.claude/skills -> a path outside $HOME (under baseTmp/...
+    // which sits at /private/tmp on macOS, NOT inside our fake $HOME).
+    const targetOutsideHome = join(baseTmp, 'safety-outside-target');
+    mkdirSync(targetOutsideHome);
+    symlinkSync(targetOutsideHome, join(home, '.claude', 'skills'));
+    const r = runSetup([], home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('outside resolved $HOME');
+  });
+
+  test('refuses install if $SKILLS_DIR resolves to a world-writable dir', () => {
+    const home = join(baseTmp, 'safety-ww-home');
+    const skillsDir = join(home, '.claude', 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+    chmodSync(skillsDir, 0o777);
+    const r = runSetup([], home);
+    // Restore mode for cleanup safety.
+    try {
+      chmodSync(skillsDir, 0o755);
+    } catch {}
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('world-writable');
+  });
+
+  test('accepts install when $SKILLS_DIR is a user-owned symlink to in-$HOME target (legit dotfiles)', () => {
+    const home = join(baseTmp, 'safety-dotfiles-home');
+    const dotfilesDir = join(home, 'dotfiles', 'claude-skills');
+    mkdirSync(dotfilesDir, { recursive: true });
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    symlinkSync(dotfilesDir, join(home, '.claude', 'skills'));
+    const r = runSetup([], home);
+    expect(r.stdout + r.stderr).toContain('Installed 5 skills');
+    // Symlinks landed inside the dotfiles dir (the resolved target).
+    expect(lstatSync(join(dotfilesDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+  });
+});
+
+describe('setup install-time safety: per-$target layer', () => {
+  test('refuses install if $target is a symlink', () => {
+    const home = join(baseTmp, 'safety-target-symlink-home');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    // Plant a symlink at one of the to-be-installed targets.
+    symlinkSync('/nonexistent-elsewhere', join(home, '.claude', 'skills', 'pair-review'));
+    const r = runSetup([], home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('symlink');
+    // Preflight refusal — no other skills should be installed either.
+    expect(existsSync(join(home, '.claude', 'skills', 'roadmap', 'SKILL.md'))).toBe(false);
+  });
+
+  test('refuses install if $target is a regular file', () => {
+    const home = join(baseTmp, 'safety-target-file-home');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'skills', 'pair-review'), 'not a directory');
+    const r = runSetup([], home);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain('not a directory');
+    expect(existsSync(join(home, '.claude', 'skills', 'roadmap', 'SKILL.md'))).toBe(false);
+  });
+
+  test('LEGACY_SKILLS (browse-native) iteration also gets symlink check', () => {
+    const home = join(baseTmp, 'safety-legacy-symlink-home');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    // Plant a SYMLINK at the legacy browse-native target (where v0.10.0
+    // would have installed before removal). Uninstall must visibly skip.
+    symlinkSync('/elsewhere', join(home, '.claude', 'skills', 'browse-native'));
+    const r = runSetup(['--uninstall'], home);
+    // Uninstall should succeed for non-existent SKILLS targets (none
+    // installed in this fixture) and visibly skip the symlinked legacy.
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout + r.stderr).toContain('browse-native');
+    expect(r.stdout + r.stderr).toContain('symlink');
+    // The symlink is preserved (we don't operate on attacker-controlled paths).
+    expect(lstatSync(join(home, '.claude', 'skills', 'browse-native')).isSymbolicLink()).toBe(true);
+  });
+
+  test('refuses uninstall pass to operate on a symlinked $target', () => {
+    const home = join(baseTmp, 'safety-uninstall-symlink-home');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    // Install normally first.
+    runSetup([], home);
+    // Now replace one $target with a symlink.
+    rmSync(join(home, '.claude', 'skills', 'pair-review'), { recursive: true });
+    symlinkSync('/elsewhere', join(home, '.claude', 'skills', 'pair-review'));
+    const r = runSetup(['--uninstall'], home);
+    // Uninstall continues for other skills but skips the symlinked one.
+    expect(r.stdout + r.stderr).toContain('symlink');
+    expect(lstatSync(join(home, '.claude', 'skills', 'pair-review')).isSymbolicLink()).toBe(true);
+  });
+});
+
+// ─── Track 5A: skill preamble two-path probe (CP#3 integration) ──────
+//
+// Default install creates symlinks at ~/.claude/skills/{name}/SKILL.md
+// (path 1). Vendored install drops symlinks at .claude/skills/{name}/
+// SKILL.md inside the project root (path 2). Both forms must let a skill
+// preamble resolve $_EXTEND_ROOT correctly via the readlink chain
+// `_SKILL_SRC=$(readlink path1 || readlink path2)` then
+// `_EXTEND_ROOT=$(dirname dirname $_SKILL_SRC)`.
+
+describe('Track 5A skill preamble probe (CP#3 integration)', () => {
+  // Run the real preamble probe block from skills/pair-review.md against
+  // a controlled fixture and verify $_EXTEND_ROOT resolves correctly.
+  function runPreambleProbe(home: string, vendoredDir: string | null): {
+    extendRoot: string;
+    exitCode: number | null;
+  } {
+    const script = `
+      set -u
+      cd "$1"
+      _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \\
+                || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
+      _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+      printf '%s\\n' "$_EXTEND_ROOT"
+    `;
+    const cwd = vendoredDir ?? home;
+    const r = spawnSync('bash', ['-c', script, 'preamble-probe', cwd], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home },
+    });
+    return {
+      extendRoot: (r.stdout ?? '').trim(),
+      exitCode: r.status,
+    };
+  }
+
+  test('default install: path 1 resolves $_EXTEND_ROOT to repo source', () => {
+    const home = join(baseTmp, 'cp3-default-home');
+    mkdirSync(home, { recursive: true });
+    const setupResult = runSetup([], home);
+    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 5 skills');
+    const probe = runPreambleProbe(home, null);
+    expect(probe.extendRoot).toBe(ROOT);
+  });
+
+  test('vendored install: path 2 fallthrough resolves $_EXTEND_ROOT', () => {
+    // Default install absent (fresh $HOME); vendored install at
+    // <projectRoot>/.claude/skills/{name}/SKILL.md.
+    const home = join(baseTmp, 'cp3-vendored-home');
+    mkdirSync(home, { recursive: true });
+    const projectRoot = join(baseTmp, 'cp3-vendored-project');
+    mkdirSync(join(projectRoot, '.claude', 'skills', 'pair-review'), { recursive: true });
+    symlinkSync(
+      join(ROOT, 'skills', 'pair-review.md'),
+      join(projectRoot, '.claude', 'skills', 'pair-review', 'SKILL.md'),
+    );
+    const probe = runPreambleProbe(home, projectRoot);
+    expect(probe.extendRoot).toBe(ROOT);
+  });
+
+  test('truly-broken install: both probes empty, $_EXTEND_ROOT empty (silent no-op per D10)', () => {
+    const home = join(baseTmp, 'cp3-broken-home');
+    mkdirSync(home, { recursive: true });
+    const projectRoot = join(baseTmp, 'cp3-broken-project');
+    mkdirSync(projectRoot, { recursive: true });
+    const probe = runPreambleProbe(home, projectRoot);
+    // dirname dirname "" yields "." — _EXTEND_ROOT is "." and the
+    // subsequent [ -x "$_EXTEND_ROOT/bin/update-check" ] check fails
+    // silently, matching D10 semantics.
+    expect(probe.extendRoot).toBe('.');
   });
 });
 

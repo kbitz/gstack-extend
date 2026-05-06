@@ -31,19 +31,6 @@ bun --cwd ~/.claude/skills/gstack-extend run setup
 This installs all skills into `~/.claude/skills/`.
 To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
 
-### Per-project installs (v0.16.0+)
-
-Install skills into a project-local directory instead of the global one:
-
-```bash
-~/.claude/skills/gstack-extend/setup --skills-dir ./my-project/.claude/skills
-```
-
-Note: as of v0.16.0 skill preambles still resolve their helper scripts from
-the default `~/.claude/skills/` path. Full per-project support (preamble path
-resolution + upgrade propagation) lands in Group 5 Pre-flight 2 and Track 5A —
-see `docs/ROADMAP.md`.
-
 ---
 
 ## /pair-review — Pair Testing Session Manager
