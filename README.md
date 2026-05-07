@@ -116,7 +116,7 @@ and writes approved findings to TODOS.md for /roadmap to organize.
 3. **Synthesis** — Findings merged, deduped, and clustered by root cause (target: 3-8 clusters)
 4. **Dedup** — Clusters matched against ROADMAP.md tracks to skip already-tracked issues
 5. **Triage** — You approve, reject, or defer each cluster via AskUserQuestion
-6. **Persist** — Approved findings written to TODOS.md, summary report saved to `.context/full-review/`
+6. **Persist** — Approved findings written to TODOS.md, summary report saved to `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/full-review/`
 
 ### Documentation Taxonomy Update
 
