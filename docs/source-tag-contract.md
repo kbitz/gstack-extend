@@ -208,7 +208,7 @@ Normalization:
 Dedup collapses across sources intentionally. If `/pair-review` and
 `/full-review` both surface the same bug, they merge into one item; the first
 writer's source tag is preserved on the kept entry; the dropped source is
-recorded in `.context/roadmap/dedupe-log.jsonl`.
+recorded in `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/roadmap/dedupe-log.jsonl`.
 
 Collision safety: the hash-input is raw normalized title. Two distinct titles
 that normalize identically WILL collide — this is the tradeoff for catching

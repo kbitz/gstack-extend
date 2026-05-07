@@ -136,12 +136,35 @@ If the user says "where was I" or "continue review", treat it as **Resume**.
 
 ---
 
+## Path Resolution
+
+Session state lives in `<SESSION_DIR>` — a durable, per-project directory at
+`${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/full-review/`. Survives
+Conductor workspace archival.
+
+Resolve `SESSION_DIR` at the start of every bash block that touches state:
+
+```bash
+_SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/full-review/SKILL.md 2>/dev/null)
+_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+SESSION_DIR=$(session_dir full-review)
+echo "SESSION_DIR=$SESSION_DIR"
+```
+
+Throughout this skill, `<SESSION_DIR>` in path expressions means the resolved
+value above. When invoking Glob/Read/Write/Edit, substitute the concrete
+absolute path printed by the bash block.
+
+---
+
 ## Active Session Guard
 
 On **Init**, before starting Phase 1, check for an existing session:
 
 ```
-Glob pattern: .context/full-review/session.yaml
+Glob pattern: <SESSION_DIR>/session.yaml
 ```
 
 If an active session exists, read it and present via AskUserQuestion:
@@ -151,7 +174,9 @@ If an active session exists, read it and present via AskUserQuestion:
 
 If "Start a fresh review", archive the old state:
 ```bash
-mv .context/full-review ".context/full-review-archived-$(date -u +%Y%m%d-%H%M%S)"
+TS=$(date -u +%Y%m%d-%H%M%S)
+ARCHIVE_DIR=$(session_archive_dir full-review "$TS")
+mv "$SESSION_DIR" "$ARCHIVE_DIR"
 ```
 
 ---
@@ -374,7 +399,7 @@ After all agents return, validate each output:
 ### Step 4: Write state checkpoint
 
 ```bash
-mkdir -p .context/full-review
+mkdir -p "$SESSION_DIR"
 ```
 
 Write `session.yaml`:
@@ -432,7 +457,7 @@ Each cluster gets:
 
 ### Step 3: Write state checkpoint
 
-Write clusters to `.context/full-review/clusters.md`. Update `session.yaml`:
+Write clusters to `<SESSION_DIR>/clusters.md`. Update `session.yaml`:
 set `phase: clusters_complete`, add `clusters_total: <count>`.
 
 ### Step 4: Handle empty results
@@ -470,7 +495,7 @@ If matched, annotate the cluster:
 
 ### Step 3: Write state checkpoint
 
-Update `.context/full-review/clusters.md` with dedup annotations. Update
+Update `<SESSION_DIR>/clusters.md` with dedup annotations. Update
 `session.yaml`: set `phase: dedup_complete`.
 
 ---
@@ -482,7 +507,7 @@ then important, then minor.
 
 ### For each cluster:
 
-Read the current cluster state from `.context/full-review/clusters.md` (not from
+Read the current cluster state from `<SESSION_DIR>/clusters.md` (not from
 context). Find the first untriaged cluster.
 
 Present via AskUserQuestion:
@@ -500,7 +525,7 @@ before persistence.
 ### On Approve
 
 Mark all findings in this cluster for persistence. Update the cluster's triage
-decision to `approved` in `.context/full-review/clusters.md`. Update
+decision to `approved` in `<SESSION_DIR>/clusters.md`. Update
 `session.yaml` triage counts.
 
 ### On Reject
@@ -598,7 +623,7 @@ If the commit fails (nothing to commit), that's fine — continue.
 
 ### Step 5: Write report
 
-Write `.context/full-review/report.md`:
+Write `<SESSION_DIR>/report.md`:
 
 ```markdown
 # Full Review Report
@@ -658,7 +683,7 @@ On `/full-review resume` or `/full-review status`:
 ### Step 1: Find existing state
 
 ```
-Glob pattern: .context/full-review/session.yaml
+Glob pattern: <SESSION_DIR>/session.yaml
 ```
 
 If no state found: "No active review session. Want to start a fresh review?"
@@ -764,7 +789,7 @@ This does NOT apply to routine cluster naming, obvious approve/reject calls wher
 
 ## GSTACK REVIEW REPORT
 
-At session-done, prepend this table to `.context/full-review/report.md` as the first section (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately.
+At session-done, prepend this table to `<SESSION_DIR>/report.md` as the first section (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately.
 
 Template:
 

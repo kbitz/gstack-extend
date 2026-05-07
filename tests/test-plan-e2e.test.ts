@@ -9,8 +9,9 @@
  *     parseable (via parseGroupTracks).
  *   - Fixture review docs under the project store are discoverable by
  *     the expected glob patterns.
- *   - Fixture .context/pair-review state is readable in the 5-category
- *     consumption scheme (PASSED/SKIPPED/DEFERRED/PARKED/FIXED).
+ *   - Fixture pair-review state is readable in the 5-category consumption
+ *     scheme (PASSED/SKIPPED/DEFERRED/PARKED/FIXED). State now lives at
+ *     ~/.gstack/projects/<slug>/pair-review/ — fixtures mirror that shape.
  *   - A simulated /test-plan run writes the expected files to expected paths.
  *   - /qa-only's discovery glob would find the written batch-plan file.
  *   - Archive-then-fresh-write is idempotent.
@@ -205,7 +206,7 @@ tracks:
 });
 
 describe('prior pair-review consumption', () => {
-  const sessionDir = join(baseTmp, 'consume', '.context', 'pair-review-archived-20260420-150000');
+  const sessionDir = join(baseTmp, 'consume', '.gstack', 'projects', 'fixture', 'pair-review-archived-20260420-150000');
 
   beforeAll(() => {
     mkdirSync(join(sessionDir, 'groups'), { recursive: true });
@@ -251,7 +252,7 @@ describe('prior pair-review consumption', () => {
 });
 
 describe('Phase 7 archive + write groups file', () => {
-  const groupsDir = join(baseTmp, 'phase7', '.context', 'pair-review', 'groups');
+  const groupsDir = join(baseTmp, 'phase7', '.gstack', 'projects', 'fixture', 'pair-review', 'groups');
   let archPath: string;
   let groupsFile: string;
 
@@ -422,7 +423,7 @@ describe('TODOS.md append', () => {
 });
 
 describe('idempotence: multiple archive generations coexist', () => {
-  const groupsDir = join(baseTmp, 'idempotence', '.context', 'pair-review', 'groups');
+  const groupsDir = join(baseTmp, 'idempotence', '.gstack', 'projects', 'fixture', 'pair-review', 'groups');
   let arch1: string;
   let arch2: string;
   let groupsFile: string;
@@ -451,10 +452,10 @@ describe('idempotence: multiple archive generations coexist', () => {
 });
 
 describe('session.yaml handoff marker', () => {
-  const session = join(baseTmp, 'session', '.context', 'pair-review', 'session.yaml');
+  const session = join(baseTmp, 'session', '.gstack', 'projects', 'fixture', 'pair-review', 'session.yaml');
 
   beforeAll(() => {
-    mkdirSync(join(baseTmp, 'session', '.context', 'pair-review'), { recursive: true });
+    mkdirSync(join(baseTmp, 'session', '.gstack', 'projects', 'fixture', 'pair-review'), { recursive: true });
     writeFileSync(
       session,
       `project: fixture-project

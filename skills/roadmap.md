@@ -195,7 +195,18 @@ You judge when hierarchical mode is needed; no numeric threshold. The structured
 
 ### Structured proposal artifact
 
-Before any AskUserQuestion or apply, write the proposal to **`.context/roadmap/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target.
+Before any AskUserQuestion or apply, write the proposal to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper:
+
+```bash
+_SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/roadmap/SKILL.md 2>/dev/null)
+_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+PROPOSAL_DIR=$(session_dir roadmap-proposals)
+mkdir -p "$PROPOSAL_DIR"
+```
+
+This resolves to `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/roadmap-proposals/` — durable, survives Conductor workspace archival.
 
 Format:
 
@@ -221,7 +232,7 @@ Format:
 - Pass 2 ran: placement proposed at <ts>
 ```
 
-Sections that have no entries can be omitted. Path is `.context/roadmap/proposal-{ts}.md` — accumulates audit-trail history.
+Sections that have no entries can be omitted. Path is `<PROPOSAL_DIR>/proposal-{ts}.md` — accumulates audit-trail history.
 
 ### AskUserQuestion clusters
 

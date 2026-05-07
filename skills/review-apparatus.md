@@ -161,7 +161,7 @@ what's there.
   hints.
 - **Existing test directories** (`test/`, `tests/`, `spec/`, `__tests__/`, `cypress/`,
   `playwright/`) — note what's there and what kinds of tests exist.
-- **`.gstack/`, `.context/`, `.claude/`** — existing gstack-related state.
+- **`.gstack/`, `.claude/`** — existing gstack-related state. (Durable per-project session state for /pair-review, /full-review, /roadmap lives at `~/.gstack/projects/<slug>/<skill>/`, not in the workspace.)
 - **Dev-server routes** or admin endpoints — grep source for `/debug`, `/admin`,
   `/__` prefixes, route handlers that look like dev helpers.
 - **Environment config** — `.env.example`, `.env.development`, etc. Often reveals
@@ -169,9 +169,11 @@ what's there.
 
 ### Step 3: Also note what pair-review tested recently
 
-If `.context/pair-review/` exists (suggests the project already uses /pair-review),
-skim the most recent session's report.md if present. Previously-tested areas are
-where CC-assisted verification would have helped most, so they inform judgment about
+If a /pair-review session exists for this project (probe via the session-paths
+helper: `source "$_EXTEND_ROOT/bin/lib/session-paths.sh"; ls "$(session_dir
+pair-review)/report.md" 2>/dev/null`), skim the most recent session's report.md
+if present. Previously-tested areas are where CC-assisted verification would
+have helped most, so they inform judgment about
 what apparatus would be valuable.
 
 ### Step 4: Produce the inventory
@@ -379,9 +381,10 @@ If the project is so minimal there's literally no apparatus and no obvious gaps
 minimal for apparatus proposals; re-run after the project grows." Write nothing.
 
 ### /pair-review session active
-If `.context/pair-review/session.yaml` exists AND shows an active (non-DONE)
-session, warn: "There's an active /pair-review session. Running /review-apparatus
-now won't break it, but proposals here won't be available to this pair-review
+If a /pair-review `session.yaml` exists at `$(session_dir pair-review)/session.yaml`
+AND shows an active (non-DONE) session, warn: "There's an active /pair-review
+session. Running /review-apparatus now won't break it, but proposals here won't
+be available to this pair-review
 session until they're implemented. Continue?" AskUserQuestion with options:
 `["Continue", "Stop and finish pair-review first"]`.
 

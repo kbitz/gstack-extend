@@ -2,6 +2,89 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.15.0] - 2026-05-07
+
+### Persist session state outside the Conductor workspace
+
+`/pair-review`, `/full-review`, and `/roadmap` previously wrote session state
+to `<workspace>/.context/<skill>/`. Conductor archives the workspace when work
+merges to main, taking that state with it — so `/pair-review`'s advertised
+"cross-machine resume" silently broke at the worst time (mid-test, post-merge,
+across handoffs). Same latent bug in `/full-review` (multi-day triage) and
+`/roadmap` (proposal audit trail).
+
+Session state now lives at
+`${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/<skill>/`, mirroring
+gstack core's `/context-save` checkpoints/ pattern. Survives Conductor
+workspace archival; per-machine durable (cross-machine layer is delivered by
+mind-meld, not this PR).
+
+#### Added: `bin/lib/session-paths.sh`
+
+Sourced bash helper exposing two echoing functions (matches `effort.sh`'s
+idiom):
+
+- `session_dir <skill>` → `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/<skill>`
+- `session_archive_dir <skill> <ts>` → same with `-archived-<ts>` suffix
+
+Slug resolution mirrors `~/.claude/skills/gstack/bin/gstack-slug` exactly:
+try the binary, fall back to `basename "$PWD"` sanitized to `[a-zA-Z0-9._-]`.
+Outside a git repo, slug becomes the cwd basename — never errors. A final
+guard returns `unknown-project` if the basename is fully stripped.
+
+`tests/lib-session-paths.test.ts` covers `session_dir`, `session_archive_dir`,
+the `GSTACK_STATE_ROOT` override, the basename PWD fallback, character
+sanitization, the `unknown-project` sentinel, and empty-arg errors. Pattern
+matches `tests/lib-install-safety.test.ts`.
+
+#### Changed: skill paths
+
+- `skills/pair-review.md`: every `.context/pair-review/` reference replaced
+  with `<SESSION_DIR>` (resolved via the helper). Active Session Guard's `mv`
+  uses `session_archive_dir`. Path Resolution section added near the top of
+  State Management explaining the bash block to run before any state-touching
+  phase.
+- `skills/full-review.md`: same treatment with `<SESSION_DIR>` resolved via
+  `session_dir full-review`.
+- `skills/roadmap.md`: proposal artifact moved from
+  `.context/roadmap/proposal-{ts}.md` to `<PROPOSAL_DIR>/proposal-{ts}.md`
+  where `<PROPOSAL_DIR>` = `~/.gstack/projects/<slug>/roadmap-proposals/`
+  (flat, mirrors gstack's `checkpoints/` shape rather than nested
+  `roadmap/proposals/`).
+- `skills/test-plan.md`: Phase 4 (prior pair-review consumption) and Phase 7
+  (state handoff) now write into pair-review's durable session dir. Archived
+  sibling scan walks `${PROJECT_DIR}/pair-review-archived-*` rather than
+  `.context/pair-review-archived-*`.
+- `skills/review-apparatus.md`: detection probes for an existing pair-review
+  session use `$(session_dir pair-review)/` rather than `.context/pair-review/`.
+
+#### Migration
+
+None. Sole-user repo; nothing to migrate. `.context/<skill>/` directories in
+existing workspaces will be abandoned with the workspace at archival, which
+is the same behavior the user already expected — they just couldn't get to
+the state from a new workspace.
+
+#### Tests
+
+- New: `tests/lib-session-paths.test.ts` (10 tests).
+- Updated: `tests/test-plan-e2e.test.ts` — fixture paths under
+  `.gstack/projects/<fixture>/pair-review/` rather than `.context/pair-review/`.
+  Behavior unchanged; fixtures now mirror production shape.
+- Updated: `tests/skill-protocols.test.ts`:
+  - `BLOCK_ROADMAP_PROPOSAL_PATH` now asserts `<PROPOSAL_DIR>/proposal-{ts}.md`.
+  - New drift-lock describe: every affected skill must source
+    `bin/lib/session-paths.sh`, must call `session_dir <name>` with the
+    expected name, and must NOT contain a `.context/<skill>/` literal.
+
+Full suite: 892 pass, 0 fail.
+
+#### Removed
+
+- `.context/` from `.gitignore` (nothing writes there anymore).
+
+---
+
 ## [0.18.14.0] - 2026-05-06
 
 ### Track 5A — Install pipeline polish

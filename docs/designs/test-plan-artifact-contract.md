@@ -166,9 +166,9 @@ description.
 
 ### /pair-review (active consumer)
 
-- Reads `.context/pair-review/groups/<group-slug>.md` (not the
-  `-test-plan-batch-*.md` file — that's project-scoped and shared; the groups file
-  is session-scoped).
+- Reads `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/groups/<group-slug>.md`
+  (not the `-test-plan-batch-*.md` file — that's project-scoped and shared; the
+  groups file is session-scoped, durable across Conductor archive).
 - Honors `plan_source: test-plan` in `session.yaml` (skips its own Phase 1 Test
   Plan Generation when set).
 - Surfaces item IDs in its group-file format as comments:
