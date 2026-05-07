@@ -141,7 +141,7 @@ groups/
 <user>-<branch>-test-plan-batch-<ts>.md  # the generated plan (qa-only picks up)
 ```
 
-**Workspace-scoped state** (`.context/pair-review/`, gitignored):
+**Pair-review session state** (`<PR_SESSION_DIR>` = `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`, durable):
 ```
 session.yaml                           # written by test-plan, then owned by pair-review
 groups/
@@ -150,6 +150,21 @@ groups/
 deploy.md                              # written by pair-review (not us)
 parked-bugs.md                         # written by pair-review (not us)
 ```
+
+Test-plan resolves this path via `bin/lib/session-paths.sh` (same helper
+pair-review uses) so both skills agree on the same on-disk location:
+
+```bash
+_SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/test-plan/SKILL.md 2>/dev/null)
+_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+PR_SESSION_DIR=$(session_dir pair-review)
+```
+
+Throughout this skill, `<PR_SESSION_DIR>` in path expressions means the
+resolved value above. Re-source the helper at the start of every bash block
+that touches session state.
 
 ### File format — manifest.yaml
 
@@ -205,7 +220,7 @@ manifest: ~/.gstack/projects/<slug>/groups/<group-slug>/manifest.yaml
 (items tagged automated — run /qa-only separately if you want a broad pass)
 
 ## Manual (for pair-review)
-(items tagged manual — these populate .context/pair-review/groups/<group>.md)
+(items tagged manual — these populate <PR_SESSION_DIR>/groups/<group>.md)
 
 ## Provenance Index
 (item-id -> source doc path + line + normalized text)
@@ -473,11 +488,13 @@ items (after dedup)."
 For each Track in the manifest, scan for prior pair-review artifacts:
 
 ```bash
-# Current workspace
-CUR_PR=".context/pair-review"
-[ -d "$CUR_PR" ] && scan_pair_review "$CUR_PR" "$TRACK_BRANCH"
-# Archived sessions in current workspace
-for d in .context/pair-review-archived-*; do
+# Re-source the helper if this is a fresh bash block
+PR_SESSION_DIR=$(session_dir pair-review)
+PROJECT_DIR=$(dirname "$PR_SESSION_DIR")
+# Active session
+[ -d "$PR_SESSION_DIR" ] && scan_pair_review "$PR_SESSION_DIR" "$TRACK_BRANCH"
+# Archived sessions (siblings in the same project dir)
+for d in "$PROJECT_DIR"/pair-review-archived-*; do
   [ -d "$d" ] && scan_pair_review "$d" "$TRACK_BRANCH"
 done
 ```
@@ -564,7 +581,7 @@ Structure:
 8. `## Automated (v2, not yet executed)` — items tagged automated, listed for
    /qa-only separate invocation
 9. `## Manual (for /pair-review)` — items tagged manual (these populate
-   `.context/pair-review/groups/<group>.md` in Phase 7)
+   `<PR_SESSION_DIR>/groups/<group>.md` in Phase 7)
 10. `## Items Surfaced From Prior Sessions (user decision required)` — SKIPPED
     items surfaced
 11. `## Provenance Index` — table: item-id | source | rationale_quote
@@ -578,17 +595,19 @@ Action receipt: "Plan written to <path>. <A> automated, <M> manual, <D> deferred
 ### Step 1: Archive existing groups file
 
 ```bash
-GROUPS_FILE=".context/pair-review/groups/${GROUP_SLUG}.md"
+# Re-source the helper if this is a fresh bash block
+PR_SESSION_DIR=$(session_dir pair-review)
+GROUPS_FILE="$PR_SESSION_DIR/groups/${GROUP_SLUG}.md"
 if [ -f "$GROUPS_FILE" ]; then
-  ARCH=".context/pair-review/groups/${GROUP_SLUG}-archived-${TS}.md"
+  ARCH="$PR_SESSION_DIR/groups/${GROUP_SLUG}-archived-${TS}.md"
   mv "$GROUPS_FILE" "$ARCH"
 fi
-mkdir -p ".context/pair-review/groups"
+mkdir -p "$PR_SESSION_DIR/groups"
 ```
 
 ### Step 2: Write session.yaml
 
-If `.context/pair-review/session.yaml` exists, read it and union:
+If `<PR_SESSION_DIR>/session.yaml` exists, read it and union:
 - Preserve existing fields
 - Set `plan_source: test-plan`
 - Set `build_commit: <current HEAD short hash>`
@@ -642,7 +661,7 @@ Skip these sections (already handled by /test-plan):
 - Active Session Guard
 
 Execute Phase 2 (Test Execution Loop) at full depth with the populated
-`.context/pair-review/groups/<group-slug>.md`.
+`<PR_SESSION_DIR>/groups/<group-slug>.md`.
 
 Tell the user once: "Plan generated. Entering /pair-review's execution loop on group '<title>' (<N> items)."
 
@@ -685,7 +704,7 @@ LATEST PLAN: <batch file path>
   Generated: <ISO timestamp>
   Items: <A> automated | <M> manual | <D> deferred | <S> user-decision
 
-PAIR-REVIEW STATE: .context/pair-review/
+PAIR-REVIEW STATE: <PR_SESSION_DIR>
   Session: plan_source=<source>, branch=<branch>, commit=<commit>
   Active groups: [<list>]
   Group <slug>: <N> untested, <P> passed, <F> failed, <K> skipped, <X> parked
@@ -726,7 +745,7 @@ Escalate per failure mode #4 pattern. Do not proceed to Phase 2.
 Skip that doc with a warning. Do not fail the whole run. Continue with remaining docs.
 
 ### pair-review state write fails in Phase 7
-Abort before Phase 8. Report: "Failed to write `.context/pair-review/groups/<group>.md`.
+Abort before Phase 8. Report: "Failed to write `<PR_SESSION_DIR>/groups/<group>.md`.
 Plan file at <path> is preserved. Fix the underlying issue (permissions, disk),
 then re-run /test-plan run — the archive-then-write sequence is idempotent."
 

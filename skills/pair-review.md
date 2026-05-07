@@ -147,12 +147,26 @@ reliability mechanism: if context compacts, the skill re-reads from disk.
 
 ### Paths
 
-All state lives in `.context/pair-review/` (gitignored, conductor-visible). This is
-the single source of truth. No external state directories.
+All state lives in `<SESSION_DIR>` — a durable, per-project directory at
+`${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`. This is the
+single source of truth and survives Conductor workspace archival.
+
+Resolve `SESSION_DIR` at the start of every bash block that touches state:
 
 ```bash
+_SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \
+           || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
+_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+SESSION_DIR=$(session_dir pair-review)
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+echo "SESSION_DIR=$SESSION_DIR"
+echo "BRANCH=$BRANCH"
 ```
+
+Throughout the rest of this skill, `<SESSION_DIR>` in path expressions means
+the resolved value above. When invoking Glob/Read/Write/Edit, substitute the
+concrete absolute path printed by the bash block.
 
 ### File Format
 
@@ -218,7 +232,7 @@ Run this phase on **Init** only. On **Resume**, skip to Phase 3.
 
 Use Glob to check for an existing deploy recipe:
 ```
-Glob pattern: .context/pair-review/deploy.md
+Glob pattern: <SESSION_DIR>/deploy.md
 ```
 
 Also check CLAUDE.md for a pointer:
@@ -262,7 +276,7 @@ project for testing? I'll save it so we can reuse it."
 
 ### Step 4: Save the recipe
 
-Write `deploy.md` to `.context/pair-review/`:
+Write `deploy.md` to `<SESSION_DIR>/`:
 
 ```markdown
 # Deploy Recipe
@@ -294,7 +308,7 @@ other skills too?"
 If yes, append to CLAUDE.md:
 ```yaml
 ## Deploy Recipe
-test_deploy_recipe: ".context/pair-review/deploy.md"
+test_deploy_recipe: "~/.gstack/projects/<slug>/pair-review/deploy.md"
 ```
 
 ---
@@ -345,7 +359,7 @@ at a time).
 Create the session directory and write all files:
 
 ```bash
-mkdir -p .context/pair-review/groups
+mkdir -p "$SESSION_DIR/groups"
 ```
 
 Write `session.yaml` and each `groups/<name>.md` file. All items start as UNTESTED.
@@ -503,7 +517,7 @@ a bug that is clearly unrelated to the current test item:
    reproducible — verify before fixing` for the repro. Move on. The
    re-verify guidance in the promoted TODO will surface the gap later if
    the bug ever needs to be fixed.
-2. Append a new entry to `.context/pair-review/parked-bugs.md`.
+2. Append a new entry to `<SESSION_DIR>/parked-bugs.md`.
    Determine N by reading the file and incrementing the highest existing number
    (or 1 if the file is empty/new).
    ```markdown
@@ -690,7 +704,7 @@ When `/pair-review resume` or `/pair-review status` is invoked.
 Use the Glob tool to check for an existing session:
 
 ```
-Glob pattern: .context/pair-review/session.yaml
+Glob pattern: <SESSION_DIR>/session.yaml
 ```
 
 If the file exists, read it and proceed to Step 2.
@@ -780,7 +794,7 @@ Duration: <time from started to now>
 
 ### Step 2: Save report
 
-Write report to `.context/pair-review/report.md`.
+Write report to `<SESSION_DIR>/report.md`.
 
 ### Step 3: Offer next steps
 
@@ -809,7 +823,7 @@ Present via AskUserQuestion:
 On **Init**, before starting Phase 0, check for an existing active session:
 
 ```
-Glob pattern: .context/pair-review/session.yaml
+Glob pattern: <SESSION_DIR>/session.yaml
 ```
 
 If an active session exists, read it and present via AskUserQuestion:
@@ -817,9 +831,12 @@ If an active session exists, read it and present via AskUserQuestion:
 - Question: "You have an active test session (started [date], [N]/[M] items tested). What would you like to do?"
 - Options: ["Resume the existing session", "Start a new session (archives the old one)"]
 
-If B, move the old session to a timestamped archive:
+If B, move the old session to a timestamped archive (re-source the helper if
+this is a fresh bash block):
 ```bash
-mv .context/pair-review .context/pair-review-archived-$(date -u +%Y%m%d-%H%M%S)
+TS=$(date -u +%Y%m%d-%H%M%S)
+ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
+mv "$SESSION_DIR" "$ARCHIVE_DIR"
 ```
 
 ---
@@ -909,7 +926,7 @@ For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `FAILED
 - All groups complete, no parked bugs and no failures → **DONE**
 - Complete with items SKIPPED, PARKED, or with deferred bugs → **DONE_WITH_CONCERNS** (list them)
 - A group cannot proceed (deploy broken, can't reach the app, missing credentials) → **BLOCKED**
-- Session interrupted or resumed without required context (lost `.context/pair-review/` state, for example) → **NEEDS_CONTEXT**
+- Session interrupted or resumed without required context (lost `<SESSION_DIR>` state, for example) → **NEEDS_CONTEXT**
 
 <!-- SHARED:escalation-opener -->
 ### Escalation
@@ -996,6 +1013,6 @@ Verdict-to-status mapping:
 - All items in group are PASSED or FIXED → group "DONE — all <N> items pass".
 - Group has SKIPPED or PARKED items, or deferred bugs → group "DONE_WITH_CONCERNS — <specifics>".
 - Group could not proceed (deploy broken, app unreachable, missing credentials) → "BLOCKED — <reason>".
-- Session state malformed or `.context/pair-review/` lost on resume → "NEEDS_CONTEXT — <what is missing>".
+- Session state malformed or `<SESSION_DIR>` lost on resume → "NEEDS_CONTEXT — <what is missing>".
 
 The mini-table runs at each group boundary so the Conductor action-receipt pattern still shows a clean summary in the collapsed view. The rollup runs once at session-done.

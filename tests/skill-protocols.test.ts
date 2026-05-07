@@ -119,12 +119,19 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
 // behavior (fast-path output) and test fixtures (proposal artifact format).
 
 const BLOCK_ROADMAP_FAST_PATH = 'Plan looks current. No changes.';
-const BLOCK_ROADMAP_PROPOSAL_PATH = '.context/roadmap/proposal-';
+// Proposal artifact path moved off `.context/roadmap/` (workspace-local, dies
+// with Conductor archival) to `~/.gstack/projects/<slug>/roadmap-proposals/`
+// (durable, mirrors gstack's checkpoints/ pattern). The skill resolves the
+// concrete dir via session_dir roadmap-proposals; the markdown placeholder
+// `<PROPOSAL_DIR>/proposal-{ts}.md` is the canonical reference string.
+const BLOCK_ROADMAP_PROPOSAL_PATH = '<PROPOSAL_DIR>/proposal-{ts}.md';
+const BLOCK_ROADMAP_PROPOSAL_HELPER_CALL = 'session_dir roadmap-proposals';
 const BLOCK_ROADMAP_CLUSTER_STRUCTURAL = 'Hold scope — fold into existing structure instead';
 
 const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_ROADMAP_FAST_PATH, label: 'fast-path-output' },
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
+  { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
   { block: BLOCK_ROADMAP_CLUSTER_STRUCTURAL, label: 'cluster-structural-hold-scope' },
 ];
 
@@ -287,4 +294,44 @@ describe('Track 5A test-plan.md cross-skill probe (Phase 8 inline-Read)', () => 
     // single-path read by accident.
     expect(content).toMatch(/fall back to.+\.claude\/skills\/pair-review\/SKILL\.md/);
   });
+});
+
+// ─── Session-paths helper drift-lock ─────────────────────────────────
+//
+// State for /pair-review, /full-review, /roadmap moved off `.context/<skill>/`
+// (workspace-local) onto `~/.gstack/projects/<slug>/<skill>/` (durable, mirrors
+// gstack /context-save's checkpoints/ shape). Each affected skill must source
+// bin/lib/session-paths.sh and call session_dir with its own skill name (or
+// pair-review's, in test-plan's case). Lock the call site so a future edit
+// can't accidentally regress to `.context/`.
+
+const SESSION_DIR_CALLERS: Array<{ skill: string; call: string }> = [
+  { skill: 'pair-review', call: 'session_dir pair-review' },
+  { skill: 'full-review', call: 'session_dir full-review' },
+  { skill: 'roadmap', call: 'session_dir roadmap-proposals' },
+  // test-plan writes into pair-review's session dir, so it calls session_dir
+  // pair-review (not session_dir test-plan).
+  { skill: 'test-plan', call: 'session_dir pair-review' },
+];
+
+describe('session-paths helper drift-lock', () => {
+  for (const { skill, call } of SESSION_DIR_CALLERS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    test(`${skill}.md sources bin/lib/session-paths.sh`, () => {
+      expect(content).toContain('bin/lib/session-paths.sh');
+    });
+    test(`${skill}.md calls ${call}`, () => {
+      expect(content).toContain(call);
+    });
+    test(`${skill}.md no longer references .context/${skill === 'test-plan' ? 'pair-review' : skill}/`, () => {
+      const oldPath = `.context/${skill === 'test-plan' ? 'pair-review' : skill}/`;
+      expect(content).not.toContain(oldPath);
+    });
+  }
 });
