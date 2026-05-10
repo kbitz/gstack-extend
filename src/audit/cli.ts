@@ -43,7 +43,7 @@ import { runCheckPhaseInvariants } from './checks/phase-invariants.ts';
 import { runCheckPhases } from './checks/phases.ts';
 import { runCheckScatteredTodos } from './checks/scattered-todos.ts';
 import { runCheckSizeCaps } from './checks/size-caps.ts';
-import { runCheckStaleness } from './checks/staleness.ts';
+import { runCheckVersionTagStaleness } from './checks/version-tag-staleness.ts';
 import { runCheckStateSections } from './checks/state-sections.ts';
 import { runCheckStructuralFitness } from './checks/structural-fitness.ts';
 import { runCheckStructure } from './checks/structure.ts';
@@ -364,7 +364,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckStateSections,
   runCheckPhases,
   runCheckPhaseInvariants,
-  runCheckStaleness,
+  runCheckVersionTagStaleness,
   runCheckVersion,
   runCheckTaxonomy,
   runCheckDocLocation,
@@ -487,7 +487,13 @@ export function runScanState(ctx: AuditCtx, prompt: string | null): string {
   }
 
   // Compute signals via the same checks the bash version would scan.
-  const stalenessFail = runCheckStaleness(ctx).status === 'fail' ? 1 : 0;
+  // VERSION_TAG_STALENESS now emits `warn` (not `fail`) per Track 6A; the
+  // signal still fires on either non-pass status to keep dispatcher behavior
+  // unchanged — `version_tag_staleness_fail: 1` means "stale items present"
+  // regardless of whether the section status is `fail` or `warn`.
+  const versionTagStalenessRes = runCheckVersionTagStaleness(ctx);
+  const versionTagStalenessFail =
+    versionTagStalenessRes.status === 'warn' || versionTagStalenessRes.status === 'fail' ? 1 : 0;
   const unprocessedRes = runCheckUnprocessed(ctx);
   const itemsLine = unprocessedRes.preamble?.find((l) => l.startsWith('ITEMS: ')) ?? 'ITEMS: 0';
   const unprocessedCount = Number.parseInt(itemsLine.replace(/^ITEMS:[ \t]*/, ''), 10) || 0;
@@ -529,7 +535,7 @@ export function runScanState(ctx: AuditCtx, prompt: string | null): string {
     `    "unprocessed_count": ${unprocessedCount},`,
     `    "in_flight_groups": "${inFlightGroups}",`,
     `    "origin_total": ${originTotal},`,
-    `    "staleness_fail": ${stalenessFail},`,
+    `    "version_tag_staleness_fail": ${versionTagStalenessFail},`,
     `    "git_inferred_freshness": ${gitFreshness},`,
     `    "has_zero_open_group": ${hasZeroOpenGroup}`,
     '  }',

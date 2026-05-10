@@ -90,14 +90,14 @@ State signals JSON schema:
     "unprocessed_count": N,
     "in_flight_groups": "1 2",
     "origin_total": N,
-    "staleness_fail": 0|1,
+    "version_tag_staleness_fail": 0|1,
     "git_inferred_freshness": N,
     "has_zero_open_group": 0|1
   }
 }
 ```
 
-`staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped. `git_inferred_freshness` counts active tasks where 2+ commits landed on referenced files since intro, OR 1 commit referenced the enclosing `Track NX` (the single-bundled-PR case).
+`version_tag_staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped — VERSION_TAG_STALENESS only fires on items with explicit `(shipped vN.N.N)` annotations; broader recency lives in the `signals.git_inferred_freshness` field below. `git_inferred_freshness` counts active tasks where 2+ commits landed on referenced files since intro, OR 1 commit referenced the enclosing `Track NX` (the single-bundled-PR case).
 
 Read in addition: `TODOS.md ## Unprocessed` (with source-tag pre-classification per below), `ROADMAP.md` (full structure), and recent git log scoped to ROADMAP-referenced files.
 
@@ -146,7 +146,7 @@ Skip reassessment entirely when ALL of these hold:
 - Audit returned `STATUS: pass` for every blocker check (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET).
 - `## Unprocessed` is empty.
 - `signals.has_zero_open_group == 0` AND no in-flight Group has inbox items that look like closure debt (file overlap with the Group's `_touches:_` or `[source:group=N]` matches).
-- `signals.staleness_fail == 0` AND `signals.git_inferred_freshness == 0` (this is the codex guard — no in-flight Track has files with shipped activity since intro; otherwise the plan is stale and reassessment must run).
+- `signals.version_tag_staleness_fail == 0` AND `signals.git_inferred_freshness == 0` (this is the codex guard — no in-flight Track has files with shipped activity since intro; otherwise the plan is stale and reassessment must run).
 - User prompt has no `intents.split`, `intents.closure`, or structural keyword cue (e.g., "review the plan", "restructure", "reorganize").
 
 If all conditions hold, print: **`Plan looks current. No changes.`** Exit before Step 3. No commit.
@@ -486,7 +486,7 @@ When completing a skill workflow, report status using one of:
 For /roadmap specifically: map the audit output plus the run's work (triage decisions, ROADMAP.md updates, PROGRESS.md appends) to the enum. Rollup:
 
 - Audit clean, all triage complete, no unresolved blockers → **DONE**
-- Audit returned advisory findings (STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
+- Audit returned advisory findings (VERSION_TAG_STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
 - Audit returned blockers (SIZE caps, COLLISIONS, STRUCTURE errors, VERSION errors) unresolved → **BLOCKED**
 - Required inputs missing or ambiguous → **NEEDS_CONTEXT**
 
@@ -541,7 +541,7 @@ Lead the run summary with this table, above the audit detail:
 ```
 
 - `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS (cycles/forward-refs), PARALLELISM_BUDGET.
-- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), PARALLELIZABLE_FUTURE.
+- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), FUTURE.
 
 Verdict-to-status mapping:
 

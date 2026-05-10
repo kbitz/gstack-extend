@@ -27,7 +27,7 @@ FINDINGS:
 - Phase 1 (line 3): missing **End-state:** field
 
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)

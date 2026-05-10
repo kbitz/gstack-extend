@@ -27,7 +27,7 @@ FINDINGS:
 - Phase 1 (line 3): scaffolding path `does/not/exist.ts` does not exist
 
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)

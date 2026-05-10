@@ -26,7 +26,7 @@ STATUS: pass
 FINDINGS:
 - (none)
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)

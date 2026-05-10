@@ -27,7 +27,7 @@ STATUS: skip
 FINDINGS:
 - (none declared)
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)

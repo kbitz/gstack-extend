@@ -27,7 +27,7 @@ FINDINGS:
 - Phase 1 (line 3): listed Group 3 has no `## Group 3` heading
 
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)

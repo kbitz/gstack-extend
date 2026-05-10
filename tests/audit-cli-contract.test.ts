@@ -140,6 +140,30 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     expect(parsed).toHaveProperty('intents');
   });
 
+  test('--scan-state signals schema is pinned (regression guard for renames)', () => {
+    // Track 6A renamed the section STALENESS → VERSION_TAG_STALENESS and the
+    // JSON key staleness_fail → version_tag_staleness_fail. Assert every
+    // dispatcher-consumed key explicitly. Adding a new signal here is
+    // intentional friction — skills/roadmap.md consumes this contract.
+    // Note: empty repo emits `signals: null` (GREENFIELD path) — must seed a
+    // ROADMAP.md to reach the keyed-signals branch.
+    const repo = makeEmptyRepo(baseTmp);
+    seedRoadmap(repo, '## Group 1: Foo\n#### Track 1A: Bar\n_touches: a.ts_\n- thing\n');
+    const r = run(['--scan-state', repo]);
+    const parsed = JSON.parse(r.stdout) as { signals: Record<string, unknown> };
+    const signalKeys = Object.keys(parsed.signals).sort();
+    expect(signalKeys).toEqual([
+      'git_inferred_freshness',
+      'has_zero_open_group',
+      'in_flight_groups',
+      'origin_total',
+      'unprocessed_count',
+      'version_tag_staleness_fail',
+    ]);
+    // Old key must NOT come back — explicit guard against revert.
+    expect(parsed.signals).not.toHaveProperty('staleness_fail');
+  });
+
   test('malformed ROADMAP produces at least one fail/warn STATUS', () => {
     const repo = makeEmptyRepo(baseTmp);
     seedRoadmap(repo, '## Group 1: Foo\n\nNo Tracks.\n');

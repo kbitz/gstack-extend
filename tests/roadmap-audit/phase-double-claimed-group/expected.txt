@@ -28,7 +28,7 @@ FINDINGS:
 - Group 2: claimed by multiple Phases (1,2)
 
 
-## STALENESS
+## VERSION_TAG_STALENESS
 STATUS: pass
 FINDINGS:
 - (none)
