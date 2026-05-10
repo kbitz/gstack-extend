@@ -124,7 +124,7 @@ on triage; not parsed.
 
 - `<source>` is the originating skill: `pair-review`, `full-review`,
   `review`, `review-apparatus`, `test-plan`, `investigate`, `ship`, `manual`,
-  `discovered`.
+  `discovered`, `plan-ceo-review`, `plan-eng-review`.
 - `<key>=<value>` pairs provide structured metadata. Order does not matter.
 - Keys MUST be lowercase, `[a-z-]+`.
 - Values MUST NOT contain `[]`, `,`, or `;`. Values containing these should be
@@ -138,6 +138,8 @@ on triage; not parsed.
 | `item` | pair-review, test-plan | integer | Test-plan item index within the group |
 | `severity` | full-review, review | `critical` \| `necessary` \| `nice-to-have` \| `edge-case` | Reviewer's severity classification |
 | `files` | full-review (when single-cluster) | pipe-separated paths | File paths the finding references |
+| `track` | plan-ceo-review, plan-eng-review | track id (e.g. `4A`, `11A.2`) | The Track being reviewed; anchors the deferral to its origin |
+| `defer` | plan-ceo-review, plan-eng-review | `true` | Marks an item as deferred-from-scope by the review (in-scope work cut to keep the Track sized correctly), distinct from a normal review finding. Always written as `defer=true` (the grammar requires `key=value`; bare flags are rejected). |
 
 ### Source-default routing matrix (used by /roadmap scrutiny gate)
 
@@ -155,6 +157,9 @@ on triage; not parsed.
 | `full-review:edge-case` | SUGGEST_KILL | Edge or hypothetical — bias toward drop |
 | `full-review` (no severity, legacy) | PROMPT | Legacy tag without taxonomy |
 | `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. |
+| `plan-ceo-review:track=<id>,defer=true` | KEEP | Work cut from a Track during CEO plan review; `/roadmap` decides placement (new Track, Future, or kill) on next regen |
+| `plan-eng-review:track=<id>,defer=true` | KEEP | Work cut from a Track during eng plan review; same routing as plan-ceo-review |
+| `plan-ceo-review` / `plan-eng-review` (no `defer=true`) | PROMPT | Review-surfaced finding that wasn't in original scope — ask user whether it's a deferred-scope item or new work |
 | `discovered:<path>` | PROMPT | Extracted from scattered doc, may be out of context |
 | `<unknown>` / missing | PROMPT | Unrecognized — ask user |
 
@@ -191,6 +196,12 @@ on triage; not parsed.
 - **Why:** customer ask from two accounts.
 - **Effort:** L (human: ~1 week / CC: ~1 hr)
 - **Priority:** P3
+
+### [plan-ceo-review:track=4A,defer=true] Per-tenant isolation for cache layer
+- **Description:** original Track 4A scope included tenant-scoped cache keys. Cut during CEO review to keep PR sized correctly (~600 LOC vs ~250 cap).
+- **Hypothesis (untested):** likely fits as its own Track in the next Group, after Track 4A's cache primitives land.
+- **Effort:** M (human: ~1 day / CC: ~30 min)
+- **Found in:** `~/.gstack/projects/<slug>/ceo-plans/2026-05-10-track-4a.md` §"Deferred"
 ```
 
 ## Dedup semantics

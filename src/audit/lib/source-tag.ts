@@ -65,6 +65,8 @@ export const REGISTERED_SOURCES: ReadonlySet<string> = new Set([
   'ship',
   'manual',
   'discovered',
+  'plan-ceo-review',
+  'plan-eng-review',
 ]);
 
 const SHORT_FORM_SEVERITIES: ReadonlySet<string> = new Set([
@@ -316,6 +318,25 @@ export function routeSourceTag(raw: string): RouteOutcome {
       return {
         action: 'PROMPT',
         reason: 'extracted from a scattered doc — confirm before incorporating',
+        source,
+      };
+
+    case 'plan-ceo-review':
+    case 'plan-eng-review':
+      // `defer=true` flag → KEEP (in-scope work cut by the review; /roadmap
+      // regen places it). Without `defer` → PROMPT (review surfaced
+      // out-of-scope work; ask user whether it's a real defer or a new
+      // finding).
+      if (parsed.value.pairs.defer === 'true') {
+        return {
+          action: 'KEEP',
+          reason: `${source} — work cut from Track during plan review; /roadmap regen will place`,
+          source,
+        };
+      }
+      return {
+        action: 'PROMPT',
+        reason: `${source} — review-surfaced finding without defer=true flag; surface for explicit decision`,
         source,
       };
 

@@ -92,6 +92,7 @@ fi
 SKILLS=(
   pair-review
   roadmap
+  roadmap-new
   full-review
   review-apparatus
   test-plan
