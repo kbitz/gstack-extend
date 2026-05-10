@@ -141,44 +141,10 @@ describe('parseRoadmap — Group _Depends on:_', () => {
   });
 });
 
-describe('parseRoadmap — _serialize: true_', () => {
-  test('flag captured on Group', () => {
-    const r = parseRoadmap(
-      '## Group 1: A\n_serialize: true_\n',
-      deps(),
-    );
-    expect(r.value.groups[0]!.serialize).toBe(true);
-  });
-
-  test('serialize creates implicit intra-group dep chain', () => {
-    const md = [
-      '## Group 1: A',
-      '_serialize: true_',
-      '### Track 1A: First',
-      '### Track 1B: Second',
-      '### Track 1C: Third',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    const findTrack = (id: string) => r.value.tracks.find((t) => t.id === id)!;
-    expect(findTrack('1A').deps).toEqual([]);
-    expect(findTrack('1B').deps).toEqual(['1A']);
-    expect(findTrack('1C').deps).toEqual(['1B']);
-  });
-});
-
-describe('parseRoadmap — Pre-flight', () => {
-  test('Pre-flight marker sets group flag', () => {
-    const md = [
-      '## Group 1: A',
-      '**Pre-flight** (shared infra)',
-      '- **Item 1** (S)',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    expect(r.value.groups[0]!.hasPreflight).toBe(true);
-  });
-});
+// `_serialize: true_` and Pre-flight subsection were v1 primitives. Both
+// are gone in v2 — sequential file work belongs in different Groups (or
+// merged into one Track), and shared-infra-before-parallel work belongs
+// in a small earlier Group, not a sub-section of the same Group.
 
 describe('parseRoadmap — Tracks', () => {
   test('basic Track parses ID and group attribution', () => {

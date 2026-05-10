@@ -1,20 +1,18 @@
 /**
- * style-lint.ts — port of check_style_lint (~L2854-2918).
+ * style-lint.ts — advisory warnings that don't affect correctness.
  *
- * Advisory warnings that don't affect correctness. Composes from:
+ * Composes from:
  *   1. Parser-emitted warnings (from ctx.roadmap.value.styleLintWarnings):
  *      duplicate track IDs, malformed _touches:_, self-dep, unparseable
- *      _Depends on:_ annotation. These accumulate in document order
- *      during parse.
+ *      _Depends on:_ annotation. Accumulate in document order during parse.
  *   2. Intra-group track dep cycles (ctx.roadmap.value.trackDepCycles).
  *   3. Redundant explicit `_Depends on: Group N_` when N is the
  *      immediately-preceding Group in numeric order.
- *   4. Pre-flight subsection in a single-Track Group (artificial
- *      separation — Pre-flight exists to serialize parallel Tracks).
+ *   4. Pre-flight subsection in a single-Track Group (v1 only — Pre-flight
+ *      exists to serialize parallel Tracks; v2 has no Pre-flight primitive).
  *
  * Findings are emitted WITHOUT a `- ` bullet prefix — bash builds the
- * string verbatim and renders via `echo -e`, no ` -` adornment. Mirror
- * exactly so the snapshot stays byte-equal.
+ * string verbatim and renders via `echo -e`, no ` -` adornment.
  */
 
 import type { GroupInfo } from '../parsers/roadmap.ts';
@@ -62,7 +60,7 @@ export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
     prevSorted = g.num;
   }
 
-  // 4. Pre-flight in single-Track Group.
+  // 4. Pre-flight in single-Track Group (v1 only).
   for (const g of ctx.roadmap.value.groups) {
     if (!g.hasPreflight) continue;
     if (g.isComplete) continue;

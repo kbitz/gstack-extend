@@ -22,8 +22,10 @@
 
 import type { AuditCtx, CheckResult } from '../types.ts';
 
-const GROUP_RE = /^## Group ([0-9]+):/;
-const TRACK_RE = /^### Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
+// Heading-depth-agnostic: v1 uses ## Group / ### Track, v2 uses
+// ### Group / #### Track inside state H2 sections.
+const GROUP_RE = /^#{2,4} Group ([0-9]+):/;
+const TRACK_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
 const PREFLIGHT_RE = /^\*\*Pre-flight\*\*/i;
 const STOP_RE = /^## (Future|Unprocessed|Execution Map)/i;
 

@@ -33,17 +33,18 @@ import { runCheckDependencies } from './checks/dependencies.ts';
 import { runCheckDocInventory } from './checks/doc-inventory.ts';
 import { runCheckDocLocation } from './checks/doc-location.ts';
 import { runCheckDocType } from './checks/doc-type.ts';
+import { runCheckFuture } from './checks/future.ts';
 import { runCheckGroupDeps } from './checks/group-deps.ts';
 import { runCheckInFlightGroups } from './checks/in-flight-groups.ts';
 import { detectMode, type ModeResult } from './checks/mode.ts';
 import { runCheckOriginStats } from './checks/origin-stats.ts';
 import { runCheckParallelismBudget } from './checks/parallelism-budget.ts';
-import { runCheckParallelizableFuture } from './checks/parallelizable-future.ts';
 import { runCheckPhaseInvariants } from './checks/phase-invariants.ts';
 import { runCheckPhases } from './checks/phases.ts';
 import { runCheckScatteredTodos } from './checks/scattered-todos.ts';
 import { runCheckSizeCaps } from './checks/size-caps.ts';
 import { runCheckStaleness } from './checks/staleness.ts';
+import { runCheckStateSections } from './checks/state-sections.ts';
 import { runCheckStructuralFitness } from './checks/structural-fitness.ts';
 import { runCheckStructure } from './checks/structure.ts';
 import { runCheckStyleLint } from './checks/style-lint.ts';
@@ -360,6 +361,7 @@ export function renderCheckResult(r: CheckResult): string {
 const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckVocabLint,
   runCheckStructure,
+  runCheckStateSections,
   runCheckPhases,
   runCheckPhaseInvariants,
   runCheckStaleness,
@@ -377,7 +379,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckSizeCaps,
   runCheckCollisions,
   runCheckParallelismBudget,
-  runCheckParallelizableFuture,
+  runCheckFuture,
   runCheckStyleLint,
   runCheckDocInventory,
   runCheckScatteredTodos,
@@ -561,13 +563,13 @@ function computeGitInferredFreshness(ctx: AuditCtx): number {
       inActive = false;
       continue;
     }
-    if (/^## Group/.test(line)) {
+    if (/^#{2,4} Group/.test(line)) {
       inActive = true;
       continue;
     }
     if (!inActive) continue;
 
-    const tm = line.match(/^### Track ([0-9]+[A-Z](?:\.[0-9]+)?):/);
+    const tm = line.match(/^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/);
     if (tm !== null) {
       curTrack = tm[1]!;
       continue;

@@ -8,6 +8,11 @@ STATUS: skip
 FINDINGS:
 - No ROADMAP.md found
 
+## STATE_SECTIONS
+STATUS: skip
+FINDINGS:
+- No ROADMAP.md found
+
 ## PHASES
 STATUS: skip
 FINDINGS:
@@ -99,11 +104,10 @@ CAP: 4
 FINDINGS:
 - No in-flight Groups
 
-## PARALLELIZABLE_FUTURE
+## FUTURE
 STATUS: skip
-CANDIDATES:
 FINDINGS:
-- No ROADMAP.md
+- No ROADMAP.md found
 
 ## STYLE_LINT
 STATUS: pass

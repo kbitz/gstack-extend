@@ -49,8 +49,8 @@ export function parsePhases(content: string): ParserResult<ParsedPhases> {
   for (const line of lines) {
     lineno++;
 
-    // Phase heading.
-    const phaseHeading = line.match(/^## Phase ([0-9]+):(.*)$/);
+    // Phase heading — v1 (H2) or v2 (H3).
+    const phaseHeading = line.match(/^#{2,3} Phase ([0-9]+):(.*)$/);
     if (phaseHeading) {
       cur = {
         num: phaseHeading[1]!,
@@ -66,8 +66,19 @@ export function parsePhases(content: string): ParserResult<ParsedPhases> {
       continue;
     }
 
-    // Any other H2 closes the Phase block.
+    // Any other H2 closes the Phase block. (H3 within a v2 Phase still belongs
+    // to the Phase — Group H3 headings sit alongside Phase H3.)
     if (/^## /.test(line)) {
+      cur = null;
+      inScaffolding = false;
+      continue;
+    }
+
+    // v2: a sibling H3 Group heading closes the Phase block. Phase
+    // membership is declared via `**Groups:**`, not nesting — so once
+    // we leave the Phase H3 block (Phase metadata + scaffolding paragraph)
+    // we stop accumulating fields.
+    if (cur !== null && /^### Group /.test(line)) {
       cur = null;
       inScaffolding = false;
       continue;
