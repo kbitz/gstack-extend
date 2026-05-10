@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.16.2] - 2026-05-10
+
+### Changed: `/roadmap-new` makes file collisions drive Group structure, not validate it after
+
+Step 3 of `/roadmap-new` now decomposes work into draft Tracks with `_touches:_`
+footprints **before** assigning them to Groups. The pairwise file-set
+intersection of those footprints becomes the grouping primitive: pairs with
+empty intersection may co-Group, pairs with non-empty intersection must merge
+into one Track or land in different Groups with a dep edge. Group naming and
+themes decorate the resulting parallel-safety partition, not the other way
+around.
+
+The audit's COLLISIONS check (Step 4) is reframed as a drift safety net rather
+than the primary parallel-safety check. A failure there now signals that the
+matrix step was skipped or human edits introduced a collision, instead of being
+the first place collisions get detected.
+
+Prior behavior asked the LLM to "remember" parallel-safety while structuring,
+then audited after writing — which let v1 "5 Tracks in Group N" parade as
+parallel when 4 of them actually chained on shared files. The new ordering
+forces the right outcome at structuring time.
+
+Spec doc (`docs/designs/roadmap-v2-state-model.md`) is unchanged — it defines
+the Group contract (set-disjoint touches), and the construction order belongs
+in the skill prose.
+
 ## [0.18.16.1] - 2026-05-10
 
 ### Changed: `## Shipped` moves to the document tail in `/roadmap-new`

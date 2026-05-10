@@ -216,7 +216,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** Read the existing `## Shipped` (or v1 `✓ Complete` Groups). Those IDs are frozen. They form the tail of the new ROADMAP.md (after `## Future`) and don't get re-thought.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What's the right Current Plan?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Group cohesively into Tracks (1 PR each) → Groups (parallel-safe Tracks) → optional Phases (named end-state spanning ≥2 Groups). Renumber freely from the next-available ID after Shipped/In Progress.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR each), each with an explicit `_touches:_` footprint. _Don't assign Tracks to Groups yet_ — Group assignment is a separate step driven by the collision matrix (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -234,11 +234,22 @@ Hard rule: **1 Track = 1 PR**. The audit enforces this with the `max_loc_per_tra
 
 When proposing a Track, anticipate review-induced expansion. If the work is high-risk or touches new surface area (3+ new files, `medium-high`/`high` risk), size it at ~50% of the cap. CEO/eng-review will likely add scope; bake the headroom in up front.
 
-### Parallelization discipline
+### Collision-driven grouping
 
-Hard rule: **Tracks within a Group must have set-disjoint `_touches:_` footprints**. The audit fails any non-empty intersection — no escape hatch via `_Depends on:_`. If two pieces of work need to serialize on the same files, they're either one Track or in different Groups.
+Group assignment is **constrained by the file-collision matrix**, not by theme. Compute it before naming Groups, not after.
 
-This is what made v1 "5 Tracks in Group N" parade as parallel when really 4 of them chained on shared files. In v2, that situation forces the right outcome: merge the chained Tracks into one (sequential file work belongs in one PR), or move them to a different Group that depends on the first.
+Once draft Tracks exist with `_touches:_` footprints, compute the pairwise intersection of every Track-pair's footprint:
+
+- Pairs with **empty intersection** are parallel-safe — they may co-Group.
+- Pairs with **non-empty intersection** must NOT co-Group. Resolve by either:
+  - **Merging** them into a single Track (when the overlap is most of both footprints — sequential file work belongs in one PR), OR
+  - **Splitting** them across Groups with an inter-Group dep edge (when each Track has substantial unique surface that justifies separate PRs).
+
+Only after the collision matrix is satisfied may Tracks be named into Groups around cohesive themes. **Groups are equivalence classes of "can run in parallel," not bundles by topic.** Naming and theme are decorations on top of the parallel-safety partition.
+
+This is what made v1 "5 Tracks in Group N" parade as parallel when really 4 of them chained on shared files. The audit's COLLISIONS check (Step 4) is now a safety net for human-edit drift after apply — the structural decision has to be made up front, not validated post-hoc.
+
+If you find yourself rewriting Tracks repeatedly to escape collisions, the input scope is wrong: either the Tracks are too granular (merge them) or the proposed Group is doing too much (split into sequential Groups with a dep edge).
 
 ### Renumbering
 
@@ -335,7 +346,9 @@ Run the audit immediately after writing edits:
 "$_EXTEND_ROOT/bin/roadmap-audit"
 ```
 
-If any blocker check fires (SIZE, COLLISIONS, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET), escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+This is a drift safety net, not the primary check. COLLISIONS in particular should already be satisfied by Step 3's collision-driven grouping; an audit failure here means either (a) the regeneration skipped the matrix step, or (b) human edits between regeneration and apply introduced a collision. Either way, escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+
+The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
 
 ### TODOS.md drain orphan check
 
