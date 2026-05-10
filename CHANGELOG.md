@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.19.0] - 2026-05-10
+
+### Changed: STALENESS section renamed to VERSION_TAG_STALENESS + STATUS bug fix (Track 6A)
+
+`/roadmap` audit now emits `## VERSION_TAG_STALENESS` instead of `## STALENESS`. The check only ever fired on items with explicit `(shipped vN.N.N)` annotations — broader recency lives in the `signals.git_inferred_freshness` field of `--scan-state`. The old name read as "is the plan stale?" when it actually meant "is a version-tagged completed item still in the active plan?" — the rename closes a dogfood-noted misread that `STALENESS: pass` settled the freshness question.
+
+The check's STATUS also flipped from `fail` → `warn`. Skill prose has always classified this section as advisory (alongside TAXONOMY, SIZE_LABEL_MISMATCH); the code returning `fail` was elevating it to blocker rollups against the documented contract. Reconciled in the same PR as the rename.
+
+### Changed (breaking, internal): scan-state JSON key renamed
+
+`signals.staleness_fail` → `signals.version_tag_staleness_fail` in `bin/roadmap-audit --scan-state` output. Atomic rename — no deprecation window. Internal contract: the only known consumer is the `/roadmap` skill dispatcher (`skills/roadmap.md`), which is updated in the same PR. A new schema-pinning assertion in `tests/audit-cli-contract.test.ts` guards against future renames going silent on either side.
+
+Internals also renamed: `src/audit/checks/staleness.ts` → `version-tag-staleness.ts`, `runCheckStaleness` → `runCheckVersionTagStaleness`. Skill prose updated in both `skills/roadmap.md` (5 refs + clarifier + drive-by `PARALLELIZABLE_FUTURE` → `FUTURE` typo fix) and `skills/roadmap-new.md` (2 refs).
+
+### Added: Direct unit tests for `check_phases`, `check_phase_invariants`, `check_vocab_lint` (Track 6A)
+
+Three new test files (`tests/check-phases.test.ts`, `tests/check-phase-invariants.test.ts`, `tests/check-vocab-lint.test.ts`) pin each branch of these state-machine checks. Snapshot fixtures still cover the end-to-end pipeline; these unit tests pinpoint a state-machine regression to a single rule instead of cascading across 8 fixtures.
+
+New `tests/helpers/audit-ctx.ts` extracts the `makeCtx`/`stubGit` builders previously inlined in `tests/check-staleness.test.ts` (now `check-version-tag-staleness.test.ts`). Override-based factory pattern: every required AuditCtx field has a default, callers pass only what they exercise. Saves the next AuditCtx-shape change from a 3-site update.
+
 ## [0.18.18.0] - 2026-05-10
 
 ### Added: Track 6B — Track 5A test follow-ups
