@@ -17,7 +17,7 @@ _(none — no Group has both shipped and unshipped Tracks)_
 
 ## Current Plan
 
-### Group 6: Audit Polish + Track 5A Test Follow-ups
+### Group 6: Audit Polish + Track 5A Test Follow-ups + /roadmap-new Refactor
 
 ##### Track 6A: Audit polish + FRESHNESS coverage
 _3 tasks . ~300 LOC . low risk . [src/audit/checks/, tests/audit-checks/, skills/roadmap.md]_
@@ -31,6 +31,14 @@ _2 tasks . ~50 LOC . low risk . [test files only]_
 _touches: tests/update.test.ts, tests/checks-doc-type.test.ts_
 - **`bin/update-run` upgrade-flow integration test** -- trigger `bin/update-run` and verify post-upgrade skills still resolve via path-1. Closes a Track 5A test-coverage gap surfaced during /ship of v0.18.14.0; low priority because (a) `bin/update-run` was unchanged in 5A scope, (b) post-upgrade resolution goes through path-1 which IS exercised, (c) update-run has its own non-Track-5A test coverage. _tests/update.test.ts, ~20 lines + git-fetch fixture._ (S)
 - **Doc-type math unit tests** -- boundary cases (empty file, exactly 4 content lines, exactly 5 content lines with 25% density vs 60% density) for the `_inferred_doc_type` math. End-to-end coverage already exists via `tests/roadmap-audit/doc-type-mismatch/`; this Track adds isolated unit tests for the boundary cases. _tests/checks-doc-type.test.ts, ~30 lines._ (S)
+
+##### Track 6C: `/roadmap-new` refactor — cut overhead + add ID-renames helper
+_4 tasks . ~150 LOC . low risk . [skill prose + cli helper + new lib + tests]_
+_touches: skills/roadmap-new.md, src/audit/cli.ts, src/audit/types.ts, src/audit/lib/renames-diff.ts, tests/audit-cli-contract.test.ts, tests/audit-invariants.test.ts, tests/lib-renames-diff.test.ts_
+- **Cut `--scan-state` subcommand** -- delete `runScanState` + `computeGitInferredFreshness` + intent-parsing helpers from `src/audit/cli.ts`; drop `scanState`/`userPrompt` from `Argv` + `AuditEnv`; remove scan-state fixtures and tests. Drove zero decisions in dogfood; intent parsing belongs in the LLM. _src/audit/cli.ts, src/audit/types.ts, tests, fixtures, ~−250 lines._ (M)
+- **Cut Step 2 fast-path + top-of-run hint branches from skill prose** -- delete the fast-path predicate (~25 lines) and the top-of-run hint branches that printed pre-shipping context. Always regenerate; the no-op proposal handles the clean case naturally. _skills/roadmap-new.md, ~−40 lines._ (S)
+- **Rewrite Step 5 PROGRESS.md flow** -- replace direct row-write with detect-staleness → AskUserQuestion → optional scoped general-purpose subagent appends rows from CHANGELOG. Honors the documentation taxonomy (PROGRESS.md content owned by /document-release) without invoking the full skill. _skills/roadmap-new.md, ~+25 lines._ (S)
+- **Add ID-renames helper + apply-summary integration** -- new `src/audit/lib/renames-diff.ts` (parseEntities, computeRenames, formatRenamesTable) with `tests/lib-renames-diff.test.ts` (12 tests). Skill prose at apply-summary time runs the helper against pre/post ROADMAP.md and includes the table in the apply summary + commit message body. _src/audit/lib/renames-diff.ts, tests/lib-renames-diff.test.ts, skills/roadmap-new.md, ~+200 lines._ (S)
 
 ### Group 7: Tighten `git commit` Failure Handling
 
@@ -175,9 +183,10 @@ Adjacency list:
 
 Track detail per group:
 ```
-Group 6:  Audit Polish + Track 5A Test Follow-ups
+Group 6:  Audit Polish + Track 5A Test Follow-ups + /roadmap-new refactor
   +-- Track 6A ........... ~M . 3 tasks (audit polish)
   +-- Track 6B ........... ~S . 2 tasks (5A test follow-ups)
+  +-- Track 6C ........... ~M . 4 tasks (/roadmap-new refactor)
 
 Group 7:  Tighten git commit failure handling
   +-- Track 7A ........... ~S . 1 task
@@ -210,7 +219,7 @@ Group 15: SKILL.md.tmpl promotion
   +-- Track 15A .......... ~M . 1 task
 ```
 
-**Total: 0 phases . 10 groups . 14 tracks remaining.**
+**Total: 0 phases . 10 groups . 15 tracks remaining.**
 
 ---
 

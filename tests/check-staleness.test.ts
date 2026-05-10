@@ -40,7 +40,7 @@ function makeCtx(roadmap: string, current: string, git: GitGateway): AuditCtx {
   return {
     repoRoot: '/tmp/x',
     extendDir: '/tmp/x',
-    env: { stateDir: '/tmp/x', scanState: false },
+    env: { stateDir: '/tmp/x' },
     git,
     paths: { todos: null, roadmap: 'ROADMAP.md', progress: null },
     files: {

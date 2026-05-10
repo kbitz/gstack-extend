@@ -12,7 +12,6 @@
  *   - bogus flags pass through silently (no validation)
  *   - missing/invalid repo path → "No ROADMAP.md found" skip path
  *   - malformed ROADMAP.md → graceful per-section STATUS (fail/warn)
- *   - --scan-state emits JSON for any repo, including empty
  *
  * Why lock these: a future refactor may legitimately change exit code
  * semantics (e.g., exit 1 on missing ROADMAP). That's a contract change
@@ -88,11 +87,6 @@ describe('audit CLI contract: exit code is always 0', () => {
     expect(run(['--bogus-flag-not-real', repo]).exitCode).toBe(0);
   });
 
-  test('--scan-state on empty repo', () => {
-    const repo = makeEmptyRepo(baseTmp);
-    expect(run(['--scan-state', repo]).exitCode).toBe(0);
-  });
-
   test('malformed ROADMAP.md', () => {
     const repo = makeEmptyRepo(baseTmp);
     seedRoadmap(repo, 'completely\nbroken\nnot a roadmap\n');
@@ -128,16 +122,6 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     const repo = makeEmptyRepo(baseTmp);
     const r = run([repo]);
     expect(r.stdout).toContain('No ROADMAP.md found');
-  });
-
-  test('--scan-state always emits valid JSON', () => {
-    const repo = makeEmptyRepo(baseTmp);
-    const r = run(['--scan-state', repo]);
-    // Should parse without error.
-    const parsed = JSON.parse(r.stdout);
-    expect(typeof parsed).toBe('object');
-    expect(parsed).toHaveProperty('signals');
-    expect(parsed).toHaveProperty('intents');
   });
 
   test('malformed ROADMAP produces at least one fail/warn STATUS', () => {

@@ -56,7 +56,6 @@ import { runCheckVersion } from './checks/version.ts';
 import { runCheckVocabLint } from './checks/vocab-lint.ts';
 import { createGitGateway } from './lib/git.ts';
 import { resolveStateDir } from './lib/effort.ts';
-import { computeInFlight } from './lib/in-flight.ts';
 import { walkMdFiles } from './lib/md-walk.ts';
 import { parallelismCap as resolveParallelismCap } from './lib/parallelism-cap.ts';
 import { versionGt } from './lib/semver.ts';
@@ -79,23 +78,12 @@ import {
 
 export type Argv = {
   repoRoot: string | null; // null → resolve via gateway / pwd
-  scanState: boolean;
-  prompt: string | null;
 };
 
 export function parseArgs(argv: string[]): Argv {
-  const out: Argv = { repoRoot: null, scanState: false, prompt: null };
+  const out: Argv = { repoRoot: null };
   const rest: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === '--scan-state') {
-      out.scanState = true;
-      continue;
-    }
-    if (a === '--prompt') {
-      out.prompt = argv[++i] ?? '';
-      continue;
-    }
+  for (const a of argv) {
     rest.push(a);
   }
   if (rest.length > 0) out.repoRoot = rest[0]!;
@@ -312,8 +300,6 @@ export function buildAuditCtx(args: {
     extendDir,
     env: {
       stateDir: resolveStateDir(),
-      scanState: argv.scanState,
-      userPrompt: argv.prompt ?? undefined,
     },
     git,
     paths: { todos: todosPath, roadmap: roadmapPath, progress: progressPath },
@@ -411,221 +397,6 @@ export function runAudit(ctx: AuditCtx): string {
   return out.join('\n');
 }
 
-// ─── --scan-state ─────────────────────────────────────────────────────
-//
-// Emits the JSON envelope documented at bash L3825-3837. The bash version
-// runs the audit silently and greps fields out of the output; here we
-// reach into the structured CheckResults instead, which is faster and
-// less brittle.
-//
-// Intent detection mirrors bash word-pattern matching with negation
-// guards (a 5-word window before each match looks for negators like
-// "don't" / "not" / "never"). Hand-rolled to avoid the awk loop the
-// bash version uses.
-
-const CLOSURE_WORDS = /\b(close out|close-out|finish|wrap up|fully done|fully close)\b/i;
-const SPLIT_WORDS = /\b(split|break up|break apart|too big|decompose)\b/i;
-const TRACK_REF_RE = /Track ([0-9]+)([a-zA-Z])(\.[0-9]+)?/i;
-const NEGATORS = new Set([
-  "don't",
-  'do',
-  'not',
-  'never',
-  'unless',
-  'instead',
-]);
-
-function intentFires(prompt: string, pattern: RegExp): boolean {
-  if (prompt === '') return false;
-  const lower = prompt.toLowerCase();
-  let firstMatch: RegExpMatchArray | null = null;
-  const re = new RegExp(pattern.source, pattern.flags.replace('i', '') + 'gi');
-  while (true) {
-    const m = re.exec(lower);
-    if (m === null) break;
-    firstMatch = m;
-    // Look at the 5 tokens preceding this match.
-    const before = lower.slice(0, m.index).trim();
-    const tokens = before.split(/[ \t\n\v\f\r]+/);
-    const window = tokens.slice(-5);
-    let neg = false;
-    for (const tok of window) {
-      const stripped = tok.replace(/[^a-z']+$/g, '');
-      if (NEGATORS.has(stripped)) {
-        neg = true;
-        break;
-      }
-    }
-    if (!neg) return true;
-  }
-  return firstMatch !== null && false;
-}
-
-function normalizeTrackRef(prompt: string): string {
-  const m = TRACK_REF_RE.exec(prompt);
-  if (m === null) return '';
-  const num = m[1]!;
-  const letter = m[2]!.toUpperCase();
-  const suffix = m[3] ?? '';
-  return `${num}${letter}${suffix}`;
-}
-
-export function runScanState(ctx: AuditCtx, prompt: string | null): string {
-  const promptStr = prompt ?? '';
-  const closure = intentFires(promptStr, CLOSURE_WORDS) ? 1 : 0;
-  const split = intentFires(promptStr, SPLIT_WORDS) ? 1 : 0;
-  const trackRef = normalizeTrackRef(promptStr);
-
-  if (ctx.paths.roadmap === null) {
-    return [
-      '{',
-      '  "exclusive_state": "GREENFIELD",',
-      `  "intents": {"closure": ${closure}, "split": ${split}, "track_ref": "${trackRef}"},`,
-      '  "signals": null',
-      '}',
-    ].join('\n');
-  }
-
-  // Compute signals via the same checks the bash version would scan.
-  const stalenessFail = runCheckStaleness(ctx).status === 'fail' ? 1 : 0;
-  const unprocessedRes = runCheckUnprocessed(ctx);
-  const itemsLine = unprocessedRes.preamble?.find((l) => l.startsWith('ITEMS: ')) ?? 'ITEMS: 0';
-  const unprocessedCount = Number.parseInt(itemsLine.replace(/^ITEMS:[ \t]*/, ''), 10) || 0;
-
-  const { inFlight } = computeInFlight(ctx.roadmap.value);
-  const inFlightGroups = inFlight.join(' ');
-
-  // origin_total — extract from ORIGIN_STATS body.
-  const originRes = runCheckOriginStats(ctx);
-  const totalLine = originRes.body.find((l) => l.startsWith('TOTAL_OPEN_ORIGIN: ')) ?? '';
-  const originTotal = Number.parseInt(totalLine.replace(/^TOTAL_OPEN_ORIGIN:[ \t]*/, ''), 10) || 0;
-
-  // has_zero_open_group — any in-flight Group with zero open Tracks
-  // (PER_GROUP entry of `${g}=0`).
-  const budget = runCheckParallelismBudget(ctx);
-  const perGroupLine = budget.preamble?.find((l) => l.startsWith('PER_GROUP: ')) ?? '';
-  let hasZeroOpenGroup = 0;
-  for (const entry of perGroupLine.replace(/^PER_GROUP:[ \t]*/, '').split(' ')) {
-    if (entry === '') continue;
-    const eq = entry.indexOf('=');
-    if (eq < 0) continue;
-    if (entry.slice(eq + 1) === '0') {
-      hasZeroOpenGroup = 1;
-      break;
-    }
-  }
-
-  // git_inferred_freshness — scan ROADMAP.md for active task bullets and
-  // probe git for "this file changed since the task was introduced".
-  // 2-commit floor OR 1-commit with Track-ID in commit subject (relaxed
-  // to catch single-bundled-PR Tracks).
-  const gitFreshness = computeGitInferredFreshness(ctx);
-
-  return [
-    '{',
-    '  "exclusive_state": null,',
-    `  "intents": {"closure": ${closure}, "split": ${split}, "track_ref": "${trackRef}"},`,
-    '  "signals": {',
-    `    "unprocessed_count": ${unprocessedCount},`,
-    `    "in_flight_groups": "${inFlightGroups}",`,
-    `    "origin_total": ${originTotal},`,
-    `    "staleness_fail": ${stalenessFail},`,
-    `    "git_inferred_freshness": ${gitFreshness},`,
-    `    "has_zero_open_group": ${hasZeroOpenGroup}`,
-    '  }',
-    '}',
-  ].join('\n');
-}
-
-// ─── git_inferred_freshness ───────────────────────────────────────────
-//
-// Scans ROADMAP.md for active task bullets (everything before
-// `## Future` / `## Unprocessed` / `## Execution Map`). For each task,
-// extracts a 4-word title phrase, finds the task's introduction date via
-// `git log -S`, and counts subsequent commits to any referenced file.
-// Two-commit threshold (conservative) OR one-commit with Track-ID in the
-// subject (relaxed to catch single-bundled-PR Tracks).
-//
-// Cost: O(active_tasks × files_per_task) git calls. Bounded — bash audit
-// is OK with this; touchfile cache (Group 4A) will further amortize.
-
-function computeGitInferredFreshness(ctx: AuditCtx): number {
-  if (ctx.paths.roadmap === null) return 0;
-  if (ctx.git.toplevel() === null) return 0;
-
-  const lines = ctx.files.roadmap.split('\n');
-  let inActive = true;
-  let curTrack = '';
-  let count = 0;
-
-  for (const line of lines) {
-    if (/^## (Future|Unprocessed|Execution Map)/i.test(line)) {
-      inActive = false;
-      continue;
-    }
-    if (/^#{2,4} Group/.test(line)) {
-      inActive = true;
-      continue;
-    }
-    if (!inActive) continue;
-
-    const tm = line.match(/^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/);
-    if (tm !== null) {
-      curTrack = tm[1]!;
-      continue;
-    }
-
-    if (!/^- \*\*/.test(line)) continue;
-
-    // Title without bold/Pre-flight numbering, then 4-word phrase.
-    const title = line.replace(/^- \*\*/, '').replace(/\*\*.*/, '').replace(/^\[[0-9]+\][ \t\v\f\r]*/, '');
-    const words = title.split(/[ \t]+/).filter((w) => w !== '');
-    if (words.length === 0) continue;
-    const phrase = words.slice(0, 4).join(' ');
-
-    // Files: italic _[a, b, c]_ + backtick-quoted paths (with `/` or `.`).
-    const files = new Set<string>();
-    const itMatch = line.match(/_\[([^\]]+)\]/);
-    if (itMatch !== null) {
-      for (const f of itMatch[1]!.split(',')) {
-        const trimmed = f.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/g, '');
-        if (trimmed !== '') files.add(trimmed);
-      }
-    }
-    const btRe = /`([^`]+)`/g;
-    let bt: RegExpExecArray | null;
-    while ((bt = btRe.exec(line)) !== null) {
-      const v = bt[1]!;
-      if (v.includes('/') || v.includes('.')) files.add(v);
-    }
-    if (files.size === 0) continue;
-
-    const intro = ctx.git.logFirstWithPhrase(phrase, ctx.paths.roadmap);
-    if (intro === null || intro.date === '') continue;
-
-    let fired = false;
-    for (const f of files) {
-      const subjects = ctx.git.logSubjectsSince(intro.date, f);
-      if (subjects.length >= 2) {
-        count++;
-        fired = true;
-        break;
-      }
-      if (subjects.length >= 1 && curTrack !== '') {
-        const trackEsc = curTrack.replace(/\./g, '\\.');
-        const re = new RegExp(`track ${trackEsc}([^a-z0-9]|$)`, 'i');
-        if (subjects.some((s) => re.test(s))) {
-          count++;
-          fired = true;
-          break;
-        }
-      }
-    }
-    if (fired) continue;
-  }
-  return count;
-}
-
 // ─── main ─────────────────────────────────────────────────────────────
 
 export function main(argv: string[]): { stdout: string; exitCode: number } {
@@ -639,9 +410,6 @@ export function main(argv: string[]): { stdout: string; exitCode: number } {
   const extendDir = process.env.GSTACK_EXTEND_DIR ?? join(import.meta.dir, '..', '..');
   const ctx = buildAuditCtx({ repoRoot, extendDir, argv: args });
 
-  if (args.scanState) {
-    return { stdout: runScanState(ctx, args.prompt) + '\n', exitCode: 0 };
-  }
   return { stdout: runAudit(ctx), exitCode: 0 };
 }
 

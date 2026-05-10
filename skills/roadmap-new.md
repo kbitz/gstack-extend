@@ -131,27 +131,9 @@ doesn't load.
 
 ```bash
 "$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
-"$_EXTEND_ROOT/bin/roadmap-audit" --scan-state --prompt "$USER_PROMPT" > /tmp/roadmap-state.json
 ```
 
-State signals JSON schema:
-
-```json
-{
-  "exclusive_state": null | "GREENFIELD",
-  "intents": {"closure": 0|1, "split": 0|1, "track_ref": "<id-or-empty>"},
-  "signals": {
-    "unprocessed_count": N,
-    "in_flight_groups": "1 2",
-    "origin_total": N,
-    "staleness_fail": 0|1,
-    "git_inferred_freshness": N,
-    "has_zero_open_group": 0|1
-  }
-}
-```
-
-Read in addition: `TODOS.md ## Unprocessed` (with source-tag pre-classification per below), the full `ROADMAP.md`, and recent git log scoped to ROADMAP-referenced files.
+Read in addition: the full `ROADMAP.md`, the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
 **LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
@@ -173,40 +155,9 @@ for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
 
 `route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before regeneration sees them.
 
-**Detected-intent prints** (visible to user, no decisions): if the JSON's intents show non-zero, print one line each so the user can correct on the next prompt:
-- `intents.closure == 1` → "Detected closure intent in your prompt."
-- `intents.split == 1` → "Detected split intent in your prompt."
-- `intents.track_ref != ""` → "Detected reference to Track {ID}."
-- prompt contains a minimal cue ("just triage", "small pass", "quick cleanup", "no rework", "don't restructure", or similar) → "Detected minimal-cue — will surface only correctness signals (closure debt, freshness, hotfix candidates); structural regeneration deferred to your next /roadmap call."
-
-If the user replies "ignore that" before the next prompt, drop the bias.
-
-**Phase-context hint.** If the audit's `## PHASES` section emits a row with `state=in_flight`, print one line at the top of the run so the user carries Phase context into PR descriptions and review:
-
-> `Phase {N} ({title}) in flight: current_group={M}, all_groups=[...]. Mid-Phase ships default to PATCH; when the last Group lands, /ship will recommend MINOR.`
-
-If `state=complete` for a Phase whose Groups are all shipped, print instead:
-
-> `Phase {N} ({title}) is closing — all groups shipped. Next /ship is phase-closing; recommend MINOR when /ship Step 12 prompts.`
-
-## Step 2: Fast-path
-
-Skip regeneration entirely when ALL of these hold:
-
-- Audit returned `STATUS: pass` for every blocker check (SIZE, COLLISIONS, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET).
-- `## Unprocessed` is empty.
-- `signals.has_zero_open_group == 0` AND no in-flight Group has inbox items source-tagged to its footprint (closure-debt scan via `[source:group=N]` matches).
-- `signals.staleness_fail == 0` AND `signals.git_inferred_freshness == 0` (the codex guard — no in-flight Track has files with shipped activity since intro).
-- User prompt has no `intents.split`, `intents.closure`, or structural keyword cue (e.g., "review the plan", "regenerate", "reorganize").
-- ROADMAP.md is already in v2 grammar (audit's `STATE_SECTIONS: pass`, no `MIGRATION_NEEDED`).
-
-If all conditions hold, print: **`Plan looks current. No changes.`** Exit before Step 3. No commit.
-
-If any condition fails, run regeneration.
-
 **Migration shortcut.** When the audit reports `STATE_SECTIONS: warn` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — the upcoming plan must be re-emitted in v2 grammar. The Shipped region is preserved (existing `✓ Complete` Groups become `## Shipped` entries with frozen IDs); everything else is regenerated from inputs.
 
-## Step 3: Regenerate
+## Step 2: Regenerate
 
 This is the LLM-owned step. Hold the full picture in mind and **emit a complete `## In Progress` + `## Current Plan` + `## Future` block from scratch**. Don't surgically edit existing entries; the whole upcoming plan is volatile.
 
@@ -326,7 +277,7 @@ The v1 placement-batch and deferral-batch clusters no longer exist. There's noth
 
 **Cluster 3 — Ambiguity** (genuine uncertainty between two equally plausible structural shapes): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
 
-## Step 4: Apply
+## Step 3: Apply
 
 Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
@@ -358,17 +309,60 @@ Before commit, assert that every item the proposal placed/killed/deferred is gon
 
 Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <D> drained from inbox."`.
 
-## Step 5: Update PROGRESS.md
+**ID renames table.** When regeneration renumbered any Groups/Tracks, run
+the renames helper against the pre-edit ROADMAP.md (captured before Step 3
+overwrites it) and the post-edit content; include the resulting table in
+the apply summary AND the commit message body so users re-anchoring on
+old IDs can find their work:
 
-Check if a version was bumped since the last PROGRESS.md entry.
+```bash
+bun -e "import { computeRenames, formatRenamesTable } from '$_EXTEND_ROOT/src/audit/lib/renames-diff.ts';
+import { readFileSync } from 'node:fs';
+const oldRoadmap = process.env.ROADMAP_BEFORE ?? '';
+const newRoadmap = readFileSync('docs/ROADMAP.md', 'utf8');
+console.log(formatRenamesTable(computeRenames(oldRoadmap, newRoadmap)));"
+```
 
-If PROGRESS.md exists:
-- If a new version shipped that isn't in PROGRESS.md, append a row to the version table.
-- Verify the phase status table is current.
+The helper matches by exact normalized title (whitespace-collapsed,
+lowercased, with `Hotfix:` prefix and `✓ Shipped` suffix stripped). Pure
+additions and deletions are dropped; only same-title-different-ID pairs
+are surfaced. Output is empty when nothing renamed — skip the table in
+that case.
 
-If PROGRESS.md doesn't exist: create with a single row for the current VERSION (or v0.1.0 if no VERSION file).
+## Step 4: PROGRESS.md staleness check
 
-## Step 6: Version Recommendation
+`/roadmap-new` does not write PROGRESS.md prose itself — version-row content
+is owned by `/document-release`. This step only detects staleness and
+optionally delegates the row append to a scoped subagent.
+
+Compute staleness: parse the latest version from `VERSION` (or `pyproject.toml`)
+and the latest version row in `docs/PROGRESS.md`. If they differ — i.e. one
+or more shipped versions are missing from PROGRESS.md — surface it:
+
+```
+AskUserQuestion: "PROGRESS.md is N versions behind (missing X.Y.Z, …). Append rows now via subagent?"
+Options: ["Yes, append rows", "Skip — I'll run /document-release later", "Skip — not relevant"]
+```
+
+If the user picks "Yes", launch a **scoped general-purpose subagent** with this
+prompt (do NOT invoke the `/document-release` skill — its scope is broader
+than just PROGRESS.md and would clash with the inbox drain we just did):
+
+> "Append rows to docs/PROGRESS.md for versions A, B, C, drawing prose from
+> the matching `## [A.B.C]` sections in CHANGELOG.md. Match the existing
+> PROGRESS.md row format exactly. Be conservative — quote CHANGELOG verbatim
+> when unsure. Stage docs/PROGRESS.md but do not commit. Report what you
+> appended in <100 words."
+
+When the subagent returns, include the staged PROGRESS.md update in the
+Step 6 commit (or an immediately-following sibling commit) so the user
+sees one cohesive change.
+
+If PROGRESS.md doesn't exist at all: create with a single row for the current
+VERSION (or v0.1.0 if no VERSION file). This is a structural bootstrap, not
+content authoring — safe for /roadmap-new to do directly.
+
+## Step 5: Version Recommendation
 
 Based on changes since the last tag (or VERSION baseline if no tags):
 
@@ -379,11 +373,11 @@ Based on changes since the last tag (or VERSION baseline if no tags):
 | Breaking changes, public launch | MAJOR |
 | Doc-only, config, CI | None |
 
-**Phase-aware default.** If the audit's `## PHASES` section reports `state=complete` for a Phase whose final Group is shipped, default the recommendation to MINOR. If `state=in_flight`, default to PATCH. Either default is overridable.
+If the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. The recommendation stands until /ship Step 12 confirms.
 
 /roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user: "I recommend bumping to vX.Y.Z. Run `/ship` to execute the bump." If no bump needed, say so.
 
-## Step 7: Commit
+## Step 6: Commit
 
 Stage only documentation files: ROADMAP.md, TODOS.md (drained inbox), PROGRESS.md (if modified).
 

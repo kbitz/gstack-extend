@@ -72,8 +72,6 @@ export type VersionInfo = {
 
 export type AuditEnv = {
   stateDir: string;
-  scanState: boolean;
-  userPrompt?: string;
 };
 
 // File paths resolved by find_doc (root first, then docs/). null when neither exists.

@@ -27,7 +27,7 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
   return {
     repoRoot: '/tmp/x',
     extendDir: '/tmp/x',
-    env: { stateDir: '/tmp/x', scanState: false },
+    env: { stateDir: '/tmp/x' },
     git: {
       toplevel: () => null,
       tags: () => [],

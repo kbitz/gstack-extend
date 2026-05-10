@@ -43,13 +43,8 @@ const STATUS_SET = new Set<string>(CANONICAL_STATUSES);
 const parseSections = parseAuditSections;
 
 function listFixtures(): string[] {
-  // --scan-state fixtures emit a JSON object, not section blocks — skip
-  // them in the invariants walk (they live under the same fixtures dir
-  // because they share file structure for setup, but the output shape
-  // is different).
   return readdirSync(FIXTURES_DIR)
     .filter((n) => statSync(join(FIXTURES_DIR, n)).isDirectory())
-    .filter((n) => !n.startsWith('scan-state'))
     .sort();
 }
 
