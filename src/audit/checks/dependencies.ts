@@ -31,9 +31,9 @@ export function runCheckDependencies(ctx: AuditCtx): CheckResult {
   const lines = ctx.files.roadmap.split('\n');
   const tracks: string[] = [];
   for (const line of lines) {
-    if (!/^### Track/.test(line)) continue;
-    // Strip "### " prefix and everything from ":" onward.
-    const name = line.replace(/^### /, '').replace(/:.*$/, '');
+    if (!/^#{3,5} Track/.test(line)) continue;
+    // Strip leading H#'s and everything from ":" onward.
+    const name = line.replace(/^#{3,5} /, '').replace(/:.*$/, '');
     tracks.push(name);
   }
 

@@ -126,13 +126,15 @@ const BLOCK_ROADMAP_FAST_PATH = 'Plan looks current. No changes.';
 // `<PROPOSAL_DIR>/proposal-{ts}.md` is the canonical reference string.
 const BLOCK_ROADMAP_PROPOSAL_PATH = '<PROPOSAL_DIR>/proposal-{ts}.md';
 const BLOCK_ROADMAP_PROPOSAL_HELPER_CALL = 'session_dir roadmap-proposals';
-const BLOCK_ROADMAP_CLUSTER_STRUCTURAL = 'Hold scope — fold into existing structure instead';
+// v2 (state-section model): placement-cluster machinery (v1 Clusters 1-4)
+// is gone. The only remaining cluster is "Approve regenerated plan?" — its
+// Hold option keeps the existing plan untouched, no verbatim string to
+// pin since the prose is intentionally regenerable.
 
 const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_ROADMAP_FAST_PATH, label: 'fast-path-output' },
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
   { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
-  { block: BLOCK_ROADMAP_CLUSTER_STRUCTURAL, label: 'cluster-structural-hold-scope' },
 ];
 
 // ─── Tests ───────────────────────────────────────────────────────────

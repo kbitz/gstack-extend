@@ -26,7 +26,7 @@ export function detectMode(ctx: AuditCtx): ModeResult {
   let groupCount = 0;
   let hasFuture = false;
   for (const line of ctx.files.roadmap.split('\n')) {
-    if (/^## Group/.test(line)) groupCount++;
+    if (/^#{2,4} Group/.test(line)) groupCount++;
     if (/^## Future($| \()/i.test(line)) hasFuture = true;
   }
 

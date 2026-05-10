@@ -49,22 +49,25 @@ export function runCheckVocabLint(ctx: AuditCtx): CheckResult {
     }
   }
 
-  // Pass 2: "phase" with state-machine whitelist.
+  // Pass 2: "phase" with state-machine whitelist. Recognizes Phase headings
+  // at H2 (v1) or H3 (v2 inside state H2 sections), Group headings at any
+  // depth, and the v2 state-section H2s.
   type State = 'TOPLEVEL' | 'GROUP' | 'FUTURE' | 'PHASE';
   let state: State = 'TOPLEVEL';
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
 
-    // State transitions on ## headings.
-    if (/^## /.test(line)) {
-      if (/^## Phase [0-9]+:/.test(line)) {
+    if (/^## /.test(line) || /^### /.test(line) || /^#### /.test(line)) {
+      if (/^#{2,3} Phase [0-9]+:/.test(line)) {
         state = 'PHASE';
-      } else if (/^## Group/i.test(line)) {
+      } else if (/^#{2,4} Group/i.test(line)) {
         state = 'GROUP';
       } else if (/^## Future($| \()/i.test(line)) {
         state = 'FUTURE';
-      } else {
+      } else if (/^## (Shipped|In Progress|Current Plan)\b/.test(line)) {
+        state = 'TOPLEVEL';
+      } else if (/^## /.test(line)) {
         state = 'TOPLEVEL';
       }
     }

@@ -2,6 +2,92 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.16.0] - 2026-05-10
+
+### Added: `/roadmap-new` skill (v2 preview, ships alongside `/roadmap`)
+
+A new roadmap skill built around lifecycle-state sections and whole-plan
+regeneration. Ships as `/roadmap-new` so the v1 `/roadmap` keeps working
+unchanged — preview the new model on real projects, then migrate when ready.
+
+The v2 model addresses four recurring pain points in v1:
+
+- **Defer-by-default → one-by-one fallback.** v1 mass-recommended deferral when
+  inbox items didn't fit existing Groups, then asked placement per item when
+  the user pushed back. v2 regenerates the upcoming plan as one document — no
+  per-item placement loop, no deferral batch. The whole plan is volatile each
+  run.
+- **Hotfix subsection misuse.** v1 routed any inbox item source-tagged to a
+  shipped Group into that Group's `**Hotfix**` subsection, regardless of
+  whether it was a real regression. v2 makes Hotfix a Group title prefix
+  (`Hotfix:`) with single-Track invariants and a queue-jumping rule —
+  deferred scope is just normal Current Plan work.
+- **Sizing failure.** v1 Tracks routinely declared "Ship as N PRs" inline,
+  evading the 300-LOC cap until CEO review caught it. v2 audit bans the PR-
+  split language outright and treats the cap as a hard rule: 1 Track = 1 PR,
+  always.
+- **Illusory parallelization.** v1 audit's collision check skipped Track pairs
+  joined by `_Depends on:_`, so a Group with 5 chained Tracks could parade as
+  parallel-safe. v2 forbids intra-Group `_Depends on:_` between Tracks — if
+  work needs serialization on shared files, it's either one Track or in
+  different Groups.
+
+### Added: state-section grammar
+
+ROADMAP.md is organized at the top level by lifecycle state:
+
+```
+## Shipped         — completed work, IDs frozen forever
+## In Progress     — Phase/Group mid-flight (some shipped Tracks, some not)
+## Current Plan    — definitely doing this
+## Future          — flat bullets only, not committed to
+```
+
+Tracks have no separate "in progress" state (they're 1 PR each; the branch-
+open → PR-merge window is short). Groups/Phases are in-progress when at least
+one Track has shipped and at least one hasn't.
+
+### Added: regenerate-the-plan reassessment
+
+Each `/roadmap-new` run treats the upcoming plan (`## In Progress` +
+`## Current Plan` + `## Future`) as volatile and emits a complete new block
+from inputs (TODOS.md inbox, git activity, leftover non-shipped work).
+Shipped IDs are frozen; everything else can be renumbered. The proposal
+artifact is the entire upcoming plan, reviewed as one document.
+
+### Added: deferral protocol for `/plan-ceo-review` and `/plan-eng-review`
+
+When in-scope work is cut from a Track during plan review, the deferred items
+land in `TODOS.md ## Unprocessed` with `[plan-ceo-review:track=<id>,
+defer=true]` or `[plan-eng-review:track=<id>,defer=true]` source tags. The
+next `/roadmap-new` run picks them up and decides placement holistically.
+Source-tag routing matrix updated so `defer=true` items KEEP automatically
+and review findings without `defer=true` PROMPT.
+
+### Added: `state-sections` and `future` audit checks
+
+- `STATE_SECTIONS` validates the four state sections appear in the right order
+  and at most once each. Emits `MIGRATION_NEEDED: warn` on v1-grammar input
+  (advisory, non-blocking).
+- `FUTURE` enforces that `## Future` contains only flat bullets in v2
+  grammar — no Phase/Group/Track structure, no `_touches:_`, no sizing.
+- v2-only enforcement (intra-Group `_Depends on:_` ban, "N PRs" language ban,
+  Hotfix invariants) is gated on detected v2 grammar so v1 roadmaps stay
+  byte-stable under `/roadmap`.
+
+### Added: `docs/designs/roadmap-v2-state-model.md` and migration plan
+
+Full grammar specification, primitive rules, ID stability, deferral protocol,
+and out-of-scope future work. `roadmap-v2-migration-plan.md` is a 12-step
+recipe for promoting `/roadmap-new` to `/roadmap` and retiring v1 once the
+preview is proven.
+
+### Removed: `parallelizable-future` audit check
+
+Replaced by the simpler `FUTURE` check. v1 used to surface Future tracks
+eligible for promotion to current Groups; v2 treats Future as flat bullets
+only, so the lookup primitive doesn't apply.
+
 ## [0.18.15.0] - 2026-05-07
 
 ### Persist session state outside the Conductor workspace

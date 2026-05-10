@@ -8,6 +8,14 @@ STATUS: pass
 FINDINGS:
 - (none)
 
+## STATE_SECTIONS
+STATUS: warn
+FINDINGS:
+- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## Shipped / ## In Progress / ## Current Plan / ## Future). See docs/designs/roadmap-v2-state-model.md.
+
+GRAMMAR: v1
+SECTIONS_PRESENT: 
+
 ## PHASES
 STATUS: skip
 PHASES:
@@ -97,7 +105,7 @@ BY_GROUP:
 ## SIZE
 STATUS: fail
 FINDINGS:
-- 1A: loc=1000 exceeds max_loc_per_track=300
+- 1A: loc=1000 exceeds max_loc_per_track=300 — split into multiple Tracks
 
 MAX_TASKS_PER_TRACK: 5
 MAX_LOC_PER_TRACK: 300
@@ -119,13 +127,11 @@ STATUS: pass
 FINDINGS:
 - (none)
 
-## PARALLELIZABLE_FUTURE
-STATUS: pass
-CANDIDATES:
+## FUTURE
+STATUS: skip
 FINDINGS:
-- (none)
-IN_FLIGHT_COUNT: 2
-CAP: 4
+- v1 grammar (no ## Future section) — not validated
+FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT
 STATUS: pass

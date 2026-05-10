@@ -28,12 +28,15 @@ import type { AuditCtx, CheckResult } from '../types.ts';
 
 type Section = 'none' | 'skip' | 'group' | 'preflight' | 'track' | 'future';
 
-const GROUP_RE = /^## Group ([0-9]+):/;
+// Heading-depth-agnostic: v1 uses ## Group / ### Track, v2 uses
+// ### Group / #### Track inside state H2 sections.
+const GROUP_RE = /^#{2,4} Group ([0-9]+):/;
 const PREFLIGHT_RE = /^\*\*Pre-flight\*\*/i;
-const TRACK_RE = /^### Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
+const TRACK_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
 const FUTURE_RE = /^## Future/i;
 const UNPROCESSED_RE = /^## Unprocessed/i;
 const EXEC_MAP_RE = /^## Execution Map/i;
+const STATE_SECTION_RE = /^## (Shipped|In Progress|Current Plan)/;
 const TASK_BOLD_RE = /^- \*\*([^*]+)\*\*/;
 const TASK_EFFORT_RE = /\((S|M|L|XL)\)$/;
 const TASK_FILES_RE = /_\[([^\]]+)\]/;

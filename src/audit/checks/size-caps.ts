@@ -1,14 +1,14 @@
 /**
- * size-caps.ts — port of check_size_caps (~L2417-2525).
+ * size-caps.ts — per-track size cap enforcement.
  *
- * Enforces per-track size caps on modern (non-legacy) Tracks; legacy
- * Tracks with no `_touches:_` are skipped with a banner. ✓ Complete
- * Tracks are skipped silently (caps are advice for in-flight work).
+ * Enforces caps on active (non-shipped, non-legacy) Tracks. Legacy Tracks
+ * with no `_touches:_` are skipped with a banner. Shipped Tracks are
+ * skipped silently (caps are advice for in-flight/planned work).
  *
- * Caps come from lib/effort.ts ceilings. Findings report tasks/loc/files
- * exceedances per track, plus a split suggestion when a track is
- * oversized — clusters its tasks by primary file path and surfaces the
- * clusters when 2+ contain ≥2 tasks.
+ * Caps come from lib/effort.ts ceilings. The v2 rule is hard: if a Track
+ * exceeds the LOC cap, it isn't a Track — it's multiple Tracks. The skill's
+ * regenerate step is responsible for splitting; the audit just fails so
+ * oversized Tracks don't survive a /roadmap run.
  *
  * SIZE_LABEL_MISMATCH (informational): per-task `~N lines` vs effort tier
  * LOC mapping divergence >3x. Always emitted (independent of cap status)
@@ -23,47 +23,7 @@
  */
 
 import { ceiling } from '../lib/effort.ts';
-import type { TrackInfo } from '../parsers/roadmap.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
-
-const TRACK_RE = /^### Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
-const ANY_H2_RE = /^## /;
-
-function splitSuggestion(roadmapContent: string, targetTrack: string): string {
-  const lines = roadmapContent.split('\n');
-  let inTarget = false;
-  // path → count, insertion order preserved for stable output.
-  const clusters = new Map<string, number>();
-  for (const line of lines) {
-    const tm = line.match(TRACK_RE);
-    if (tm !== null) {
-      inTarget = tm[1] === targetTrack;
-      continue;
-    }
-    if (!inTarget) continue;
-    if (ANY_H2_RE.test(line)) {
-      inTarget = false;
-      continue;
-    }
-    if (!/^- \*\*/.test(line)) continue;
-    const btMatch = line.match(/`([^`]+)`/);
-    let path = btMatch !== null ? btMatch[1]! : '(misc)';
-    let key: string;
-    if (path.includes('/')) {
-      const parts = path.split('/');
-      key = `${parts[0]}/${parts[1] ?? ''}`.replace(/\/$/, '');
-    } else {
-      key = path;
-    }
-    clusters.set(key, (clusters.get(key) ?? 0) + 1);
-  }
-  const big: string[] = [];
-  for (const [key, count] of clusters) {
-    if (count >= 2) big.push(`${key} (${count})`);
-  }
-  if (big.length < 2) return '';
-  return `  Split suggestion for ${targetTrack}: tasks cluster by file path into ${big.length} groups [${big.join(', ')}]. Consider splitting along these lines.`;
-}
 
 export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
   const tracks = ctx.roadmap.value.tracks;
@@ -84,32 +44,23 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
   const legacyTracks: string[] = [];
 
   for (const t of tracks) {
-    if (t.isComplete) continue;
+    if (t.state === 'shipped') continue;
     if (t.legacy) {
       legacyTracks.push(t.id);
       continue;
     }
     modernCount++;
-    let oversized = false;
     if (t.tasksCount > maxTasks) {
       findings.push(`- ${t.id}: tasks=${t.tasksCount} exceeds max_tasks_per_track=${maxTasks}`);
-      oversized = true;
     }
     if (t.loc > maxLoc) {
-      findings.push(`- ${t.id}: loc=${t.loc} exceeds max_loc_per_track=${maxLoc}`);
-      oversized = true;
+      findings.push(`- ${t.id}: loc=${t.loc} exceeds max_loc_per_track=${maxLoc} — split into multiple Tracks`);
     }
     if (t.filesCount > maxFiles) {
       findings.push(`- ${t.id}: files=${t.filesCount} exceeds max_files_per_track=${maxFiles}`);
-      oversized = true;
-    }
-    if (oversized) {
-      const sug = splitSuggestion(ctx.files.roadmap, t.id);
-      if (sug !== '') findings.push(sug);
     }
   }
 
-  // Body assembly. Status precedence: skip-legacy-all > pass > fail.
   let status: 'pass' | 'fail' | 'skip-legacy-all';
   const body: string[] = [];
   if (findings.length === 0 && modernCount === 0) {
@@ -124,10 +75,9 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
     status = 'fail';
     body.push('FINDINGS:');
     body.push(...findings);
-    body.push(''); // bash echo -e of \n-terminated $findings artifact
+    body.push('');
   }
 
-  // SIZE_LABEL_MISMATCH (informational), independent of cap status.
   const mismatches = ctx.roadmap.value.sizeLabelMismatches;
   if (mismatches.length > 0) {
     body.push('SIZE_LABEL_MISMATCH:');

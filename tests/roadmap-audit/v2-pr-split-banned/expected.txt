@@ -1,0 +1,170 @@
+## VOCAB_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STRUCTURE
+STATUS: fail
+FINDINGS:
+- Track 1A: body contains PR-split language ("N PRs"/"PR1"/"PR2"/"two PRs"/etc.) — 1 Track = 1 PR; if work needs multiple PRs, split into multiple Tracks
+
+
+## STATE_SECTIONS
+STATUS: pass
+FINDINGS:
+- (none)
+GRAMMAR: v2
+SECTIONS_PRESENT: Shipped, Current Plan, Future
+
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
+## STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+CURRENT: 0.1.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- PROGRESS.md: missing
+
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No Depends on: lines found
+
+## GROUP_DEPS
+STATUS: pass
+FINDINGS:
+- All Group-level dependencies valid (1 groups)
+ADJACENCY:
+- Group 1 ← {}
+
+## TASK_LIST
+STATUS: info
+TASK: group=1|track=1A|title=Schema scaffold|effort=M|files=|complete=0
+TASK: group=1|track=1A|title=Reader wiring|effort=M|files=|complete=0
+TOTAL_TASKS: 2
+TOTAL_CURRENT: 2
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 1
+TRACK_COUNT: 1
+TASK_COUNT: 2
+GROUP_SIZES: 1=2
+TRACK_SIZES: 1A=2
+
+## IN_FLIGHT_GROUPS
+STATUS: info
+IN_FLIGHT: 1
+COMPLETE: 
+PRIMARY: 1
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TASKS_PER_TRACK: 5
+MAX_LOC_PER_TRACK: 300
+MAX_FILES_PER_TRACK: 8
+
+## COLLISIONS
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TRACKS_PER_GROUP: 8
+SHARED_INFRA_STATUS: missing
+
+## PARALLELISM_BUDGET
+IN_FLIGHT_TRACKS: 1
+CAP: 4
+PER_GROUP: 1=1
+STATUS: pass
+FINDINGS:
+- (none)
+
+## FUTURE
+STATUS: pass
+FINDINGS:
+- (none)
+FUTURE_BULLET_COUNT: 0
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- docs/ROADMAP.md: 2 TODO patterns (project doc)
+- docs/TODOS.md: 1 TODO patterns (project doc)
+
+TOTAL_FILES: 2
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: empty
+FINDINGS:
+- Unprocessed section exists but is empty
+
+## TODO_FORMAT
+HEADINGS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: pass
+FINDINGS:
+- (none)
+
+## MODE
+DETECTED: triage
+REASON: Valid Groups > Tracks structure found (1 groups)

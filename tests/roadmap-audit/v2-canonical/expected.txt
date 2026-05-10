@@ -1,0 +1,184 @@
+## VOCAB_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STRUCTURE
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STATE_SECTIONS
+STATUS: pass
+FINDINGS:
+- (none)
+GRAMMAR: v2
+SECTIONS_PRESENT: Shipped, In Progress, Current Plan, Future
+
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
+## STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+CURRENT: 0.5.0
+SOURCE: VERSION
+LATEST_TAG: (none)
+RECOMMEND: none
+STATUS: fail
+FINDINGS:
+- No git tags found — consider tagging releases (git tag vX.Y.Z)
+
+
+## TAXONOMY
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DEPENDENCIES
+STATUS: pass
+FINDINGS:
+- (none)
+
+## GROUP_DEPS
+STATUS: pass
+FINDINGS:
+- All Group-level dependencies valid (5 groups)
+ADJACENCY:
+- Group 1 ← {}
+- Group 2 ← {1}
+- Group 3 ← {2}
+- Group 4 ← {3}
+- Group 5 ← {4}
+
+## TASK_LIST
+STATUS: info
+TASK: group=3|track=3B|title=Preserve selection on sync|effort=S|files=|complete=0
+TASK: group=3|track=3B|title=Cross-account thread collision|effort=M|files=|complete=0
+TASK: group=4|track=4A|title=Outbox view|effort=M|files=|complete=0
+TASK: group=4|track=4A|title=Outbox view-model|effort=S|files=|complete=0
+TASK: group=4|track=4B|title=Make undo outbox-linked|effort=M|files=|complete=0
+TASK: group=5|track=5A|title=Post-send confirmation|effort=M|files=|complete=0
+TASK: group=future|track=none|title=Cross-device account sync|effort=?|files=|complete=0
+TASK: group=future|track=none|title=Investigate Graph rate-limit handling|effort=?|files=|complete=0
+TOTAL_TASKS: 8
+TOTAL_CURRENT: 6
+TOTAL_FUTURE: 2
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 3
+TRACK_COUNT: 5
+TASK_COUNT: 6
+GROUP_SIZES: 3=2,4=3,5=1
+TRACK_SIZES: 3A=0,3B=2,4A=2,4B=1,5A=1
+IMBALANCE_RATIO: 3.00
+
+## IN_FLIGHT_GROUPS
+STATUS: info
+IN_FLIGHT: 3
+COMPLETE: 1 2
+PRIMARY: 3
+
+## ORIGIN_STATS
+STATUS: info
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP: 
+
+## SIZE
+STATUS: pass
+FINDINGS:
+- (none)
+SIZE_LABEL_MISMATCH:
+- 3B "Cross-account thread collision": effort=(M) implies ~150 LOC, declared ~40 lines (>3x divergence)
+MAX_TASKS_PER_TRACK: 5
+MAX_LOC_PER_TRACK: 300
+MAX_FILES_PER_TRACK: 8
+
+## COLLISIONS
+STATUS: pass
+FINDINGS:
+- (none)
+MAX_TRACKS_PER_GROUP: 8
+SHARED_INFRA_STATUS: missing
+
+## PARALLELISM_BUDGET
+IN_FLIGHT_TRACKS: 1
+CAP: 4
+PER_GROUP: 3=1
+COMPLETE_TRACKS: 3A
+STATUS: pass
+FINDINGS:
+- (none)
+
+## FUTURE
+STATUS: pass
+FINDINGS:
+- (none)
+FUTURE_BULLET_COUNT: 2
+
+## STYLE_LINT
+STATUS: warn
+FINDINGS:
+Group 5: _Depends on: Group 4_ is redundant (preceding Group is the default) — drop the annotation
+
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- docs/PROGRESS.md: 0 TODO patterns (project doc)
+- docs/ROADMAP.md: 6 TODO patterns (project doc)
+- docs/TODOS.md: 1 TODO patterns (project doc)
+
+TOTAL_FILES: 3
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+ITEMS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: empty
+FINDINGS:
+- Unprocessed section exists but is empty
+
+## TODO_FORMAT
+HEADINGS: 0
+LEGACY_BULLETS: 0
+COMPACT_BULLETS: 0
+STATUS: pass
+FINDINGS:
+- (none)
+
+## MODE
+DETECTED: triage
+REASON: Valid Groups > Tracks structure found (5 groups)

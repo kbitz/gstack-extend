@@ -14,7 +14,7 @@
 
 # Registered source skills. Anything not on this list will be flagged as
 # UNKNOWN_SOURCE_TAG by the validator.
-_SOURCE_TAG_REGISTRY="pair-review full-review review review-apparatus test-plan investigate ship manual discovered"
+_SOURCE_TAG_REGISTRY="pair-review full-review review review-apparatus test-plan investigate ship manual discovered plan-ceo-review plan-eng-review"
 
 # parse_source_tag <raw-string>
 #
@@ -280,6 +280,19 @@ route_source_tag() {
     discovered)
       echo "action=PROMPT"
       echo "reason=extracted from a scattered doc — confirm before incorporating"
+      echo "source=$source"
+      ;;
+    plan-ceo-review|plan-eng-review)
+      # `defer=true` → KEEP (in-scope work cut by the review; /roadmap
+      # regen places it). Without it → PROMPT (review surfaced out-of-scope
+      # work; ask user).
+      if echo "$parsed" | grep -qE '^defer=true$'; then
+        echo "action=KEEP"
+        echo "reason=$source — work cut from Track during plan review; /roadmap regen will place"
+      else
+        echo "action=PROMPT"
+        echo "reason=$source — review-surfaced finding without defer=true flag; surface for explicit decision"
+      fi
       echo "source=$source"
       ;;
     *)
