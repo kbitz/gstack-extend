@@ -11,13 +11,7 @@ adjacency list in the Execution Map under Current Plan.
 
 ## In Progress
 
-_(none — no Group has both shipped and unshipped Tracks)_
-
----
-
-## Current Plan
-
-### Group 6: Audit Polish + Track 5A Test Follow-ups + /roadmap-new Refactor
+### Group 6: Audit Polish + Track 5A Test Follow-ups + /roadmap-new Refactor _(in progress)_
 
 ##### Track 6A: Audit polish + FRESHNESS coverage
 _3 tasks . ~300 LOC . low risk . [src/audit/checks/, tests/audit-checks/, skills/roadmap.md]_
@@ -26,11 +20,7 @@ _touches: src/audit/checks/, tests/audit-checks/, tests/audit-snapshots.test.ts,
 - **Rename STALENESS → VERSION_TAG_STALENESS + skill prose clarifier** -- mechanical rename in `src/audit/checks/staleness.ts` (+ `expected.txt` fixtures), plus a one-line clarifier in `skills/roadmap.md` Interpreting Audit Findings: "VERSION_TAG_STALENESS only fires on items with explicit (shipped vN.N.N) annotations; broader recency belongs to FRESHNESS." Closes the dogfood-noted misread that `STALENESS: pass` settles the freshness question. _src/audit/checks/, tests/, skills/roadmap.md, ~30 lines._ (S)
 - **Extend FRESHNESS scan to TODOS.md `## Unprocessed`** -- new `_inferred_freshness_for_todo` walks Unprocessed items, extracts referenced file paths from prose, runs the same per-file commit-since-introduction lookup as the ROADMAP scan (incl. Track-ID-or-title-fuzzy-match relaxation). Surfaces shipped-but-unclosed inbox items in the FRESHNESS AskUserQuestion flow. _src/audit/checks/freshness.ts, tests/, ~120 lines._ (M)
 
-##### Track 6B: Track 5A test follow-ups
-_2 tasks . ~50 LOC . low risk . [test files only]_
-_touches: tests/update.test.ts, tests/checks-doc-type.test.ts_
-- **`bin/update-run` upgrade-flow integration test** -- trigger `bin/update-run` and verify post-upgrade skills still resolve via path-1. Closes a Track 5A test-coverage gap surfaced during /ship of v0.18.14.0; low priority because (a) `bin/update-run` was unchanged in 5A scope, (b) post-upgrade resolution goes through path-1 which IS exercised, (c) update-run has its own non-Track-5A test coverage. _tests/update.test.ts, ~20 lines + git-fetch fixture._ (S)
-- **Doc-type math unit tests** -- boundary cases (empty file, exactly 4 content lines, exactly 5 content lines with 25% density vs 60% density) for the `_inferred_doc_type` math. End-to-end coverage already exists via `tests/roadmap-audit/doc-type-mismatch/`; this Track adds isolated unit tests for the boundary cases. _tests/checks-doc-type.test.ts, ~30 lines._ (S)
+##### Track 6B: Track 5A test follow-ups ✓ Shipped (v0.18.18.0)
 
 ##### Track 6C: `/roadmap-new` refactor — cut overhead + add ID-renames helper
 _3 tasks . ~250 LOC . low risk . [skill prose + new lib + tests]_
@@ -38,6 +28,10 @@ _touches: skills/roadmap-new.md, src/audit/lib/renames-diff.ts, tests/lib-rename
 - **Cut Step 2 fast-path + top-of-run hint branches + `--scan-state` invocation from `/roadmap-new` skill prose** -- delete the fast-path predicate (~25 lines), the top-of-run hint branches, and the `--scan-state` JSON read from Step 1. v1 `/roadmap` keeps using `--scan-state` (helper preserved in `src/audit/cli.ts`); v2 reads audit + TODOS + git directly. _skills/roadmap-new.md, ~−45 lines._ (S)
 - **Rewrite Step 5 PROGRESS.md flow** -- replace direct row-write with detect-staleness → AskUserQuestion → optional scoped general-purpose subagent appends rows from CHANGELOG. Honors the documentation taxonomy (PROGRESS.md content owned by /document-release) without invoking the full skill. _skills/roadmap-new.md, ~+25 lines._ (S)
 - **Add ID-renames helper + apply-summary integration** -- new `src/audit/lib/renames-diff.ts` (parseEntities, computeRenames, formatRenamesTable) with `tests/lib-renames-diff.test.ts` (15 tests). Skill prose at apply-summary time runs the helper against pre/post ROADMAP.md and includes the table in the apply summary + commit message body. _src/audit/lib/renames-diff.ts, tests/lib-renames-diff.test.ts, skills/roadmap-new.md, ~+200 lines._ (S)
+
+---
+
+## Current Plan
 
 ### Group 7: Tighten `git commit` Failure Handling
 
@@ -184,7 +178,7 @@ Track detail per group:
 ```
 Group 6:  Audit Polish + Track 5A Test Follow-ups + /roadmap-new refactor
   +-- Track 6A ........... ~M . 3 tasks (audit polish)
-  +-- Track 6B ........... ~S . 2 tasks (5A test follow-ups)
+  +-- Track 6B ........... ✓ Shipped (v0.18.18.0) — 2 tasks (5A test follow-ups)
   +-- Track 6C ........... ~M . 3 tasks (/roadmap-new refactor)
 
 Group 7:  Tighten git commit failure handling
@@ -218,7 +212,7 @@ Group 15: SKILL.md.tmpl promotion
   +-- Track 15A .......... ~M . 1 task
 ```
 
-**Total: 0 phases . 10 groups . 15 tracks remaining.**
+**Total: 0 phases . 10 groups . 14 tracks remaining.**
 
 ---
 

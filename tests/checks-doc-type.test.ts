@@ -293,6 +293,132 @@ describe('runCheckDocType: plantuml fence triggers design-mismatch', () => {
     const body = result.body.join('\n');
     expect(body).toContain('looks like a design doc (mermaid/plantuml fence)');
     expect(body).toContain("'docs/designs/sequence.md'");
+    // docs/designs/ doesn't exist in this fixture, so the suggestion must
+    // prefix `mkdir -p 'docs/designs' && ...` before the git mv. Pin the
+    // shape so the implicit branch can't regress to a bare git mv.
+    expect(body).toContain("mkdir -p 'docs/designs' && ");
+  });
+});
+
+// ─── Boundary cases: contentLines + density ─────────────────────────
+//
+// The heuristic has two numeric gates: contentLines >= MIN_CONTENT_LINES (5)
+// and density >= CHECKBOX_DENSITY_THRESHOLD (0.5). Tests pin both at their
+// decision points so an off-by-one (e.g., `>=` → `>`) or threshold change
+// trips a test instead of silently shifting behavior.
+//
+// 5-line denominators can only produce density values {0, 0.2, 0.4, 0.6,
+// 0.8, 1.0} — the 0.5 boundary requires an even denominator. Fixtures use
+// 10 content lines so 4/10, 5/10, 6/10 land at 0.4 / 0.5 / 0.6 exactly.
+
+const CONTENT_10_LINES_4_CHECKBOX = [
+  'First plain line of prose content.',
+  'Second plain line of prose content.',
+  'Third plain line of prose content.',
+  'Fourth plain line of prose content.',
+  'Fifth plain line of prose content.',
+  'Sixth plain line of prose content.',
+  '- [ ] first checkbox',
+  '- [ ] second checkbox',
+  '- [ ] third checkbox',
+  '- [ ] fourth checkbox',
+].join('\n');
+
+const CONTENT_10_LINES_5_CHECKBOX = [
+  'First plain line of prose content.',
+  'Second plain line of prose content.',
+  'Third plain line of prose content.',
+  'Fourth plain line of prose content.',
+  'Fifth plain line of prose content.',
+  '- [ ] first checkbox',
+  '- [ ] second checkbox',
+  '- [ ] third checkbox',
+  '- [ ] fourth checkbox',
+  '- [ ] fifth checkbox',
+].join('\n');
+
+const CONTENT_10_LINES_6_CHECKBOX = [
+  'First plain line of prose content.',
+  'Second plain line of prose content.',
+  'Third plain line of prose content.',
+  'Fourth plain line of prose content.',
+  '- [ ] first checkbox',
+  '- [ ] second checkbox',
+  '- [ ] third checkbox',
+  '- [ ] fourth checkbox',
+  '- [ ] fifth checkbox',
+  '- [ ] sixth checkbox',
+].join('\n');
+
+const CONTENT_4_LINES_ALL_CHECKBOX = [
+  '- [ ] one',
+  '- [ ] two',
+  '- [ ] three',
+  '- [ ] four',
+].join('\n');
+
+describe('runCheckDocType: content-line boundary (MIN_CONTENT_LINES = 5)', () => {
+  test('empty file (0 content lines) is skipped', () => {
+    const repoRoot = join(baseTmp, `boundary-empty-${Date.now()}`);
+    mkdirSync(repoRoot, { recursive: true });
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('docs/empty.md', '')],
+    });
+    const result = runCheckDocType(ctx);
+    expect(result.status).toBe('pass');
+  });
+
+  test('4 content lines all checkboxes is skipped (under MIN)', () => {
+    const repoRoot = join(baseTmp, `boundary-4lines-${Date.now()}`);
+    mkdirSync(repoRoot, { recursive: true });
+    // 100% density would normally fire — proves the MIN_CONTENT_LINES gate
+    // suppresses density-based findings before they're evaluated.
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('docs/short-inbox.md', CONTENT_4_LINES_ALL_CHECKBOX)],
+    });
+    const result = runCheckDocType(ctx);
+    expect(result.status).toBe('pass');
+  });
+});
+
+describe('runCheckDocType: density boundary (CHECKBOX_DENSITY_THRESHOLD = 0.5, >=)', () => {
+  test('density 0.4 (4/10, just below threshold) is NOT flagged', () => {
+    const repoRoot = join(baseTmp, `boundary-d04-${Date.now()}`);
+    mkdirSync(repoRoot, { recursive: true });
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('docs/below.md', CONTENT_10_LINES_4_CHECKBOX)],
+    });
+    const result = runCheckDocType(ctx);
+    expect(result.status).toBe('pass');
+  });
+
+  test('density 0.5 (5/10, EXACTLY at threshold) fires per `>=`', () => {
+    const repoRoot = join(baseTmp, `boundary-d05-${Date.now()}`);
+    mkdirSync(repoRoot, { recursive: true });
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('docs/exact.md', CONTENT_10_LINES_5_CHECKBOX)],
+    });
+    const result = runCheckDocType(ctx);
+    expect(result.status).toBe('warn');
+    const body = result.body.join('\n');
+    expect(body).toContain('looks like a TODO inbox');
+  });
+
+  test('density 0.6 (6/10, just above threshold) fires', () => {
+    const repoRoot = join(baseTmp, `boundary-d06-${Date.now()}`);
+    mkdirSync(repoRoot, { recursive: true });
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('docs/above.md', CONTENT_10_LINES_6_CHECKBOX)],
+    });
+    const result = runCheckDocType(ctx);
+    expect(result.status).toBe('warn');
+    const body = result.body.join('\n');
+    expect(body).toContain('looks like a TODO inbox');
   });
 });
 

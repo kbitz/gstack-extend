@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.18.0] - 2026-05-10
+
+### Added: Track 6B — Track 5A test follow-ups
+
+Closes two test-coverage gaps surfaced during /ship of v0.18.14.0.
+
+- **Post-upgrade path-1 resolution integration test** in `tests/update.test.ts`. New opt-in fixture variant `createFixtureRepoWithRealSetup` copies the real `setup` + `bin/lib/install-safety.sh` + empty placeholder skill `.md` files into a fixture repo so `update-run`'s post-pull `setup` invocation actually rebuilds `~/.claude/skills/{name}/SKILL.md` symlinks. Four assertions after `update-run` completes: `UPGRADE_OK` fires, path-1 holds a symlink, the symlink target resolves into the fixture (not ROOT — proves no developer-home leakage), and the CP#3 readlink-chain probe yields `$_EXTEND_ROOT` = fixture root. Bash probe runs with scoped `env: { HOME, PATH }` only (no `process.env` spread) and `cwd: homeDir`, so the test cannot pass for the wrong reason via inherited developer env or a stale workspace-local `.claude/` directory. Probe also asserts exit 0 + non-empty stdout to defend against the failure mode where `set -u` + command substitution silently produces an empty `$_SKILL_SRC`.
+
+- **Doc-type math boundary tests** in `tests/checks-doc-type.test.ts`. Five new tests pin the heuristic at its actual decision boundaries: empty file (0 content lines, skip), 4 content lines all checkboxes (under `MIN_CONTENT_LINES`, skip), density 0.4 (4/10, below `>=` 0.5 threshold, skip), density 0.5 EXACTLY (5/10, fires per `>=`), density 0.6 (6/10, fires). Fixtures use 10-line content so 4/10·5/10·6/10 land at the 0.4·0.5·0.6 boundary cleanly — a 5-line denominator can only produce {0, 0.2, 0.4, 0.6, 0.8, 1.0}, which misses 0.5 entirely.
+
+### Changed: cache-clear assertions in update-run happy-path test now seeded
+
+The existing happy-path test now pre-seeds `last-update-check` and `update-snoozed` in `stateDir` before invoking `update-run`, then asserts both files are removed. Previously the implicit `existsSync(...).toBe(false)` would have passed even if `update-run` did nothing (the files never existed to begin with).
+
+### Changed: plantuml fence test pins `mkdir -p` prefix
+
+The existing plantuml-fence design-mismatch test now asserts `mkdir -p 'docs/designs' && ` appears in the suggestion. Previously the test only matched the destination filename, so removing the `mkdir -p` branch from `suggestionFor` would have left the test green.
+
 ## [0.18.17.0] - 2026-05-10
 
 ### Added: `/roadmap-new` Group/Track ID-renames mapping at apply time
