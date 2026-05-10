@@ -29,6 +29,7 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -43,6 +44,19 @@ const UPDATE_RUN = join(ROOT, 'bin', 'update-run');
 const UPDATE_CHECK = join(ROOT, 'bin', 'update-check');
 const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
+const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
+
+// Mirrors the SKILLS array in setup. Hardcoded rather than parsed from
+// setup itself so a malformed setup edit fails the test loudly instead of
+// silently shrinking the symlink check.
+const REAL_SETUP_SKILLS = [
+  'pair-review',
+  'roadmap',
+  'roadmap-new',
+  'full-review',
+  'review-apparatus',
+  'test-plan',
+] as const;
 
 const baseTmp = makeBaseTmp('update-test-');
 afterAll(() => {
@@ -74,6 +88,51 @@ function createFixtureRepo(name: string): string {
   // Copy real update-run + dependencies in.
   writeFileSync(join(dir, 'bin', 'update-run'), readFileSync(UPDATE_RUN));
   chmodSync(join(dir, 'bin', 'update-run'), 0o755);
+
+  spawnSync('git', ['-C', dir, 'add', '-A']);
+  spawnSync('git', ['-C', dir, 'commit', '-m', 'initial', '--quiet']);
+  spawnSync('git', ['-C', dir, 'push', 'origin', 'main', '--quiet']);
+  return dir;
+}
+
+// Variant of createFixtureRepo that swaps the echo-only stub setup for
+// the REAL setup script + bin/lib/install-safety.sh + empty placeholder
+// skills/*.md files. Used by the post-upgrade path-1 resolution test to
+// exercise the setup-after-pull symlink rebuild. Kept separate from
+// createFixtureRepo so the lighter scenarios (happy/branch-switch/dirty/
+// diverged) don't suddenly depend on install-safety semantics and bun
+// availability for their setup invocation.
+function createFixtureRepoWithRealSetup(name: string): string {
+  const dir = join(baseTmp, name);
+  const remoteDir = join(baseTmp, `${name}-remote`);
+
+  mkdirSync(remoteDir, { recursive: true });
+  spawnSync('git', ['-C', remoteDir, 'init', '--bare', '--initial-branch=main', '--quiet']);
+
+  mkdirSync(join(dir, 'bin', 'lib'), { recursive: true });
+  mkdirSync(join(dir, 'skills'), { recursive: true });
+  spawnSync('git', ['-C', dir, 'init', '--initial-branch=main', '--quiet']);
+  spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', remoteDir]);
+
+  writeFileSync(join(dir, 'VERSION'), '1.0.0\n');
+
+  // Real setup + its sourced dependency. setup checks for `bun` on PATH at
+  // line 16 — the test process inherits the developer's PATH via runBin's
+  // env scoping, so bun is available.
+  writeFileSync(join(dir, 'setup'), readFileSync(SETUP));
+  chmodSync(join(dir, 'setup'), 0o755);
+  writeFileSync(join(dir, 'bin', 'lib', 'install-safety.sh'), readFileSync(INSTALL_SAFETY_LIB));
+
+  // Real update-run.
+  writeFileSync(join(dir, 'bin', 'update-run'), readFileSync(UPDATE_RUN));
+  chmodSync(join(dir, 'bin', 'update-run'), 0o755);
+
+  // Empty placeholder skill .md files — setup only needs `[ -f $src ]` to
+  // pass before creating the symlink. Content is irrelevant; symlink
+  // targets just have to exist.
+  for (const skill of REAL_SETUP_SKILLS) {
+    writeFileSync(join(dir, 'skills', `${skill}.md`), '');
+  }
 
   spawnSync('git', ['-C', dir, 'add', '-A']);
   spawnSync('git', ['-C', dir, 'commit', '-m', 'initial', '--quiet']);
@@ -123,6 +182,11 @@ describe('bin/update-run', () => {
       homeDir = join(baseTmp, 'happy-home');
       mkdirSync(stateDir, { recursive: true });
       mkdirSync(homeDir, { recursive: true });
+      // Pre-seed the two cache files update-run is expected to clear.
+      // Without this pre-seeding the post-run existsSync(...).toBe(false)
+      // assertions are vacuous — the files never existed to begin with.
+      writeFileSync(join(stateDir, 'last-update-check'), 'UP_TO_DATE 1.0.0\n');
+      writeFileSync(join(stateDir, 'update-snoozed'), '1.1.0 1 1700000000\n');
       result = runBin(UPDATE_RUN, [repo], {
         home: homeDir,
         gstackExtendDir: ROOT,
@@ -139,6 +203,14 @@ describe('bin/update-run', () => {
       const marker = join(stateDir, 'just-upgraded-from');
       expect(existsSync(marker)).toBe(true);
       expect(readFileSync(marker, 'utf8').trim()).toBe('1.0.0');
+    });
+
+    test('clears last-update-check cache after upgrade', () => {
+      expect(existsSync(join(stateDir, 'last-update-check'))).toBe(false);
+    });
+
+    test('clears update-snoozed after upgrade', () => {
+      expect(existsSync(join(stateDir, 'update-snoozed'))).toBe(false);
     });
   });
 
@@ -259,6 +331,106 @@ describe('bin/update-run', () => {
     test('preserves local commits on failure', () => {
       const r = spawnSync('git', ['-C', repo, 'log', '--oneline', '-1'], { encoding: 'utf8' });
       expect(r.stdout).toContain('local diverge');
+    });
+  });
+
+  // ─── Track 6B: post-upgrade path-1 resolution (real-setup fixture) ──
+  //
+  // The four scenarios above use a stub setup (echo "setup ran"), so they
+  // verify update-run's git mechanics but not the setup-after-pull seam.
+  // This scenario uses createFixtureRepoWithRealSetup so the fixture's
+  // setup actually rebuilds ~/.claude/skills/{name}/SKILL.md symlinks
+  // pointing into the fixture's skills/ directory. After update-run
+  // completes:
+  //   1. UPGRADE_OK fires (sanity).
+  //   2. The path-1 location holds a symlink (not a regular file/missing).
+  //   3. readlinkSync resolves to fixture/skills/{name}.md (not ROOT — the
+  //      test runs under a mock $HOME so a leak to the developer's real
+  //      gstack-extend install would mis-resolve here).
+  //   4. The skill-preamble readlink chain (`dirname dirname $_SKILL_SRC`)
+  //      yields _EXTEND_ROOT = fixture root, matching the CP#3 contract.
+  describe('post-upgrade path-1 resolution (Track 6B)', () => {
+    let repo: string;
+    let homeDir: string;
+    let result: ReturnType<typeof runBin>;
+
+    beforeAll(() => {
+      repo = createFixtureRepoWithRealSetup('post-upgrade-path1');
+      pushNewVersion(`${baseTmp}/post-upgrade-path1-remote`, '1.4.0');
+      const stateDir = join(baseTmp, 'post-upgrade-path1-state');
+      homeDir = join(baseTmp, 'post-upgrade-path1-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+    });
+
+    test('upgrade succeeds with real setup invocation', () => {
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('UPGRADE_OK 1.0.0 1.4.0');
+      // Real setup announces its work; confirms it actually ran.
+      expect(out).toContain('Installed 6 skills');
+    });
+
+    test('path-1 SKILL.md is a symlink under mock $HOME', () => {
+      const link = join(homeDir, '.claude', 'skills', 'pair-review', 'SKILL.md');
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    });
+
+    test('path-1 symlink resolves into the fixture (not ROOT)', () => {
+      const link = join(homeDir, '.claude', 'skills', 'pair-review', 'SKILL.md');
+      // The symlink target MUST point into the fixture's skills/, proving
+      // the fixture's setup ran. A target of `<ROOT>/skills/pair-review.md`
+      // would mean the developer's real gstack-extend leaked in through an
+      // unscoped env var — a serious test-isolation bug. realpathSync
+      // canonicalizes both sides because macOS resolves /var → /private/var
+      // (setup uses `pwd -P` at line 27 to capture SCRIPT_DIR).
+      expect(realpathSync(readlinkSync(link))).toBe(
+        realpathSync(join(repo, 'skills', 'pair-review.md')),
+      );
+    });
+
+    test('CP#3 preamble probe resolves $_EXTEND_ROOT to fixture root', () => {
+      // Mirrors the existing 'Track 5A skill preamble probe' shape: run
+      // the same bash readlink-chain a skill preamble would, but AFTER
+      // an update-run cycle instead of after a fresh setup.
+      //
+      // Env scoping is critical: spreading process.env would inherit the
+      // developer's GSTACK_EXTEND_DIR/BASH_ENV/PWD into the probe and
+      // defeat the test-isolation the assertions claim to enforce.
+      // Both adversarial reviewers caught a prior version that did this.
+      // cwd is pinned to homeDir for the same reason: the script's second
+      // readlink falls back to `.claude/skills/pair-review/SKILL.md`
+      // (path 2), and an unscoped cwd could find a stale workspace-local
+      // .claude/ directory and silently satisfy the probe with the wrong
+      // target. PATH is needed so `bash` can find `readlink` and `dirname`.
+      const script = `
+        set -u
+        _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \\
+                  || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
+        _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+        printf '%s\\n' "$_EXTEND_ROOT"
+      `;
+      const r = spawnSync('bash', ['-c', script], {
+        encoding: 'utf8',
+        env: { HOME: homeDir, PATH: process.env.PATH ?? '/usr/bin:/bin' },
+        cwd: homeDir,
+      });
+      // Guard against the failure mode where the probe exits 0 with empty
+      // stdout (both readlinks failed but `_SKILL_SRC` is still defined
+      // under `set -u` because command substitution succeeds even when
+      // the command inside fails). Without this, `realpathSync('')` would
+      // resolve to cwd and the test would pass for the wrong reason.
+      expect(r.status).toBe(0);
+      const probeOut = (r.stdout ?? '').trim();
+      expect(probeOut).not.toBe('');
+      expect(probeOut).not.toBe('.');
+      // Canonicalize both sides: setup's pwd -P resolves /var → /private/var
+      // on macOS, so the bash probe yields the realpath form.
+      expect(realpathSync(probeOut)).toBe(realpathSync(repo));
     });
   });
 });
