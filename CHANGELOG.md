@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.17.0] - 2026-05-10
+
+### Added: `/roadmap-new` Group/Track ID-renames mapping at apply time
+
+When `/roadmap-new` regenerates and renumbers (old Group 7→6, old Group 12 splitting into 13/14/15, etc.), the apply summary and commit message body now include a one-table mapping of every renamed Group/Track that kept its title. Closes the cognitive gap where users anchored on volatile IDs ("I was working on Track 9A") had to re-derive the new ID manually.
+
+New helper at `src/audit/lib/renames-diff.ts` — three pure functions: `parseEntities` extracts `(id, kind, title)` tuples from any ROADMAP.md, `computeRenames` matches by exact normalized title (whitespace-collapsed, lowercased, with `Hotfix:` prefix and `✓ Shipped (vX.Y.Z)` suffix stripped) and emits same-title-different-ID pairs, `formatRenamesTable` renders the markdown table. Group and Track namespaces are kept separate — a Group titled "Foo" doesn't match a Track titled "Foo". 15 unit tests in `tests/lib-renames-diff.test.ts` cover normalization, parsing across heading depths, namespace separation, ✓ Shipped suffix changes, and multi-rename scenarios.
+
+### Changed: ROADMAP.md migrated to v2 state-section grammar
+
+The first dogfood run of `/roadmap-new` on this repo's own ROADMAP. Phase 1 (Groups 1–4) and Group 5 (Install Pipeline) preserved verbatim under `## Shipped` with frozen IDs. Upcoming plan regenerated from scratch driven by the file-collision matrix: 10 Groups, 14 Tracks, with the four skill-trim Tracks (14A–14D) running fully in parallel. TODOS.md inbox drained — three legacy bullet entries reformatted: 2 `[ship]` follow-up tests promoted into a new parallel Track 6B; 1 `[ceo-review]` Project Bootstrapping item promoted into Groups 8 + 9 (split because audit-init-subcommand and the gstack-extend-init wrapper have a hard serial dep).
+
+### Changed: `/roadmap-new` skill refactor — cut overhead from dogfood feedback
+
+After the first end-to-end run, three layers of overhead got cut from the skill prose:
+
+- **Step 2 fast-path predicate deleted.** Predicate was so narrow (audit clean + empty inbox + no freshness + no prompt cue + already-v2) that it almost never fired. Always regenerate; the no-op proposal handles the clean case naturally without dedicated bypass.
+- **Top-of-run Phase-context hint branches deleted.** Pre-shipping context lines that printed when a Phase was in flight or closing. `/ship` owns version recommendations — `/roadmap-new` doesn't predict.
+- **`--scan-state` invocation removed from Step 1.** The JSON envelope drove zero decisions in the first dogfood run; intent parsing belongs in the LLM. v1 `/roadmap` keeps using `--scan-state` (helper preserved in `src/audit/cli.ts`); v2 reads audit + TODOS + git directly.
+
+### Changed: `/roadmap-new` Step 5 PROGRESS.md flow honors documentation taxonomy
+
+Replaces direct row-write with detect-staleness → AskUserQuestion → optional scoped general-purpose subagent appends rows from CHANGELOG. Project taxonomy assigns PROGRESS.md content to `/document-release`; `/roadmap-new` only owns structure. The new flow respects that boundary without invoking the full `/document-release` skill (which has broader scope and would clash with the inbox drain `/roadmap-new` just performed).
+
+### Fixed: restore `--scan-state` after Codex caught v1 `/roadmap` regression
+
+Initial Track 6C cut deleted `--scan-state` from `src/audit/cli.ts` based on the dogfood finding that `/roadmap-new` doesn't use it. Codex adversarial review caught that v1 `/roadmap` (skills/roadmap.md:80) STILL invokes `--scan-state` and parses the JSON output. Removing the helper would have silently broken v1: the flag would parse as a positional repo-root argument and the JSON read would corrupt v1's intent/signal extraction. Restored `runScanState`, `computeGitInferredFreshness`, intent helpers, dispatch, two scan-state fixtures, cli-contract test assertions, and the audit-invariants filter. v2 `/roadmap-new` skill prose still doesn't invoke the helper.
+
 ## [0.18.16.2] - 2026-05-10
 
 ### Changed: `/roadmap-new` makes file collisions drive Group structure, not validate it after

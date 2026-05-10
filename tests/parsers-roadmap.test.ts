@@ -526,26 +526,29 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     const content = await file.text();
     const r = parseRoadmap(content, deps());
     expect(r.errors).toEqual([]);
-    // Group 1 (Bun Test Toolchain) is ✓ Complete.
+    // v2 grammar: shipped Groups (1-5) live in `## Shipped` with bullet-form
+    // Tracks. The parser still picks up the Group headings and marks them
+    // complete via the `✓ Shipped (vX.Y.Z)` heading suffix.
     const g1 = r.value.groups.find((g) => g.num === '1');
     expect(g1?.isComplete).toBe(true);
-    // Track 1A is ✓ Complete.
-    const t1a = r.value.tracks.find((t) => t.id === '1A');
-    expect(t1a?.isComplete).toBe(true);
-    // Track 2A (TS port) shipped in v0.18.6.0; closed by /roadmap reassessment.
-    const t2a = r.value.tracks.find((t) => t.id === '2A');
-    expect(t2a).toBeDefined();
-    expect(t2a!.isComplete).toBe(true);
-    // Groups parse with kind: unspecified by default; Groups that explicitly
-    // declare `_Depends on: none_` (Groups 7 and 8 post-Phase-1) parse as
-    // kind: none. No Group should depend on a specific other Group via the
-    // _Depends on: Group N_ form (the Execution Map block at the bottom is
-    // human documentation, not parser input).
+    const g5 = r.value.groups.find((g) => g.num === '5');
+    expect(g5?.isComplete).toBe(true);
+    // Active Groups (6+) parse and are NOT marked complete.
+    const g6 = r.value.groups.find((g) => g.num === '6');
+    expect(g6?.isComplete).toBe(false);
+    // Active Tracks (heading-form) are extracted; e.g. Track 6A in current plan.
+    const t6a = r.value.tracks.find((t) => t.id === '6A');
+    expect(t6a).toBeDefined();
+    expect(t6a!.isComplete).toBe(false);
+    // Group dep parse: kinds limited to 'unspecified' / 'none' / 'after'.
+    // Active Groups in the current plan use explicit `_Depends on:_` blocks
+    // OR rely on the preceding-Group default. No Group should have a
+    // malformed deps block.
     for (const g of r.value.groups) {
-      expect(['unspecified', 'none']).toContain(g.deps.kind);
+      expect(['unspecified', 'none', 'after', 'list']).toContain(g.deps.kind);
     }
-    // Sanity: at least 6 groups, several tracks (real-repo shape).
-    expect(r.value.groups.length).toBeGreaterThanOrEqual(6);
+    // Sanity: at least 10 groups, several tracks (real-repo shape).
+    expect(r.value.groups.length).toBeGreaterThanOrEqual(10);
     expect(r.value.tracks.length).toBeGreaterThanOrEqual(7);
   });
 });
