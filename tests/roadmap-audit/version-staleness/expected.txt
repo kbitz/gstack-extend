@@ -26,8 +26,8 @@ STATUS: skip
 FINDINGS:
 - (none declared)
 
-## STALENESS
-STATUS: fail
+## VERSION_TAG_STALENESS
+STATUS: warn
 FINDINGS:
 - line 3: completed item still present (v0.3.0 shipped) — delete it
 

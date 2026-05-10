@@ -1,12 +1,23 @@
 /**
- * staleness.ts — port of check_staleness (~L625-702).
+ * version-tag-staleness.ts — port of check_staleness (~L625-702).
  *
- * Greps ROADMAP.md for completed-item markers carrying a version annotation
- * (`~~text~~ DONE`, `~~text~~ ✓`, `~~text~~ ✅`, `~~text~~ Completed`,
- * `^### ~~`). For each match, extracts the parenthetical version and flags
- * it stale if either:
+ * Greps ROADMAP.md for completed-item markers carrying an explicit version
+ * annotation (`~~text~~ DONE`, `~~text~~ ✓`, `~~text~~ ✅`,
+ * `~~text~~ Completed`, `^### ~~`). For each match, extracts the
+ * parenthetical version and flags it stale if either:
  *   1. A git tag matching `vX.Y.Z` or `X.Y.Z` exists for that version.
  *   2. The current VERSION (or pyproject.toml) is >= the matched version.
+ *
+ * Why VERSION_TAG_STALENESS and not STALENESS: this check only fires on
+ * items with explicit `(vN.N.N)` annotations. Broader recency belongs to
+ * the `signals.git_inferred_freshness` field of `--scan-state`. The rename
+ * (Track 6A) closed a dogfood-noted misread that `STALENESS: pass` settled
+ * the freshness question.
+ *
+ * STATUS: warn (advisory) — the skill prose treats this as advisory in
+ * its DONE_WITH_CONCERNS list. Returning `fail` previously elevated this
+ * to blocker rollups despite the skill prose contract; the rename moment
+ * (Track 6A) was the right time to reconcile.
  *
  * Bash uses `git tag --list` and `version_gt` from lib/semver. Here the
  * tags come through `ctx.git.tags()` (gateway) and the comparator is
@@ -18,10 +29,10 @@ import type { AuditCtx, CheckResult } from '../types.ts';
 
 const VERSION_RE = /\(v?[0-9]+\.[0-9]+(?:\.[0-9]+)*\)/;
 
-export function runCheckStaleness(ctx: AuditCtx): CheckResult {
+export function runCheckVersionTagStaleness(ctx: AuditCtx): CheckResult {
   if (ctx.paths.roadmap === null) {
     return {
-      section: 'STALENESS',
+      section: 'VERSION_TAG_STALENESS',
       status: 'skip',
       body: ['FINDINGS:', '- No ROADMAP.md found'],
     };
@@ -55,14 +66,14 @@ export function runCheckStaleness(ctx: AuditCtx): CheckResult {
 
   if (findings.length === 0) {
     return {
-      section: 'STALENESS',
+      section: 'VERSION_TAG_STALENESS',
       status: 'pass',
       body: ['FINDINGS:', '- (none)'],
     };
   }
   return {
-    section: 'STALENESS',
-    status: 'fail',
+    section: 'VERSION_TAG_STALENESS',
+    status: 'warn',
     body: ['FINDINGS:', ...findings, ''],
   };
 }

@@ -546,7 +546,7 @@ When completing a skill workflow, report status using one of:
 For /roadmap specifically: map the audit output plus the run's work (regeneration decisions, ROADMAP.md updates, PROGRESS.md appends) to the enum. Rollup:
 
 - Audit clean, regeneration applied, no unresolved blockers → **DONE**
-- Audit returned advisory findings (STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH, MIGRATION_NEEDED) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
+- Audit returned advisory findings (VERSION_TAG_STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH, MIGRATION_NEEDED) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
 - Audit returned blockers (SIZE caps, COLLISIONS, STRUCTURE errors, STATE_SECTIONS errors, VERSION errors) unresolved → **BLOCKED**
 - Required inputs missing or ambiguous → **NEEDS_CONTEXT**
 
@@ -601,7 +601,7 @@ Lead the run summary with this table, above the audit detail:
 ```
 
 - `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE.
-- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
+- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
 
 Verdict-to-status mapping:
 
