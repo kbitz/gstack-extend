@@ -1,10 +1,5 @@
 # Roadmap
 
-## Shipped
-
-#### Group 1: Auth ✓ Shipped (v0.5.0)
-- Track 1A — _shipped (v0.5.0)_
-
 ## Current Plan
 
 ### Group 2: Hotfix: Crash on login (multi-track — invalid)
@@ -32,3 +27,8 @@ _touches: src/foo.swift_
 - **Patch** -- fix it. _src/foo.swift, ~5 lines._ (S)
 
 ## Future
+
+## Shipped
+
+#### Group 1: Auth ✓ Shipped (v0.5.0)
+- Track 1A — _shipped (v0.5.0)_

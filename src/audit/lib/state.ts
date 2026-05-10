@@ -1,12 +1,14 @@
 /**
  * state.ts — lifecycle-state detection for ROADMAP.md sections.
  *
- * The v2 grammar puts state at the top of the document hierarchy:
+ * The v2 grammar puts state at the top of the document hierarchy. Sections
+ * appear in this order so the active plan is at the top of the document and
+ * the shipped history sinks to the tail:
  *
- *   ## Shipped
  *   ## In Progress
  *   ## Current Plan
  *   ## Future
+ *   ## Shipped
  *
  * Each H2 state heading opens a region that runs until the next H2 (state or
  * otherwise) or EOF. Phases, Groups, and Tracks inherit their lifecycle state

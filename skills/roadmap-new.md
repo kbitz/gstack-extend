@@ -2,7 +2,7 @@
 name: roadmap-new
 description: |
   v2 roadmap skill (preview). Maintains ROADMAP.md as a state-organized
-  execution plan (## Shipped / ## In Progress / ## Current Plan / ## Future)
+  execution plan (## In Progress / ## Current Plan / ## Future / ## Shipped)
   and regenerates the upcoming plan whole on each substantive run instead
   of surgically reassessing it. Only shipped work has stable IDs; the rest
   is volatile and re-thought each run.
@@ -62,7 +62,9 @@ Handle responses the same way as /pair-review (see pair-review.md inline upgrade
 # /roadmap-new — Plan Regeneration (v2 preview)
 
 This skill maintains ROADMAP.md organized by lifecycle state at the top
-level (`## Shipped` / `## In Progress` / `## Current Plan` / `## Future`).
+level (`## In Progress` / `## Current Plan` / `## Future` / `## Shipped`).
+Active plan sits at the top; shipped history sinks to the tail so readers
+don't scroll past completed work to see what's happening now and next.
 Every substantive run **regenerates** the upcoming plan from scratch
 instead of surgically reassessing it. Only shipped work has stable IDs.
 
@@ -212,7 +214,7 @@ This is the LLM-owned step. Hold the full picture in mind and **emit a complete 
 
 Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
-- **What is shipped?** Read the existing `## Shipped` (or v1 `✓ Complete` Groups). Those IDs are frozen. They form the prefix of the new ROADMAP.md and don't get re-thought.
+- **What is shipped?** Read the existing `## Shipped` (or v1 `✓ Complete` Groups). Those IDs are frozen. They form the tail of the new ROADMAP.md (after `## Future`) and don't get re-thought.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
 - **What's the right Current Plan?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Group cohesively into Tracks (1 PR each) → Groups (parallel-safe Tracks) → optional Phases (named end-state spanning ≥2 Groups). Renumber freely from the next-available ID after Shipped/In Progress.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
@@ -272,9 +274,6 @@ Format:
 ```markdown
 # Roadmap regeneration proposal — <ISO timestamp>
 
-## Shipped (preserved — IDs frozen)
-<verbatim from existing roadmap, or migrated from v1 ✓ Complete blocks>
-
 ## In Progress (proposed)
 <full v2 grammar block>
 
@@ -283,6 +282,9 @@ Format:
 
 ## Future (proposed)
 <flat bullets>
+
+## Shipped (preserved — IDs frozen, lives at tail of ROADMAP.md)
+<verbatim from existing roadmap, or migrated from v1 ✓ Complete blocks>
 
 ## Hotfix proposals
 <each Hotfix Group called out with rationale>
@@ -317,7 +319,7 @@ The v1 placement-batch and deferral-batch clusters no longer exist. There's noth
 
 Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
-- **Whole-block replacement.** The existing `## Shipped` content is preserved verbatim (or constructed from v1 `✓ Complete` Groups during migration). The existing `## In Progress`, `## Current Plan`, and `## Future` content is fully replaced with the regenerated content.
+- **Whole-block replacement.** The existing `## In Progress`, `## Current Plan`, and `## Future` content is fully replaced with the regenerated content. The existing `## Shipped` content (which lives at the tail of the document) is preserved verbatim, or constructed from v1 `✓ Complete` Groups during migration.
 - **TODOS.md drain.** Every inbox item that the proposal placed (into Current Plan, Future, or killed) is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
 - **No helper invocations.** There's no split-track helper anymore. All edits are direct file writes.
 - **Track / Group completion conventions:**
@@ -391,23 +393,6 @@ The audit enforces this format. Helpers consume it. Skill prose follows it when 
 # Roadmap
 
 (optional preamble paragraph)
-
----
-
-## Shipped
-
-### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
-<one-line summary>
-
-#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 1A — _shipped (vX.Y.Z.W)_
-- Track 1B — _shipped (vX.Y.Z.W)_
-
-#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 2A — _shipped (vX.Y.Z.W)_
-
-(loose Groups not in a Phase are listed at H4 directly under `## Shipped`
-without a Phase wrapper)
 
 ---
 
@@ -486,6 +471,24 @@ structure, no `_touches:_`, no sizing, no IDs.
 
 - **<Item title>** — description. _Source: <where it came from>._
 - **<Item title>** — description.
+
+---
+
+## Shipped
+
+### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
+<one-line summary>
+
+#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 1A — _shipped (vX.Y.Z.W)_
+- Track 1B — _shipped (vX.Y.Z.W)_
+
+#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 2A — _shipped (vX.Y.Z.W)_
+
+(loose Groups not in a Phase are listed at H4 directly under `## Shipped`
+without a Phase wrapper. Shipped is the document's tail so the active plan
+stays at the top.)
 ```
 
 **Vocabulary** is enforced by the audit's `check_vocab_lint` (banned: Cluster, Workstream, Milestone, Sprint; controlled: Phase only inside an explicit `### Phase N:` block, the `## Future` section, or the file-title line). Don't re-encode the rules here — the audit owns them.

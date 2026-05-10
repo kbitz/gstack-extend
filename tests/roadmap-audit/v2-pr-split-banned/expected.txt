@@ -14,7 +14,7 @@ STATUS: pass
 FINDINGS:
 - (none)
 GRAMMAR: v2
-SECTIONS_PRESENT: Shipped, Current Plan, Future
+SECTIONS_PRESENT: Current Plan, Future, Shipped
 
 ## PHASES
 STATUS: skip

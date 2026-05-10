@@ -1,7 +1,5 @@
 # Roadmap
 
-## Shipped
-
 ## Current Plan
 
 ### Group 1: Real work
@@ -23,3 +21,5 @@ _touches: src/foo.swift_
 - **Whatever** -- yes. _src/foo.swift, ~50 lines._ (M)
 
 - **Another bullet** — also fine on its own.
+
+## Shipped

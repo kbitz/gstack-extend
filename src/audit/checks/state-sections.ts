@@ -2,9 +2,10 @@
  * state-sections.ts — validates the v2 state-section grammar.
  *
  * Enforces:
- *   - State sections (`## Shipped`, `## In Progress`, `## Current Plan`,
- *     `## Future`) appear in document order. All four are individually
- *     optional, but when present they must be in this order.
+ *   - State sections (`## In Progress`, `## Current Plan`, `## Future`,
+ *     `## Shipped`) appear in document order. All four are individually
+ *     optional, but when present they must be in this order. Shipped
+ *     lives at the tail so the active plan is what readers see first.
  *   - No state section appears more than once.
  *   - When at least one state section is present, the document is in v2
  *     mode and the parser stamps each Group/Track with its lifecycle
@@ -20,7 +21,7 @@
 
 import type { AuditCtx, CheckResult } from '../types.ts';
 
-const ORDER = ['Shipped', 'In Progress', 'Current Plan', 'Future'] as const;
+const ORDER = ['In Progress', 'Current Plan', 'Future', 'Shipped'] as const;
 type StateSectionName = (typeof ORDER)[number];
 
 export function runCheckStateSections(ctx: AuditCtx): CheckResult {
@@ -71,7 +72,7 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
   const grammar = ctx.roadmap.value.hasV2Grammar ? 'v2' : 'v1';
   if (grammar === 'v1') {
     findings.push(
-      '- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## Shipped / ## In Progress / ## Current Plan / ## Future). See docs/designs/roadmap-v2-state-model.md.',
+      '- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## In Progress / ## Current Plan / ## Future / ## Shipped). See docs/designs/roadmap-v2-state-model.md.',
     );
   }
 
