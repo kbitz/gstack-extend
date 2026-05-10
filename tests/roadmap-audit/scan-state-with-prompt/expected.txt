@@ -1,0 +1,12 @@
+{
+  "exclusive_state": null,
+  "intents": {"closure": 1, "split": 0, "track_ref": ""},
+  "signals": {
+    "unprocessed_count": 0,
+    "in_flight_groups": "1",
+    "origin_total": 0,
+    "staleness_fail": 0,
+    "git_inferred_freshness": 0,
+    "has_zero_open_group": 0
+  }
+}
