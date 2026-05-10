@@ -41,21 +41,24 @@ every time we update it." This document defines the new model.
 ## Lifecycle states
 
 The top-level structure of `ROADMAP.md` is organized by lifecycle state. There
-are four states:
+are four states, listed here in document order — the active plan sits at the
+top of ROADMAP.md, shipped history sinks to the tail so readers don't scroll
+past completed work to see what's happening now and next:
 
 | State            | Section heading              | Granularity          |
 |------------------|------------------------------|----------------------|
-| Shipped          | `## Shipped`                 | Phase / Group / Track |
 | In Progress      | `## In Progress`             | Phase / Group         |
 | Current Plan     | `## Current Plan`            | Phase / Group / Track |
 | Deferred Future  | `## Future`                  | Flat bullets only     |
+| Shipped          | `## Shipped`                 | Phase / Group / Track |
 
 State applies to **discrete units**:
 
-- A **Track** is `shipped` (in `## Shipped`) or unshipped (in `## Current Plan`,
-  inside its parent Group). Tracks have no separate "in progress" state — they
-  are 1 PR; the window between branch-open and PR-merge is short, and ID
-  stability over that window is handled as an implementation rule, not a state.
+- A **Track** is `shipped` (in `## Shipped` at the document tail) or unshipped
+  (in `## Current Plan`, inside its parent Group). Tracks have no separate
+  "in progress" state — they are 1 PR; the window between branch-open and
+  PR-merge is short, and ID stability over that window is handled as an
+  implementation rule, not a state.
 - A **Group** is `shipped` (all its Tracks have shipped), `in progress` (≥1
   shipped Track and ≥1 unshipped), or `current plan` (no shipped Tracks yet).
   Shipped Tracks within an in-progress Group stay co-located with their Group
@@ -74,28 +77,6 @@ within an in-progress Group is shown by inline `✓` markers on individual Track
 # Roadmap
 
 (optional preamble paragraph)
-
----
-
-## Shipped
-
-(append-only history, IDs frozen, byte-stable across regenerations)
-
-### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
-<one-line summary>
-
-#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 1A — _shipped (vX.Y.Z.W)_
-- Track 1B — _shipped (vX.Y.Z.W)_
-
-#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 2A — _shipped (vX.Y.Z.W)_
-
-### Phase 2: <Title> ✓ Shipped (vX.Y.Z.W)
-...
-
-(loose Groups not in a Phase are listed at the same H3 level under `## Shipped`
-without a Phase wrapper)
 
 ---
 
@@ -183,6 +164,29 @@ structure, no `_touches:_`, no sizing, no IDs.
 
 - **<Item title>** — description. _Source: <where it came from>._
 - **<Item title>** — description.
+
+---
+
+## Shipped
+
+(append-only history, IDs frozen, byte-stable across regenerations. Lives at
+the document tail so the active plan above stays visible without scrolling.)
+
+### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
+<one-line summary>
+
+#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 1A — _shipped (vX.Y.Z.W)_
+- Track 1B — _shipped (vX.Y.Z.W)_
+
+#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 2A — _shipped (vX.Y.Z.W)_
+
+### Phase 2: <Title> ✓ Shipped (vX.Y.Z.W)
+...
+
+(loose Groups not in a Phase are listed at the same H3 level under `## Shipped`
+without a Phase wrapper)
 ```
 
 ## Primitives
@@ -308,8 +312,8 @@ Drops:
 Adds:
 
 - `STATE_SECTIONS` check: validates the four top-level sections appear in
-  the correct order (`## Shipped`, `## In Progress`, `## Current Plan`,
-  `## Future`). All four are optional individually but must appear in this
+  the correct order (`## In Progress`, `## Current Plan`, `## Future`,
+  `## Shipped`). All four are optional individually but must appear in this
   order when present.
 - SIZE check rule: any Track body containing literal `N PRs`, `two PRs`,
   `multiple PRs`, `PR1`, `PR2` is `STRUCTURE: fail` (regex

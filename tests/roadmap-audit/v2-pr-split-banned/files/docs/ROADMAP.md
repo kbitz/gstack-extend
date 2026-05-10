@@ -1,7 +1,5 @@
 # Roadmap
 
-## Shipped
-
 ## Current Plan
 
 ### Group 1: Big work
@@ -16,3 +14,5 @@ Ship as 2 PRs. PR1 sets up the schema; PR2 wires the readers.
 - **Reader wiring** -- another thing. _src/b.py, ~120 lines._ (M)
 
 ## Future
+
+## Shipped

@@ -1,13 +1,5 @@
 # Roadmap
 
-## Shipped
-
-#### Group 1: Bootstrap ✓ Shipped (v0.1.0)
-- Track 1A — _shipped (v0.1.0)_
-
-#### Group 2: First feature ✓ Shipped (v0.2.0)
-- Track 2A — _shipped (v0.2.0)_
-
 ## In Progress
 
 #### Group 3: Multi-account
@@ -48,3 +40,11 @@ _touches: src/Services/DeliveryTracker.swift_
 
 - **Cross-device account sync** — sync account configurations via iCloud KVS.
 - **Investigate Graph rate-limit handling** — current backoff is global; should be per-account.
+
+## Shipped
+
+#### Group 1: Bootstrap ✓ Shipped (v0.1.0)
+- Track 1A — _shipped (v0.1.0)_
+
+#### Group 2: First feature ✓ Shipped (v0.2.0)
+- Track 2A — _shipped (v0.2.0)_

@@ -1,7 +1,5 @@
 # Roadmap
 
-## Shipped
-
 ## Current Plan
 
 ### Group 1: Bad
@@ -20,3 +18,5 @@ _Depends on: Track 1A_
 - **Do thing B** -- something. _b.py, ~20 lines._ (S)
 
 ## Future
+
+## Shipped

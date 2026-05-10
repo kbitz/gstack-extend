@@ -15,7 +15,7 @@ FINDINGS:
 ## STATE_SECTIONS
 STATUS: warn
 FINDINGS:
-- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## Shipped / ## In Progress / ## Current Plan / ## Future). See docs/designs/roadmap-v2-state-model.md.
+- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## In Progress / ## Current Plan / ## Future / ## Shipped). See docs/designs/roadmap-v2-state-model.md.
 
 GRAMMAR: v1
 SECTIONS_PRESENT: 

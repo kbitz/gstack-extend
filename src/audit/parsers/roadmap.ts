@@ -1,12 +1,13 @@
 /**
  * roadmap.ts — parser for ROADMAP.md, v2 state-section grammar.
  *
- * The document is organized by lifecycle state at the top level:
+ * The document is organized by lifecycle state at the top level (active plan
+ * first, shipped history last):
  *
- *   ## Shipped         — completed work, IDs frozen
  *   ## In Progress     — Groups/Phases mid-flight (some shipped Tracks, some not)
  *   ## Current Plan    — definitely doing this
  *   ## Future          — flat bullets only, no Phase/Group/Track structure
+ *   ## Shipped         — completed work, IDs frozen
  *
  * Inside Shipped / In Progress / Current Plan, the structure is:
  *
@@ -86,7 +87,7 @@ export type ParsedRoadmap = {
   styleLintWarnings: string[];
   sizeLabelMismatches: SizeLabelMismatch[];
   trackDepCycles: string[];
-  hasV2Grammar: boolean; // true when at least one ## Shipped/In Progress/Current Plan/Future seen
+  hasV2Grammar: boolean; // true when at least one ## In Progress/Current Plan/Future/Shipped seen
   futureBullets: string[]; // raw bullet lines from ## Future (when v2)
   futureMalformed: string[]; // non-bullet content seen inside ## Future (validation hint)
 };

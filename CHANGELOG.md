@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.16.1] - 2026-05-10
+
+### Changed: `## Shipped` moves to the document tail in `/roadmap-new`
+
+Section order in v2 ROADMAP.md flips from
+`Shipped → In Progress → Current Plan → Future` to
+`In Progress → Current Plan → Future → Shipped`. The active plan now sits at
+the top of ROADMAP.md, and shipped history sinks to the tail — readers don't
+scroll past completed work to see what's happening now and next.
+
+The `STATE_SECTIONS` audit check enforces the new order. Existing v2 roadmaps
+written under v0.18.16.0 will fail the order check until rerun through
+`/roadmap-new`, which regenerates the full document in the new layout. v1
+roadmaps (no state sections) are unaffected — they continue to emit
+`MIGRATION_NEEDED: warn` only.
+
+The Shipped grammar itself is unchanged: per-Track bullets with frozen IDs and
+versions stay (they're the canonical Track-ID → version map the regenerator
+anchors on, and CHANGELOG/PROGRESS don't carry that detail per Track).
+
 ## [0.18.16.0] - 2026-05-10
 
 ### Added: `/roadmap-new` skill (v2 preview, ships alongside `/roadmap`)
