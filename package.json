@@ -10,5 +10,5 @@
     "test": "bun scripts/select-tests.ts",
     "test:full": "bun test tests/"
   },
-  "version": "0.18.17.0"
+  "version": "0.18.18.0"
 }
