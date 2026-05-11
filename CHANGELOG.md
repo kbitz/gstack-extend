@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.1.0] - 2026-05-11
+
+### Added: `/pair-review` supports concurrent sessions across branches
+
+Until now, `pair-review` state was keyed only by project slug — one `session.yaml` per project at `~/.gstack/projects/<slug>/pair-review/`. Two Conductor workspaces (or two machines) running `/pair-review` on different branches would trample each other: whichever ran second auto-archived the other's session via the stale-branch guard added in v0.19.0.1.
+
+State is now keyed by branch. The active session for a given branch lives at `~/.gstack/projects/<slug>/pair-review/branches/<sanitized-branch>/{session.yaml, groups/, parked-bugs.md, report.md}`. `deploy.md` stays at the project level — the deploy recipe is branch-agnostic. Per-branch archives live under `~/.gstack/projects/<slug>/pair-review/archives/<sanitized-branch>-<ts>/`. Multiple branches now have independent slots; the stale-branch guards from v0.19.0.1 are dead code and have been removed.
+
+**Helper**: `bin/lib/session-paths.sh` gains an optional `<branch>` argument on `session_dir` and `session_archive_dir`, plus a new `session_sanitize_branch` helper (converts `/` to `--`, strips chars outside `[a-zA-Z0-9._-]`, returns `unknown-branch` if the input is empty or fully stripped). Skills that want per-branch slots opt in by passing the branch; full-review and roadmap-proposals continue to omit it (single project-level slot, unchanged behavior).
+
+**Legacy state**: existing top-level `session.yaml`/`groups/`/`parked-bugs.md` won't be picked up by the new code paths — they'll be ignored, and a fresh per-branch session will start on the next `/pair-review`. The old data is preserved in place; recover it by moving the files into `<projects-root>/<slug>/pair-review/branches/<sanitized-branch>/` (replace `/` in the branch name with `--`). No migration ships with this release.
+
+**`/test-plan`** updates: Phase 4's prior-session harvester now walks `<PR_PROJECT_DIR>/branches/*` (active sessions across every branch) and `<PR_PROJECT_DIR>/archives/*` (per-branch archives) instead of the legacy `<slug>/pair-review-archived-*` siblings. Phase 7 writes the build's session state into the integration branch's per-branch dir.
+
+**Tests**: `tests/skill-protocols.test.ts` swaps the stale-branch drift-lock for a per-branch path drift-lock that asserts `session_dir pair-review "$BRANCH"`, `PROJECT_DIR=$(session_dir pair-review)`, and archives-with-branch-arg. `tests/lib-session-paths.test.ts` gains 8 new tests covering the branch-arg form, sanitizer behavior, and unsafe-input stripping. `tests/test-plan-e2e.test.ts` fixture paths updated to the new layout.
+
 ## [0.19.0.1] - 2026-05-10
 
 ### Fixed: `/pair-review` no longer offers to resume sessions from a different branch
