@@ -701,7 +701,24 @@ When `/pair-review resume` or `/pair-review status` is invoked.
 
 ### Step 1: Find existing state
 
-Use the Glob tool to check for an existing session:
+**Stale-branch guard first.** A pair-review session must NEVER be resumed on a
+branch other than the one it was started on. Before the existence check,
+auto-archive any session whose `branch:` field doesn't match the current
+branch (re-source the helper if this is a fresh bash block):
+
+```bash
+if [ -f "$SESSION_DIR/session.yaml" ]; then
+  STORED_BRANCH=$(awk -F': *' '$1=="branch" {print $2; exit}' "$SESSION_DIR/session.yaml" | tr -d '"')
+  if [ -n "$STORED_BRANCH" ] && [ "$STORED_BRANCH" != "$BRANCH" ]; then
+    TS=$(date -u +%Y%m%d-%H%M%S)
+    ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
+    mv "$SESSION_DIR" "$ARCHIVE_DIR"
+    echo "Archived stale session (branch '$STORED_BRANCH' → current '$BRANCH')"
+  fi
+fi
+```
+
+Then use the Glob tool to check for an existing session on the current branch:
 
 ```
 Glob pattern: <SESSION_DIR>/session.yaml
@@ -710,6 +727,9 @@ Glob pattern: <SESSION_DIR>/session.yaml
 If the file exists, read it and proceed to Step 2.
 
 If no state found: "No active test session found. Want to start a new one?"
+(If the stale-branch guard just archived a session, mention that in the same
+prompt — the user should know their old branch's session was preserved, not
+deleted.)
 
 ### Step 2: Render dashboard
 
@@ -820,7 +840,26 @@ Present via AskUserQuestion:
 
 ## Active Session Guard
 
-On **Init**, before starting Phase 0, check for an existing active session:
+On **Init**, before starting Phase 0, check for an existing active session.
+
+**Stale-branch guard first.** A pair-review session must NEVER be offered for
+resume on a branch other than the one it was started on. Before the existence
+check, auto-archive any session whose `branch:` field doesn't match the
+current branch (re-source the helper if this is a fresh bash block):
+
+```bash
+if [ -f "$SESSION_DIR/session.yaml" ]; then
+  STORED_BRANCH=$(awk -F': *' '$1=="branch" {print $2; exit}' "$SESSION_DIR/session.yaml" | tr -d '"')
+  if [ -n "$STORED_BRANCH" ] && [ "$STORED_BRANCH" != "$BRANCH" ]; then
+    TS=$(date -u +%Y%m%d-%H%M%S)
+    ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
+    mv "$SESSION_DIR" "$ARCHIVE_DIR"
+    echo "Archived stale session (branch '$STORED_BRANCH' → current '$BRANCH')"
+  fi
+fi
+```
+
+Then check for an existing session on the current branch:
 
 ```
 Glob pattern: <SESSION_DIR>/session.yaml

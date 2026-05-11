@@ -235,6 +235,43 @@ describe('pair-review multi-table templates', () => {
   });
 });
 
+// ─── Stale-branch guard drift-lock ──────────────────────────────────
+//
+// pair-review state is project-scoped (one session.yaml per project), but
+// session.yaml stores the `branch:` it was started on. Both entry points
+// that could offer a session for resume (Active Session Guard on Init,
+// Phase 3 Step 1 on Resume/Status) must compare stored branch to current
+// branch and auto-archive on mismatch — otherwise a session abandoned on
+// an old branch gets offered for resume on a new branch.
+//
+// Lock the guard text so a future edit can't silently regress.
+describe('pair-review stale-branch guard', () => {
+  const file = join(ROOT, 'skills', 'pair-review.md');
+  const content = readFileSync(file, 'utf8');
+
+  const STALE_BRANCH_AWK = `awk -F': *' '$1=="branch" {print $2; exit}'`;
+
+  test('Active Session Guard contains the stale-branch check', () => {
+    const idx = content.indexOf('## Active Session Guard');
+    expect(idx).toBeGreaterThan(-1);
+    const next = content.indexOf('## ', idx + 3);
+    const section = content.slice(idx, next === -1 ? undefined : next);
+    expect(section).toContain('Stale-branch guard');
+    expect(section).toContain(STALE_BRANCH_AWK);
+    expect(section).toContain('session_archive_dir pair-review');
+  });
+
+  test('Phase 3 Step 1 contains the stale-branch check', () => {
+    const idx = content.indexOf('## Phase 3: Resume');
+    expect(idx).toBeGreaterThan(-1);
+    const next = content.indexOf('## Phase 4', idx);
+    const section = content.slice(idx, next === -1 ? undefined : next);
+    expect(section).toContain('Stale-branch guard');
+    expect(section).toContain(STALE_BRANCH_AWK);
+    expect(section).toContain('session_archive_dir pair-review');
+  });
+});
+
 // ─── Track 5A: skill preamble two-path probe (drift-lock) ────────────
 //
 // Each skill preamble probes path 1 (~/.claude/skills/{name}/SKILL.md)
