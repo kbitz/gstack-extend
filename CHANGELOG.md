@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0.1] - 2026-05-10
+
+### Fixed: `/pair-review` no longer offers to resume sessions from a different branch
+
+`pair-review` state is project-scoped (one `session.yaml` per project), but `session.yaml` stores the `branch:` it was started on. Until now, both entry points that could offer a session for resume — the Active Session Guard on Init and Phase 3 Step 1 on Resume/Status — read `session.yaml` without checking that the stored branch matched the current branch, so a session abandoned on an old branch got offered for resume on a new branch.
+
+Both entry points now run a stale-branch guard before any "resume?" prompt: if `session.yaml`'s `branch:` differs from the current branch, the session is auto-archived to a timestamped sibling directory (via `session_archive_dir pair-review "$TS"`) and the skill proceeds as if no session existed. Data is preserved — the user can recover an archived session by branching back and inspecting `~/.gstack/projects/<slug>/pair-review-archived-<ts>/`.
+
+Added a drift-lock test (`tests/skill-protocols.test.ts → pair-review stale-branch guard`) that asserts both sections contain the guard text, the canonical awk parse for the stored branch, and the `session_archive_dir` call. Future edits cannot silently drop the guard from one side.
+
 ## [0.19.0.0] - 2026-05-10
 
 ### Changed (breaking): `/roadmap-new` cut over to `/roadmap`; v1 grammar dropped (Track 6D)
