@@ -235,40 +235,39 @@ describe('pair-review multi-table templates', () => {
   });
 });
 
-// ─── Stale-branch guard drift-lock ──────────────────────────────────
+// ─── Per-branch session-path drift-lock ─────────────────────────────
 //
-// pair-review state is project-scoped (one session.yaml per project), but
-// session.yaml stores the `branch:` it was started on. Both entry points
-// that could offer a session for resume (Active Session Guard on Init,
-// Phase 3 Step 1 on Resume/Status) must compare stored branch to current
-// branch and auto-archive on mismatch — otherwise a session abandoned on
-// an old branch gets offered for resume on a new branch.
-//
-// Lock the guard text so a future edit can't silently regress.
-describe('pair-review stale-branch guard', () => {
+// pair-review sessions are now keyed by branch: SESSION_DIR resolves to
+// `<PR_PROJECT_DIR>/branches/<sanitized-branch>/`. The old stale-branch
+// guard (which auto-archived sessions on branch mismatch) is no longer
+// needed — different branches simply live at different paths. Lock the
+// new shape so a future edit can't silently regress to the single-slot
+// design.
+describe('pair-review per-branch session paths', () => {
   const file = join(ROOT, 'skills', 'pair-review.md');
   const content = readFileSync(file, 'utf8');
 
-  const STALE_BRANCH_AWK = `awk -F': *' '$1=="branch" {print $2; exit}'`;
+  test('preamble resolves SESSION_DIR with branch arg', () => {
+    expect(content).toContain('session_dir pair-review "$BRANCH"');
+  });
 
-  test('Active Session Guard contains the stale-branch check', () => {
+  test('preamble resolves PROJECT_DIR (no branch)', () => {
+    // The branchless call still exists for project-level resources (deploy.md).
+    expect(content).toMatch(/PROJECT_DIR=\$\(session_dir pair-review\)/);
+  });
+
+  test('Active Session Guard does not contain the legacy stale-branch awk', () => {
+    // The auto-archive-on-mismatch logic is dead code now; if a future edit
+    // re-introduces the awk parse it likely means we regressed to one-slot.
+    expect(content).not.toContain(`awk -F': *' '$1=="branch" {print $2; exit}'`);
+  });
+
+  test('Active Session Guard archives with per-branch arg', () => {
     const idx = content.indexOf('## Active Session Guard');
     expect(idx).toBeGreaterThan(-1);
     const next = content.indexOf('## ', idx + 3);
     const section = content.slice(idx, next === -1 ? undefined : next);
-    expect(section).toContain('Stale-branch guard');
-    expect(section).toContain(STALE_BRANCH_AWK);
-    expect(section).toContain('session_archive_dir pair-review');
-  });
-
-  test('Phase 3 Step 1 contains the stale-branch check', () => {
-    const idx = content.indexOf('## Phase 3: Resume');
-    expect(idx).toBeGreaterThan(-1);
-    const next = content.indexOf('## Phase 4', idx);
-    const section = content.slice(idx, next === -1 ? undefined : next);
-    expect(section).toContain('Stale-branch guard');
-    expect(section).toContain(STALE_BRANCH_AWK);
-    expect(section).toContain('session_archive_dir pair-review');
+    expect(section).toContain('session_archive_dir pair-review "$TS" "$BRANCH"');
   });
 });
 

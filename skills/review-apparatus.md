@@ -381,11 +381,12 @@ If the project is so minimal there's literally no apparatus and no obvious gaps
 minimal for apparatus proposals; re-run after the project grows." Write nothing.
 
 ### /pair-review session active
-If a /pair-review `session.yaml` exists at `$(session_dir pair-review)/session.yaml`
-AND shows an active (non-DONE) session, warn: "There's an active /pair-review
-session. Running /review-apparatus now won't break it, but proposals here won't
-be available to this pair-review
-session until they're implemented. Continue?" AskUserQuestion with options:
+Pair-review sessions are per-branch — check every branch slot under
+`$(session_dir pair-review)/branches/*/session.yaml`. If any of those shows an
+active (non-DONE) session, warn: "There's an active /pair-review session (on
+branch `<sanitized-branch>`). Running /review-apparatus now won't break it, but
+proposals here won't be available to that pair-review session until they're
+implemented. Continue?" AskUserQuestion with options:
 `["Continue", "Stop and finish pair-review first"]`.
 
 ### No repo (not a git directory)

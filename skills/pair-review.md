@@ -147,37 +147,52 @@ reliability mechanism: if context compacts, the skill re-reads from disk.
 
 ### Paths
 
-All state lives in `<SESSION_DIR>` — a durable, per-project directory at
-`${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`. This is the
-single source of truth and survives Conductor workspace archival.
+State lives in two scopes — a project-wide dir and a per-branch dir under it.
+Sessions are keyed by branch, so multiple branches (in different Conductor
+workspaces or on different machines) can each have their own active session
+without trampling each other.
 
-Resolve `SESSION_DIR` at the start of every bash block that touches state:
+- `<PROJECT_DIR>` = `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`
+  Project-wide, branch-agnostic. Holds `deploy.md` (deploy recipe is the same
+  regardless of branch) and the `branches/` + `archives/` subdirs.
+- `<SESSION_DIR>` = `<PROJECT_DIR>/branches/<sanitized-branch>/`
+  Per-branch session state: `session.yaml`, `groups/`, `parked-bugs.md`, `report.md`.
+
+Resolve both at the start of every bash block that touches state:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \
            || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
-SESSION_DIR=$(session_dir pair-review)
 BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+PROJECT_DIR=$(session_dir pair-review)
+SESSION_DIR=$(session_dir pair-review "$BRANCH")
+echo "PROJECT_DIR=$PROJECT_DIR"
 echo "SESSION_DIR=$SESSION_DIR"
 echo "BRANCH=$BRANCH"
 ```
 
-Throughout the rest of this skill, `<SESSION_DIR>` in path expressions means
-the resolved value above. When invoking Glob/Read/Write/Edit, substitute the
-concrete absolute path printed by the bash block.
+Throughout the rest of this skill, `<SESSION_DIR>` and `<PROJECT_DIR>` in path
+expressions mean the resolved values above. When invoking Glob/Read/Write/Edit,
+substitute the concrete absolute path printed by the bash block.
 
 ### File Format
 
 ```
-pair-review/
-  session.yaml          # Session metadata, active groups, deploy recipe
-  deploy.md             # Discovered deploy recipe
-  parked-bugs.md        # Bugs noticed during testing, not yet triaged
-  groups/
-    auth.md             # Test group with items, status, evidence
-    onboarding.md       # Another group
+pair-review/                                  # <PROJECT_DIR>
+  deploy.md                                   # Discovered deploy recipe (project-wide)
+  branches/
+    <sanitized-branch>/                       # <SESSION_DIR> — one per active branch
+      session.yaml                            # Session metadata, active groups, deploy recipe
+      parked-bugs.md                          # Bugs noticed during testing, not yet triaged
+      groups/
+        auth.md                               # Test group with items, status, evidence
+        onboarding.md                         # Another group
+      report.md                               # Written at /pair-review done
+  archives/
+    <sanitized-branch>-<ts>/                  # Past sessions per branch
+      ...
 ```
 
 **session.yaml** fields:
@@ -230,9 +245,10 @@ Run this phase on **Init** only. On **Resume**, skip to Phase 3.
 
 ### Step 1: Check for existing deploy recipe
 
-Use Glob to check for an existing deploy recipe:
+Use Glob to check for an existing deploy recipe. Deploy recipe lives at the
+project level (one per project, not per branch):
 ```
-Glob pattern: <SESSION_DIR>/deploy.md
+Glob pattern: <PROJECT_DIR>/deploy.md
 ```
 
 Also check CLAUDE.md for a pointer:
@@ -276,7 +292,7 @@ project for testing? I'll save it so we can reuse it."
 
 ### Step 4: Save the recipe
 
-Write `deploy.md` to `<SESSION_DIR>/`:
+Write `deploy.md` to `<PROJECT_DIR>/` (project-level, shared across branches):
 
 ```markdown
 # Deploy Recipe
@@ -701,24 +717,10 @@ When `/pair-review resume` or `/pair-review status` is invoked.
 
 ### Step 1: Find existing state
 
-**Stale-branch guard first.** A pair-review session must NEVER be resumed on a
-branch other than the one it was started on. Before the existence check,
-auto-archive any session whose `branch:` field doesn't match the current
-branch (re-source the helper if this is a fresh bash block):
-
-```bash
-if [ -f "$SESSION_DIR/session.yaml" ]; then
-  STORED_BRANCH=$(awk -F': *' '$1=="branch" {print $2; exit}' "$SESSION_DIR/session.yaml" | tr -d '"')
-  if [ -n "$STORED_BRANCH" ] && [ "$STORED_BRANCH" != "$BRANCH" ]; then
-    TS=$(date -u +%Y%m%d-%H%M%S)
-    ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
-    mv "$SESSION_DIR" "$ARCHIVE_DIR"
-    echo "Archived stale session (branch '$STORED_BRANCH' → current '$BRANCH')"
-  fi
-fi
-```
-
-Then use the Glob tool to check for an existing session on the current branch:
+`SESSION_DIR` is already keyed by the current branch (resolved by
+`session_dir pair-review "$BRANCH"`), so sessions on other branches live at
+sibling paths and are not visible here — that is by design. Use the Glob tool
+to check for an existing session on the current branch:
 
 ```
 Glob pattern: <SESSION_DIR>/session.yaml
@@ -727,9 +729,9 @@ Glob pattern: <SESSION_DIR>/session.yaml
 If the file exists, read it and proceed to Step 2.
 
 If no state found: "No active test session found. Want to start a new one?"
-(If the stale-branch guard just archived a session, mention that in the same
-prompt — the user should know their old branch's session was preserved, not
-deleted.)
+
+If the user wants to see sessions on other branches, list `<PROJECT_DIR>/branches/`
+— each sibling there is another branch's active session.
 
 ### Step 2: Render dashboard
 
@@ -840,26 +842,10 @@ Present via AskUserQuestion:
 
 ## Active Session Guard
 
-On **Init**, before starting Phase 0, check for an existing active session.
-
-**Stale-branch guard first.** A pair-review session must NEVER be offered for
-resume on a branch other than the one it was started on. Before the existence
-check, auto-archive any session whose `branch:` field doesn't match the
-current branch (re-source the helper if this is a fresh bash block):
-
-```bash
-if [ -f "$SESSION_DIR/session.yaml" ]; then
-  STORED_BRANCH=$(awk -F': *' '$1=="branch" {print $2; exit}' "$SESSION_DIR/session.yaml" | tr -d '"')
-  if [ -n "$STORED_BRANCH" ] && [ "$STORED_BRANCH" != "$BRANCH" ]; then
-    TS=$(date -u +%Y%m%d-%H%M%S)
-    ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
-    mv "$SESSION_DIR" "$ARCHIVE_DIR"
-    echo "Archived stale session (branch '$STORED_BRANCH' → current '$BRANCH')"
-  fi
-fi
-```
-
-Then check for an existing session on the current branch:
+On **Init**, before starting Phase 0, check for an existing active session on
+the current branch. `SESSION_DIR` is already branch-scoped, so sessions on
+other branches are invisible here — by design, they have their own
+`branches/<branch>/` slot and continue to live independently.
 
 ```
 Glob pattern: <SESSION_DIR>/session.yaml
@@ -867,14 +853,14 @@ Glob pattern: <SESSION_DIR>/session.yaml
 
 If an active session exists, read it and present via AskUserQuestion:
 
-- Question: "You have an active test session (started [date], [N]/[M] items tested). What would you like to do?"
+- Question: "You have an active test session on this branch (started [date], [N]/[M] items tested). What would you like to do?"
 - Options: ["Resume the existing session", "Start a new session (archives the old one)"]
 
-If B, move the old session to a timestamped archive (re-source the helper if
-this is a fresh bash block):
+If B, move this branch's session to a per-branch archive (re-source the helper
+if this is a fresh bash block):
 ```bash
 TS=$(date -u +%Y%m%d-%H%M%S)
-ARCHIVE_DIR=$(session_archive_dir pair-review "$TS")
+ARCHIVE_DIR=$(session_archive_dir pair-review "$TS" "$BRANCH")
 mv "$SESSION_DIR" "$ARCHIVE_DIR"
 ```
 
