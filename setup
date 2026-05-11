@@ -92,16 +92,16 @@ fi
 SKILLS=(
   pair-review
   roadmap
-  roadmap-new
   full-review
   review-apparatus
   test-plan
 )
 
-# Historical skills that prior releases installed. Still iterated on uninstall so
-# users upgrading from <0.10.0 get a clean removal of browse-native.
+# Historical skills that prior releases installed. Iterated on every install
+# (auto-cleanup of dangling symlinks for retired skills) and on uninstall.
 LEGACY_SKILLS=(
   browse-native
+  roadmap-new
 )
 
 # ─── Uninstall path ────────────────────────────────────────────
@@ -178,6 +178,23 @@ for skill in "${SKILLS[@]}"; do
 done
 
 mkdir -p "$SKILLS_DIR"
+
+# Auto-clean retired skills so upgrades don't leave dangling symlinks.
+# Only removes symlinks we created (target points at our own skills/ dir);
+# anything else is left alone.
+removed_legacy=0
+for skill in "${LEGACY_SKILLS[@]}"; do
+  target="$SKILLS_DIR/$skill"
+  [ -L "$target/SKILL.md" ] || continue
+  link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
+  expected_old="$SCRIPT_DIR/skills/${skill}.md"
+  if [ "$link_target" = "$expected_old" ]; then
+    rm -f "$target/SKILL.md"
+    rmdir "$target" 2>/dev/null || true
+    removed_legacy=$((removed_legacy + 1))
+    echo "Removed retired skill: $skill"
+  fi
+done
 
 installed=0
 for skill in "${SKILLS[@]}"; do

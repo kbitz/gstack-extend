@@ -1,5 +1,7 @@
 # Roadmap
 
+## Current Plan
+
 ## Phase 1: Some Migration
 
 **End-state:** all bash test scripts deleted; bun test is the sole runner.

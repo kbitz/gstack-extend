@@ -3,13 +3,8 @@
  *
  * For each Group, computes the pairwise intersection of every active
  * (non-shipped, non-legacy) Track's `_touches:_` set. Non-empty
- * intersection = audit blocker.
- *
- * Pairs joined by an intra-Group `_Depends on:_` (direct or transitive)
- * skip the collision check — the dep edge is the v1 serialization signal.
- * In v2 grammar, intra-Group deps are themselves a STRUCTURE: fail (see
- * checks/structure.ts), so the dep-skip is effectively a no-op for v2
- * input. Keeping it preserves v1 audit compatibility.
+ * intersection = audit blocker. Tracks within a Group must be fully
+ * parallel-safe; intra-Group `_Depends on:_` is itself a STRUCTURE: fail.
  *
  * Each collision is classified:
  *   - SHARED_INFRA when ANY overlapping path is in the loaded
@@ -18,21 +13,16 @@
  *
  * Side outputs:
  *   - GROUP_SIZE_WARNINGS: Group has more active Tracks than the cap.
- *   - SERIALIZED_GROUPS: human-friendly note when v1 `_serialize: true_` is
- *     declared on a Group with ≥2 Tracks (the dep-skip is where actual
- *     serialization is honored).
  *
  * Output shape:
  *   STATUS: pass | fail | skip
  *   FINDINGS: per-collision (or "- (none)")
  *   [GROUP_SIZE_WARNINGS:]
- *   [SERIALIZED_GROUPS:]
  *   MAX_TRACKS_PER_GROUP: N
  *   SHARED_INFRA_STATUS: missing | loaded
  */
 
 import { ceiling } from '../lib/effort.ts';
-import { trackDependsOn } from '../parsers/roadmap.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckCollisions(ctx: AuditCtx): CheckResult {
@@ -50,7 +40,6 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
 
   const findings: string[] = [];
   const groupSizeWarnings: string[] = [];
-  const serializedNotes: string[] = [];
 
   for (const g of ctx.roadmap.value.groups) {
     // Active (non-shipped, non-legacy) Tracks only.
@@ -68,23 +57,11 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
         `- Group ${g.num}: ${tracks.length} active tracks exceeds max_tracks_per_group=${maxTracksPerGroup}`,
       );
     }
-    if (g.serialize && tracks.length >= 2) {
-      serializedNotes.push(
-        `- Group ${g.num}: ${tracks.length} tracks declared serial (\`_serialize: true_\`)`,
-      );
-    }
 
     for (let i = 0; i < tracks.length; i++) {
       for (let j = i + 1; j < tracks.length; j++) {
         const a = tracks[i]!;
         const b = tracks[j]!;
-        // Skip pairs joined by intra-Group dep (v1 serialization signal).
-        if (
-          trackDependsOn(ctx.roadmap.value, a, b) ||
-          trackDependsOn(ctx.roadmap.value, b, a)
-        ) {
-          continue;
-        }
         const aT = trackById.get(a);
         const bT = trackById.get(b);
         if (aT === undefined || bT === undefined) continue;
@@ -122,9 +99,6 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
   }
   if (groupSizeWarnings.length > 0) {
     body.push('GROUP_SIZE_WARNINGS:', ...groupSizeWarnings, '');
-  }
-  if (serializedNotes.length > 0) {
-    body.push('SERIALIZED_GROUPS:', ...serializedNotes, '');
   }
   body.push(`MAX_TRACKS_PER_GROUP: ${maxTracksPerGroup}`);
   body.push(`SHARED_INFRA_STATUS: ${ctx.sharedInfra.status}`);

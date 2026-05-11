@@ -2,8 +2,8 @@
  * renames-diff.ts — detect Group/Track ID renames between two ROADMAP.md
  * snapshots.
  *
- * Used by /roadmap-new at apply time so the regenerated plan can include
- * an "ID renames" mapping in the apply summary + commit message. v2's
+ * Used by /roadmap at apply time so the regenerated plan can include an
+ * "ID renames" mapping in the apply summary + commit message. The
  * "renumber freely" stance is correct philosophically, but humans still
  * anchor on IDs in conversation/PRs — surfacing the mapping at the regen
  * boundary closes the gap cheaply.

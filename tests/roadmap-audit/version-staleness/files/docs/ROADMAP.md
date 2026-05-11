@@ -4,6 +4,8 @@
 
 ### ~~Future feature~~ DONE (v0.9.0)
 
+## Current Plan
+
 ## Group 1: Active
 
 ### Track 1A: Live work

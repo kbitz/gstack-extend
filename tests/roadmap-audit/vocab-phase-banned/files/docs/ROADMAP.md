@@ -1,5 +1,7 @@
 # Roadmap
 
+## Current Plan
+
 ## Group 1: First batch
 
 This is the discovery phase of our work.

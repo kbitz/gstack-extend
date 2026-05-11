@@ -52,7 +52,6 @@ const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
 const REAL_SETUP_SKILLS = [
   'pair-review',
   'roadmap',
-  'roadmap-new',
   'full-review',
   'review-apparatus',
   'test-plan',
@@ -372,7 +371,7 @@ describe('bin/update-run', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('UPGRADE_OK 1.0.0 1.4.0');
       // Real setup announces its work; confirms it actually ran.
-      expect(out).toContain('Installed 6 skills');
+      expect(out).toContain('Installed 5 skills');
     });
 
     test('path-1 SKILL.md is a symlink under mock $HOME', () => {
@@ -476,7 +475,7 @@ describe('setup default install', () => {
   });
 
   test('installs 5 skills to default skills dir', () => {
-    expect(r.stdout + r.stderr).toContain('Installed 6 skills');
+    expect(r.stdout + r.stderr).toContain('Installed 5 skills');
   });
 
   for (const skill of ['pair-review', 'review-apparatus', 'test-plan']) {
@@ -685,7 +684,7 @@ describe('setup install-time safety: $SKILLS_DIR layer', () => {
     mkdirSync(join(home, '.claude'), { recursive: true });
     symlinkSync(dotfilesDir, join(home, '.claude', 'skills'));
     const r = runSetup([], home);
-    expect(r.stdout + r.stderr).toContain('Installed 6 skills');
+    expect(r.stdout + r.stderr).toContain('Installed 5 skills');
     // Symlinks landed inside the dotfiles dir (the resolved target).
     expect(lstatSync(join(dotfilesDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
   });
@@ -784,7 +783,7 @@ describe('Track 5A skill preamble probe (CP#3 integration)', () => {
     const home = join(baseTmp, 'cp3-default-home');
     mkdirSync(home, { recursive: true });
     const setupResult = runSetup([], home);
-    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 6 skills');
+    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 5 skills');
     const probe = runPreambleProbe(home, null);
     expect(probe.extendRoot).toBe(ROOT);
   });

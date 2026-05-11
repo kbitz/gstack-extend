@@ -1,5 +1,5 @@
 /**
- * state-sections.ts — validates the v2 state-section grammar.
+ * state-sections.ts — validates the state-section grammar.
  *
  * Enforces:
  *   - State sections (`## In Progress`, `## Current Plan`, `## Future`,
@@ -7,13 +7,12 @@
  *     optional, but when present they must be in this order. Shipped
  *     lives at the tail so the active plan is what readers see first.
  *   - No state section appears more than once.
- *   - When at least one state section is present, the document is in v2
- *     mode and the parser stamps each Group/Track with its lifecycle
- *     state. When absent, the document is in v1 mode (transitional —
- *     emits a `MIGRATION_NEEDED: warn` finding).
+ *   - At least one state section is present. A document with none is in
+ *     v1 grammar; the check fails with `MIGRATION_NEEDED` so the user
+ *     runs /roadmap to regenerate.
  *
  * Output shape:
- *   STATUS: pass | fail | warn
+ *   STATUS: pass | fail
  *   FINDINGS: per-finding (or "- (none)")
  *   GRAMMAR: v1 | v2
  *   SECTIONS_PRESENT: <comma-separated list>
@@ -72,7 +71,7 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
   const grammar = ctx.roadmap.value.hasV2Grammar ? 'v2' : 'v1';
   if (grammar === 'v1') {
     findings.push(
-      '- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## In Progress / ## Current Plan / ## Future / ## Shipped). See docs/designs/roadmap-v2-state-model.md.',
+      '- MIGRATION_NEEDED: ROADMAP.md has no state sections. Run /roadmap to regenerate into ## In Progress / ## Current Plan / ## Future / ## Shipped. See docs/designs/roadmap-v2-state-model.md.',
     );
   }
 
@@ -90,12 +89,9 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
     };
   }
 
-  // v1 alone (no other findings) → warn (advisory).
-  // Otherwise (duplicates / order errors) → fail.
-  const onlyMigration = findings.length === 1 && grammar === 'v1';
   return {
     section: 'STATE_SECTIONS',
-    status: onlyMigration ? 'warn' : 'fail',
+    status: 'fail',
     body: ['FINDINGS:', ...findings, '', ...tail],
   };
 }

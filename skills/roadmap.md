@@ -1,17 +1,18 @@
 ---
 name: roadmap
 description: |
-  Documentation restructuring skill. Maintains ROADMAP.md as a Groups > Tracks > Tasks
-  execution plan, drains TODOS.md inbox into the right places, marks shipped Groups
-  Complete, and surfaces parallelization opportunities. Single entry point: `/roadmap`.
-  Auto-detects what to do (greenfield restructure, triage new items, close out a Group,
-  freshness scan, mid-flight revision) from current state + last-run state + user prompt.
-  No subcommands.
-  Use when asked to "restructure TODOs", "clean up the roadmap", "reorganize backlog",
-  "tidy up docs", "update the roadmap", "close out Group N", "split Track NA", or after
-  a big batch of work that generated many new TODOs.
-  Proactively suggest when TODOS.md has grown significantly or structure looks stale.
-  Works for any project type.
+  Plan regeneration skill. Maintains ROADMAP.md as a state-organized
+  execution plan (## In Progress / ## Current Plan / ## Future / ## Shipped)
+  and regenerates the upcoming plan whole on each substantive run instead
+  of surgically reassessing it. Only shipped work has stable IDs; the rest
+  is volatile and re-thought each run. Spec:
+  `docs/designs/roadmap-v2-state-model.md`.
+  Use when asked to "regenerate the roadmap", "restructure TODOs",
+  "clean up the roadmap", "reorganize backlog", "tidy up docs",
+  "update the roadmap", or after a big batch of work that generated many
+  new TODOs.
+  Proactively suggest when TODOS.md has grown significantly or structure
+  looks stale. Works for any project type.
 allowed-tools:
   - Bash
   - Read
@@ -59,47 +60,74 @@ Handle responses the same way as /pair-review (see pair-review.md inline upgrade
 
 ---
 
-# /roadmap — Documentation Restructuring
+# /roadmap — Plan Regeneration
 
-This skill maintains ROADMAP.md as a Groups > Tracks > Tasks execution plan. Helpers (`bin/roadmap-audit`, `bin/roadmap-route`, `bin/roadmap-revise`) emit feature-engineered signals; the skill prose holds the whole picture in mind and proposes a plan diff. Every run is plan reassessment, not inbox drainage.
+This skill maintains ROADMAP.md organized by lifecycle state at the top
+level (`## In Progress` / `## Current Plan` / `## Future` / `## Shipped`).
+Active plan sits at the top; shipped history sinks to the tail so readers
+don't scroll past completed work to see what's happening now and next.
+Every substantive run **regenerates** the upcoming plan from scratch
+instead of surgically reassessing it. Only shipped work has stable IDs.
 
-**HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md, PROGRESS.md, and (during overhaul cleanup) `docs/designs/`/`docs/archive/` reorganization. Never modify code, configs, or CI files. VERSION is recommended but never written by /roadmap (that's /ship's job).
+The grammar, audit contract, and rationale live in
+`docs/designs/roadmap-v2-state-model.md`. Read that doc for the full
+specification; this prose describes the workflow.
+
+**HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md,
+PROGRESS.md, and (during overhaul cleanup) `docs/designs/` /
+`docs/archive/` reorganization. Never modify code, configs, or CI files.
+VERSION is recommended but never written by /roadmap (`/ship` does that).
 
 **File ownership:**
-- **TODOS.md** = inbox. Other skills write here (pair-review, full-review, investigate, review-apparatus, test-plan, manual). /roadmap reads and drains it.
-- **ROADMAP.md** = structured execution plan. /roadmap owns this. Groups > Tracks > Tasks live here.
+- **TODOS.md** = inbox. Other skills write here (pair-review, full-review,
+  investigate, review-apparatus, test-plan, manual). /roadmap reads and
+  drains it.
+- **ROADMAP.md** = structured execution plan. /roadmap owns this. Phases /
+  Groups / Tracks live here, organized by state.
 
-**Source-tag contract:** Every inbox item carries a `[source:key=val]` tag. The canonical grammar, severity taxonomy, and dedup rules live in `docs/source-tag-contract.md`. The audit's `TODO_FORMAT` check validates entries against it.
+**Source-tag contract:** Every inbox item carries a `[source:key=val]` tag.
+Grammar, severity taxonomy, and dedup rules live in
+`docs/source-tag-contract.md`. The audit's `TODO_FORMAT` check validates
+entries against it.
+
+## The four lifecycle states
+
+| State           | Section heading      | Granularity         | Mutability                       |
+|-----------------|----------------------|---------------------|----------------------------------|
+| Shipped         | `## Shipped`         | Phase / Group / Track | Frozen IDs forever, append-only  |
+| In Progress     | `## In Progress`     | Phase / Group        | Volatile (Tracks pinned only by open PR) |
+| Current Plan    | `## Current Plan`    | Phase / Group / Track | Fully volatile — regenerated each run |
+| Future          | `## Future`          | Flat bullets         | Fully volatile — regenerated each run |
+
+Granularity rules:
+- A **Track** is `shipped` (in `## Shipped`) or unshipped (in `## In Progress`
+  Group with `✓ Shipped` inline, or in `## Current Plan` Group). Tracks have
+  no separate "in progress" state — they're 1 PR each, and the branch-open →
+  PR-merge window is short.
+- A **Group** is `shipped` (all Tracks shipped → in `## Shipped`),
+  `in progress` (≥1 shipped Track and ≥1 not → in `## In Progress`),
+  or `current plan` (no shipped Tracks → in `## Current Plan`). Shipped
+  Tracks within an in-progress Group stay co-located (with `✓` markers)
+  until the whole Group lands.
+- A **Phase** mirrors Group rules: shipped (all Groups shipped),
+  in progress (partial), or current plan.
+
+A **Hotfix** is not a special primitive — it's a Group whose title starts
+with `Hotfix:`, contains exactly one Track, and (when not yet shipped) has
+no current-plan deps. It sits at the head of `## In Progress` or
+`## Current Plan` and jumps the queue. Hotfix is reserved for breaking
+regressions on shipped behavior, never for deferred scope.
 
 ## Step 1: Gather
 
-Read everything before deciding anything. Reassessment can't see what it doesn't load.
+Read everything before deciding anything. Regeneration can't see what it
+doesn't load.
 
 ```bash
 "$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
-"$_EXTEND_ROOT/bin/roadmap-audit" --scan-state --prompt "$USER_PROMPT" > /tmp/roadmap-state.json
 ```
 
-State signals JSON schema:
-
-```json
-{
-  "exclusive_state": null | "GREENFIELD",
-  "intents": {"closure": 0|1, "split": 0|1, "track_ref": "<id-or-empty>"},
-  "signals": {
-    "unprocessed_count": N,
-    "in_flight_groups": "1 2",
-    "origin_total": N,
-    "version_tag_staleness_fail": 0|1,
-    "git_inferred_freshness": N,
-    "has_zero_open_group": 0|1
-  }
-}
-```
-
-`version_tag_staleness_fail` fires only when a task has an explicit version-tag annotation that has shipped — VERSION_TAG_STALENESS only fires on items with explicit `(shipped vN.N.N)` annotations; broader recency lives in the `signals.git_inferred_freshness` field below. `git_inferred_freshness` counts active tasks where 2+ commits landed on referenced files since intro, OR 1 commit referenced the enclosing `Track NX` (the single-bundled-PR case).
-
-Read in addition: `TODOS.md ## Unprocessed` (with source-tag pre-classification per below), `ROADMAP.md` (full structure), and recent git log scoped to ROADMAP-referenced files.
+Read in addition: the full `ROADMAP.md`, the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
 **LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
@@ -119,83 +147,72 @@ for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
 # also: compute_dedup_hash "<title>" for dedup
 ```
 
-`route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before reassessment sees them.
+`route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before regeneration sees them.
 
-**Detected-intent prints** (visible to user, no decisions): if the JSON's intents show non-zero, print one line each so the user can correct on the next prompt:
-- `intents.closure == 1` → "Detected closure intent in your prompt."
-- `intents.split == 1` → "Detected split intent in your prompt."
-- `intents.track_ref != ""` → "Detected reference to Track {ID}."
-- prompt contains a minimal cue ("just triage", "don't restructure", "small pass", "quick cleanup", "no rework", or similar) → "Detected minimal-cue — will skip structural proposals; correctness signals (closure debt, freshness) still surfaced."
+**Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — the upcoming plan must be re-emitted in v2 grammar. The Shipped region is preserved (existing `✓ Complete` Groups become `## Shipped` entries with frozen IDs); everything else is regenerated from inputs.
 
-If the user replies "ignore that" before the next prompt, drop the bias.
+## Step 2: Regenerate
 
-**Phase-context hint.** If the audit's `## PHASES` section emits a row with `state=in_flight`, print one line at the top of the run so the user carries Phase context into PR descriptions and review:
-
-> `Phase {N} ({title}) in flight: current_group={M}, all_groups=[...]. Mid-Phase ships default to PATCH; when the last Group lands, /ship will recommend MINOR.`
-
-If `state=complete` for a Phase whose Groups are all marked `✓ Complete`, print instead:
-
-> `Phase {N} ({title}) is closing — all groups Complete. Next /ship is phase-closing; recommend MINOR when /ship Step 12 prompts.`
-
-These are advisory print-only; they do not gate Step 2's fast-path.
-
-## Step 2: Fast-path
-
-Skip reassessment entirely when ALL of these hold:
-
-- Audit returned `STATUS: pass` for every blocker check (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET).
-- `## Unprocessed` is empty.
-- `signals.has_zero_open_group == 0` AND no in-flight Group has inbox items that look like closure debt (file overlap with the Group's `_touches:_` or `[source:group=N]` matches).
-- `signals.version_tag_staleness_fail == 0` AND `signals.git_inferred_freshness == 0` (this is the codex guard — no in-flight Track has files with shipped activity since intro; otherwise the plan is stale and reassessment must run).
-- User prompt has no `intents.split`, `intents.closure`, or structural keyword cue (e.g., "review the plan", "restructure", "reorganize").
-
-If all conditions hold, print: **`Plan looks current. No changes.`** Exit before Step 3. No commit.
-
-If any condition fails, run reassessment.
-
-## Step 3: Reassess
-
-This is the LLM-owned step. Hold the full picture in mind and propose a plan diff. Don't iterate item-by-item; that's exactly the failure mode this redesign exists to fix.
+This is the LLM-owned step. Hold the full picture in mind and **emit a complete `## In Progress` + `## Current Plan` + `## Future` block from scratch**. Don't surgically edit existing entries; the whole upcoming plan is volatile.
 
 ### What to look at, holistically
 
 Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
-- **Is each existing Group/Track's current state correct given new evidence?** A Track whose files have shipped activity might be secretly done. A Group whose Pre-flight items have all landed might be ready for ✓ Complete. A Track whose `_touches:_` no longer reflects its actual scope might need re-scoping or splitting.
-- **Are inbox items proving an in-flight Group's scope was incomplete?** Items tagged `[pair-review:group=N]` or referencing files in Group N's `_touches:_` are closure debt for Group N. Real closure means resolving those — extend an existing Track, add a closing Track, or (for ✓ Complete Groups) append to **Hotfix** — *not* dumping them into Pre-flight or Future.
-- **Are there themes in the inbox set that warrant new Tracks or a new Group?** A new Track makes sense when the work is cohesive enough to ship in one plan+implement session, has a coherent file footprint, and has a bounded estimate. **No item-count rules.** 10 tiny bugs in the same area can be one Track. One large-scope task can be its own Track. Three unrelated items don't form a Track even if they share a source tag. The judgment is "is this scope cohesive?", not "are there ≥N items?"
-- **Are there stale items in ROADMAP.md?** Files no longer in `git ls-files`, version-tagged tasks where the version has shipped, items the freshness scan flagged.
-- **Does the user's prompt intent reshape the proposal?** A minimal cue skips structural proposals but still surfaces closure debt and freshness — correctness can't be overridden by a minimal cue. An explicit `intents.split` proposal does the split AND surfaces other necessary changes.
+- **What is shipped?** Read the existing `## Shipped` (or v1 `✓ Complete` Groups). Those IDs are frozen. They form the tail of the new ROADMAP.md (after `## Future`) and don't get re-thought.
+- **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR each), each with an explicit `_touches:_` footprint. _Don't assign Tracks to Groups yet_ — Group assignment is a separate step driven by the collision matrix (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
+- **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
 ### Adversarial-flagged items have priority
 
-Items from `[full-review:severity=critical|necessary]` or `[investigate]` are signals that something is genuinely wrong. They drive structural and closure decisions, not just batch-deferral exemption:
+Items from `[full-review:severity=critical|necessary]` or `[investigate]` are signals that something is genuinely wrong. They drive structural and hotfix decisions:
 
-- A critical pair-review finding for Group N is closure debt; Group N can't ship until it's resolved.
-- An investigate finding referencing Track 2A's files probably means Track 2A's scope was wrong; reassess the Track.
-- Surface adversarial items individually in the AskUserQuestion presentation (see Cluster types below).
+- A critical pair-review finding that's a regression on a shipped Group → propose a Hotfix Group with one Track.
+- An investigate finding referencing in-flight Track files → fold into the Track's regeneration (or split off into a sibling Track if scope justifies).
+- Surface adversarial items individually in the proposal so the user sees them.
 
-### Hierarchical reassessment for large input
+### Sizing discipline
 
-If the combined input (`unprocessed_count + active_track_count + active_task_count`) feels large enough that single-pass reasoning would be sloppy — themes don't naturally cluster on first read, or your draft proposal has internal contradictions — split into two passes against the **full** picture (not Group-scoped; that loses cross-Group themes):
+Hard rule: **1 Track = 1 PR**. The audit enforces this with the `max_loc_per_track` cap (default 300). When summing task LOC estimates pushes a Track over the cap, split it into multiple Tracks. **No "Ship as N PRs" language ever** — that's the v1 escape hatch the audit now bans (`STRUCTURE: fail`).
 
-- **Pass 1 — Structure.** Identify only structural changes: themes warranting new Tracks, Tracks/Groups secretly done, lopsided structure, closure-debt clusters. Output a structure proposal with no per-item placements yet. User approves/revises via AskUserQuestion.
-- **Pass 2 — Placement.** Given the agreed structure, do per-item placement into the now-stable target. Output placements + deferrals.
+When proposing a Track, anticipate review-induced expansion. If the work is high-risk or touches new surface area (3+ new files, `medium-high`/`high` risk), size it at ~50% of the cap. CEO/eng-review will likely add scope; bake the headroom in up front.
 
-You judge when hierarchical mode is needed; no numeric threshold. The structured proposal artifact (below) records both passes for audit.
+### Collision-driven grouping
 
-### Constraints
+Group assignment is **constrained by the file-collision matrix**, not by theme. Compute it before naming Groups, not after.
 
-- **Stable IDs for completed work.** Once a Track or Group ships (`✓ Complete`), its ID is locked forever — CHANGELOG, PROGRESS.md, commit messages, and downstream skills reference it. Upcoming work (anything not yet `✓ Complete`) is *not* ID-stable: when priority shifts, renumber the upcoming Groups/Tracks to match the new execution order rather than slotting the new initiative at the bottom. Renumbering must keep cross-references in sync — `_Depends on:_` annotations, adjacency list, intra-body Track references — and the post-apply audit will flag breakage. New work added at the active tail gets the next available ID.
-- **No Pre-flight in single-Track Groups.** Pre-flight exists to serialize shared-infra work *before* parallel Tracks within the same Group. A Group with one Track has nothing to parallelize against, so a Pre-flight subsection is artificial separation — fold the work into the single Track instead (as additional tasks if needed). If a second Track is added later, that's the moment to consider extracting shared-infra back into Pre-flight.
-- **Mid-flight Group reopening is forbidden.** A ✓ Complete Group stays ✓ Complete. Post-ship work appends to the Group's **Hotfix** subsection — Hotfix is the only post-ship primitive.
-- **HARD GATE.** Documentation only. ROADMAP.md, TODOS.md, PROGRESS.md, design/archive reorganization. Never code, configs, CI files. Recommend a VERSION bump but never write VERSION (`/ship` does that).
-- **Don't over-restructure trivial volume.** A 2-item triage with no closure debt is a placement-only run. Reassessment proposing a new Track for 2 unrelated items is over-engineering.
-- **Vocabulary discipline.** Audit's `check_vocab_lint` owns this — don't introduce banned terms.
+Once draft Tracks exist with `_touches:_` footprints, compute the pairwise intersection of every Track-pair's footprint:
+
+- Pairs with **empty intersection** are parallel-safe — they may co-Group.
+- Pairs with **non-empty intersection** must NOT co-Group. Resolve by either:
+  - **Merging** them into a single Track (when the overlap is most of both footprints — sequential file work belongs in one PR), OR
+  - **Splitting** them across Groups with an inter-Group dep edge (when each Track has substantial unique surface that justifies separate PRs).
+
+Only after the collision matrix is satisfied may Tracks be named into Groups around cohesive themes. **Groups are equivalence classes of "can run in parallel," not bundles by topic.** Naming and theme are decorations on top of the parallel-safety partition.
+
+This is what made v1 "5 Tracks in Group N" parade as parallel when really 4 of them chained on shared files. The audit's COLLISIONS check (Step 4) is now a safety net for human-edit drift after apply — the structural decision has to be made up front, not validated post-hoc.
+
+If you find yourself rewriting Tracks repeatedly to escape collisions, the input scope is wrong: either the Tracks are too granular (merge them) or the proposed Group is doing too much (split into sequential Groups with a dep edge).
+
+### Renumbering
+
+Renumber upcoming work freely. The next available numeric ID after a regeneration is `max(shipped_group_num, in_progress_group_num) + 1`. Letters within each Group cycle A, B, C…
+
+If a Track has an open PR (rare in practice), the user will call that out during regen review — preserve that ID for the regen. Don't build machinery to detect open PRs automatically.
+
+### Greenfield
+
+When `exclusive_state == "GREENFIELD"` (no ROADMAP.md exists), regeneration produces the entire ROADMAP.md from inputs. Ship it as a fresh document with the four state-section structure (most state sections will be empty initially — that's fine).
+
+### Phase proposal
+
+When the regenerated plan includes 2+ sequential Groups that together deliver one named end-state no single Group ships, wrap them in a `### Phase N: Title` block with `**End-state:**` (one sentence) and `**Groups:**` (list of member Group numbers) fields. Most projects don't need Phases — declare one only when the wrapper buys clarity.
 
 ### Structured proposal artifact
 
-Before any AskUserQuestion or apply, write the proposal to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper:
+Before the AskUserQuestion, write the entire proposed `## In Progress` + `## Current Plan` + `## Future` block to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
@@ -211,93 +228,60 @@ This resolves to `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/roadmap-pr
 Format:
 
 ```markdown
-# Roadmap reassessment proposal — <ISO timestamp>
+# Roadmap regeneration proposal — <ISO timestamp>
 
-## Structural changes
-- NEW Track 1B "Audit polish" — N tasks from inbox items <ids>
-- EXTEND Track 2A — add closing-bug tasks from inbox items <ids>
-- ✓ Complete Track 1A — files have N commits since intro
+## In Progress (proposed)
+<full v2 grammar block>
 
-## Placements
-- Item <id> → Group N Pre-flight (off-topic for Track 2A)
-- Item <id> → Future (defer; no in-flight Group fits)
-- Item <id> → KILL (referenced files no longer exist)
+## Current Plan (proposed)
+<full v2 grammar block, including Execution Map>
 
-## Closure proposals
-- Group N → ✓ Complete (after closing-Track ships)
+## Future (proposed)
+<flat bullets>
 
-## Hierarchical mode
-<only present in hierarchical mode>
-- Pass 1 ran: structure proposed at <ts>
-- Pass 2 ran: placement proposed at <ts>
+## Shipped (preserved — IDs frozen, lives at tail of ROADMAP.md)
+<verbatim from existing roadmap, or migrated from v1 ✓ Complete blocks>
+
+## Hotfix proposals
+<each Hotfix Group called out with rationale>
+
+## Summary
+- N Groups newly added to Current Plan
+- M items deferred to Future
+- K items killed (with reasons)
+- J Hotfix Groups proposed
+- Migration: v1 → v2 (when applicable)
 ```
-
-Sections that have no entries can be omitted. Path is `<PROPOSAL_DIR>/proposal-{ts}.md` — accumulates audit-trail history.
 
 ### AskUserQuestion clusters
 
-Present the diff as clusters in this order: structural → closure → placement batch → deferral/kill batch. The user's responses produce the *applied* diff (may be a subset).
+The proposal is one document, so the question loop is collapsed. Two clusters:
 
-**Cluster 1 — Structural proposal** (one per structural change):
+**Cluster 1 — Adversarial items** (one per critical/necessary item that survived classification): briefly summarize each and confirm whether it's a Hotfix candidate, in-scope for an existing Track, or deferred. Adversarial items can change the structural shape, so confirm before final proposal.
 
-> AskUserQuestion: "<one-line theme summary>. I'd <extract/extend/split/merge> ... Approve?"
+**Cluster 2 — Approve regenerated plan**:
+
+> AskUserQuestion: "Regenerated plan ready (see proposal-{ts}.md). Apply?"
 >
-> A) Approve as proposed
-> B) Revise (specify what to change)
-> C) Hold scope — fold into existing structure instead
+> A) Approve — apply the full proposal
+> B) Revise — specify what to change
+> C) Hold — keep current plan; only apply trivial closures (mark fully-shipped Groups as Shipped, drop empty Tracks)
 
-**Cluster 2 — Closure proposal** (one per closure):
+The v1 placement-batch and deferral-batch clusters no longer exist. There's nothing item-by-item to ask about because the whole upcoming plan is regenerated as one document.
 
-> AskUserQuestion: "<Track or Group> shows N commits since intro including <ref> — propose marking ✓ Complete in place. Approve?"
->
-> A) Mark Complete
-> B) Still in progress
+**Cluster 3 — Ambiguity** (genuine uncertainty between two equally plausible structural shapes): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
 
-**Cluster 3 — Placement batch** (single batched table for all per-item placements, with reassessment's recommendation per item; user approves all or overrides selectively). Adversarial-flagged items break out individually in this batch with their own context.
+## Step 3: Apply
 
-**Cluster 4 — Deferral / kill batch** (single batched approval for items reassessment recommends deferring or killing, with reasons).
+Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
-**Cluster 5 — Ambiguity** (genuine uncertainty between two equally plausible proposals): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
-
-If reassessment produces only placements (no structural / closure changes), it should feel like a batched triage. Structural changes always present first.
-
-### Greenfield (no ROADMAP.md exists)
-
-Greenfield is reassessment with an empty current plan. Read TODOS.md and recent git history; propose Groups/Tracks/Tasks following the **Output Format** below; present via Cluster 1 (one structural proposal covering the entire ROADMAP). After approval, clean TODOS.md to leave only the empty `## Unprocessed` header.
-
-### Phase proposal (greenfield + structural restructures)
-
-When the proposal includes 2+ sequential Groups, ask one extra AskUserQuestion before applying: *"Do Groups <N..M> together deliver one named feature no single Group ships? (e.g., 'all bash tests deleted; bun is sole runner') — if yes, I'll wrap them in a `## Phase N: Title` block; default no Phase."* Default to no Phase. A single Group, or two Groups that are sequential only because of file collision (not toward a shared end-state), is not a Phase.
-
-## Step 4: Apply
-
-Apply the user's approved diff to ROADMAP.md and TODOS.md.
-
-- **Split-track** operations use the helper:
-  ```bash
-  "$_EXTEND_ROOT/bin/roadmap-revise" split-track \
-    --from {parent} \
-    --child '{child1-id}|{child1-name}|{indices}' \
-    --child '{child2-id}|{child2-name}|{indices}'
-  ```
-  Refresh per-child metadata (task counts, `_touches:_`) as direct file edits after the helper runs.
-- **All other operations** (extend Track, add Track, mark ✓ Complete, append to Hotfix, defer to Future, kill) are direct ROADMAP.md / TODOS.md edits.
-- **Stable ID rules apply.** Completed (`✓ Complete`) Tracks and Groups never renumber. Upcoming work can be renumbered when priority shifts; keep all cross-references (`_Depends on:_` annotations, adjacency list, intra-body Track refs) in sync, then re-run audit to catch any drift.
-- **Hotfix subsection format** for post-ship items in ✓ Complete Groups:
-  ```
-  ## Group N: Name ✓ Complete
-
-  Shipped as v0.9.17.3. All 3 Tracks completed.
-
-  **Hotfix** (post-ship fixes; serial, one-at-a-time):
-  - Arrow key double-move [pair-review:group=N,item=M] — _~20 lines_ (S)
-  ```
-- **Track / Group completion conventions.** Two paths:
-  - **In-place ✓ Complete** (Track stays visible): `### Track 2B: Draft Safety ✓ Complete`. Body remains under the heading. Completed Tracks stop counting toward PARALLELISM_BUDGET, SIZE caps, COLLISIONS.
-  - **Collapse to italic line** under Group heading: `_Track 2B (Draft Safety) — ✓ Complete (v0.9.17.3). 3 tasks shipped._` Use when winding down and the Track body is no longer informative.
-  - **Group**: `## Group N: Name ✓ Complete` in place; one-line shipped note.
-  - **Preserve project conventions.** If the project already uses inline `✅` markers or a custom `## Shipped` section, match what's there.
-- **Individual task completion** (one bullet, siblings still open): delete the bullet, update parent task count + effort. Git log + CHANGELOG/PROGRESS preserve history.
+- **Whole-block replacement.** The existing `## In Progress`, `## Current Plan`, and `## Future` content is fully replaced with the regenerated content. The existing `## Shipped` content (which lives at the tail of the document) is preserved verbatim, or constructed from v1 `✓ Complete` Groups during migration.
+- **TODOS.md drain.** Every inbox item that the proposal placed (into Current Plan, Future, or killed) is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
+- **No helper invocations.** There's no split-track helper anymore. All edits are direct file writes.
+- **Track / Group completion conventions:**
+  - **In-progress Group with shipped Tracks**: shipped Tracks stay co-located with the Group, marked `✓ Shipped (vX.Y.Z.W)` inline.
+  - **Group fully shipped**: the whole Group moves from `## In Progress` to `## Shipped` as one block.
+  - **Track shipped within Current Plan Group**: the Track gets `✓ Shipped (vX.Y.Z.W)` inline; the Group moves to `## In Progress` if not all Tracks are shipped, or to `## Shipped` if all are.
 
 ### Audit-after-apply
 
@@ -307,28 +291,72 @@ Run the audit immediately after writing edits:
 "$_EXTEND_ROOT/bin/roadmap-audit"
 ```
 
-If any blocker check fires (SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS, PARALLELISM_BUDGET), escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+This is a drift safety net, not the primary check. COLLISIONS in particular should already be satisfied by Step 3's collision-driven grouping; an audit failure here means either (a) the regeneration skipped the matrix step, or (b) human edits between regeneration and apply introduced a collision. Either way, escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+
+The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
 
 ### TODOS.md drain orphan check
 
-Before commit, assert that every item the proposal said to move/kill/defer is gone from `## Unprocessed`. Any orphan = something didn't apply. Escalate with the orphan list and current diff state.
+Before commit, assert that every item the proposal placed/killed/deferred is gone from `## Unprocessed`. Any orphan = something didn't apply. Escalate with the orphan list and current diff state.
 
 ### Apply summary
 
-Print a one-line summary of what shipped: "Reassessed roadmap: <closures> closed, <new-tracks> added, <triaged> placed."
+Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <D> drained from inbox."`.
 
-## Step 5: Update PROGRESS.md
+**ID renames table.** When regeneration renumbered any Groups/Tracks, run
+the renames helper against the pre-edit ROADMAP.md (captured before Step 3
+overwrites it) and the post-edit content; include the resulting table in
+the apply summary AND the commit message body so users re-anchoring on
+old IDs can find their work:
 
-Check if a version was bumped since the last PROGRESS.md entry.
+```bash
+bun -e "import { computeRenames, formatRenamesTable } from '$_EXTEND_ROOT/src/audit/lib/renames-diff.ts';
+import { readFileSync } from 'node:fs';
+const oldRoadmap = process.env.ROADMAP_BEFORE ?? '';
+const newRoadmap = readFileSync('docs/ROADMAP.md', 'utf8');
+console.log(formatRenamesTable(computeRenames(oldRoadmap, newRoadmap)));"
+```
 
-If PROGRESS.md exists:
-- If a new version shipped that isn't in PROGRESS.md, append a row to the version table.
-- Verify the phase status table is current (do groups in TODOS.md align with roadmap?).
-- The roadmap section uses natural language, not Groups vocabulary.
+The helper matches by exact normalized title (whitespace-collapsed,
+lowercased, with `Hotfix:` prefix and `✓ Shipped` suffix stripped). Pure
+additions and deletions are dropped; only same-title-different-ID pairs
+are surfaced. Output is empty when nothing renamed — skip the table in
+that case.
 
-If PROGRESS.md doesn't exist: create with a single row for the current VERSION (or v0.1.0 if no VERSION file).
+## Step 4: PROGRESS.md staleness check
 
-## Step 6: Version Recommendation
+`/roadmap` does not write PROGRESS.md prose itself — version-row content
+is owned by `/document-release`. This step only detects staleness and
+optionally delegates the row append to a scoped subagent.
+
+Compute staleness: parse the latest version from `VERSION` (or `pyproject.toml`)
+and the latest version row in `docs/PROGRESS.md`. If they differ — i.e. one
+or more shipped versions are missing from PROGRESS.md — surface it:
+
+```
+AskUserQuestion: "PROGRESS.md is N versions behind (missing X.Y.Z, …). Append rows now via subagent?"
+Options: ["Yes, append rows", "Skip — I'll run /document-release later", "Skip — not relevant"]
+```
+
+If the user picks "Yes", launch a **scoped general-purpose subagent** with this
+prompt (do NOT invoke the `/document-release` skill — its scope is broader
+than just PROGRESS.md and would clash with the inbox drain we just did):
+
+> "Append rows to docs/PROGRESS.md for versions A, B, C, drawing prose from
+> the matching `## [A.B.C]` sections in CHANGELOG.md. Match the existing
+> PROGRESS.md row format exactly. Be conservative — quote CHANGELOG verbatim
+> when unsure. Stage docs/PROGRESS.md but do not commit. Report what you
+> appended in <100 words."
+
+When the subagent returns, include the staged PROGRESS.md update in the
+Step 6 commit (or an immediately-following sibling commit) so the user
+sees one cohesive change.
+
+If PROGRESS.md doesn't exist at all: create with a single row for the current
+VERSION (or v0.1.0 if no VERSION file). This is a structural bootstrap, not
+content authoring — safe for /roadmap to do directly.
+
+## Step 5: Version Recommendation
 
 Based on changes since the last tag (or VERSION baseline if no tags):
 
@@ -339,21 +367,20 @@ Based on changes since the last tag (or VERSION baseline if no tags):
 | Breaking changes, public launch | MAJOR |
 | Doc-only, config, CI | None |
 
-**Phase-aware default.** If the audit's `## PHASES` section reports `state=complete` for a Phase whose final Group is `✓ Complete`, default the recommendation to MINOR — this Group is phase-closing. If it reports `state=in_flight`, default to PATCH (mid-Phase Groups remain independently shippable). Either default is overridable: a phase that ends in cleanup/migration may still be PATCH, and a mid-Phase Group that ships independent user-visible value can be MINOR.
+If the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. The recommendation stands until /ship Step 12 confirms.
 
 /roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user: "I recommend bumping to vX.Y.Z. Run `/ship` to execute the bump." If no bump needed, say so.
 
-## Step 7: Commit
+## Step 6: Commit
 
-Stage only documentation files: ROADMAP.md, TODOS.md (cleaned inbox), PROGRESS.md (if modified).
+Stage only documentation files: ROADMAP.md, TODOS.md (drained inbox), PROGRESS.md (if modified).
 
 Commit message reflects what ran. Examples:
-- Greenfield: `docs: restructure roadmap (Groups > Tracks > Tasks)`
-- Reassessment with structure changes: `docs: reassess roadmap — added Track 1B, closed Group 2, triaged 6 items`
-- Placements only: `docs: triage unprocessed items into roadmap`
-- Freshness sweep: `docs: freshen roadmap (mark shipped Tracks ✓ Complete)`
-- Closure + triage: `docs: close out Group {N} and triage new items`
-- Revise (split): `docs: split Track {parent} into {children}`
+- Greenfield: `docs: bootstrap roadmap (v2 state-section model)`
+- Regeneration with structural changes: `docs: regenerate roadmap — N new Tracks, M deferred to Future`
+- Migration v1 → v2: `docs: migrate roadmap to v2 state-section model`
+- Pure closures: `docs: move shipped Groups to Shipped section`
+- Inbox drain only: `docs: drain TODOS inbox into roadmap`
 
 **Never stage VERSION, CHANGELOG.md, or any code files.**
 
@@ -361,84 +388,113 @@ If no doc changes were written, skip the commit entirely (don't create empty com
 
 ## Output Format (ROADMAP.md template)
 
-The audit enforces this format. Helpers consume it. Skill prose follows it when writing/restructuring:
+The audit enforces this format. Helpers consume it. Skill prose follows it when writing/regenerating:
 
 ```markdown
-# Roadmap — Phase N (vX.x)
+# Roadmap
 
-Organized as **Groups > Tracks > Tasks**. A Group is a wave of PRs that land
-together — parallel-safe within, dependency-ordered between. By default each
-Group depends on the immediately preceding Group (single linear chain); projects
-with parallel workstreams annotate explicit `_Depends on:_` lines for a DAG.
-Within a Group, Tracks must be fully parallel-safe (set-disjoint `_touches:_`
-footprints). Each track is one plan + implement session.
+(optional preamble paragraph)
 
 ---
 
-## Group 1: [Name]
+## In Progress
 
-[Optional: _Depends on: none_  | _Depends on: Group N (Name)_]
+### Phase 3: <Title>
 
-[1-2 sentence rationale.]
+**End-state:** <one sentence>
+**Groups:** 5, 6, 7
 
-**Pre-flight** (shared-infra; serial, one-at-a-time):
-- [trivial fix or shared-infra task]
+#### Group 5: <Title>
 
-### Track 1A: [Name]
-_N tasks . ~X days (human) / ~Y min (CC) . [low/medium/high] risk . [primary files]_
-_touches: file1, file2_
-[_Depends on: Track 1X_  — optional, intra-Group serialization]
+##### Track 5A: <Title> ✓ Shipped (v0.18.14.0)
+##### Track 5B: <Title>
+_<N tasks . ~LOC . risk . files>_
+_touches: a, b, c_
+- **<task>** -- description. _path, ~N lines._ (S/M/L/XL)
 
-[Optional: 1-line description.]
+#### Group 6: <Title>
 
-- **[Task title]** -- [description]. _[files affected], ~N lines._ (S/M/L/XL)
+(unshipped Tracks listed normally)
 
 ---
 
-## Group 2: [Name]
+## Current Plan
+
+### Phase 4: <Title>
+
+**End-state:** <one sentence>
+**Groups:** 8, 9
+
+#### Group 8: <Title>
+
+##### Track 8A: <Title>
+_<N tasks . ~LOC . risk . files>_
+_touches: a, b, c_
+- **<task>** -- description. _path, ~N lines._ (S/M/L/XL)
+
+##### Track 8B: <Title>
 ...
 
----
+#### Group 9: <Title>
 
-## Execution Map
+##### Track 9A: <Title>
+...
+
+### Execution Map
 
 Adjacency list:
 \`\`\`
-- Group 1 ← {}
-- Group 2 ← {1}
+- Group 5 ← {}
+- Group 6 ← {5}
+- Group 8 ← {6}
+- Group 9 ← {8}
 \`\`\`
 
 Track detail per group:
 \`\`\`
-Group 1: [Name]
-  +-- Track 1A ........... ~X days .. N tasks
+Group 5: <Title>          (in progress)
+  +-- Track 5A ........... ✓ shipped
+  +-- Track 5B ........... ~M . 3 tasks
+
+Group 6: <Title>
+  +-- Track 6A ........... ~S . 1 task
+  +-- Track 6B ........... ~M . 2 tasks
 \`\`\`
 
-**Total: N groups . M tracks . P tasks**
+**Total: <N> phases . <M> groups . <P> tracks remaining.**
 
 ---
 
-## Future (Phase N+1+)
+## Future
 
-Items deferred to a future phase. Plain bullets (not structured into Groups/Tracks).
-Items here can OPT INTO parallelism analysis by upgrading to a full `### Track FX:`
-heading with `_touches:_` and `_Depends on:_` metadata — those become candidates
-for surface-parallelizable when in-flight Groups have headroom.
+Items we might do but aren't committed to. Plain bullets. No phase/group/track
+structure, no `_touches:_`, no sizing, no IDs.
 
-- **[Item title]** — [description]. _Deferred because: [reason]._
+- **<Item title>** — description. _Source: <where it came from>._
+- **<Item title>** — description.
 
 ---
 
-## Unprocessed
+## Shipped
 
-Items awaiting triage by /roadmap. Added by other skills or manually.
+### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
+<one-line summary>
 
-- [source] Item description (date or context)
+#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 1A — _shipped (vX.Y.Z.W)_
+- Track 1B — _shipped (vX.Y.Z.W)_
+
+#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
+- Track 2A — _shipped (vX.Y.Z.W)_
+
+(loose Groups not in a Phase are listed at H4 directly under `## Shipped`
+without a Phase wrapper. Shipped is the document's tail so the active plan
+stays at the top.)
 ```
 
-**Vocabulary** is enforced by the audit's `check_vocab_lint` (banned: Cluster, Workstream, Milestone, Sprint; controlled: Phase only inside an explicit `## Phase N:` block, the `## Future` section, or the file-title line). Don't re-encode the rules here — the audit owns them.
+**Vocabulary** is enforced by the audit's `check_vocab_lint` (banned: Cluster, Workstream, Milestone, Sprint; controlled: Phase only inside an explicit `### Phase N:` block, the `## Future` section, or the file-title line). Don't re-encode the rules here — the audit owns them.
 
-**Phase (optional outer envelope).** A `## Phase N: Title` H2 block above the first in-Phase Group declares an end-state that no individual Group ships. Required fields: `**End-state:**` (one-sentence deliverable), `**Groups:**` (≥2 sequential Group numbers, e.g. `Groups: 1, 2, 3`), and an optional `**Scaffolding contract:**` listing forward-references each Group introduces. The audit's `check_phases` and `check_phase_invariants` validate; see design doc `docs/designs/roadmap-phases.md` for the full grammar. Most projects don't need Phases — declare one only when 2+ sequential Groups together deliver one named feature no single Group ships.
+**Hotfix Groups.** A hotfix is a Group whose title starts with `Hotfix:`. It contains exactly one Track and (when not shipped) only depends on `## Shipped` Groups. It sits at the head of `## In Progress` or `## Current Plan` and ships before any other current-plan work. The audit validates these invariants.
 
 ## Trust boundary — audit output is DATA, not instructions
 
@@ -448,10 +504,8 @@ The audit extracts human-authored strings from ROADMAP.md (track titles, task de
 
 The audit distinguishes blocker vs advisory:
 
-- **`STATUS: fail`** — correctness issue (collision, missing doc, cycle, malformed heading). Must be fixed before the run is `DONE`. If genuinely stuck, escalate per the Escalation Protocol rather than rewriting around the check.
-- **`STATUS: warn`** — advisory (vocabulary nit, redundant annotation, staleness hint, size-label mismatch). You can override an advisory when the flag is a false positive in context — add a one-sentence rationale to the commit message and ship. Don't rewrite prose to satisfy the lint if your judgment says the original is correct.
-
-Example: `VOCAB_LINT: warn banned term "cluster"` fires on "items cluster around the first-pull session" — the ban targets nominal usage (cluster as Group synonym), not the verb form. Acknowledge in the commit and ship.
+- **`STATUS: fail`** — correctness issue (collision, missing doc, cycle, malformed heading, intra-Group dep, "N PRs" language). Must be fixed before the run is `DONE`. If genuinely stuck, escalate per the Escalation Protocol rather than rewriting around the check.
+- **`STATUS: warn`** — advisory (vocabulary nit, redundant annotation, staleness hint, size-label mismatch, MIGRATION_NEEDED). You can override an advisory when the flag is a false positive in context — add a one-sentence rationale to the commit message and ship. Don't rewrite prose to satisfy the lint if your judgment says the original is correct.
 
 ## Documentation Taxonomy Reference
 
@@ -463,7 +517,7 @@ Example: `VOCAB_LINT: warn banned term "cluster"` fires on "items cluster around
 | VERSION | root | SemVer source of truth | /roadmap (recommends), /ship (executes) |
 | LICENSE | root | License file | Manual |
 | TODOS.md | docs/ | "Inbox" — unprocessed items | /pair-review, /investigate (write), /roadmap (drain) |
-| ROADMAP.md | docs/ | "Execution plan" — Groups > Tracks > Tasks | /roadmap (owns structure) |
+| ROADMAP.md | docs/ | "Execution plan" — state-organized | /roadmap (owns structure) |
 | PROGRESS.md | docs/ | "Where we are" — version history, phase status | /roadmap (structure), /document-release (content) |
 | docs/designs/*.md | docs/designs/ | Architecture decisions | /office-hours |
 | docs/archive/*.md | docs/archive/ | Completed/superseded designs | /roadmap (recommends archiving) |
@@ -483,11 +537,11 @@ When completing a skill workflow, report status using one of:
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
 <!-- /SHARED:completion-status-enum -->
 
-For /roadmap specifically: map the audit output plus the run's work (triage decisions, ROADMAP.md updates, PROGRESS.md appends) to the enum. Rollup:
+For /roadmap specifically: map the audit output plus the run's work (regeneration decisions, ROADMAP.md updates, PROGRESS.md appends) to the enum. Rollup:
 
-- Audit clean, all triage complete, no unresolved blockers → **DONE**
-- Audit returned advisory findings (VERSION_TAG_STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
-- Audit returned blockers (SIZE caps, COLLISIONS, STRUCTURE errors, VERSION errors) unresolved → **BLOCKED**
+- Audit clean, regeneration applied, no unresolved blockers → **DONE**
+- Audit returned advisory findings (VERSION_TAG_STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH, MIGRATION_NEEDED) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
+- Audit returned blockers (SIZE caps, COLLISIONS, STRUCTURE errors, STATE_SECTIONS errors, VERSION errors) unresolved → **BLOCKED**
 - Required inputs missing or ambiguous → **NEEDS_CONTEXT**
 
 <!-- SHARED:escalation-opener -->
@@ -496,7 +550,7 @@ For /roadmap specifically: map the audit output plus the run's work (triage deci
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
 <!-- /SHARED:escalation-opener -->
 
-- Restructure attempted 3 times and audit still fails → STOP and escalate.
+- Regeneration attempted 3 times and audit still fails → STOP and escalate.
 - Freshness scan ambiguous (can't tell if a TODO is done) → STOP and escalate.
 - Reorganization scope exceeds what you can verify against current code → STOP and escalate.
 
@@ -517,10 +571,10 @@ RECOMMENDATION: [what the user should do next]
 When you encounter high-stakes ambiguity during this workflow:
 <!-- /SHARED:confusion-head -->
 
-- Two plausible interpretations of a TODO with different Group/Track placements.
-- A request that contradicts existing structure (merge two tracks the audit flags as a PARALLEL collision).
+- An inbox item could plausibly be a Hotfix (regression) or a Current Plan item (new scope) — same source-tag.
+- A request that contradicts the audit (force a sequential dep within a Group when the audit blocks it).
 - A destructive operation with unclear scope ("clean up" — delete? archive? collapse?).
-- Missing context that would change placement significantly (unknown phase, unclear file ownership).
+- Missing context that would change classification significantly (unknown phase, unclear file ownership).
 
 STOP. Name the ambiguity in one sentence. Present 2-3 options with tradeoffs. Ask via AskUserQuestion. Do not guess on architectural or data-model decisions.
 
@@ -540,12 +594,12 @@ Lead the run summary with this table, above the audit detail:
 **VERDICT:** <STATUS> — <one-line summary>
 ```
 
-- `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, STRUCTURE, VERSION, GROUP_DEPS (cycles/forward-refs), PARALLELISM_BUDGET.
-- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), FUTURE.
+- `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE.
+- `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
 
 Verdict-to-status mapping:
 
-- Audit clean + ops complete + no unresolved blockers → "DONE — {ops summary}".
+- Audit clean + regeneration applied + no unresolved blockers → "DONE — {ops summary}".
 - Only advisory findings, acknowledged → "DONE_WITH_CONCERNS — {advisory list}".
 - Blocker findings unresolved → "BLOCKED — {blocker list}; resolve before re-running".
 - Missing inputs / conflicting states → "NEEDS_CONTEXT — {what is missing}".

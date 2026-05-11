@@ -401,9 +401,10 @@ regenerated, so v1 vocabulary (Pre-flight, Hotfix subsections,
 entries) simply doesn't survive the next run — there's nothing for the audit
 to migrate after the regen lands.
 
-The audit only enforces v2 grammar on the post-regen output; if a v1-shaped
-roadmap is audited mid-flight (before the user has run `/roadmap`), it emits
-`MIGRATION_NEEDED: warn` pointing at this design doc, but doesn't fail.
+The audit enforces v2 grammar; a v1-shaped roadmap audited before the user
+has run `/roadmap` emits `MIGRATION_NEEDED: fail` pointing at this design
+doc. Run `/roadmap` to regenerate into v2 grammar before any other audit
+work proceeds.
 
 ## Test fixtures
 

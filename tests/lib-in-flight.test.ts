@@ -24,8 +24,6 @@ function group(num: string, opts: Partial<GroupInfo> = {}): GroupInfo {
     deps: { kind: 'unspecified' },
     depsRaw: null,
     depAnchors: [],
-    serialize: false,
-    hasPreflight: false,
     trackIds: [],
     ...opts,
   };
