@@ -34,7 +34,11 @@ type RunResult = { exitCode: number; stdout: string; stderr: string };
 // process.env. cwd defaults to the repo root (so gstack-slug picks up the
 // real remote and we get a stable slug for tests that don't pin it).
 function runFn(
-  fn: 'session_dir' | 'session_archive_dir' | '_session_resolve_slug',
+  fn:
+    | 'session_dir'
+    | 'session_archive_dir'
+    | 'session_sanitize_branch'
+    | '_session_resolve_slug',
   args: string[] = [],
   opts: { env?: Record<string, string>; cwd?: string } = {},
 ): RunResult {
@@ -119,10 +123,44 @@ describe('session_dir', () => {
     expect(r.stderr).toContain('skill argument required');
     expect(r.stdout).toBe('');
   });
+
+  test('with branch arg appends /branches/<sanitized-branch>', () => {
+    const stateRoot = join(baseTmp, 'state-branch');
+    const r = runFn('session_dir', ['pair-review', 'kbitz/compose-perf-review'], {
+      env: { GSTACK_STATE_ROOT: stateRoot },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toEndWith('/pair-review/branches/kbitz--compose-perf-review');
+  });
+
+  test('with branch arg strips unsafe chars', () => {
+    const stateRoot = join(baseTmp, 'state-branch-unsafe');
+    const r = runFn('session_dir', ['pair-review', '../evil; rm -rf /'], {
+      env: { GSTACK_STATE_ROOT: stateRoot },
+    });
+    expect(r.exitCode).toBe(0);
+    // Sanitization preserves [a-zA-Z0-9._-] only. `/` is the only seg-separator
+    // that becomes `--`. The remaining chars in this input survive after strip:
+    // ".." (dot-dot), "evil", " ", ";", " rm -rf " -> ".." + "evilrm-rf"-ish.
+    // Just assert: no slashes after the branches/ segment, no spaces, no `;`.
+    expect(r.stdout).toMatch(/\/pair-review\/branches\/[a-zA-Z0-9._-]+$/);
+    expect(r.stdout).not.toContain(';');
+    expect(r.stdout).not.toContain(' ');
+  });
+
+  test('empty branch arg behaves like no branch arg (project dir)', () => {
+    const stateRoot = join(baseTmp, 'state-empty-branch');
+    const r = runFn('session_dir', ['pair-review', ''], {
+      env: { GSTACK_STATE_ROOT: stateRoot },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toEndWith('/pair-review');
+    expect(r.stdout).not.toContain('/branches/');
+  });
 });
 
 describe('session_archive_dir', () => {
-  test('composes -archived-<ts> sibling path', () => {
+  test('composes -archived-<ts> sibling path (no branch arg)', () => {
     const stateRoot = join(baseTmp, 'state-archive');
     const r = runFn('session_archive_dir', ['pair-review', '20260507-091500'], {
       env: { GSTACK_STATE_ROOT: stateRoot },
@@ -130,6 +168,17 @@ describe('session_archive_dir', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toStartWith(`${stateRoot}/projects/`);
     expect(r.stdout).toEndWith('/pair-review-archived-20260507-091500');
+  });
+
+  test('with branch arg composes archives/<branch>-<ts> under <skill>/', () => {
+    const stateRoot = join(baseTmp, 'state-archive-branch');
+    const r = runFn(
+      'session_archive_dir',
+      ['pair-review', '20260507-091500', 'kbitz/feature'],
+      { env: { GSTACK_STATE_ROOT: stateRoot } },
+    );
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toEndWith('/pair-review/archives/kbitz--feature-20260507-091500');
   });
 
   test('returns 1 when skill arg is empty', () => {
@@ -142,6 +191,32 @@ describe('session_archive_dir', () => {
     const r = runFn('session_archive_dir', ['pair-review', '']);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('skill and ts arguments required');
+  });
+});
+
+describe('session_sanitize_branch', () => {
+  test('converts / to -- and preserves safe chars', () => {
+    const r = runFn('session_sanitize_branch', ['kbitz/feature-x.1']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('kbitz--feature-x.1');
+  });
+
+  test('strips unsafe chars', () => {
+    const r = runFn('session_sanitize_branch', ['user/branch with spaces;rm']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/^[a-zA-Z0-9._-]+$/);
+  });
+
+  test('empty input returns "unknown-branch"', () => {
+    const r = runFn('session_sanitize_branch', ['']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('unknown-branch');
+  });
+
+  test('fully-stripped input returns "unknown-branch"', () => {
+    const r = runFn('session_sanitize_branch', ['!@#$%^&*()']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('unknown-branch');
   });
 });
 
