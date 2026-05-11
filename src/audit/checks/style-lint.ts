@@ -8,8 +8,6 @@
  *   2. Intra-group track dep cycles (ctx.roadmap.value.trackDepCycles).
  *   3. Redundant explicit `_Depends on: Group N_` when N is the
  *      immediately-preceding Group in numeric order.
- *   4. Pre-flight subsection in a single-Track Group (v1 only — Pre-flight
- *      exists to serialize parallel Tracks; v2 has no Pre-flight primitive).
  *
  * Findings are emitted WITHOUT a `- ` bullet prefix — bash builds the
  * string verbatim and renders via `echo -e`, no ` -` adornment.
@@ -58,18 +56,6 @@ export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
       }
     }
     prevSorted = g.num;
-  }
-
-  // 4. Pre-flight in single-Track Group (v1 only).
-  for (const g of ctx.roadmap.value.groups) {
-    if (!g.hasPreflight) continue;
-    if (g.isComplete) continue;
-    if (g.trackIds.length === 0) continue;
-    if (g.trackIds.length === 1) {
-      warnings.push(
-        `Group ${g.num}: Pre-flight subsection in a single-Track Group is artificial separation — fold into Track ${g.trackIds[0]} (Pre-flight exists to serialize shared-infra before parallel Tracks)`,
-      );
-    }
   }
 
   if (warnings.length === 0) {

@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   parseRoadmap,
-  trackDependsOn,
   type ParseRoadmapDeps,
 } from '../src/audit/parsers/roadmap.ts';
 
@@ -466,59 +465,6 @@ describe('parseRoadmap — cycle detection', () => {
   });
 });
 
-describe('trackDependsOn — transitive closure helper', () => {
-  test('direct dep returns true', () => {
-    const md = [
-      '## Group 1: A',
-      '### Track 1A: First',
-      '### Track 1B: Second',
-      'Depends on: Track 1A',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    expect(trackDependsOn(r.value, '1B', '1A')).toBe(true);
-  });
-
-  test('transitive dep returns true', () => {
-    const md = [
-      '## Group 1: A',
-      '### Track 1A: First',
-      '### Track 1B: Second',
-      'Depends on: Track 1A',
-      '### Track 1C: Third',
-      'Depends on: Track 1B',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    expect(trackDependsOn(r.value, '1C', '1A')).toBe(true);
-  });
-
-  test('reverse direction returns false', () => {
-    const md = [
-      '## Group 1: A',
-      '### Track 1A: First',
-      '### Track 1B: Second',
-      'Depends on: Track 1A',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    expect(trackDependsOn(r.value, '1A', '1B')).toBe(false);
-  });
-
-  test('cycle-safe (does not infinite loop)', () => {
-    const md = [
-      '## Group 1: A',
-      '### Track 1A: First',
-      'Depends on: Track 1B',
-      '### Track 1B: Second',
-      'Depends on: Track 1A',
-      '',
-    ].join('\n');
-    const r = parseRoadmap(md, deps());
-    expect(trackDependsOn(r.value, '1A', '1C')).toBe(false);
-  });
-});
-
 describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
   test('parses without errors and produces sensible counts', async () => {
     const path = join(import.meta.dir, '..', 'docs', 'ROADMAP.md');
@@ -536,10 +482,10 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     // Active Groups (6+) parse and are NOT marked complete.
     const g6 = r.value.groups.find((g) => g.num === '6');
     expect(g6?.isComplete).toBe(false);
-    // Active Tracks (heading-form) are extracted; e.g. Track 6A in current plan.
-    const t6a = r.value.tracks.find((t) => t.id === '6A');
-    expect(t6a).toBeDefined();
-    expect(t6a!.isComplete).toBe(false);
+    // Group 7's first Track (current plan) is extracted as in-progress.
+    const t7a = r.value.tracks.find((t) => t.id === '7A');
+    expect(t7a).toBeDefined();
+    expect(t7a!.isComplete).toBe(false);
     // Group dep parse: kinds limited to 'unspecified' / 'none' / 'after'.
     // Active Groups in the current plan use explicit `_Depends on:_` blocks
     // OR rely on the preceding-Group default. No Group should have a

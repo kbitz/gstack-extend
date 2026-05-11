@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0.0] - 2026-05-10
+
+### Changed (breaking): `/roadmap-new` cut over to `/roadmap`; v1 grammar dropped (Track 6D)
+
+The v2 state-section model graduates from preview. `skills/roadmap-new.md` is renamed to `skills/roadmap.md` (the existing v1 skill is replaced wholesale), and v1 grammar is no longer accepted by the audit — `STATE_SECTIONS` now emits `MIGRATION_NEEDED: fail` (was `warn`) when a ROADMAP.md has no state sections. First `/roadmap` run on an existing v1 project will refuse to proceed without regenerating into the four state sections (`## In Progress` / `## Current Plan` / `## Future` / `## Shipped`); the regeneration preserves the Shipped region and re-emits everything else from inputs.
+
+**Removed v1 audit primitives**, now unconditional/dropped:
+
+- `serialize` and `hasPreflight` fields on `GroupInfo`. The `_serialize: true_` parsing block, the `**Pre-flight**` subsection parser, and the post-parse implicit-dep generation for serialized groups are gone. Sequential file work belongs in different Groups (or merged into one Track); shared-infra-before-parallel work belongs in a small earlier Group, not a sub-section of the same Group.
+- The `if (hasV2Grammar)` gate around the intra-Group dep ban, PR-split ban, and Hotfix invariants in `src/audit/checks/structure.ts`. These are now unconditional structural checks.
+- The Pre-flight-in-single-Track-Group warning from `src/audit/checks/style-lint.ts` (item 4).
+- The `SERIALIZED_GROUPS:` note and `trackDependsOn(...)` dep-skip from `src/audit/checks/collisions.ts`. With the intra-Group dep ban now unconditional, there are no deps to skip.
+- The `if (!hasV2Grammar)` skip path from `src/audit/checks/future.ts` — Future is now always validated.
+- `PREFLIGHT_RE` regexes and the `'preflight'` section state from `src/audit/checks/task-list.ts` and `src/audit/checks/structural-fitness.ts`.
+- The exported `trackDependsOn` helper from `src/audit/parsers/roadmap.ts` (no remaining callers after the collisions.ts strip).
+- `bin/roadmap-revise` (split-track helper). The v2 regenerate-whole flow uses direct file writes; helper is unreachable.
+- `lib/state.ts` `detectStateRegions()` simplification: any of the four state sections now triggers `kind: 'v2'` (previously `## Future` alone was treated as v1 to avoid ambiguity with v1 `## Future` content).
+- Test fixture `tests/roadmap-audit/preflight-single-track/` (purely v1 Pre-flight test). All other v1-grammar fixtures gain a `## Current Plan` heading so `STATE_SECTIONS` passes; their underlying Group/Track shape exercises checks that still apply.
+
+**Setup, tests, and docs:**
+
+- `setup` SKILLS array drops `roadmap-new`. `tests/update.test.ts` `REAL_SETUP_SKILLS` constant updated. "Installed N skills" assertions updated 6 → 5.
+- `tests/parsers-roadmap.test.ts` drops the `trackDependsOn` import and its 4-test describe block.
+- `tests/skill-protocols.test.ts` drops the `BLOCK_ROADMAP_FAST_PATH` verbatim block (the v1 fast-path output `Plan looks current. No changes.` no longer exists; the v2 model regenerates on every substantive run).
+- 5 mock `GroupInfo` fixtures (`tests/check-phases.test.ts`, `tests/check-group-deps.test.ts`, `tests/check-phase-invariants.test.ts`, `tests/lib-in-flight.test.ts`, `tests/helpers/audit-ctx.ts`) drop the `serialize: false` / `hasPreflight: false` fields.
+- 27 `expected.txt` snapshots regenerated mechanically (`STATE_SECTIONS: warn` → `pass`, `FUTURE: skip` → `pass`).
+- `docs/designs/roadmap-v2-migration-plan.md` deleted (this PR completed the migration).
+- `docs/designs/roadmap-v2-state-model.md` retained as the living spec for the model.
+- `docs/ROADMAP.md`: Group 6 Tracks 6A and 6C marked `✓ Shipped` inline; new Track 6D records this cutover.
+
+**Known stale corpus item:** `tests/fixtures/skill-prose-corpus/1-roadmap-reassessment.md` was calibrated on v1 surgical-reassessment voice. It still works as clarity/completeness/actionability calibration but no longer reflects the regeneration-shaped output the new skill produces. Will be regenerated from a real `/roadmap` run when one is captured.
+
+**Consumer migration:** projects with v1 ROADMAP.md (managua, bolt, etc.) hit `MIGRATION_NEEDED: fail` on first `/roadmap` invocation after upgrading and must regenerate to v2 grammar before any other audit work proceeds. This repo's own `docs/ROADMAP.md` is already v2 and audits clean.
+
 ## [0.18.19.0] - 2026-05-10
 
 ### Changed: STALENESS section renamed to VERSION_TAG_STALENESS + STATUS bug fix (Track 6A)

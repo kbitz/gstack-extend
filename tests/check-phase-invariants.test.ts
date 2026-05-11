@@ -37,8 +37,6 @@ function group(num: string): GroupInfo {
     deps: { kind: 'unspecified' },
     depsRaw: null,
     depAnchors: [],
-    serialize: false,
-    hasPreflight: false,
     trackIds: [],
   };
 }

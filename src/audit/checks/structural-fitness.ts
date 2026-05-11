@@ -22,11 +22,8 @@
 
 import type { AuditCtx, CheckResult } from '../types.ts';
 
-// Heading-depth-agnostic: v1 uses ## Group / ### Track, v2 uses
-// ### Group / #### Track inside state H2 sections.
 const GROUP_RE = /^#{2,4} Group ([0-9]+):/;
 const TRACK_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
-const PREFLIGHT_RE = /^\*\*Pre-flight\*\*/i;
 const STOP_RE = /^## (Future|Unprocessed|Execution Map)/i;
 
 export function runCheckStructuralFitness(ctx: AuditCtx): CheckResult {
@@ -44,8 +41,7 @@ export function runCheckStructuralFitness(ctx: AuditCtx): CheckResult {
   let taskCount = 0;
   let curGroup = '';
   let curTrack = '';
-  let section: 'none' | 'group' | 'track' | 'preflight' = 'none';
-  let inPreflight = false;
+  let section: 'none' | 'group' | 'track' = 'none';
   let skipGroup = false;
   // Insertion-order maps preserve emission sequence.
   const groupSizes = new Map<string, number>();
@@ -64,7 +60,6 @@ export function runCheckStructuralFitness(ctx: AuditCtx): CheckResult {
       groupCount++;
       groupSizes.set(curGroup, 0);
       section = 'group';
-      inPreflight = false;
       curTrack = '';
       continue;
     }
@@ -75,13 +70,6 @@ export function runCheckStructuralFitness(ctx: AuditCtx): CheckResult {
       trackCount++;
       trackSizes.set(curTrack, 0);
       section = 'track';
-      inPreflight = false;
-      continue;
-    }
-    if (PREFLIGHT_RE.test(line)) {
-      if (skipGroup) continue;
-      inPreflight = true;
-      section = 'preflight';
       continue;
     }
     if (STOP_RE.test(line)) break;
@@ -91,14 +79,9 @@ export function runCheckStructuralFitness(ctx: AuditCtx): CheckResult {
     if (/^- \*\*/.test(line)) {
       taskCount++;
       if (curGroup !== '') groupSizes.set(curGroup, (groupSizes.get(curGroup) ?? 0) + 1);
-      if (!inPreflight && curTrack !== '') {
+      if (curTrack !== '') {
         trackSizes.set(curTrack, (trackSizes.get(curTrack) ?? 0) + 1);
       }
-      continue;
-    }
-    if (inPreflight && /^- [^*]/.test(line)) {
-      taskCount++;
-      if (curGroup !== '') groupSizes.set(curGroup, (groupSizes.get(curGroup) ?? 0) + 1);
       continue;
     }
   }

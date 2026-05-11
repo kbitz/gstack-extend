@@ -1,16 +1,12 @@
 /**
- * task-list.ts — port of check_task_list (~L1214-1361).
- *
- * Single-pass scan of ROADMAP.md emitting one TASK row per discovered task.
- * Output is consumed by /roadmap during reorg, so the row format is the
- * structural contract:
+ * task-list.ts — single-pass scan of ROADMAP.md emitting one TASK row per
+ * discovered task. Output is consumed by /roadmap during reorg, so the row
+ * format is the structural contract:
  *
  *   TASK: group=<num>|track=<id>|title=<...>|effort=<S|M|L|XL|?>|files=<csv>|complete=<0|1>
  *
  * Rules:
  *   - Group heading sets `group_num`; section transitions reset state.
- *   - `**Pre-flight**` opens a pseudo-track named `preflight`; bullet lines
- *     inside it (no `**`) are emitted as `effort=S|files=|track=preflight`.
  *   - `### Track NA[.M]:` opens a real track.
  *   - `## Future` switches to `group=future|track=none`. `## Unprocessed`
  *     stops the scan. `## Execution Map` and any other `## ` reset section
@@ -18,29 +14,21 @@
  *   - Task lines (`- **Title**`) parse the title before the closing `**`,
  *     a trailing `(S|M|L|XL)` for effort (else `?`), and an italic
  *     `_[a, b, c]_` files block. `complete=1` iff the enclosing Group is
- *     marked ✓ Complete in its heading (track-level complete is ignored
- *     here — bash matches that exactly).
- *   - Pre-flight bullets (`- ` + non-`*`) → `effort=S, files=`,
- *     track=preflight.
+ *     marked ✓ Complete in its heading.
  */
 
 import type { AuditCtx, CheckResult } from '../types.ts';
 
-type Section = 'none' | 'skip' | 'group' | 'preflight' | 'track' | 'future';
+type Section = 'none' | 'skip' | 'group' | 'track' | 'future';
 
-// Heading-depth-agnostic: v1 uses ## Group / ### Track, v2 uses
-// ### Group / #### Track inside state H2 sections.
 const GROUP_RE = /^#{2,4} Group ([0-9]+):/;
-const PREFLIGHT_RE = /^\*\*Pre-flight\*\*/i;
 const TRACK_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
 const FUTURE_RE = /^## Future/i;
 const UNPROCESSED_RE = /^## Unprocessed/i;
 const EXEC_MAP_RE = /^## Execution Map/i;
-const STATE_SECTION_RE = /^## (Shipped|In Progress|Current Plan)/;
 const TASK_BOLD_RE = /^- \*\*([^*]+)\*\*/;
 const TASK_EFFORT_RE = /\((S|M|L|XL)\)$/;
 const TASK_FILES_RE = /_\[([^\]]+)\]/;
-const PREFLIGHT_TASK_RE = /^- [^*]/;
 
 export function runCheckTaskList(ctx: AuditCtx): CheckResult {
   if (ctx.paths.roadmap === null) {
@@ -59,7 +47,6 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
   let section: Section = 'none';
   let groupNum = '';
   let trackId = '';
-  let inPreflight = false;
   let totalTasks = 0;
   let totalCurrent = 0;
   let totalFuture = 0;
@@ -84,15 +71,7 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
     if (groupMatch !== null) {
       groupNum = groupMatch[1]!;
       section = 'group';
-      inPreflight = false;
       trackId = '';
-      continue;
-    }
-
-    if (PREFLIGHT_RE.test(line)) {
-      inPreflight = true;
-      trackId = 'preflight';
-      section = 'preflight';
       continue;
     }
 
@@ -100,7 +79,6 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
     if (trackMatch !== null) {
       trackId = trackMatch[1]!;
       section = 'track';
-      inPreflight = false;
       continue;
     }
 
@@ -108,7 +86,6 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
       section = 'future';
       groupNum = 'future';
       trackId = 'none';
-      inPreflight = false;
       continue;
     }
     if (UNPROCESSED_RE.test(line)) break;
@@ -122,7 +99,6 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
     }
     if (section === 'none' || section === 'skip') continue;
 
-    // Bold task line.
     const taskMatch = line.match(TASK_BOLD_RE);
     if (taskMatch !== null) {
       const title = taskMatch[1]!;
@@ -137,17 +113,6 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
       totalTasks++;
       if (section === 'future') totalFuture++;
       else totalCurrent++;
-      continue;
-    }
-
-    // Pre-flight bullet (no bold).
-    if (inPreflight && PREFLIGHT_TASK_RE.test(line)) {
-      const title = line.replace(/^- /, '');
-      const g = groupNum === '' ? '0' : groupNum;
-      const complete = completeGroups.has(g);
-      emitTask(g, 'preflight', title, 'S', '', complete);
-      totalTasks++;
-      totalCurrent++;
       continue;
     }
   }

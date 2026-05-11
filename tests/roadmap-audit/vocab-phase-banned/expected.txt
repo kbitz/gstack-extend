@@ -1,7 +1,7 @@
 ## VOCAB_LINT
 STATUS: warn
 FINDINGS:
-- line 5: banned term "phase" found
+- line 7: banned term "phase" found
 
 
 ## STRUCTURE
@@ -10,12 +10,11 @@ FINDINGS:
 - (none)
 
 ## STATE_SECTIONS
-STATUS: warn
+STATUS: pass
 FINDINGS:
-- MIGRATION_NEEDED: ROADMAP.md uses v1 grammar (no state sections). Run /roadmap to regenerate into v2 (## In Progress / ## Current Plan / ## Future / ## Shipped). See docs/designs/roadmap-v2-state-model.md.
-
-GRAMMAR: v1
-SECTIONS_PRESENT: 
+- (none)
+GRAMMAR: v2
+SECTIONS_PRESENT: Current Plan
 
 ## PHASES
 STATUS: skip
@@ -126,9 +125,9 @@ FINDINGS:
 - (none)
 
 ## FUTURE
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- v1 grammar (no ## Future section) — not validated
+- (none)
 FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT

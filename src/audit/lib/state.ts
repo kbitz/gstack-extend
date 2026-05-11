@@ -1,9 +1,9 @@
 /**
  * state.ts — lifecycle-state detection for ROADMAP.md sections.
  *
- * The v2 grammar puts state at the top of the document hierarchy. Sections
- * appear in this order so the active plan is at the top of the document and
- * the shipped history sinks to the tail:
+ * State lives at the top of the document hierarchy. Sections appear in this
+ * order so the active plan is at the top of the document and the shipped
+ * history sinks to the tail:
  *
  *   ## In Progress
  *   ## Current Plan
@@ -14,9 +14,10 @@
  * otherwise) or EOF. Phases, Groups, and Tracks inherit their lifecycle state
  * from the enclosing region.
  *
- * Backward compatibility (v1 input): when no state sections are seen, the
- * detector returns `kind: 'v1'` and consumers fall back to inline-marker
- * derivation (✓ Complete on Group heading → shipped; etc.).
+ * When no state sections are seen, the detector returns `kind: 'v1'`. The
+ * STATE_SECTIONS check fails the run with MIGRATION_NEEDED in that case;
+ * consumers (parser inline-marker fallback) keep working so the failure
+ * output stays informative.
  */
 export type LifecycleState = 'shipped' | 'in-progress' | 'current-plan' | 'future';
 
@@ -76,14 +77,6 @@ export function detectStateRegions(content: string): StateRegions {
   }
 
   if (ranges.length === 0) return { kind: 'v1' };
-  // v2 trigger requires at least one of Shipped / In Progress / Current Plan.
-  // `## Future` alone is ambiguous (v1 had it too), so a Future-only document
-  // is treated as v1 with the Future region preserved for use by checks that
-  // care (e.g. legacy parallelizable-future analysis).
-  const hasV2Trigger = ranges.some(
-    (r) => r.state === 'shipped' || r.state === 'in-progress' || r.state === 'current-plan',
-  );
-  if (!hasV2Trigger) return { kind: 'v1' };
   return { kind: 'v2', ranges };
 }
 

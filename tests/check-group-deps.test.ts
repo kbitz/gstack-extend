@@ -77,8 +77,6 @@ function group(num: string, name: string, opts: Partial<GroupInfo> = {}): GroupI
     deps: { kind: 'unspecified' },
     depsRaw: null,
     depAnchors: [],
-    serialize: false,
-    hasPreflight: false,
     trackIds: [],
     ...opts,
   };

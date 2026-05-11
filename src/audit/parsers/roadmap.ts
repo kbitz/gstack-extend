@@ -1,5 +1,5 @@
 /**
- * roadmap.ts — parser for ROADMAP.md, v2 state-section grammar.
+ * roadmap.ts — parser for ROADMAP.md.
  *
  * The document is organized by lifecycle state at the top level (active plan
  * first, shipped history last):
@@ -15,15 +15,14 @@
  *   ### Group N: Title    (work primitive)
  *   #### Track NA: Title  (one PR)
  *
- * v1 fallback: when no state sections are present, the parser accepts the
- * v1 grammar where Groups are at H2 (`## Group N`) and Tracks at H3
- * (`### Track NA`). Lifecycle state is then derived from inline markers:
- *   - Group with `✓ Complete` suffix → shipped
- *   - Group with any shipped Tracks but not `✓ Complete` → in-progress
- *   - Otherwise → current-plan
- *
  * Heading levels for Phase/Group/Track are detected by leading `#+ ` rather
- * than fixed depth — simplifies mixed-grammar docs and v1↔v2 transitions.
+ * than fixed depth.
+ *
+ * When no state sections are present, the document is in v1 grammar — the
+ * parser still extracts Groups/Tracks (so the audit can read them) but the
+ * STATE_SECTIONS check fails the run with MIGRATION_NEEDED. Inline `✓
+ * Complete` markers on Group headings still mark Groups shipped in that
+ * mode so the failure output is informative.
  *
  * Parser is pure: takes content string, returns a value-only result.
  */
@@ -53,8 +52,6 @@ export type GroupInfo = {
   deps: GroupDeps;
   depsRaw: string | null;
   depAnchors: GroupDepAnchor[];
-  serialize: boolean; // v1 `_serialize: true_` escape hatch
-  hasPreflight: boolean; // v1 `**Pre-flight**` subsection
   trackIds: string[];
 };
 
@@ -184,8 +181,6 @@ export function parseRoadmap(
   const groupHeadingLine = new Map<string, number>();
   const groupInlineComplete = new Set<string>(); // ✓ Complete inline marker
   const groupHotfix = new Set<string>();
-  const groupSerialize = new Set<string>(); // v1 `_serialize: true_`
-  const groupHasPreflight = new Set<string>(); // v1 `**Pre-flight**`
   const groupDepsRaw = new Map<string, string>();
   const groupDeps = new Map<string, GroupDeps>();
   const groupDepAnchors = new Map<string, GroupDepAnchor[]>();
@@ -209,7 +204,7 @@ export function parseRoadmap(
   const futureBullets: string[] = [];
   const futureMalformed: string[] = [];
 
-  type Section = 'none' | 'skip' | 'group' | 'preflight' | 'track' | 'future';
+  type Section = 'none' | 'skip' | 'group' | 'track' | 'future';
   let section: Section = 'none';
   let groupNum = '';
   let trackId = '';
@@ -322,25 +317,6 @@ export function parseRoadmap(
           );
         }
       }
-      continue;
-    }
-
-    // Group-level `_serialize: true_` escape hatch (v1 only — v2 forbids
-    // intra-Group serialization via the structure check).
-    if (
-      section === 'group' &&
-      trackId === '' &&
-      /^_serialize:[ \t\v\f\r]*true_[ \t\v\f\r]*$/i.test(line)
-    ) {
-      if (groupNum !== '') groupSerialize.add(groupNum);
-      continue;
-    }
-
-    // `**Pre-flight**` subsection marker (v1 only).
-    if (/^\*\*Pre-flight\*\*/i.test(line)) {
-      section = 'preflight';
-      trackId = '';
-      if (groupNum !== '') groupHasPreflight.add(groupNum);
       continue;
     }
 
@@ -493,23 +469,6 @@ export function parseRoadmap(
     }
   }
 
-  // Post-parse: expand `_serialize: true_` into intra-group track edges (v1 compat).
-  for (const g of groupSerialize) {
-    const gTracks = groupTracks.get(g);
-    if (!gTracks || gTracks.length === 0) continue;
-    let prev = '';
-    for (const t of gTracks) {
-      if (prev !== '') {
-        const existing = trackDeps.get(t) ?? [];
-        if (!existing.includes(prev)) {
-          existing.push(prev);
-          trackDeps.set(t, existing);
-        }
-      }
-      prev = t;
-    }
-  }
-
   // Post-parse: cycle detection on intra-group dep DAG.
   const trackDepCycles = detectTrackDepCycles(trackDeps);
 
@@ -576,8 +535,6 @@ export function parseRoadmap(
       deps: groupDeps.get(num) ?? { kind: 'unspecified' },
       depsRaw: groupDepsRaw.get(num) ?? null,
       depAnchors: groupDepAnchors.get(num) ?? [],
-      serialize: groupSerialize.has(num),
-      hasPreflight: groupHasPreflight.has(num),
       trackIds: groupTracks.get(num) ?? [],
     };
   });
@@ -615,25 +572,3 @@ export function parseRoadmap(
   };
 }
 
-// ─── Transitive dep helper (used by checks/collisions) ────────────────
-
-export function trackDependsOn(
-  parsed: ParsedRoadmap,
-  from: string,
-  to: string,
-): boolean {
-  const adj = new Map<string, string[]>();
-  for (const t of parsed.tracks) adj.set(t.id, t.deps);
-  const visited = new Set<string>();
-  const queue: string[] = [from];
-  while (queue.length > 0) {
-    const node = queue.shift()!;
-    if (visited.has(node)) continue;
-    visited.add(node);
-    for (const dep of adj.get(node) ?? []) {
-      if (dep === to) return true;
-      queue.push(dep);
-    }
-  }
-  return false;
-}

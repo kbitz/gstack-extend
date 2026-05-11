@@ -113,26 +113,17 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_CONFUSION_HEAD, label: 'confusion-head' },
 ];
 
-// ─── Roadmap-only verbatim assertions (v0.18.0 reassessment redesign) ─
+// ─── Roadmap-only verbatim assertions ─────────────────────────────────
 //
-// These strings live in skills/roadmap.md only. Load-bearing for skill
-// behavior (fast-path output) and test fixtures (proposal artifact format).
-
-const BLOCK_ROADMAP_FAST_PATH = 'Plan looks current. No changes.';
-// Proposal artifact path moved off `.context/roadmap/` (workspace-local, dies
-// with Conductor archival) to `~/.gstack/projects/<slug>/roadmap-proposals/`
-// (durable, mirrors gstack's checkpoints/ pattern). The skill resolves the
-// concrete dir via session_dir roadmap-proposals; the markdown placeholder
-// `<PROPOSAL_DIR>/proposal-{ts}.md` is the canonical reference string.
+// These strings live in skills/roadmap.md only. Load-bearing for the
+// proposal artifact format. Proposal artifact path lives at
+// `~/.gstack/projects/<slug>/roadmap-proposals/` (durable, mirrors gstack's
+// checkpoints/ pattern); the skill resolves the concrete dir via
+// session_dir roadmap-proposals.
 const BLOCK_ROADMAP_PROPOSAL_PATH = '<PROPOSAL_DIR>/proposal-{ts}.md';
 const BLOCK_ROADMAP_PROPOSAL_HELPER_CALL = 'session_dir roadmap-proposals';
-// v2 (state-section model): placement-cluster machinery (v1 Clusters 1-4)
-// is gone. The only remaining cluster is "Approve regenerated plan?" — its
-// Hold option keeps the existing plan untouched, no verbatim string to
-// pin since the prose is intentionally regenerable.
 
 const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
-  { block: BLOCK_ROADMAP_FAST_PATH, label: 'fast-path-output' },
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
   { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
 ];
