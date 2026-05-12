@@ -29,31 +29,23 @@ FINDINGS:
 - No ROADMAP.md found
 
 ## VERSION
-CURRENT: 0.1.0
-SOURCE: VERSION
-LATEST_TAG: (none)
-PROGRESS_LATEST: 0.1.0
-RECOMMEND: none
-STATUS: fail
+STATUS: skip
 FINDINGS:
-- No git tags found — consider tagging releases (git tag vX.Y.Z)
-
+- No VERSION file or pyproject.toml version found
 
 ## TAXONOMY
 STATUS: fail
 FINDINGS:
+- TODOS.md: missing (inbox for unprocessed items)
 - ROADMAP.md: missing (run /roadmap to create from TODOS.md)
+- PROGRESS.md: missing
+- VERSION: missing (no VERSION file and no pyproject.toml `version = "..."` field)
 
 
 ## DOC_LOCATION
 STATUS: fail
 FINDINGS:
-- TODOS.md is in root — should be in docs/
-  Suggested: git mv -- 'TODOS.md' 'docs/TODOS.md'
-- PROGRESS.md is in root — should be in docs/
-  Suggested: git mv -- 'PROGRESS.md' 'docs/PROGRESS.md'
-- README.md is in docs/ — should be in root (tools/platforms expect it there)
-  Suggested: git mv -- 'docs/README.md' 'README.md'
+- docs/ directory absent — project-level docs (ROADMAP.md/TODOS.md/PROGRESS.md) belong there. Run /roadmap to scaffold.
 
 
 ## DOC_TYPE_MISMATCH
@@ -62,9 +54,9 @@ FINDINGS:
 - (none)
 
 ## ARCHIVE_CANDIDATES
-STATUS: pass
+STATUS: skip
 FINDINGS:
-- (none)
+- No version source (VERSION file or pyproject.toml) — cannot detect archive candidates
 
 ## DEPENDENCIES
 STATUS: skip
@@ -92,9 +84,9 @@ COMPLETE:
 PRIMARY:
 
 ## ORIGIN_STATS
-STATUS: info
+STATUS: skip
 TOTAL_OPEN_ORIGIN: 0
-BY_GROUP: 
+BY_GROUP:
 
 ## SIZE
 STATUS: skip
@@ -126,11 +118,9 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- PROGRESS.md: 0 TODO patterns (project doc)
-- TODOS.md: 1 TODO patterns (project doc)
-- docs/README.md: 0 TODO patterns (root doc)
+- CLAUDE.md: 0 TODO patterns (root doc)
 
-TOTAL_FILES: 3
+TOTAL_FILES: 1
 
 ## SCATTERED_TODOS
 STATUS: pass
@@ -139,20 +129,15 @@ FINDINGS:
 TOTAL_SCATTERED: 0
 
 ## UNPROCESSED
+STATUS: skip
 ITEMS: 0
-LEGACY_BULLETS: 0
-COMPACT_BULLETS: 0
-STATUS: none
 FINDINGS:
-- No Unprocessed section
+- No TODOS.md found
 
 ## TODO_FORMAT
-HEADINGS: 0
-LEGACY_BULLETS: 0
-COMPACT_BULLETS: 0
-STATUS: pass
+STATUS: skip
 FINDINGS:
-- (none)
+- No TODOS.md found
 
 ## MODE
 DETECTED: overhaul

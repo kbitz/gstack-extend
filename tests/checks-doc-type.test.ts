@@ -7,14 +7,17 @@
  *   - Shell injection defense: paths with `;`, `$()`, backticks, spaces,
  *     leading dashes, embedded single quotes — all single-quoted in the
  *     emitted `Suggested: git mv ...` line.
- *   - inboxDestination resolution: root TODOS.md vs docs/TODOS.md vs
- *     neither (defaults to docs/TODOS.md, never creates a shadow root).
+ *   - Inbox always-block (Track 8A): inbox-mismatch findings always emit
+ *     "review and move (no automated suggestion — inbox content typically
+ *     wants merge, not rename)" regardless of TODOS.md location state.
+ *     Replaces the prior inbox-destination-resolution tests — that branch
+ *     no longer exists in `suggestionFor`.
  *   - Skip rules: allowlist (CONTRIBUTING.md, *checklist*.md), root docs
  *     (README.md), project docs (TODOS.md), in-docs/designs/ (mermaid
  *     fence INSIDE the canonical location), tiny stubs (<5 content lines).
  *   - Plantuml fence (paired with mermaid in the regex; previously only
  *     mermaid had a fixture).
- *   - Collision: destination already exists → "review and move"
+ *   - Collision: design destination already exists → "review and move"
  *     suggestion, no destructive git mv emitted.
  *
  * Constructs a minimal AuditCtx shape directly — runCheckDocType only
@@ -155,10 +158,20 @@ describe('runCheckDocType: shell-safe suggestion quoting', () => {
   });
 });
 
-// ─── inboxDestination resolution (TODOS.md root vs docs/) ────────────
+// ─── Inbox always-block (Track 8A) ───────────────────────────────────
+//
+// Per Track 8A's CEO + eng review (codex catch): inbox-mismatch findings
+// (checkbox-density >= 0.50 outside TODOS.md) ALWAYS emit "review and move
+// (no automated suggestion — inbox content typically wants merge, not
+// rename)" regardless of whether docs/TODOS.md exists, root TODOS.md
+// exists, or neither exists. Moving a checkbox-heavy file into TODOS.md
+// is almost always a merge/import operation, not a rename — `git mv`
+// is the wrong tool. The pre-Track-8A behavior emitted git-mv suggestions
+// targeting whichever TODOS.md location existed, which is the bug class
+// this block now locks shut.
 
-describe('runCheckDocType: inbox destination respects existing TODOS.md location', () => {
-  test('docs/TODOS.md exists → suggest moving to docs/TODOS.md', () => {
+describe('runCheckDocType: inbox-mismatch is always-block', () => {
+  test('docs/TODOS.md exists → no git-mv suggestion, always-block wording', () => {
     const repoRoot = join(baseTmp, `inbox-docs-${Date.now()}`);
     mkdirSync(join(repoRoot, 'docs'), { recursive: true });
     const ctx = makeCtx({
@@ -167,17 +180,15 @@ describe('runCheckDocType: inbox destination respects existing TODOS.md location
       docsTodos: true,
     });
     const result = runCheckDocType(ctx);
+    expect(result.status).toBe('warn');
     const body = result.body.join('\n');
-    // Either the suggestion targets docs/TODOS.md, OR (if the dest exists
-    // on disk via the mkdirSync above plus a real file) the collision
-    // branch fires. Both confirm the canonical-location resolution.
-    // We did NOT create the actual file, so the suggestion path runs.
-    expect(body).toContain("'docs/TODOS.md'");
-    // It MUST NOT suggest creating a shadow root TODOS.md.
-    expect(body).not.toContain("git mv -- 'docs/random-inbox.md' 'TODOS.md'");
+    expect(body).toContain('review and move');
+    expect(body).toContain('inbox content typically wants merge, not rename');
+    // No git mv emitted for inbox findings, regardless of dest location.
+    expect(body).not.toContain('git mv');
   });
 
-  test('only root TODOS.md exists → suggest root TODOS.md', () => {
+  test('only root TODOS.md exists → no git-mv suggestion, always-block wording', () => {
     const repoRoot = join(baseTmp, `inbox-root-${Date.now()}`);
     mkdirSync(repoRoot, { recursive: true });
     const ctx = makeCtx({
@@ -188,10 +199,11 @@ describe('runCheckDocType: inbox destination respects existing TODOS.md location
     });
     const result = runCheckDocType(ctx);
     const body = result.body.join('\n');
-    expect(body).toContain("'TODOS.md'");
+    expect(body).toContain('inbox content typically wants merge, not rename');
+    expect(body).not.toContain('git mv');
   });
 
-  test('neither exists → defaults to docs/TODOS.md (canonical)', () => {
+  test('neither TODOS.md exists → no git-mv suggestion, always-block wording', () => {
     const repoRoot = join(baseTmp, `inbox-neither-${Date.now()}`);
     mkdirSync(repoRoot, { recursive: true });
     const ctx = makeCtx({
@@ -200,7 +212,27 @@ describe('runCheckDocType: inbox destination respects existing TODOS.md location
     });
     const result = runCheckDocType(ctx);
     const body = result.body.join('\n');
-    expect(body).toContain("'docs/TODOS.md'");
+    expect(body).toContain('inbox content typically wants merge, not rename');
+    expect(body).not.toContain('git mv');
+  });
+
+  test('inbox short-circuits before collision detection (no destination check)', () => {
+    // Even if docs/TODOS.md exists on disk (would normally trigger the
+    // collision branch), inbox findings emit always-block wording —
+    // they short-circuit before collision detection runs.
+    const repoRoot = join(baseTmp, `inbox-shortcircuit-${Date.now()}`);
+    mkdirSync(join(repoRoot, 'docs'), { recursive: true });
+    writeFileSync(join(repoRoot, 'docs', 'TODOS.md'), '# Existing inbox\n');
+    const ctx = makeCtx({
+      repoRoot,
+      mdFiles: [makeFile('random-inbox.md', CHECKBOX_HEAVY_CONTENT)],
+      docsTodos: true,
+    });
+    const result = runCheckDocType(ctx);
+    const body = result.body.join('\n');
+    expect(body).toContain('inbox content typically wants merge, not rename');
+    // NOT the collision-branch wording — different always-block reason.
+    expect(body).not.toContain('destination ambiguous');
   });
 });
 

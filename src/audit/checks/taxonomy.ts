@@ -36,14 +36,25 @@ export function runCheckTaxonomy(ctx: AuditCtx): CheckResult {
     );
   }
 
+  // Both-exist findings name the precedence reality: cli.ts:findDoc checks
+  // root first then docs/, so the root copy is what every check actually
+  // reads and the docs/ copy is silently ignored. Without naming that
+  // explicitly, users who hit this case often reconcile in the wrong
+  // direction (edit the invisible copy).
   if (ctx.exists.rootTodos && ctx.exists.docsTodos) {
-    findings.push('- TODOS.md exists in both root and docs/ — should be in docs/ only');
+    findings.push(
+      '- TODOS.md exists in BOTH root and docs/ — root copy is used; docs/ copy is invisible to the audit. Reconcile manually.',
+    );
   }
   if (ctx.exists.rootRoadmap && ctx.exists.docsRoadmap) {
-    findings.push('- ROADMAP.md exists in both root and docs/ — should be in docs/ only');
+    findings.push(
+      '- ROADMAP.md exists in BOTH root and docs/ — root copy is used; docs/ copy is invisible to the audit. Reconcile manually.',
+    );
   }
   if (ctx.exists.rootProgress && ctx.exists.docsProgress) {
-    findings.push('- PROGRESS.md exists in both root and docs/ — should be in docs/ only');
+    findings.push(
+      '- PROGRESS.md exists in BOTH root and docs/ — root copy is used; docs/ copy is invisible to the audit. Reconcile manually.',
+    );
   }
 
   // PROGRESS.md ↔ CHANGELOG.md exact-match overlap detection.
