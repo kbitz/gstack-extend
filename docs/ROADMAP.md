@@ -35,7 +35,7 @@ data-loss risk because the skill reports a commit that didn't land.
 ##### Track 7A: Snapshot staged state + escalate on real failure
 _1 task . ~30 LOC . low risk . [3 review-skill files]_
 _touches: skills/full-review.md, skills/pair-review.md, skills/review-apparatus.md_
-- **Snapshot staged state + escalate on real failure** -- before commit, snapshot `git diff --cached --quiet; _HAS_STAGED=$?`. Run `git commit` only if `_HAS_STAGED` is 1. On non-zero exit with staged content present, escalate as BLOCKED with the stderr tail rather than swallowing silently. Apply identically to all three skills to preserve parity. _skills/full-review.md:498, skills/pair-review.md (parked-bug + fix-flow commits), skills/review-apparatus.md:346, ~30 lines (3 small edits)._ (S)
+- **Surface `git commit` failure output** -- after each `git commit -m "..."`, capture combined stdout+stderr into `_OUT` and echo it on non-zero exit so pre-commit hook rejections, missing `user.email`, detached-HEAD refusal, and similar real failures stop being silently swallowed. Match gstack's own bare-commit pattern (no snapshot, no pathspec gymnastics, no sanitization) since the parent project has the same bug class accepted by parity. Apply identically to all seven sites to preserve parity. _skills/full-review.md:619, skills/pair-review.md (parked-bug + fix-flow commits at :455/:470/:633/:636/:669), skills/review-apparatus.md:351, ~21 lines (7 small edits)._ (S)
 
 ### Group 8: Project Bootstrapping — `roadmap-audit init` Subcommand
 
@@ -226,7 +226,7 @@ Group 15: SKILL.md.tmpl promotion
 
 ### Phase 1: Bun Test Migration ✓ Shipped (v0.18.3 → v0.18.11.0)
 
-**End-state:** `bun test` is the sole test entry point, all `scripts/test-*.sh` retired, `bin/roadmap-audit` is a 7-line POSIX-sh shim invoking `src/audit/cli.ts`, and the 4 leverage patterns (touchfiles, skill prose corpus + in-session judging, audit-compliance, eval persistence — last deferred to Future) are adopted.
+**End-state:** `bun test` is the sole test entry point, all `scripts/test-*.sh` retired, `bin/roadmap-audit` is a 7-line POSIX-sh shim invoking `src/audit/cli.ts`, and the leverage patterns (touchfiles, audit-compliance) are adopted. Skill prose corpus + in-session judging shipped in Track 4C but was later removed in Track 7A as calibration theater (parent gstack project has no equivalent; the fixture genre didn't match real skill source-prose edits). Eval persistence was deferred to Future and remains deferred.
 
 **Groups:** 1, 2, 3, 4 (sequential).
 
@@ -244,7 +244,7 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 
 #### Group 4: Test Leverage Patterns ✓ Shipped (v0.18.11.0)
 - Track 4A — _shipped (v0.18.9.0): touchfiles diff selection_
-- Track 4C — _shipped (v0.18.11.0): skill prose corpus + in-session judging routing rule_
+- Track 4C — _shipped (v0.18.11.0); removed in Track 7A: skill prose corpus + in-session judging routing rule_
 - Track 4D — _shipped (v0.18.10.0): audit-compliance test for gstack-extend invariants_
 
 #### Group 5: Install Pipeline ✓ Shipped (v0.18.14.0)

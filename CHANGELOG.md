@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.2.0] - 2026-05-12
+
+### Changed: Surface `git commit` failure output in review skills (Track 7A)
+
+`/full-review`, `/pair-review`, and `/review-apparatus` previously swallowed any non-zero exit from `git commit` as "nothing to commit, that's fine — continue." That silently hid pre-commit hook rejections, missing `user.email`, detached-HEAD refusal, GPG signing failures, and merge-conflict markers. Downstream state (parked-bug `FIXED` status, fix commit hashes, TODOS commits) was reported as landed when the commit actually failed.
+
+Each of the 7 commit sites now captures combined stdout+stderr into `_OUT` and echoes it on non-zero exit so the failure becomes visible to the LLM consumer instead of being hidden. The pattern matches gstack core's bar (gstack itself has no equivalent safeguard) — minimum-viable visibility without overengineering.
+
+At the 4 pair-review fix/checkpoint sites (`:455`, `:470`, `:633`, `:636`), the pattern additionally halts the bash block with `exit 1` on real failure (distinguished from the expected clean-tree case at checkpoints via a `nothing to commit` sniff). Surrounding prose explicitly instructs the LLM to STOP and not record stale commit hashes or mark bugs as `FIXED` when the commit failed. This closes the specific data-integrity bug Track 7A was named for: the adversarial review surfaced that visibility alone wasn't enough — downstream "record-and-mark-FIXED" semantics in the pair-review fix flow still needed an explicit halt.
+
+The 3 TODOS-commit sites (`full-review.md:619`, `review-apparatus.md:351`, `pair-review.md:669`) keep the visibility-only pattern — they have no downstream state-recording that would corrupt under failure.
+
+Surgical scope decision driven by the parent-project calibration: gstack itself uses bare `git commit -m "..."` everywhere. Building rigorous escalation in gstack-extend that gstack doesn't have was scoped down to "match parent's bar, plus halt where the data-loss class actually bites."
+
+ROADMAP line ref `skills/full-review.md:498` was stale (actual `:619`) — fixed.
+
+### Removed: `tests/fixtures/skill-prose-corpus/` (and CLAUDE.md convention)
+
+Track 4C (v0.18.11.0) shipped a 4-fixture corpus of skill **output** prose (`/roadmap` reassessment, `/test-plan` extraction, `/pair-review` test list, plus a shallow-control negative example) and a CLAUDE.md convention telling Claude to score changed skill prose against it in-session whenever `skills/*.md` was edited.
+
+Removing the corpus + the convention. Reasons surfaced during Track 7A's eng review:
+
+- The corpus models skill OUTPUT prose (what skills generate when invoked), but the convention fires on any edit to a SKILL.md file, which is skill SOURCE prose (instructions Claude reads). Different genre entirely — comparing a 3-line bash explanation to a 4KB reassessment proposal is apples-to-oranges.
+- Parent gstack has no equivalent corpus or convention. Building rigorous prose-scoring in gstack-extend that gstack doesn't have was the same calibration miss as the original Track 7A spec.
+- Zero executable consumers: no judge, no automated test, no script. The convention was purely manual and rarely matched the change genre when it fired.
+
+Deletes: `tests/fixtures/skill-prose-corpus/{1-roadmap-reassessment,2-test-plan-extraction,3-pair-review-test-list,4-shallow-control}.md`. CLAUDE.md prose-corpus paragraph dropped. ROADMAP.md Phase 1 end-state + Track 4C entry annotated with the removal. PROGRESS.md Group 4 summary updated. Historical records left intact (the v0.18.11.0 CHANGELOG entry, the `docs/designs/group-4-replan.md` design doc, archives) so the audit trail survives.
+
+Tests: 972/0 pass on the final diff. `tests/fixtures/extractor-corpus/` (separate concept, real harness via `scripts/score-extractor.ts`) and `tests/fixtures/source-tag-hash-corpus.json` (real unit test fixture) intentionally left alone.
+
 ## [0.19.1.0] - 2026-05-11
 
 ### Added: `/pair-review` supports concurrent sessions across branches

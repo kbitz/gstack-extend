@@ -66,7 +66,7 @@ Built the `/browse-native` skill against real macOS apps. Beta never left beta; 
 
 ## Roadmap
 
-- **Phase 1 (Groups 1–4): Bun Test Migration** — ✓ Complete (v0.18.3 → v0.18.11.0). `bun test` is the sole entry point; `bin/roadmap-audit` is a 7-line shim invoking `src/audit/cli.ts`; touchfiles diff selection + audit-compliance + skill prose corpus shipped. Suite 113s → 32s; audit snapshots 124s → 7.3s.
+- **Phase 1 (Groups 1–4): Bun Test Migration** — ✓ Complete (v0.18.3 → v0.18.11.0). `bun test` is the sole entry point; `bin/roadmap-audit` is a 7-line shim invoking `src/audit/cli.ts`; touchfiles diff selection + audit-compliance shipped. Skill prose corpus also shipped in Track 4C but was later removed in Track 7A (calibration theater — parent gstack has no equivalent). Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - **Group 5: Install Pipeline** — Single Track 5A "Install pipeline polish" with 5 tasks (preamble probe, layout scaffolding, doc type detection, update-run dir propagation, setup symlink hardening).
 - **Group 6: Distribution Infrastructure** — Track 6A: auto-detect major version boundary (waits for an external 0.x → 1.x bump).
 - **Group 7: Audit Polish** — Track 7A with 3 tasks: direct phase-check tests, STALENESS rename, FRESHNESS scan extends to TODOS.md.
