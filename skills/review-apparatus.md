@@ -348,10 +348,14 @@ Stage the TODOS.md file and commit:
 git add <path-to-TODOS.md>
 ```
 ```bash
-git commit -m "chore: add review-apparatus proposals to TODOS.md (<N> items)"
+_OUT=$(git commit -m "chore: add review-apparatus proposals to TODOS.md (<N> items)" 2>&1)
+_RC=$?
+if [ $_RC -ne 0 ]; then echo "$_OUT"; fi
 ```
 
 If the commit fails because there's nothing to commit, that's fine — continue.
+The captured `$_OUT` surfaces any real failure (pre-commit hook reject, missing
+`user.email`, detached HEAD, etc.) instead of swallowing it silently.
 
 ### Step 5: Next steps
 

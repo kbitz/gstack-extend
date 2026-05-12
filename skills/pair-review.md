@@ -452,11 +452,24 @@ If this is the first fix in the current group, commit a checkpoint:
 
 ```bash
 git add -u
-git commit -m "test: checkpoint before fix (<group> group)"
+_OUT=$(git commit -m "test: checkpoint before fix (<group> group)" 2>&1)
+_RC=$?
+if [ $_RC -ne 0 ]; then
+  echo "$_OUT"
+  if ! printf '%s' "$_OUT" | grep -q "nothing to commit"; then
+    echo "BLOCKED: checkpoint commit failed. Do NOT proceed."
+    exit 1
+  fi
+fi
 ```
 
-Record the checkpoint in session.yaml. If the commit fails (clean tree), note
-"working tree clean" and proceed.
+If the bash block exits zero, record the checkpoint commit hash in session.yaml.
+If `$_OUT` contains "nothing to commit" (clean tree, no test changes since the
+last checkpoint), skip the checkpoint entry — note "working tree clean" in
+session.yaml and proceed. If the block exits non-zero (BLOCKED case),
+**STOP**: do NOT record a checkpoint hash in session.yaml, do NOT proceed to
+the fix step. Report BLOCKED to the user with the printed `$_OUT` tail
+(pre-commit hook reject, missing `user.email`, detached HEAD, etc.).
 
 **Implement the fix:**
 
@@ -467,10 +480,22 @@ the agent fixes it.
 
 ```bash
 git add -u
-git commit -m "fix: <description> (pair-review item <N>)"
+_OUT=$(git commit -m "fix: <description> (pair-review item <N>)" 2>&1)
+_RC=$?
+if [ $_RC -ne 0 ]; then
+  echo "$_OUT"
+  echo "BLOCKED: fix commit failed. Do NOT proceed."
+  exit 1
+fi
 ```
 
-Record the fix commit in the item's metadata.
+If the bash block exits zero, record the fix commit hash in the item's metadata.
+If the block exits non-zero (BLOCKED case — including "nothing to commit," which
+at fix-commit time means the agent's fix did not actually modify any tracked
+files), **STOP**: do NOT record a fix commit hash, do NOT mark the item as
+fixed, do NOT proceed to rebuild/redeploy. Report BLOCKED to the user with
+the printed `$_OUT` tail (pre-commit hook reject, missing `user.email`,
+detached HEAD, fix never staged, etc.).
 
 **Rebuild/redeploy:**
 
@@ -630,10 +655,44 @@ TODOS.md is an escape hatch for genuinely cross-branch bugs, not the easy path.
 
 Behavior for each option:
 - **Fix now** — blocks upcoming groups or relates to current area.
-  1. Checkpoint: `git add -u` then `git commit -m "test: checkpoint before parked bug fix"`
-     (skip if working tree is clean)
+  1. Checkpoint (skip if working tree is clean):
+
+     ```bash
+     git add -u
+     _OUT=$(git commit -m "test: checkpoint before parked bug fix" 2>&1)
+     _RC=$?
+     if [ $_RC -ne 0 ]; then
+       echo "$_OUT"
+       if ! printf '%s' "$_OUT" | grep -q "nothing to commit"; then
+         echo "BLOCKED: checkpoint commit failed. Do NOT proceed."
+         exit 1
+       fi
+     fi
+     ```
+
+     If `$_OUT` mentions "nothing to commit," that's the clean-tree case —
+     proceed without recording a checkpoint. If the bash block exits
+     non-zero (BLOCKED case), **STOP**: do NOT proceed to step 2. Report
+     BLOCKED to the user with the printed `$_OUT` tail.
   2. The agent implements the fix
-  3. Commit: `git add -u` then `git commit -m "fix: <description> (pair-review parked bug #<N>)"`
+  3. Commit:
+
+     ```bash
+     git add -u
+     _OUT=$(git commit -m "fix: <description> (pair-review parked bug #<N>)" 2>&1)
+     _RC=$?
+     if [ $_RC -ne 0 ]; then
+       echo "$_OUT"
+       echo "BLOCKED: fix commit failed. Do NOT proceed."
+       exit 1
+     fi
+     ```
+
+     If the block exits non-zero (BLOCKED case — including "nothing to
+     commit," which at fix-commit time means the agent's fix did not
+     actually modify any tracked files), **STOP**: do NOT proceed to
+     step 4 (rebuild/redeploy), step 5 (verify), or step 6 (mark FIXED).
+     Report BLOCKED to the user with the printed `$_OUT` tail.
   4. Rebuild/redeploy using deploy.md
   5. Ask the user to verify the fix
   6. Update the bug's status to `FIXED` and record the fix commit hash
@@ -665,8 +724,16 @@ Behavior for each option:
   the bug into Groups/Tracks — that is /roadmap's job during triage mode.
 
   Commit the TODOS.md change separately: stage the TODOS.md file you wrote to
-  (root or docs/, whichever you used) then commit with
-  `git commit -m "chore: add parked bug to TODOS.md (<description>)"`.
+  (root or docs/, whichever you used) then commit:
+
+  ```bash
+  _OUT=$(git commit -m "chore: add parked bug to TODOS.md (<description>)" 2>&1)
+  _RC=$?
+  if [ $_RC -ne 0 ]; then echo "$_OUT"; fi
+  ```
+
+  The captured `$_OUT` surfaces any real failure (pre-commit hook reject,
+  missing `user.email`, detached HEAD, etc.) instead of swallowing it.
   Update the bug's status to `DEFERRED_TO_TODOS`.
 - **Stay parked** — this-branch, non-blocking. Remains for Phase 2.5.
 

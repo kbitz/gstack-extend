@@ -36,8 +36,6 @@ git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
 
 `scripts/score-extractor.ts` is a manual harness for scoring `/test-plan` extractor JSON output against vendored fixtures (`tests/fixtures/extractor-corpus/`). Run via `bun scripts/score-extractor.ts --help`.
 
-`tests/fixtures/skill-prose-corpus/` is a reference corpus of skill output prose — 3 positive examples (`/roadmap` reassessment, `/test-plan` extraction, `/pair-review` test list) plus a `4-shallow-control` negative control. There is no automated judge test; the corpus is calibration material for the rubric (clarity / completeness / actionability, 1–5 each, ≥3 expected on positives, ≤2 expected on at least one axis for the control). When skill prose changes — i.e. any edit to `skills/*.md` in a session — Claude should proactively recommend judging the changed prose against the corpus and rubric in-session. Sample request: "score the new skill prose against tests/fixtures/skill-prose-corpus and the rubric." This runs in the existing Claude Code session (no API key, no separate billing, prompt caching across fixtures), keeps the human in the loop for taste decisions, and skips the cost overhead of an SDK-driven test that would only run on this machine anyway.
-
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
