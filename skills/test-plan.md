@@ -141,17 +141,21 @@ groups/
 <user>-<branch>-test-plan-batch-<ts>.md  # the generated plan (qa-only picks up)
 ```
 
-**Pair-review session state** (`<PR_SESSION_DIR>` = `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`, durable):
+**Pair-review session state** is keyed by branch. Two paths:
+- `<PR_PROJECT_DIR>` = `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`
+  Project-wide. Holds `deploy.md` plus `branches/` and `archives/` subdirs.
+- `<PR_SESSION_DIR>` = `<PR_PROJECT_DIR>/branches/<sanitized-build-branch>/`
+  Per-branch session state we write into:
 ```
 session.yaml                           # written by test-plan, then owned by pair-review
 groups/
   <group-slug>.md                      # written by test-plan, then owned by pair-review
   <group-slug>-archived-<ts>.md        # prior groups file on re-run
-deploy.md                              # written by pair-review (not us)
 parked-bugs.md                         # written by pair-review (not us)
+report.md                              # written by pair-review at /done (not us)
 ```
 
-Test-plan resolves this path via `bin/lib/session-paths.sh` (same helper
+Test-plan resolves both via `bin/lib/session-paths.sh` (same helper
 pair-review uses) so both skills agree on the same on-disk location:
 
 ```bash
@@ -159,12 +163,16 @@ _SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null \
            || readlink .claude/skills/test-plan/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
-PR_SESSION_DIR=$(session_dir pair-review)
+BUILD_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+PR_PROJECT_DIR=$(session_dir pair-review)
+PR_SESSION_DIR=$(session_dir pair-review "$BUILD_BRANCH")
 ```
 
 Throughout this skill, `<PR_SESSION_DIR>` in path expressions means the
-resolved value above. Re-source the helper at the start of every bash block
-that touches session state.
+per-branch dir (we always write into the **integration build's branch** dir),
+and `<PR_PROJECT_DIR>` means the project-wide parent (where we scan for
+prior sessions across all branches). Re-source the helper at the start of
+every bash block that touches session state.
 
 ### File format — manifest.yaml
 
@@ -270,10 +278,11 @@ GROUP_SLUG=$(echo "$GROUP_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]
 
 ### Step 4: Confirm integrated build
 
-**CRITICAL per design decision Tension 1:** /pair-review is single-branch. /test-plan
-run REQUIRES the current branch/HEAD to be a single integrated build containing all
-Track code. If the user is on a Track branch that doesn't have the other Tracks
-merged in, the bug bash won't cover the integrated behavior.
+**CRITICAL per design decision Tension 1:** a /pair-review session covers one
+branch at a time, so /test-plan run REQUIRES the current branch/HEAD to be a
+single integrated build containing all Track code. If the user is on a Track
+branch that doesn't have the other Tracks merged in, the bug bash won't cover
+the integrated behavior.
 
 Present via AskUserQuestion:
 - Question: "Current branch: **<branch>** at **<commit>**.\n\nIs this the integrated bug-bash build? All Track branches in this Group should be merged into this commit (via main, a preview deploy, or an integration branch)."
@@ -489,12 +498,13 @@ For each Track in the manifest, scan for prior pair-review artifacts:
 
 ```bash
 # Re-source the helper if this is a fresh bash block
-PR_SESSION_DIR=$(session_dir pair-review)
-PROJECT_DIR=$(dirname "$PR_SESSION_DIR")
-# Active session
-[ -d "$PR_SESSION_DIR" ] && scan_pair_review "$PR_SESSION_DIR" "$TRACK_BRANCH"
-# Archived sessions (siblings in the same project dir)
-for d in "$PROJECT_DIR"/pair-review-archived-*; do
+PR_PROJECT_DIR=$(session_dir pair-review)
+# Active sessions across every branch (one subdir per branch).
+for d in "$PR_PROJECT_DIR"/branches/*; do
+  [ -d "$d" ] && scan_pair_review "$d" "$TRACK_BRANCH"
+done
+# Archived sessions (per-branch, grouped under archives/).
+for d in "$PR_PROJECT_DIR"/archives/*; do
   [ -d "$d" ] && scan_pair_review "$d" "$TRACK_BRANCH"
 done
 ```
@@ -596,7 +606,8 @@ Action receipt: "Plan written to <path>. <A> automated, <M> manual, <D> deferred
 
 ```bash
 # Re-source the helper if this is a fresh bash block
-PR_SESSION_DIR=$(session_dir pair-review)
+BUILD_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+PR_SESSION_DIR=$(session_dir pair-review "$BUILD_BRANCH")
 GROUPS_FILE="$PR_SESSION_DIR/groups/${GROUP_SLUG}.md"
 if [ -f "$GROUPS_FILE" ]; then
   ARCH="$PR_SESSION_DIR/groups/${GROUP_SLUG}-archived-${TS}.md"

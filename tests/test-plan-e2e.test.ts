@@ -206,7 +206,16 @@ tracks:
 });
 
 describe('prior pair-review consumption', () => {
-  const sessionDir = join(baseTmp, 'consume', '.gstack', 'projects', 'fixture', 'pair-review-archived-20260420-150000');
+  const sessionDir = join(
+    baseTmp,
+    'consume',
+    '.gstack',
+    'projects',
+    'fixture',
+    'pair-review',
+    'archives',
+    'kbitz--widget-core-20260420-150000',
+  );
 
   beforeAll(() => {
     mkdirSync(join(sessionDir, 'groups'), { recursive: true });
@@ -252,7 +261,17 @@ describe('prior pair-review consumption', () => {
 });
 
 describe('Phase 7 archive + write groups file', () => {
-  const groupsDir = join(baseTmp, 'phase7', '.gstack', 'projects', 'fixture', 'pair-review', 'groups');
+  const groupsDir = join(
+    baseTmp,
+    'phase7',
+    '.gstack',
+    'projects',
+    'fixture',
+    'pair-review',
+    'branches',
+    'kbitz--widget-pipeline',
+    'groups',
+  );
   let archPath: string;
   let groupsFile: string;
 
