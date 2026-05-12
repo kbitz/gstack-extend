@@ -37,18 +37,22 @@ _1 task . ~30 LOC . low risk . [3 review-skill files]_
 _touches: skills/full-review.md, skills/pair-review.md, skills/review-apparatus.md_
 - **Surface `git commit` failure output** -- after each `git commit -m "..."`, capture combined stdout+stderr into `_OUT` and echo it on non-zero exit so pre-commit hook rejections, missing `user.email`, detached-HEAD refusal, and similar real failures stop being silently swallowed. Match gstack's own bare-commit pattern (no snapshot, no pathspec gymnastics, no sanitization) since the parent project has the same bug class accepted by parity. Apply identically to all seven sites to preserve parity. _skills/full-review.md:619, skills/pair-review.md (parked-bug + fix-flow commits at :455/:470/:633/:636/:669), skills/review-apparatus.md:351, ~21 lines (7 small edits)._ (S)
 
-### Group 8: Project Bootstrapping — `roadmap-audit init` Subcommand
+### Group 8: Project Bootstrapping — Layout Scaffolding
 
 _Depends on: Group 6_
 
-Closes the CEO-reviewed deferral from Track 5A. Codex outside-voice flagged
-that layout scaffolding belonged in a separate Bootstrapping Group rather
-than Track 5A's "install pipeline polish" scope.
+Closes the CEO-reviewed deferral from Track 5A. Codex outside-voice on
+plan-review reshape pushed back on the original `bin/roadmap-audit init`
+subcommand shape: the audit already emits pre-quoted `Suggested: git mv`
+lines, and `/roadmap` already orchestrates user prompts via AskUserQuestion,
+so a parallel JSON channel was unneeded. Track 8A ships as a skill-prose
+section in `skills/roadmap.md` plus three small TS fixes that close the
+audit-output gaps the skill consumes.
 
-##### Track 8A: `bin/roadmap-audit init` subcommand
-_1 task . ~150 LOC . medium risk . [src/audit/cli.ts, tests/, skills/roadmap.md]_
-_touches: src/audit/cli.ts, src/audit/checks/, tests/audit-init.test.ts, skills/roadmap.md_
-- **`bin/roadmap-audit init` subcommand** -- new subcommand creates `docs/`, `docs/designs/`, `docs/archive/` in a fresh project and offers to `git mv` misplaced docs (consumes findings from `check_doc_location` and `check_doc_type`). On destination collisions, AskUserQuestion with diff/merge/skip/abort options. Skill prose in `skills/roadmap.md` adds a "Layout scaffolding" subsection describing when the subcommand fires. _src/audit/cli.ts, src/audit/checks/, tests/audit-init.test.ts, skills/roadmap.md, ~150 lines._ (M)
+##### Track 8A: Layout Scaffolding section + audit fixes
+_1 task . ~135 LOC . low-medium risk . [skills/roadmap.md, src/audit/checks/]_
+_touches: skills/roadmap.md, src/audit/checks/doc-location.ts, src/audit/checks/doc-type.ts, src/audit/checks/taxonomy.ts, tests/_
+- **Layout Scaffolding skill section + audit gap fixes** -- new "Layout Scaffolding" subsection in `skills/roadmap.md` that consumes DOC_LOCATION + DOC_TYPE_MISMATCH findings (design-mismatch only) plus the new `docs/ directory absent` finding from doc-location.ts. Single batch yes-to-all confirm; per-mv `git rev-parse --is-inside-work-tree` preflight then `git ls-files --error-unmatch --` branch (untracked → `mv`, tracked → `git mv`, exit 128 → halt as unexpected). All scaffold mkdir validated before any moves; no rollback on partial success; idempotent re-run. Audit fixes: doc-location.ts gains a `docs/ directory absent` finding gated on CLAUDE.md presence so it only fires on gstack-onboarded projects (load-bearing for trigger noise scope); taxonomy.ts both-exist wording captures precedence reality ("root copy is used; docs/ copy is invisible to the audit"); doc-type.ts inbox-mismatch is always-block (no automated git-mv suggestion ever — inbox content typically wants merge, not rename). Inbox always-block lives in `suggestionFor`; the legacy `inboxDestination` resolver is removed as dead code. _skills/roadmap.md, src/audit/checks/{doc-location,doc-type,taxonomy}.ts, tests/checks-doc-location.test.ts (new), tests/checks-doc-type.test.ts (rewrite inbox describe block), tests/skill-protocols.test.ts (5 new drift-lock tokens), tests/roadmap-audit/{docs-dir-absent-with-claude,taxonomy-both-exist}/ (new fixtures), ~135 lines._ (M)
 
 ### Group 9: Project Bootstrapping — `gstack-extend init <project>` Scaffold
 

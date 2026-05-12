@@ -56,7 +56,7 @@ FINDINGS:
 - docs/architecture-sketch.md: looks like a design doc (mermaid/plantuml fence) but is outside docs/designs/
   Suggested: mkdir -p 'docs/designs' && git mv -- 'docs/architecture-sketch.md' 'docs/designs/architecture-sketch.md'
 - docs/inbox-notes.md: looks like a TODO inbox (checkbox density >= 0.5) but is outside TODOS.md
-  Suggested: review and move (no automated suggestion — destination ambiguous)
+  Suggested: review and move (no automated suggestion — inbox content typically wants merge, not rename)
 
 
 ## ARCHIVE_CANDIDATES

@@ -526,6 +526,99 @@ The audit distinguishes blocker vs advisory:
 
 **Archiving rule:** Design docs in `docs/designs/` whose referenced version has shipped (version <= current VERSION) are candidates for archiving. Move them to `docs/archive/`. The audit flags these automatically.
 
+## Layout Scaffolding
+
+When the audit reports DOC_LOCATION non-pass (misplaced project docs), DOC_TYPE_MISMATCH non-pass with design-mismatch findings (mermaid/plantuml fence outside `docs/designs/`), or the `docs/ directory absent` finding (greenfield CLAUDE.md-onboarded project with no `docs/` yet), offer to scaffold the canonical layout and execute the audit's `Suggested:` move lines. Skip this section silently when DOC_LOCATION and DOC_TYPE_MISMATCH both pass — the layout is already canonical.
+
+Inbox-mismatch findings (DOC_TYPE_MISMATCH with `inbox content typically wants merge, not rename` text) are always-block by policy: a checkbox-heavy file outside `TODOS.md` typically wants merge/import, not rename. Surface them informationally, never execute their suggestions.
+
+Both-exist findings (`X.md exists in BOTH root and docs/`) reported by TAXONOMY are also blocked items — the audit reads the root copy and the docs/ copy is invisible, so user has to reconcile manually before any move is safe. Surface, never execute.
+
+### Trigger detection
+
+Read the audit output produced in Step 1. Layout Scaffolding fires when ANY of:
+
+- `## DOC_LOCATION` status is `fail` (misplaced project docs or `docs/` absent + CLAUDE.md present)
+- `## DOC_TYPE_MISMATCH` status is `warn` AND any finding has a `Suggested:` line that contains `git mv` (design-mismatch with no collision, including the `mkdir -p '<parent>' && git mv ...` variant when the parent directory is absent). Inbox-mismatch findings (with `inbox content typically wants merge, not rename`) don't count for triggering — they're always-block.
+
+Manual invocation also works: the user can say "scaffold the layout" or "fix the misplaced docs" and the skill enters this section directly.
+
+### Plan presentation (single batch confirm)
+
+Build a plan from the audit output:
+
+- **Scaffold list:** every directory that should exist but doesn't. The canonical set is `docs/`, `docs/designs/`, `docs/archive/`. Only include dirs that don't already exist.
+- **Move list:** every `Suggested: git mv -- 'src' 'dst'` line from DOC_LOCATION and DOC_TYPE_MISMATCH (design-mismatch only). Parse the `Suggested:` lines verbatim — they are already shell-quoted by the audit (`shellQuote` + `--` end-of-options sentinel from `doc-type.ts`); the skill must execute them as-is rather than re-quoting.
+- **Blocked list:** every finding from DOC_TYPE_MISMATCH with `review and move` text (inbox always-block or design collision), plus every TAXONOMY both-exist finding. Show informationally; never execute.
+
+Present the full plan in one batch and ask a single yes-to-all AskUserQuestion. Example shape:
+
+```
+Layout Scaffolding plan:
+
+Scaffold (mkdir -p):
+  docs/
+  docs/designs/
+  docs/archive/
+
+Moves (git mv or mv):
+  TODOS.md → docs/TODOS.md
+  docs/architecture-sketch.md → docs/designs/architecture-sketch.md
+
+Blocked (informational, NOT executed):
+  docs/inbox-notes.md — inbox content typically wants merge, not rename
+  ROADMAP.md exists in BOTH root and docs/ — reconcile manually first
+
+Apply this plan?
+```
+
+Options: **A) Apply** **B) Skip — leave audit findings as-is**. If the user picks A, proceed to execution. If B, exit the section cleanly; audit findings remain visible and the user can resolve manually.
+
+### Execution (apply path)
+
+**Preflight — fail fast, mutate nothing:**
+
+1. Run `git rev-parse --is-inside-work-tree`. Capture exit code. If exit is 128 (not in a git repo), the move executor uses plain `mv` for every item. If exit is 0, the executor branches per-item via `git ls-files`.
+2. For every scaffold directory: confirm the path either doesn't exist OR exists as a directory (symlinks-to-directories are fine; chezmoi/stow setups depend on that). If any scaffold path exists as a regular file, FIFO, or broken symlink, HALT with a clear message naming the offending path. No `mkdir -p` runs until all scaffold paths preflight clean.
+3. For every move source: confirm the file still exists (defends against the file being deleted/moved between plan emit and apply). If any move source has disappeared, drop it from the move list and note it in the post-apply summary; don't halt — the remaining moves are still safe.
+
+**Apply scaffold (all dirs validated, no rollback):**
+
+Run `mkdir -p <path>` for each scaffold directory. `mkdir -p` is idempotent — already-exists is a no-op. If any `mkdir` fails (permission denied, path conflict the preflight missed), HALT and emit a partial-state summary listing completed/failed/not-attempted. Do NOT attempt rollback — the user can `rmdir` empty directories manually if they want to undo.
+
+**Apply moves (per-item branch on git tracking):**
+
+For each move in the plan, in order:
+
+1. If preflight returned exit 128 (not in git): use plain `mv` (see "plain-mv branch" below).
+2. If preflight returned exit 0 (in git): run `git ls-files --error-unmatch -- '<src>'`. Capture exit code.
+   - Exit 0: source is tracked → run the audit's `Suggested: git mv ...` line verbatim. `git mv` refuses to overwrite an existing destination, so no extra collision check is needed.
+   - Exit 1: source is untracked → use plain `mv` (see below).
+   - Exit 128 (or anything other than 0/1): unexpected git failure (corrupt repo, path-resolution error, etc.) → HALT and emit a partial-state summary.
+
+**Plain-mv branch (collision-safe):** Plain `mv` is silently destructive — it overwrites an existing destination without error. Two design docs with the same basename in different directories both produce dest `docs/designs/<basename>.md`; without a guard, the second move silently clobbers the first. Before each plain `mv`, run `[ -e "<dst>" ]`. If the destination already exists, HALT with a collision-error message naming the source and destination, and emit the partial-state summary. Otherwise, substitute `mv --` for `git mv --` in the audit's suggestion and run.
+
+Run each move via a Bash tool call with the exact pre-quoted command from the audit's `Suggested:` line (or its `mv` substitution for the plain branch). Capture combined stdout+stderr. On non-zero exit from `mv` or `git mv`, HALT with a friendly error wrap (the raw stderr plus a one-line context note) and emit the partial-state summary.
+
+**Post-apply summary:**
+
+After every move attempt (success or halt), print a summary block:
+
+```
+Layout Scaffolding summary:
+  Scaffolded: docs/, docs/designs/, docs/archive/
+  Moved (3): TODOS.md → docs/TODOS.md, docs/sketch.md → docs/designs/sketch.md, ...
+  Skipped (1): docs/old.md — source disappeared before move
+  Blocked (informational): docs/inbox-notes.md (always-block per audit)
+  Failed (0): —
+```
+
+On clean success, re-run the audit (Step 1's `bin/roadmap-audit`, no flag) and read the `## DOC_LOCATION` and `## DOC_TYPE_MISMATCH` section statuses to confirm both now pass. If they don't, surface the remaining findings — something didn't land. On halt, the summary captures what did and didn't happen; the user resolves manually.
+
+### Idempotent re-run
+
+Running Layout Scaffolding on an already-canonical project is a no-op: the trigger detection sees DOC_LOCATION/DOC_TYPE_MISMATCH both passing and skips the section. Running it after a partial-success halt also re-detects from a clean audit — only the remaining work is re-proposed.
+
 <!-- SHARED:completion-status-enum -->
 ## Completion Status Protocol
 

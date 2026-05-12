@@ -123,9 +123,34 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
 const BLOCK_ROADMAP_PROPOSAL_PATH = '<PROPOSAL_DIR>/proposal-{ts}.md';
 const BLOCK_ROADMAP_PROPOSAL_HELPER_CALL = 'session_dir roadmap-proposals';
 
+// Track 8A — Layout Scaffolding section drift-locks. The flow has subtle
+// load-bearing behavior the audit suggestions depend on:
+//   - `git rev-parse --is-inside-work-tree`: distinguishes not-in-git from
+//     in-git-but-untracked at preflight. Without this, `git mv` fails
+//     ungracefully on greenfield repos.
+//   - `git ls-files --error-unmatch --`: per-file tracked check that
+//     decides between `git mv` and plain `mv`. The `--` sentinel is
+//     load-bearing for leading-dash filenames.
+//   - "inbox content typically wants merge, not rename": the inbox
+//     always-block reason text the skill surfaces informationally. If
+//     this string drifts, the skill prose stops matching the audit
+//     output it consumes.
+//   - The Layout Scaffolding section heading itself — required for the
+//     trigger-detection rules above to resolve to anything.
+const BLOCK_LAYOUT_SCAFFOLDING_HEADING = '## Layout Scaffolding';
+const BLOCK_LAYOUT_GIT_REV_PARSE = 'git rev-parse --is-inside-work-tree';
+const BLOCK_LAYOUT_GIT_LS_FILES = 'git ls-files --error-unmatch --';
+const BLOCK_LAYOUT_INBOX_BLOCK_REASON = 'inbox content typically wants merge, not rename';
+const BLOCK_LAYOUT_IDEMPOTENT_NOTE = 'Idempotent re-run';
+
 const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
   { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
+  { block: BLOCK_LAYOUT_SCAFFOLDING_HEADING, label: 'layout-scaffolding-section' },
+  { block: BLOCK_LAYOUT_GIT_REV_PARSE, label: 'layout-git-rev-parse-preflight' },
+  { block: BLOCK_LAYOUT_GIT_LS_FILES, label: 'layout-git-ls-files-tracked-check' },
+  { block: BLOCK_LAYOUT_INBOX_BLOCK_REASON, label: 'layout-inbox-block-reason' },
+  { block: BLOCK_LAYOUT_IDEMPOTENT_NOTE, label: 'layout-idempotent-re-run' },
 ];
 
 // ─── Tests ───────────────────────────────────────────────────────────

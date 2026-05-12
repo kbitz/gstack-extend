@@ -1,0 +1,151 @@
+## VOCAB_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## STRUCTURE
+STATUS: fail
+FINDINGS:
+- No Group headings found (expected ## Group N: Name or ### Group N: Name)
+
+
+## STATE_SECTIONS
+STATUS: pass
+FINDINGS:
+- (none)
+GRAMMAR: v2
+SECTIONS_PRESENT: Current Plan
+
+## PHASES
+STATUS: skip
+PHASES:
+- (none declared)
+
+## PHASE_INVARIANTS
+STATUS: skip
+FINDINGS:
+- (none declared)
+
+## VERSION_TAG_STALENESS
+STATUS: pass
+FINDINGS:
+- (none)
+
+## VERSION
+STATUS: skip
+FINDINGS:
+- No VERSION file or pyproject.toml version found
+
+## TAXONOMY
+STATUS: fail
+FINDINGS:
+- TODOS.md: missing (inbox for unprocessed items)
+- PROGRESS.md: missing
+- VERSION: missing (no VERSION file and no pyproject.toml `version = "..."` field)
+- ROADMAP.md exists in BOTH root and docs/ — root copy is used; docs/ copy is invisible to the audit. Reconcile manually.
+
+
+## DOC_LOCATION
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_TYPE_MISMATCH
+STATUS: pass
+FINDINGS:
+- (none)
+
+## ARCHIVE_CANDIDATES
+STATUS: skip
+FINDINGS:
+- No version source (VERSION file or pyproject.toml) — cannot detect archive candidates
+
+## DEPENDENCIES
+STATUS: skip
+FINDINGS:
+- No Depends on: lines found
+
+## GROUP_DEPS
+STATUS: skip
+FINDINGS:
+- No Groups in ROADMAP.md
+
+## TASK_LIST
+STATUS: info
+TOTAL_TASKS: 0
+TOTAL_CURRENT: 0
+TOTAL_FUTURE: 0
+
+## STRUCTURAL_FITNESS
+STATUS: info
+GROUP_COUNT: 0
+TRACK_COUNT: 0
+TASK_COUNT: 0
+
+## IN_FLIGHT_GROUPS
+STATUS: skip
+IN_FLIGHT:
+COMPLETE:
+PRIMARY:
+
+## ORIGIN_STATS
+STATUS: skip
+TOTAL_OPEN_ORIGIN: 0
+BY_GROUP:
+
+## SIZE
+STATUS: skip
+FINDINGS:
+- No tracks found
+
+## COLLISIONS
+STATUS: skip
+FINDINGS:
+- No Groups found
+
+## PARALLELISM_BUDGET
+STATUS: skip
+IN_FLIGHT_TRACKS: 0
+CAP: 4
+FINDINGS:
+- No in-flight Groups
+
+## FUTURE
+STATUS: pass
+FINDINGS:
+- (none)
+FUTURE_BULLET_COUNT: 0
+
+## STYLE_LINT
+STATUS: pass
+FINDINGS:
+- (none)
+
+## DOC_INVENTORY
+STATUS: info
+FILES:
+- ROADMAP.md: 0 TODO patterns (project doc)
+- docs/ROADMAP.md: 0 TODO patterns (project doc)
+
+TOTAL_FILES: 2
+
+## SCATTERED_TODOS
+STATUS: pass
+FINDINGS:
+- (none)
+TOTAL_SCATTERED: 0
+
+## UNPROCESSED
+STATUS: skip
+ITEMS: 0
+FINDINGS:
+- No TODOS.md found
+
+## TODO_FORMAT
+STATUS: skip
+FINDINGS:
+- No TODOS.md found
+
+## MODE
+DETECTED: overhaul
+REASON: No Groups > Tracks structure found

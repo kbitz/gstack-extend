@@ -20,4 +20,39 @@
 
 **Depends on / blocked by:** None — both blockers (Track 6A rename and the v0.19.0.0 cutover) have shipped.
 
+### [review:track-8a] Tighten docs/-absent gate if CLAUDE.md proves too broad in dogfood
+
+**What:** Narrow the gate on `src/audit/checks/doc-location.ts`'s "docs/ directory absent" finding from `hasClaude` to a stronger gstack-extend signal (e.g., the presence of a `bin/roadmap-audit` shim, or an entry in `~/.gstack-extend/projects.yaml` once that exists, or `docs/ROADMAP.md` anywhere in the worktree).
+
+**Why:** Codex /review caught that CLAUDE.md is a Claude Code marker, not a gstack-extend marker. Generic Claude Code repos commonly have CLAUDE.md but aren't gstack-extend onboarded. With the current gate, running `bin/roadmap-audit` (or `/ship` gating) on such a repo emits a hard DOC_LOCATION fail telling the user to scaffold a layout they didn't opt into. For solo gstack-extend dogfood, the false-positive rate is near zero — but if you ever run the audit in a fleet context or open the project up, the gate needs to be tighter.
+
+**Pros:**
+- Closes the only remaining cross-model tension from /review on Track 8A.
+- Tightens a deliberate user-facing gate decision (eng-review D7) once we have dogfood evidence either way.
+
+**Cons:**
+- Re-opens a recently-locked design decision; no fix until the gate is actually firing on the wrong projects in practice.
+
+**Context:** Track 8A `/review` codex round caught this as finding #5. User chose to keep the CLAUDE.md gate (D2-A) and defer the tightening as TODO. Re-evaluate after first dogfood-encountered false positive.
+
+**Depends on / blocked by:** Dogfood signal — a real false positive firing on a non-gstack repo, or a fleet-context expansion.
+
+### [review:track-8a] Add realpath preflight to Layout Scaffolding skill prose for non-solo contexts
+
+**What:** Skill prose currently allows symlinked scaffold directories (chezmoi/stow setups). Add a realpath preflight that resolves each scaffold directory and refuses to proceed if the resolved target lives outside the repo root. Defense-in-depth against a hypothetical malicious-repo clone scenario.
+
+**Why:** Codex /review caught that a malicious repo can make `docs` a symlink to an external directory; then Layout Scaffolding creates `docs/designs/` at that external path and `mv`s files out of the repo. Real risk in fleet / "I cloned a stranger's repo and ran /roadmap" contexts. Solo-repo risk is near zero (you only run /roadmap on your own clones).
+
+**Pros:**
+- Closes a defense-in-depth gap codex flagged on the Layout Scaffolding flow.
+- Mirrors the `is_safe_install_path` pattern Track 5A shipped for the install context.
+
+**Cons:**
+- chezmoi/stow setups that legitimately symlink `docs/` outside the worktree (rare but real) lose the auto-scaffold; they'd hit a halt and need manual setup.
+- ~15 lines of skill prose for a low-likelihood scenario in solo context.
+
+**Context:** Track 8A `/review` codex round caught this as finding #4. User chose to defer (D3-A). Resurrect when the project opens up or when the symlink-attack vector becomes relevant.
+
+**Depends on / blocked by:** Non-solo / opening-up event, OR a realized symlink-attack scenario.
+
 _(empty — all entries drained into ROADMAP.md by /roadmap on 2026-05-10)_
