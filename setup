@@ -95,6 +95,7 @@ SKILLS=(
   full-review
   review-apparatus
   test-plan
+  gstack-extend-upgrade
 )
 
 # Historical skills that prior releases installed. Iterated on every install

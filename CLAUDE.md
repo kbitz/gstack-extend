@@ -61,3 +61,4 @@ Key routing rules:
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
 - Audit testing/debugging apparatus, "what helpers should we add", "review the test infra", "bolt-on dev tools" → invoke review-apparatus
 - Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;"
+- Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade

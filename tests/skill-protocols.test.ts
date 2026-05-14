@@ -26,6 +26,15 @@ const ROOT = join(import.meta.dir, '..');
 
 const SKILLS = ['pair-review', 'roadmap', 'full-review', 'review-apparatus', 'test-plan'] as const;
 
+// gstack-extend-upgrade is a thin utility skill (mirrors gstack's own
+// gstack-upgrade): it carries the SHARED:upgrade-flow block and the two-path
+// preamble probe, but NOT the workflow-skill protocol boilerplate (Completion
+// Status Protocol, Confusion Protocol, GSTACK REVIEW REPORT table). So the
+// protocol assertions below iterate SKILLS (5) while the upgrade-flow and
+// preamble-probe assertions iterate PREAMBLE_SKILLS (6). This split is
+// intentional — do not collapse it back to one list.
+const PREAMBLE_SKILLS = [...SKILLS, 'gstack-extend-upgrade'] as const;
+
 const REQUIRED_SECTIONS = [
   '## Completion Status Protocol',
   '### Escalation',
@@ -228,6 +237,110 @@ describe('verbatim graft blocks (shared across all 5 skills)', () => {
   }
 });
 
+// ─── Track 10A: SHARED:upgrade-flow verbatim block (drift-lock, 6 files) ──
+//
+// The upgrade flow used to be inlined — and silently divergent — across the 5
+// workflow preambles. Track 10A consolidated it into ONE canonical block,
+// sourced from skills/gstack-extend-upgrade.md and embedded byte-identically
+// in all 6 files (5 workflow preambles + the standalone upgrade skill). The
+// canonical text is extracted from the upgrade skill itself rather than
+// duplicated here — the skill file IS the source of truth.
+const UPGRADE_FLOW_RE = /<!-- SHARED:upgrade-flow -->[\s\S]*?<!-- \/SHARED:upgrade-flow -->/;
+const upgradeSkillContent = readFileSync(
+  join(ROOT, 'skills', 'gstack-extend-upgrade.md'),
+  'utf8',
+);
+const upgradeFlowMatch = UPGRADE_FLOW_RE.exec(upgradeSkillContent);
+const CANONICAL_UPGRADE_FLOW = upgradeFlowMatch ? upgradeFlowMatch[0] : '';
+
+describe('Track 10A SHARED:upgrade-flow block', () => {
+  test('canonical block is present in skills/gstack-extend-upgrade.md', () => {
+    if (!CANONICAL_UPGRADE_FLOW) {
+      throw new Error(
+        'No <!-- SHARED:upgrade-flow --> ... <!-- /SHARED:upgrade-flow --> block in skills/gstack-extend-upgrade.md',
+      );
+    }
+  });
+
+  // Load-bearing strings — a reworded canonical block could stay byte-identical
+  // across all 6 files yet silently drop the D9/D10 guarantees. Pin them.
+  test('canonical block keeps the absent-UPGRADE_OK failure gate (D9)', () => {
+    expect(CANONICAL_UPGRADE_FLOW).toContain('Treat absent `UPGRADE_OK` as failure');
+  });
+  test('canonical block keeps the auto_upgrade-after-success ordering (D10)', () => {
+    expect(CANONICAL_UPGRADE_FLOW).toContain(
+      'Only on a confirmed `UPGRADE_OK <old> <new>`, enable auto-upgrade',
+    );
+  });
+
+  for (const skill of PREAMBLE_SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    test(`${skill} embeds the canonical SHARED:upgrade-flow block`, () => {
+      if (!CANONICAL_UPGRADE_FLOW) return; // covered by the presence test above
+      if (!content.includes(CANONICAL_UPGRADE_FLOW)) {
+        throw new Error(
+          `${skill} drift in SHARED:upgrade-flow — propagate canonical text from skills/gstack-extend-upgrade.md`,
+        );
+      }
+    });
+  }
+});
+
+describe('Track 10A old inline-flow content removed', () => {
+  // Negative assertions: prove the consolidation REPLACED the old per-skill
+  // inline flows rather than appending alongside them. These tokens were
+  // load-bearing in the pre-Track-10A divergent copies — the truncated
+  // cross-reference and the broken `git pull` recovery command. (The old
+  // bootstrap pattern is NOT a usable negative token: each skill has a
+  // second, out-of-scope `_EXTEND_ROOT` computation for session-paths that
+  // legitimately still uses it.)
+  const REMOVED_TOKENS = [
+    'Handle responses the same way as /pair-review',
+    'git -C $_EXTEND_ROOT pull',
+  ];
+  for (const skill of SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const token of REMOVED_TOKENS) {
+      test(`${skill} no longer contains pre-Track-10A token: ${token}`, () => {
+        expect(content).not.toContain(token);
+      });
+    }
+  }
+});
+
+describe('Track 10A D7 bootstrap empty-guard', () => {
+  // Positive assertion: the update-check preamble bootstrap guards on a
+  // non-empty _SKILL_SRC before deriving _EXTEND_ROOT. Without the guard,
+  // a failed readlink left _EXTEND_ROOT="." and `[ -x ./bin/update-check ]`
+  // could execute a script from the caller's cwd. All 6 preamble skills
+  // carry the guarded form.
+  const D7_GUARD = '[ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")';
+  for (const skill of PREAMBLE_SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    test(`${skill} preamble bootstrap has the _SKILL_SRC empty-guard`, () => {
+      expect(content).toContain(D7_GUARD);
+    });
+  }
+});
+
 describe('roadmap-only verbatim blocks', () => {
   const file = join(ROOT, 'skills', 'roadmap.md');
   let content: string;
@@ -300,14 +413,15 @@ describe('pair-review per-branch session paths', () => {
 //
 // Each skill preamble probes path 1 (~/.claude/skills/{name}/SKILL.md)
 // then path 2 (.claude/skills/{name}/SKILL.md) as a vendored-install
-// fallback. The two-line readlink is identical-shaped across all 5 skills
-// — assert presence here so a future PR can't drop the path-2 fallthrough
-// from one skill while keeping it in the others.
+// fallback. The two-line readlink is identical-shaped across all 6 preamble
+// skills (the 5 workflow skills + gstack-extend-upgrade) — assert presence
+// here so a future PR can't drop the path-2 fallthrough from one skill while
+// keeping it in the others.
 //
 // Mirrors gstack core's preamble probe pattern. See CHANGELOG v0.18.14.
 
 describe('Track 5A two-path preamble probe (path-2 fallthrough)', () => {
-  for (const skill of SKILLS) {
+  for (const skill of PREAMBLE_SKILLS) {
     const file = join(ROOT, 'skills', `${skill}.md`);
     let content: string;
     try {
