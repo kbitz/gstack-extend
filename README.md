@@ -9,6 +9,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Stable |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | New |
+| `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
 
 ## Installation
 
@@ -191,6 +192,25 @@ The artifact contract is owned by /test-plan and documented at
 | ROADMAP.md | Execution plan | /roadmap |
 | `~/.gstack/projects/<slug>/groups/<group>/manifest.yaml` | Track→branch→review-doc mapping | /test-plan |
 | `~/.gstack/projects/<slug>/<user>-<branch>-test-plan-batch-*.md` | Batched test plan artifact | /test-plan |
+
+---
+
+## /gstack-extend-upgrade — Upgrade gstack-extend
+
+A first-class upgrade path for gstack-extend itself, mirroring gstack's own
+`/gstack-upgrade`. The same flow runs automatically inside every gstack-extend skill's
+preamble when a periodic check detects a new version — this skill is the standalone
+entry point for checking or upgrading on demand.
+
+- **One canonical flow** — the upgrade procedure is a single drift-locked block shared by all skill preambles and this skill; no more divergent copies
+- **Fast-forward only** — `bin/update-run` pulls with `--ff-only`; a diverged local `main` fails safely instead of destroying work, and the branch + stash are restored on any mid-run failure
+- **Honest reporting** — every run emits exactly one `UPGRADE_OK` / `UPGRADE_FAILED` line; the skill never claims success without `UPGRADE_OK`
+- **Disambiguated checks** — a direct check distinguishes "up to date", "checks disabled", and "couldn't reach GitHub" instead of collapsing them to a vague "no update"
+- **Auto-upgrade, snooze, never-ask** — same opt-in UX as gstack core; auto-upgrade is only armed after a confirmed successful run
+
+```
+/gstack-extend-upgrade   # Force a fresh check; upgrade if a newer version exists
+```
 
 ---
 

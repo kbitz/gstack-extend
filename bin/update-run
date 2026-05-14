@@ -8,13 +8,20 @@
 # This avoids hardcoding paths and works regardless of where the repo is cloned.
 #
 # Output:
-#   UPGRADE_OK <old> <new>     — upgrade succeeded
-#   UPGRADE_FAILED <reason>    — upgrade failed
+#   UPGRADE_OK <old> <new>      — upgrade succeeded
+#   UPGRADE_FAILED <reason>     — upgrade failed
+#
+# Exactly one result line is always emitted. The script runs under `set -e`;
+# an EXIT trap guarantees a UPGRADE_FAILED line even when a git stage dies
+# mid-run, and best-effort-restores the branch + stash before reporting so a
+# failed upgrade does not strand the user on main with work stashed.
 set -euo pipefail
 
 INSTALL_DIR="${1:-}"
 STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
 
+# ─── Pre-flight (before the trap — these self-report and INSTALL_DIR may
+#     be empty/invalid, so the trap's git restoration must not run) ──────
 if [ -z "$INSTALL_DIR" ]; then
   echo "UPGRADE_FAILED missing repo root argument"
   exit 1
@@ -25,56 +32,116 @@ if [ ! -d "$INSTALL_DIR/.git" ]; then
   exit 1
 fi
 
+# ─── EXIT trap: guarantee a result line + best-effort state restore ─────
+# _RESULT_EMITTED guards double-emit: every explicit UPGRADE_OK/UPGRADE_FAILED
+# echo sets it, and the trap stays silent when it is set. The trap only acts
+# on a NONZERO exit — a clean exit 0 after UPGRADE_OK must not produce a
+# spurious failure. _STAGE names the failed step. _PREV_BRANCH / _STASHED
+# track restorable state created during the run.
+_STAGE="init"
+_RESULT_EMITTED=""
+_PREV_BRANCH=""
+_STASHED=""
+
+# restore_stash — pop the update-run stash, but ONLY when we are back on the
+# branch it was taken from, and clear _STASHED on success. Two guards in one:
+#   - Branch check: popping onto the wrong branch would apply the user's
+#     branch-local work somewhere it doesn't belong (e.g. onto main after a
+#     failed checkout-restore) while the run still reports success.
+#   - Clear-on-success: without this, a later failure (and the EXIT trap)
+#     could pop a SECOND time and silently drop an unrelated stash entry.
+restore_stash() {
+  [ -n "$_STASHED" ] || return 0
+  _RS_CUR=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || true)
+  if [ "$_RS_CUR" != "$_PREV_BRANCH" ]; then
+    echo "Note: could not return to branch '$_PREV_BRANCH' — your changes remain stashed. Run 'git -C $INSTALL_DIR stash pop' after checking out '$_PREV_BRANCH'."
+    return 0
+  fi
+  if git -C "$INSTALL_DIR" stash pop 2>/dev/null; then
+    _STASHED=""
+  else
+    echo "Note: local changes were stashed but could not be restored. Run 'git -C $INSTALL_DIR stash pop' manually."
+  fi
+}
+
+on_exit() {
+  _ec=$?
+  [ "$_ec" -eq 0 ] && return 0
+  [ -n "$_RESULT_EMITTED" ] && return 0
+  # Best-effort restoration: leave the worktree as if we never ran.
+  if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
+    git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
+  fi
+  restore_stash
+  _RESULT_EMITTED=1
+  echo "UPGRADE_FAILED stage=$_STAGE (exit $_ec)"
+}
+trap on_exit EXIT
+
 # ─── Step 1: Save old version ─────────────────────────────────
+_STAGE="read-version"
 OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 
 # ─── Step 2: Upgrade via git ──────────────────────────────────
+_STAGE="mkdir-state"
 mkdir -p "$STATE_DIR"
 
-PREV_BRANCH=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || true)
+_STAGE="read-branch"
+_PREV_BRANCH=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || true)
+
+_STAGE="stash"
 STASH_OUTPUT=$(git -C "$INSTALL_DIR" stash 2>&1)
+if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
+  _STASHED=1
+fi
+
+_STAGE="fetch"
 git -C "$INSTALL_DIR" fetch origin
 
 # Switch to main if on a different branch
-if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
+if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
+  _STAGE="checkout-main"
   git -C "$INSTALL_DIR" checkout main
-  echo "Note: switched from branch '$PREV_BRANCH' to main for upgrade."
+  echo "Note: switched from branch '$_PREV_BRANCH' to main for upgrade."
 fi
 
 # Fast-forward only — if main has diverged locally, fail safely instead of destroying work
+_STAGE="pull-ff-only"
 if ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
   # Restore previous branch if we switched
-  if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
-    git -C "$INSTALL_DIR" checkout "$PREV_BRANCH" 2>/dev/null || true
+  if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
+    git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
   fi
-  # Restore stashed changes
-  if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
-    git -C "$INSTALL_DIR" stash pop 2>/dev/null || true
-  fi
+  # Restore stashed changes (branch-checked + clears _STASHED on success)
+  restore_stash
+  _RESULT_EMITTED=1
   echo "UPGRADE_FAILED local main has diverged from origin/main (ff-only failed)"
   exit 1
 fi
 
+_STAGE="setup"
 "$INSTALL_DIR/setup"
 
-# Switch back to previous branch if we moved away
-if [ -n "$PREV_BRANCH" ] && [ "$PREV_BRANCH" != "main" ]; then
-  git -C "$INSTALL_DIR" checkout "$PREV_BRANCH" 2>/dev/null || true
+# Switch back to previous branch if we moved away (best-effort)
+if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
+  _STAGE="checkout-restore"
+  git -C "$INSTALL_DIR" checkout "$_PREV_BRANCH" 2>/dev/null || true
 fi
 
-# Restore stashed changes on the original branch (best-effort)
-if echo "$STASH_OUTPUT" | grep -q "Saved working directory"; then
-  if ! git -C "$INSTALL_DIR" stash pop 2>/dev/null; then
-    echo "Note: local changes were stashed but could not be restored. Run 'git -C $INSTALL_DIR stash pop' manually."
-  fi
-fi
+# Restore stashed changes on the original branch (branch-checked, best-effort)
+_STAGE="stash-pop"
+restore_stash
 
 # ─── Step 3: Write upgrade marker ─────────────────────────────
+_STAGE="write-marker"
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 echo "$OLD_VERSION" > "$STATE_DIR/just-upgraded-from"
 
 # Clear cache so next check is fresh
+_STAGE="clear-cache"
 rm -f "$STATE_DIR/last-update-check"
 rm -f "$STATE_DIR/update-snoozed"
 
+_STAGE="done"
+_RESULT_EMITTED=1
 echo "UPGRADE_OK $OLD_VERSION $NEW_VERSION"

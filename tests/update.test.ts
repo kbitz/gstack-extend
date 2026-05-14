@@ -7,7 +7,7 @@
  *   1. bin/update-run: missing-arg, not-git-repo, happy-path on main,
  *      non-main-branch auto-switch + restore, dirty-worktree + branch-switch,
  *      diverged-main ff-only failure.
- *   2. setup: default install (5 skills), --with-native rejected, --uninstall,
+ *   2. setup: default install (6 skills), --with-native rejected, --uninstall,
  *      foreign-symlink preserved, --bogus rejected, install-time safety
  *      (symlink at $target / regular file at $target / world-writable
  *      $SKILLS_DIR / outside-$HOME), --skills-dir arg validation,
@@ -55,6 +55,7 @@ const REAL_SETUP_SKILLS = [
   'full-review',
   'review-apparatus',
   'test-plan',
+  'gstack-extend-upgrade',
 ] as const;
 
 const baseTmp = makeBaseTmp('update-test-');
@@ -211,6 +212,12 @@ describe('bin/update-run', () => {
     test('clears update-snoozed after upgrade', () => {
       expect(existsSync(join(stateDir, 'update-snoozed'))).toBe(false);
     });
+
+    test('does not emit UPGRADE_FAILED on success', () => {
+      // EXIT trap (Track 10A) must stay silent on a clean exit 0 — a
+      // spurious UPGRADE_FAILED after UPGRADE_OK is the false-failure bug.
+      expect(result.stdout + result.stderr).not.toContain('UPGRADE_FAILED');
+    });
   });
 
   describe('non-main branch auto-switch', () => {
@@ -331,6 +338,14 @@ describe('bin/update-run', () => {
       const r = spawnSync('git', ['-C', repo, 'log', '--oneline', '-1'], { encoding: 'utf8' });
       expect(r.stdout).toContain('local diverge');
     });
+
+    test('emits exactly one UPGRADE_FAILED and no UPGRADE_OK', () => {
+      // The ff-only path emits its own explicit UPGRADE_FAILED; the EXIT
+      // trap's _RESULT_EMITTED guard (Track 10A) must NOT double-emit.
+      const out = result.stdout + result.stderr;
+      expect((out.match(/UPGRADE_FAILED/g) ?? []).length).toBe(1);
+      expect(out).not.toContain('UPGRADE_OK');
+    });
   });
 
   // ─── Track 6B: post-upgrade path-1 resolution (real-setup fixture) ──
@@ -371,7 +386,7 @@ describe('bin/update-run', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('UPGRADE_OK 1.0.0 1.4.0');
       // Real setup announces its work; confirms it actually ran.
-      expect(out).toContain('Installed 5 skills');
+      expect(out).toContain('Installed 6 skills');
     });
 
     test('path-1 SKILL.md is a symlink under mock $HOME', () => {
@@ -410,7 +425,8 @@ describe('bin/update-run', () => {
         set -u
         _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \\
                   || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
-        _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+        _EXTEND_ROOT=""
+        [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
         printf '%s\\n' "$_EXTEND_ROOT"
       `;
       const r = spawnSync('bash', ['-c', script], {
@@ -430,6 +446,79 @@ describe('bin/update-run', () => {
       // Canonicalize both sides: setup's pwd -P resolves /var → /private/var
       // on macOS, so the bash probe yields the realpath form.
       expect(realpathSync(probeOut)).toBe(realpathSync(repo));
+    });
+  });
+
+  // ─── Track 10A: EXIT trap on mid-run stage failure ─────────────────
+  //
+  // The scenarios above exercise update-run's explicit exit paths. This
+  // one kills a stage mid-run AFTER the branch switch — a failing `setup`
+  // pulled from the remote dies at `_STAGE=setup` under `set -e`, by which
+  // point update-run has already moved feature/trap → main. That is the
+  // only failure point that exercises REAL branch restoration: a fetch- or
+  // stash-stage failure would never have left feature/trap to begin with.
+  // Asserts the EXIT trap: emits exactly one UPGRADE_FAILED naming the
+  // failed stage, restores the original branch, pops the stash, and leaves
+  // no success side effects behind.
+  describe('EXIT trap on mid-run stage failure (Track 10A)', () => {
+    let repo: string;
+    let stateDir: string;
+    let result: ReturnType<typeof runBin>;
+
+    beforeAll(() => {
+      repo = createFixtureRepo('trap-setup-fail');
+      spawnSync('git', ['-C', repo, 'checkout', '-b', 'feature/trap', '--quiet']);
+      writeFileSync(join(repo, 'trap-file.txt'), 'committed\n');
+      spawnSync('git', ['-C', repo, 'add', 'trap-file.txt']);
+      spawnSync('git', ['-C', repo, 'commit', '-m', 'trap commit', '--quiet']);
+      // Dirty a tracked file so update-run stashes — lets us assert the
+      // trap pops the stash back after restoring the branch.
+      writeFileSync(join(repo, 'VERSION'), '9.9.9-dirty\n');
+      // Push a failing `setup` to the remote so `git pull --ff-only` brings
+      // it in and `_STAGE=setup` dies AFTER checkout-main.
+      const work = `${baseTmp}/trap-setup-fail-remote-work`;
+      spawnSync('git', ['clone', '--quiet', `${baseTmp}/trap-setup-fail-remote`, work]);
+      writeFileSync(join(work, 'setup'), '#!/usr/bin/env bash\nexit 1\n');
+      spawnSync('git', ['-C', work, 'add', 'setup']);
+      spawnSync('git', ['-C', work, 'commit', '-m', 'failing setup', '--quiet']);
+      spawnSync('git', ['-C', work, 'push', 'origin', 'main', '--quiet']);
+      rmSync(work, { recursive: true, force: true });
+
+      stateDir = join(baseTmp, 'trap-setup-fail-state');
+      const homeDir = join(baseTmp, 'trap-setup-fail-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+    });
+
+    test('trap emits UPGRADE_FAILED naming the failed stage', () => {
+      expect(result.stdout + result.stderr).toContain('UPGRADE_FAILED stage=setup');
+    });
+
+    test('trap emits exactly one result line, no UPGRADE_OK', () => {
+      const out = result.stdout + result.stderr;
+      expect((out.match(/UPGRADE_FAILED/g) ?? []).length).toBe(1);
+      expect(out).not.toContain('UPGRADE_OK');
+    });
+
+    test('trap restores the original branch (post-checkout-main failure)', () => {
+      // update-run reached _STAGE=setup, so it had already switched
+      // feature/trap → main. A passing assertion here means the trap
+      // actually checked the branch back out.
+      const r = spawnSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' });
+      expect(r.stdout?.trim()).toBe('feature/trap');
+    });
+
+    test('trap pops the stash (dirty change restored)', () => {
+      expect(readFileSync(join(repo, 'VERSION'), 'utf8').trim()).toBe('9.9.9-dirty');
+    });
+
+    test('no just-upgraded-from marker written on failure', () => {
+      expect(existsSync(join(stateDir, 'just-upgraded-from'))).toBe(false);
     });
   });
 });
@@ -474,11 +563,11 @@ describe('setup default install', () => {
     r = runSetup([], mockHome);
   });
 
-  test('installs 5 skills to default skills dir', () => {
-    expect(r.stdout + r.stderr).toContain('Installed 5 skills');
+  test('installs 6 skills to default skills dir', () => {
+    expect(r.stdout + r.stderr).toContain('Installed 6 skills');
   });
 
-  for (const skill of ['pair-review', 'review-apparatus', 'test-plan']) {
+  for (const skill of ['pair-review', 'review-apparatus', 'test-plan', 'gstack-extend-upgrade']) {
     test(`creates ${skill} symlink to repo source`, () => {
       const link = join(mockHome, '.claude', 'skills', skill, 'SKILL.md');
       expect(lstatSync(link).isSymbolicLink()).toBe(true);
@@ -684,7 +773,7 @@ describe('setup install-time safety: $SKILLS_DIR layer', () => {
     mkdirSync(join(home, '.claude'), { recursive: true });
     symlinkSync(dotfilesDir, join(home, '.claude', 'skills'));
     const r = runSetup([], home);
-    expect(r.stdout + r.stderr).toContain('Installed 5 skills');
+    expect(r.stdout + r.stderr).toContain('Installed 6 skills');
     // Symlinks landed inside the dotfiles dir (the resolved target).
     expect(lstatSync(join(dotfilesDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
   });
@@ -783,7 +872,7 @@ describe('Track 5A skill preamble probe (CP#3 integration)', () => {
     const home = join(baseTmp, 'cp3-default-home');
     mkdirSync(home, { recursive: true });
     const setupResult = runSetup([], home);
-    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 5 skills');
+    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 6 skills');
     const probe = runPreambleProbe(home, null);
     expect(probe.extendRoot).toBe(ROOT);
   });

@@ -2,6 +2,27 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track-10a] Migrations runner parity for gstack-extend upgrades
+
+**What:** Add a `migrations/v*.sh` runner to `bin/update-run`, mirroring gstack's `gstack-upgrade/SKILL.md` Step 4.75 — after the git pull + `./setup`, run any migration script whose version is newer than the old `VERSION`. Idempotent, non-fatal on error.
+
+**Why:** Track 10A makes `/gstack-extend-upgrade` the first-class upgrade path. gstack's equivalent has a state-fix channel for changes a plain `git pull` can't cover (renamed config keys, moved state dirs, orphaned files). gstack-extend has none. The day gstack-extend ships a breaking state change, existing installs have no migration mechanism and get stranded on broken state.
+
+**Pros:**
+- Cheap (~30 LOC) — `update-run` already has `OLD_VERSION`/`NEW_VERSION` in hand; gstack's Step 4.75 is a direct reference impl.
+- Removes a latent upgrade hazard before it bites.
+
+**Cons:**
+- Speculative until a real migration exists — building infra with no first customer. Mitigation: P3 means "build when the first migration is actually needed," not now.
+
+**Context:** Deferred from Approach C during the Track 10A CEO review (2026-05-14). The review chose Approach B (standalone skill + consolidate the inline flow) and explicitly held the migrations runner out of scope. Reference: gstack `gstack-upgrade/SKILL.md` Step 4.75.
+
+**Effort estimate:** S (human) → S (CC)
+
+**Priority:** P3
+
+**Depends on / blocked by:** Track 10A landing first (it establishes `/gstack-extend-upgrade` and may further touch `bin/update-run` via the D9 EXIT-trap hardening).
+
 ### [plan-eng-review:track-6a] Drift test: skill prose section-name lists vs CANONICAL_SECTIONS
 
 **What:** Add a test that asserts every `## SECTION_NAME` referenced in the advisory-sections lists in `skills/roadmap.md` matches `CANONICAL_SECTIONS` from `src/audit/sections.ts`.

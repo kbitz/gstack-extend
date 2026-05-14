@@ -25,7 +25,8 @@ allowed-tools:
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null \
            || readlink .claude/skills/full-review/SKILL.md 2>/dev/null)
-_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+_EXTEND_ROOT=""
+[ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
@@ -35,6 +36,7 @@ fi
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
 
+<!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
 Check if auto-upgrade is enabled:
@@ -43,24 +45,28 @@ _AUTO=$("$_EXTEND_ROOT/bin/config" get auto_upgrade 2>/dev/null || true)
 echo "AUTO_UPGRADE=${_AUTO:-false}"
 ```
 
+Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`.
+
 **If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
 ```bash
 "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"
 ```
-After upgrade, tell user: "Update installed. You're running the previous version for this session; next invocation will use v{new}."
-If it fails, warn: "Auto-upgrade failed. Run `git -C $_EXTEND_ROOT pull && $_EXTEND_ROOT/setup` manually."
+- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
+- On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 
 **Otherwise**, use AskUserQuestion:
 - Question: "gstack-extend **v{new}** is available (you're on v{old}). Upgrade now?"
 - Options: ["Yes, upgrade now", "Always keep me up to date", "Not now", "Never ask again"]
 
-**If "Yes, upgrade now":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`. Tell user: "Update installed. You're running the previous version for this session; next invocation will use v{new}."
+**If "Yes, upgrade now":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`.
+- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}."
+- On failure: tell user "Upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 
-**If "Always keep me up to date":**
+**If "Always keep me up to date":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` first. **Only on a confirmed `UPGRADE_OK <old> <new>`, enable auto-upgrade:**
 ```bash
 "$_EXTEND_ROOT/bin/config" set auto_upgrade true
 ```
-Tell user: "Auto-upgrade enabled." Then run `update-run`.
+Then tell user "Update installed (v{old} → v{new}). Auto-upgrade enabled — future updates install automatically." On failure, do **not** enable auto-upgrade; tell user "Upgrade failed: {reason}. Auto-upgrade not enabled. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 
 **If "Not now":** Write snooze state, then continue with the skill:
 ```bash
@@ -85,6 +91,7 @@ Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell us
 "$_EXTEND_ROOT/bin/config" set update_check false
 ```
 Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
+<!-- /SHARED:upgrade-flow -->
 
 ---
 

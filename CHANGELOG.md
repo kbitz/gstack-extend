@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0.0] - 2026-05-14
+
+### Added: `/gstack-extend-upgrade` skill (Track 10A)
+
+A first-class upgrade path for gstack-extend, mirroring gstack's own `/gstack-upgrade`. Run `/gstack-extend-upgrade` to check for and install updates on demand — no more `git pull` archaeology. The standalone command does a forced update check and, when invoked with nothing to upgrade, disambiguates *why*: "up to date", "checks disabled", or "couldn't reach GitHub" are now distinct, honest messages instead of a single vague "no update".
+
+### Changed: consolidated the upgrade flow into one canonical block
+
+The upgrade flow used to be inlined — and silently divergent — across all 5 skill preambles (`pair-review`, `roadmap`, `full-review`, `review-apparatus`, `test-plan`). `roadmap`'s copy had a broken recovery command (it told you to `git pull` but forgot to re-run `setup`), an ASCII arrow where the others used unicode, and a truncated handler. Track 10A collapses all of that into a single `SHARED:upgrade-flow` verbatim block, sourced from `skills/gstack-extend-upgrade.md` and embedded byte-identically in all 6 files. `tests/skill-protocols.test.ts` now drift-locks the block across every file and pins the load-bearing behavior strings, so the copies can never diverge again. The interactive "Yes, upgrade now" path now branches on `bin/update-run`'s actual result instead of unconditionally reporting success, and "Always keep me up to date" only arms auto-upgrade after a *confirmed* successful run.
+
+### Fixed: `bin/update-run` no longer reports false success or loses stashed work
+
+`bin/update-run` runs under `set -e`; a failure in a git stage (fetch, checkout, setup) used to exit without emitting any result line, leaving callers unable to tell success from failure. It now has an EXIT trap that guarantees exactly one `UPGRADE_OK` / `UPGRADE_FAILED` line, names the failed stage, and — critically — restores the user's branch and pops their stash before reporting, so a failed upgrade never strands them on `main` with work stashed away. A shared `restore_stash` helper adds two data-safety guards: it only pops the stash when the worktree is back on the branch the stash came from (no more applying branch-local work onto `main`), and it clears the stash flag on success so a later failure can't pop a *second* time and silently drop an unrelated stash entry. The preamble bootstrap also gained a guard so a failed `readlink` can no longer resolve `_EXTEND_ROOT` to `.` and execute a script from the caller's working directory.
+
+### Added: preamble bootstrap empty-guard + `setup` registration
+
+Every skill preamble now guards `_SKILL_SRC` non-empty before deriving `_EXTEND_ROOT`. `gstack-extend-upgrade` is registered in `setup`'s `SKILLS` array so it installs alongside the other skills; `tests/update.test.ts` and the audit-compliance suite were updated for the 6-skill count.
+
 ## [0.19.3.0] - 2026-05-12
 
 ### Added: Layout Scaffolding skill section + audit gap fixes (Track 8A)
