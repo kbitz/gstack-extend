@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0.1] - 2026-05-14
+
+### Changed: regenerated roadmap to absorb v0.19/v0.20 drift, archived v2 state-model spec
+
+`docs/ROADMAP.md` was 4 ships behind reality — Group 6 sat in `## In Progress` with all four tracks already shipped, two `/pair-review` shipments (`v0.19.0.1` cross-branch resume hotfix, `v0.19.1.0` concurrent sessions feature) had never been recorded at all, and Tracks 7A/8A/10A had landed as `v0.19.2.0`/`v0.19.3.0`/`v0.20.0.0` without ever moving to `## Shipped`. `/roadmap` regenerated the entire upcoming plan from scratch per the v2 doctrine, preserved the existing Shipped tail, and added five new shipped Groups (6 closure + retroactive 7 and 8 for the un-roadmapped `/pair-review` work + 9, 10, 11 for the post-roadmap ships). Inbox drained from 4 items to empty: 1 item (`[plan-eng-review:track=6A,defer=true]` drift test for skill section names) folded into the canonical-fragments Track because both touch `tests/skill-protocols.test.ts`; 3 items the user explicitly promoted to Current Plan rather than deferring — Group 18 (`migrations runner parity for gstack-extend upgrades`, ~30 LOC mirroring gstack's `gstack-upgrade/SKILL.md` Step 4.75), Group 19 (tighten the `DOC_LOCATION` "docs/ directory absent" gate to a stronger gstack-extend signal so generic Claude Code repos stop tripping it), and Group 20 (realpath preflight in the Layout Scaffolding skill prose so malicious-repo `docs/` symlinks can't trick the scaffolder into `mv`'ing files out of the worktree). Current Plan now spans Groups 12–20 with 12 tracks; Future grew to 11 entries.
+
+ID renumbering was substantial — Group 7 (Tighten `git commit` failure handling) re-IDed to Group 9 in Shipped, Group 8 (Layout Scaffolding) → Group 10, Group 10 (`/gstack-extend-upgrade`) → Group 11, and the entire Current Plan slid forward to accommodate the retroactive 7 and 8 plus the three promoted Groups. The renames table is captured in the regeneration commit body for users re-anchoring on old IDs.
+
+### Changed: archived `docs/designs/roadmap-v2-state-model.md`
+
+The v2 state-section model design doc was tagged as an `ARCHIVE_CANDIDATES` audit fail (referenced `v0.18.14`; current `VERSION` is now `v0.20.0.1` and the model is fully shipped through `v0.19.0.0` plus 4 follow-on iterations). Moved to `docs/archive/` via `git mv` (preserves history). Both prose cross-references in `skills/roadmap.md` (frontmatter `description:` + the `## Spec` body line) updated to the new path. One stale code reference remains at `src/audit/checks/state-sections.ts:74` (the `MIGRATION_NEEDED` error string still points at the old `docs/designs/` path); `/roadmap`'s `HARD GATE: Documentation changes only` blocked the TS source update in this run, so it's tracked as a Future entry that the next code-touching Track will absorb in passing.
+
+### Fixed: STRUCTURE, TODO_FORMAT, and FUTURE audit blockers
+
+Three audit failures resolved by the regen, not by direct fix: STRUCTURE flagged Track 6D missing the `_N tasks . effort . risk . files_` metadata line (auto-resolves when 6D moved to Shipped, which uses bullet form not Track form); TODO_FORMAT flagged 4 inbox tags using the legacy kebab grammar (`[review:track-8a]`) instead of canonical `key=value` (`[review:track=8A]`) — auto-resolves when the inbox drains to empty; FUTURE flagged a stray `---` separator that the regen had inserted between the last Future bullet and `## Shipped`. ARCHIVE_CANDIDATES cleared by the move described above. Post-apply audit: every check passes, including SIZE, COLLISIONS, GROUP_DEPS (20 groups validated), and PARALLELISM_BUDGET. No code, config, or CI files touched — pure docs.
+
 ## [0.20.0.0] - 2026-05-14
 
 ### Added: `/gstack-extend-upgrade` skill (Track 10A)
