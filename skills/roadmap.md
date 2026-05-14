@@ -6,7 +6,7 @@ description: |
   and regenerates the upcoming plan whole on each substantive run instead
   of surgically reassessing it. Only shipped work has stable IDs; the rest
   is volatile and re-thought each run. Spec:
-  `docs/designs/roadmap-v2-state-model.md`.
+  `docs/archive/roadmap-v2-state-model.md`.
   Use when asked to "regenerate the roadmap", "restructure TODOs",
   "clean up the roadmap", "reorganize backlog", "tidy up docs",
   "update the roadmap", or after a big batch of work that generated many
@@ -107,7 +107,8 @@ Every substantive run **regenerates** the upcoming plan from scratch
 instead of surgically reassessing it. Only shipped work has stable IDs.
 
 The grammar, audit contract, and rationale live in
-`docs/designs/roadmap-v2-state-model.md`. Read that doc for the full
+`docs/archive/roadmap-v2-state-model.md` (archived 2026-05-14 after the
+model fully shipped through v0.19/0.20). Read that doc for the full
 specification; this prose describes the workflow.
 
 **HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md,
