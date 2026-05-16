@@ -202,6 +202,15 @@ pair-review/                                  # <PROJECT_DIR>
       ...
 ```
 
+**Terminal-passed statuses**: PASSED or PASSED_BY_COVERAGE. Every reference below
+to "passed" filtering — group completion, summary counters, dashboard, resume
+lookahead, per-item table rendering — means both statuses unless explicitly
+narrowed to direct PASSED. Use the phrase `terminal-passed statuses` when
+referring to this set; a `tests/skill-protocols.test.ts` invariant asserts the
+canonical definition exists and that the phrase appears at multiple filter
+sites (≥4 occurrences), so a future edit that drops it from a filter site
+trips the test.
+
 **session.yaml** fields:
 ```yaml
 project: <project name from CLAUDE.md or directory>
@@ -211,13 +220,17 @@ last_active: <ISO 8601 UTC>
 build_commit: <short hash of current HEAD>
 deploy_recipe: deploy.md
 active_groups: [<group slugs currently being tested>]
-completed_groups: [<group slugs where all items passed>]
+completed_groups: [<group slugs where all items reached terminal-passed statuses>]
 summary:
   total: <int>
-  passed: <int>
+  passed: <int>                # INCLUSIVE — counts PASSED + PASSED_BY_COVERAGE
+  passed_by_coverage: <int>    # sub-count of passed
   failed: <int>
   skipped: <int>
   untested: <int>
+  bundles_offered: <int>       # count of bundle prompts shown
+  bundles_accepted: <int>      # user picked "All pass"
+  bundles_rejected: <int>      # user picked "Mark individually"
 parked_bugs:
   total: <int>
   todos: <int>          # promoted to docs/TODOS.md
@@ -227,6 +240,11 @@ checkpoints:
   - commit: <short hash>
     timestamp: <ISO 8601>
     note: "<description>"
+coverage_warnings:      # entries logged when validation drops edges
+  - phase: inference | resume
+    rule: cycle | self-reference | existence | intra-group
+    edge: "<source-item> -> <target-item>"
+    note: <short human-readable explanation>
 ```
 
 **groups/<name>.md** format:
@@ -236,13 +254,28 @@ checkpoints:
 ## Items
 
 ### 1. <Item description>
-- Status: UNTESTED | PASSED | FAILED | SKIPPED
+- Status: UNTESTED | PASSED | PASSED_BY_COVERAGE | FAILED | SKIPPED
 - Build: <commit hash when tested>
 - Tested: <ISO 8601 timestamp>
-- Notes: <human's observation>
+- Notes: <human's observation>             # human-authored only; machine never writes
 - Evidence: <failure description, if failed>
 - Fix: <commit hash, if fixed>
+- Covers: [<item-indices>]                 # optional; intra-group item indices this item verifies-by-action
+- CoverageNote: <text>                     # machine-authored coverage annotation; never overwrites Notes
 ```
+
+`PASSED_BY_COVERAGE` exists as a distinct status (rather than reusing `PASSED`) so
+the FAIL handler can find and demote *only* items that were resolved via
+bundle-confirmation, not items that were directly tested. Directly-`PASSED` items
+have independent evidence and stay `PASSED` regardless of what happens to other
+items in the group. Without this distinction, a single covering-item failure
+would silently invalidate every previously-passed item that happened to be in
+any `Covers:` list — which would weaken integrity instead of preserving it.
+
+**Transitive coverage is explicitly NOT supported in v1.** If item 1 covers item
+2 and item 2 covers item 3, passing item 1 does NOT auto-cover item 3. Bundle
+prompts and FAIL-time demotion consider only **direct** edges in the just-passed
+or just-failed item's `Covers:` list.
 
 ---
 
@@ -367,6 +400,53 @@ Analyze the diff content and generate test items grouped by feature area. Rules:
 - Do NOT include things that automated tests already cover
 - Be specific: "Verify the login form shows an error on invalid password" not "Test login"
 
+### Step 3.5: Infer coverage hints (Covers metadata)
+
+While generating items, attach an optional `Covers:` field to any item that
+plausibly verifies another item in the same group via a single user action.
+This lets Phase 2 bundle confirmation prompts and avoid redundant per-item
+clicks for items that one action already demonstrated.
+
+**Inference heuristics** — attach `Covers: [N, M]` to item X when ANY of these
+hold for an item-pair (X, Y) in the same group:
+
+1. **Same-prerequisite-action**: Y's verification implicitly requires the user
+   to have done what X tests. ("Verify logged-in homepage renders" covers
+   "Verify session cookie is set" if both follow a sign-in.)
+2. **Strict subset**: X tests a feature; Y tests a sub-state of that feature
+   with no additional setup. ("Verify the form submits" covers "Verify the
+   submit button is enabled when fields are valid.")
+3. **Same observation, different framing**: X and Y describe the same
+   observable state from different angles. ("Item appears in the list" covers
+   "Item count increments.")
+
+Heuristics that do **not** justify Covers links: shared module/file, shared
+test fixture, semantic adjacency, "they feel related." The agent must be able
+to articulate the heuristic match in one sentence; if it can't, no link.
+
+**Coverage is intra-group only.** Cross-group `Covers:` links are out of scope.
+
+**Validation rules** — every inferred (and later, user-edited) Covers graph must
+pass these:
+
+1. **No self-reference**: `Covers:` may not contain its own item index.
+2. **No cycles**: directed graph induced by `Covers:` edges must be acyclic.
+3. **Existence**: every target index must refer to an existing item in the
+   same group.
+4. **Intra-group**: no cross-group references (enforced by the integer-only
+   schema — group filenames are not referenceable).
+
+Failure handling — **deterministic per rule**:
+- **Self-reference / Existence / Intra-group** — drop the single offending edge
+  (the (source, target) pair that failed).
+- **Cycle** — find the strongly connected component (SCC); drop the edge in
+  the SCC whose source has the highest item index (tie-break: highest target
+  index). Deterministic and testable.
+
+At inference (plan time), apply automatically and log dropped edges to
+`coverage_warnings:` in session.yaml with `phase: inference`. Inference runs
+ONLY at Phase 1 plan generation; resume never re-infers.
+
 ### Step 4: Present and approve
 
 Present the plan via AskUserQuestion:
@@ -377,6 +457,57 @@ add, remove, or modify any items."
 Show each group with its items. Ask which groups to start with (user works on 1-3
 at a time).
 
+### Step 4.5: Coverage graph review (skip if no item has Covers)
+
+If any generated item has a non-empty `Covers:` field, present a second
+AskUserQuestion immediately after Step 4. If NO item has Covers (heuristics
+didn't match), SKIP this step entirely — no UX friction for plans without
+coverage hints.
+
+```
+Question:
+"Coverage shortcuts the plan suggests:
+
+  Item 1 (Sign in) → covers items 3 (Session cookie), 4 (Logged-in nav)
+  Item 2 (Sign out) → covers item 6 (Session cleared)
+
+Bundling these saves ~4 prompts. Approve, edit, or strip all?"
+
+Options: ["Approve as-is", "Edit", "Strip all coverage"]
+```
+
+- **Approve as-is** → continue to Step 5.
+- **Edit** → enter the structured edit loop (below).
+- **Strip all coverage** → set every `Covers:` field to empty; persisted (user-stripped graph stays empty for the session). Continue to Step 5.
+
+**Structured edit loop**: present a follow-up AskUserQuestion:
+
+```
+Question: "Coverage edit menu:"
+Options: ["Drop an edge", "Add an edge", "Strip all coverage", "Done editing"]
+```
+
+- **Drop an edge** → second AskUserQuestion lists every current edge as an
+  option (`"1 → 3"`, `"1 → 4"`, etc.) plus `"Cancel"`. Apply the selected
+  drop; re-render the graph; loop back to the edit menu.
+- **Add an edge** → two free-text follow-ups: `"Source item index?"` then
+  `"Target item index?"`. Validate both as integers in [1, group_size]; run
+  the four validation rules; on failure, present the named rule that fired
+  and loop back to the edit menu. On success, add the edge; loop back.
+- **Strip all coverage** → same as the top-level option; exits the loop.
+- **Done editing** → exit the loop and re-present the top-level graph prompt
+  (Approve / Edit / Strip).
+
+**Loop bail-out**: track invalid-edit attempts within a single edit session.
+After **3 consecutive invalid edits**, insert a fallback AskUserQuestion:
+
+```
+Question: "Three invalid edits in a row. Strip all coverage and continue, or keep editing?"
+Options: ["Strip all coverage", "Keep editing"]
+```
+
+This caps the loop without forcing the user to abandon.
+
 ### Step 5: Write state
 
 Create the session directory and write all files:
@@ -385,7 +516,9 @@ Create the session directory and write all files:
 mkdir -p "$SESSION_DIR/groups"
 ```
 
-Write `session.yaml` and each `groups/<name>.md` file. All items start as UNTESTED.
+Write `session.yaml` and each `groups/<name>.md` file. All items start as
+UNTESTED. Items with inferred (or user-edited) Covers get the `Covers: [N, M]`
+line written to disk.
 
 ---
 
@@ -435,10 +568,74 @@ Wait for the user's response.
 
 1. Edit the group file: mark item N as `Status: PASSED`, `Build: <HEAD>`,
    `Tested: <now>`. While the file is open, identify item N+2 (new lookahead).
-2. Edit session.yaml summary counts.
+2. Edit session.yaml summary counts (increment `passed`).
 3. Write both edits in **parallel** (two Edit tool calls in the same turn).
-4. Present item N+1 (from the cached lookahead) immediately via AskUserQuestion
-   with item N+2 as the new lookahead preview. Receipt: "Item N passed."
+4. **Bundle check**: read item N's `Covers:` field. Filter the target list to
+   items still at `UNTESTED` (silently drop any target already at a non-UNTESTED
+   status — those were added/tested out of order). If the filtered list is
+   non-empty, present the **bundle prompt** below before advancing to item N+1.
+   Otherwise, present item N+1 (from the cached lookahead) immediately via
+   AskUserQuestion with item N+2 as the new lookahead preview. Receipt: "Item N passed."
+
+#### Bundle prompt (post-PASS)
+
+When item X passes and `X.Covers` resolves to a non-empty UNTESTED set,
+present this AskUserQuestion BEFORE advancing to the next UNTESTED item.
+Increment `session.yaml.summary.bundles_offered` before showing the prompt.
+
+```
+Question:
+"Item X passed. Items [N], [M] are flagged as verified by your action on X:
+
+  [N]. <Item N description>
+  [M]. <Item M description>
+
+Note: 'verified' means your action plausibly demonstrated each property. If
+you'd need to look at something specific (logs, network panel, DB row) to be
+sure, mark individually instead.
+
+Confirm all pass, mark individually, or park a bug?"
+
+Options: ["All pass", "Mark individually", "Park a bug"]
+```
+
+**Trust posture — "verified by action" vs "observed property"**: A bundle PASS
+is a claim that the user's action *plausibly demonstrated* each covered
+property, not that the user *directly observed* each one. Signing in
+successfully implies a session cookie was set, but the user did not literally
+inspect the cookie. Bundle confirmation is appropriate when the
+implicit-observation is high-confidence (the system's behavior would visibly
+break if the property were violated). When the property requires direct
+inspection to be sure (logs, network requests, DB state, race conditions),
+the user should pick "Mark individually" and verify each. This is a
+calibrated trust posture, not a license to skip inspection.
+
+Behavior:
+
+- **All pass** → For each item Y in the filtered Covers list:
+  - Mark Y's `Status` as `PASSED_BY_COVERAGE`, write `Build: <HEAD>` +
+    `Tested: <now>`.
+  - Compute Y's reverse-coverage set (sibling items whose `Covers:` lists
+    include Y). Write `CoverageNote: covered by items [<comma-separated
+    list of every item in Y's reverse-coverage set that is currently
+    terminal-passed>]`. This records full provenance for multi-cover items
+    so the FAIL handler can apply the multi-cover demotion rule correctly.
+  - Leave Y's human `Notes:` field untouched.
+  Increment `session.yaml.summary.passed_by_coverage` by the number of items
+  resolved this way; also increment `passed` by the same number (passed is
+  INCLUSIVE of passed_by_coverage). Increment `bundles_accepted` by 1.
+  Then advance to the next UNTESTED item AFTER the bundled set (since the
+  bundled items are no longer UNTESTED).
+
+- **Mark individually** → Increment `bundles_rejected` by 1. Fall through to
+  the standard per-item PASS/FAIL/SKIP flow on item N (the first bundled
+  item), then item M, in order. Do NOT write `PASSED_BY_COVERAGE` for items
+  the user marks PASSED via this path — direct PASS through the standard flow
+  always writes `PASSED`.
+
+- **Park a bug** → Run the standard PARK flow (see below). After parking,
+  return to THIS bundle prompt (not to item X). PARK does not resolve the
+  bundle; it interjects.
 
 ### On FAIL
 
@@ -446,10 +643,45 @@ Wait for the user's response.
    (If the user's response includes the failure description, use it directly.
    If they just said "fail" with no details, ask via AskUserQuestion:
    "**[Group] [N]/[Total] — What went wrong?**" with options: ["Let me describe it"])
-2. Write to disk
-3. Ask via AskUserQuestion:
+2. **E3 demotion (always — applies to ALL FAIL paths, not just Fix Now)**:
+   For each item Y whose reverse-coverage set includes this just-FAILED item X
+   (i.e., Y appears in X's `Covers:` list AND Y is currently
+   `PASSED_BY_COVERAGE`), re-evaluate Y's coverage backing using the
+   **multi-cover demotion rule**:
+   - Y demotes from `PASSED_BY_COVERAGE` to `UNTESTED` **only when every item
+     in Y's reverse-coverage set is currently non-PASSED** (i.e., none of the
+     items that originally backed Y are still terminal-passed).
+   - If at least one covering item is still terminal-passed, Y stays
+     `PASSED_BY_COVERAGE` (other items still back the claim). Append
+     `CoverageNote: covering item X failed; items [<list of still-passed
+     covering items>] still back this` to record the diminished provenance.
+   - For Y items that DO demote: write `Status: UNTESTED`, clear `Build:`,
+     clear `Tested:`, write `CoverageNote: pulled back after all covering
+     items ([<list of failed/non-passed covering items>]) failed`. Leave the
+     human `Notes:` field untouched.
+   - Direct `PASSED` items NEVER demote — they have independent evidence and
+     keep their status regardless of what happens to other items.
+3. **After E3 demotion, the next prompt MUST do a full group re-read. Do not
+   use any remembered N+1 item description from the lookahead step before the
+   FAIL; demotion changed the UNTESTED set behind lookahead's back.** This
+   sentence is load-bearing — a `tests/skill-protocols.test.ts` invariant
+   asserts this exact phrasing exists in the FAIL handler section so future
+   edits don't accidentally strip it.
+4. Write all edits to disk.
+5. Ask via AskUserQuestion:
    - Question: "**[Group] [N]/[Total] FAILED:** [evidence summary]\n\nFix now or keep testing?"
    - Options: ["Fix now", "Continue testing"]
+
+The demotion happens regardless of which option the user picks next. If the
+user picks "Continue testing," demoted items will be presented as normal
+UNTESTED items in subsequent prompts. If the user picks "Fix now" and the
+covering item then PASSES on retest, the demoted items stay UNTESTED — the
+user must re-verify them (possibly via the bundle prompt firing again if
+they re-PASS the covering item directly).
+
+If the user later parks the session or hits session-end before retesting,
+demoted items persist as UNTESTED in session state. Group completion will not
+fire until they reach a terminal state.
 
 ### On FIX NOW
 
@@ -485,9 +717,14 @@ the agent fixes it.
 
 **Commit the fix:**
 
+Determine the commit message suffix. If the failed item's `Covers:` field is
+non-empty, append `, covers [<comma-separated-indices>]`; otherwise leave the
+suffix empty:
+
 ```bash
+COVERS_SUFFIX=""    # set to ", covers [3, 4]" when item N has Covers
 git add -u
-_OUT=$(git commit -m "fix: <description> (pair-review item <N>)" 2>&1)
+_OUT=$(git commit -m "fix: <description> (pair-review item <N>$COVERS_SUFFIX)" 2>&1)
 _RC=$?
 if [ $_RC -ne 0 ]; then
   echo "$_OUT"
@@ -495,6 +732,10 @@ if [ $_RC -ne 0 ]; then
   exit 1
 fi
 ```
+
+This keeps the existing `grep "pair-review item"` pattern working for items
+without Covers, and adds full coverage provenance to the commit log for
+items with Covers — useful when reviewing the fix in PR.
 
 If the bash block exits zero, record the fix commit hash in the item's metadata.
 If the block exits non-zero (BLOCKED case — including "nothing to commit," which
@@ -536,15 +777,46 @@ If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
 ### On ADD ITEM
 
 1. Ask: which group? what's the test item?
-2. Append the new item to the group file as UNTESTED
-3. Update session.yaml summary.total
-4. Write to disk
-5. Continue with the current item (don't jump to the new one)
+2. **Coverage picker** (optional). After capturing the description, ask via
+   AskUserQuestion whether this new item covers any existing items in the
+   target group:
+
+   ```
+   Question: "Does this item cover any existing items in this group?"
+   Options: ["No", "Yes — pick targets"]
+   ```
+
+   - **No** → continue with step 3 (no `Covers:` line on the new item).
+   - **Yes — pick targets** → present a multi-select AskUserQuestion listing
+     every existing item in the group (`"1. <description>"`, `"2. <description>"`,
+     etc.). The new item's `Covers:` field is the set of selected indices.
+     Validate against the four validation rules at add time; on failure,
+     reject the offending target index(es) with the named rule that fired
+     (per the user-edit policy in Phase 1 Step 3.5) and re-present the
+     multi-select. Remaining valid targets stay selected.
+
+   Indices are resolved **at add time** and immutable thereafter. If the
+   user adds item 8 covering item 7, then later adds item 9, item 9's index
+   is 9 — item 8's `Covers: [7]` is not shifted. (Items never renumber today;
+   this preserves that invariant.)
+
+3. Append the new item to the group file as UNTESTED. Write the `Covers:`
+   line if non-empty (omit otherwise).
+4. Update session.yaml summary.total.
+5. Write to disk.
+6. Continue with the current item (don't jump to the new one).
+
+Existing items' `Covers:` lists are **immutable during execution** — they're
+editable only via the Phase 1 Step 4.5 graph prompt at plan-review time. If
+the user wants to edit existing covers mid-session, restart at Step 4.5
+(currently not exposed; out of scope for this iteration).
 
 ### On PARK
 
-Available anytime during Phase 2 (testing loop) and FIX NOW flows. When the user
-says something like "park this", "note a bug", "not related but...", or describes
+Available anytime during Phase 2 (testing loop), FIX NOW flows, bundle
+prompts (post-PASS coverage bundles + post-batch bundle walks), and the
+plan-review coverage graph prompt (Phase 1 Step 4.5). When the user says
+something like "park this", "note a bug", "not related but...", or describes
 a bug that is clearly unrelated to the current test item:
 
 1. If the user didn't include a description, ask via AskUserQuestion:
@@ -582,6 +854,9 @@ a bug that is clearly unrelated to the current test item:
 4. Write to disk
 5. Return to whatever was in progress. The next AskUserQuestion receipt will
    read: "Parked bug #N." followed by the current test item or fix prompt.
+   **From a bundle prompt or graph-review prompt**: PARK returns to the SAME
+   bundle/graph prompt — it interjects, it does not resolve the bundle or
+   graph. The user can park multiple bugs before answering the bundle.
 
 **Do NOT classify the bug at park time.** Classification happens at group completion.
 
@@ -598,37 +873,66 @@ they close it instead of inventing a fix for a stale symptom.
 When the user selects "Batch: next 3", switch to batch presentation for faster
 throughput. This reduces round-trips by 3x for rapid testing sessions.
 
-1. Read the group file. Collect the next 3 UNTESTED items (or fewer if the group
-   is nearly done). Also identify the item after the batch (the post-batch lookahead).
-2. Present all items in a single AskUserQuestion:
-   - **Question:** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]\n[N+2]. [Item description]\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+BATCH keeps **index-ordered** selection — never leapfrog ahead to grab a cluster
+of items further down the group. Leapfrogging would change the unit-of-work
+in ways that interact badly with checkpoints and group-completion logic.
+Coverage-aware compression happens via in-batch cluster hints + post-batch
+bundle walks, not via reordering.
+
+1. Read the group file. Collect the next 3 UNTESTED items in index order
+   (or fewer if the group is nearly done). Also identify the item after the
+   batch (the post-batch lookahead).
+2. **In-batch cluster detection**: scan the batched items' `Covers:` fields.
+   If any in-batch covering item's target is ALSO within this batch, render
+   an inline cluster hint inline next to the covered item: `← covered by item [N] if it passes`.
+3. Present all items in a single AskUserQuestion:
+   - **Question (default):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]\n[N+2]. [Item description]\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+   - **Question (when in-batch cluster detected):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]      ← covered by item [N] if it passes\n[N+2]. [Item description]\n\n_Cluster hint: passing [N] would also cover [N+1]._\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item."
    - **Options:** ["All pass", "Report results", "Park a bug", "Back to single mode"]
 
-3. **On "All pass"**: Mark all batch items as PASSED in the group file, update
-   session.yaml counts, write both in parallel. Present the next batch (or next
-   single item if fewer than 3 remain).
+4. **On "All pass"** — two coverage paths apply:
+   - **In-batch covers**: For each in-batch item whose `Covers:` field lists
+     another in-batch item, mark the covered items as `PASSED_BY_COVERAGE`
+     (not `PASSED`). Apply the same provenance-recording rules as the
+     post-PASS bundle prompt (CoverageNote lists all covering items in Y's
+     reverse-coverage set that are now terminal-passed). All non-covered
+     batched items get `PASSED`.
+   - **Out-of-batch covers**: For each batched item whose `Covers:` field
+     points at an UNTESTED item OUTSIDE this batch, after the batch resolves
+     to disk, fire the standard post-PASS bundle prompt for each such item
+     in item order. The user can pick "All pass" / "Mark individually" /
+     "Park" on each post-batch bundle prompt. This means a single "All pass"
+     on a batch can spawn multiple follow-up bundle prompts (worst case: one
+     per batched item with out-of-batch covers).
 
-4. **On "Report results"**: The user clicked a button, so you don't have results yet.
+   Increment `bundles_offered` / `bundles_accepted` / `bundles_rejected`
+   counters appropriately as each follow-up bundle prompt fires and resolves.
+
+5. **On "Report results"**: The user clicked a button, so you don't have results yet.
    Ask a follow-up via AskUserQuestion:
    - Question: "Enter results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
    - Options: ["Submit"]
    Parse the user's free-text response. Map each item to PASS, FAIL (with evidence),
    or SKIP. For any FAILs, follow the standard FAIL flow (ask "Fix now or continue
    testing?") one at a time in item order after recording all results.
+   The same out-of-batch walk applies: after all results are recorded, walk
+   each newly-PASSED batched item with non-empty Covers and fire bundle
+   prompts for any UNTESTED targets in item order.
 
-5. **On "Back to single mode"**: Return to single-item presentation with lookahead
+6. **On "Back to single mode"**: Return to single-item presentation with lookahead
    at the next UNTESTED item.
 
 **Minimum threshold:** If fewer than 2 UNTESTED items remain when "Batch: next 3"
 is selected, stay in single-item mode. Tell the user: "Only N item(s) left —
 staying in single mode."
 
-After a batch, if remaining UNTESTED items >= 3, offer another batch. If < 3,
-fall back to single-item presentation with lookahead.
+After a batch (including any post-batch bundle walks), if remaining UNTESTED
+items >= 3, offer another batch. If < 3, fall back to single-item presentation
+with lookahead.
 
 ### Group completion
 
-When all items in a group are tested (PASSED, FAILED with fix, or SKIPPED):
+When all items in a group reach a terminal state (terminal-passed statuses, FAILED with fix, or SKIPPED):
 1. Move the group from active_groups to completed_groups in session.yaml
 2. Write to disk
 3. Present group summary via AskUserQuestion:
@@ -800,12 +1104,31 @@ to check for an existing session on the current branch:
 Glob pattern: <SESSION_DIR>/session.yaml
 ```
 
-If the file exists, read it and proceed to Step 2.
+If the file exists, read it and proceed to Step 1.5.
 
 If no state found: "No active test session found. Want to start a new one?"
 
 If the user wants to see sessions on other branches, list `<PROJECT_DIR>/branches/`
 — each sibling there is another branch's active session.
+
+### Step 1.5: Re-validate coverage graph
+
+Read every group file. Reconstruct the in-memory covers map. Re-run the four
+validation rules from Phase 1 Step 3.5 against the persisted graph (the user
+may have hand-edited group files between sessions). Apply the same
+deterministic per-rule failure handling, logging dropped edges to
+`coverage_warnings:` in session.yaml with `phase: resume`.
+
+For each PASSED_BY_COVERAGE item: check that at least one of its (originally
+recorded) covering items still exists in the group file. If every covering
+item has been removed from the group file externally, demote the orphaned
+PASSED_BY_COVERAGE item back to UNTESTED with
+`CoverageNote: covering item removed between sessions`. Leave human `Notes:`
+untouched.
+
+Note: resume does NOT re-run inference. It only validates the persisted
+graph. New Covers links only originate from Phase 1 plan generation or
+explicit user dictation via Add Item (Phase 2).
 
 ### Step 2: Render dashboard
 
@@ -817,13 +1140,27 @@ Branch: <branch> | Build: <commit> | Started: <date>
 
 <GROUP1> (active):     3/7 passed, 1 failed (fixed), 0 skipped, 3 untested
 <GROUP2> (active):     0/4 tested
+
+# The "N/M passed" count uses terminal-passed statuses (PASSED + PASSED_BY_COVERAGE).
 <GROUP3>:              not started (5 items)
+
+COVERAGE: 3 bundles in plan
+  auth: 1 (sign in → session cookie, logged-in nav)
+  payments: 2 (cart add → cart total, checkout button enabled)
+                (cart remove → cart total, checkout button disabled)
 
 PARKED: <N> bugs parked (<M> triaged, <K> remaining)
 NEXT: <what to test next>
 DEPLOY: <build command from deploy.md>
 CHECKPOINTS: <N> saved
 ```
+
+**COVERAGE sub-block rendering rules:**
+- Omit the COVERAGE block ENTIRELY if no item in any group has a non-empty `Covers:` field.
+- Otherwise, list each group that has at least one bundle, followed by the
+  count of bundles in that group and a parenthesized summary per bundle
+  (`source description → target descriptions, comma-separated`).
+- The "3 bundles in plan" header counts ALL bundles across all groups.
 
 ### Step 3: Continue or status-only
 
@@ -858,9 +1195,12 @@ Duration: <time from started to now>
 
 ### Summary
 - Total items: N
-- Passed: N
+- Passed: N (M by coverage)
 - Failed + fixed: N
 - Skipped: N
+- Coverage savings: K items confirmed by coverage across B bundles (saved K prompts)
+- Bundles accepted: B/O (R marked individually)
+- Coverage warnings: I edge(s) dropped during inference, R dropped during resume (see session.yaml for details)
 
 ### Groups
 
@@ -869,6 +1209,7 @@ Duration: <time from started to now>
 |---|------|--------|-------|
 | 1 | <description> | PASSED | |
 | 2 | <description> | PASSED (fixed in abc123) | <evidence> |
+| 3 | <description> | PASSED (by coverage from item 1) | |
 ...
 
 ### Fixes Applied
@@ -887,6 +1228,13 @@ Duration: <time from started to now>
 |---|-----|----------------|---------|
 | 1 | <description> | <group>, item <N> | FIXED (abc123) / DEFERRED_TO_TODOS / SKIPPED |
 ```
+
+**Summary line rendering rules:**
+
+- **Passed: N (M by coverage)** — `M == summary.passed_by_coverage`. If `M == 0`, render as `- Passed: N` (omit the parenthetical) so reports for sessions that didn't use coverage stay clean.
+- **Coverage savings** — `K == summary.passed_by_coverage` (items resolved via the "All pass" bundle path); `B == summary.bundles_accepted`; "saved K prompts" reflects that each accepted bundle replaces N per-item prompts with 1 bundle prompt (net savings = N per bundle, totaled). Omit this line if `summary.bundles_accepted == 0`.
+- **Bundles accepted** — `B == summary.bundles_accepted`, `O == summary.bundles_offered`, `R == summary.bundles_rejected`. Omit this line if `summary.bundles_offered == 0`. If `bundles_offered > 0` and `bundles_accepted == 0`, still render this line (acceptance was 0/N — useful negative signal); omit the Coverage savings line in that case.
+- **Coverage warnings** — `I == count(coverage_warnings where phase == inference)`, `R == count(coverage_warnings where phase == resume)`. Omit this line entirely if `coverage_warnings` is empty.
 
 ### Step 2: Save report
 
@@ -1020,7 +1368,7 @@ When completing a skill workflow, report status using one of:
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
 <!-- /SHARED:completion-status-enum -->
 
-For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`) and per-group statuses to the session-level enum at `/pair-review done` time. Rollup rule:
+For pair-review specifically: map per-item states (`UNTESTED`, `PASSED`, `PASSED_BY_COVERAGE`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`) and per-group statuses to the session-level enum at `/pair-review done` time. Rollup rule:
 
 - All groups complete, no parked bugs and no failures → **DONE**
 - Complete with items SKIPPED, PARKED, or with deferred bugs → **DONE_WITH_CONCERNS** (list them)
@@ -1104,12 +1452,12 @@ Substitutions:
 
 - `<STATUS>` / `<STATUS-n>` is the Completion Status Protocol enum: `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT`.
 - `<SESSION_STATUS>` is the rollup across all groups: DONE if all groups DONE, DONE_WITH_CONCERNS if any group had skips/parks/deferred fixes, BLOCKED if any group was blocked.
-- Findings cells come from the group's item state tally (`PASSED`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`). Prefer compact form like "6/7 passed, 1 skipped (VPN), 1 parked".
+- Findings cells come from the group's item state tally (`PASSED`, `PASSED_BY_COVERAGE`, `FAILED`, `FIXED`, `SKIPPED`, `PARKED`). The "passed" count rolls up terminal-passed statuses (PASSED + PASSED_BY_COVERAGE). Prefer compact form like "6/7 passed, 1 skipped (VPN), 1 parked".
 - `<one-line summary>` names the concrete group outcome: "6/7 passed, moving to next group", "deploy broken after fix attempt", "1 parked bug carried forward to Payments", etc.
 
 Verdict-to-status mapping:
 
-- All items in group are PASSED or FIXED → group "DONE — all <N> items pass".
+- All items in group are at terminal-passed statuses or FIXED → group "DONE — all <N> items pass".
 - Group has SKIPPED or PARKED items, or deferred bugs → group "DONE_WITH_CONCERNS — <specifics>".
 - Group could not proceed (deploy broken, app unreachable, missing credentials) → "BLOCKED — <reason>".
 - Session state malformed or `<SESSION_DIR>` lost on resume → "NEEDS_CONTEXT — <what is missing>".
