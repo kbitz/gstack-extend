@@ -137,6 +137,33 @@ is_safe_install_path() {
   return 0
 }
 
+# _die_with_line <exit_code>
+#
+# ERR trap target for `set -euo pipefail` bins. Bash's default behavior on
+# `set -e` is to exit silently — `_die_with_line` adds line-number + exit-
+# code visibility so a `frobnosticate || true`-missing pipeline reports
+# where it died.
+#
+# Usage in caller:
+#   set -euo pipefail
+#   . "$SCRIPT_DIR/lib/install-safety.sh"
+#   trap '_die_with_line $?' ERR
+#
+# Prints to stderr; never exits on its own (lets bash's set -e do the
+# actual exit so existing exit codes propagate correctly).
+#
+# Caution: the ERR trap fires on EVERY non-zero return that set -e would
+# act on, including controlled returns from a dispatcher's case branches.
+# Shield intentional non-zero returns with `cmd_foo "$@" || exit $?` (see
+# bin/gstack-extend dispatcher for the pattern).
+_die_with_line() {
+  local exit_code="${1:-1}"
+  echo "Error: ${BASH_SOURCE[1]:-${0##*/}}:${BASH_LINENO[0]:-?} exited with code $exit_code" >&2
+  if [ "${#FUNCNAME[@]}" -gt 1 ]; then
+    echo "  Stack: ${FUNCNAME[*]:1}" >&2
+  fi
+}
+
 # is_safe_target_path <path>
 #
 # Per-skill-target check: refuses if $path is a symlink (any kind) OR
