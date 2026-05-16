@@ -238,26 +238,45 @@ echo "Installed $installed skills into $SKILLS_DIR"
 # from outside the gstack-extend repo, so we symlink it into a PATH-y
 # location. Fail-soft: if ~/.local/bin doesn't exist, print a tip and
 # move on — never break the skill install over a missing bin dir.
-cli_bin_src="$SCRIPT_DIR/bin/gstack-extend"
 cli_bin_dir="$HOME/.local/bin"
-cli_bin_dst="$cli_bin_dir/gstack-extend"
-if [ -f "$cli_bin_src" ] && [ -x "$cli_bin_src" ]; then
-  if [ -d "$cli_bin_dir" ]; then
-    # Refuse to overwrite a non-symlink already at the path.
-    if [ -e "$cli_bin_dst" ] && [ ! -L "$cli_bin_dst" ]; then
-      echo "Warning: $cli_bin_dst exists and is not a symlink; skipping CLI wire" >&2
-    else
-      ln -snf "$cli_bin_src" "$cli_bin_dst"
-      echo "Wired gstack-extend CLI → $cli_bin_dst"
-      case ":$PATH:" in
-        *":$cli_bin_dir:"*) ;;
-        *) echo "  Tip: add $cli_bin_dir to your PATH so 'gstack-extend' resolves directly." ;;
-      esac
-    fi
-  else
-    echo "Tip: ~/.local/bin doesn't exist. Either create it and add to PATH,"
-    echo "  or invoke directly: $cli_bin_src init <project>"
+
+# Wire one bin into ~/.local/bin/. Fail-soft on every error (missing source,
+# missing target dir, non-symlink collision) so a wiring hiccup never breaks
+# the rest of the install.
+wire_bin() {
+  local src="$1"
+  local name="$2"
+  local dst="$cli_bin_dir/$name"
+  if [ ! -f "$src" ] || [ ! -x "$src" ]; then
+    return 0  # source missing or not executable — silent skip
   fi
+  if [ ! -d "$cli_bin_dir" ]; then
+    echo "Tip: ~/.local/bin doesn't exist. Either create it and add to PATH,"
+    echo "  or invoke $name directly: $src"
+    return 0
+  fi
+  if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+    echo "Warning: $dst exists and is not a symlink; skipping $name wire" >&2
+    return 0
+  fi
+  ln -snf "$src" "$dst"
+  echo "Wired $name → $dst"
+}
+
+cli_bin_src="$SCRIPT_DIR/bin/gstack-extend"
+wire_bin "$cli_bin_src" "gstack-extend"
+# Track 13A: telemetry wrapper. Mirrors the gstack-extend wire so the per-skill
+# epilogue's `command -v gstack-extend-telemetry` lookup resolves cleanly on
+# vendored installs, Conductor workspaces, and CI environments where the
+# canonical $HOME/.claude/skills/gstack-extend/bin/ fallback path doesn't hold.
+wire_bin "$SCRIPT_DIR/bin/gstack-extend-telemetry" "gstack-extend-telemetry"
+
+# Single PATH-hint after wiring (avoids printing twice for two bins).
+if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
+  case ":$PATH:" in
+    *":$cli_bin_dir:"*) ;;
+    *) echo "  Tip: add $cli_bin_dir to your PATH so wired CLIs resolve directly." ;;
+  esac
 fi
 
 # ─── Self-registration in projects.json ─────────────────────────────

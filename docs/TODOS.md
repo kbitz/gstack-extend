@@ -2,6 +2,13 @@
 
 ## Unprocessed
 
+### [ship:track=13A] Pre-existing parsers-roadmap.test.ts Group 6 completeness failure (P1)
+- **What:** `tests/parsers-roadmap.test.ts:484` asserts `Group 6` in `docs/ROADMAP.md` is NOT complete, but the parser marks it complete. Confirmed pre-existing — fails on clean `origin/main`, NOT caused by Track 13A's ROADMAP edits.
+- **Why:** Breaks the green `bun run test` baseline. /ship has to triage and skip it on every run until fixed.
+- **How:** Read the test assertion (line 479-485) and the parser logic in `src/parsers/roadmap.ts`. The parser's `isComplete` heuristic for Group 6 has likely been broken by a recent ROADMAP.md restructure (the `## Shipped` section currently has Group 6 under "Phase 1 Group 4 Bun Test Migration ✓ Shipped" lineage and the parser may be inferring completion from the surrounding context). Either fix the parser to match current `## Shipped` semantics OR update the test's expected value if the parser is correct and ROADMAP intent changed.
+- **Priority:** P1
+- **Source:** Found by /ship Step 5 on branch `kbitz/skill-telemetry` (Track 13A). Surfaced earlier during the same branch's /review run.
+
 ### [review:track=12A] Track 12A follow-ups (low-priority polish surfaced by /review)
 - **What:** Polish items from pre-landing review on Track 12A. None blocking; bundle into a future Group.
   - **Multi-worktree slug collision in registry**: `detect_slug` returns same slug for two checkouts sharing `remote.origin.url`, so the second `init --migrate` silently overwrites the first entry's `path`. Decide: slug-only key (current) vs `slug+realpath` composite vs warn-on-conflict.
