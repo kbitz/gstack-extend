@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.21.0.0] - 2026-05-16
+
+### Added: `gstack-extend init <project>` — bootstrap any new project in one command (Track 12A)
+
+gstack-extend gets its first project-lifecycle CLI surface. `gstack-extend init my-app` scaffolds the canonical layout (`CLAUDE.md`, `ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `docs/{designs,archive}/`), registers the project in `~/.gstack-extend/projects.json`, runs the post-render audit, and prints a "next 30 minutes" checklist pointing the user at `/roadmap`, `/review-apparatus`, and `/full-review`. Per-language test-command detection seeds CLAUDE.md correctly for bun, cargo, go, and python projects. Slug is derived from `git config --get remote.origin.url` (owner-repo), with `basename` fallback when no remote is configured.
+
+Three flags shape the matrix: `--dry-run` prints a diff-style preview without touching the filesystem; `--no-prompt` makes the CLI fail loudly instead of hanging on stdin (required for skill/headless invocation); `--migrate` backfills missing canonical files on a partially-onboarded project, leaving any user-edited file alone. The defensive-minimal scaffold (`mkdir docs/{,designs,archive}` plus refuse-on-canonical-file-collision) refuses to overwrite work; the matrix exits 1 with `--migrate` hints when the target dir already has CLAUDE.md/etc. and `--migrate` wasn't passed. On post-render audit failure, rendered files are left in place — the audit output and a `--migrate` retry hint are printed to stderr so the user can inspect and re-run.
+
+`setup` gains two new behaviors: it symlinks `~/.local/bin/gstack-extend` to the repo's `bin/gstack-extend` (fail-soft with a PATH-tip if `~/.local/bin` is missing or a non-symlink file blocks the target), and it auto-self-registers the gstack-extend repo itself into `projects.json` on the first run after this lands. The self-register call is wrapped to never break install — failure prints a one-line diagnostic plus a retry command. Subcommand namespace reserved: `gstack-extend list / status / doctor / migrate` exist as named stubs printing "coming in a future Group" so the CLI surface is committed before downstream Tracks negotiate around it.
+
+### Added: `/gstack-extend-init` skill
+
+Conversational wrapper around `gstack-extend init` for Claude Code sessions. Drives the interactive flow: gather target path, run `--dry-run` to show the user what would happen, optionally override `--name`, confirm, execute. Surfaces D3.A audit-fail behavior verbatim and walks the user through `--migrate` retry. In headless contexts the skill falls through to `gstack-extend init <target> --no-prompt` directly.
+
+### Added: `bin/lib/projects-registry.sh` — JSON registry with atomic writes
+
+`~/.gstack-extend/projects.json` is the v1 registry: `slug`, `name`, `path`, `remote_url` (nullable), `base_branch`, `version_scheme` ("4-digit"), `created_at` (UTC ISO 8601). Eight registry primitives: `registry_path`, `registry_init`, `registry_validate`, `registry_upsert` (idempotent — re-running with same slug refreshes the entry), `registry_has_slug`, `registry_get`, `registry_list`. Writes go through `mktemp` for an unpredictable temp filename (no symlink-attack window) + atomic `mv` for crash-safety + `chmod 0644` after the rename + a `trap RETURN` to sweep the tmp file on SIGKILL between jq and mv. Last-write-wins on concurrent invocations across sibling Conductor workspaces — documented as accepted v1 behavior.
+
+JSON over YAML because `jq` is on PATH and no `yq` is anywhere; bash+JSON via jq is a one-liner for every consumer, bash+YAML is either brittle hand-rolling or a hard yq dependency.
+
+### Added: `_die_with_line()` ERR-trap helper
+
+`bin/lib/install-safety.sh` gains a shared ERR-trap helper that prints `Error: <file>:<line> exited with code <N>` plus call stack to stderr. Existing bins adopt it incrementally as they're touched. The new `bin/gstack-extend` dispatcher shields controlled `cmd_init` non-zero returns from the trap via `cmd_init "$@" || exit $?` so partial-onboarded / invalid-name / unknown-flag UX messages don't get a stack trace tacked on.
+
+### Tests
+
+Five new test files (~90 tests, all green): `tests/init-bin.test.ts` exercises CLI dispatch, the flag matrix across empty/partial/onboarded directory states, and argument validation; `tests/init-registry.test.ts` exercises all eight registry primitives plus the atomic-write invariant across 25 sequential upserts; `tests/init-templates.test.ts` validates `{{var}}` substitution and per-language detect for bun/cargo/go/python; `tests/init-distribution.test.ts` validates POSIX-portable readlink across direct, two-hop, and relative-target symlink invocations (macOS BSD + Linux); `tests/setup-init-wire.test.ts` exercises the `~/.local/bin/` symlink wire, idempotence, foreign-symlink uninstall safety, fail-soft when `~/.local/bin` is missing, and self-registration including the dedup invariant. All registry-touching tests set both `GSTACK_EXTEND_STATE_DIR=$tmpdir/gx` and `GSTACK_STATE_ROOT=$tmpdir/g` to isolate from the developer's real registry.
+
+`tests/helpers/touchfiles.ts` gains five `MANUAL_TOUCHFILES` entries so the diff-narrowed test runner picks up changes to bin/templates/registry. `tests/update.test.ts` REAL_SETUP_SKILLS list bumped to include `gstack-extend-init` (the synthetic fixture needed the new placeholder skill file for the install count to match).
+
+### Design pipeline
+
+`/plan-ceo-review` SELECTIVE EXPANSION (Tier 2 of 3 — Plus) with 1-round adversarial spec-review subagent caught 9 issues, all fixed inline (registry schema lock, projects.json concurrency story, --migrate flag vs reserved subcommand stub distinction, env var name correction, distribution discovery via setup symlink, self-registration timing, per-flag exit semantics, behavior matrix, GSTACK_EXTEND_STATE_DIR test isolation). `/plan-eng-review` decided 3 architectural taste calls: JSON over YAML for the registry, defensive-minimal Layout Scaffolding inline (mkdir + canonical-file refusal), inline lang-detect with `# EXTRACT:` marker comment. `/review` specialist sweep (testing/maintainability/security in parallel) + Claude adversarial subagent caught 26 issues; 9 auto-fixed inline (the ERR-trap noise, dead `OVERWRITE_OK_FOR_MIGRATE` code, template trailing-newline loss, symlink-loop guard, registry mktemp hardening, etc.); 12 polish items deferred to `docs/TODOS.md` for triage as a follow-up Group.
+
+### Roadmap
+
+Track 12A → shipped. Sibling extraction work (originally Track 12B, "extract Layout Scaffolding into shared helper") promoted to its own Group 21 because intra-Group dependencies are banned by `/roadmap`'s `STRUCTURE` audit — the helper extraction depends on 12A and would collide on `bin/gstack-extend` otherwise. README gains a quickstart section.
+
+Pre-existing test failure remains: `tests/parsers-roadmap.test.ts:484` (Group 6 staleness — Groups 6+7 shipped since the test was last touched). Confirmed unrelated to this branch via `git stash` test on clean HEAD before /ship. Filed for follow-up.
+
 ## [0.20.1.0] - 2026-05-16
 
 ### Added: `/pair-review` smart batching — coverage hints + post-PASS auto-bundle
