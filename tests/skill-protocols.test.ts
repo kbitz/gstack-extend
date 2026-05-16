@@ -503,3 +503,224 @@ describe('session-paths helper drift-lock', () => {
     });
   }
 });
+
+// ─── Smart-batching coverage feature drift-locks ─────────────────────
+//
+// /pair-review smart-batching adds plan-time coverage hints, a post-PASS
+// bundle prompt, a PASSED_BY_COVERAGE terminal status, FAIL-time E3
+// demotion of bundled items, a Phase 3 COVERAGE dashboard sub-block, and
+// Phase 4 report savings/acceptance/warnings lines. The skill is a markdown
+// prompt file (not executable code), so these invariants lock the prose
+// patterns that the agent reads at runtime. If a future edit silently
+// strips one of these load-bearing constructs, the feature degrades to
+// the pre-coverage behavior without any code-level signal.
+
+describe('pair-review smart-batching: coverage feature drift-locks', () => {
+  const file = join(ROOT, 'skills', 'pair-review.md');
+  const content = readFileSync(file, 'utf8');
+
+  test('canonical "terminal-passed statuses" definition exists', () => {
+    // F1 prose-as-code: the named-reference pattern that filter sites
+    // throughout the skill use instead of inline-enumerating PASSED +
+    // PASSED_BY_COVERAGE. Drift here means filter sites diverge.
+    expect(content).toContain('**Terminal-passed statuses**: PASSED or PASSED_BY_COVERAGE');
+  });
+
+  test('terminal-passed statuses referenced at known filter sites', () => {
+    // The phrase must appear at multiple filter sites — not just the
+    // definition. If a site falls back to inline-PASSED, this fails.
+    const occurrences = content.match(/terminal-passed statuses/g) ?? [];
+    expect(occurrences.length).toBeGreaterThanOrEqual(4);
+  });
+
+  test('PASSED_BY_COVERAGE status enum value present', () => {
+    expect(content).toContain('PASSED_BY_COVERAGE');
+  });
+
+  test('Covers field in item-format spec block', () => {
+    expect(content).toContain('- Covers: [<item-indices>]');
+  });
+
+  test('CoverageNote field in item-format spec block', () => {
+    expect(content).toContain('- CoverageNote: <text>');
+  });
+
+  test('session.yaml summary includes coverage counters', () => {
+    expect(content).toContain('passed_by_coverage:');
+    expect(content).toContain('bundles_offered:');
+    expect(content).toContain('bundles_accepted:');
+    expect(content).toContain('bundles_rejected:');
+  });
+
+  test('coverage_warnings is a single list with phase tag (ER2)', () => {
+    // F3 DRY win: one list + phase tag, not two parallel lists.
+    expect(content).toContain('coverage_warnings:');
+    expect(content).not.toContain('coverage_inference_warnings');
+    // phase tag must be referenced near the schema definition
+    const idx = content.indexOf('coverage_warnings:');
+    expect(content.slice(idx, idx + 200)).toMatch(/phase:\s*inference\s*\|\s*resume/);
+  });
+
+  test('transitive coverage explicit non-support note exists', () => {
+    expect(content).toMatch(
+      /Transitive coverage is explicitly NOT supported/,
+    );
+  });
+
+  test('inference heuristic names present (3 heuristics)', () => {
+    expect(content).toContain('Same-prerequisite-action');
+    expect(content).toContain('Strict subset');
+    expect(content).toContain('Same observation, different framing');
+  });
+
+  test('validation rules (4) named in skill prose', () => {
+    expect(content).toContain('No self-reference');
+    expect(content).toContain('No cycles');
+    expect(content).toContain('Existence');
+    expect(content).toContain('Intra-group');
+  });
+
+  test('cycle-handling rule names SCC and highest-index tiebreak', () => {
+    // Determinism is testable. The prose must lock the policy so a future
+    // edit doesn't reduce it to a vague "drop one edge."
+    expect(content).toContain('strongly connected component');
+    expect(content).toMatch(/highest item index/i);
+  });
+
+  test('F2: load-bearing E3 re-read sentence exists', () => {
+    // Without this sentence, lookahead-invalidation degrades silently:
+    // the next prompt may use stale N+1 description from before the FAIL,
+    // skipping past a newly-demoted UNTESTED item. Match the load-bearing
+    // fragments rather than the exact wrapped-prose layout (whitespace can
+    // legitimately shift with future markdown edits).
+    const normalized = content.replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      'the next prompt MUST do a full group re-read',
+    );
+    expect(normalized).toContain(
+      'demotion changed the UNTESTED set behind lookahead\'s back',
+    );
+  });
+
+  test('multi-cover demotion rule: only when ALL covers non-PASSED', () => {
+    // Codex T4 catch: single-cover demotion would silently destroy signal
+    // when an item has multiple backings. The plan locks the safer rule.
+    expect(content).toMatch(
+      /demotes from `PASSED_BY_COVERAGE` to `UNTESTED`.+only when every item/,
+    );
+  });
+
+  test('directly-PASSED items NEVER demote on covering-item FAIL', () => {
+    // Integrity invariant: direct evidence is independent. If a future edit
+    // tries to "simplify" by demoting all items in the Covers list, this
+    // fails.
+    expect(content).toContain('Direct `PASSED` items NEVER demote');
+  });
+
+  test('E3 demotion applies to ALL FAIL paths (not just Fix Now)', () => {
+    expect(content).toMatch(
+      /E3 demotion \(always — applies to ALL FAIL paths, not just Fix Now\)/,
+    );
+  });
+
+  test('trust-posture language: verified by action vs observed property', () => {
+    // Codex T2 catch: "covered" ≠ "observed". The bundle prompt and the
+    // skill prose must explicitly calibrate trust.
+    expect(content).toContain('verified by action');
+    expect(content).toContain('observed property');
+  });
+
+  test('Phase 3 dashboard COVERAGE sub-block template tokens', () => {
+    // ER3 dashboard render: the template must include the literal tokens
+    // an agent will pattern-match against. Skip-condition language must
+    // also be present (otherwise the block renders unconditionally).
+    expect(content).toContain('COVERAGE: 3 bundles in plan');
+    expect(content).toContain('Omit the COVERAGE block ENTIRELY if no item');
+  });
+
+  test('Phase 4 report Coverage savings line template', () => {
+    expect(content).toContain('Coverage savings: K items confirmed by coverage');
+    expect(content).toContain('Bundles accepted: B/O');
+  });
+
+  test('Phase 4 report Coverage warnings line omit-when-empty rule', () => {
+    expect(content).toContain('Omit this line entirely if `coverage_warnings` is empty');
+  });
+
+  test('BATCH out-of-batch post-batch-walk explicit (ER4)', () => {
+    // The non-trivial BATCH-coverage interaction Codex flagged: out-of-batch
+    // covers must spawn post-batch bundle prompts. Locking the prose
+    // prevents a future "simplification" from silently dropping the walk.
+    expect(content).toContain('Out-of-batch covers');
+    // Multi-line prose: scan for the load-bearing fragment without anchoring
+    // on whitespace shape (the surrounding markdown wraps mid-sentence).
+    const normalized = content.replace(/\s+/g, ' ');
+    expect(normalized).toMatch(
+      /after the batch resolves to disk, fire the standard post-PASS bundle prompt/,
+    );
+  });
+
+  test('BATCH keeps index-ordered selection (no leapfrogging)', () => {
+    expect(content).toContain('BATCH keeps **index-ordered** selection');
+  });
+
+  test('fix-commit-message COVERS_SUFFIX variable referenced', () => {
+    // Locks the in-paren commit-message format. A future edit that drops
+    // the suffix variable would silently lose coverage provenance in the
+    // git log.
+    expect(content).toContain('COVERS_SUFFIX');
+    expect(content).toContain('pair-review item <N>$COVERS_SUFFIX');
+  });
+});
+
+// ─── Smart-batching prompt-options table (T12) ───────────────────────
+//
+// Every new AskUserQuestion site introduced by smart-batching must use
+// exact, agreed option strings. Capitalization drift (e.g., "All Pass" vs
+// "All pass") or reordering would silently confuse the agent at runtime
+// since prose-driven skills rely on string-matching for prompt detection.
+// Single table, iterated below; one row = one site = one assertion.
+
+const SMART_BATCHING_PROMPT_OPTIONS: Array<{ site: string; needle: string }> = [
+  // Post-PASS coverage bundle prompt — options match the existing BATCH
+  // mode capitalization convention ("All pass" not "All Pass").
+  {
+    site: 'post-PASS coverage bundle',
+    needle: 'Options: ["All pass", "Mark individually", "Park a bug"]',
+  },
+  // Phase 1 Step 4.5 coverage graph review (top-level prompt).
+  {
+    site: 'coverage graph review (top-level)',
+    needle: 'Options: ["Approve as-is", "Edit", "Strip all coverage"]',
+  },
+  // Phase 1 Step 4.5 edit-loop menu.
+  {
+    site: 'coverage edit menu',
+    needle: 'Options: ["Drop an edge", "Add an edge", "Strip all coverage", "Done editing"]',
+  },
+  // Phase 1 Step 4.5 bail-out (after 3 consecutive invalid edits).
+  {
+    site: 'coverage edit bail-out',
+    needle: 'Options: ["Strip all coverage", "Keep editing"]',
+  },
+  // Add Item Phase 2 — covers picker first question.
+  {
+    site: 'add-item covers picker',
+    needle: 'Options: ["No", "Yes — pick targets"]',
+  },
+];
+
+describe('pair-review smart-batching: prompt-options table (T12)', () => {
+  const file = join(ROOT, 'skills', 'pair-review.md');
+  const content = readFileSync(file, 'utf8');
+
+  for (const { site, needle } of SMART_BATCHING_PROMPT_OPTIONS) {
+    test(`${site}: options array matches exactly`, () => {
+      if (!content.includes(needle)) {
+        throw new Error(
+          `Prompt-options drift at "${site}". Expected verbatim: ${needle}`,
+        );
+      }
+    });
+  }
+});

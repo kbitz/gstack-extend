@@ -176,4 +176,123 @@ describe('scanPairReviewSession', () => {
     const items = scanPairReviewSession(dir, 'main');
     expect(items[0]!.description).toBe('Vérify Lögin → behaves');
   });
+
+  // ─── Coverage-feature forward compatibility ──────────────────────────
+  //
+  // The /pair-review smart-batching feature adds two new optional fields to
+  // each item (`Covers:`, `CoverageNote:`) and a new status value
+  // (`PASSED_BY_COVERAGE`). The parser is the test-plan extractor consuming
+  // pair-review state; it must accept the new shape without choking. These
+  // tests lock the contract.
+
+  test('forward-compat: PASSED_BY_COVERAGE status accepted verbatim', () => {
+    const dir = buildSession({
+      branch: 'main',
+      groupsFiles: {
+        'g.md': [
+          '### 1. Sign in',
+          '- Status: PASSED',
+          '### 2. Session cookie set',
+          '- Status: PASSED_BY_COVERAGE',
+          '- CoverageNote: covered by items [1]',
+          '### 3. Logged-in nav renders',
+          '- Status: PASSED_BY_COVERAGE',
+        ].join('\n'),
+      },
+    });
+    const items = scanPairReviewSession(dir, 'main');
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i.status)).toEqual([
+      'PASSED',
+      'PASSED_BY_COVERAGE',
+      'PASSED_BY_COVERAGE',
+    ]);
+    // Coverage feature exists for downstream test-plan accounting; descriptions
+    // must round-trip cleanly so the test-plan extractor classifies correctly.
+    expect(items.map((i) => i.description)).toEqual([
+      'Sign in',
+      'Session cookie set',
+      'Logged-in nav renders',
+    ]);
+  });
+
+  test('forward-compat: Covers and CoverageNote lines silently ignored', () => {
+    // The parser is interested in (status, description). Unknown `-` lines
+    // like `Covers:` or `CoverageNote:` are not status lines and must not
+    // break item boundaries or stomp the current description.
+    const dir = buildSession({
+      branch: 'main',
+      groupsFiles: {
+        'g.md': [
+          '### 1. Sign in with valid credentials',
+          '- Build: abc123',
+          '- Covers: [3, 4]',
+          '- CoverageNote: covering item for session validation',
+          '- Status: PASSED',
+        ].join('\n'),
+      },
+    });
+    const items = scanPairReviewSession(dir, 'main');
+    expect(items).toHaveLength(1);
+    expect(items[0]!.status).toBe('PASSED');
+    expect(items[0]!.description).toBe('Sign in with valid credentials');
+  });
+
+  test('backward-compat: pre-coverage items (no Covers line) parse identically', () => {
+    // Regression test against the v0.19.x format. A session that pre-dates
+    // smart-batching has no Covers/CoverageNote lines at all; the parser
+    // must continue returning the same shape it always did.
+    const dir = buildSession({
+      branch: 'main',
+      groupsFiles: {
+        'legacy.md': [
+          '### 1. Old-style item',
+          '- Status: PASSED',
+          '- Build: deadbeef',
+          '- Tested: 2026-05-01T00:00:00Z',
+          '### 2. Another old item',
+          '- Status: FAILED',
+          '- Evidence: button misaligned',
+        ].join('\n'),
+      },
+    });
+    const items = scanPairReviewSession(dir, 'main');
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => ({ status: i.status, description: i.description })))
+      .toEqual([
+        { status: 'PASSED', description: 'Old-style item' },
+        { status: 'FAILED', description: 'Another old item' },
+      ]);
+  });
+
+  test('mixed group: PASSED + PASSED_BY_COVERAGE + FAILED counted distinctly', () => {
+    // Test-plan extractor downstream may want to filter PASSED vs
+    // PASSED_BY_COVERAGE separately (e.g., for the "bundles_accepted"
+    // accounting). The parser preserves the distinction.
+    const dir = buildSession({
+      branch: 'main',
+      groupsFiles: {
+        'mixed.md': [
+          '### 1. Sign in',
+          '- Status: PASSED',
+          '### 2. Cookie set',
+          '- Status: PASSED_BY_COVERAGE',
+          '### 3. Logged-in nav',
+          '- Status: PASSED_BY_COVERAGE',
+          '### 4. Sign out',
+          '- Status: FAILED',
+        ].join('\n'),
+      },
+    });
+    const items = scanPairReviewSession(dir, 'main');
+    const byStatus = items.reduce<Record<string, number>>((acc, i) => {
+      acc[i.status] = (acc[i.status] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(byStatus).toEqual({
+      PASSED: 1,
+      PASSED_BY_COVERAGE: 2,
+      FAILED: 1,
+    });
+  });
 });

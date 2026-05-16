@@ -44,6 +44,7 @@ and supports resume. Works for any project type.
 - **Deploy discovery** — finds your build/run process and reuses it across sessions
 - **Group-level checkpoints** — auto-commits before fix attempts for clean reverts
 - **Resume** — pick up exactly where you left off
+- **Smart batching** — agent infers `Covers:` links between items; one bundled "All pass" prompt confirms N covered items at once instead of N individual clicks. Integrity-preserving: `PASSED_BY_COVERAGE` items demote back to `UNTESTED` if the covering item later fails. Transparent: review and edit the coverage graph at plan time, strip all coverage to revert to today's behavior.
 
 ```
 /pair-review          # Start a new test session
