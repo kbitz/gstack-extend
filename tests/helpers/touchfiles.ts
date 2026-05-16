@@ -120,6 +120,45 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/update-run',
     'setup',
   ],
+  // Track 12A — gstack-extend init <project>. The bin sources the registry
+  // helper, reads templates from scripts/init-templates/, and shells out to
+  // bin/roadmap-audit during the post-render gate.
+  'tests/init-bin.test.ts': [
+    'bin/gstack-extend',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/install-safety.sh',
+    'bin/roadmap-audit',
+    'src/audit/**',
+    'scripts/init-templates/**',
+  ],
+  'tests/init-registry.test.ts': [
+    'bin/lib/projects-registry.sh',
+  ],
+  'tests/init-templates.test.ts': [
+    'bin/gstack-extend',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/install-safety.sh',
+    'bin/roadmap-audit',
+    'src/audit/**',
+    'scripts/init-templates/**',
+  ],
+  'tests/init-distribution.test.ts': [
+    'bin/gstack-extend',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/install-safety.sh',
+    'bin/roadmap-audit',
+    'src/audit/**',
+    'scripts/init-templates/**',
+  ],
+  'tests/setup-init-wire.test.ts': [
+    'setup',
+    'bin/gstack-extend',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/install-safety.sh',
+    'bin/roadmap-audit',
+    'src/audit/**',
+    'scripts/init-templates/**',
+  ],
 };
 
 /**

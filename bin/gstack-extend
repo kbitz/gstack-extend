@@ -1,0 +1,623 @@
+#!/usr/bin/env bash
+# gstack-extend — project-lifecycle CLI for gstack-extend-onboarded projects.
+#
+# Subcommands:
+#   init <project>     Bootstrap a new project: scaffold canonical layout,
+#                      render starter docs, register in ~/.gstack-extend/projects.json,
+#                      run post-render audit. See `init --help` for flags.
+#   list               (reserved namespace) — coming in a future Group
+#   status             (reserved namespace) — coming in a future Group
+#   doctor             (reserved namespace) — coming in a future Group
+#   migrate            (reserved namespace) — coming in a future Group
+#                      (single-project backfill is `init --migrate <dir>`)
+#
+# Flag matrix for `init` (default | --dry-run | --no-prompt | --migrate)
+#   x (empty / partial / onboarded) target-dir state — see init --help.
+#
+# Distribution: installed by `setup` as a symlink at ~/.local/bin/gstack-extend.
+# All filesystem state lives under ~/.gstack-extend/ (override via
+# GSTACK_EXTEND_STATE_DIR; matches bin/config:11). Tests that exercise the
+# audit gate must ALSO set GSTACK_STATE_ROOT to isolate ~/.gstack/.
+
+set -euo pipefail
+
+# ─── Self-location (POSIX-portable readlink) ───────────────────────────
+#
+# bin/gstack-extend may be invoked through ~/.local/bin/gstack-extend, which
+# is a symlink into the gstack-extend repo. macOS BSD readlink lacks `-f`;
+# walk the symlink chain in pure bash so the same code works on Linux and
+# macOS without coreutils. End state: SCRIPT_DIR points at the real bin/.
+_self_resolve() {
+  local src="$1"
+  local hops=0
+  # Bail after SYMLOOP_MAX (POSIX min 8; coreutils uses 40) to refuse
+  # infinite recursion on cyclic symlinks. `readlink -f` does this
+  # natively; the pure-bash walker has to do it explicitly.
+  while [ -L "$src" ]; do
+    hops=$((hops + 1))
+    if [ "$hops" -gt 40 ]; then
+      echo "gstack-extend: symlink loop detected resolving $1" >&2
+      exit 1
+    fi
+    local dir
+    dir=$(cd -P "$(dirname "$src")" && pwd)
+    src=$(readlink "$src")
+    case "$src" in
+      /*) ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR=$(_self_resolve "$0")
+REPO_ROOT=$(cd -P "$SCRIPT_DIR/.." && pwd)
+TEMPLATES_DIR="$REPO_ROOT/scripts/init-templates"
+
+# shellcheck source=bin/lib/install-safety.sh
+. "$SCRIPT_DIR/lib/install-safety.sh"
+# shellcheck source=bin/lib/projects-registry.sh
+. "$SCRIPT_DIR/lib/projects-registry.sh"
+
+# ERR trap — make set -e exits visible (line + code + call stack) rather
+# than silent. Shared helper from install-safety.sh; existing bins adopt
+# as they're touched.
+trap '_die_with_line $?' ERR
+
+# ─── Constants ─────────────────────────────────────────────────────────
+
+# Canonical files init scaffolds. The defensive-minimal scaffold (D2.B)
+# refuses if ANY of these already exist in the target dir (default mode),
+# unless --migrate is passed.
+#
+# CHANGELOG.md lives at root (matches gstack-extend itself + DOC_LOCATION
+# audit expectation) — not under docs/. Tools and platforms expect it
+# there (GitHub auto-links a root CHANGELOG.md on the releases page).
+CANONICAL_FILES=(
+  CLAUDE.md
+  CHANGELOG.md
+  VERSION
+  docs/ROADMAP.md
+  docs/TODOS.md
+  docs/PROGRESS.md
+)
+
+CANONICAL_DIRS=(
+  docs
+  docs/designs
+  docs/archive
+)
+
+COMING_SOON_MSG='reserved namespace — coming in a future Group'
+
+# ─── Helpers ───────────────────────────────────────────────────────────
+
+# validate_name <name>
+# Names must match [a-zA-Z0-9._-]+. Refuses empty + shell-special chars.
+# Used for both --name and the basename of <project> when --name is unset.
+validate_name() {
+  local name="$1"
+  if [ -z "$name" ]; then
+    echo "gstack-extend init: project name is empty" >&2
+    return 1
+  fi
+  case "$name" in
+    *[!a-zA-Z0-9._-]*)
+      echo "gstack-extend init: project name '$name' contains invalid characters" >&2
+      echo "  Allowed: letters, digits, dot, underscore, hyphen." >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# detect_lang <dir>
+# Echoes a known runtime label or "unknown". Used only to seed the
+# test-command line in CLAUDE.md; never gates init success.
+#
+# EXTRACT: bin/lib/lang-detect.sh when a second caller arrives. Today only
+# render() needs this — splitting it out now is premature abstraction.
+detect_lang() {
+  local dir="$1"
+  if [ -f "$dir/package.json" ];                                  then echo bun;    return 0; fi
+  if [ -f "$dir/Cargo.toml" ];                                    then echo cargo;  return 0; fi
+  if [ -f "$dir/go.mod" ];                                        then echo go;     return 0; fi
+  if [ -f "$dir/pyproject.toml" ] || [ -f "$dir/requirements.txt" ]; then echo python; return 0; fi
+  echo unknown
+}
+
+# test_cmd_block <lang>
+# Echoes the multi-line CLAUDE.md "Testing" body for the detected lang.
+# Stays one variable substitution in the template so the template doesn't
+# branch on language.
+test_cmd_block() {
+  local lang="$1"
+  case "$lang" in
+    bun)    printf '```bash\nbun run test     # run the project test suite\n```\n' ;;
+    cargo)  printf '```bash\ncargo test       # run the project test suite\n```\n' ;;
+    go)     printf '```bash\ngo test ./...    # run the project test suite\n```\n' ;;
+    python) printf '```bash\npytest           # run the project test suite\n```\n' ;;
+    *)      printf '_TODO: define the project test command and document it here._\n' ;;
+  esac
+}
+
+# detect_slug <dir>
+# Slug derivation: git remote owner-repo → fallback basename. Sanitized to
+# [a-zA-Z0-9._-]. Used as the registry key and for ~/.gstack/projects/<slug>.
+detect_slug() {
+  local dir="$1"
+  local remote=""
+  if [ -d "$dir/.git" ] || git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    remote=$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)
+  fi
+  if [ -n "$remote" ]; then
+    # Strip .git, drop everything before the last colon-or-slash pair.
+    # Examples:
+    #   https://github.com/owner/repo.git → owner-repo
+    #   git@github.com:owner/repo.git     → owner-repo
+    local stripped="${remote%.git}"
+    local repo="${stripped##*/}"
+    local owner_path="${stripped%/*}"
+    local owner="${owner_path##*[:/]}"
+    if [ -n "$owner" ] && [ -n "$repo" ] && [ "$owner" != "$stripped" ]; then
+      printf '%s-%s' "$owner" "$repo" | tr -cd 'a-zA-Z0-9._-'
+      return 0
+    fi
+  fi
+  basename "$dir" | tr -cd 'a-zA-Z0-9._-'
+}
+
+# detect_remote <dir>
+# Echoes the git remote URL or empty string if no remote / no .git.
+detect_remote() {
+  local dir="$1"
+  if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$dir" config --get remote.origin.url 2>/dev/null || true
+  fi
+}
+
+# detect_base_branch <dir>
+# Best-effort base branch detection: symbolic-ref of origin/HEAD → main →
+# master → "main" (default). Mirrors how /roadmap detects.
+detect_base_branch() {
+  local dir="$1"
+  if ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    echo main
+    return 0
+  fi
+  local ref
+  if ref=$(git -C "$dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null); then
+    printf '%s' "${ref#refs/remotes/origin/}"
+    return 0
+  fi
+  for b in main master; do
+    if git -C "$dir" rev-parse --verify "origin/$b" >/dev/null 2>&1; then
+      echo "$b"
+      return 0
+    fi
+  done
+  echo main
+}
+
+# detect_state <dir>
+# Echoes one of: empty | partial | onboarded.
+#   onboarded: registered in projects.json AND all canonical files present
+#   partial:   any canonical file present
+#   empty:     no canonical files present
+# Caller-supplied <dir> need not exist (returns "empty" for non-existent).
+detect_state() {
+  local dir="$1"
+  local slug
+  slug=$(detect_slug "$dir")
+  local any_present=0
+  if [ -d "$dir" ]; then
+    local f
+    for f in "${CANONICAL_FILES[@]}"; do
+      if [ -e "$dir/$f" ]; then any_present=1; break; fi
+    done
+  fi
+  if [ "$any_present" = "0" ]; then
+    echo empty
+    return 0
+  fi
+  local all_present=1
+  for f in "${CANONICAL_FILES[@]}"; do
+    if [ ! -e "$dir/$f" ]; then all_present=0; break; fi
+  done
+  if [ "$all_present" = "1" ] && registry_has_slug "$slug" 2>/dev/null; then
+    echo onboarded
+  else
+    echo partial
+  fi
+}
+
+# template_substitute <tmpl-path> <var=value>...
+# Renders a template to stdout, substituting {{var}} → value for each
+# var=value pair. Refuses if any {{...}} placeholders remain unsubstituted
+# (catches typo'd template vars in CI).
+template_substitute() {
+  local tmpl="$1"
+  shift
+  if [ ! -f "$tmpl" ]; then
+    echo "template_substitute: missing template: $tmpl" >&2
+    return 1
+  fi
+  local content
+  content=$(cat "$tmpl")
+  local kv key val
+  for kv in "$@"; do
+    key="${kv%%=*}"
+    val="${kv#*=}"
+    # Bash builtin replacement avoids sed-escaping woes with special chars.
+    content="${content//\{\{${key}\}\}/${val}}"
+  done
+  # Surface any unsubstituted placeholders so we fail loud rather than ship
+  # half-rendered docs.
+  if printf '%s' "$content" | grep -q '{{[a-zA-Z_]*}}'; then
+    echo "template_substitute: unsubstituted placeholders remain in $tmpl:" >&2
+    printf '%s' "$content" | grep -o '{{[a-zA-Z_]*}}' | sort -u >&2
+    return 1
+  fi
+  printf '%s' "$content"
+}
+
+# render_diff <existing-path> <new-content>
+# Print a tiny diff-style preview of what `--dry-run` would write.
+# No external diff dependency; just "+ would write N lines" or
+# "would overwrite (--migrate required for existing file)".
+render_diff() {
+  local existing="$1" new_content="$2"
+  local n
+  n=$(printf '%s\n' "$new_content" | wc -l | tr -d ' ')
+  if [ -e "$existing" ]; then
+    printf '  ~ would overwrite %s (%s lines)\n' "$existing" "$n"
+  else
+    printf '  + would create   %s (%s lines)\n' "$existing" "$n"
+  fi
+}
+
+# render_all <target> <dry_run> <KV ARGS...>
+# Renders all six template files into the target dir. Honors dry_run=1.
+# On real write, creates parent dirs as needed. Always skips existing
+# files (--migrate's "backfill missing only" contract). Default mode
+# never reaches the skip branch — scaffold_layout refuses on canonical-
+# file collision before render_all is called.
+render_all() {
+  local target="$1" dry_run="$2"
+  shift 2
+  local vars=("$@")
+
+  local map
+  map=(
+    "CLAUDE.md|CLAUDE.md.tmpl"
+    "CHANGELOG.md|CHANGELOG.md.tmpl"
+    "VERSION|VERSION.tmpl"
+    "docs/ROADMAP.md|ROADMAP.md.tmpl"
+    "docs/TODOS.md|TODOS.md.tmpl"
+    "docs/PROGRESS.md|PROGRESS.md.tmpl"
+  )
+
+  local pair dest tmpl content out
+  for pair in "${map[@]}"; do
+    dest="${pair%%|*}"
+    tmpl="${pair#*|}"
+    out="$target/$dest"
+    if ! content=$(template_substitute "$TEMPLATES_DIR/$tmpl" "${vars[@]}"); then
+      return 1
+    fi
+    if [ "$dry_run" = "1" ]; then
+      render_diff "$out" "$content"
+      continue
+    fi
+    if [ -e "$out" ]; then
+      # --migrate only ever backfills missing canonical files; default
+      # mode never reaches this branch (scaffold_layout refuses on
+      # canonical-file collision first). The skip message documents the
+      # behavior contract: user-edited files are always preserved.
+      echo "  ~ skipped $dest (already exists; --migrate only backfills missing files)"
+      continue
+    fi
+    mkdir -p "$(dirname "$out")"
+    # printf '%s\n' (not '%s') so VERSION and friends get a trailing
+    # newline — POSIX text files must end with \n, and bash command
+    # substitution in template_substitute strips the final newline.
+    printf '%s\n' "$content" > "$out"
+    echo "  + wrote $dest"
+  done
+}
+
+# scaffold_layout <target> <dry_run> <migrate>
+# D2.B: mkdir canonical dirs; refuse if any canonical file already exists
+# unless --migrate. Idempotent in both modes (re-running on an empty dir =
+# same result).
+scaffold_layout() {
+  local target="$1" dry_run="$2" migrate="$3"
+  if [ "$migrate" != "1" ] && [ -d "$target" ]; then
+    local f
+    for f in "${CANONICAL_FILES[@]}"; do
+      if [ -e "$target/$f" ]; then
+        echo "gstack-extend init: refusing to scaffold over existing $f" >&2
+        echo "  $target appears partially onboarded. Use --migrate to backfill only missing files." >&2
+        return 1
+      fi
+    done
+  fi
+  if [ "$dry_run" = "1" ]; then
+    local d
+    for d in "${CANONICAL_DIRS[@]}"; do
+      if [ ! -d "$target/$d" ]; then
+        echo "  + would mkdir $target/$d"
+      fi
+    done
+    return 0
+  fi
+  mkdir -p "$target"
+  local d
+  for d in "${CANONICAL_DIRS[@]}"; do
+    mkdir -p "$target/$d"
+  done
+}
+
+# run_audit <target>
+# Spawns bin/roadmap-audit in target. Returns the audit's exit code.
+# Captures stdout+stderr; caller decides what to print.
+run_audit() {
+  local target="$1"
+  ( cd "$target" && "$REPO_ROOT/bin/roadmap-audit" 2>&1 ) || return $?
+}
+
+# ─── cmd_init ──────────────────────────────────────────────────────────
+
+init_usage() {
+  cat <<'EOF'
+Usage: gstack-extend init <project> [options]
+
+  <project>          Target directory. Created if missing. May be a path or
+                     a bare name (interpreted relative to current dir).
+
+Options:
+  --name <NAME>      Display name (defaults to basename of <project>).
+                     Must match [a-zA-Z0-9._-]+.
+  --dry-run          Print what would happen; do not touch the filesystem.
+  --no-prompt        Headless mode; never read from stdin. Errors exit
+                     non-zero loudly.
+  --migrate          Backfill missing canonical files on an existing
+                     partially-onboarded project. Never overwrites
+                     user-edited files. Re-registers the project.
+  -h, --help         Show this message.
+
+Exit codes:
+  0   Init succeeded (or dry-run completed with audit-clean projection).
+  1   Init failed at any step (validation, scaffold, render, register,
+      audit). Rendered files are left in place on audit failure (D3.A);
+      use --migrate to retry after fixing.
+  2   Usage error (unknown flag, missing required arg).
+
+State location: ~/.gstack-extend/projects.json
+  (override via GSTACK_EXTEND_STATE_DIR for tests).
+EOF
+}
+
+cmd_init() {
+  local target="" name="" dry_run=0 no_prompt=0 migrate=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help)    init_usage; return 0 ;;
+      --dry-run)    dry_run=1;  shift ;;
+      --no-prompt)  no_prompt=1; shift ;;
+      --migrate)    migrate=1;  shift ;;
+      --name)
+        if [ -z "${2:-}" ]; then
+          echo "gstack-extend init: --name requires an argument" >&2
+          return 2
+        fi
+        name="$2"; shift 2
+        ;;
+      --) shift; break ;;
+      -*)
+        echo "gstack-extend init: unknown flag: $1" >&2
+        init_usage >&2
+        return 2
+        ;;
+      *)
+        if [ -z "$target" ]; then
+          target="$1"
+        else
+          echo "gstack-extend init: unexpected positional argument: $1" >&2
+          return 2
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$target" ]; then
+    echo "gstack-extend init: <project> argument required" >&2
+    init_usage >&2
+    return 2
+  fi
+
+  # Resolve target to an absolute path. Don't require it to exist yet.
+  local target_abs
+  if [ -d "$target" ]; then
+    target_abs=$(cd -P "$target" && pwd)
+  else
+    local parent
+    parent=$(dirname "$target")
+    if [ ! -d "$parent" ]; then
+      echo "gstack-extend init: parent dir of $target does not exist" >&2
+      return 1
+    fi
+    target_abs="$(cd -P "$parent" && pwd)/$(basename "$target")"
+  fi
+
+  # Derive display name from --name or basename. Validate either way.
+  if [ -z "$name" ]; then
+    name=$(basename "$target_abs")
+  fi
+  if ! validate_name "$name"; then
+    return 1
+  fi
+
+  # Detect target state — empty / partial / onboarded — and run the flag matrix.
+  local state
+  state=$(detect_state "$target_abs")
+
+  case "$state:$migrate:$dry_run" in
+    onboarded:0:*)
+      echo "gstack-extend init: $target_abs is already onboarded." >&2
+      echo "  Run \`gstack-extend doctor\` to check for drift (coming in a future Group)." >&2
+      echo "  Or use \`--migrate\` to re-register (refreshes path/remote)." >&2
+      return 1
+      ;;
+    partial:0:*)
+      echo "gstack-extend init: $target_abs is partially onboarded." >&2
+      echo "  Use \`--migrate\` to backfill missing canonical files." >&2
+      return 1
+      ;;
+  esac
+
+  # Detect language, slug, remote, base branch from the target.
+  local lang slug remote base_branch
+  lang=$(detect_lang "$target_abs")
+  slug=$(detect_slug "$target_abs")
+  remote=$(detect_remote "$target_abs")
+  base_branch=$(detect_base_branch "$target_abs")
+
+  local created_at created_at_date
+  created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  created_at_date=$(date -u +%Y-%m-%d)
+
+  local tcb
+  tcb=$(test_cmd_block "$lang")
+
+  # Print a one-line plan summary first so the user can sanity-check.
+  printf '\n'
+  if [ "$dry_run" = "1" ]; then
+    echo "gstack-extend init: DRY RUN — no files will be written."
+  fi
+  local migrate_label=""
+  [ "$migrate" = "1" ] && migrate_label=" (--migrate)"
+  cat <<EOF
+gstack-extend init: $target_abs
+  name:           $name
+  slug:           $slug
+  language:       $lang
+  base_branch:    $base_branch
+  remote_url:     ${remote:-(none)}
+  version_scheme: 4-digit
+  state:          ${state}${migrate_label}
+
+EOF
+
+  # Build the template var argv. Use ${test_cmd_block} as a multi-line var.
+  local vars=(
+    "name=$name"
+    "slug=$slug"
+    "created_at=$created_at"
+    "created_at_date=$created_at_date"
+    "test_cmd_block=$tcb"
+  )
+
+  # Scaffold (D2.B): mkdir canonical dirs + refuse on canonical file collision.
+  if ! scaffold_layout "$target_abs" "$dry_run" "$migrate"; then
+    return 1
+  fi
+
+  # Render templates. (--migrate's "skip existing" behavior is enforced
+  # inside render_all; no env-var toggle needed.)
+  if ! render_all "$target_abs" "$dry_run" "${vars[@]}"; then
+    return 1
+  fi
+
+  if [ "$dry_run" = "1" ]; then
+    # In dry-run we don't write the registry or run the audit against the
+    # would-be on-disk files. Audit needs real files; print a note and exit.
+    echo
+    echo "gstack-extend init: dry-run complete. Re-run without --dry-run to apply."
+    return 0
+  fi
+
+  # Register in projects.json.
+  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at"; then
+    echo "gstack-extend init: registry write failed (files were rendered)" >&2
+    return 1
+  fi
+  echo "  + registered $slug → $(registry_path)"
+
+  # Post-render audit gate.
+  echo
+  echo "Running post-render audit..."
+  local audit_out audit_exit
+  audit_out=$(run_audit "$target_abs") && audit_exit=0 || audit_exit=$?
+
+  if [ "$audit_exit" != "0" ]; then
+    # D3.A: leave files on audit failure; print audit output + retry hint.
+    printf '%s\n' "$audit_out" >&2
+    cat >&2 <<EOF
+
+gstack-extend init: post-render audit FAILED (exit $audit_exit).
+  Rendered files have been LEFT IN PLACE so you can inspect them.
+  After fixing the audit findings, re-run with --migrate to re-register:
+    gstack-extend init --migrate $target_abs
+EOF
+    return 1
+  fi
+
+  printf '%s\n' "$audit_out"
+
+  cat <<EOF
+
+gstack-extend init: SUCCESS.
+  Next 30 minutes:
+    1. cd $target_abs
+    2. /roadmap            (orient yourself + verify canonical layout)
+    3. /review-apparatus   (discover testing/debugging gaps)
+    4. /full-review        (weekly cadence baseline)
+EOF
+  return 0
+}
+
+# ─── Usage + dispatch (must be last so functions are defined) ──────────
+
+usage() {
+  cat <<'EOF'
+Usage: gstack-extend <subcommand> [args...]
+
+Subcommands:
+  init <project>     Bootstrap a new gstack-extend-onboarded project.
+                     `gstack-extend init --help` for flags.
+  list               (coming in a future Group)
+  status             (coming in a future Group)
+  doctor             (coming in a future Group)
+  migrate            (coming in a future Group — see `init --migrate` for
+                     per-project backfill today)
+
+Options:
+  -h, --help         Show this message.
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+# `|| exit $?` shields the dispatcher from ERR-trap noise on controlled
+# non-zero returns from cmd_init (e.g., partial-onboarded refuse, bad
+# --name). Without it, every UX-level error tacks on a "_die_with_line"
+# stack message after the user-facing error.
+case "$cmd" in
+  init)        cmd_init "$@" || exit $? ;;
+  list|status|doctor|migrate)
+    printf 'gstack-extend %s: %s\n' "$cmd" "$COMING_SOON_MSG"
+    exit 0
+    ;;
+  ""|-h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    printf 'gstack-extend: unknown subcommand: %s\n\n' "$cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

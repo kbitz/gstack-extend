@@ -10,6 +10,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Stable |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | New |
 | `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
+| `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | New |
 
 ## Installation
 
@@ -193,6 +194,23 @@ The artifact contract is owned by /test-plan and documented at
 | ROADMAP.md | Execution plan | /roadmap |
 | `~/.gstack/projects/<slug>/groups/<group>/manifest.yaml` | Track→branch→review-doc mapping | /test-plan |
 | `~/.gstack/projects/<slug>/<user>-<branch>-test-plan-batch-*.md` | Batched test plan artifact | /test-plan |
+
+---
+
+## /gstack-extend-init — Bootstrap a new project
+
+`gstack-extend init <project>` scaffolds the canonical layout (CLAUDE.md, ROADMAP.md, TODOS.md, PROGRESS.md, CHANGELOG.md, VERSION, docs/), registers the project in `~/.gstack-extend/projects.json`, and runs the post-render audit. Detects per-language test command (bun/cargo/go/python) and seeds CLAUDE.md accordingly.
+
+```bash
+gstack-extend init ~/dev/my-new-project           # full bootstrap (interactive)
+gstack-extend init ./existing --migrate           # backfill missing canonical files (leaves user-edited alone)
+gstack-extend init ./somewhere --dry-run          # preview; no filesystem changes
+gstack-extend init ./headless --no-prompt         # headless mode for scripts/CI
+```
+
+The CLI is wired into `~/.local/bin/gstack-extend` by `setup` (PATH-permitting); invoke directly via `~/.claude/skills/gstack-extend/bin/gstack-extend init ...` if `~/.local/bin` isn't in your PATH. The `/gstack-extend-init` slash skill wraps the same CLI with conversational UX for Claude Code sessions.
+
+Reserved subcommands (stubs today): `list`, `status`, `doctor`, `migrate`. Each prints `coming in a future Group — reserving namespace`.
 
 ---
 

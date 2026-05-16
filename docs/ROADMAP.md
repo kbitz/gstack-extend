@@ -25,9 +25,9 @@ layout. This Group ships the dedicated `gstack-extend init <project>`
 command for greenfield projects.
 
 ##### Track 12A: `gstack-extend init <project>` 10x-version
-_1 task . ~250 LOC . medium-high risk . [new bin + scaffold templates + setup wiring]_
-_touches: bin/gstack-extend, scripts/init-templates/, tests/init-e2e.test.ts, setup_
-- **`gstack-extend init <project>` scaffold** -- full bootstrap with starter ROADMAP.md (state-section template), CLAUDE.md scaffold, project registration in `~/.gstack-extend/projects.yaml`, and initial `/roadmap` audit. _bin/gstack-extend, scripts/init-templates/, tests/init-e2e.test.ts, setup, ~250 lines._ (M)
+_1 task . ~850 LOC . medium-high risk . [new bin + scaffold templates + setup wiring]_
+_touches: bin/gstack-extend, bin/lib/, scripts/init-templates/, skills/gstack-extend-init.md, setup, tests/init-*.test.ts, tests/setup-init-wire.test.ts, tests/helpers/touchfiles.ts_
+- **`gstack-extend init <project>` cathedral** -- full bootstrap with starter ROADMAP.md (state-section template), CLAUDE.md scaffold (per-language test-command detect: bun/cargo/go/python), CHANGELOG.md, TODOS.md (with `[manual]`-tagged first-session checklist), PROGRESS.md, VERSION, `docs/{designs,archive}/`, project registration in `~/.gstack-extend/projects.json` (JSON not YAML — jq-native), and post-render audit gate (per D3.A: leave files + retry hint on audit fail). Subcommand namespace reserved: `list/status/doctor/migrate` as stubs printing "coming in a future Group". `setup` wires `~/.local/bin/gstack-extend` symlink (fail-soft + PATH tip) and auto-self-registers (D4.A, `|| true` wrapped). Flag matrix: `default | --dry-run | --no-prompt | --migrate` × `empty | partial | onboarded` (defensive-minimal D2.B scaffold refuses on canonical file collision). `_die_with_line()` ERR-trap helper in install-safety.sh. POSIX-portable readlink for invocation via PATH symlink (macOS + Linux). _bin/gstack-extend, bin/lib/projects-registry.sh, scripts/init-templates/*.tmpl (6 files), skills/gstack-extend-init.md, setup, 5 test files, ~850 lines._ (M-H)
 
 ### Group 13: Telemetry Parity with Gstack
 
@@ -153,6 +153,21 @@ _1 task . ~30 LOC . low risk . [skills/roadmap.md skill prose only]_
 _touches: skills/roadmap.md_
 - **Realpath preflight for Layout Scaffolding skill prose** -- in the Preflight section of Layout Scaffolding, after the "every scaffold path either doesn't exist OR exists as a directory" check, add a step that resolves each scaffold directory via realpath (or `cd -P && pwd -P`) and refuses to proceed if the resolved target lives outside the repo root. Include the resolved-target value in the halt message so the user can see what tripped. Document the chezmoi/stow exception path in the same halt message (legitimately symlinks `docs/` outside the worktree; user must set up manually). Mirror the `is_safe_install_path` pattern Track 5A shipped for install. _skills/roadmap.md, ~30 lines._ (S)
 
+### Group 21: Extract Layout Scaffolding into Shared Helper
+
+_Depends on: Group 12_
+
+Track 12A shipped an inline minimal scaffold (mkdir + canonical-file refusal) in
+`bin/gstack-extend`. The richer ~85-line Layout Scaffolding logic lives in
+`skills/roadmap.md` (lines 567-658). Until extracted, the two flows duplicate
+the same canonical-path knowledge with drift risk. Source:
+[plan-ceo-review:track=12A] reviewer finding #1.
+
+##### Track 21A: Extract Layout Scaffolding into shared helper
+_1 task . ~120 LOC . low risk . [shared lib extraction]_
+_touches: skills/roadmap.md, bin/lib/layout-scaffold.sh, bin/gstack-extend_
+- **Layout Scaffolding shared helper** -- pull the ~85 lines of Layout Scaffolding logic currently inline in `skills/roadmap.md` (lines 567-658) into a shared helper consumable by both `/roadmap` (in-flight project fix) and `gstack-extend init` (day-zero scaffold). 12A's inline minimal scaffold gets replaced by a call to the same helper so future audit-gate refinements update one place. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
+
 ### Execution Map
 
 Adjacency list:
@@ -166,12 +181,13 @@ Adjacency list:
 - Group 18 ← {}
 - Group 19 ← {}
 - Group 20 ← {13}
+- Group 21 ← {12}
 ```
 
 Track detail per group:
 ```
 Group 12: gstack-extend init scaffold
-  +-- Track 12A .......... ~M . 1 task
+  +-- Track 12A .......... ~M-H . 1 task
 
 Group 13: Telemetry parity with gstack
   +-- Track 13A .......... ~M . 1 task
@@ -199,9 +215,12 @@ Group 19: Tighten docs/-absent audit gate
 
 Group 20: Realpath preflight for Layout Scaffolding
   +-- Track 20A .......... ~S . 1 task
+
+Group 21: Extract Layout Scaffolding into shared helper
+  +-- Track 21A .......... ~S . 1 task
 ```
 
-**Total: 0 phases . 9 groups . 12 tracks remaining.**
+**Total: 0 phases . 10 groups . 13 tracks remaining.**
 
 ---
 
