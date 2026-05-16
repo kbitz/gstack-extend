@@ -62,10 +62,18 @@ describe('CLI symlink wiring', () => {
     const s = scope('install');
     const r = runSetup(s);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('Wired gstack-extend CLI');
+    // Track 13A refactor: setup now wires multiple bins via wire_bin(); the
+    // message format dropped "CLI" since gstack-extend-telemetry isn't a CLI
+    // in the user-facing sense. Both wires should appear.
+    expect(r.stdout).toContain('Wired gstack-extend →');
+    expect(r.stdout).toContain('Wired gstack-extend-telemetry →');
     const symlink = join(s.localBin, 'gstack-extend');
     expect(existsSync(symlink)).toBe(true);
     expect(readlinkSync(symlink)).toBe(join(ROOT, 'bin', 'gstack-extend'));
+    // Track 13A: telemetry wrapper symlink also wired
+    const telSymlink = join(s.localBin, 'gstack-extend-telemetry');
+    expect(existsSync(telSymlink)).toBe(true);
+    expect(readlinkSync(telSymlink)).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
   });
 
   test('install is idempotent: re-run produces the same symlink', () => {

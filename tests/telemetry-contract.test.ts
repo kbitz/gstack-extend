@@ -80,44 +80,44 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
     expect(rows[0].event_type).toBe('skill_run');         // --event-type
   });
 
-  // Individual-flag smoke tests: catch the case where a future gstack version
-  // honors some flags but renames one — the all-flags-at-once test above might
-  // still pass with a null for that field if the field is nullable, but a
-  // per-flag round-trip catches the regression.
+  // Individual-flag round-trip: catches the case where a future gstack version
+  // renames one flag but still parses the rest. gstack-telemetry-log's arg
+  // parser silently drops unknown flags (`*) shift ;;`) so a row still appears
+  // — but the renamed field would land as null / default. Each per-flag test
+  // asserts the corresponding field appears with the supplied value in the
+  // resulting jsonl row, so a silent rename trips the test.
+  const PER_FLAG_CASES: Record<typeof REQUIRED_FLAGS[number], { value: string; field: string; expected: string | number }> = {
+    '--source':     { value: 'gstack-extend',       field: 'source',     expected: 'gstack-extend' },
+    '--skill':      { value: 'extend:contract-flag', field: 'skill',      expected: 'extend:contract-flag' },
+    '--duration':   { value: '42',                   field: 'duration_s', expected: 42 },
+    '--outcome':    { value: 'success',              field: 'outcome',    expected: 'success' },
+    '--session-id': { value: 'sid-roundtrip',        field: 'session_id', expected: 'sid-roundtrip' },
+    '--event-type': { value: 'skill_run',            field: 'event_type', expected: 'skill_run' },
+  };
   for (const flag of REQUIRED_FLAGS) {
-    test.if(HAS_GSTACK)(`single-flag round-trip: ${flag}`, () => {
+    test.if(HAS_GSTACK)(`single-flag round-trip: ${flag} → ${PER_FLAG_CASES[flag].field}`, () => {
       const fix = makeTelemetryFixture('community', 'real');
-      // Minimal valid invocation: always need --skill (record-keeping)
-      // plus the flag under test (when distinct from --skill).
-      const args = ['--skill', 'extend:contract-test'];
-      const sessionTag = `sid-${flag.replace(/-/g, '')}`;
-      switch (flag) {
-        case '--source':
-          args.push('--source', 'gstack-extend', '--session-id', sessionTag);
-          break;
-        case '--skill':
-          args[1] = 'extend:contract-test'; // already set
-          args.push('--session-id', sessionTag);
-          break;
-        case '--duration':
-          args.push('--duration', '42', '--session-id', sessionTag);
-          break;
-        case '--outcome':
-          args.push('--outcome', 'success', '--session-id', sessionTag);
-          break;
-        case '--session-id':
-          args.push('--session-id', sessionTag);
-          break;
-        case '--event-type':
-          args.push('--event-type', 'skill_run', '--session-id', sessionTag);
-          break;
+      // Every invocation needs --skill (required for record-keeping); add the
+      // flag under test on top of that (skipping the duplicate when testing --skill).
+      const args = ['--skill', 'extend:contract-test', '--session-id', `sid-${flag.replace(/-/g, '')}`];
+      if (flag !== '--skill' && flag !== '--session-id') {
+        args.push(flag, PER_FLAG_CASES[flag].value);
+      } else if (flag === '--skill') {
+        // Override the placeholder skill with the test's expected value
+        args[1] = PER_FLAG_CASES[flag].value;
+      } else {
+        // --session-id: override the auto-generated tag
+        args[3] = PER_FLAG_CASES[flag].value;
       }
       const r = spawnSync(GSTACK_TELEMETRY_LOG, args, {
         env: fix.env, encoding: 'utf8', timeout: 10_000,
       });
       expect(r.status).toBe(0);
-      // Tier=community always writes one row when --skill is present
-      expect(fix.readJsonl().length).toBe(1);
+      const rows = fix.readJsonl();
+      expect(rows.length).toBe(1);
+      // Assert the flag's value actually landed in the schema. If gstack
+      // renames the flag, the value silently drops and this assertion fails.
+      expect(rows[0][PER_FLAG_CASES[flag].field]).toBe(PER_FLAG_CASES[flag].expected);
     });
   }
 });

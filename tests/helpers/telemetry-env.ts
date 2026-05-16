@@ -95,8 +95,12 @@ export function makeTelemetryFixture(tier: TelemetryTier, mode: FixtureMode = 'r
   } else if (mode === 'stub') {
     stubDir = mkdtempSync(join(tmpdir(), 'gx-stub-'));
     const stub = `#!/usr/bin/env bash
-# Capturing stub for gstack-telemetry-log. Records argv to captured-args.txt.
-printf '%s\\n' "$*" >> "${stubDir}/captured-args.txt"
+# Capturing stub for gstack-telemetry-log. Records argv to captured-args.txt
+# as one invocation per line; args within an invocation are tab-separated so
+# arg boundaries survive quoting (printf '%s\\n' "$*" would join on IFS and
+# lose the boundary between "--skill" and "extend:my skill" if the value ever
+# contained whitespace).
+{ for _a in "$@"; do printf '%s\\t' "$_a"; done; printf '\\n'; } >> "${stubDir}/captured-args.txt"
 exit 0
 `;
     const stubPath = join(stubDir, 'gstack-telemetry-log');

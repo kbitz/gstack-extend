@@ -103,22 +103,14 @@ After running, note the `GE_TELEMETRY:` echo line — paste the `session=` and `
 _GE_SKILL="extend:pair-review"
 _GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
 _GE_TEL_START=$(date +%s)
-_GE_SESSION_ID="$$-$_GE_TEL_START"
+_GE_SESSION_ID="$$-$_GE_TEL_START-$RANDOM"
 if [ "${_GE_TEL:-off}" != "off" ]; then
   mkdir -p ~/.gstack/analytics
-  _GE_REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")
+  _GE_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+  _GE_REPO=$(basename "${_GE_REPO_TOP:-unknown}")
   _GE_GVER=$(cat ~/.claude/skills/gstack/VERSION 2>/dev/null | tr -d '[:space:]' || echo "unknown")
   _GE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   printf '%s\n' '{"skill":"'"$_GE_SKILL"'","ts":"'"$_GE_TS"'","repo":"'"$_GE_REPO"'","source":"gstack-extend"}' >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
-  printf '%s\n' '{"skill":"'"$_GE_SKILL"'","ts":"'"$_GE_TS"'","session_id":"'"$_GE_SESSION_ID"'","gstack_version":"'"$_GE_GVER"'"}' > ~/.gstack/analytics/.pending-"$_GE_SESSION_ID" 2>/dev/null || true
-  for _GE_PF in $(find ~/.gstack/analytics -maxdepth 1 -name '.pending-*' 2>/dev/null); do
-    [ -f "$_GE_PF" ] || continue
-    [ "$(basename "$_GE_PF")" = ".pending-$_GE_SESSION_ID" ] && continue
-    if [ -x "$HOME/.claude/skills/gstack/bin/gstack-telemetry-log" ]; then
-      "$HOME/.claude/skills/gstack/bin/gstack-telemetry-log" --event-type skill_run --skill _pending_finalize --outcome unknown --session-id "$_GE_SESSION_ID" 2>/dev/null || true
-    fi
-    break
-  done
   echo "GE_TELEMETRY: session=$_GE_SESSION_ID start=$_GE_TEL_START"
 fi
 ```
@@ -1504,12 +1496,11 @@ Replace `_GE_TEL_START` and `_GE_SESSION_ID` with the values the preamble's `GE_
 ```bash
 _GE_SKILL="extend:pair-review"
 _GE_TEL_START=$(date +%s)               # REPLACE with start= value from preamble's GE_TELEMETRY line
-_GE_SESSION_ID="$$-$_GE_TEL_START"      # REPLACE with session= value from preamble's GE_TELEMETRY line
+_GE_SESSION_ID="$$-$_GE_TEL_START-$RANDOM"      # REPLACE with session= value from preamble's GE_TELEMETRY line
 _GE_OUTCOME="success"                   # success | error | abort | unknown
 _GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
 _GE_TEL_END=$(date +%s)
 _GE_TEL_DUR=$(( _GE_TEL_END - _GE_TEL_START ))
-rm -f ~/.gstack/analytics/.pending-"$_GE_SESSION_ID" 2>/dev/null || true
 if [ "${_GE_TEL:-off}" != "off" ]; then
   _GE_BIN=""
   if command -v gstack-extend-telemetry >/dev/null 2>&1; then

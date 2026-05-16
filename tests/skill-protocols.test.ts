@@ -143,10 +143,10 @@ const CANONICAL_TELEMETRY_PREAMBLE = PREAMBLE_MATCH ? PREAMBLE_MATCH[0] : '';
 const CANONICAL_TELEMETRY_EPILOGUE = EPILOGUE_MATCH ? EPILOGUE_MATCH[0] : '';
 
 function telemetryPreambleFor(skill: string): string {
-  return CANONICAL_TELEMETRY_PREAMBLE.replace('"extend:full-review"', `"extend:${skill}"`);
+  return CANONICAL_TELEMETRY_PREAMBLE.replaceAll('"extend:full-review"', `"extend:${skill}"`);
 }
 function telemetryEpilogueFor(skill: string): string {
-  return CANONICAL_TELEMETRY_EPILOGUE.replace('"extend:full-review"', `"extend:${skill}"`);
+  return CANONICAL_TELEMETRY_EPILOGUE.replaceAll('"extend:full-review"', `"extend:${skill}"`);
 }
 
 // ─── Roadmap-only verbatim assertions ─────────────────────────────────

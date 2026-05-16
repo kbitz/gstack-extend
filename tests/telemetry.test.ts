@@ -41,11 +41,19 @@ describe('bin/gstack-extend-telemetry (unit)', () => {
     expect(r.status).toBe(0);
     const captured = fix.readStubArgs();
     expect(captured.length).toBe(1);
-    expect(captured[0]).toMatch(/^--source gstack-extend /);
-    expect(captured[0]).toContain('--skill extend:test');
-    expect(captured[0]).toContain('--duration 5');
-    expect(captured[0]).toContain('--outcome success');
-    expect(captured[0]).toContain('--session-id sid-stub');
+    // Stub captures args tab-separated to preserve arg boundaries
+    const args = captured[0].split('\t').filter((a) => a !== '');
+    expect(args[0]).toBe('--source');
+    expect(args[1]).toBe('gstack-extend');
+    // Confirm each flag-value pair is intact (boundary-aware, not substring search)
+    expect(args).toContain('--skill');
+    expect(args[args.indexOf('--skill') + 1]).toBe('extend:test');
+    expect(args).toContain('--duration');
+    expect(args[args.indexOf('--duration') + 1]).toBe('5');
+    expect(args).toContain('--outcome');
+    expect(args[args.indexOf('--outcome') + 1]).toBe('success');
+    expect(args).toContain('--session-id');
+    expect(args[args.indexOf('--session-id') + 1]).toBe('sid-stub');
   });
 
   test.if(HAS_GSTACK)('real mode + tier=community: writes one jsonl row with source:gstack-extend', () => {
@@ -77,19 +85,22 @@ describe('bin/gstack-extend-telemetry (unit)', () => {
 // with the start_time/session_id substituted from the preamble's GE_TELEMETRY
 // echo line — exactly the workflow contract.
 
+// PREAMBLE_TEMPLATE mirrors the canonical SHARED:telemetry-preamble block.
+// After R2 the block writes ONLY the start line — no .pending markers
+// (eliminated to prevent phantom-row pollution under concurrent skills).
 const PREAMBLE_TEMPLATE = (skill: string) => `
 set -uo pipefail
 _GE_SKILL="extend:${skill}"
 _GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
 _GE_TEL_START=$(date +%s)
-_GE_SESSION_ID="$$-$_GE_TEL_START"
+_GE_SESSION_ID="$$-$_GE_TEL_START-$RANDOM"
 if [ "\${_GE_TEL:-off}" != "off" ]; then
   mkdir -p ~/.gstack/analytics
-  _GE_REPO=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")
+  _GE_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+  _GE_REPO=$(basename "\${_GE_REPO_TOP:-unknown}")
   _GE_GVER=$(cat ~/.claude/skills/gstack/VERSION 2>/dev/null | tr -d '[:space:]' || echo "unknown")
   _GE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   printf '%s\\n' '{"skill":"'"$_GE_SKILL"'","ts":"'"$_GE_TS"'","repo":"'"$_GE_REPO"'","source":"gstack-extend"}' >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
-  printf '%s\\n' '{"skill":"'"$_GE_SKILL"'","ts":"'"$_GE_TS"'","session_id":"'"$_GE_SESSION_ID"'","gstack_version":"'"$_GE_GVER"'"}' > ~/.gstack/analytics/.pending-"$_GE_SESSION_ID" 2>/dev/null || true
   echo "GE_TELEMETRY: session=$_GE_SESSION_ID start=$_GE_TEL_START"
 fi
 `;
@@ -100,7 +111,6 @@ _GE_OUTCOME="${outcome}"
 _GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
 _GE_TEL_END=$(date +%s)
 _GE_TEL_DUR=$(( _GE_TEL_END - _GE_TEL_START ))
-rm -f ~/.gstack/analytics/.pending-"$_GE_SESSION_ID" 2>/dev/null || true
 if [ "\${_GE_TEL:-off}" != "off" ]; then
   _GE_BIN=""
   if command -v gstack-extend-telemetry >/dev/null 2>&1; then
