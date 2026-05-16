@@ -159,6 +159,15 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'src/audit/**',
     'scripts/init-templates/**',
   ],
+  // Track 13A — telemetry wrapper + per-skill emit blocks. The unit/integration
+  // tests spawn bin/gstack-extend-telemetry through a shell; skill-protocols
+  // already registers skills/** above for the canonical-block drift assertions.
+  'tests/telemetry.test.ts': [
+    'bin/gstack-extend-telemetry',
+  ],
+  'tests/telemetry-contract.test.ts': [
+    'bin/gstack-extend-telemetry',
+  ],
 };
 
 /**

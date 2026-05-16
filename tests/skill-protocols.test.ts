@@ -122,6 +122,33 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_CONFUSION_HEAD, label: 'confusion-head' },
 ];
 
+// ─── Track 13A: telemetry-preamble + telemetry-epilogue blocks ──────────
+//
+// The 5 extend skills carry two bash blocks each (preamble + epilogue) that
+// emit telemetry to ~/.gstack/analytics/skill-usage.jsonl with --source
+// gstack-extend marking. Only the `_GE_SKILL="extend:<name>"` line differs
+// per skill; everything else is byte-identical across the cohort.
+//
+// Rather than redefining the canonical text in TypeScript (escaping bash
+// `${...}` interpolations and `\n` printf sequences is fragile), we extract
+// each block from skills/full-review.md as the canonical source, then
+// template the skill name to match the file under test. Mirrors the
+// Track 10A SHARED:upgrade-flow extraction pattern below.
+const TELEMETRY_PREAMBLE_RE = /<!-- SHARED:telemetry-preamble -->[\s\S]*?<!-- \/SHARED:telemetry-preamble -->/;
+const TELEMETRY_EPILOGUE_RE = /<!-- SHARED:telemetry-epilogue -->[\s\S]*?<!-- \/SHARED:telemetry-epilogue -->/;
+const fullReviewContent = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
+const PREAMBLE_MATCH = TELEMETRY_PREAMBLE_RE.exec(fullReviewContent);
+const EPILOGUE_MATCH = TELEMETRY_EPILOGUE_RE.exec(fullReviewContent);
+const CANONICAL_TELEMETRY_PREAMBLE = PREAMBLE_MATCH ? PREAMBLE_MATCH[0] : '';
+const CANONICAL_TELEMETRY_EPILOGUE = EPILOGUE_MATCH ? EPILOGUE_MATCH[0] : '';
+
+function telemetryPreambleFor(skill: string): string {
+  return CANONICAL_TELEMETRY_PREAMBLE.replace('"extend:full-review"', `"extend:${skill}"`);
+}
+function telemetryEpilogueFor(skill: string): string {
+  return CANONICAL_TELEMETRY_EPILOGUE.replace('"extend:full-review"', `"extend:${skill}"`);
+}
+
 // ─── Roadmap-only verbatim assertions ─────────────────────────────────
 //
 // These strings live in skills/roadmap.md only. Load-bearing for the
@@ -234,6 +261,49 @@ describe('verbatim graft blocks (shared across all 5 skills)', () => {
         }
       });
     }
+  }
+});
+
+describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill name)', () => {
+  test('canonical preamble block extracted from skills/full-review.md', () => {
+    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toBe('');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('<!-- SHARED:telemetry-preamble -->');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('_GE_SKILL="extend:full-review"');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('source":"gstack-extend"');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('GE_TELEMETRY: session=');
+  });
+  test('canonical epilogue block extracted from skills/full-review.md', () => {
+    expect(CANONICAL_TELEMETRY_EPILOGUE).not.toBe('');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('<!-- SHARED:telemetry-epilogue -->');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('_GE_SKILL="extend:full-review"');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('bin/gstack-extend-telemetry');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('--session-id "$_GE_SESSION_ID"');
+  });
+
+  for (const skill of SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    test(`${skill} embeds the canonical telemetry-preamble block (skill name: extend:${skill})`, () => {
+      const expected = telemetryPreambleFor(skill);
+      if (!content.includes(expected)) {
+        throw new Error(
+          `${skill} drift in SHARED:telemetry-preamble — propagate canonical text from skills/full-review.md`,
+        );
+      }
+    });
+    test(`${skill} embeds the canonical telemetry-epilogue block (skill name: extend:${skill})`, () => {
+      const expected = telemetryEpilogueFor(skill);
+      if (!content.includes(expected)) {
+        throw new Error(
+          `${skill} drift in SHARED:telemetry-epilogue — propagate canonical text from skills/full-review.md`,
+        );
+      }
+    });
   }
 });
 

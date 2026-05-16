@@ -29,17 +29,6 @@ _1 task . ~850 LOC . medium-high risk . [new bin + scaffold templates + setup wi
 _touches: bin/gstack-extend, bin/lib/, scripts/init-templates/, skills/gstack-extend-init.md, setup, tests/init-*.test.ts, tests/setup-init-wire.test.ts, tests/helpers/touchfiles.ts_
 - **`gstack-extend init <project>` cathedral** -- full bootstrap with starter ROADMAP.md (state-section template), CLAUDE.md scaffold (per-language test-command detect: bun/cargo/go/python), CHANGELOG.md, TODOS.md (with `[manual]`-tagged first-session checklist), PROGRESS.md, VERSION, `docs/{designs,archive}/`, project registration in `~/.gstack-extend/projects.json` (JSON not YAML — jq-native), and post-render audit gate (per D3.A: leave files + retry hint on audit fail). Subcommand namespace reserved: `list/status/doctor/migrate` as stubs printing "coming in a future Group". `setup` wires `~/.local/bin/gstack-extend` symlink (fail-soft + PATH tip) and auto-self-registers (D4.A, `|| true` wrapped). Flag matrix: `default | --dry-run | --no-prompt | --migrate` × `empty | partial | onboarded` (defensive-minimal D2.B scaffold refuses on canonical file collision). `_die_with_line()` ERR-trap helper in install-safety.sh. POSIX-portable readlink for invocation via PATH symlink (macOS + Linux). _bin/gstack-extend, bin/lib/projects-registry.sh, scripts/init-templates/*.tmpl (6 files), skills/gstack-extend-init.md, setup, 5 test files, ~850 lines._ (M-H)
 
-### Group 13: Telemetry Parity with Gstack
-
-gstack-extend skills emit nothing today; mind-meld retro flying over a
-project sees gstack activity but is blind to all gstack-extend skill
-runs.
-
-##### Track 13A: `bin/gstack-extend-telemetry` + per-skill emit blocks
-_1 task . ~200 LOC . low risk . [new helper + per-skill blocks]_
-_touches: bin/gstack-extend-telemetry, skills/full-review.md, skills/pair-review.md, skills/review-apparatus.md, skills/test-plan.md, skills/roadmap.md_
-- **Add helper + per-skill emit blocks** -- helper appends one JSON line per activation to `~/.gstack/analytics/skill-usage.jsonl` matching gstack's schema (`{"skill","duration_s","outcome","session","ts","repo"}`); mark via skill-name prefix (`extend:roadmap`) or `"source":"gstack-extend"`. Append preamble + completion block to each gstack-extend skill following gstack's pattern at `retro/SKILL.md:58-65` and `:631-650`. Gate on `~/.gstack/.telemetry-prompted` / `gstack-config get telemetry`. _bin/gstack-extend-telemetry, skills/*.md (5 files), ~200 lines._ (M)
-
 ### Group 14: New Skill `/claude-md-cleanup`
 
 _Depends on: Group 12_
@@ -69,11 +58,11 @@ _touches: tests/skill-protocols.test.ts_
 
 ### Group 16: Skill-File Trims (parallel)
 
-_Depends on: Group 13, Group 15_
-
-Telemetry adds blocks first; canonical extraction must lock shared
-fragments before trim Tracks can run safely. Tracks 16A-16D are
-file-disjoint and run fully in parallel.
+Group 13 (Telemetry parity) shipped in v0.22.0.0, so its `SHARED:telemetry-*`
+blocks are now part of the canonical surface the trims must preserve.
+Group 15 (canonical-fragment extraction, immediately preceding) is the
+remaining prerequisite. Tracks 16A-16D are file-disjoint and run fully
+in parallel.
 
 ##### Track 16A: Trim `pair-review.md`
 _1 task . ~100 LOC (deletions) . low risk . [pair-review skill file]_
@@ -139,14 +128,14 @@ _touches: src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts_
 
 ### Group 20: Realpath Preflight for Layout Scaffolding (non-solo contexts)
 
-_Depends on: Group 13_
+_Depends on: none_
 
-Collides with Telemetry parity on `skills/roadmap.md` (Group 13 appends
-the telemetry emit block; this Group amends the Layout Scaffolding
-section preflight). Defense-in-depth against malicious-repo clones
-where `docs` is a symlink to an external directory; mirrors the
-`is_safe_install_path` pattern Track 5A shipped for the install
-context.
+Group 13 (Telemetry parity) shipped in v0.22.0.0; the previously-noted
+collision on `skills/roadmap.md` is resolved. Group 20 amends the Layout
+Scaffolding section preflight in `skills/roadmap.md` as defense-in-depth
+against malicious-repo clones where `docs` is a symlink to an external
+directory; mirrors the `is_safe_install_path` pattern Track 5A shipped
+for the install context.
 
 ##### Track 20A: Add realpath preflight to Layout Scaffolding skill prose
 _1 task . ~30 LOC . low risk . [skills/roadmap.md skill prose only]_
@@ -173,14 +162,13 @@ _touches: skills/roadmap.md, bin/lib/layout-scaffold.sh, bin/gstack-extend_
 Adjacency list:
 ```
 - Group 12 ← {}
-- Group 13 ← {}
 - Group 14 ← {12}
 - Group 15 ← {}
-- Group 16 ← {13, 15}
+- Group 16 ← {15}
 - Group 17 ← {14, 15, 16}
 - Group 18 ← {}
 - Group 19 ← {}
-- Group 20 ← {13}
+- Group 20 ← {}
 - Group 21 ← {12}
 ```
 
@@ -188,9 +176,6 @@ Track detail per group:
 ```
 Group 12: gstack-extend init scaffold
   +-- Track 12A .......... ~M-H . 1 task
-
-Group 13: Telemetry parity with gstack
-  +-- Track 13A .......... ~M . 1 task
 
 Group 14: New skill /claude-md-cleanup
   +-- Track 14A .......... ~M . 1 task
@@ -286,3 +271,6 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 
 #### Group 11: New Skill `/gstack-extend-upgrade` ✓ Shipped (v0.20.0.0)
 - Track 11A — _shipped (v0.20.0.0): /gstack-extend-upgrade skill + consolidate upgrade flow (#80)_
+
+#### Group 13: Telemetry Parity with Gstack ✓ Shipped (v0.22.0.0)
+- Track 13A — _shipped (v0.22.0.0): bin/gstack-extend-telemetry wrapper + canonical preamble/epilogue blocks in 5 skill files. Every extend skill activation now writes start + end lines to ~/.gstack/analytics/skill-usage.jsonl with extend:<skill> name and source:gstack-extend field; mind-meld retro / /retro pick up extend activity with zero downstream changes. Wrapper falls back silently when gstack isn't installed. Drift-lock test extracts canonical blocks from skills/full-review.md and asserts each other skill embeds the templated variant. Opportunistic contract test catches future gstack flag renames._

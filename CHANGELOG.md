@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0.0] - 2026-05-16
+
+### Added: Telemetry parity with gstack (Track 13A)
+
+Until this version, gstack-extend skills emitted nothing. A mind-meld retro flying over a project saw every gstack skill activation (with duration, outcome, repo, source) and was blind to all gstack-extend activity — the five extend skills (`/full-review`, `/pair-review`, `/review-apparatus`, `/test-plan`, `/roadmap`) could run hundreds of times across a week and the activity log would show zero entries for them.
+
+This Track closes that gap. Every extend skill activation now writes two JSON lines to `~/.gstack/analytics/skill-usage.jsonl` — a start line on entry and a full-record end line on completion — marked with both an `extend:<skill>` name prefix AND a `source:gstack-extend` field. The pair lands in the same sink as gstack's own events, so existing readers (mind-meld retro, `/retro`, future cross-tool analytics) pick up extend activity with zero downstream code changes.
+
+**Added: `bin/gstack-extend-telemetry`** — a ~30 LOC wrapper around gstack's existing `gstack-telemetry-log`. It prepends `--source gstack-extend` to every invocation, passes the rest through, and exits 0 silently when `gstack-telemetry-log` isn't on PATH or in the canonical install location. The 3-tier lookup (PATH → `$GSTACK_DIR/bin` → `$HOME/.claude/skills/gstack/bin`) means it works whether the user has gstack symlinked into PATH or just installed at the default location. `set -uo pipefail` (no `-e`) guarantees telemetry never crashes a skill mid-flight.
+
+**Added: per-skill preamble + epilogue blocks** — five extend skill files (`skills/{full-review,pair-review,review-apparatus,test-plan,roadmap}.md`) each gain two canonical bash blocks wrapped in `<!-- SHARED:telemetry-preamble -->` and `<!-- SHARED:telemetry-epilogue -->` markers. The preamble mirrors gstack's `retro/SKILL.md:77-89` pattern: read telemetry tier via `gstack-config get telemetry` (silent fallback to `off` if missing), write the start line + a `.pending-$SESSION_ID` marker, then scan for stale markers from prior crashed sessions and finalize one via `gstack-telemetry-log`. The epilogue computes duration, removes our own marker, and calls the wrapper with `--skill extend:<name> --duration N --outcome X`. Only the `_GE_SKILL="extend:<name>"` line differs per skill; everything else is byte-identical across the cohort.
+
+**Added: drift-lock tests** — `tests/skill-protocols.test.ts` now extracts the canonical preamble + epilogue blocks from `skills/full-review.md` and asserts each of the other 4 skill files contains the templated version with its own `extend:<skill>` name. Mirrors the Track 10A `SHARED:upgrade-flow` extraction pattern. Any future drift across the cohort fails the test with a "propagate canonical text" message.
+
+**Added: integration + contract test coverage** — `tests/telemetry.test.ts` runs the wrapper through 4 unit scenarios (tier=community writes, tier=off skips, missing-gstack no-ops, --source prepending verified via PATH stub) plus 3 end-to-end scenarios that spawn bash subshells executing the preamble + epilogue snippets and assert the resulting jsonl state. `tests/telemetry-contract.test.ts` is opportunistic: when gstack is installed it runs the wrapper against the real `gstack-telemetry-log` and asserts all 6 flags we depend on (`--source`, `--skill`, `--duration`, `--outcome`, `--session-id`, `--event-type`) round-trip correctly to the jsonl schema; when gstack is absent it SKIPs with an explicit marker. Catches drift from a future gstack release that renames a flag and silently breaks our wrapper.
+
+**Test isolation: `tests/helpers/telemetry-env.ts`** — every telemetry test sets `HOME=$tmpdir` and symlinks the real gstack install into `$tmpdir/.claude/skills/gstack/` so the wrapper resolves the real `gstack-telemetry-log` but writes go to `$tmpdir/.gstack/analytics/`. Without this, `bun test` would pollute the developer's real telemetry file with test fixtures forever, corrupting the very dataset mind-meld retro reads. Three fixture modes (`real` / `stub` / `absent`) cover the wrapper's three lookup paths.
+
+Net diff: +369 lines across the 5 skill files + the helper wrapper + the helper module + 3 test files (1153 pass / 1 unrelated pre-existing fail in `parsers-roadmap.test.ts`).
+
 ## [0.21.0.0] - 2026-05-16
 
 ### Added: `gstack-extend init <project>` — bootstrap any new project in one command (Track 12A)

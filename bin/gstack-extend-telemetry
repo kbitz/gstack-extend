@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# gstack-extend-telemetry — thin wrapper around gstack's gstack-telemetry-log.
+#
+# Marks every event with --source gstack-extend so mind-meld retro can
+# distinguish extend-skill activity from gstack-skill activity in the
+# shared ~/.gstack/analytics/skill-usage.jsonl sink.
+#
+# Silent no-op when gstack-telemetry-log is not findable (gstack not
+# installed) — extend skills run fine without telemetry.
+#
+# Lookup order:
+#   1. PATH (command -v gstack-telemetry-log)
+#   2. $GSTACK_DIR/bin/gstack-telemetry-log (matches gstack's own convention)
+#   3. ~/.claude/skills/gstack/bin/gstack-telemetry-log (canonical install)
+#
+# Honors GSTACK_HOME / GSTACK_STATE_DIR by inheritance (bash env passes
+# through to the child process). Tests MUST set GSTACK_HOME=$tmpdir to
+# avoid polluting the user's real ~/.gstack/analytics/.
+#
+# Usage:
+#   gstack-extend-telemetry --skill extend:roadmap --duration 142 \
+#     --outcome success --session-id "12345-1710756600"
+#
+# NOTE: set -uo pipefail (no -e) — telemetry must never crash a skill.
+set -uo pipefail
+
+_GTL=""
+if command -v gstack-telemetry-log >/dev/null 2>&1; then
+  _GTL="gstack-telemetry-log"
+elif [ -n "${GSTACK_DIR:-}" ] && [ -x "$GSTACK_DIR/bin/gstack-telemetry-log" ]; then
+  _GTL="$GSTACK_DIR/bin/gstack-telemetry-log"
+elif [ -x "$HOME/.claude/skills/gstack/bin/gstack-telemetry-log" ]; then
+  _GTL="$HOME/.claude/skills/gstack/bin/gstack-telemetry-log"
+else
+  exit 0
+fi
+
+# Prepend --source gstack-extend; later --source on the command line wins
+# per gstack-telemetry-log's case-based arg parser (last flag overrides).
+"$_GTL" --source gstack-extend "$@" 2>/dev/null || true
+exit 0
