@@ -96,6 +96,7 @@ SKILLS=(
   review-apparatus
   test-plan
   gstack-extend-upgrade
+  gstack-extend-init
 )
 
 # Historical skills that prior releases installed. Iterated on every install
@@ -141,6 +142,23 @@ if [ "$UNINSTALL" -eq 1 ]; then
       fi
     fi
   done
+
+  # ─── CLI symlink uninstall ──────────────────────────────────────────
+  # Mirrors the CLI install path below. Only remove if the symlink points
+  # at OUR bin — never touch a symlink pointing elsewhere (could be the
+  # user's own `gstack-extend` shim or another project's).
+  cli_link="$HOME/.local/bin/gstack-extend"
+  cli_expected="$SCRIPT_DIR/bin/gstack-extend"
+  if [ -L "$cli_link" ]; then
+    link_target="$(readlink "$cli_link" 2>/dev/null || true)"
+    if [ "$link_target" = "$cli_expected" ]; then
+      rm -f "$cli_link"
+      echo "Removed gstack-extend CLI symlink ($cli_link)"
+    else
+      echo "Skipped gstack-extend CLI symlink (points elsewhere: $link_target)"
+    fi
+  fi
+
   echo "Uninstall complete."
   exit 0
 fi
@@ -213,3 +231,55 @@ for skill in "${SKILLS[@]}"; do
 done
 
 echo "Installed $installed skills into $SKILLS_DIR"
+
+# ─── CLI symlink wire ────────────────────────────────────────────────
+#
+# bin/gstack-extend is the project-lifecycle CLI. It must be invokable
+# from outside the gstack-extend repo, so we symlink it into a PATH-y
+# location. Fail-soft: if ~/.local/bin doesn't exist, print a tip and
+# move on — never break the skill install over a missing bin dir.
+cli_bin_src="$SCRIPT_DIR/bin/gstack-extend"
+cli_bin_dir="$HOME/.local/bin"
+cli_bin_dst="$cli_bin_dir/gstack-extend"
+if [ -f "$cli_bin_src" ] && [ -x "$cli_bin_src" ]; then
+  if [ -d "$cli_bin_dir" ]; then
+    # Refuse to overwrite a non-symlink already at the path.
+    if [ -e "$cli_bin_dst" ] && [ ! -L "$cli_bin_dst" ]; then
+      echo "Warning: $cli_bin_dst exists and is not a symlink; skipping CLI wire" >&2
+    else
+      ln -snf "$cli_bin_src" "$cli_bin_dst"
+      echo "Wired gstack-extend CLI → $cli_bin_dst"
+      case ":$PATH:" in
+        *":$cli_bin_dir:"*) ;;
+        *) echo "  Tip: add $cli_bin_dir to your PATH so 'gstack-extend' resolves directly." ;;
+      esac
+    fi
+  else
+    echo "Tip: ~/.local/bin doesn't exist. Either create it and add to PATH,"
+    echo "  or invoke directly: $cli_bin_src init <project>"
+  fi
+fi
+
+# ─── Self-registration in projects.json ─────────────────────────────
+#
+# D4.A: setup auto-writes the gstack-extend repo's own entry into the
+# registry the first time it runs after Track 12A ships. Wrapped so a
+# registry-write bug never breaks install. --migrate is the right
+# subcommand here: gstack-extend repo IS canonically onboarded, just
+# not yet registered.
+if [ -x "$cli_bin_src" ]; then
+  # Capture stderr so a failed self-register reports its first useful
+  # line (audit STATUS:fail, permission error, etc.) instead of being
+  # silently swallowed and pointing the user at a retry that'll fail
+  # the same way.
+  _self_register_log=$(mktemp /tmp/gstack-extend-self-register.XXXXXX)
+  if "$cli_bin_src" init --migrate --no-prompt "$SCRIPT_DIR" >/dev/null 2>"$_self_register_log"; then
+    echo "Self-registered gstack-extend in ~/.gstack-extend/projects.json"
+  else
+    echo "Note: gstack-extend self-registration skipped (registry write or audit failed)." >&2
+    # First non-empty line of stderr — usually the diagnostic the user needs.
+    grep -m1 . "$_self_register_log" 2>/dev/null | sed 's/^/  /' >&2 || true
+    echo "  Retry: gstack-extend init --migrate $SCRIPT_DIR" >&2
+  fi
+  rm -f "$_self_register_log"
+fi
