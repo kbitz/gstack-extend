@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0.2] - 2026-05-22
+
+### Fixed: Group 14 — green `bun run test` baseline restored (drift-proof real-ROADMAP test)
+
+`bun run test` now passes clean on `origin/main`. The `parsers-roadmap.test.ts` "real-world" block asserted hard-coded lifecycle states for specific Groups (`g6.isComplete === false`, `t7a.isComplete === false`) that were correct only while those Groups sat in `## Current Plan`. Groups 6 and 7 shipped and migrated into `## Shipped`, so the parser correctly resolved them to `shipped` — but the test still expected the old answers and failed. `/ship` had been skipping the suite on every run as a result.
+
+**Root cause:** a test reading the *living* `docs/ROADMAP.md` and asserting on specific Group/Track numbers that move every release. The parser was never wrong; the assertions rotted. A `/plan-ceo-review` plus a Codex outside-voice pass caught that the failure undercounted (two stale assertions, not one) and that a naive repoint would have re-broken on a fully-drained roadmap.
+
+**Fixed:** dropped the two volatile assertions; kept only the frozen `## Shipped` anchors (Groups 1 and 5, which never drift); and added a synthetic `state-section enclosure` fixture that proves `## Shipped` → complete and `## Current Plan` → not-complete deterministically, off the live document. Lifecycle behavior is now covered by controlled markdown instead of by reading a file that changes every ship. Test-only change; the parser is untouched.
+
 ## [0.22.0.1] - 2026-05-22
 
 ### Changed: roadmap regeneration — dropped `/claude-md-cleanup`, drained the inbox, shipped Group 12
