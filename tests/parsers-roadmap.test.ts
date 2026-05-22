@@ -68,6 +68,34 @@ describe('parseRoadmap — Groups', () => {
   });
 });
 
+describe('parseRoadmap — state-section enclosure (v2) drives completion', () => {
+  // Deterministic coverage of the exact path the real-world ROADMAP test used
+  // to assert via hard-coded group numbers (which drifted every ship). A Group
+  // under `## Shipped` resolves to `shipped` purely by section enclosure — even
+  // with NO inline `✓` marker — and a Group under `## Current Plan` resolves to
+  // `current-plan`. Section enclosure takes precedence over inline markers
+  // (roadmap.ts), so omitting the marker isolates the enclosure logic.
+  test('Group under ## Shipped is complete; under ## Current Plan is not (no inline markers)', () => {
+    const md = [
+      '## Current Plan',
+      '### Group 1: Active',
+      '### Track 1A: Do the thing',
+      '',
+      '## Shipped',
+      '#### Group 2: Done',
+      '- Track 2A — shipped (v1.0.0)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const g1 = r.value.groups.find((g) => g.num === '1');
+    const g2 = r.value.groups.find((g) => g.num === '2');
+    expect(g1?.state).toBe('current-plan');
+    expect(g1?.isComplete).toBe(false);
+    expect(g2?.state).toBe('shipped');
+    expect(g2?.isComplete).toBe(true);
+  });
+});
+
 describe('parseRoadmap — Group _Depends on:_', () => {
   test('none / em-dash / single dash all map to kind: none', () => {
     for (const annotation of ['none', '—', '-', '---']) {
@@ -472,20 +500,17 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     const content = await file.text();
     const r = parseRoadmap(content, deps());
     expect(r.errors).toEqual([]);
-    // v2 grammar: shipped Groups (1-5) live in `## Shipped` with bullet-form
-    // Tracks. The parser still picks up the Group headings and marks them
-    // complete via the `✓ Shipped (vX.Y.Z)` heading suffix.
+    // Frozen anchors: Groups 1 and 5 are permanently in `## Shipped`, so the
+    // parser resolves them to `shipped` via section enclosure. These never
+    // drift as the roadmap advances. Specific *active* group/track numbers are
+    // intentionally NOT asserted here — they migrate into `## Shipped` on every
+    // ship and rot the assertion (the bug Track 14A fixed). Lifecycle behavior
+    // is covered deterministically by the synthetic `state-section enclosure`
+    // fixture, not by reading the live document.
     const g1 = r.value.groups.find((g) => g.num === '1');
     expect(g1?.isComplete).toBe(true);
     const g5 = r.value.groups.find((g) => g.num === '5');
     expect(g5?.isComplete).toBe(true);
-    // Active Groups (6+) parse and are NOT marked complete.
-    const g6 = r.value.groups.find((g) => g.num === '6');
-    expect(g6?.isComplete).toBe(false);
-    // Group 7's first Track (current plan) is extracted as in-progress.
-    const t7a = r.value.tracks.find((t) => t.id === '7A');
-    expect(t7a).toBeDefined();
-    expect(t7a!.isComplete).toBe(false);
     // Group dep parse: kinds limited to 'unspecified' / 'none' / 'after'.
     // Active Groups in the current plan use explicit `_Depends on:_` blocks
     // OR rely on the preceding-Group default. No Group should have a
