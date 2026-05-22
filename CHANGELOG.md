@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0.1] - 2026-05-22
+
+### Changed: roadmap regeneration — dropped `/claude-md-cleanup`, drained the inbox, shipped Group 12
+
+A `/plan-ceo-review` of the planned `/claude-md-cleanup` skill (Track 14A) found that the official `claude-md-improver` plugin already covers the core need, so the Track was cut rather than built — a parallel gstack-extend skill would have been net-negative maintenance for marginal value-add. This release records that decision and the `/roadmap` regeneration that followed.
+
+**Removed:** Group 14 (`/claude-md-cleanup`) and every reference to it, including the now-dangling `Depends on: Group 14` edge in Group 17.
+
+**Changed: `docs/ROADMAP.md` regenerated.** Group 12 (`gstack-extend init`, shipped v0.21.0.0) moved from Current Plan into Shipped, slotted in version order between Groups 11 and 13. The two inbox items were drained: the pre-existing P1 `parsers-roadmap.test.ts` Group 6 completeness failure became the new Group 14 (listed first, since it unblocks the green test baseline), and the Track 12A `/review` polish bundle became Group 22. Collision-driven dependencies (Group 21 lands after both Group 20 and Group 22) plus WIP-lane sequencing keep the parallel front at the cap of 4. `bin/roadmap-audit` passes clean.
+
+**Changed: `docs/PROGRESS.md`** — corrected the stale Groups 8→12 chain (it claimed `/claude-md-cleanup` shipped in 11A) to reflect what actually shipped: Groups 8–13, v0.19.1.0 → v0.22.0.0.
+
+**Drained: `docs/TODOS.md`** — `## Unprocessed` inbox is now empty; both items were placed into the roadmap.
+
+Docs-only change. One pre-existing test failure remains (`parsers-roadmap.test.ts:484`, Group 6 staleness) — unrelated to this diff and tracked as the new Group 14.
+
 ## [0.22.0.0] - 2026-05-16
 
 ### Added: Telemetry parity with gstack (Track 13A)
