@@ -17,31 +17,22 @@ _(no Tracks currently mid-flight)_
 
 ## Current Plan
 
-### Group 12: `gstack-extend init <project>` Scaffold
+### Group 14: Fix `parsers-roadmap` Group 6 Completeness Failure
 
-Project bootstrapping continuation — Layout Scaffolding (shipped in
-Group 10) gave skill prose for `mkdir/git mv` against the canonical
-layout. This Group ships the dedicated `gstack-extend init <project>`
-command for greenfield projects.
+_Depends on: none_
 
-##### Track 12A: `gstack-extend init <project>` 10x-version
-_1 task . ~850 LOC . medium-high risk . [new bin + scaffold templates + setup wiring]_
-_touches: bin/gstack-extend, bin/lib/, scripts/init-templates/, skills/gstack-extend-init.md, setup, tests/init-*.test.ts, tests/setup-init-wire.test.ts, tests/helpers/touchfiles.ts_
-- **`gstack-extend init <project>` cathedral** -- full bootstrap with starter ROADMAP.md (state-section template), CLAUDE.md scaffold (per-language test-command detect: bun/cargo/go/python), CHANGELOG.md, TODOS.md (with `[manual]`-tagged first-session checklist), PROGRESS.md, VERSION, `docs/{designs,archive}/`, project registration in `~/.gstack-extend/projects.json` (JSON not YAML — jq-native), and post-render audit gate (per D3.A: leave files + retry hint on audit fail). Subcommand namespace reserved: `list/status/doctor/migrate` as stubs printing "coming in a future Group". `setup` wires `~/.local/bin/gstack-extend` symlink (fail-soft + PATH tip) and auto-self-registers (D4.A, `|| true` wrapped). Flag matrix: `default | --dry-run | --no-prompt | --migrate` × `empty | partial | onboarded` (defensive-minimal D2.B scaffold refuses on canonical file collision). `_die_with_line()` ERR-trap helper in install-safety.sh. POSIX-portable readlink for invocation via PATH symlink (macOS + Linux). _bin/gstack-extend, bin/lib/projects-registry.sh, scripts/init-templates/*.tmpl (6 files), skills/gstack-extend-init.md, setup, 5 test files, ~850 lines._ (M-H)
+Pre-existing P1: `tests/parsers-roadmap.test.ts:484` asserts Group 6 is NOT
+complete, but the parser marks it complete. Fails on clean `origin/main`;
+`/ship` skips it on every run. Unblocks the green `bun run test` baseline.
 
-### Group 14: New Skill `/claude-md-cleanup`
-
-_Depends on: Group 12_
-
-Collides on `setup` with Group 12. Audits CLAUDE.md for bloat, stale
-references, and content that should be pointers.
-
-##### Track 14A: `/claude-md-cleanup` skill
-_1 task . ~250 LOC . low risk . [new skill + setup wiring]_
-_touches: skills/claude-md-cleanup.md, setup_
-- **`/claude-md-cleanup` skill** -- detect duplication against README, TESTING.md, CONTRIBUTING.md; flag stale file references via `git ls-files`; flag long inline content that could be a pointer; produce diff with summary + per-section recommendation. Wire into setup's SKILLS array. _skills/claude-md-cleanup.md, setup, ~250 lines._ (M)
+##### Track 14A: Fix Group 6 completeness parse (or test expectation)
+_1 task . ~40 LOC . low risk . [parser + its test]_
+_touches: src/parsers/roadmap.ts, tests/parsers-roadmap.test.ts_
+- **Reconcile Group 6 completeness** -- the parser's `isComplete` heuristic infers completion from the surrounding `## Shipped` Bun-migration lineage context above Group 6. Either fix the parser to match current `## Shipped` semantics OR update the test's expected value if the parser is correct and ROADMAP intent changed. Read assertion (lines 479-485) + `src/parsers/roadmap.ts`. _src/parsers/roadmap.ts, tests/parsers-roadmap.test.ts, ~40 lines._ (S) _Source: [ship:track=13A]._
 
 ### Group 15: Canonical Fragment Extraction + Skill-Prose Drift Test
+
+_Depends on: none_
 
 Skill simplification pre-work — identifies byte-identical fragments
 across the four review-skill files and locks them via
@@ -86,10 +77,10 @@ _touches: skills/test-plan.md_
 
 ### Group 17: Promote Canonical Fragments to `SKILL.md.tmpl`
 
-_Depends on: Group 14, Group 15, Group 16_
+_Depends on: Group 15, Group 16_
 
-Collides with `/claude-md-cleanup` on `setup`; consumes canonical
-extraction + trims. Once skills are trimmed and fragments are locked,
+Consumes canonical extraction + trims. Once skills are trimmed and
+fragments are locked,
 promote them into a shared template so new skills inherit automatically
 and cross-cutting protocol additions become single-source instead of
 N-skill grafts.
@@ -100,6 +91,8 @@ _touches: .claude/skills/SKILL.md.tmpl, setup_
 - **Promote canonical fragments into a shared template** -- once Group 15 has identified which fragments rhyme and Group 16 has trimmed, promote them into `.claude/skills/SKILL.md.tmpl`. New skills inherit automatically. _.claude/skills/SKILL.md.tmpl, setup integration, ~150 lines._ (M)
 
 ### Group 18: Migrations Runner Parity for `gstack-extend` Upgrades
+
+_Depends on: none_
 
 Mirrors gstack's `gstack-upgrade/SKILL.md` Step 4.75. `bin/update-run`
 already has `OLD_VERSION`/`NEW_VERSION` in hand; this Group adds a
@@ -114,6 +107,8 @@ _touches: bin/update-run, migrations/, tests/update.test.ts_
 
 ### Group 19: Tighten `docs/`-Absent Audit Gate
 
+Sequenced after Group 18 (the default preceding-Group dependency) to cap
+concurrent WIP in the audit/infra lane; no hard technical dependency.
 Source: pre-landing `/review` codex round on Track 10A (formerly Track
 8A). Narrows the `DOC_LOCATION` "docs/ directory absent" finding's
 trigger from any-CLAUDE.md to a stronger gstack-extend signal, so
@@ -144,12 +139,14 @@ _touches: skills/roadmap.md_
 
 ### Group 21: Extract Layout Scaffolding into Shared Helper
 
-_Depends on: Group 12_
+_Depends on: Group 20, Group 22_
 
-Track 12A shipped an inline minimal scaffold (mkdir + canonical-file refusal) in
-`bin/gstack-extend`. The richer ~85-line Layout Scaffolding logic lives in
-`skills/roadmap.md` (lines 567-658). Until extracted, the two flows duplicate
-the same canonical-path knowledge with drift risk. Source:
+Sibling to Group 12 (shipped v0.21.0.0). Track 12A shipped an inline minimal
+scaffold (mkdir + canonical-file refusal) in `bin/gstack-extend`. The richer
+~85-line Layout Scaffolding logic lives in `skills/roadmap.md` (lines 567-658).
+Until extracted, the two flows duplicate the same canonical-path knowledge with
+drift risk. Collides with Group 20 on `skills/roadmap.md` and with Group 22 on
+`bin/gstack-extend`, so it lands after both. Source:
 [plan-ceo-review:track=12A] reviewer finding #1.
 
 ##### Track 21A: Extract Layout Scaffolding into shared helper
@@ -157,28 +154,40 @@ _1 task . ~120 LOC . low risk . [shared lib extraction]_
 _touches: skills/roadmap.md, bin/lib/layout-scaffold.sh, bin/gstack-extend_
 - **Layout Scaffolding shared helper** -- pull the ~85 lines of Layout Scaffolding logic currently inline in `skills/roadmap.md` (lines 567-658) into a shared helper consumable by both `/roadmap` (in-flight project fix) and `gstack-extend init` (day-zero scaffold). 12A's inline minimal scaffold gets replaced by a call to the same helper so future audit-gate refinements update one place. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
 
+### Group 22: Track 12A Init Polish
+
+_Depends on: Group 20_
+
+Low-priority polish bundle surfaced by pre-landing `/review` on Track 12A
+(merged v0.21.0.0). None blocking; mostly test-coverage hardening + small
+refactors on the `gstack-extend init` surface. Consolidated into one Track.
+Sequenced in the scaffolding lane (Group 20 → 22 → 21) to cap concurrent WIP;
+the only hard edge is Group 21 depending on this Group's `bin/gstack-extend` work.
+
+##### Track 22A: 12A init-surface polish + test coverage
+_1 task . ~200 LOC . low risk . [init bin + registry + init tests]_
+_touches: bin/gstack-extend, bin/lib/projects-registry.sh, tests/init-*.test.ts, tests/helpers/init-scope.ts, skills/gstack-extend-init.md_
+- **Init polish + coverage** -- (a) audit-failure path test (PATH-shim non-zero `roadmap-audit`, assert exit 1 + "audit FAILED" + "--migrate" hint + files-on-disk); (b) concurrent registry-write test (5-10 parallel `registry_upsert`, assert valid JSON); (c) `validate_name` edge-case tests (`..`, `.`, leading-dash, empty, Unicode); (d) `lang_detect` precedence tests; (e) setup self-register fail-soft test (corrupt projects.json → exit 0 + note); (f) `render_all` map ↔ CANONICAL_FILES DRY refactor; (g) extract shared `mkScope` tmpdir helper to `tests/helpers/init-scope.ts`; (h) `env -u GSTACK_EXTEND_STATE_DIR` guard on setup self-register; (i) mirror multi-hop readlink walker in skill preamble; (j) trim fresh-init audit output to non-pass sections. Registry slug-collision + orphan items deferred to a future `doctor` Track. _~200 lines._ (M) _Source: [review:track=12A]._
+
 ### Execution Map
 
 Adjacency list:
 ```
-- Group 12 ← {}
-- Group 14 ← {12}
+- Group 14 ← {}
 - Group 15 ← {}
 - Group 16 ← {15}
-- Group 17 ← {14, 15, 16}
+- Group 17 ← {15, 16}
 - Group 18 ← {}
-- Group 19 ← {}
+- Group 19 ← {18}
 - Group 20 ← {}
-- Group 21 ← {12}
+- Group 21 ← {20, 22}
+- Group 22 ← {20}
 ```
 
 Track detail per group:
 ```
-Group 12: gstack-extend init scaffold
-  +-- Track 12A .......... ~M-H . 1 task
-
-Group 14: New skill /claude-md-cleanup
-  +-- Track 14A .......... ~M . 1 task
+Group 14: Fix parsers-roadmap Group 6 completeness (P1)
+  +-- Track 14A .......... ~S . 1 task
 
 Group 15: Canonical fragments + section-name drift test
   +-- Track 15A .......... ~S . 2 tasks
@@ -203,9 +212,12 @@ Group 20: Realpath preflight for Layout Scaffolding
 
 Group 21: Extract Layout Scaffolding into shared helper
   +-- Track 21A .......... ~S . 1 task
+
+Group 22: Track 12A init polish
+  +-- Track 22A .......... ~M . 1 task
 ```
 
-**Total: 0 phases . 10 groups . 13 tracks remaining.**
+**Total: 0 phases . 9 groups . 10 tracks remaining.**
 
 ---
 
@@ -271,6 +283,9 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 
 #### Group 11: New Skill `/gstack-extend-upgrade` ✓ Shipped (v0.20.0.0)
 - Track 11A — _shipped (v0.20.0.0): /gstack-extend-upgrade skill + consolidate upgrade flow (#80)_
+
+#### Group 12: `gstack-extend init <project>` Scaffold ✓ Shipped (v0.21.0.0)
+- Track 12A — _shipped (v0.21.0.0): gstack-extend init <project> + skill — full bootstrap (starter ROADMAP/CLAUDE/CHANGELOG/TODOS/PROGRESS/VERSION, docs/ layout, project registry, post-render audit gate), setup CLI symlink + self-registration (#83)_
 
 #### Group 13: Telemetry Parity with Gstack ✓ Shipped (v0.22.0.0)
 - Track 13A — _shipped (v0.22.0.0): bin/gstack-extend-telemetry wrapper + canonical preamble/epilogue blocks in 5 skill files. Every extend skill activation now writes start + end lines to ~/.gstack/analytics/skill-usage.jsonl with extend:<skill> name and source:gstack-extend field; mind-meld retro / /retro pick up extend activity with zero downstream changes. Wrapper falls back silently when gstack isn't installed. Drift-lock test extracts canonical blocks from skills/full-review.md and asserts each other skill embeds the templated variant. Opportunistic contract test catches future gstack flag renames._
