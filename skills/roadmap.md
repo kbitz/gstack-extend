@@ -185,6 +185,28 @@ regressions on shipped behavior, never for deferred scope.
 Read everything before deciding anything. Regeneration can't see what it
 doesn't load.
 
+### 1a. Establish shipped ground truth FIRST
+
+Before opening ROADMAP.md, determine what has **actually shipped** from git —
+the one signal every repo has:
+
+1. **git commits** — the real source of truth for what merged, and for what was
+   completed last. `git log --oneline -40` plus the scoped queries below, and
+   `git tag` / `git describe --tags` for the latest released version where tags
+   exist. This is the spine of "what's done."
+2. **CHANGELOG.md / PROGRESS.md** — optional corroboration when present (a
+   version number, a "what's new" note). Don't assume they exist, don't block
+   on them, and when a doc and the commits disagree, **the commits win.**
+
+**Do NOT reconstruct "what's done" by walking ROADMAP.md's `## Shipped` section
+and re-verifying each entry against git** — that's the slow path that burns the
+context window cycling "is this one done yet?" over and over. ROADMAP.md is read
+next (1b), where the git-derived ground truth is cross-referenced against it —
+only to map that truth onto Track/Group IDs and see what's still open. When the
+roadmap and the ground truth disagree, the ground truth wins.
+
+### 1b. Read the roadmap, inbox, and audit
+
 ```bash
 "$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
 ```
@@ -221,7 +243,7 @@ This is the LLM-owned step. Hold the full picture in mind and **emit a complete 
 
 Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
-- **What is shipped?** Read the existing `## Shipped` (or v1 `✓ Complete` Groups). Those IDs are frozen. They form the tail of the new ROADMAP.md (after `## Future`) and don't get re-thought.
+- **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
 - **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR each), each with an explicit `_touches:_` footprint. _Don't assign Tracks to Groups yet_ — Group assignment is a separate step driven by the collision matrix (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
