@@ -1,6 +1,7 @@
 ---
 name: gstack-extend-init
 description: |
+  Beta (less battle-tested — review its output carefully).
   Bootstrap a new gstack-extend-onboarded project. Scaffolds the canonical
   layout (CLAUDE.md, ROADMAP.md, TODOS.md, PROGRESS.md, CHANGELOG.md, VERSION,
   docs/), registers the project in ~/.gstack-extend/projects.json, and runs
@@ -12,6 +13,10 @@ allowed-tools:
   - Read
   - AskUserQuestion
 ---
+
+> **⚠️ Beta skill.** Newer and less battle-tested than gstack-extend's stable
+> skills. Before substantive work, tell the user this skill is beta and that its
+> output warrants closer review than usual. Note any rough edges so it can be hardened.
 
 ## Preamble (run first)
 

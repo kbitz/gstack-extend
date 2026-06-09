@@ -59,7 +59,7 @@ Key routing rules:
 - Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap
 - Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
-- Audit testing/debugging apparatus, "what helpers should we add", "review the test infra", "bolt-on dev tools" → invoke review-apparatus
-- Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;"
+- Audit testing/debugging apparatus, "what helpers should we add", "review the test infra", "bolt-on dev tools" → invoke review-apparatus _(beta)_
+- Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;" _(beta)_
 - Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade
-- Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init
+- Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init _(beta)_
