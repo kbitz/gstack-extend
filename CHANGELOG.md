@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1.0] - 2026-06-09
+
+### Changed: `/roadmap` detects shipped work git-first; three skills marked beta
+
+**Fixed: `/roadmap` was reconstructing shipped state from the roadmap itself.** Step 1 (Gather) and Step 2 ("What is shipped?") derived "what's done" by walking `ROADMAP.md`'s `## Shipped` section and re-verifying each entry against scattered git history — the slow path that burned the context window cycling "is this one done yet?" before the regeneration could even start. The skill now establishes shipped ground truth *first*, from the always-present source:
+
+- **New `### 1a. Establish shipped ground truth FIRST`** — read git commits as the real source of truth for what merged and what was completed last (`git log`, plus `git tag` / `git describe` for the latest release). `CHANGELOG.md` / `PROGRESS.md` are optional corroboration when present and skipped silently when absent (not every repo has them); when a doc and the commits disagree, the commits win.
+- **Step 1b reads `ROADMAP.md` next**, purely as the cross-reference target — mapping the git-derived truth onto Track/Group IDs and surfacing what's still open. The explicit guard against re-verifying `## Shipped` entries against git stays in place; ground truth wins over stale roadmap state.
+- **Step 2's "What is shipped?"** now reconciles `## Shipped` against the git-derived ground truth instead of treating the roadmap as the source: frozen IDs are trusted, but anything shown shipped in the ground truth while still parked in `## Current Plan` / `## In Progress` is promoted, and discrepancies are surfaced in the proposal.
+
+**Changed: `/gstack-extend-init`, `/test-plan`, and `/review-apparatus` marked beta.** Each carries a `⚠️ Beta skill` banner after its frontmatter (instructing the agent to tell the user it's beta and that output warrants closer review), a `Beta (less battle-tested)` lead in its `description:`, a `Beta` status in the README skill table (`/review-apparatus` was "Stable", the other two "New"), and a `_(beta)_` tag on its CLAUDE.md routing line. No behavior change to those three skills — just honest signposting that they're newer and less proven.
+
+Frontmatter and `SHARED:` protocol locks unaffected; full suite green (1153 pass).
+
 ## [0.22.0.2] - 2026-05-22
 
 ### Fixed: Group 14 — green `bun run test` baseline restored (drift-proof real-ROADMAP test)

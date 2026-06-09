@@ -1,6 +1,7 @@
 ---
 name: review-apparatus
 description: |
+  Beta (less battle-tested — review its output carefully).
   Project testing/debugging apparatus audit. Reads the repo, takes inventory of what
   apparatus already exists (scripts, bin/ tools, Makefile targets, dev endpoints,
   logging, staging configs, existing test infra), identifies gaps where a lightweight
@@ -20,6 +21,10 @@ allowed-tools:
   - Glob
   - Grep
 ---
+
+> **⚠️ Beta skill.** Newer and less battle-tested than gstack-extend's stable
+> skills. Before substantive work, tell the user this skill is beta and that its
+> output warrants closer review than usual. Note any rough edges so it can be hardened.
 
 ## Preamble (run first)
 

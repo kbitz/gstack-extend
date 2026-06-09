@@ -7,10 +7,10 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Documentation restructuring | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
-| `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Stable |
-| `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | New |
+| `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
+| `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
 | `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
-| `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | New |
+| `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | Beta |
 
 ## Installation
 

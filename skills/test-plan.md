@@ -1,6 +1,7 @@
 ---
 name: test-plan
 description: |
+  Beta (less battle-tested — review its output carefully).
   Group-scoped batched test-plan generator. Composes with /pair-review as the
   execution engine. Reads a roadmap Group's Tracks, harvests any CEO/eng/design
   review docs for those branches, consumes any per-Track /pair-review artifacts
@@ -22,6 +23,10 @@ allowed-tools:
   - Glob
   - Grep
 ---
+
+> **⚠️ Beta skill.** Newer and less battle-tested than gstack-extend's stable
+> skills. Before substantive work, tell the user this skill is beta and that its
+> output warrants closer review than usual. Note any rough edges so it can be hardened.
 
 ## Preamble (run first)
 
