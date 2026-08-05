@@ -277,8 +277,11 @@ coverage_warnings:      # entries logged when validation drops edges
 
 ## Items
 
-### 1. <Item description>
+### 1. <Action line — imperative, one line, readable at a glance>
 - Status: UNTESTED | PASSED | PASSED_BY_COVERAGE | FAILED | SKIPPED
+- Pass: <observable state that means it worked>
+- Fail: <the concrete wrong behavior to watch for>
+- Context: <background — written to disk, NEVER rendered in a prompt>
 - Build: <commit hash when tested>
 - Tested: <ISO 8601 timestamp>
 - Notes: <human's observation>             # human-authored only; machine never writes
@@ -287,6 +290,13 @@ coverage_warnings:      # entries logged when validation drops edges
 - Covers: [<item-indices>]                 # optional; intra-group item indices this item verifies-by-action
 - CoverageNote: <text>                     # machine-authored coverage annotation; never overwrites Notes
 ```
+
+The heading is the **action line only** — the single thing the human does.
+`Pass:` and `Fail:` are required on every item; `Context:` is optional and is
+never shown in an AskUserQuestion. See Phase 1 Step 3 for the authoring rules.
+
+A merged item (Step 3.2) carries multiple pass conditions on one `Pass:` line,
+separated by semicolons, with a single action line. Max 4 conditions.
 
 `PASSED_BY_COVERAGE` exists as a distinct status (rather than reusing `PASSED`) so
 the FAIL handler can find and demote *only* items that were resolved via
@@ -416,20 +426,134 @@ Read CLAUDE.md and docs/TODOS.md for project-specific context that informs what 
 
 ### Step 3: Generate grouped test plan
 
-Analyze the diff content and generate test items grouped by feature area. Rules:
-- Each group has 3-7 items
-- Group by feature area, screen, or workflow (not by file)
-- Items should be things a human needs to verify (subjective feel, visual correctness,
-  interaction flow, real-world behavior)
-- Do NOT include things that automated tests already cover
-- Be specific: "Verify the login form shows an error on invalid password" not "Test login"
+Analyze the diff content and generate test items grouped by feature area.
+
+**Optimize for the human's clock.** The plan is good when it covers the change
+in the fewest questions the human has to answer, each of which they can answer
+without thinking. Every extra item, every sentence of background, every screen
+they have to navigate back to is time they don't get back.
+
+**Sizing**: group by feature area, screen, or workflow (not by file). 7 items
+per group is a **ceiling, not a target** — a 3-item group that covers the change
+beats a 7-item group padded with splits. Never invent items to hit a count.
+Items must be things a human has to judge (subjective feel, visual correctness,
+interaction flow, real-world behavior). Do NOT include anything automated tests
+already cover.
+
+**Every item is one action and a verdict.** Write each item in this exact shape:
+
+```
+<Imperative action — one line, verb-first, readable at a glance>
+PASS: <the observable state that means it worked>
+FAIL: <the concrete wrong behavior you expect if it's broken>
+```
+
+Authoring rules for the three lines:
+
+- **Action is a single instruction.** "Sign in with a wrong password." Not
+  "Test the login error path" (too vague to act on), and not "Verify that the
+  login form, which now uses the new validation hook, shows an error" (buries
+  the instruction in background).
+- **PASS and FAIL describe what the eye sees**, not intent or correctness.
+  Write "PASS: inline red text under the password field reads 'Incorrect
+  password'" — never "PASS: error handling works correctly."
+- **FAIL is not the negation of PASS.** Name the specific wrong behavior, so the
+  human knows what to watch for: "FAIL: the page reloads, or the error shows as
+  a toast instead of inline." If the only FAIL you can write is "not the above,"
+  the PASS line isn't observable enough — rewrite it.
+- **No background in the item.** No file paths, no commit hashes, no "this
+  changed because…", no explanation of the implementation, no justification for
+  why it's worth testing. If context genuinely matters, put it in the item's
+  optional `Context:` field — written to disk and **never rendered in a prompt**.
+  If the user asks "why am I testing this?", answer then, in a separate message.
+
+**Forcing function**: if you cannot write a one-line observable PASS, it is not
+a manual test item. Either an automated test already covers it (drop it) or it's
+underspecified (rewrite it until you can). Do not ship a vague item and hope the
+human infers the intent.
+
+### Step 3.2: Merge co-observable items (run BEFORE coverage inference)
+
+The single biggest waste in a session is asking two questions about one glance.
+Before inferring any `Covers:` links, pass over each group and merge.
+
+**Merge test** — two candidate items become ONE item when *both* hold:
+
+1. A single user action puts both properties on screen at the same moment, AND
+2. The human needs to do **nothing additional** — no navigation, no click, no
+   scroll, no opening a panel — to judge the second after judging the first.
+
+If "would they have to do anything else to see it?" is no, merge. Adjacency on
+one screen is the common case: two fields in the same form, a button and its
+label, a header and the list beneath it, a toggle and the state it controls.
+
+**Merged item shape** — one action, several pass conditions:
+
+```
+Open the settings screen.
+PASS: header reads "Settings"; both toggles render off; Save is disabled.
+FAIL: header still reads "Preferences", a toggle renders on, or Save is
+      enabled with no changes made.
+```
+
+Keep the action line singular. If merging forces it into "do X, then do Y", the
+merge was wrong — split it back.
+
+**Ceiling — judged, not counted**: merge only while a FAIL would still be
+unambiguous. The test is "if they say it failed, do I know which condition
+broke?" When the answer is no, split. In practice that lands around three or
+four conditions, but a merged item with six tightly-related visual checks on
+one screen can be fine and one with two unrelated ones can already be too many.
+Judge the ambiguity, not the count.
+
+**Merge vs. Covers — the boundary.** These solve different problems:
+
+- **Merge** when both properties are judged *in the same glance*. → one item.
+- **Covers** when one property is *implied* by another but confirming it
+  directly would need separate inspection — a cookie, a log line, a DB row, a
+  network request. → two items, linked.
+
+**Never emit a `Covers:` link between two items visible on the same screen at
+the same time.** That pairing is a missed merge, and it costs the user an extra
+bundle prompt to resolve what should have been a single question.
+
+### Step 3.4: Order for one pass through the app
+
+Item order is the other half of session speed. Order within each group so the
+human walks the app once instead of bouncing between screens.
+
+1. **State locality first** — consecutive items should share the same screen or
+   app state. All the settings-screen items together, then all the home-screen
+   items. Every state change between consecutive items is dead time.
+2. **Risk breaks ties** — when two items are equally cheap to reach, put the
+   higher-blast-radius one first. Sessions get abandoned partway; the important
+   verification should already be done when that happens.
+3. **Destructive last** — items that delete data, sign out, or reset state go at
+   the end of their group, or they invalidate the setup for everything after.
+
+Rule 3 wins over rule 2. A destructive item that is also the highest-risk one
+still goes last: putting it first would invalidate the state every other item
+needs, which costs more than the early signal is worth.
+
+Group order follows the same logic one level up: highest-risk group first.
+
+Item indices are assigned **after** this ordering, so Step 3.5 coverage
+inference never has to chase a reorder. Ordering does not run again — but note
+that the Step 4 approval pass can still remove items, which can orphan a
+`Covers:` target. That is caught by the existing **Existence** validation rule
+at Step 4.5; do not re-run ordering to "fix" it, just drop the orphaned edge.
 
 ### Step 3.5: Infer coverage hints (Covers metadata)
 
-While generating items, attach an optional `Covers:` field to any item that
-plausibly verifies another item in the same group via a single user action.
-This lets Phase 2 bundle confirmation prompts and avoid redundant per-item
-clicks for items that one action already demonstrated.
+Run this **after** the Step 3.2 merge pass, on the surviving items only. Attach
+an optional `Covers:` field to any item that plausibly verifies another item in
+the same group via a single user action. This lets Phase 2 bundle confirmation
+prompts avoid redundant per-item clicks for items that one action already
+demonstrated.
+
+**Precondition**: every remaining item pair has already failed the Step 3.2
+merge test. If a candidate `Covers:` pair is co-observable in one glance, you
+missed a merge — go back and merge it instead of linking it.
 
 **Inference heuristics** — attach `Covers: [N, M]` to item X when ANY of these
 hold for an item-pair (X, Y) in the same group:
@@ -447,6 +571,11 @@ hold for an item-pair (X, Y) in the same group:
 Heuristics that do **not** justify Covers links: shared module/file, shared
 test fixture, semantic adjacency, "they feel related." The agent must be able
 to articulate the heuristic match in one sentence; if it can't, no link.
+
+Also disqualifying: **co-visibility**. If X and Y are both judged in the same
+glance with no additional action, that is a merge (Step 3.2), not a Covers
+link. A `Covers:` edge is only earned when confirming Y directly would take
+work the human is being spared.
 
 **Coverage is intra-group only.** Cross-group `Covers:` links are out of scope.
 
@@ -478,8 +607,10 @@ Present the plan via AskUserQuestion:
 "Here's the test plan I generated from the diff. Review and tell me if you want to
 add, remove, or modify any items."
 
-Show each group with its items. Ask which groups to start with (user works on 1-3
-at a time).
+Show each group with its items — **action lines only**, numbered. Do not render
+`Pass:`, `Fail:`, or `Context:` at plan review; the user is judging scope and
+coverage here, not executing. Full criteria appear when each item is presented
+in Phase 2. Ask which groups to start with (user works on 1-3 at a time).
 
 ### Step 4.5: Coverage graph review (skip if no item has Covers)
 
@@ -574,11 +705,26 @@ Read the current group file from disk (not from context). Find the first UNTESTE
 item (item N). Also find the second UNTESTED item (item N+1) — the lookahead.
 Present via AskUserQuestion:
 
-- **Question:** "[Action receipt if applicable]\n\n**[Group] [N]/[Total]:** [Item description]\n\n_Next up: [N+1]. [Next item description]_"
+- **Question:** "[Action receipt if applicable]\n\n**[Group] [N]/[Total]:** [Action line]\n\nPASS: [item's Pass field]\nFAIL: [item's Fail field]\n\n_Next up: [N+1]. [Next item's action line only]_"
 - **Options:** ["Pass", "Fail", "Skip", "Park a bug", "Add item", "Batch: next 3"]
 
 If item N is the last UNTESTED in the group, replace the _Next up:_ line with
 _Last item in this group._
+
+The lookahead line shows the **action line only** — no PASS/FAIL for N+1. Its
+job is to let the human start moving, not to be read carefully.
+
+**Legacy items (sessions started before the three-line shape).** On resume you
+may hit items with no `Pass:`/`Fail:` fields. Render the heading alone and omit
+both criteria lines — do NOT invent criteria for an item the user already
+approved under the old format, and do NOT emit empty `PASS:` / `FAIL:` labels.
+Newly added items in that session still use the current shape.
+
+**Nothing else goes in the prompt.** No preamble, no summary of what changed, no
+rationale, no file or commit references, no "this matters because." The item's
+`Context:` field is never rendered here. The prompt is exactly: receipt, action,
+PASS, FAIL, lookahead. If the user asks why they're testing something, answer in
+a separate message and then re-present the item unchanged.
 
 Use this exact AskUserQuestion format every time. Do not present test items as
 plain text, yes/no questions, or lettered multiple choice. The options array is
@@ -611,8 +757,8 @@ Increment `session.yaml.summary.bundles_offered` before showing the prompt.
 Question:
 "Item X passed. Items [N], [M] are flagged as verified by your action on X:
 
-  [N]. <Item N description>
-  [M]. <Item M description>
+  [N]. <Item N action line> — PASS: <Item N Pass field>
+  [M]. <Item M action line> — PASS: <Item M Pass field>
 
 Note: 'verified' means your action plausibly demonstrated each property. If
 you'd need to look at something specific (logs, network panel, DB row) to be
@@ -782,8 +928,11 @@ Mark the failed item as `Status: FAILED` with `Fix: <commit>` and
 **Continue testing:**
 
 Present the same item again for retest via AskUserQuestion:
-- Question: "Fixed in [commit]. Build [succeeded/failed]. Retest:\n\n**[Group] [N]/[Total]:** [Item description]"
+- Question: "Fixed in [commit]. Build [succeeded/failed]. Retest:\n\n**[Group] [N]/[Total]:** [Action line]\n\nPASS: [item's Pass field]\nFAIL: [item's Fail field]"
 - Options: ["Pass", "Fail", "Skip", "Park a bug", "Add item"]
+
+Do not append an explanation of the fix to this prompt. The human retests the
+same observable criteria; what changed underneath is not their input.
 
 If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
 
@@ -801,6 +950,15 @@ If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
 ### On ADD ITEM
 
 1. Ask: which group? what's the test item?
+
+   Whatever the user says, write it to disk in the Step 3 three-line shape:
+   an imperative action line as the heading, plus `Pass:` and `Fail:` fields.
+   If their phrasing doesn't yield an observable PASS, convert it yourself and
+   show the result in the next receipt ("Added item N: <action line>") — don't
+   interrogate them for criteria mid-session. Before appending, apply the Step
+   3.2 merge test against the group's existing UNTESTED items: if the new item
+   is co-observable with one of them, fold it in as an extra pass condition on
+   that item instead of appending a new one, and say so in the receipt.
 2. **Coverage picker** (optional). After capturing the description, ask via
    AskUserQuestion whether this new item covers any existing items in the
    target group:
@@ -910,9 +1068,15 @@ bundle walks, not via reordering.
    If any in-batch covering item's target is ALSO within this batch, render
    an inline cluster hint inline next to the covered item: `← covered by item [N] if it passes`.
 3. Present all items in a single AskUserQuestion:
-   - **Question (default):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]\n[N+2]. [Item description]\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
-   - **Question (when in-batch cluster detected):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Item description]\n[N+1]. [Item description]      ← covered by item [N] if it passes\n[N+2]. [Item description]\n\n_Cluster hint: passing [N] would also cover [N+1]._\n\n_Next up: [N+3]. [Post-batch item description]_\n\nReport results for each item."
+   - **Question (default):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Action line]\n    PASS: [Pass field]\n[N+1]. [Action line]\n    PASS: [Pass field]\n[N+2]. [Action line]\n    PASS: [Pass field]\n\n_Next up: [N+3]. [Post-batch action line]_\n\nReport results for each item. Examples:\n`all pass` · `1 pass, 2 fail: button misaligned, 3 skip` · `2 fail: crashes on tap`"
+   - **Question (when in-batch cluster detected):** "[Action receipt if applicable]\n\n**[Group] — Batch [start]-[end]/[Total]:**\n\n[N]. [Action line]\n    PASS: [Pass field]\n[N+1]. [Action line]      ← covered by item [N] if it passes\n    PASS: [Pass field]\n[N+2]. [Action line]\n    PASS: [Pass field]\n\n_Cluster hint: passing [N] would also cover [N+1]._\n\n_Next up: [N+3]. [Post-batch action line]_\n\nReport results for each item."
    - **Options:** ["All pass", "Report results", "Park a bug", "Back to single mode"]
+
+   Batch mode renders **action + PASS only** — the `Fail:` field is omitted on
+   purpose to keep three items scannable in one block. If the user asks what a
+   failure would look like for a batched item, give them that item's `Fail:`
+   line and re-present the batch unchanged. `Context:` is never rendered here
+   either.
 
 4. **On "All pass"** — two coverage paths apply:
    - **In-batch covers**: For each in-batch item whose `Covers:` field lists

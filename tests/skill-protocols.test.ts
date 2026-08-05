@@ -794,3 +794,222 @@ describe('pair-review smart-batching: prompt-options table (T12)', () => {
     });
   }
 });
+
+// ─── Item-shape + merge-gate drift-locks ─────────────────────────────
+//
+// Two session-speed regressions the skill previously allowed:
+//
+//   1. Over-splitting — two items describing one glance, each asking its
+//      own question (or worse, linked by a Covers edge that costs an extra
+//      bundle prompt to resolve). Fixed by the Step 3.2 merge gate, which
+//      runs BEFORE coverage inference and claims co-observable pairs first.
+//   2. Muddy prompts — background, rationale, and file references inlined
+//      into the item, burying the instruction. Fixed by the mandatory
+//      three-line item shape (action / PASS / FAIL) plus a Context: field
+//      that lives on disk and is never rendered in a prompt.
+//
+// Both fixes are prose the agent reads at runtime, so lock the load-bearing
+// phrasing. Silent removal degrades straight back to the old behavior with
+// no code-level signal.
+
+describe('pair-review item shape: three-line contract', () => {
+  const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
+  const normalized = content.replace(/\s+/g, ' ');
+
+  test('Pass/Fail/Context fields exist in the item-format spec block', () => {
+    expect(content).toContain('- Pass: <observable state that means it worked>');
+    expect(content).toContain('- Fail: <the concrete wrong behavior to watch for>');
+    expect(content).toContain(
+      '- Context: <background — written to disk, NEVER rendered in a prompt>',
+    );
+  });
+
+  test('sizing rule is a ceiling, not a target', () => {
+    // The old "Each group has 3-7 items" read as a quota and pressured
+    // splitting to fill it. If a future edit reintroduces a count target,
+    // over-splitting comes back.
+    expect(content).not.toContain('Each group has 3-7 items');
+    expect(normalized).toContain('7 items per group is a **ceiling, not a target**');
+  });
+
+  test('FAIL-is-not-negation-of-PASS rule present', () => {
+    // Without this, FAIL lines collapse to "not the above", which tells the
+    // human nothing about what to watch for.
+    expect(content).toContain('**FAIL is not the negation of PASS.**');
+  });
+
+  test('no-background-in-item rule present', () => {
+    expect(content).toContain('**No background in the item.**');
+    expect(normalized).toContain('never rendered in a prompt');
+  });
+
+  test('unwritable-PASS forcing function present', () => {
+    // The rule that converts vague items into either a dropped item or a
+    // rewritten one, instead of shipping them and hoping.
+    expect(normalized).toContain(
+      'if you cannot write a one-line observable PASS, it is not a manual test item',
+    );
+  });
+
+  test('Phase 2 prompt template renders action + PASS + FAIL, lookahead action-only', () => {
+    expect(content).toContain(
+      '**[Group] [N]/[Total]:** [Action line]\\n\\nPASS: [item\'s Pass field]\\nFAIL: [item\'s Fail field]',
+    );
+    expect(content).toContain("_Next up: [N+1]. [Next item's action line only]_");
+  });
+
+  test('Phase 2 prompt has an explicit nothing-else clause', () => {
+    // Load-bearing: this is the sentence that stops rationale and diff
+    // summaries from leaking back into the question the human answers.
+    expect(content).toContain('**Nothing else goes in the prompt.**');
+    expect(normalized).toContain(
+      'The prompt is exactly: receipt, action, PASS, FAIL, lookahead',
+    );
+  });
+
+  test('plan review renders action lines only', () => {
+    expect(normalized).toContain('Show each group with its items — **action lines only**');
+  });
+
+  test('legacy items without Pass/Fail render heading-only on resume', () => {
+    // Sessions started before the three-line shape have items with no Pass:/
+    // Fail: fields. Without this fallback the Phase 2 template renders bare
+    // "PASS:" / "FAIL:" labels with nothing after them.
+    expect(content).toContain('**Legacy items (sessions started before the three-line shape).**');
+    expect(normalized).toContain('do NOT emit empty `PASS:` / `FAIL:` labels');
+  });
+
+  // Every other site that renders an item to the user. Each one previously
+  // interpolated a single opaque `[Item description]`; reverting any of them
+  // reintroduces the muddiness the three-line shape exists to prevent.
+
+  test('retest-after-fix prompt renders action + PASS + FAIL', () => {
+    expect(content).toContain(
+      "**[Group] [N]/[Total]:** [Action line]\\n\\nPASS: [item's Pass field]\\nFAIL: [item's Fail field]",
+    );
+    expect(normalized).toContain(
+      'Do not append an explanation of the fix to this prompt',
+    );
+  });
+
+  test('BATCH prompt renders action + PASS per item, Fail omitted on purpose', () => {
+    expect(content).toContain('[N]. [Action line]\\n    PASS: [Pass field]');
+    expect(content).toContain('_Next up: [N+3]. [Post-batch action line]_');
+    // The omission must stay documented as deliberate, or a future reader
+    // "fixes" it by re-adding FAIL and the batch block stops being scannable.
+    expect(normalized).toContain(
+      'Batch mode renders **action + PASS only** — the `Fail:` field is omitted on purpose',
+    );
+  });
+
+  test('bundle prompt lists covered items as action + PASS', () => {
+    expect(content).toContain('[N]. <Item N action line> — PASS: <Item N Pass field>');
+    expect(content).toContain('[M]. <Item M action line> — PASS: <Item M Pass field>');
+  });
+
+  test('no item-render site still uses the opaque [Item description] token', () => {
+    // Catch-all: the old placeholder must not survive at any render site.
+    // Prose references to "item description" (e.g. the FAIL-handler lookahead
+    // sentence) are fine — only the bracketed template token is banned.
+    expect(content).not.toContain('[Item description]');
+  });
+});
+
+describe('pair-review merge gate (Step 3.2)', () => {
+  const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
+  const normalized = content.replace(/\s+/g, ' ');
+
+  test('merge step exists and is ordered before coverage inference', () => {
+    expect(content).toContain('### Step 3.2: Merge co-observable items (run BEFORE coverage inference)');
+    const mergeIdx = content.indexOf('### Step 3.2: Merge co-observable items');
+    const coversIdx = content.indexOf('### Step 3.5: Infer coverage hints');
+    expect(mergeIdx).toBeGreaterThan(-1);
+    expect(coversIdx).toBeGreaterThan(mergeIdx);
+  });
+
+  test('merge test names the no-additional-action condition', () => {
+    expect(normalized).toContain(
+      'A single user action puts both properties on screen at the same moment',
+    );
+    expect(normalized).toContain('no navigation, no click, no scroll, no opening a panel');
+  });
+
+  test('merged-item ceiling is judged (FAIL ambiguity), not counted', () => {
+    // Learning [qualitative-judgment-not-numeric-thresholds]: a hard "max 4"
+    // encodes a programmatic decision where judgment belongs. The rule must
+    // stay framed on whether a FAIL would be ambiguous; the count is a guide.
+    expect(content).toContain('**Ceiling — judged, not counted**');
+    expect(normalized).toContain('Judge the ambiguity, not the count');
+  });
+
+  test('merge-vs-Covers boundary stated in both directions', () => {
+    // The boundary has to be stated at the merge step AND re-asserted in
+    // the Covers heuristics, or inference drifts back to linking pairs that
+    // should have been merged.
+    expect(normalized).toContain(
+      '**Never emit a `Covers:` link between two items visible on the same screen at the same time.**',
+    );
+    expect(content).toContain('Also disqualifying: **co-visibility**.');
+  });
+
+  test('Covers inference declares the merge precondition', () => {
+    expect(normalized).toContain(
+      'Run this **after** the Step 3.2 merge pass, on the surviving items only',
+    );
+  });
+
+  test('ADD ITEM applies the merge test to new items', () => {
+    expect(normalized).toContain('apply the Step 3.2 merge test against the group\'s existing UNTESTED items');
+  });
+});
+
+describe('pair-review ordering (Step 3.4)', () => {
+  const content = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
+  const normalized = content.replace(/\s+/g, ' ');
+
+  test('ordering step exists between merge and coverage inference', () => {
+    expect(content).toContain('### Step 3.4: Order for one pass through the app');
+    const orderIdx = content.indexOf('### Step 3.4: Order for one pass');
+    expect(content.indexOf('### Step 3.2: Merge co-observable items')).toBeLessThan(orderIdx);
+    expect(content.indexOf('### Step 3.5: Infer coverage hints')).toBeGreaterThan(orderIdx);
+  });
+
+  test('three ordering rules named', () => {
+    expect(content).toContain('**State locality first**');
+    expect(content).toContain('**Risk breaks ties**');
+    expect(content).toContain('**Destructive last**');
+  });
+
+  test('ordering precedes index assignment, orphans deferred to Existence rule', () => {
+    // Reordering after Covers inference would silently repoint every edge.
+    // The claim must stay honest: Step 4 approval can still delete items, so
+    // "immutable thereafter" would be false — orphaned edges are the Step 4.5
+    // Existence rule's job, not a reason to re-run ordering.
+    expect(normalized).toContain('Item indices are assigned **after** this ordering');
+    expect(normalized).toContain('caught by the existing **Existence** validation rule');
+  });
+
+  test('destructive-last takes precedence over risk-first', () => {
+    expect(content).toContain('Rule 3 wins over rule 2.');
+  });
+});
+
+describe('test-plan inherits the item shape and merge gate', () => {
+  // /test-plan skips pair-review Phase 1 entirely (Phase 8 says so), so it
+  // must apply Steps 3 / 3.2 / 3.4 itself. Extraction from review docs is
+  // the worst offender for redundant prose-heavy items.
+  const content = readFileSync(join(ROOT, 'skills', 'test-plan.md'), 'utf8');
+  const normalized = content.replace(/\s+/g, ' ');
+
+  test('Step 4 requires Pass/Fail/Context fields', () => {
+    expect(content).toContain('`Pass:` and `Fail:` fields (required)');
+    expect(normalized).toContain('never rendered in a prompt');
+  });
+
+  test('Step 4 defers to pair-review Steps 3 / 3.2 / 3.4 by name', () => {
+    expect(normalized).toContain('**Step 3**');
+    expect(normalized).toContain('**Step 3.2**');
+    expect(normalized).toContain('**Step 3.4**');
+    expect(normalized).toContain('/test-plan skips pair-review\'s Phase 1, so it owns those authoring rules here');
+  });
+});

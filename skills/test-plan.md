@@ -709,10 +709,21 @@ Populate with all items tagged `manual` + included-from-prior items + items with
 `[retest-after-fix]` tag. Use the format from pair-review.md `groups/<name>.md`
 spec. Each item has:
 - Number (sequential in group)
-- Description (testable, imperative)
+- Action line as the heading (imperative, one line, readable at a glance)
+- `Pass:` and `Fail:` fields (required)
+- `Context:` field for any background (optional; never rendered in a prompt)
 - Status: UNTESTED
 - Provenance tags
 - Item ID (as a comment for pair-review's retest/dedup logic in future)
+
+/test-plan skips pair-review's Phase 1, so it owns those authoring rules here.
+Before writing, apply pair-review Phase 1 **Step 3** (three-line item shape, no
+background in the item, observable PASS/FAIL), **Step 3.2** (merge items that a
+single glance verifies — extracted items from different review docs frequently
+describe the same observation), and **Step 3.4** (order for state locality, risk,
+destructive-last). Extraction sources produce redundant, prose-heavy items;
+merging and rewriting them is not optional polish, it's what keeps the bug bash
+short.
 
 Failure-mode guard (per failure mode #4): if the write fails (permissions, disk),
 abort BEFORE dropping into pair-review Phase 2. Report the error and exit. Do not
