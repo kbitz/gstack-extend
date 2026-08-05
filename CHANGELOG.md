@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.2.0] - 2026-08-05
+
+### Fixed: `/pair-review` asks fewer questions, and each one is answerable without thinking
+
+Two complaints, both about the same thing: sessions took longer than they should. This release attacks both halves.
+
+**Fixed: items that one glance covers are now one item.** The plan generator was splitting properties that sit next to each other on the same screen into separate items, then asking about each one. Worse, the existing `Covers:` smart-batching feature was absorbing exactly that case and "solving" it with a bundle prompt — still two items, still an extra question. And Step 3's "each group has 3-7 items" read as a quota, pressuring splits to fill it.
+
+- **New Step 3.2 (Merge co-observable items)**, running *before* coverage inference so it claims those pairs first. Two items become one when a single action puts both properties on screen at the same moment **and** the human needs to do nothing additional — no navigation, click, scroll, or panel — to judge the second after the first.
+- **The merge/`Covers:` boundary is now explicit in both directions.** Merge when both properties are judged in the same glance; `Covers:` only when one is *implied* by another but confirming it directly would take separate inspection (a cookie, a log line, a DB row). Emitting a `Covers:` link between two items visible on the same screen is now named as a missed merge, because it costs an extra bundle prompt to resolve what should have been one question.
+- **The 3-7 quota is now a ceiling, not a target**, with "never invent items to hit a count." Merged items carry several pass conditions under one action; how many is judged by whether a FAIL would still be unambiguous, not counted.
+
+**Fixed: the question you're asked is now just the question.** Items were arriving wrapped in background — what changed, why it matters, which file moved — burying the actual instruction. Every item now has a mandatory three-line shape: an imperative action line, a `PASS:` line, and a `FAIL:` line. `PASS` and `FAIL` describe what the eye sees, never intent ("inline red text reads 'Incorrect password'", not "error handling works"). `FAIL` names the specific wrong behavior rather than negating `PASS`, so you know what to watch for. Background moves to a `Context:` field that is written to disk and **never rendered in a prompt**; ask why and you get an answer in a separate message. If a one-line observable `PASS` can't be written, the item isn't a manual test — it's either already automated or underspecified.
+
+All six item-render sites follow the shape (single item, batch, retest-after-fix, coverage bundle, plan review, report). Batch mode renders action + `PASS` only, deliberately, to keep three items scannable.
+
+**Added: items are ordered for one walk through the app.** New Step 3.4 orders by state locality first (consecutive items share a screen — every state change between items is dead time), risk as the tiebreak (sessions get abandoned; the important verification should already be done), and destructive items last (they invalidate the setup for everything after, which beats the early signal). Groups follow the same logic one level up.
+
+**Changed: `/test-plan` inherits the same contract.** It skips `/pair-review`'s Phase 1 entirely, so it now owns Steps 3, 3.2, and 3.4 itself. Extraction from review docs is the worst offender for redundant, prose-heavy items.
+
+Resuming a session started before this release renders those items heading-only rather than emitting empty `PASS:`/`FAIL:` labels. 34 drift-locks added, including a catch-all proving no render site still uses the old opaque item token. Full suite green (1178 pass).
+
 ## [0.22.1.0] - 2026-06-09
 
 ### Changed: `/roadmap` detects shipped work git-first; three skills marked beta
