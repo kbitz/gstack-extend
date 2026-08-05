@@ -45,7 +45,10 @@ and supports resume. Works for any project type.
 - **Deploy discovery** — finds your build/run process and reuses it across sessions
 - **Group-level checkpoints** — auto-commits before fix attempts for clean reverts
 - **Resume** — pick up exactly where you left off
-- **Smart batching** — agent infers `Covers:` links between items; one bundled "All pass" prompt confirms N covered items at once instead of N individual clicks. Integrity-preserving: `PASSED_BY_COVERAGE` items demote back to `UNTESTED` if the covering item later fails. Transparent: review and edit the coverage graph at plan time, strip all coverage to revert to today's behavior.
+- **One glance, one question** — items a single action verifies at the same moment are merged into one item at plan time, before any coverage inference runs. Two properties on the same screen never cost two prompts.
+- **Executable items** — every item is an imperative action plus observable `PASS:` / `FAIL:` criteria. Background lives in a `Context:` field that never reaches the prompt, so the question you're asked is just the question.
+- **Ordered for one walk** — items are sequenced by state locality (consecutive items share a screen), then risk, with destructive items last.
+- **Smart batching** — for properties that are *implied* rather than co-visible (a cookie, a log line, a DB row), the agent infers `Covers:` links; one bundled "All pass" prompt confirms N covered items at once instead of N individual clicks. Integrity-preserving: `PASSED_BY_COVERAGE` items demote back to `UNTESTED` if the covering item later fails. Transparent: review and edit the coverage graph at plan time, strip all coverage to revert to today's behavior.
 
 ```
 /pair-review          # Start a new test session
