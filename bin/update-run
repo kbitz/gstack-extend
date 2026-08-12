@@ -120,7 +120,7 @@ if ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
 fi
 
 _STAGE="setup"
-"$INSTALL_DIR/setup"
+"$INSTALL_DIR/setup" --host auto --quiet
 
 # Switch back to previous branch if we moved away (best-effort)
 if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then

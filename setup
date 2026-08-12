@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
-# gstack-extend setup — install skill symlinks.
+# gstack-extend setup — install each skill as its own SKILL.md directory.
 #
 # Usage:
-#   ./setup                                       # Install to ~/.claude/skills/
-#   ./setup --uninstall                           # Remove symlinks from default dir
-#   ./setup --skills-dir <path> --uninstall       # Remove symlinks from a custom dir
-#                                                 # (legacy escape hatch for v0.16.0
-#                                                 #  installs; --skills-dir is no
-#                                                 #  longer accepted for install)
+#   ./setup                                          # Claude (~/.claude/skills/)
+#   ./setup --host auto                              # detect claude/codex/opencode
+#   ./setup --host claude|codex|opencode
+#   ./setup --host <host> --uninstall
+#   ./setup --skills-dir <path> --uninstall          # legacy v0.16.0 cleanup
+#   ./setup --quiet
 set -euo pipefail
 
-# bun is the project runtime — required for tests, scripts, and the audit
-# binary path. Fail fast at install time so users hit a clear error instead
-# of confusing "command not found" later.
 if ! command -v bun >/dev/null 2>&1; then
   echo "Error: bun is required but not installed." >&2
   echo "Install with checksum verification:" >&2
@@ -25,14 +22,17 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SKILLS_DIR="${HOME}/.claude/skills"
+SKILLS_DIR=""
 SKILLS_DIR_GIVEN=0
 UNINSTALL=0
-USAGE="Usage: ./setup [--uninstall] [--skills-dir <path> --uninstall]"
+QUIET=0
+HOST="claude"
+USAGE="Usage: ./setup [--host claude|codex|opencode|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
 
-# Source install-safety helpers (is_safe_install_path, is_safe_target_path).
 # shellcheck source=bin/lib/install-safety.sh
 . "$SCRIPT_DIR/bin/lib/install-safety.sh"
+
+log() { [ "$QUIET" -eq 0 ] && echo "$@" || true; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,20 +40,29 @@ while [ $# -gt 0 ]; do
       UNINSTALL=1
       shift
       ;;
+    -q|--quiet)
+      QUIET=1
+      shift
+      ;;
+    --host)
+      if [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
+        echo "Error: --host requires claude, codex, opencode, or auto (got: '${2:-<missing>}')" >&2
+        echo "$USAGE" >&2
+        exit 1
+      fi
+      HOST="$2"
+      shift 2
+      ;;
+    --host=*)
+      HOST="${1#--host=}"
+      shift
+      ;;
     --skills-dir)
-      # Reject missing value and values that look like a flag
-      # (e.g. `./setup --skills-dir --uninstall` would otherwise set
-      # SKILLS_DIR to "--uninstall" and fail later inside mkdir).
-      # Empty string and any value starting with "-" both fail the guard.
       if [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
         echo "Error: --skills-dir requires a path argument (got: '${2:-<missing>}')" >&2
         echo "$USAGE" >&2
         exit 1
       fi
-      # Require an absolute path. Relative paths are interpreted against
-      # $PWD at invocation, so running install from one cwd and uninstall
-      # from another silently targets a different directory with success
-      # exit code. Reject up front.
       if [ "${2#/}" = "$2" ]; then
         echo "Error: --skills-dir requires an absolute path (got: '$2')" >&2
         echo "Hint: use \$(pwd)/$2 if you meant the current directory." >&2
@@ -72,14 +81,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# --skills-dir is now uninstall-only. Pairing it with install was retired
-# in Track 5A: skill preambles only probe ~/.claude/skills/{name}/ and
-# .claude/skills/{name}/, so symlinks at custom paths are never found.
-# Preserved for cleaning up v0.16.0 leftovers via:
-#   ./setup --skills-dir <old-custom-dir> --uninstall
+case "$HOST" in
+  claude|codex|opencode|auto) ;;
+  *)
+    echo "Unknown --host value: $HOST (expected claude, codex, opencode, or auto)" >&2
+    echo "$USAGE" >&2
+    exit 1
+    ;;
+esac
+
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
   echo "Error: --skills-dir is no longer accepted for install." >&2
-  echo "  Skill preambles probe ~/.claude/skills/{name}/ and .claude/skills/{name}/." >&2
+  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode)." >&2
   echo "  Symlinks at any other path will not be discovered." >&2
   echo "" >&2
   echo "  To clean up a v0.16.0-era custom install, use:" >&2
@@ -99,35 +112,85 @@ SKILLS=(
   gstack-extend-init
 )
 
-# Historical skills that prior releases installed. Iterated on every install
-# (auto-cleanup of dangling symlinks for retired skills) and on uninstall.
 LEGACY_SKILLS=(
   browse-native
   roadmap-new
 )
 
-# ─── Uninstall path ────────────────────────────────────────────
-#
-# Per-target safety guard: refuse if $target is a symlink to refuse
-# operating on a path an attacker may have planted. Uninstalls only the
-# symlinks we created (where SKILL.md points at our $SCRIPT_DIR/skills/).
-if [ "$UNINSTALL" -eq 1 ]; then
+host_skills_dir() {
+  case "$1" in
+    claude) echo "${HOME}/.claude/skills" ;;
+    codex) echo "${HOME}/.codex/skills" ;;
+    opencode) echo "${HOME}/.config/opencode/skills" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Never treat the package checkout as a skill (no root SKILL.md).
+refuse_package_root_link() {
+  local dest="$1"
+  if [ -L "$dest" ]; then
+    local dest_target
+    dest_target="$(readlink "$dest" 2>/dev/null || true)"
+    if [ "$dest_target" = "$SCRIPT_DIR" ]; then
+      rm -f "$dest"
+      log "Removed package-root skill link: $dest"
+    fi
+  fi
+}
+
+rewrite_skill_body() {
+  local src="$1"
+  local dest="$2"
+  local host="$3"
+  local host_root skill
+  host_root="$(host_skills_dir "$host")"
+
+  if [ -L "$dest" ]; then
+    rm -f "$dest"
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  local sed_args=()
+  for skill in gstack-extend-upgrade gstack-extend-init pair-review review-apparatus test-plan full-review roadmap gstack-extend; do
+    sed_args+=(-e "s|~/.claude/skills/${skill}|${host_root}/${skill}|g")
+  done
+  sed "${sed_args[@]}" "$src" > "$tmp"
+
+  if [ "$host" = "codex" ]; then
+    awk '
+      BEGIN { fm=0; skip=0 }
+      /^---[[:space:]]*$/ {
+        if (fm==0) { fm=1; print; next }
+        skip=0; print; next
+      }
+      fm==1 && /^allowed-tools:[[:space:]]*$/ { skip=1; next }
+      skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
+      skip==1 { skip=0 }
+      { print }
+    ' "$tmp" > "$dest"
+    rm -f "$tmp"
+  else
+    mv "$tmp" "$dest"
+  fi
+}
+
+uninstall_from_dir() {
+  local skills_dir="$1"
+  local skill target link_target expected
   for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
-    target="$SKILLS_DIR/$skill"
-    # Per-target safety: refuse to operate on a symlinked or non-dir
-    # $target. Visible skip rather than hard exit so other skills can
-    # still uninstall cleanly. is_safe_target_path prints stderr.
+    target="$skills_dir/$skill"
     if [ -e "$target" ] || [ -L "$target" ]; then
       if [ -L "$target" ]; then
-        echo "Skipped $skill (target is a symlink — refusing to operate on it)"
+        log "Skipped $skill (target is a symlink — refusing to operate on it)"
         continue
       fi
       if [ ! -d "$target" ]; then
-        echo "Skipped $skill (target exists but is not a directory)"
+        log "Skipped $skill (target exists but is not a directory)"
         continue
       fi
     else
-      # Target doesn't exist at all; nothing to uninstall.
       continue
     fi
     if [ -L "$target/SKILL.md" ]; then
@@ -135,124 +198,177 @@ if [ "$UNINSTALL" -eq 1 ]; then
       expected="$SCRIPT_DIR/skills/${skill}.md"
       if [ "$link_target" = "$expected" ]; then
         rm -f "$target/SKILL.md"
+        rm -f "$target/.extend-root"
         rmdir "$target" 2>/dev/null || true
-        echo "Removed $skill"
+        log "Removed $skill"
       else
-        echo "Skipped $skill (symlink points elsewhere)"
+        log "Skipped $skill (symlink points elsewhere)"
+      fi
+    elif [ -f "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]; then
+      local baked
+      baked="$(cat "$target/.extend-root" 2>/dev/null || true)"
+      if [ "$baked" = "$SCRIPT_DIR" ]; then
+        rm -f "$target/SKILL.md" "$target/.extend-root"
+        rmdir "$target" 2>/dev/null || true
+        log "Removed $skill"
+      else
+        log "Skipped $skill (extend-root points elsewhere)"
       fi
     fi
   done
+  refuse_package_root_link "$skills_dir/gstack-extend"
+}
 
-  # ─── CLI symlink uninstall ──────────────────────────────────────────
-  # Mirrors the CLI install path below. Only remove if the symlink points
-  # at OUR bin — never touch a symlink pointing elsewhere (could be the
-  # user's own `gstack-extend` shim or another project's).
-  cli_link="$HOME/.local/bin/gstack-extend"
-  cli_expected="$SCRIPT_DIR/bin/gstack-extend"
-  if [ -L "$cli_link" ]; then
-    link_target="$(readlink "$cli_link" 2>/dev/null || true)"
-    if [ "$link_target" = "$cli_expected" ]; then
-      rm -f "$cli_link"
-      echo "Removed gstack-extend CLI symlink ($cli_link)"
-    else
-      echo "Skipped gstack-extend CLI symlink (points elsewhere: $link_target)"
-    fi
-  fi
-
-  echo "Uninstall complete."
-  exit 0
-fi
-
-# ─── Install path ──────────────────────────────────────────────
-#
-# Preflight: validate ALL targets before mutating ANY (E8). If skill 3
-# fails the safety check, skills 1 and 2 must not be already-installed
-# in a partial state.
-#
-# Layer 1: $SKILLS_DIR (or its nearest existing ancestor) resolves to a
-# user-owned, in-$HOME, non-world-writable path. Defends against an
-# attacker planting a symlink at ~/.claude/skills.
-if ! is_safe_install_path "$SKILLS_DIR"; then
-  echo "$USAGE" >&2
-  exit 1
-fi
-
-# Layer 2: each $SKILLS_DIR/{skill} target is either non-existent or a
-# regular directory — never a symlink, never a regular file/FIFO.
-for skill in "${SKILLS[@]}"; do
-  target="$SKILLS_DIR/$skill"
-  src="$SCRIPT_DIR/skills/${skill}.md"
-  if [ ! -f "$src" ]; then
-    echo "Warning: $src not found, skipping" >&2
-    continue
-  fi
-  if ! is_safe_target_path "$target"; then
+preflight_dir() {
+  local skills_dir="$1"
+  if ! is_safe_install_path "$skills_dir"; then
     echo "$USAGE" >&2
     exit 1
   fi
-  if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
-    echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
-    continue
+  local skill target src
+  for skill in "${SKILLS[@]}"; do
+    target="$skills_dir/$skill"
+    src="$SCRIPT_DIR/skills/${skill}.md"
+    if [ ! -f "$src" ]; then
+      echo "Warning: $src not found, skipping" >&2
+      continue
+    fi
+    if ! is_safe_target_path "$target"; then
+      echo "$USAGE" >&2
+      exit 1
+    fi
+    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ ! -f "$target/.extend-root" ]; then
+      echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
+      continue
+    fi
+  done
+}
+
+clean_legacy() {
+  local skills_dir="$1"
+  local skill target link_target expected_old
+  for skill in "${LEGACY_SKILLS[@]}"; do
+    target="$skills_dir/$skill"
+    [ -L "$target/SKILL.md" ] || continue
+    link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
+    expected_old="$SCRIPT_DIR/skills/${skill}.md"
+    if [ "$link_target" = "$expected_old" ]; then
+      rm -f "$target/SKILL.md"
+      rmdir "$target" 2>/dev/null || true
+      log "Removed retired skill: $skill"
+    fi
+  done
+}
+
+install_into_dir() {
+  local skills_dir="$1"
+  local host="$2"
+  local skill src target installed
+  installed=0
+  mkdir -p "$skills_dir"
+  refuse_package_root_link "$skills_dir/gstack-extend"
+  clean_legacy "$skills_dir"
+
+  for skill in "${SKILLS[@]}"; do
+    src="$SCRIPT_DIR/skills/${skill}.md"
+    [ -f "$src" ] || continue
+    target="$skills_dir/$skill"
+    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ ! -f "$target/.extend-root" ]; then
+      continue
+    fi
+    mkdir -p "$target"
+    if [ "$host" = "claude" ]; then
+      ln -snf "$src" "$target/SKILL.md"
+      rm -f "$target/.extend-root"
+    else
+      rewrite_skill_body "$src" "$target/SKILL.md" "$host"
+      printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
+    fi
+    installed=$((installed + 1))
+  done
+  log "Installed $installed skills into $skills_dir"
+}
+
+# ─── Resolve which hosts to touch ──────────────────────────────────
+INSTALL_CLAUDE=0
+INSTALL_CODEX=0
+INSTALL_OPENCODE=0
+
+if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
+  :
+elif [ "$HOST" = "auto" ]; then
+  command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
+  command -v codex >/dev/null 2>&1 && INSTALL_CODEX=1
+  command -v opencode >/dev/null 2>&1 && INSTALL_OPENCODE=1
+  [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ] && INSTALL_CLAUDE=1
+  [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ] && INSTALL_CODEX=1
+  [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ] && INSTALL_OPENCODE=1
+  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ]; then
+    INSTALL_CLAUDE=1
   fi
-done
+elif [ "$HOST" = "claude" ]; then
+  INSTALL_CLAUDE=1
+elif [ "$HOST" = "codex" ]; then
+  INSTALL_CODEX=1
+elif [ "$HOST" = "opencode" ]; then
+  INSTALL_OPENCODE=1
+fi
 
-mkdir -p "$SKILLS_DIR"
-
-# Auto-clean retired skills so upgrades don't leave dangling symlinks.
-# Only removes symlinks we created (target points at our own skills/ dir);
-# anything else is left alone.
-removed_legacy=0
-for skill in "${LEGACY_SKILLS[@]}"; do
-  target="$SKILLS_DIR/$skill"
-  [ -L "$target/SKILL.md" ] || continue
-  link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
-  expected_old="$SCRIPT_DIR/skills/${skill}.md"
-  if [ "$link_target" = "$expected_old" ]; then
-    rm -f "$target/SKILL.md"
-    rmdir "$target" 2>/dev/null || true
-    removed_legacy=$((removed_legacy + 1))
-    echo "Removed retired skill: $skill"
+# ─── Uninstall ─────────────────────────────────────────────────────
+if [ "$UNINSTALL" -eq 1 ]; then
+  if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
+    uninstall_from_dir "$SKILLS_DIR"
+  else
+    [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)"
+    [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)"
+    [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)"
   fi
-done
 
-installed=0
-for skill in "${SKILLS[@]}"; do
-  src="$SCRIPT_DIR/skills/${skill}.md"
-  if [ ! -f "$src" ]; then
-    continue
+  if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "claude" ] || [ "$HOST" = "auto" ]; }; then
+    cli_link="$HOME/.local/bin/gstack-extend"
+    cli_expected="$SCRIPT_DIR/bin/gstack-extend"
+    if [ -L "$cli_link" ]; then
+      link_target="$(readlink "$cli_link" 2>/dev/null || true)"
+      if [ "$link_target" = "$cli_expected" ]; then
+        rm -f "$cli_link"
+        log "Removed gstack-extend CLI symlink ($cli_link)"
+      else
+        log "Skipped gstack-extend CLI symlink (points elsewhere: $link_target)"
+      fi
+    fi
   fi
-  target="$SKILLS_DIR/$skill"
-  if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
-    continue
-  fi
-  mkdir -p "$target"
-  ln -snf "$src" "$target/SKILL.md"
-  installed=$((installed + 1))
-done
 
-echo "Installed $installed skills into $SKILLS_DIR"
+  log "Uninstall complete."
+  exit 0
+fi
 
-# ─── CLI symlink wire ────────────────────────────────────────────────
-#
-# bin/gstack-extend is the project-lifecycle CLI. It must be invokable
-# from outside the gstack-extend repo, so we symlink it into a PATH-y
-# location. Fail-soft: if ~/.local/bin doesn't exist, print a tip and
-# move on — never break the skill install over a missing bin dir.
+# ─── Install ───────────────────────────────────────────────────────
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  preflight_dir "$(host_skills_dir claude)"
+fi
+if [ "$INSTALL_CODEX" -eq 1 ]; then
+  preflight_dir "$(host_skills_dir codex)"
+fi
+if [ "$INSTALL_OPENCODE" -eq 1 ]; then
+  preflight_dir "$(host_skills_dir opencode)"
+fi
+
+[ "$INSTALL_CLAUDE" -eq 1 ] && install_into_dir "$(host_skills_dir claude)" claude
+[ "$INSTALL_CODEX" -eq 1 ] && install_into_dir "$(host_skills_dir codex)" codex
+[ "$INSTALL_OPENCODE" -eq 1 ] && install_into_dir "$(host_skills_dir opencode)" opencode
+
 cli_bin_dir="$HOME/.local/bin"
 
-# Wire one bin into ~/.local/bin/. Fail-soft on every error (missing source,
-# missing target dir, non-symlink collision) so a wiring hiccup never breaks
-# the rest of the install.
 wire_bin() {
   local src="$1"
   local name="$2"
   local dst="$cli_bin_dir/$name"
   if [ ! -f "$src" ] || [ ! -x "$src" ]; then
-    return 0  # source missing or not executable — silent skip
+    return 0
   fi
   if [ ! -d "$cli_bin_dir" ]; then
-    echo "Tip: ~/.local/bin doesn't exist. Either create it and add to PATH,"
-    echo "  or invoke $name directly: $src"
+    log "Tip: ~/.local/bin doesn't exist. Either create it and add to PATH,"
+    log "  or invoke $name directly: $src"
     return 0
   fi
   if [ -e "$dst" ] && [ ! -L "$dst" ]; then
@@ -260,43 +376,26 @@ wire_bin() {
     return 0
   fi
   ln -snf "$src" "$dst"
-  echo "Wired $name → $dst"
+  log "Wired $name → $dst"
 }
 
 cli_bin_src="$SCRIPT_DIR/bin/gstack-extend"
 wire_bin "$cli_bin_src" "gstack-extend"
-# Track 13A: telemetry wrapper. Mirrors the gstack-extend wire so the per-skill
-# epilogue's `command -v gstack-extend-telemetry` lookup resolves cleanly on
-# vendored installs, Conductor workspaces, and CI environments where the
-# canonical $HOME/.claude/skills/gstack-extend/bin/ fallback path doesn't hold.
 wire_bin "$SCRIPT_DIR/bin/gstack-extend-telemetry" "gstack-extend-telemetry"
 
-# Single PATH-hint after wiring (avoids printing twice for two bins).
 if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
   case ":$PATH:" in
     *":$cli_bin_dir:"*) ;;
-    *) echo "  Tip: add $cli_bin_dir to your PATH so wired CLIs resolve directly." ;;
+    *) log "  Tip: add $cli_bin_dir to your PATH so wired CLIs resolve directly." ;;
   esac
 fi
 
-# ─── Self-registration in projects.json ─────────────────────────────
-#
-# D4.A: setup auto-writes the gstack-extend repo's own entry into the
-# registry the first time it runs after Track 12A ships. Wrapped so a
-# registry-write bug never breaks install. --migrate is the right
-# subcommand here: gstack-extend repo IS canonically onboarded, just
-# not yet registered.
 if [ -x "$cli_bin_src" ]; then
-  # Capture stderr so a failed self-register reports its first useful
-  # line (audit STATUS:fail, permission error, etc.) instead of being
-  # silently swallowed and pointing the user at a retry that'll fail
-  # the same way.
   _self_register_log=$(mktemp /tmp/gstack-extend-self-register.XXXXXX)
   if "$cli_bin_src" init --migrate --no-prompt "$SCRIPT_DIR" >/dev/null 2>"$_self_register_log"; then
-    echo "Self-registered gstack-extend in ~/.gstack-extend/projects.json"
+    log "Self-registered gstack-extend in ~/.gstack-extend/projects.json"
   else
     echo "Note: gstack-extend self-registration skipped (registry write or audit failed)." >&2
-    # First non-empty line of stderr — usually the diagnostic the user needs.
     grep -m1 . "$_self_register_log" 2>/dev/null | sed 's/^/  /' >&2 || true
     echo "  Retry: gstack-extend init --migrate $SCRIPT_DIR" >&2
   fi

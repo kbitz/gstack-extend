@@ -15,9 +15,20 @@ allowed-tools:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/gstack-extend-upgrade/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/gstack-extend-upgrade/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/gstack-extend-upgrade/SKILL.md 2>/dev/null \
            || readlink .claude/skills/gstack-extend-upgrade/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=""
 [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+if [ -z "$_EXTEND_ROOT" ]; then
+  for _er in ~/.claude/skills/gstack-extend-upgrade/.extend-root ~/.codex/skills/gstack-extend-upgrade/.extend-root ~/.config/opencode/skills/gstack-extend-upgrade/.extend-root .claude/skills/gstack-extend-upgrade/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    _SKILL_SRC="$_EXTEND_ROOT/skills/gstack-extend-upgrade.md"
+    break
+  done
+  unset _er
+fi
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" --force 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true

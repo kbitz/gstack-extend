@@ -22,9 +22,20 @@ allowed-tools:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/gstack-extend-init/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/gstack-extend-init/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/gstack-extend-init/SKILL.md 2>/dev/null \
            || readlink .claude/skills/gstack-extend-init/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=""
 [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+if [ -z "$_EXTEND_ROOT" ]; then
+  for _er in ~/.claude/skills/gstack-extend-init/.extend-root ~/.codex/skills/gstack-extend-init/.extend-root ~/.config/opencode/skills/gstack-extend-init/.extend-root .claude/skills/gstack-extend-init/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    _SKILL_SRC="$_EXTEND_ROOT/skills/gstack-extend-init.md"
+    break
+  done
+  unset _er
+fi
 if [ -z "$_EXTEND_ROOT" ] || [ ! -x "$_EXTEND_ROOT/bin/gstack-extend" ]; then
   echo "ERROR: cannot locate bin/gstack-extend — run \`setup\` first."
   exit 1

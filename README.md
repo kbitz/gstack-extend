@@ -30,8 +30,22 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 bun --cwd ~/.claude/skills/gstack-extend run setup
 ```
 
-This installs all skills into `~/.claude/skills/`.
-To uninstall: `~/.claude/skills/gstack-extend/setup --uninstall`
+Default install is Claude (`~/.claude/skills/<name>/SKILL.md`). For every
+detected agent (Claude, Codex, OpenCode):
+
+```bash
+~/.claude/skills/gstack-extend/setup --host auto
+```
+
+| Host | Path |
+|------|------|
+| Claude | `~/.claude/skills/<name>/` |
+| Codex | `~/.codex/skills/<name>/` |
+| OpenCode | `~/.config/opencode/skills/<name>/` |
+
+Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
+
+To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 ---
 

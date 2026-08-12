@@ -32,9 +32,20 @@ allowed-tools:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/test-plan/SKILL.md 2>/dev/null \
            || readlink .claude/skills/test-plan/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=""
 [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+if [ -z "$_EXTEND_ROOT" ]; then
+  for _er in ~/.claude/skills/test-plan/.extend-root ~/.codex/skills/test-plan/.extend-root ~/.config/opencode/skills/test-plan/.extend-root .claude/skills/test-plan/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    _SKILL_SRC="$_EXTEND_ROOT/skills/test-plan.md"
+    break
+  done
+  unset _er
+fi
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
@@ -226,8 +237,18 @@ pair-review uses) so both skills agree on the same on-disk location:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/test-plan/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/test-plan/SKILL.md 2>/dev/null \
            || readlink .claude/skills/test-plan/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+if [ -z "$_EXTEND_ROOT" ] || [ "$_EXTEND_ROOT" = "." ]; then
+  for _er in ~/.claude/skills/test-plan/.extend-root ~/.codex/skills/test-plan/.extend-root ~/.config/opencode/skills/test-plan/.extend-root .claude/skills/test-plan/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    break
+  done
+  unset _er
+fi
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
 BUILD_BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 PR_PROJECT_DIR=$(session_dir pair-review)
@@ -738,8 +759,9 @@ Action receipt: "Pair-review state staged. <N> items in <group> group. Handing o
 The skill's final action is to hand execution to /pair-review's Phase 2 loop.
 
 Read the pair-review skill — try `~/.claude/skills/pair-review/SKILL.md`
-first, fall back to `.claude/skills/pair-review/SKILL.md` (vendored
-install) — using the Read tool.
+first, then `~/.codex/skills/pair-review/SKILL.md`, then
+`~/.config/opencode/skills/pair-review/SKILL.md`, then fall back to
+`.claude/skills/pair-review/SKILL.md` (vendored install) — using the Read tool.
 
 Skip these sections (already handled by /test-plan):
 - Preamble

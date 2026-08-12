@@ -502,7 +502,13 @@ describe('Track 5A two-path preamble probe (path-2 fallthrough)', () => {
     test(`${skill} preamble probes ~/.claude/skills/${skill}/SKILL.md (path 1)`, () => {
       expect(content).toContain(`readlink ~/.claude/skills/${skill}/SKILL.md 2>/dev/null`);
     });
-    test(`${skill} preamble falls back to .claude/skills/${skill}/SKILL.md (path 2)`, () => {
+    test(`${skill} preamble probes ~/.codex/skills/${skill}/SKILL.md`, () => {
+      expect(content).toContain(`readlink ~/.codex/skills/${skill}/SKILL.md 2>/dev/null`);
+    });
+    test(`${skill} preamble probes ~/.config/opencode/skills/${skill}/SKILL.md`, () => {
+      expect(content).toContain(`readlink ~/.config/opencode/skills/${skill}/SKILL.md 2>/dev/null`);
+    });
+    test(`${skill} preamble falls back to .claude/skills/${skill}/SKILL.md (vendored)`, () => {
       expect(content).toContain(`readlink .claude/skills/${skill}/SKILL.md 2>/dev/null`);
     });
   }
@@ -523,14 +529,15 @@ describe('Track 5A test-plan.md cross-skill probe (Phase 8 inline-Read)', () => 
   test('Phase 8 inline pair-review read mentions both probe paths', () => {
     // Path 1: the standard global install location.
     expect(content).toContain('~/.claude/skills/pair-review/SKILL.md');
-    // Path 2: the vendored install fallback.
+    expect(content).toContain('~/.codex/skills/pair-review/SKILL.md');
+    expect(content).toContain('~/.config/opencode/skills/pair-review/SKILL.md');
     expect(content).toContain('.claude/skills/pair-review/SKILL.md');
   });
 
   test('Phase 8 prose explicitly instructs the agent to fall back', () => {
     // Lock the actionable verb so future edits don't reduce this to a
     // single-path read by accident.
-    expect(content).toMatch(/fall back to.+\.claude\/skills\/pair-review\/SKILL\.md/);
+    expect(content).toMatch(/fall back to[\s\S]+\.claude\/skills\/pair-review\/SKILL\.md/);
   });
 });
 
