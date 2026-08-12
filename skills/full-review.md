@@ -24,9 +24,20 @@ allowed-tools:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/full-review/SKILL.md 2>/dev/null \
            || readlink .claude/skills/full-review/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=""
 [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+if [ -z "$_EXTEND_ROOT" ]; then
+  for _er in ~/.claude/skills/full-review/.extend-root ~/.codex/skills/full-review/.extend-root ~/.config/opencode/skills/full-review/.extend-root .claude/skills/full-review/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    _SKILL_SRC="$_EXTEND_ROOT/skills/full-review.md"
+    break
+  done
+  unset _er
+fi
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
@@ -177,8 +188,18 @@ Resolve `SESSION_DIR` at the start of every bash block that touches state:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/full-review/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/full-review/SKILL.md 2>/dev/null \
            || readlink .claude/skills/full-review/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+if [ -z "$_EXTEND_ROOT" ] || [ "$_EXTEND_ROOT" = "." ]; then
+  for _er in ~/.claude/skills/full-review/.extend-root ~/.codex/skills/full-review/.extend-root ~/.config/opencode/skills/full-review/.extend-root .claude/skills/full-review/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    break
+  done
+  unset _er
+fi
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
 SESSION_DIR=$(session_dir full-review)
 echo "SESSION_DIR=$SESSION_DIR"

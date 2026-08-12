@@ -26,9 +26,20 @@ allowed-tools:
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/roadmap/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/roadmap/SKILL.md 2>/dev/null \
            || readlink .claude/skills/roadmap/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=""
 [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+if [ -z "$_EXTEND_ROOT" ]; then
+  for _er in ~/.claude/skills/roadmap/.extend-root ~/.codex/skills/roadmap/.extend-root ~/.config/opencode/skills/roadmap/.extend-root .claude/skills/roadmap/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    _SKILL_SRC="$_EXTEND_ROOT/skills/roadmap.md"
+    break
+  done
+  unset _er
+fi
 if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
   _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
@@ -300,8 +311,18 @@ Before the AskUserQuestion, write the entire proposed `## In Progress` + `## Cur
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
+           || readlink ~/.codex/skills/roadmap/SKILL.md 2>/dev/null \
+           || readlink ~/.config/opencode/skills/roadmap/SKILL.md 2>/dev/null \
            || readlink .claude/skills/roadmap/SKILL.md 2>/dev/null)
 _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
+if [ -z "$_EXTEND_ROOT" ] || [ "$_EXTEND_ROOT" = "." ]; then
+  for _er in ~/.claude/skills/roadmap/.extend-root ~/.codex/skills/roadmap/.extend-root ~/.config/opencode/skills/roadmap/.extend-root .claude/skills/roadmap/.extend-root; do
+    [ -f "$_er" ] || continue
+    _EXTEND_ROOT=$(cat "$_er")
+    break
+  done
+  unset _er
+fi
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
 PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"

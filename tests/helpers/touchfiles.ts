@@ -150,6 +150,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'src/audit/**',
     'scripts/init-templates/**',
   ],
+  'tests/setup-hosts.test.ts': [
+    'setup',
+    'skills/**',
+    'bin/lib/install-safety.sh',
+  ],
   'tests/setup-init-wire.test.ts': [
     'setup',
     'bin/gstack-extend',

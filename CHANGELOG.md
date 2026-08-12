@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.3.0] - 2026-08-12
+
+### Added
+
+- **Native multi-host skill install.** `./setup --host auto` detects Claude, Codex, and OpenCode and installs each skill as its own `SKILL.md` directory. Codex goes to `~/.codex/skills/<name>/`, OpenCode to `~/.config/opencode/skills/<name>/`. The package checkout is never linked as a skill. `--quiet` and `--uninstall --host …` work per host. After upgrade, `update-run` re-runs `setup --host auto --quiet`.
+
 ## [0.22.2.0] - 2026-08-05
 
 ### Fixed: `/pair-review` asks fewer questions, and each one is answerable without thinking

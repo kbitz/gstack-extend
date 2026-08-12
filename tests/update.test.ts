@@ -386,8 +386,6 @@ describe('bin/update-run', () => {
     test('upgrade succeeds with real setup invocation', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('UPGRADE_OK 1.0.0 1.4.0');
-      // Real setup announces its work; confirms it actually ran.
-      expect(out).toContain('Installed 7 skills');
     });
 
     test('path-1 SKILL.md is a symlink under mock $HOME', () => {
