@@ -42,6 +42,7 @@ export type StubGitOpts = {
   diffNames?: string[];
   logFirstWithPhrase?: { date: string } | null;
   logSubjectsSince?: string[];
+  workingTreePaths?: string[];
 };
 
 export function stubGit(opts: StubGitOpts = {}): GitGateway {
@@ -52,6 +53,7 @@ export function stubGit(opts: StubGitOpts = {}): GitGateway {
     diffNamesBetween: () => opts.diffNames ?? [],
     logFirstWithPhrase: () => opts.logFirstWithPhrase ?? null,
     logSubjectsSince: () => opts.logSubjectsSince ?? [],
+    workingTreePaths: () => opts.workingTreePaths ?? [],
   };
 }
 

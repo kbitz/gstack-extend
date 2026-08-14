@@ -511,15 +511,72 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     expect(g1?.isComplete).toBe(true);
     const g5 = r.value.groups.find((g) => g.num === '5');
     expect(g5?.isComplete).toBe(true);
-    // Group dep parse: kinds limited to 'unspecified' / 'none' / 'after'.
-    // Active Groups in the current plan use explicit `_Depends on:_` blocks
-    // OR rely on the preceding-Group default. No Group should have a
-    // malformed deps block.
+    // Group dep parse: kinds limited to 'unspecified' / 'none' / 'list'.
+    // Unspecified means none (v3). No Group should have a malformed deps block.
     for (const g of r.value.groups) {
       expect(['unspecified', 'none', 'after', 'list']).toContain(g.deps.kind);
     }
     // Sanity: at least 10 groups, several tracks (real-repo shape).
     expect(r.value.groups.length).toBeGreaterThanOrEqual(10);
     expect(r.value.tracks.length).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('parseRoadmap — card fields + session weight', () => {
+  test('parses _out / _read-first / _produces / _blocked-by', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Title',
+      '_1 task . ~S . low risk . [a.ts]_',
+      '_touches: src/a.ts_',
+      '_out: 1B, 2A_',
+      '_read-first: 0A, docs/designs/foo.md_',
+      '_produces: typed accessors on UbiquitousKVStore_',
+      '_blocked-by: Track 0A_',
+      '- **Do it** -- yes. _src/a.ts, ~20 lines._ (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.out).toEqual(['1B', '2A']);
+    expect(t.readFirst).toEqual(['0A', 'docs/designs/foo.md']);
+    expect(t.produces).toBe('typed accessors on UbiquitousKVStore');
+    expect(t.blockedBy).toEqual(['0A']);
+    expect(t.sessionWeight).toBe(1);
+    expect(t.markdownOnly).toBe(false);
+  });
+
+  test('delete task is weight S even when tagged L', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Trim',
+      '_1 task . ~L . low risk . [skills/foo.md]_',
+      '_touches: skills/foo.md_',
+      '- **Delete dead helper** -- gone. _skills/foo.md, ~2000 lines (del)._ (L)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(1);
+    expect(t.deleteOnly).toBe(true);
+    expect(t.markdownOnly).toBe(true);
+    expect(t.sizeLabelMismatches ?? r.value.sizeLabelMismatches).toEqual([]);
+  });
+
+  test('two M write-tasks sum to weight 4', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Two',
+      '_2 tasks . ~M . low risk . [a.ts]_',
+      '_touches: src/a.ts_',
+      '- **One** -- . _src/a.ts, ~80 lines._ (M)',
+      '- **Two** -- . _src/a.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.sessionWeight).toBe(4);
   });
 });

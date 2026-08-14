@@ -2,7 +2,7 @@
  * lib-parallelism-cap.test.ts — CLAUDE.md override parsing for the
  * parallelism budget cap.
  *
- * Default 4 unless `<!-- roadmap:parallelism_cap=N -->` is present
+ * Default 6 unless `<!-- roadmap:parallelism_cap=N -->` is present
  * with a positive integer N. Non-positive or non-numeric values fall
  * back to the default — preserves bash's `[ -n "$cap" ] && [ "$cap"
  * -gt 0 ]` guard.

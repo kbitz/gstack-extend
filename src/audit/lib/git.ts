@@ -47,6 +47,8 @@ export type GitGateway = {
   logFirstWithPhrase(phrase: string, file: string): { date: string } | null;
   /** Subjects of commits to `file` since `sinceISO`. */
   logSubjectsSince(sinceISO: string, file: string): string[];
+  /** Union of unstaged, staged, and untracked paths (drift check). */
+  workingTreePaths(): string[];
 };
 
 export type GitGatewayDeps = {
@@ -115,6 +117,23 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       const r = spawn(['log', '--format=%s', `--after=${sinceISO}`, '--', file], cwd);
       if (!r.ok) return [];
       return splitLines(r.stdout);
+    },
+
+    workingTreePaths(): string[] {
+      const out = new Set<string>();
+      const batches: string[][] = [
+        ['diff', '--name-only', 'HEAD'],
+        ['diff', '--name-only', '--cached'],
+        ['ls-files', '--others', '--exclude-standard'],
+      ];
+      for (const args of batches) {
+        const r = spawn(args, cwd);
+        if (!r.ok) continue;
+        for (const line of splitLines(r.stdout)) {
+          if (line !== '') out.add(line);
+        }
+      }
+      return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     },
   };
 }

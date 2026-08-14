@@ -5,8 +5,8 @@
  * Bash's _compute_in_flight_groups + check_in_flight_groups share the
  * same logic; this suite covers the precedence rules:
  *   - Numeric sort, not doc order.
- *   - Default-prev rule: empty deps → previous Group in numeric order.
- *   - `_Depends on: none_` → no deps (empty list).
+ *   - Unspecified and `_Depends on: none_` → no deps (ready).
+ *   - Explicit list → those Groups must be complete.
  *   - Unknown dep references disqualify the Group from the frontier.
  *   - Group whose deps are all Complete enters the frontier.
  */
@@ -20,7 +20,9 @@ function group(num: string, opts: Partial<GroupInfo> = {}): GroupInfo {
   return {
     num,
     name: `G${num}`,
+    state: 'current-plan',
     isComplete: false,
+    isHotfix: false,
     deps: { kind: 'unspecified' },
     depsRaw: null,
     depAnchors: [],
@@ -40,14 +42,18 @@ describe('computeInFlight', () => {
     expect(r.unknownDeps).toEqual([]);
   });
 
-  test('default-prev: Group 2 needs Group 1 complete', () => {
+  test('unspecified: Group 2 is ready alongside Group 1', () => {
     const r = computeInFlight(parsed([group('1'), group('2')]));
-    // Group 1 in-flight (no deps), Group 2 blocked by incomplete Group 1.
-    expect(r.inFlight).toEqual(['1']);
+    expect(r.inFlight).toEqual(['1', '2']);
   });
 
-  test('Group 1 complete unblocks Group 2', () => {
-    const r = computeInFlight(parsed([group('1', { isComplete: true }), group('2')]));
+  test('explicit dep: Group 1 complete unblocks Group 2', () => {
+    const r = computeInFlight(
+      parsed([
+        group('1', { isComplete: true }),
+        group('2', { deps: { kind: 'list', depNums: ['1'] } }),
+      ]),
+    );
     expect(r.inFlight).toEqual(['2']);
   });
 
@@ -72,10 +78,8 @@ describe('computeInFlight', () => {
     expect(r.unknownDeps).toEqual(['2→9']);
   });
 
-  test('numeric sort, not doc order', () => {
-    // Doc order: 10, 2, 1. Numeric: 1, 2, 10. Group 1 has no prev (it's
-    // first). Group 2's prev is 1. Group 10's prev is 2. None complete.
+  test('numeric sort, not doc order — all unspecified are ready', () => {
     const r = computeInFlight(parsed([group('10'), group('2'), group('1')]));
-    expect(r.inFlight).toEqual(['1']);
+    expect(r.inFlight).toEqual(['1', '2', '10']);
   });
 });

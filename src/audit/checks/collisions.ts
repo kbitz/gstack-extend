@@ -23,6 +23,7 @@
  */
 
 import { ceiling } from '../lib/effort.ts';
+import { isSharedDoc, normalizeTouch, touchesIntersect } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckCollisions(ctx: AuditCtx): CheckResult {
@@ -58,6 +59,24 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
       );
     }
 
+    const claudeOwners: string[] = [];
+    for (const tid of tracks) {
+      const t = trackById.get(tid);
+      if (t === undefined) continue;
+      for (const raw of t.touches) {
+        const n = normalizeTouch(raw);
+        if (n.path === 'CLAUDE.md' || n.path === 'docs/CLAUDE.md') {
+          claudeOwners.push(tid);
+          break;
+        }
+      }
+    }
+    if (claudeOwners.length > 1) {
+      findings.push(
+        `- Group ${g.num}: CLAUDE.md claimed by ${claudeOwners.join(',')} — only one Track per Group may declare it`,
+      );
+    }
+
     for (let i = 0; i < tracks.length; i++) {
       for (let j = i + 1; j < tracks.length; j++) {
         const a = tracks[i]!;
@@ -66,14 +85,19 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
         const bT = trackById.get(b);
         if (aT === undefined || bT === undefined) continue;
         if (aT.touches.length === 0 || bT.touches.length === 0) continue;
+        if (!touchesIntersect(aT.touches, bT.touches)) continue;
 
-        const aSorted = [...new Set(aT.touches)].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
-        const bSet = new Set(bT.touches);
+        const aNorm = aT.touches.map((t) => normalizeTouch(t).path);
+        const bNorm = new Set(bT.touches.map((t) => normalizeTouch(t).path));
         const intersection: string[] = [];
-        for (const x of aSorted) {
-          if (bSet.has(x)) intersection.push(x);
+        for (const x of [...new Set(aNorm)].sort((p, q) => (p < q ? -1 : p > q ? 1 : 0))) {
+          if (isSharedDoc(x)) continue;
+          if (bNorm.has(x)) intersection.push(x);
         }
-        if (intersection.length === 0) continue;
+        // Directory-prefix hits may not share an identical token.
+        if (intersection.length === 0) {
+          intersection.push('(prefix)');
+        }
 
         let classification: 'SHARED_INFRA' | 'PARALLEL' = 'PARALLEL';
         for (const f of intersection) {

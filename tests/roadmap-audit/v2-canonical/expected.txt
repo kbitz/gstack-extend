@@ -71,9 +71,9 @@ FINDINGS:
 - All Group-level dependencies valid (5 groups)
 ADJACENCY:
 - Group 1 ← {}
-- Group 2 ← {1}
-- Group 3 ← {2}
-- Group 4 ← {3}
+- Group 2 ← {}
+- Group 3 ← {}
+- Group 4 ← {}
 - Group 5 ← {4}
 
 ## TASK_LIST
@@ -101,7 +101,7 @@ IMBALANCE_RATIO: 3.00
 
 ## IN_FLIGHT_GROUPS
 STATUS: info
-IN_FLIGHT: 3
+IN_FLIGHT: 3 4
 COMPLETE: 1 2
 PRIMARY: 3
 
@@ -117,6 +117,7 @@ FINDINGS:
 SIZE_LABEL_MISMATCH:
 - 3B "Cross-account thread collision": effort=(M) implies ~150 LOC, declared ~40 lines (>3x divergence)
 MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
 MAX_FILES_PER_TRACK: 8
 
@@ -127,10 +128,19 @@ FINDINGS:
 MAX_TRACKS_PER_GROUP: 8
 SHARED_INFRA_STATUS: missing
 
+## PACKING
+STATUS: fail
+FINDINGS:
+- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
+- written groups [3B | 4A,4B | 5A]
+- packer bins    [3B,4A,4B | 5A]
+
+BINS: 2
+
 ## PARALLELISM_BUDGET
-IN_FLIGHT_TRACKS: 1
-CAP: 4
-PER_GROUP: 3=1
+IN_FLIGHT_TRACKS: 3
+CAP: 6
+PER_GROUP: 3=1 4=2
 COMPLETE_TRACKS: 3A
 STATUS: pass
 FINDINGS:
@@ -143,10 +153,9 @@ FINDINGS:
 FUTURE_BULLET_COUNT: 2
 
 ## STYLE_LINT
-STATUS: warn
+STATUS: pass
 FINDINGS:
-Group 5: _Depends on: Group 4_ is redundant (preceding Group is the default) — drop the annotation
-
+- (none)
 
 ## DOC_INVENTORY
 STATUS: info

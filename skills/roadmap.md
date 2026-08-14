@@ -136,15 +136,14 @@ fi
 
 This skill maintains ROADMAP.md organized by lifecycle state at the top
 level (`## In Progress` / `## Current Plan` / `## Future` / `## Shipped`).
-Active plan sits at the top; shipped history sinks to the tail so readers
-don't scroll past completed work to see what's happening now and next.
-Every substantive run **regenerates** the upcoming plan from scratch
-instead of surgically reassessing it. Only shipped work has stable IDs.
+Active plan sits at the top; shipped history sinks to the tail (or to
+`docs/roadmap-shipped.md` when the tail no longer fits). Every substantive
+run **regenerates** the upcoming plan from scratch instead of surgically
+reassessing it. Only shipped work has stable IDs.
 
-The grammar, audit contract, and rationale live in
-`docs/archive/roadmap-v2-state-model.md` (archived 2026-05-14 after the
-model fully shipped through v0.19/0.20). Read that doc for the full
-specification; this prose describes the workflow.
+Groups are launch batches the packer assigns. Tracks are one-PR cards
+`/autoplan` will read. The grammar lives in this file; the packer is
+`bin/roadmap-pack`.
 
 **HARD GATE:** Documentation changes only — ROADMAP.md, TODOS.md,
 PROGRESS.md, and (during overhaul cleanup) `docs/designs/` /
@@ -222,7 +221,9 @@ roadmap and the ground truth disagree, the ground truth wins.
 "$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
 ```
 
-Read in addition: the full `ROADMAP.md`, the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan`, `## Future` — not the `## Shipped` essays). If `docs/roadmap-shipped.md` exists, load **only an ID+title index** (Group/Track headings), not the bodies. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+
+If `## Shipped` in ROADMAP.md exceeds ~50 KB or ~20 Groups, offer to move it to `docs/roadmap-shipped.md` (leave a pointer line, plus any in-progress Group's shipped sibling Tracks).
 
 **LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
@@ -256,7 +257,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR each), each with an explicit `_touches:_` footprint. _Don't assign Tracks to Groups yet_ — Group assignment is a separate step driven by the collision matrix (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and optional `_blocked-by: Track X` for a semantic dep the files do not show. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -270,26 +271,48 @@ Items from `[full-review:severity=critical|necessary]` or `[investigate]` are si
 
 ### Sizing discipline
 
-Hard rule: **1 Track = 1 PR**. The audit enforces this with the `max_loc_per_track` cap (default 300). When summing task LOC estimates pushes a Track over the cap, split it into multiple Tracks. **No "Ship as N PRs" language ever** — that's the v1 escape hatch the audit now bans (`STRUCTURE: fail`).
+Hard rule: **1 Track = 1 PR = 1 LLM session.** The audit enforces this with **session weight**, not line counts.
 
-When proposing a Track, anticipate review-induced expansion. If the work is high-risk or touches new surface area (3+ new files, `medium-high`/`high` risk), size it at ~50% of the cap. CEO/eng-review will likely add scope; bake the headroom in up front.
+| Tier | Weight | Meaning |
+|------|--------|---------|
+| S | 1 | a slice (~¼ session) |
+| M | 2 | half session |
+| L | 4 | the whole session — only task on the Track |
+| XL | 5 (forbidden) | split into more Tracks |
+
+Cap is **weight ≤ 4** (one L, two M, four S, or 2S+1M). `max_tasks_per_track` is 5.
+
+**Deletions are cheap.** A delete/remove/trim task, or `~N lines (del)`, is weight S regardless of N. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
+
+**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A single directory touch (`src/`) is a scan-scope Track — the packer will sit it alone.
+
+**The card is the scope.** Do not pre-shrink a Track so `/autoplan` can fill it. Overflow discovered in review goes to `TODOS.md`; the next regen packs it. **No "Ship as N PRs" language ever** (`STRUCTURE: fail`).
+
+**Card leanness.** ROADMAP.md holds the card, not the `/autoplan` essay. Review residue (`## Decision Audit Trail`, dual-voice tables, Completeness scores) belongs in `docs/designs/track-NX.md`. If you catch yourself pasting a review into a Track body, stop and write a design doc instead.
 
 ### Collision-driven grouping
 
-Group assignment is **constrained by the file-collision matrix**, not by theme. Compute it before naming Groups, not after.
+Group assignment is **the packer's job**, not a theme judgment.
 
-Once draft Tracks exist with `_touches:_` footprints, compute the pairwise intersection of every Track-pair's footprint:
+1. Draft Tracks only. Each has `_touches:_`, tasks, optional `_blocked-by: Track X`.
+2. Run:
+   ```bash
+   "$_EXTEND_ROOT/bin/roadmap-pack"
+   ```
+   On the first regen after this skill version, also run `"$_EXTEND_ROOT/bin/roadmap-pack" --materialize` and write any implicit previous-Group edges the author still wants as explicit `_Depends on: Group N_`. After that, unspecified = none.
+3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
+4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
+5. Paste the packer's adjacency (or the audit's `GROUP_DEPS` ADJACENCY after apply) into the Execution Map. Do not hand-write a line. Document order is not execution order.
 
-- Pairs with **empty intersection** are parallel-safe — they may co-Group.
-- Pairs with **non-empty intersection** must NOT co-Group. Resolve by either:
-  - **Merging** them into a single Track (when the overlap is most of both footprints — sequential file work belongs in one PR), OR
-  - **Splitting** them across Groups with an inter-Group dep edge (when each Track has substantial unique surface that justifies separate PRs).
+`PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
 
-Only after the collision matrix is satisfied may Tracks be named into Groups around cohesive themes. **Groups are equivalence classes of "can run in parallel," not bundles by topic.** Naming and theme are decorations on top of the parallel-safety partition.
+**Groups are launch batches of 4–6 parallel-safe Tracks** (hard max 8). Same files → different Groups (or one merged Track). Unrelated files → same Group. A 1-track Group is legal only as a Hotfix or a scan-scope Track whose `_touches:` collides with every other unpacked Track in the layer.
 
-This is what made v1 "5 Tracks in Group N" parade as parallel when really 4 of them chained on shared files. The audit's COLLISIONS check (Step 4) is now a safety net for human-edit drift after apply — the structural decision has to be made up front, not validated post-hoc.
+Do not sequence Groups "to cap concurrent WIP." That throttle is `parallelism_cap` (default 6) at launch time.
 
-If you find yourself rewriting Tracks repeatedly to escape collisions, the input scope is wrong: either the Tracks are too granular (merge them) or the proposed Group is doing too much (split into sequential Groups with a dep edge).
+Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
+
+`_touches:` is load-bearing. After a Track ships, `bin/roadmap-touches drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack. Directory entries end in `/`. Created files are `path (new)`.
 
 ### Renumbering
 
@@ -398,7 +421,7 @@ Run the audit immediately after writing edits:
 
 This is a drift safety net, not the primary check. COLLISIONS in particular should already be satisfied by Step 3's collision-driven grouping; an audit failure here means either (a) the regeneration skipped the matrix step, or (b) human edits between regeneration and apply introduced a collision. Either way, escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
 
-The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
+The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PACKING, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
 
 ### TODOS.md drain orphan check
 
@@ -515,6 +538,9 @@ The audit enforces this format. Helpers consume it. Skill prose follows it when 
 ##### Track 5B: <Title>
 _<N tasks . ~LOC . risk . files>_
 _touches: a, b, c_
+_out: 5C_
+_read-first: 5A, docs/designs/track-5A.md_
+_produces: <one line downstream may assume>_
 - **<task>** -- description. _path, ~N lines._ (S/M/L/XL)
 
 #### Group 6: <Title>
@@ -535,6 +561,9 @@ _touches: a, b, c_
 ##### Track 8A: <Title>
 _<N tasks . ~LOC . risk . files>_
 _touches: a, b, c_
+_out: 8B_
+_read-first: 5B_
+_produces: <one line>_
 - **<task>** -- description. _path, ~N lines._ (S/M/L/XL)
 
 ##### Track 8B: <Title>
@@ -547,11 +576,11 @@ _touches: a, b, c_
 
 ### Execution Map
 
-Adjacency list:
+Adjacency list (from the packer / GROUP_DEPS — not document order):
 \`\`\`
 - Group 5 ← {}
-- Group 6 ← {5}
-- Group 8 ← {6}
+- Group 6 ← {}
+- Group 8 ← {5, 6}
 - Group 9 ← {8}
 \`\`\`
 
@@ -593,8 +622,9 @@ structure, no `_touches:_`, no sizing, no IDs.
 - Track 2A — _shipped (vX.Y.Z.W)_
 
 (loose Groups not in a Phase are listed at H4 directly under `## Shipped`
-without a Phase wrapper. Shipped is the document's tail so the active plan
-stays at the top.)
+without a Phase wrapper. When history no longer fits, replace this section
+with `History: docs/roadmap-shipped.md` and keep only in-progress Groups'
+shipped sibling Tracks here.)
 ```
 
 **Vocabulary** is enforced by the audit's `check_vocab_lint` (banned: Cluster, Workstream, Milestone, Sprint; controlled: Phase only inside an explicit `### Phase N:` block, the `## Future` section, or the file-title line). Don't re-encode the rules here — the audit owns them.
@@ -623,6 +653,7 @@ The audit distinguishes blocker vs advisory:
 | LICENSE | root | License file | Manual |
 | TODOS.md | docs/ | "Inbox" — unprocessed items | /pair-review, /investigate (write), /roadmap (drain) |
 | ROADMAP.md | docs/ | "Execution plan" — state-organized | /roadmap (owns structure) |
+| roadmap-shipped.md | docs/ | Frozen shipped history (optional split) | /roadmap |
 | PROGRESS.md | docs/ | "Where we are" — version history, phase status | /roadmap (structure), /document-release (content) |
 | docs/designs/*.md | docs/designs/ | Architecture decisions | /office-hours |
 | docs/archive/*.md | docs/archive/ | Completed/superseded designs | /roadmap (recommends archiving) |
@@ -792,7 +823,7 @@ Lead the run summary with this table, above the audit detail:
 **VERDICT:** <STATUS> — <one-line summary>
 ```
 
-- `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE.
+- `<N>` counts audit sections with `STATUS: fail`: SIZE, COLLISIONS, PACKING, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PARALLELISM_BUDGET, FUTURE.
 - `<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`: VOCAB_LINT, STYLE_LINT, VERSION_TAG_STALENESS, TAXONOMY, SIZE_LABEL_MISMATCH, DOC_LOCATION, ARCHIVE_CANDIDATES, DEPENDENCIES, TASK_LIST, STRUCTURAL_FITNESS, DOC_INVENTORY, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).
 
 Verdict-to-status mapping:

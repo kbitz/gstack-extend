@@ -5,8 +5,8 @@
  *
  * Mirrors bash `_compute_in_flight_groups` semantics:
  *   - Groups iterated in NUMERIC sort order.
- *   - Effective deps: explicit if set; otherwise the immediately-preceding
- *     Group in numeric order; `_Depends on: none_` → no deps.
+ *   - Effective deps: explicit list if set; unspecified and
+ *     `_Depends on: none_` → no deps.
  *   - A Group is in-flight iff it isn't itself ✓ Complete AND every effective
  *     dep is in COMPLETE_GROUPS (and references an existing Group — unknown
  *     deps disqualify the Group from the frontier).
@@ -27,10 +27,10 @@ function compareGroupNum(a: string, b: string): number {
   return Number.parseInt(a, 10) - Number.parseInt(b, 10);
 }
 
-function effectiveDepsFor(g: GroupInfo, prev: string | null): string[] {
+function effectiveDepsFor(g: GroupInfo, _prev: string | null): string[] {
   switch (g.deps.kind) {
     case 'unspecified':
-      return prev === null ? [] : [prev];
+      return [];
     case 'none':
       return [];
     case 'list':

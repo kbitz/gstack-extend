@@ -115,6 +115,7 @@ SIZE_LABEL_MISMATCH:
 - 2B "Reset session": effort=(S) implies ~50 LOC, declared ~10 lines (>3x divergence)
 - 3A "Patch": effort=(S) implies ~50 LOC, declared ~5 lines (>3x divergence)
 MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
 MAX_FILES_PER_TRACK: 8
 
@@ -125,9 +126,18 @@ FINDINGS:
 MAX_TRACKS_PER_GROUP: 8
 SHARED_INFRA_STATUS: missing
 
+## PACKING
+STATUS: fail
+FINDINGS:
+- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
+- written groups [(none)]
+- packer bins    [2A | 2B | 3A]
+
+BINS: 3
+
 ## PARALLELISM_BUDGET
 IN_FLIGHT_TRACKS: 2
-CAP: 4
+CAP: 6
 PER_GROUP: 2=2
 STATUS: pass
 FINDINGS:
@@ -140,11 +150,9 @@ FINDINGS:
 FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT
-STATUS: warn
+STATUS: pass
 FINDINGS:
-Group 2: _Depends on: Group 1_ is redundant (preceding Group is the default) — drop the annotation
-Group 3: _Depends on: Group 2_ is redundant (preceding Group is the default) — drop the annotation
-
+- (none)
 
 ## DOC_INVENTORY
 STATUS: info

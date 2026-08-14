@@ -38,6 +38,7 @@ import { runCheckGroupDeps } from './checks/group-deps.ts';
 import { runCheckInFlightGroups } from './checks/in-flight-groups.ts';
 import { detectMode, type ModeResult } from './checks/mode.ts';
 import { runCheckOriginStats } from './checks/origin-stats.ts';
+import { runCheckPacking } from './checks/packing.ts';
 import { runCheckParallelismBudget } from './checks/parallelism-budget.ts';
 import { runCheckPhaseInvariants } from './checks/phase-invariants.ts';
 import { runCheckPhases } from './checks/phases.ts';
@@ -63,7 +64,7 @@ import { versionGt } from './lib/semver.ts';
 import { loadSharedInfra } from './lib/shared-infra.ts';
 import { parsePhases } from './parsers/phases.ts';
 import { parseProgress } from './parsers/progress.ts';
-import { parseRoadmap } from './parsers/roadmap.ts';
+import { mergeShippedArchive, parseRoadmap } from './parsers/roadmap.ts';
 import { parseTodos } from './parsers/todos.ts';
 import {
   collectParseErrors,
@@ -255,8 +256,13 @@ export function buildAuditCtx(args: {
     }
   }
 
-  // Parse all four docs.
-  const roadmap = parseRoadmap(roadmapContent);
+  // Parse all four docs. Optional docs/roadmap-shipped.md is merged for
+  // frozen-ID uniqueness; the active file still wins on collision.
+  let roadmap = parseRoadmap(roadmapContent);
+  const shippedArchivePath = findDoc(repoRoot, 'roadmap-shipped.md');
+  if (shippedArchivePath !== null) {
+    roadmap = mergeShippedArchive(roadmap, parseRoadmap(readMaybe(shippedArchivePath)));
+  }
   const phases = parsePhases(roadmapContent);
   const todos = parseTodos(todosContent);
 
@@ -378,6 +384,7 @@ const ALL_CHECKS: Array<(ctx: AuditCtx) => CheckResult> = [
   runCheckOriginStats,
   runCheckSizeCaps,
   runCheckCollisions,
+  runCheckPacking,
   runCheckParallelismBudget,
   runCheckFuture,
   runCheckStyleLint,

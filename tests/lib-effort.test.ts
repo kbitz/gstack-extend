@@ -53,6 +53,7 @@ describe('ceiling — defaults', () => {
     expect(ceiling('max_loc_per_track', deps)).toBe(300);
     expect(ceiling('max_files_per_track', deps)).toBe(8);
     expect(ceiling('max_tracks_per_group', deps)).toBe(8);
+    expect(ceiling('max_session_weight', deps)).toBe(4);
   });
 
   test('unknown key returns 0', () => {

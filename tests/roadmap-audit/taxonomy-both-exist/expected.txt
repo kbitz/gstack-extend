@@ -103,10 +103,15 @@ STATUS: skip
 FINDINGS:
 - No Groups found
 
+## PACKING
+STATUS: skip
+FINDINGS:
+- No unshipped Tracks to pack
+
 ## PARALLELISM_BUDGET
 STATUS: skip
 IN_FLIGHT_TRACKS: 0
-CAP: 4
+CAP: 6
 FINDINGS:
 - No in-flight Groups
 

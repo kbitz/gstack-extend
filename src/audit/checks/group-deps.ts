@@ -5,11 +5,12 @@
  * regardless of status (the adjacency is the useful artifact for humans
  * and downstream tools).
  *
- * Effective dep rule:
- *   - No `_Depends on:_` annotation → defaults to "depends on the
- *     immediately preceding Group in numeric order".
+ * Effective dep rule (v3):
+ *   - No `_Depends on:_` annotation → none (ready if its Tracks are).
  *   - `_Depends on: none_` (or `—` / `-`) → no deps.
  *   - `_Depends on: Group N[, Group M]_` → explicit list.
+ * First regen after the cutover should materialize any implicit
+ * previous-Group edges the author still wants.
  *
  * Validations (in fail-precedence order):
  *   1. Forward-ref: every explicit dep must point at an existing Group.
@@ -41,11 +42,11 @@ function compareGroupNums(a: string, b: string): number {
   return an - bn;
 }
 
-function effectiveDepsFor(g: GroupInfo, prevGroupNum: string | null): string[] {
+function effectiveDepsFor(g: GroupInfo, _prevGroupNum: string | null): string[] {
   const deps = g.deps;
   switch (deps.kind) {
     case 'unspecified':
-      return prevGroupNum === null ? [] : [prevGroupNum];
+      return [];
     case 'none':
       return [];
     case 'list':

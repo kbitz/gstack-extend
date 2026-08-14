@@ -13,7 +13,7 @@ STATUS: pass
 FINDINGS:
 - (none)
 GRAMMAR: v2
-SECTIONS_PRESENT: Current Plan, Future, Shipped
+SECTIONS_PRESENT: In Progress, Current Plan, Future, Shipped
 
 ## PHASES
 STATUS: skip
@@ -31,7 +31,7 @@ FINDINGS:
 - (none)
 
 ## VERSION
-CURRENT: 0.1.0
+CURRENT: 0.5.0
 SOURCE: VERSION
 LATEST_TAG: (none)
 RECOMMEND: none
@@ -41,10 +41,9 @@ FINDINGS:
 
 
 ## TAXONOMY
-STATUS: fail
+STATUS: pass
 FINDINGS:
-- PROGRESS.md: missing
-
+- (none)
 
 ## DOC_LOCATION
 STATUS: pass
@@ -62,34 +61,35 @@ FINDINGS:
 - (none)
 
 ## DEPENDENCIES
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No Depends on: lines found
+- (none)
 
 ## GROUP_DEPS
 STATUS: pass
 FINDINGS:
-- All Group-level dependencies valid (1 groups)
+- All Group-level dependencies valid (2 groups)
 ADJACENCY:
 - Group 1 ← {}
+- Group 2 ← {1}
 
 ## TASK_LIST
 STATUS: info
-TASK: group=1|track=1A|title=Real work|effort=S|files=|complete=0
-TASK: group=future|track=none|title=Plain bullet ok|effort=?|files=|complete=0
-TASK: group=future|track=none|title=Whatever|effort=M|files=|complete=0
-TASK: group=future|track=none|title=Another bullet|effort=?|files=|complete=0
-TOTAL_TASKS: 4
-TOTAL_CURRENT: 1
-TOTAL_FUTURE: 3
+TASK: group=1|track=1A|title=Write helper|effort=S|files=|complete=0
+TASK: group=1|track=1B|title=Write other|effort=S|files=|complete=0
+TASK: group=2|track=2A|title=Consume|effort=S|files=|complete=0
+TOTAL_TASKS: 3
+TOTAL_CURRENT: 3
+TOTAL_FUTURE: 0
 
 ## STRUCTURAL_FITNESS
 STATUS: info
-GROUP_COUNT: 1
-TRACK_COUNT: 1
-TASK_COUNT: 1
-GROUP_SIZES: 1=1
-TRACK_SIZES: 1A=1
+GROUP_COUNT: 2
+TRACK_COUNT: 3
+TASK_COUNT: 3
+GROUP_SIZES: 1=2,2=1
+TRACK_SIZES: 1A=1,1B=1,2A=1
+IMBALANCE_RATIO: 2.00
 
 ## IN_FLIGHT_GROUPS
 STATUS: info
@@ -106,8 +106,6 @@ BY_GROUP:
 STATUS: pass
 FINDINGS:
 - (none)
-SIZE_LABEL_MISMATCH:
-- 1A "Real work": effort=(S) implies ~50 LOC, declared ~10 lines (>3x divergence)
 MAX_TASKS_PER_TRACK: 5
 MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
@@ -124,24 +122,21 @@ SHARED_INFRA_STATUS: missing
 STATUS: pass
 FINDINGS:
 - (none)
-BINS: 1
+BINS: 2
 
 ## PARALLELISM_BUDGET
-IN_FLIGHT_TRACKS: 1
+IN_FLIGHT_TRACKS: 2
 CAP: 6
-PER_GROUP: 1=1
+PER_GROUP: 1=2
 STATUS: pass
 FINDINGS:
 - (none)
 
 ## FUTURE
-STATUS: fail
+STATUS: pass
 FINDINGS:
-- Future contains a heading: "#### Track FX: This shouldn't be here" — Future is plain bullets only (no Phase/Group/Track structure)
-- Future contains a metadata line: "_2 tasks . medium risk . [src/foo.swift]_" — Future is plain bullets only (no _touches:_, no sizing)
-- Future contains a metadata line: "_touches: src/foo.swift_" — Future is plain bullets only (no _touches:_, no sizing)
-
-FUTURE_BULLET_COUNT: 3
+- (none)
+FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT
 STATUS: pass
@@ -151,10 +146,11 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- docs/ROADMAP.md: 2 TODO patterns (project doc)
+- docs/PROGRESS.md: 0 TODO patterns (project doc)
+- docs/ROADMAP.md: 3 TODO patterns (project doc)
 - docs/TODOS.md: 1 TODO patterns (project doc)
 
-TOTAL_FILES: 2
+TOTAL_FILES: 3
 
 ## SCATTERED_TODOS
 STATUS: pass
@@ -180,4 +176,4 @@ FINDINGS:
 
 ## MODE
 DETECTED: triage
-REASON: Valid Groups > Tracks structure found (1 groups)
+REASON: Valid Groups > Tracks structure found (2 groups)
