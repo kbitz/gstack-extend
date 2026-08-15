@@ -10,7 +10,8 @@ LLM drafts Tracks; `bin/roadmap-pack` assigns Groups.
 - Markdown-only and delete-only Tracks skip the code file-fanout cap.
 - Shared docs are not collisions. `CLAUDE.md` is, one Track per Group.
 - `PACKING` fails when written Groups ≠ packer bins. Live `Hotfix:` Groups are excluded from both sides.
-- Collision-split bins are serial (later layer + `_Depends on:`). Fill width is one number (`min(parallelism_cap, 8)`); a leftover over that cap stays a ready sibling. Bins are emitted in topological order.
+- Collision-split bins are serial (later layer + `_Depends on:`). Fill width is one number (`min(parallelism_cap, 8)`); a leftover over that cap stays a ready sibling. Bins are emitted in topological order. Same-layer / FFD ties break by document order, never ID — packing is invariant under a bijective rename.
+- STYLE_LINT `unordered collision` fires only when the pair is genuinely unordered: no `_blocked-by` path, no packer-bin path, no written Group `_Depends on:` path.
 - Optional `docs/roadmap-shipped.md` is merged for frozen IDs. Archive ID collisions warn.
 - `_touches:` drift: `bin/roadmap-touches drift --track <id>`. Created files are `path (new)`.
 

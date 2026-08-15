@@ -266,7 +266,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, not document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks in different layers with no edge emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then document order — never ID sort. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). After bins settle, renumber so Track letters match their Group (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -303,7 +303,7 @@ Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you ra
 
 Group assignment is **the packer's job**, not a theme judgment.
 
-1. Draft Tracks only. Each has `_touches:_`, tasks, and `_blocked-by: Track X` on every serialized chain. Prefer dotted family IDs for splits (`102A` → `102A.1` / `102A.2`) so design-doc references stay valid.
+1. Draft Tracks only. Each has `_touches:_`, tasks, and `_blocked-by: Track X` on every serialized chain. Splits get ordinary per-Group letters; the renames table carries lineage. Do not invent dotted family IDs.
 2. Pack the **draft**, not the live file:
    ```bash
    "$_EXTEND_ROOT/bin/roadmap-pack" --from /tmp/draft-tracks.md
@@ -326,7 +326,23 @@ Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`,
 
 ### Renumbering
 
-Renumber upcoming work freely, except **splits keep a dotted family ID** (`102A.1`, `102A.2`) so existing design docs and source tags still resolve. The next available numeric ID after a regeneration is `max(shipped_group_num, in_progress_group_num) + 1`. Letters within each Group cycle A, B, C…
+Only **SHIPPED** numbers are frozen. Current Plan Group/Track numbers are ephemeral labels, recycled every regeneration.
+
+Start at the first free integer after shipped history. Skip tombstoned and frozen-family numbers (called out in the roadmap or a `_tombstone: 84, 86, 90` note — Bolt skips 84/86/90). Do **not** keep minting fresh numbers above the last Current Plan range; that is noise.
+
+Track numbers must match their Group: Track 91A lives in Group 91. Letters cycle A, B, C… per Group. Splits get the next letter in that Group; the renames table carries lineage. Dotted split IDs (`102A.1`) are legacy — still parsed, never assigned.
+
+In Progress IDs stay put when a Track has an open PR (the user will call that out). Idle In Progress without a PR recycles with Current Plan.
+
+Renumbering is part of every regen. After bins settle and you have the old→new map, run one atomic sweep — never sequential find-replace (old/new sets overlap when recycling):
+
+```bash
+"$_EXTEND_ROOT/bin/roadmap-renumber" --map old=new,old=new
+# or: --map-file /tmp/renames.txt
+# add --dry-run to preview
+```
+
+The helper (a) applies every pair in one pass, (b) matches with digit/letter lookarounds so `Group 147_` italics work (`\b` does not — `_` is a word char), and (c) skips dated-historical mentions (absorption notes, "split from", "the retired 104C", anything next to an ISO date). Date-qualify lineage instead of remapping it to a live ID.
 
 If a Track has an open PR (rare in practice), the user will call that out during regen review — preserve that ID for the regen. Don't build machinery to detect open PRs automatically.
 
@@ -441,11 +457,11 @@ Before commit, assert that every item the proposal placed/killed/deferred is gon
 
 Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <D> drained from inbox."`.
 
-**ID renames table.** When regeneration renumbered any Groups/Tracks, run
-the renames helper against the pre-edit ROADMAP.md (captured before Step 3
-overwrites it) and the post-edit content; include the resulting table in
-the apply summary AND the commit message body so users re-anchoring on
-old IDs can find their work:
+**ID renames table.** After `bin/roadmap-renumber` (or a title-matched
+diff against the pre-edit ROADMAP.md), include the map in the apply
+summary AND the commit message body so users re-anchoring on old IDs
+can find their work. Title-match fallback when you did not drive the
+rewrite from an explicit `--map`:
 
 ```bash
 bun -e "import { computeRenames, formatRenamesTable } from '$_EXTEND_ROOT/src/audit/lib/renames-diff.ts';
