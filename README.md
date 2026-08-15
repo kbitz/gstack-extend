@@ -5,7 +5,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | Skill | What it does | Works with | Status |
 |-------|-------------|------------|--------|
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
-| `/roadmap` | Documentation restructuring | Any project | Stable |
+| `/roadmap` | Plan regeneration — packer assigns Groups | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
@@ -73,39 +73,46 @@ and supports resume. Works for any project type.
 
 ---
 
-## /roadmap — Documentation Restructuring
+## /roadmap — Plan Regeneration
 
-Restructures TODOS.md into a clean execution plan (ROADMAP.md) with consistent
-vocabulary, dependency ordering, and file-ownership grouping for parallel agent
-execution. Audits versioning, validates doc taxonomy, and recommends version bumps.
+Maintains ROADMAP.md as a state-organized execution plan. The LLM drafts
+Tracks (one PR / one session). `bin/roadmap-pack` assigns Groups. Theme is
+a name, not a partition. Audits the docs, drains TODOS.md, and recommends
+a VERSION bump (`/ship` writes it).
 
-- **Two files, one flow** — TODOS.md is the inbox (other skills write here), ROADMAP.md is the structured execution plan
-- **Two modes** — Overhaul (first run: full restructure) and Triage (subsequent runs: process only new items)
+- **Two files, one flow** — TODOS.md is the inbox (other skills write here), ROADMAP.md is the structured execution plan. Optional `docs/roadmap-shipped.md` holds frozen shipped history when the tail no longer fits.
+- **Regenerate, don't patch** — every substantive run rewrites `## In Progress` / `## Current Plan` / `## Future`. Only shipped IDs are frozen.
 - **Deterministic audit** — automated checks (vocabulary, structure, version-tag staleness, versioning, taxonomy, doc location, archive candidates, dependencies, unprocessed, task list, structural fitness, doc inventory, scattered TODOs, session-weight size caps, collisions, packing, style lint, group deps, in-flight groups, origin stats, TODO format)
-- **Session-weight size + collision + packing** — Tracks have explicit `_touches:_` file sets. Size is session weight (S=1, M=2, L=4, cap 4), not line counts. The packer (`bin/roadmap-pack`) assigns Groups; the audit fails when written Groups disagree. Intra-Group collisions are still blockers. Shared docs are not collisions. Edit `docs/shared-infra.txt` to tune always-shared files.
-- **Group-level deps (DAG)** — Unspecified `_Depends on:_` means none (ready). Write `_Depends on: Group N (Name), Group M_` only for a real edge. The audit parses annotations, detects cycles + forward refs, warns on drifted name anchors (`STALE_DEPS`), and always emits a topologically-ordered adjacency list.
-- **Scrutiny + closure culture** — TODOS.md entries follow a canonical rich format (`### [source:key=val] Title` + child bullets), spec'd in `docs/source-tag-contract.md` and validated by the `TODO_FORMAT` audit check. Source tags drive per-source scrutiny defaults in triage (`full-review:edge-case → SUGGEST KILL`, observed bugs → KEEP) so the default stops being "add to backlog." Origin tags like `[pair-review:group=N]` route bugs back to the Group that surfaced them (closure bias), and Groups keep stable numeric IDs forever — completed Groups stay in place marked `✓ Complete` so origin refs never rot. A closure debt dashboard (`IN_FLIGHT_GROUPS` + `ORIGIN_STATS`) renders at the top of every `/roadmap` run.
+- **Session-weight size + collision + packing** — Tracks have explicit `_touches:_` file sets. Size is session weight (S=1, M=2, L=4, XL=split, cap 4), not line counts. Tag deletes `~N lines (del)` — title verbs are not enough. The packer (`bin/roadmap-pack`) assigns Groups; `PACKING` fails when written Groups disagree. Collision-split bins are serial. Shared docs are not collisions. `CLAUDE.md` is one-per-Group. Edit `docs/shared-infra.txt` to tune always-shared files. Design: `docs/designs/roadmap-v3-packing.md`.
+- **Group-level deps (DAG)** — Unspecified `_Depends on:_` means none (ready). Write `_Depends on: Group N (Name), Group M_` only for a real edge. First regen after upgrade: `bin/roadmap-pack --materialize` and write any implicit previous-Group edges you still want. The audit parses annotations, detects cycles + forward refs, warns on drifted name anchors (`STALE_DEPS`), and always emits a topologically-ordered adjacency list.
+- **Ship gate** — `bin/roadmap-touches drift --track <id>` hard-fails undeclared committed/staged/unstaged/untracked paths. `report-cross-group` prints soft overlaps across Groups. Created files are `path (new)`.
+- **Scrutiny + closure culture** — TODOS.md entries follow a canonical rich format (`### [source:key=val] Title` + child bullets), spec'd in `docs/source-tag-contract.md` and validated by the `TODO_FORMAT` audit check. Source tags drive per-source scrutiny defaults (`full-review:edge-case → SUGGEST KILL`, observed bugs → KEEP) so the default stops being "add to backlog." Origin tags like `[pair-review:group=N]` route bugs back to the Group that surfaced them (closure bias), and Groups keep stable numeric IDs forever — completed Groups stay in place marked `✓ Complete` so origin refs never rot. A closure debt dashboard (`IN_FLIGHT_GROUPS` + `ORIGIN_STATS`) renders at the top of every `/roadmap` run. Live `Hotfix:` Groups jump the in-flight queue.
 - **Layout Scaffolding** — When the audit reports misplaced project docs (DOC_LOCATION non-pass), design-mismatch findings outside `docs/designs/` (DOC_TYPE_MISMATCH), or a `docs/ directory absent` finding on a CLAUDE.md-onboarded project with no `docs/` yet, `/roadmap` offers a single batch confirm to scaffold the canonical layout (`docs/`, `docs/designs/`, `docs/archive/`) and execute the audit's pre-quoted `git mv` suggestions. Per-file preflight via `git ls-files --error-unmatch --` chooses `mv` vs `git mv`; collisions on the plain-mv branch HALT with a summary. Idempotent re-run.
-- **Parallel-agent friendly** — Groups > Tracks > Tasks organized by file ownership to minimize merge conflicts
+- **Launch batches, not file-ownership themes** — Groups are 4–6 parallel-safe Tracks (hard max 8). Same files → different Groups. Unrelated files → same Group.
 
 ```
-/roadmap              # Audit + restructure (auto-detects overhaul vs triage mode)
-/roadmap update       # Incremental refresh (freshness scan + triage, never exits early)
+/roadmap              # Audit + regenerate the upcoming plan
+/roadmap update       # Same path; never exits early on a "clean" inbox
+bin/roadmap-pack                         # print packer bins
+bin/roadmap-pack --materialize           # old implicit previous-Group edges
+bin/roadmap-touches drift --track 15A    # fail undeclared paths
+bin/roadmap-touches report-cross-group   # soft overlaps across Groups
 ```
 
 ### How It Works
 
-1. **Audit** — Runs `bin/roadmap-audit` against repo docs. Reports vocabulary drift, structural violations, stale items, version mismatches, and taxonomy issues.
-2. **Build/Update ROADMAP.md** — In overhaul mode, reorganizes everything from scratch. In triage mode, classifies unprocessed items from TODOS.md into existing Groups/Tracks.
-3. **Update PROGRESS.md** — Appends version history rows, verifies phase status.
-4. **Version recommendation** — Suggests a bump based on changes since last tag (does not write VERSION).
+1. **Audit** — Runs `bin/roadmap-audit` against repo docs. Reports vocabulary, structure, size, collisions, packing, group deps, and the rest of the section list.
+2. **Draft Tracks, then pack** — 1 Track = 1 PR = 1 session. Each card has `_touches:_` plus `_out:` / `_read-first:` / `_produces:` / `_blocked-by:`. `bin/roadmap-pack` assigns Groups. Do not re-partition the bins.
+3. **Apply** — Replace `## In Progress` / `## Current Plan` / `## Future`. Drain TODOS.md. Re-audit. `PACKING` must match the packer.
+4. **PROGRESS + version** — `/roadmap` flags a stale PROGRESS.md and recommends a VERSION bump. It does not write VERSION (`/ship` does).
 
 ### Documentation Taxonomy
 
 | Doc | Purpose | Written by |
 |-----|---------|------------|
 | TODOS.md | Inbox — unprocessed items | /pair-review, /full-review, /investigate, /review-apparatus, manual |
-| ROADMAP.md | Execution plan — Groups > Tracks > Tasks | /roadmap |
+| ROADMAP.md | Execution plan — state sections, Groups are packer bins | /roadmap |
+| roadmap-shipped.md | Optional frozen shipped history | /roadmap |
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
 | VERSION | SemVer source of truth | /ship |

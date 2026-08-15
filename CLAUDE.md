@@ -25,7 +25,9 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 
 `tests/audit-compliance.test.ts` is a structural-invariants safety net for gstack-extend itself (Track 4D). Three describes: (A) frontmatter sanity for every `skills/*.md` (`---` fence, `name:` matches filename, non-empty `description:`, `allowed-tools:` present); (B) `setup` ↔ `skills/*.md` symmetric (every name in `SKILLS=( … )` has a file, every file is in the array); (C) source-tag registry consistency — `REGISTERED_SOURCES` exported from `src/audit/lib/source-tag.ts` is the single source of truth, and `docs/source-tag-contract.md`'s grammar list must match it exactly. When adding a source tag, update both sides; when adding a skill, register it in `setup`'s `SKILLS=( … )` array.
 
-Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`.
+Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`. New `PACKING` fixtures live under `tests/roadmap-audit/packing-ok/`.
+
+`bin/roadmap-pack` and `bin/roadmap-touches` are the packing and `_touches:` drift CLIs (`src/audit/pack-cli.ts`, `src/audit/touches-cli.ts`). `pack --materialize` prints old implicit previous-Group edges. `touches drift --track <id>` unions merge-base..HEAD with the working tree. `touches report-cross-group` prints soft overlaps.
 
 To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` semantics change):
 
