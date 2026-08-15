@@ -156,6 +156,7 @@ for /pair-review, and a hand-off.
 branch/commit where all Track code is present (main after merges, a preview deploy,
 or similar). Track branches appear ONLY as item provenance in the plan.
 
+<!-- SHARED:conductor-visibility-head -->
 ## Conductor Visibility Rule
 
 Conductor shows only the last message before the agent stops. All intermediate
@@ -163,6 +164,7 @@ messages and tool calls are collapsed by default. This means:
 
 1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
    is the last message and is always visible.
+<!-- /SHARED:conductor-visibility-head -->
 2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
    of all actions taken since the last user interaction.
 3. **Never rely on intermediate text output for important confirmations.** If the

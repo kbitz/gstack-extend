@@ -23,14 +23,14 @@ _Depends on: none_
 
 Packer layer 0. Five file-disjoint Tracks. In-flight count is 5 (cap 6).
 
-##### Track 15A: Extract canonical fragments + add REQUIRED_VERBATIM_BLOCKS + section-name drift test
+##### Track 15A: Lock SHARED:conductor-visibility-head + section-list drift + SKILLS helper
 _3 tasks . ~130 LOC . low risk . [skill-protocols test + SKILLS helper]_
-_touches: tests/skill-protocols.test.ts, tests/helpers/parse-setup-skills.ts (new)_
+_touches: tests/skill-protocols.test.ts, tests/helpers/parse-setup-skills.ts (new), tests/audit-compliance.test.ts, skills/pair-review.md, skills/full-review.md, skills/review-apparatus.md, skills/test-plan.md_
 _out: 16A, 16B, 16C, 16D, 17A_
-_produces: locked REQUIRED_VERBATIM_BLOCKS, section-name drift assertions, and a shared SKILLS-list parser_
-- **Extract canonical shared fragments + lock via test** -- identify byte-identical graft fragments across pair-review, full-review, review-apparatus, test-plan; add per-fragment assertions. _tests/skill-protocols.test.ts, ~80 lines._ (S)
-- **Drift test: skill prose section-name lists vs CANONICAL_SECTIONS** -- assert every `## SECTION_NAME` in `skills/roadmap.md` advisory lists matches `CANONICAL_SECTIONS`. _tests/skill-protocols.test.ts, ~30 lines._ (S)
-- **Deduplicate SKILLS list** -- extract `tests/helpers/parse-setup-skills.ts` and consume it from the protocols test so `setup` and the test cannot drift. _tests/helpers/parse-setup-skills.ts (new), tests/skill-protocols.test.ts, ~20 lines._ (S)
+_produces: locked SHARED:conductor-visibility-head, exact-set section-list drift assertions, and explicit SETUP/PROTOCOL/PREAMBLE/CONDUCTOR cohorts_
+- **Lock Conductor visibility head** -- wrap the shared heading+item-1 core in pair-review, full-review, review-apparatus, test-plan; extract-from-canonical with AskUserQuestion / last-message pins. Conductor-only — 17A must not inherit blindly. _skills/{pair-review,full-review,review-apparatus,test-plan}.md, tests/skill-protocols.test.ts, ~40 lines._ (S)
+- **Drift test: advisory/fail lists vs CANONICAL_SECTIONS** -- named parser on the two GSTACK REVIEW REPORT comma-lists; exact sets; fail-on-empty; SIZE_LABEL_MISMATCH is a known fossil (SIZE body label), not a section. Do not edit skills/roadmap.md. _tests/skill-protocols.test.ts, ~50 lines._ (S)
+- **Shared SKILLS parser + explicit cohorts** -- extract `tests/helpers/parse-setup-skills.ts`; audit-compliance consumes it; protocol membership is an explicit 5/6/4 split (init is install-only). _tests/helpers/parse-setup-skills.ts (new), tests/audit-compliance.test.ts, tests/skill-protocols.test.ts, ~40 lines._ (S)
 
 ##### Track 15B: `migrations/v*.sh` runner in `bin/update-run`
 _1 task . ~30 LOC . low risk . [bin/update-run + migrations/ + tests]_
