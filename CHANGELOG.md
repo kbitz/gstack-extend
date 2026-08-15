@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Packer fill width is one number.** FFD and tail-absorb both use `min(parallelism_cap, 8)`. A leftover over the cap stays a ready sibling. PACKING can pass at a configured width other than 8.
 - **Collision spill re-layers dependents.** A track pushed to a later bin no longer prints at a higher layer than something that `_blocked-by` it. Launch-by-DAG was already correct; the printed layers now match.
 - **Bins print in topological order.** `DEPENDS` `Group <bin N>` is paste-ready — assign Group numbers in print order, no hand sort.
+- **One width knob.** Group size is `fillCap(parallelism_cap)`, not a separate `max_tracks_per_group`. COLLISIONS and PARALLELISM_BUDGET use that number. Ready-sibling overflow no longer fails the budget — only a single Group wider than the cap does.
 
 ## [0.24.0.0] - 2026-08-15
 

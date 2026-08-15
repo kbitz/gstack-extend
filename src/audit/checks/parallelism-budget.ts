@@ -1,9 +1,11 @@
 /**
  * parallelism-budget.ts — port of check_parallelism_budget (~L3101-3166).
  *
- * Counts in-flight Tracks across all in-flight Groups; flags when total
- * exceeds the parallelism cap (default 6, override via CLAUDE.md)
- * `<!-- roadmap:parallelism_cap=N -->`). ✓ Complete Tracks aren't load.
+ * Counts in-flight Tracks across all ready Groups. The cap is
+ * fillCap(parallelism_cap) — same number the packer fills to.
+ * A single Group wider than the cap fails. The *sum* across ready
+ * siblings does not: overflow bins are parallel by design.
+ * ✓ Complete Tracks aren't load.
  *
  * Output shape:
  *   skip → STATUS first, then IN_FLIGHT_TRACKS/CAP/FINDINGS in body.
@@ -12,10 +14,11 @@
  */
 
 import { computeInFlight } from '../lib/in-flight.ts';
+import { fillCap } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckParallelismBudget(ctx: AuditCtx): CheckResult {
-  const cap = ctx.parallelismCap;
+  const cap = fillCap(ctx.parallelismCap);
   const { inFlight } = computeInFlight(ctx.roadmap.value);
 
   if (inFlight.length === 0) {
@@ -59,14 +62,26 @@ export function runCheckParallelismBudget(ctx: AuditCtx): CheckResult {
     preamble.push(`COMPLETE_TRACKS: ${completeTracksList.join(' ')}`);
   }
 
-  if (total > cap) {
+  const oversized = perGroup
+    .map((entry) => {
+      const eq = entry.indexOf('=');
+      const g = entry.slice(0, eq);
+      const n = Number.parseInt(entry.slice(eq + 1), 10);
+      return { g, n };
+    })
+    .filter((x) => x.n > cap);
+
+  if (oversized.length > 0) {
     return {
       section: 'PARALLELISM_BUDGET',
       preamble,
       status: 'fail',
       body: [
         'FINDINGS:',
-        `- ${total} in-flight tracks exceeds parallelism cap of ${cap}. Consider deferring tracks to a future Group, splitting work across more sequential Groups, marking shipped Tracks \`✓ Complete\` (in-place) so they stop counting, or raising the cap via \`<!-- roadmap:parallelism_cap=N -->\` in CLAUDE.md.`,
+        ...oversized.map(
+          (x) =>
+            `- Group ${x.g}: ${x.n} tracks exceeds fill cap ${cap} — split or raise \`<!-- roadmap:parallelism_cap=N -->\``,
+        ),
       ],
     };
   }
