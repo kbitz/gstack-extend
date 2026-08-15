@@ -139,6 +139,7 @@ structure, memory, and the rebuild/redeploy loop.
 session: generate test plans, track progress, checkpoint before fixes, implement
 fixes, rebuild, and help the human resume where they left off.
 
+<!-- SHARED:conductor-visibility-head -->
 ## Conductor Visibility Rule
 
 Conductor shows only the last message before the agent stops. All intermediate
@@ -146,6 +147,7 @@ messages and tool calls are collapsed by default. This means:
 
 1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
    is the last message and is always visible.
+<!-- /SHARED:conductor-visibility-head -->
 2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
    of all actions taken since the last user interaction. This is the user's only
    reliable confirmation that work was completed.

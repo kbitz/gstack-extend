@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.3.0] - 2026-08-15
+
+### Added
+
+- **Track 15A locks the remaining shared fragments.** The Conductor visibility head is a `SHARED:conductor-visibility-head` block in pair-review, full-review, review-apparatus, and test-plan. Tests extract it from full-review and fail if any of the four files drift. Roadmap's fail/advisory section lists are pinned to exact sets. `SIZE_LABEL_MISMATCH` stays a known fossil (a SIZE body label, not a section). `setup`'s `SKILLS=(` list parses through a shared helper, with explicit SETUP / PROTOCOL / PREAMBLE / CONDUCTOR cohorts so `gstack-extend-init` stays install-only.
+
+### Changed
+
+- **The 15A ROADMAP card matches the lock.** `_touches:`, `_produces:`, and the three task bullets describe the Conductor wrap, exact-set drift test, and explicit cohorts — not the rejected `REQUIRED_VERBATIM_BLOCKS` / `setup − upgrade` design.
+
 ## [0.24.2.0] - 2026-08-15
 
 ### Fixed

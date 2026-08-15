@@ -16,6 +16,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { REGISTERED_SOURCES } from '../src/audit/lib/source-tag.ts';
+import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SKILLS_DIR = join(ROOT, 'skills');
@@ -73,24 +74,6 @@ describe('(A) frontmatter sanity', () => {
 });
 
 // ─── (B) setup ↔ skills/*.md symmetric ───────────────────────────────
-
-function parseSetupSkills(setupText: string): string[] {
-  // The SKILLS bash array is declared as:
-  //   SKILLS=(
-  //     pair-review
-  //     roadmap
-  //     ...
-  //   )
-  // Capture the body, then collect non-empty/non-comment whitespace-separated
-  // tokens. This is intentionally regex-only (no bash parser): the locked plan
-  // calls out "parse setup as text via regex" per codex.
-  const m = /^SKILLS=\(\s*\n([\s\S]*?)\n\s*\)\s*$/m.exec(setupText);
-  if (!m || !m[1]) throw new Error('SKILLS=( ... ) array not found in setup');
-  return m[1]
-    .split('\n')
-    .map((line) => line.replace(/#.*$/, '').trim())
-    .filter((line) => line.length > 0);
-}
 
 describe('(B) setup ↔ skills/*.md symmetric', () => {
   const setupText = readFileSync(SETUP_FILE, 'utf8');

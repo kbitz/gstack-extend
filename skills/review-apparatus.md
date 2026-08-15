@@ -150,6 +150,7 @@ TODOS.md as `[review-apparatus]` items for /roadmap to organize and the user
 skills will pick up new apparatus organically once the helpers exist in the project.
 How they discover and invoke apparatus is a future, separate design.
 
+<!-- SHARED:conductor-visibility-head -->
 ## Conductor Visibility Rule
 
 Conductor shows only the last message before the agent stops. All intermediate
@@ -157,6 +158,7 @@ messages and tool calls are collapsed by default. This means:
 
 1. **Every user-facing prompt MUST use AskUserQuestion** — this ensures the prompt
    is the last message and is always visible.
+<!-- /SHARED:conductor-visibility-head -->
 2. **Every AskUserQuestion MUST include an action receipt** — a one-line summary
    of all actions taken since the last user interaction. This is the user's only
    reliable confirmation that work was completed.

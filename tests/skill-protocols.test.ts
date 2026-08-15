@@ -19,21 +19,37 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
+import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
-const SKILLS = ['pair-review', 'roadmap', 'full-review', 'review-apparatus', 'test-plan'] as const;
+// Three named cohorts. Do not derive protocol membership from setup's
+// install list — gstack-extend-init is the second utility skill (after
+// upgrade) and has no SHARED protocol / telemetry / Conductor blocks.
+// 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
+// rule stay per-skill. Keep "Action receipt format".
+// 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
+// not tmpl-universal — do not inherit it blindly.
+const PROTOCOL_SKILLS = [
+  'pair-review',
+  'roadmap',
+  'full-review',
+  'review-apparatus',
+  'test-plan',
+] as const;
+const PREAMBLE_SKILLS = [...PROTOCOL_SKILLS, 'gstack-extend-upgrade'] as const;
+const CONDUCTOR_SKILLS = [
+  'pair-review',
+  'full-review',
+  'review-apparatus',
+  'test-plan',
+] as const;
 
-// gstack-extend-upgrade is a thin utility skill (mirrors gstack's own
-// gstack-upgrade): it carries the SHARED:upgrade-flow block and the two-path
-// preamble probe, but NOT the workflow-skill protocol boilerplate (Completion
-// Status Protocol, Confusion Protocol, GSTACK REVIEW REPORT table). So the
-// protocol assertions below iterate SKILLS (5) while the upgrade-flow and
-// preamble-probe assertions iterate PREAMBLE_SKILLS (6). This split is
-// intentional — do not collapse it back to one list.
-const PREAMBLE_SKILLS = [...SKILLS, 'gstack-extend-upgrade'] as const;
+const SKILLS = PROTOCOL_SKILLS;
 
 const REQUIRED_SECTIONS = [
   '## Completion Status Protocol',
@@ -1020,3 +1036,346 @@ describe('test-plan inherits the item shape and merge gate', () => {
     expect(normalized).toContain('/test-plan skips pair-review\'s Phase 1, so it owns those authoring rules here');
   });
 });
+
+// ─── Track 15A: cohorts, Conductor lock, advisory-list drift ──────────
+
+const EXPECTED_SETUP_SKILLS = [
+  'pair-review',
+  'roadmap',
+  'full-review',
+  'review-apparatus',
+  'test-plan',
+  'gstack-extend-upgrade',
+  'gstack-extend-init',
+] as const;
+
+const KNOWN_FOSSILS = ['SIZE_LABEL_MISMATCH'] as const;
+
+const EXPECTED_FAIL_SECTIONS = [
+  'SIZE',
+  'COLLISIONS',
+  'PACKING',
+  'STRUCTURE',
+  'STATE_SECTIONS',
+  'VERSION',
+  'GROUP_DEPS',
+  'PARALLELISM_BUDGET',
+  'FUTURE',
+] as const;
+
+const EXPECTED_ADVISORY_SECTIONS = [
+  'VOCAB_LINT',
+  'STYLE_LINT',
+  'VERSION_TAG_STALENESS',
+  'TAXONOMY',
+  'SIZE_LABEL_MISMATCH',
+  'DOC_LOCATION',
+  'ARCHIVE_CANDIDATES',
+  'DEPENDENCIES',
+  'TASK_LIST',
+  'STRUCTURAL_FITNESS',
+  'DOC_INVENTORY',
+  'GROUP_DEPS',
+  'STATE_SECTIONS',
+] as const;
+
+const FAIL_LIST_PREFIX = '`<N>` counts audit sections with `STATUS: fail`:';
+const ADVISORY_LIST_PREFIX =
+  '`<M>` counts advisory sections with `STATUS: warn` or `STATUS: info`:';
+
+/**
+ * Extract ALL_CAPS section tokens from the two GSTACK REVIEW REPORT
+ * comma-lists in skills/roadmap.md. Strip parentheticals and never
+ * treat `STATUS` as a section. Fail closed if a list is missing,
+ * duplicated, empty, or a comma-cell has leftover ALL_CAPS after the
+ * first token (missing-comma bypass).
+ *
+ * Do not harvest every `## ALL_CAPS` heading — `## GSTACK REVIEW REPORT`
+ * is not an audit section.
+ */
+function extractAuditSectionLists(roadmapSkill: string): {
+  fail: string[];
+  advisory: string[];
+} {
+  const tokenize = (afterColon: string): string[] => {
+    const stripped = afterColon.replace(/\([^)]*\)/g, ' ');
+    const names: string[] = [];
+    for (const part of stripped.split(',')) {
+      const hits = [...part.matchAll(/\b([A-Z][A-Z0-9_]*)\b/g)]
+        .map((m) => m[1])
+        .filter((name): name is string => Boolean(name) && name !== 'STATUS');
+      if (hits.length > 1) {
+        throw new Error(
+          `leftover section token '${hits[1]}' after '${hits[0]}' in skills/roadmap.md list cell`,
+        );
+      }
+      if (hits[0]) names.push(hits[0]);
+    }
+    return names;
+  };
+
+  const collect = (prefix: string, label: string): string[] => {
+    const hits: string[] = [];
+    let from = 0;
+    while (from < roadmapSkill.length) {
+      const idx = roadmapSkill.indexOf(prefix, from);
+      if (idx === -1) break;
+      const lineEnd = roadmapSkill.indexOf('\n', idx);
+      const rest = roadmapSkill.slice(idx + prefix.length, lineEnd === -1 ? undefined : lineEnd);
+      hits.push(rest);
+      from = idx + prefix.length;
+    }
+    if (hits.length === 0) {
+      throw new Error(`no ${label} list found in skills/roadmap.md`);
+    }
+    if (hits.length > 1) {
+      throw new Error(`duplicate ${label} list (${hits.length}) in skills/roadmap.md`);
+    }
+    const tokens = tokenize(hits[0] ?? '');
+    if (tokens.length === 0) {
+      throw new Error(`${label} list in skills/roadmap.md produced zero tokens`);
+    }
+    return tokens;
+  };
+
+  return {
+    fail: collect(FAIL_LIST_PREFIX, 'fail'),
+    advisory: collect(ADVISORY_LIST_PREFIX, 'advisory'),
+  };
+}
+
+describe('Track 15A skill-file presence', () => {
+  for (const skill of [...new Set([...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS, ...CONDUCTOR_SKILLS])]) {
+    test(`skills/${skill}.md exists`, () => {
+      const file = join(ROOT, 'skills', `${skill}.md`);
+      if (!existsSync(file)) {
+        throw new Error(`Missing: ${file}`);
+      }
+    });
+  }
+});
+
+describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
+  const setupText = readFileSync(join(ROOT, 'setup'), 'utf8');
+  const setupSkills = parseSetupSkills(setupText);
+
+  test('live setup parses to the exact 7-name install list', () => {
+    expect(setupSkills).toEqual([...EXPECTED_SETUP_SKILLS]);
+  });
+
+  test('PROTOCOL ⊂ PREAMBLE ⊂ SETUP', () => {
+    for (const s of PROTOCOL_SKILLS) {
+      expect(PREAMBLE_SKILLS).toContain(s);
+      expect(setupSkills).toContain(s);
+    }
+    for (const s of PREAMBLE_SKILLS) {
+      expect(setupSkills).toContain(s);
+    }
+  });
+
+  test("PREAMBLE \\ PROTOCOL === ['gstack-extend-upgrade']", () => {
+    const extra = PREAMBLE_SKILLS.filter((s) => !(PROTOCOL_SKILLS as readonly string[]).includes(s));
+    expect(extra).toEqual(['gstack-extend-upgrade']);
+  });
+
+  test("SETUP \\ PREAMBLE === ['gstack-extend-init']", () => {
+    const extra = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
+    expect(extra).toEqual(['gstack-extend-init']);
+  });
+
+  test('PROTOCOL and PREAMBLE do not include init', () => {
+    expect(PROTOCOL_SKILLS).not.toContain('gstack-extend-init');
+    expect(PREAMBLE_SKILLS).not.toContain('gstack-extend-init');
+  });
+
+  test('CONDUCTOR_SKILLS is the 4 trim-target files, not PROTOCOL', () => {
+    expect([...CONDUCTOR_SKILLS]).toEqual([
+      'pair-review',
+      'full-review',
+      'review-apparatus',
+      'test-plan',
+    ]);
+    expect(CONDUCTOR_SKILLS).not.toContain('roadmap');
+  });
+
+  test('every cohort member has skills/<name>.md', () => {
+    for (const name of [...setupSkills, ...PROTOCOL_SKILLS, ...PREAMBLE_SKILLS, ...CONDUCTOR_SKILLS]) {
+      expect(existsSync(join(ROOT, 'skills', `${name}.md`))).toBe(true);
+    }
+  });
+});
+
+describe('Track 15A parseSetupSkills grammar (synthetic)', () => {
+  test('missing SKILLS=( throws', () => {
+    expect(() => parseSetupSkills('LEGACY_SKILLS=(\n  x\n)\n')).toThrow(
+      'SKILLS=( ... ) array not found in setup',
+    );
+  });
+
+  test('comments and blanks are ignored', () => {
+    const text = `SKILLS=(
+  pair-review
+  # comment only
+  roadmap  # trailing
+
+  full-review
+)
+`;
+    expect(parseSetupSkills(text)).toEqual(['pair-review', 'roadmap', 'full-review']);
+  });
+
+  test('empty / comments-only body returns []', () => {
+    const text = `SKILLS=(
+  # none
+)
+`;
+    expect(parseSetupSkills(text)).toEqual([]);
+  });
+
+  test('blank-only SKILLS body returns []', () => {
+    expect(parseSetupSkills('SKILLS=(\n\n)\n')).toEqual([]);
+  });
+
+  test('multi-token line is one invalid name, not split', () => {
+    const text = `SKILLS=(
+  pair-review roadmap
+)
+`;
+    expect(parseSetupSkills(text)).toEqual(['pair-review roadmap']);
+  });
+});
+
+describe('Track 15A SHARED:conductor-visibility-head', () => {
+  // Conductor-only host workaround. 17A must not treat this as tmpl-universal.
+  const CONDUCTOR_RE =
+    /<!-- SHARED:conductor-visibility-head -->[\s\S]*?<!-- \/SHARED:conductor-visibility-head -->/;
+  const fullReview = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
+  const match = CONDUCTOR_RE.exec(fullReview);
+  const canonical = match ? match[0] : '';
+
+  test('canonical block extracted from skills/full-review.md', () => {
+    expect(canonical).not.toBe('');
+    expect(canonical).toContain('<!-- SHARED:conductor-visibility-head -->');
+    expect(canonical).toContain('<!-- /SHARED:conductor-visibility-head -->');
+    expect(canonical).toContain('## Conductor Visibility Rule');
+    expect(canonical).toContain('AskUserQuestion');
+    expect(canonical).toContain('last message before the agent stops');
+  });
+
+  test('canonical block is exactly one marker pair', () => {
+    expect(canonical.split('<!-- SHARED:conductor-visibility-head -->').length - 1).toBe(1);
+    expect(canonical.split('<!-- /SHARED:conductor-visibility-head -->').length - 1).toBe(1);
+  });
+
+  test('canonical block excludes per-skill item 2 and Action receipt format', () => {
+    expect(canonical).not.toContain('2. **Every AskUserQuestion MUST include an action receipt**');
+    expect(canonical).not.toContain('Action receipt format');
+  });
+
+  for (const skill of CONDUCTOR_SKILLS) {
+    const file = join(ROOT, 'skills', `${skill}.md`);
+    const content = readFileSync(file, 'utf8');
+
+    test(`${skill} embeds the canonical SHARED:conductor-visibility-head block`, () => {
+      if (!content.includes(canonical)) {
+        throw new Error(
+          `${skill} drift in SHARED:conductor-visibility-head — propagate canonical text from skills/full-review.md`,
+        );
+      }
+    });
+
+    test(`${skill} has exactly one Conductor marker pair`, () => {
+      expect(content.split('<!-- SHARED:conductor-visibility-head -->').length - 1).toBe(1);
+      expect(content.split('<!-- /SHARED:conductor-visibility-head -->').length - 1).toBe(1);
+    });
+
+    test(`${skill} still has Action receipt format and item 2 outside the wrap`, () => {
+      const after = content.slice(content.indexOf('<!-- /SHARED:conductor-visibility-head -->'));
+      expect(after).toContain('Action receipt format');
+      expect(after).toContain('2. **Every AskUserQuestion MUST include an action receipt**');
+    });
+  }
+});
+
+describe('Track 15A roadmap advisory-list drift vs CANONICAL_SECTIONS', () => {
+  const roadmapSkill = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const lists = extractAuditSectionLists(roadmapSkill);
+  const allowed = new Set<string>([
+    ...CANONICAL_SECTIONS,
+    ...OPTIONAL_SECTIONS,
+    ...KNOWN_FOSSILS,
+  ]);
+
+  test('fail list is the exact pinned set', () => {
+    expect(lists.fail).toEqual([...EXPECTED_FAIL_SECTIONS]);
+  });
+
+  test('advisory list is the exact pinned set (includes SIZE_LABEL_MISMATCH fossil)', () => {
+    expect(lists.advisory).toEqual([...EXPECTED_ADVISORY_SECTIONS]);
+  });
+
+  test('every extracted name is a canonical section, optional section, or known fossil', () => {
+    for (const name of [...lists.fail, ...lists.advisory]) {
+      if (!allowed.has(name)) {
+        throw new Error(
+          `'${name}' in skills/roadmap.md advisory/fail list is not a CANONICAL_SECTIONS / OPTIONAL_SECTIONS entry (and not KNOWN_FOSSILS). SIZE_LABEL_MISMATCH is a SIZE body label, not a section.`,
+        );
+      }
+    }
+  });
+
+  test('SIZE_LABEL_MISMATCH is a known fossil, not a canonical section', () => {
+    expect(CANONICAL_SECTIONS).not.toContain('SIZE_LABEL_MISMATCH');
+    expect(KNOWN_FOSSILS).toContain('SIZE_LABEL_MISMATCH');
+  });
+
+  test('## SIZE_LABEL_MISMATCH heading is absent from skills/roadmap.md', () => {
+    expect(roadmapSkill).not.toContain('## SIZE_LABEL_MISMATCH');
+  });
+
+  test('list parser strips parentheticals and ignores STATUS', () => {
+    const sample = `${FAIL_LIST_PREFIX} SIZE, GROUP_DEPS (stale-anchor), STATE_SECTIONS (MIGRATION_NEEDED).\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    const parsed = extractAuditSectionLists(sample);
+    expect(parsed.fail).toEqual(['SIZE', 'GROUP_DEPS', 'STATE_SECTIONS']);
+    expect(parsed.advisory).toEqual(['VOCAB_LINT']);
+  });
+
+  test('list parser throws on missing fail list', () => {
+    expect(() => extractAuditSectionLists(`${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`)).toThrow(
+      'no fail list found',
+    );
+  });
+
+  test('list parser throws on duplicate fail list', () => {
+    const dup = `${FAIL_LIST_PREFIX} SIZE.\n${FAIL_LIST_PREFIX} PACKING.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    expect(() => extractAuditSectionLists(dup)).toThrow('duplicate fail list');
+  });
+
+  test('list parser throws on empty fail tokens', () => {
+    expect(() =>
+      extractAuditSectionLists(`${FAIL_LIST_PREFIX}\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`),
+    ).toThrow('produced zero tokens');
+  });
+
+  test('list parser throws on missing advisory list', () => {
+    expect(() => extractAuditSectionLists(`${FAIL_LIST_PREFIX} SIZE.\n`)).toThrow(
+      'no advisory list found',
+    );
+  });
+
+  test('list parser throws on duplicate advisory list', () => {
+    const dup = `${FAIL_LIST_PREFIX} SIZE.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n${ADVISORY_LIST_PREFIX} STYLE_LINT.\n`;
+    expect(() => extractAuditSectionLists(dup)).toThrow('duplicate advisory list');
+  });
+
+  test('list parser throws on leftover ALL_CAPS in a cell (missing comma)', () => {
+    const sample = `${FAIL_LIST_PREFIX} SIZE, PACKING NEW_SECTION.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'NEW_SECTION'");
+  });
+
+  test('list parser throws on leftover ALL_CAPS after a parenthetical', () => {
+    const sample = `${FAIL_LIST_PREFIX} SIZE, GROUP_DEPS (stale-anchor) PHASES.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'PHASES'");
+  });
+});
+
