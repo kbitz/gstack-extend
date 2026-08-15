@@ -5,8 +5,9 @@
  *
  * Mirrors bash `_compute_in_flight_groups` semantics:
  *   - Groups iterated in NUMERIC sort order.
- *   - Effective deps: explicit if set; otherwise the immediately-preceding
- *     Group in numeric order; `_Depends on: none_` → no deps.
+ *   - Effective deps: explicit list if set; unspecified and
+ *     `_Depends on: none_` → no deps.
+ *   - Live Hotfix Groups implicitly block every non-hotfix Group.
  *   - A Group is in-flight iff it isn't itself ✓ Complete AND every effective
  *     dep is in COMPLETE_GROUPS (and references an existing Group — unknown
  *     deps disqualify the Group from the frontier).
@@ -27,10 +28,10 @@ function compareGroupNum(a: string, b: string): number {
   return Number.parseInt(a, 10) - Number.parseInt(b, 10);
 }
 
-function effectiveDepsFor(g: GroupInfo, prev: string | null): string[] {
+function explicitDepsFor(g: GroupInfo): string[] {
   switch (g.deps.kind) {
     case 'unspecified':
-      return prev === null ? [] : [prev];
+      return [];
     case 'none':
       return [];
     case 'list':
@@ -38,21 +39,31 @@ function effectiveDepsFor(g: GroupInfo, prev: string | null): string[] {
   }
 }
 
+function effectiveDepsFor(g: GroupInfo, liveHotfixes: string[]): string[] {
+  const deps = [...explicitDepsFor(g)];
+  if (g.isHotfix) return deps;
+  for (const h of liveHotfixes) {
+    if (h !== g.num && !deps.includes(h)) deps.push(h);
+  }
+  return deps;
+}
+
 export function computeInFlight(parsed: ParsedRoadmap): InFlightResult {
   const groups = [...parsed.groups].sort((a, b) => compareGroupNum(a.num, b.num));
   const groupSet = new Set(groups.map((g) => g.num));
   const completeSet = new Set(groups.filter((g) => g.isComplete).map((g) => g.num));
+  const liveHotfixes = groups
+    .filter((g) => g.isHotfix && !completeSet.has(g.num))
+    .map((g) => g.num);
 
   const inFlight: string[] = [];
   const unknownDeps: string[] = [];
 
-  let prev: string | null = null;
   for (const g of groups) {
     if (completeSet.has(g.num)) {
-      prev = g.num;
       continue;
     }
-    const deps = effectiveDepsFor(g, prev);
+    const deps = effectiveDepsFor(g, liveHotfixes);
     let depOk = true;
     for (const d of deps) {
       if (!groupSet.has(d)) {
@@ -66,7 +77,6 @@ export function computeInFlight(parsed: ParsedRoadmap): InFlightResult {
       }
     }
     if (depOk) inFlight.push(g.num);
-    prev = g.num;
   }
   return { inFlight, unknownDeps };
 }

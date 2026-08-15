@@ -40,8 +40,10 @@ export type StubGitOpts = {
   tags?: string[];
   latest?: string | null;
   diffNames?: string[];
+  mergeBase?: string | null;
   logFirstWithPhrase?: { date: string } | null;
   logSubjectsSince?: string[];
+  workingTreePaths?: string[];
 };
 
 export function stubGit(opts: StubGitOpts = {}): GitGateway {
@@ -49,9 +51,11 @@ export function stubGit(opts: StubGitOpts = {}): GitGateway {
     toplevel: () => opts.toplevel ?? null,
     tags: () => opts.tags ?? [],
     tagsLatest: () => opts.latest ?? null,
+    mergeBase: () => opts.mergeBase ?? null,
     diffNamesBetween: () => opts.diffNames ?? [],
     logFirstWithPhrase: () => opts.logFirstWithPhrase ?? null,
     logSubjectsSince: () => opts.logSubjectsSince ?? [],
+    workingTreePaths: () => opts.workingTreePaths ?? [],
   };
 }
 

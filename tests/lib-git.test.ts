@@ -155,6 +155,45 @@ describe('createGitGateway — mocked', () => {
     expect(git.logFirstWithPhrase('phrase', 'ROADMAP.md')).toBeNull();
   });
 
+  test('mergeBase: returns sha on hit', () => {
+    const git = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'merge-base HEAD main': { ok: true, stdout: 'abc123\n', stderr: '' },
+      }),
+    });
+    expect(git.mergeBase('main')).toBe('abc123');
+  });
+
+  test('mergeBase: missing ref returns null', () => {
+    const git = createGitGateway({ cwd: '/tmp', spawn: mockSpawn({}) });
+    expect(git.mergeBase('origin/main')).toBeNull();
+  });
+
+  test('workingTreePaths unions unstaged, staged, untracked and sorts', () => {
+    const git = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'diff --name-only HEAD': { ok: true, stdout: 'unstaged.ts\n', stderr: '' },
+        'diff --name-only --cached': { ok: true, stdout: 'staged.ts\n', stderr: '' },
+        'ls-files --others --exclude-standard': { ok: true, stdout: 'untracked.ts\n', stderr: '' },
+      }),
+    });
+    expect(git.workingTreePaths()).toEqual(['staged.ts', 'unstaged.ts', 'untracked.ts']);
+  });
+
+  test('workingTreePaths ignores a failed batch', () => {
+    const git = createGitGateway({
+      cwd: '/tmp',
+      spawn: mockSpawn({
+        'diff --name-only HEAD': { ok: false, stdout: '', stderr: 'err' },
+        'diff --name-only --cached': { ok: true, stdout: 'staged.ts\n', stderr: '' },
+        'ls-files --others --exclude-standard': { ok: true, stdout: '', stderr: '' },
+      }),
+    });
+    expect(git.workingTreePaths()).toEqual(['staged.ts']);
+  });
+
   test('logSubjectsSince: splits commit subjects', () => {
     const git = createGitGateway({
       cwd: '/tmp',

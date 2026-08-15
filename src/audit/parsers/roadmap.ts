@@ -27,7 +27,7 @@
  * Parser is pure: takes content string, returns a value-only result.
  */
 
-import { effortToLoc, type ConfigDeps } from '../lib/effort.ts';
+import { effortToLoc, isMarkdownOnlyTouches, sessionWeight, type ConfigDeps } from '../lib/effort.ts';
 import { detectStateRegions, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
@@ -64,10 +64,18 @@ export type TrackInfo = {
   filesCount: number;
   tasksCount: number;
   loc: number;
+  sessionWeight: number;
+  deleteOnly: boolean;
+  markdownOnly: boolean;
+  out: string[];
+  readFirst: string[];
+  produces: string | null;
+  blockedBy: string[];
   legacy: boolean;
   deps: string[];
   depsFreetext: boolean;
   bannedPrSplit: boolean; // body contained "N PRs"/"two PRs"/"PR1"/"PR2"/etc.
+  untaggedWriteTasks: number;
 };
 
 export type SizeLabelMismatch = {
@@ -104,6 +112,57 @@ function extractLinesHint(line: string): number | null {
   const m = line.match(new RegExp(`~([0-9]+)${WS}*lines?`));
   if (!m) return null;
   return Number.parseInt(m[1]!, 10);
+}
+
+function stripItalic(line: string, prefix: RegExp): string {
+  let raw = line.replace(prefix, '');
+  raw = raw.replace(/_[ \t\v\f\r]*$/, '');
+  return trim(raw);
+}
+
+function parseCommaList(line: string, prefix: RegExp): string[] {
+  const raw = stripItalic(line, prefix);
+  if (raw === '') return [];
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const p = trim(part);
+    if (p !== '') out.push(p);
+  }
+  return out;
+}
+
+function parseCommaIds(line: string, prefix: RegExp): string[] {
+  return parseCommaList(line, prefix);
+}
+
+function canonicalizeTrackId(raw: string): string {
+  return raw.replace(/^([0-9]+)([A-Za-z])((?:\.[0-9]+)?)$/, (_m, n: string, letter: string, rest: string) => {
+    return `${n}${letter.toUpperCase()}${rest}`;
+  });
+}
+
+function parseTrackRefs(line: string): string[] {
+  const ids: string[] = [];
+  const push = (raw: string) => {
+    const id = canonicalizeTrackId(raw);
+    if (id !== '' && !ids.includes(id)) ids.push(id);
+  };
+  const re = /Track[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    push(m[1]!);
+  }
+  for (const part of parseCommaList(line, /^_blocked-by:/)) {
+    const bare = part.replace(/^Track[ \t]+/i, '');
+    if (/^[0-9]+[A-Za-z](?:\.[0-9]+)?$/.test(bare)) push(bare);
+  }
+  return ids;
+}
+
+const DELETE_HINT_RE = /\(del(?:etions?)?\)/i;
+
+function isDeleteTask(line: string): boolean {
+  return DELETE_HINT_RE.test(line);
 }
 
 // Heading depth-agnostic patterns. v1 uses ##, v2 uses ### or ####.
@@ -195,6 +254,13 @@ export function parseRoadmap(
   const trackFilesCount = new Map<string, number>();
   const trackTasks = new Map<string, number>();
   const trackLoc = new Map<string, number>();
+  const trackWeight = new Map<string, number>();
+  const trackDeleteTasks = new Map<string, number>();
+  const trackUntaggedWrites = new Map<string, number>();
+  const trackOut = new Map<string, string[]>();
+  const trackReadFirst = new Map<string, string[]>();
+  const trackProduces = new Map<string, string>();
+  const trackBlockedBy = new Map<string, string[]>();
   const trackLegacy = new Map<string, boolean>();
   const trackDeps = new Map<string, string[]>();
   const trackDepsFreetext = new Set<string>();
@@ -214,7 +280,6 @@ export function parseRoadmap(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
-    const enclosingState = stateAtLine(regions, lineNo);
 
     // Top-level state section detection.
     const stateMatch = line.match(STATE_HEADING_RE);
@@ -339,6 +404,10 @@ export function parseRoadmap(
       trackTouches.set(trackId, []);
       trackTasks.set(trackId, 0);
       trackLoc.set(trackId, 0);
+      trackWeight.set(trackId, 0);
+      trackDeleteTasks.set(trackId, 0);
+      trackOut.set(trackId, []);
+      trackReadFirst.set(trackId, []);
       trackFilesCount.set(trackId, 0);
       trackLegacy.set(trackId, true);
       if (groupNum !== '') {
@@ -360,7 +429,8 @@ export function parseRoadmap(
         for (const f of raw.split(',')) {
           const ft = trim(f);
           if (ft === '') continue;
-          if (/[ \t\v\f\r=]/.test(ft)) {
+          const pathPart = ft.replace(/[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i, '');
+          if (pathPart === '' || /[ \t\v\f\r=]/.test(pathPart)) {
             malformed = true;
             continue;
           }
@@ -380,6 +450,27 @@ export function parseRoadmap(
         trackTouches.set(trackId, touchesList);
         trackFilesCount.set(trackId, touchesList.length);
         trackLegacy.set(trackId, false);
+        continue;
+      }
+
+      // Card-contract fields (optional; /roadmap writes them on regen).
+      if (/^_out:/.test(line)) {
+        trackOut.set(trackId, parseCommaIds(line, /^_out:/));
+        continue;
+      }
+      if (/^_read-first:/.test(line)) {
+        trackReadFirst.set(trackId, parseCommaList(line, /^_read-first:/));
+        continue;
+      }
+      if (/^_produces:/.test(line)) {
+        let raw = line.replace(/^_produces:[ \t\v\f\r]*/, '');
+        raw = raw.replace(/_[ \t\v\f\r]*$/, '');
+        const p = trim(raw);
+        if (p !== '') trackProduces.set(trackId, p);
+        continue;
+      }
+      if (/^_blocked-by:/.test(line)) {
+        trackBlockedBy.set(trackId, parseTrackRefs(line));
         continue;
       }
 
@@ -436,11 +527,18 @@ export function parseRoadmap(
 
       trackTasks.set(trackId, (trackTasks.get(trackId) ?? 0) + 1);
 
+      const deleted = isDeleteTask(line);
+      if (deleted) {
+        trackDeleteTasks.set(trackId, (trackDeleteTasks.get(trackId) ?? 0) + 1);
+      }
+
       if (effort !== null) {
         const expectedLoc = effortToLoc(effort, deps);
         trackLoc.set(trackId, (trackLoc.get(trackId) ?? 0) + expectedLoc);
+        const weight = deleted ? sessionWeight('S') : sessionWeight(effort);
+        trackWeight.set(trackId, (trackWeight.get(trackId) ?? 0) + weight);
 
-        if (declaredLines !== null && declaredLines > 0 && expectedLoc > 0) {
+        if (!deleted && declaredLines !== null && declaredLines > 0 && expectedLoc > 0) {
           const ratioNum = Math.max(declaredLines, expectedLoc);
           const ratioDen = Math.min(declaredLines, expectedLoc);
           if (ratioNum > ratioDen * 3) {
@@ -453,6 +551,10 @@ export function parseRoadmap(
             });
           }
         }
+      } else if (deleted) {
+        trackWeight.set(trackId, (trackWeight.get(trackId) ?? 0) + sessionWeight('S'));
+      } else {
+        trackUntaggedWrites.set(trackId, (trackUntaggedWrites.get(trackId) ?? 0) + 1);
       }
     }
 
@@ -541,19 +643,30 @@ export function parseRoadmap(
 
   const tracks: TrackInfo[] = trackOrder.map((id) => {
     const state = trackState.get(id) ?? 'current-plan';
+    const touches = trackTouches.get(id) ?? [];
+    const tasksCount = trackTasks.get(id) ?? 0;
+    const deleteTasks = trackDeleteTasks.get(id) ?? 0;
     return {
       id,
       groupNum: trackGroup.get(id) ?? '0',
       state,
       isComplete: state === 'shipped',
-      touches: trackTouches.get(id) ?? [],
+      touches,
       filesCount: trackFilesCount.get(id) ?? 0,
-      tasksCount: trackTasks.get(id) ?? 0,
+      tasksCount,
       loc: trackLoc.get(id) ?? 0,
+      sessionWeight: trackWeight.get(id) ?? 0,
+      deleteOnly: tasksCount > 0 && deleteTasks === tasksCount,
+      markdownOnly: isMarkdownOnlyTouches(touches),
+      out: trackOut.get(id) ?? [],
+      readFirst: trackReadFirst.get(id) ?? [],
+      produces: trackProduces.get(id) ?? null,
+      blockedBy: trackBlockedBy.get(id) ?? [],
       legacy: trackLegacy.get(id) ?? true,
       deps: trackDeps.get(id) ?? [],
       depsFreetext: trackDepsFreetext.has(id),
       bannedPrSplit: trackBannedPrSplit.has(id),
+      untaggedWriteTasks: trackUntaggedWrites.get(id) ?? 0,
     };
   });
 
@@ -569,6 +682,47 @@ export function parseRoadmap(
       futureMalformed,
     },
     errors,
+  };
+}
+
+/** Merge a shipped-archive parse into the active roadmap parse (IDs from
+ *  the archive fill gaps; active file wins on collision). */
+export function mergeShippedArchive(
+  active: ParserResult<ParsedRoadmap>,
+  archive: ParserResult<ParsedRoadmap>,
+): ParserResult<ParsedRoadmap> {
+  const seenGroups = new Set(active.value.groups.map((g) => g.num));
+  const seenTracks = new Set(active.value.tracks.map((t) => t.id));
+  const groups = [...active.value.groups];
+  const tracks = [...active.value.tracks];
+  const collisionWarnings: string[] = [];
+  for (const g of archive.value.groups) {
+    if (seenGroups.has(g.num)) {
+      collisionWarnings.push(
+        `archive Group ${g.num} collides with active ROADMAP — active wins, archive copy dropped`,
+      );
+      continue;
+    }
+    groups.push({ ...g, state: 'shipped', isComplete: true });
+  }
+  for (const t of archive.value.tracks) {
+    if (seenTracks.has(t.id)) {
+      collisionWarnings.push(
+        `archive Track ${t.id} collides with active ROADMAP — active wins, archive copy dropped`,
+      );
+      continue;
+    }
+    tracks.push({ ...t, state: 'shipped', isComplete: true });
+  }
+  return {
+    value: {
+      ...active.value,
+      groups,
+      tracks,
+      styleLintWarnings: [...active.value.styleLintWarnings, ...collisionWarnings],
+      sizeLabelMismatches: [...active.value.sizeLabelMismatches],
+    },
+    errors: [...active.errors],
   };
 }
 

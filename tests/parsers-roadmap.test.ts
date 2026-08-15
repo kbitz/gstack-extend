@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  mergeShippedArchive,
   parseRoadmap,
   type ParseRoadmapDeps,
 } from '../src/audit/parsers/roadmap.ts';
@@ -254,6 +255,20 @@ describe('parseRoadmap — _touches:_', () => {
     expect(r.value.styleLintWarnings.some((w) => w.includes('whitespace'))).toBe(true);
   });
 
+  test('path (new) is a legal touch token', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '_touches: src/a.ts (new), src/b.ts_',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.touches).toEqual(['src/a.ts (new)', 'src/b.ts']);
+    expect(t.legacy).toBe(false);
+    expect(r.value.styleLintWarnings.some((w) => w.includes('whitespace'))).toBe(false);
+  });
+
   test('= in token rejected (kv-store separator)', () => {
     const md = [
       '## Group 1: A',
@@ -363,6 +378,8 @@ describe('parseRoadmap — task lines', () => {
     const t = r.value.tracks[0]!;
     expect(t.tasksCount).toBe(1);
     expect(t.loc).toBe(0);
+    expect(t.untaggedWriteTasks).toBe(1);
+    expect(t.sessionWeight).toBe(0);
   });
 
   test('size label mismatch when declared lines diverges >3x from effort tier', () => {
@@ -511,15 +528,178 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     expect(g1?.isComplete).toBe(true);
     const g5 = r.value.groups.find((g) => g.num === '5');
     expect(g5?.isComplete).toBe(true);
-    // Group dep parse: kinds limited to 'unspecified' / 'none' / 'after'.
-    // Active Groups in the current plan use explicit `_Depends on:_` blocks
-    // OR rely on the preceding-Group default. No Group should have a
-    // malformed deps block.
+    // Group dep parse: kinds limited to 'unspecified' / 'none' / 'list'.
+    // Unspecified means none (v3). No Group should have a malformed deps block.
     for (const g of r.value.groups) {
       expect(['unspecified', 'none', 'after', 'list']).toContain(g.deps.kind);
     }
     // Sanity: at least 10 groups, several tracks (real-repo shape).
     expect(r.value.groups.length).toBeGreaterThanOrEqual(10);
     expect(r.value.tracks.length).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('parseRoadmap — card fields + session weight', () => {
+  test('parses _out / _read-first / _produces / _blocked-by', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Title',
+      '_1 task . ~S . low risk . [a.ts]_',
+      '_touches: src/a.ts_',
+      '_out: 1B, 2A_',
+      '_read-first: 0A, docs/designs/foo.md_',
+      '_produces: typed accessors on UbiquitousKVStore_',
+      '_blocked-by: Track 0A_',
+      '- **Do it** -- yes. _src/a.ts, ~20 lines._ (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.out).toEqual(['1B', '2A']);
+    expect(t.readFirst).toEqual(['0A', 'docs/designs/foo.md']);
+    expect(t.produces).toBe('typed accessors on UbiquitousKVStore');
+    expect(t.blockedBy).toEqual(['0A']);
+    expect(t.sessionWeight).toBe(1);
+    expect(t.markdownOnly).toBe(false);
+  });
+
+  test('mixed Track-ref and bare IDs are unioned; lowercase is canonicalized', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: T',
+      '_touches: src/a.ts_',
+      '_blocked-by: Track 15a, 16B_',
+      '- **Do it** -- yes. _src/a.ts, ~20 lines._ (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.blockedBy).toEqual(['15A', '16B']);
+  });
+
+  test('delete task is weight S even when tagged L', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Trim',
+      '_1 task . ~L . low risk . [skills/foo.md]_',
+      '_touches: skills/foo.md_',
+      '- **Delete dead helper** -- gone. _skills/foo.md, ~2000 lines (del)._ (L)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(1);
+    expect(t.deleteOnly).toBe(true);
+    expect(t.markdownOnly).toBe(true);
+    expect(t.sizeLabelMismatches ?? r.value.sizeLabelMismatches).toEqual([]);
+  });
+
+  test('title verb without (del) is not a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Trim skill',
+      '_1 task . ~M . low risk . [skills/pair-review.md]_',
+      '_touches: skills/pair-review.md_',
+      '- **Trim pair-review.md** -- rewrite. _skills/pair-review.md, ~100 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(2);
+    expect(t.deleteOnly).toBe(false);
+  });
+
+  test('Implement trim() helper is not a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Util',
+      '_1 task . ~M . low risk . [src/trim.ts]_',
+      '_touches: src/trim.ts_',
+      '- **Implement trim() helper** -- add util. _src/trim.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(2);
+    expect(t.deleteOnly).toBe(false);
+  });
+
+  test('(del) hint without a title verb is still a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Drop',
+      '_1 task . ~L . low risk . [src/old.ts]_',
+      '_touches: src/old.ts_',
+      '- **Drop the unused helper** -- gone. _src/old.ts, ~40 lines (del)._ (L)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(1);
+    expect(t.deleteOnly).toBe(true);
+  });
+
+  test('mixed delete + write is not deleteOnly', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Mix',
+      '_2 tasks . ~M . low risk . [src/a.ts]_',
+      '_touches: src/a.ts_',
+      '- **Delete dead helper** -- gone. _src/old.ts, ~10 lines (del)._ (L)',
+      '- **Write new** -- . _src/a.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.deleteOnly).toBe(false);
+    expect(t.sessionWeight).toBe(3);
+  });
+
+  test('two M write-tasks sum to weight 4', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Two',
+      '_2 tasks . ~M . low risk . [a.ts]_',
+      '_touches: src/a.ts_',
+      '- **One** -- . _src/a.ts, ~80 lines._ (M)',
+      '- **Two** -- . _src/a.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.sessionWeight).toBe(4);
+  });
+});
+
+describe('mergeShippedArchive', () => {
+  test('archive fills gaps; active wins on collision with a warning', () => {
+    const active = parseRoadmap(
+      '## Current Plan\n#### Group 2: Live\n##### Track 2A: New\n',
+      deps(),
+    );
+    const archive = parseRoadmap(
+      '## Shipped\n#### Group 1: Old\n##### Track 1A: Done\n#### Group 2: StaleName\n##### Track 2A: Stale\n',
+      deps(),
+    );
+    const m = mergeShippedArchive(active, archive);
+    expect(m.value.groups.find((g) => g.num === '1')?.state).toBe('shipped');
+    expect(m.value.groups.find((g) => g.num === '2')?.name).toBe('Live');
+    expect(m.value.tracks.map((t) => t.id).sort()).toEqual(['1A', '2A']);
+    expect(m.value.tracks.find((t) => t.id === '1A')?.state).toBe('shipped');
+    expect(m.value.styleLintWarnings.some((w) => w.includes('archive Group 2'))).toBe(true);
+    expect(m.value.styleLintWarnings.some((w) => w.includes('archive Track 2A'))).toBe(true);
+  });
+
+  test('empty archive is a no-op', () => {
+    const active = parseRoadmap('', deps());
+    const m = mergeShippedArchive(active, parseRoadmap('', deps()));
+    expect(m.value.groups).toEqual([]);
+    expect(m.value.tracks).toEqual([]);
   });
 });

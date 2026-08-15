@@ -2,7 +2,7 @@
  * parallelism-budget.ts — port of check_parallelism_budget (~L3101-3166).
  *
  * Counts in-flight Tracks across all in-flight Groups; flags when total
- * exceeds the parallelism cap (default 4, override via CLAUDE.md
+ * exceeds the parallelism cap (default 6, override via CLAUDE.md)
  * `<!-- roadmap:parallelism_cap=N -->`). ✓ Complete Tracks aren't load.
  *
  * Output shape:

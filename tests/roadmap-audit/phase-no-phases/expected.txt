@@ -73,7 +73,7 @@ FINDINGS:
 - All Group-level dependencies valid (2 groups)
 ADJACENCY:
 - Group 1 ← {}
-- Group 2 ← {1}
+- Group 2 ← {}
 
 ## TASK_LIST
 STATUS: info
@@ -94,7 +94,7 @@ IMBALANCE_RATIO: 1.00
 
 ## IN_FLIGHT_GROUPS
 STATUS: info
-IN_FLIGHT: 1
+IN_FLIGHT: 1 2
 COMPLETE: 
 PRIMARY: 1
 
@@ -108,6 +108,7 @@ STATUS: pass
 FINDINGS:
 - (none)
 MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
 MAX_FILES_PER_TRACK: 8
 
@@ -118,10 +119,19 @@ FINDINGS:
 MAX_TRACKS_PER_GROUP: 8
 SHARED_INFRA_STATUS: missing
 
+## PACKING
+STATUS: fail
+FINDINGS:
+- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
+- written groups [1A | 2A]
+- packer bins    [1A,2A]
+
+BINS: 1
+
 ## PARALLELISM_BUDGET
-IN_FLIGHT_TRACKS: 1
-CAP: 4
-PER_GROUP: 1=1
+IN_FLIGHT_TRACKS: 2
+CAP: 6
+PER_GROUP: 1=1 2=1
 STATUS: pass
 FINDINGS:
 - (none)

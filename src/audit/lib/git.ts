@@ -10,6 +10,7 @@
  *   toplevel()                     git rev-parse --show-toplevel
  *   tags()                         git tag --list  (lexicographic)
  *   tagsLatest()                   git --no-pager tag --list --sort=-v:refname | head -1
+ *   mergeBase(ref)                 git merge-base HEAD ref
  *   diffNamesBetween(from, to)     git --no-pager diff --name-only from..to
  *   logFirstWithPhrase(phrase, f)  git log -1 --format=%ai -S "phrase" -- f
  *   logSubjectsSince(since, f)     git log --format=%s --after=since -- f
@@ -41,12 +42,16 @@ export type GitGateway = {
   tags(): string[];
   /** Latest tag by `sort=-v:refname` semantics, or null. */
   tagsLatest(): string | null;
+  /** merge-base of HEAD and `ref`, or null if the ref is missing. */
+  mergeBase(ref: string): string | null;
   /** File names changed between two refs (e.g., latestTag..HEAD). */
   diffNamesBetween(from: string, to: string): string[];
   /** Date of the most recent commit that added/removed `phrase` in `file`. */
   logFirstWithPhrase(phrase: string, file: string): { date: string } | null;
   /** Subjects of commits to `file` since `sinceISO`. */
   logSubjectsSince(sinceISO: string, file: string): string[];
+  /** Union of unstaged, staged, and untracked paths (drift check). */
+  workingTreePaths(): string[];
 };
 
 export type GitGatewayDeps = {
@@ -97,6 +102,13 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       return lines[0] ?? null;
     },
 
+    mergeBase(ref: string): string | null {
+      const r = spawn(['merge-base', 'HEAD', ref], cwd);
+      if (!r.ok) return null;
+      const out = r.stdout.trim();
+      return out === '' ? null : out;
+    },
+
     diffNamesBetween(from: string, to: string): string[] {
       const r = spawn(['--no-pager', 'diff', '--name-only', `${from}..${to}`], cwd);
       if (!r.ok) return [];
@@ -115,6 +127,23 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       const r = spawn(['log', '--format=%s', `--after=${sinceISO}`, '--', file], cwd);
       if (!r.ok) return [];
       return splitLines(r.stdout);
+    },
+
+    workingTreePaths(): string[] {
+      const out = new Set<string>();
+      const batches: string[][] = [
+        ['diff', '--name-only', 'HEAD'],
+        ['diff', '--name-only', '--cached'],
+        ['ls-files', '--others', '--exclude-standard'],
+      ];
+      for (const args of batches) {
+        const r = spawn(args, cwd);
+        if (!r.ok) continue;
+        for (const line of splitLines(r.stdout)) {
+          if (line !== '') out.add(line);
+        }
+      }
+      return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     },
   };
 }

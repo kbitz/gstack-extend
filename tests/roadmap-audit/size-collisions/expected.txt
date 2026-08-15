@@ -104,9 +104,10 @@ BY_GROUP:
 ## SIZE
 STATUS: fail
 FINDINGS:
-- 1A: loc=1000 exceeds max_loc_per_track=300 — split into multiple Tracks
+- 1A: session_weight=10 exceeds max_session_weight=4 — split into multiple Tracks
 
 MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
 MAX_FILES_PER_TRACK: 8
 
@@ -118,9 +119,18 @@ FINDINGS:
 MAX_TRACKS_PER_GROUP: 8
 SHARED_INFRA_STATUS: missing
 
+## PACKING
+STATUS: fail
+FINDINGS:
+- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
+- written groups [1A,1B]
+- packer bins    [1A | 1B]
+
+BINS: 2
+
 ## PARALLELISM_BUDGET
 IN_FLIGHT_TRACKS: 2
-CAP: 4
+CAP: 6
 PER_GROUP: 1=2
 STATUS: pass
 FINDINGS:

@@ -32,9 +32,11 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
       toplevel: () => null,
       tags: () => [],
       tagsLatest: () => null,
+      mergeBase: () => null,
       diffNamesBetween: () => [],
       logFirstWithPhrase: () => null,
       logSubjectsSince: () => [],
+      workingTreePaths: () => [],
     },
     paths: { todos: null, roadmap: 'ROADMAP.md', progress: null },
     files: {
@@ -73,7 +75,9 @@ function group(num: string, name: string, opts: Partial<GroupInfo> = {}): GroupI
   return {
     num,
     name,
+    state: 'current-plan',
     isComplete: false,
+    isHotfix: false,
     deps: { kind: 'unspecified' },
     depsRaw: null,
     depAnchors: [],
@@ -97,10 +101,10 @@ describe('check_group_deps', () => {
       ]),
     );
     expect(r.status).toBe('pass');
-    // Default rule: Group 2 depends on Group 1 (the previous group).
+    // v3: unspecified = none. Group 2 is ready, not chained.
     expect(r.body).toContain('ADJACENCY:');
     expect(r.body).toContain('- Group 1 ← {}');
-    expect(r.body).toContain('- Group 2 ← {1}');
+    expect(r.body).toContain('- Group 2 ← {}');
   });
 
   test('flags forward reference as fail', () => {
@@ -199,7 +203,7 @@ describe('check_group_deps', () => {
     const adjStart = r.body.indexOf('ADJACENCY:');
     expect(adjStart).toBeGreaterThanOrEqual(0);
     expect(r.body[adjStart + 1]).toBe('- Group 1 ← {}');
-    expect(r.body[adjStart + 2]).toBe('- Group 2 ← {1}');
-    expect(r.body[adjStart + 3]).toBe('- Group 10 ← {2}');
+    expect(r.body[adjStart + 2]).toBe('- Group 2 ← {}');
+    expect(r.body[adjStart + 3]).toBe('- Group 10 ← {}');
   });
 });

@@ -25,7 +25,8 @@ export type CeilingKey =
   | 'max_tasks_per_track'
   | 'max_loc_per_track'
   | 'max_files_per_track'
-  | 'max_tracks_per_group';
+  | 'max_tracks_per_group'
+  | 'max_session_weight';
 
 const EFFORT_DEFAULTS: Record<EffortTier, number> = {
   S: 50,
@@ -39,6 +40,15 @@ const CEILING_DEFAULTS: Record<CeilingKey, number> = {
   max_loc_per_track: 300,
   max_files_per_track: 8,
   max_tracks_per_group: 8,
+  max_session_weight: 4,
+};
+
+/** Session weight per effort tier. XL is above the cap so it always splits. */
+export const SESSION_WEIGHT: Record<EffortTier, number> = {
+  S: 1,
+  M: 2,
+  L: 4,
+  XL: 5,
 };
 
 const EFFORT_ENV: Record<EffortTier, string> = {
@@ -60,6 +70,7 @@ const CEILING_ENV: Record<CeilingKey, string> = {
   max_loc_per_track: 'ROADMAP_MAX_LOC_PER_TRACK',
   max_files_per_track: 'ROADMAP_MAX_FILES_PER_TRACK',
   max_tracks_per_group: 'ROADMAP_MAX_TRACKS_PER_GROUP',
+  max_session_weight: 'ROADMAP_MAX_SESSION_WEIGHT',
 };
 
 const CEILING_CFG: Record<CeilingKey, string> = {
@@ -67,6 +78,7 @@ const CEILING_CFG: Record<CeilingKey, string> = {
   max_loc_per_track: 'roadmap_max_loc_per_track',
   max_files_per_track: 'roadmap_max_files_per_track',
   max_tracks_per_group: 'roadmap_max_tracks_per_group',
+  max_session_weight: 'roadmap_max_session_weight',
 };
 
 function isPositiveInt(s: string): boolean {
@@ -146,9 +158,32 @@ export function ceiling(key: string, deps: ConfigDeps = {}): number {
     key !== 'max_tasks_per_track' &&
     key !== 'max_loc_per_track' &&
     key !== 'max_files_per_track' &&
-    key !== 'max_tracks_per_group'
+    key !== 'max_tracks_per_group' &&
+    key !== 'max_session_weight'
   ) {
     return 0;
   }
   return configIntGet(CEILING_CFG[key], CEILING_DEFAULTS[key], CEILING_ENV[key], deps);
+}
+
+export function sessionWeight(tier: string): number {
+  if (tier !== 'S' && tier !== 'M' && tier !== 'L' && tier !== 'XL') return 0;
+  return SESSION_WEIGHT[tier];
+}
+
+const MD_TOUCH_RE = /\.(md|mdx)$/i;
+const DOCISH_PREFIX = /^(docs\/|skills\/|\.claude\/skills\/)/;
+
+/** True when every scheduling touch is markdown / docs / skill prose. */
+export function isMarkdownOnlyTouches(touches: string[]): boolean {
+  if (touches.length === 0) return false;
+  for (const raw of touches) {
+    const t = raw.replace(/[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i, '').replace(/\/+$/, '');
+    if (t === '') continue;
+    if (DOCISH_PREFIX.test(t)) continue;
+    if (MD_TOUCH_RE.test(t)) continue;
+    if (/^(CLAUDE|README|CONTRIBUTING|CODE_OF_CONDUCT|AGENTS)\.md$/i.test(t)) continue;
+    return false;
+  }
+  return true;
 }

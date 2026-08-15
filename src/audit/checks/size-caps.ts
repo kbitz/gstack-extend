@@ -1,25 +1,13 @@
 /**
  * size-caps.ts — per-track size cap enforcement.
  *
- * Enforces caps on active (non-shipped, non-legacy) Tracks. Legacy Tracks
- * with no `_touches:_` are skipped with a banner. Shipped Tracks are
- * skipped silently (caps are advice for in-flight/planned work).
+ * Session weight is the hard unit (S=1, M=2, L=4, XL=5). A Track that
+ * exceeds max_session_weight (default 4) is not a Track. Delete-tagged
+ * tasks count as S regardless of declared N. Markdown-only and delete-only
+ * Tracks skip the code file-fanout cap.
  *
- * Caps come from lib/effort.ts ceilings. The v2 rule is hard: if a Track
- * exceeds the LOC cap, it isn't a Track — it's multiple Tracks. The skill's
- * regenerate step is responsible for splitting; the audit just fails so
- * oversized Tracks don't survive a /roadmap run.
- *
- * SIZE_LABEL_MISMATCH (informational): per-task `~N lines` vs effort tier
- * LOC mapping divergence >3x. Always emitted (independent of cap status)
- * when any are present.
- *
- * Output shape:
- *   STATUS: pass | fail | skip | skip-legacy-all
- *   FINDINGS: per-finding lines (or "- (none)")
- *   [SIZE_LABEL_MISMATCH:]   (only when present)
- *   MAX_TASKS_PER_TRACK / MAX_LOC_PER_TRACK / MAX_FILES_PER_TRACK
- *   [LEGACY_TRACKS:]         (only when any legacy tracks remain)
+ * LOC is still summed for SIZE_LABEL_MISMATCH (write-tasks only) and
+ * emitted as MAX_LOC_PER_TRACK for back-compat — it is not a fail gate.
  */
 
 import { ceiling } from '../lib/effort.ts';
@@ -38,6 +26,7 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
   const maxTasks = ceiling('max_tasks_per_track');
   const maxLoc = ceiling('max_loc_per_track');
   const maxFiles = ceiling('max_files_per_track');
+  const maxWeight = ceiling('max_session_weight');
 
   const findings: string[] = [];
   let modernCount = 0;
@@ -53,10 +42,18 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
     if (t.tasksCount > maxTasks) {
       findings.push(`- ${t.id}: tasks=${t.tasksCount} exceeds max_tasks_per_track=${maxTasks}`);
     }
-    if (t.loc > maxLoc) {
-      findings.push(`- ${t.id}: loc=${t.loc} exceeds max_loc_per_track=${maxLoc} — split into multiple Tracks`);
+    if (t.sessionWeight > maxWeight) {
+      findings.push(
+        `- ${t.id}: session_weight=${t.sessionWeight} exceeds max_session_weight=${maxWeight} — split into multiple Tracks`,
+      );
     }
-    if (t.filesCount > maxFiles) {
+    if (t.untaggedWriteTasks > 0) {
+      findings.push(
+        `- ${t.id}: ${t.untaggedWriteTasks} write-task(s) missing (S|M|L) effort tag — untagged writes are not weight 0`,
+      );
+    }
+    const skipFanout = t.markdownOnly || t.deleteOnly;
+    if (!skipFanout && t.filesCount > maxFiles) {
       findings.push(`- ${t.id}: files=${t.filesCount} exceeds max_files_per_track=${maxFiles}`);
     }
   }
@@ -89,6 +86,7 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
   }
 
   body.push(`MAX_TASKS_PER_TRACK: ${maxTasks}`);
+  body.push(`MAX_SESSION_WEIGHT: ${maxWeight}`);
   body.push(`MAX_LOC_PER_TRACK: ${maxLoc}`);
   body.push(`MAX_FILES_PER_TRACK: ${maxFiles}`);
 

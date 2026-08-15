@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0.0] - 2026-08-14
+
+### Added
+
+- **`/roadmap` packing is a program.** Draft Tracks, then `bin/roadmap-pack` assigns Groups. Theme is a name, not a partition. Unrelated disjoint work lands in one launch batch; same-file work cannot sit in one Group. The audit's new `PACKING` section fails when written Groups disagree with the packer.
+- **Session-weight sizing.** A Track is one PR / one session. Tag tasks `(S)` / `(M)` / `(L)` — S=1, M=2, L=4, XL=split. Cap is weight 4, not 300 invented lines. Deletes need `~N lines (del)` (title verbs are not enough). Markdown-only Tracks skip the code file-fanout cap.
+- **Track card fence for `/autoplan`.** `/roadmap` writes `_out:`, `_read-first:`, `_produces:`, and `_blocked-by:` on each card so a planning session sees the user's stated scope without changing `/autoplan`.
+- **`docs/roadmap-shipped.md`.** Optional shipped-history file. The audit merges it for frozen IDs; regen loads an ID+title index, not the essays.
+- **`bin/roadmap-touches drift --track <id>`.** Hard-fails if committed, staged, unstaged, or untracked paths are not covered by `_touches:`.
+
+### Changed
+
+- Unspecified `_Depends on:_` is **none**, not "previous Group." Serial is opt-in. First regen after upgrade: run `bin/roadmap-pack --materialize` and write any implicit edges you still want.
+- Default `parallelism_cap` is 6 (was 4). That is the launch-time throttle — do not sequence Groups just to cap WIP.
+- You no longer compute the collision matrix by hand. `/roadmap` Step 2 runs `bin/roadmap-pack` and writes the bins it prints.
+- Collision-split packer bins are serial (later layer + `_Depends on:`). Capacity overflow stays a ready sibling. A leftover singleton tail is absorbed into the previous bin when it fits under the hard max of 8.
+- Live `Hotfix:` Groups jump the in-flight queue: non-hotfix Groups wait until they ship.
+- `_touches: path (new)` is a legal token. Mixed `_blocked-by: Track 15A, 16B` keeps both IDs; `15a` canonicalizes to `15A`; unknown IDs fail STRUCTURE.
+- Untagged write-tasks fail SIZE (they are not weight 0). Archive ID collisions warn instead of silently dropping the shipped copy.
+
 ## [0.22.3.0] - 2026-08-12
 
 ### Added

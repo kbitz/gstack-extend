@@ -105,6 +105,7 @@ STATUS: pass
 FINDINGS:
 - (none)
 MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
 MAX_FILES_PER_TRACK: 8
 
@@ -113,10 +114,19 @@ STATUS: skip
 FINDINGS:
 - No Groups found
 
+## PACKING
+STATUS: fail
+FINDINGS:
+- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
+- written groups [(none)]
+- packer bins    [1A]
+
+BINS: 1
+
 ## PARALLELISM_BUDGET
 STATUS: skip
 IN_FLIGHT_TRACKS: 0
-CAP: 4
+CAP: 6
 FINDINGS:
 - No in-flight Groups
 

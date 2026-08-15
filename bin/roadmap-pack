@@ -1,0 +1,3 @@
+#!/bin/sh
+# Theme-blind Track packer. Source: src/audit/pack-cli.ts
+exec bun "$(dirname "$0")/../src/audit/pack-cli.ts" "$@"

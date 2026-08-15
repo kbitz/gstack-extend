@@ -6,30 +6,14 @@
  *      duplicate track IDs, malformed _touches:_, self-dep, unparseable
  *      _Depends on:_ annotation. Accumulate in document order during parse.
  *   2. Intra-group track dep cycles (ctx.roadmap.value.trackDepCycles).
- *   3. Redundant explicit `_Depends on: Group N_` when N is the
- *      immediately-preceding Group in numeric order.
+ *   3. (removed) Redundant-previous-Group lint — unspecified is now
+ *      none, so an explicit `_Depends on: Group N_` is always meaningful.
  *
  * Findings are emitted WITHOUT a `- ` bullet prefix — bash builds the
  * string verbatim and renders via `echo -e`, no ` -` adornment.
  */
 
-import type { GroupInfo } from '../parsers/roadmap.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
-
-function compareGroupNum(a: string, b: string): number {
-  return Number.parseInt(a, 10) - Number.parseInt(b, 10);
-}
-
-function explicitDeps(g: GroupInfo): string[] | null {
-  switch (g.deps.kind) {
-    case 'unspecified':
-      return null;
-    case 'none':
-      return [];
-    case 'list':
-      return g.deps.depNums;
-  }
-}
 
 export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
   const warnings: string[] = [...ctx.roadmap.value.styleLintWarnings];
@@ -40,22 +24,6 @@ export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
     warnings.push(
       `Dep cycle in intra-Group track graph: ${cyc} — remove or invert one edge to break the cycle`,
     );
-  }
-
-  // 3. Redundant-backwards-adjacent: explicit dep that equals the
-  //    immediately-preceding Group (numeric-sort order).
-  const groupsSorted = [...ctx.roadmap.value.groups].sort((a, b) => compareGroupNum(a.num, b.num));
-  let prevSorted = '';
-  for (const g of groupsSorted) {
-    const explicit = explicitDeps(g);
-    if (explicit !== null && explicit.length === 1 && prevSorted !== '') {
-      if (explicit[0] === prevSorted) {
-        warnings.push(
-          `Group ${g.num}: _Depends on: Group ${prevSorted}_ is redundant (preceding Group is the default) — drop the annotation`,
-        );
-      }
-    }
-    prevSorted = g.num;
   }
 
   if (warnings.length === 0) {
