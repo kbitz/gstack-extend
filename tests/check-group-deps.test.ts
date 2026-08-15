@@ -32,6 +32,7 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
       toplevel: () => null,
       tags: () => [],
       tagsLatest: () => null,
+      mergeBase: () => null,
       diffNamesBetween: () => [],
       logFirstWithPhrase: () => null,
       logSubjectsSince: () => [],

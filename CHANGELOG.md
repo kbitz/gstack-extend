@@ -7,16 +7,17 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **`/roadmap` packing is a program.** Draft Tracks, then `bin/roadmap-pack` assigns Groups. Theme is a name, not a partition. Unrelated disjoint work lands in one launch batch; same-file work cannot sit in one Group. The audit's new `PACKING` section fails when written Groups disagree with the packer.
-- **Session-weight sizing.** A Track is one PR / one session. S=1, M=2, L=4, XL=split. Cap is weight 4, not 300 invented lines. Delete/trim tasks (or `~N lines (del)`) count as S. Markdown-only Tracks skip the code file-fanout cap.
+- **Session-weight sizing.** A Track is one PR / one session. S=1, M=2, L=4, XL=split. Cap is weight 4, not 300 invented lines. Tasks tagged `~N lines (del)` count as S. Title verbs are not enough. Markdown-only Tracks skip the code file-fanout cap.
 - **Track card fence for `/autoplan`.** `/roadmap` writes `_out:`, `_read-first:`, `_produces:`, and `_blocked-by:` on each card so a planning session sees the user's stated scope without changing `/autoplan`.
 - **`docs/roadmap-shipped.md`.** Optional shipped-history file. The audit merges it for frozen IDs; regen loads an ID+title index, not the essays.
-- **`bin/roadmap-touches drift --track <id>`.** Hard-fails if the working tree touched a path `_touches:` does not cover.
+- **`bin/roadmap-touches drift --track <id>`.** Hard-fails if committed, staged, unstaged, or untracked paths are not covered by `_touches:`.
 
 ### Changed
 
 - Unspecified `_Depends on:_` is **none**, not "previous Group." Serial is opt-in. First regen after upgrade: run `bin/roadmap-pack --materialize` and write any implicit edges you still want.
 - Default `parallelism_cap` is 6 (was 4).
 - `/roadmap` Step 2 no longer asks the model to compute the collision matrix by hand.
+- Collision-split packer bins are serial (later layer + `_Depends on:`). Capacity overflow stays a ready sibling.
 
 ## [0.22.3.0] - 2026-08-12
 

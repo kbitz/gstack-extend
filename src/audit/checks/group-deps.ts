@@ -28,7 +28,7 @@
  * groups with no deps). cli.ts emits this regardless of status.
  */
 
-import type { GroupDeps, GroupInfo } from '../parsers/roadmap.ts';
+import type { GroupInfo } from '../parsers/roadmap.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 function parseGroupNum(num: string): number {

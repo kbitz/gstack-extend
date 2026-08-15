@@ -147,12 +147,9 @@ function parseTrackRefs(line: string): string[] {
 }
 
 const DELETE_HINT_RE = /\(del(?:etions?)?\)/i;
-const DELETE_VERB_RE = /\b(delete|remove|trim)\b/i;
 
-function isDeleteTask(line: string, title: string): boolean {
-  if (DELETE_HINT_RE.test(line)) return true;
-  if (DELETE_VERB_RE.test(title)) return true;
-  return false;
+function isDeleteTask(line: string): boolean {
+  return DELETE_HINT_RE.test(line);
 }
 
 // Heading depth-agnostic patterns. v1 uses ##, v2 uses ### or ####.
@@ -269,7 +266,6 @@ export function parseRoadmap(
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const lineNo = i + 1;
-    const enclosingState = stateAtLine(regions, lineNo);
 
     // Top-level state section detection.
     const stateMatch = line.match(STATE_HEADING_RE);
@@ -516,7 +512,7 @@ export function parseRoadmap(
 
       trackTasks.set(trackId, (trackTasks.get(trackId) ?? 0) + 1);
 
-      const deleted = isDeleteTask(line, title);
+      const deleted = isDeleteTask(line);
       if (deleted) {
         trackDeleteTasks.set(trackId, (trackDeleteTasks.get(trackId) ?? 0) + 1);
       }

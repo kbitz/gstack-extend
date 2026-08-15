@@ -3,8 +3,9 @@
  *
  * Input: unshipped Tracks with `_touches:_` and optional `_blocked-by:`.
  * Output: layers × bins. A bin is a launch Group (target 4–6, max 8).
- * Layers are serial (explicit blocked-by only). Bins in the same layer
- * are all ready — never a fake serial chain.
+ * Layers are serial (explicit blocked-by, plus collision spill).
+ * Capacity overflow stays in the same layer (parallel ready).
+ * File-collision spill is a later layer — never two ready bins on one path.
  *
  * Shared docs are excluded from collision. A path ending in `/` is a
  * directory prefix. `path (new)` is the same path without the marker.
@@ -120,6 +121,20 @@ function binCollides(bin: PackTrack[], candidate: PackTrack): boolean {
   return false;
 }
 
+type LayerBin = {
+  tracks: PackTrack[];
+  layerOffset: number;
+  collisionBlockedBy: string[];
+};
+
+function collidingIds(bin: PackTrack[], candidate: PackTrack): string[] {
+  const ids: string[] = [];
+  for (const existing of bin) {
+    if (touchesIntersect(existing.touches, candidate.touches)) ids.push(existing.id);
+  }
+  return ids;
+}
+
 export function packTracks(
   tracks: PackTrack[],
   opts: { target?: number; maxPerBin?: number } = {},
@@ -152,34 +167,52 @@ export function packTracks(
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
 
-    const layerBins: PackTrack[][] = [];
+    const layerBins: LayerBin[] = [];
     for (const t of ordered) {
       if (t.isHotfix) {
-        layerBins.push([t]);
+        layerBins.push({ tracks: [t], layerOffset: 0, collisionBlockedBy: [] });
         continue;
       }
+      const fitOrder = [...layerBins].sort((a, b) => a.layerOffset - b.layerOffset);
       let placed = false;
-      for (const bin of layerBins) {
-        if (bin.length >= capacity) continue;
-        if (bin.some((x) => x.isHotfix)) continue;
-        if (binCollides(bin, t)) continue;
-        bin.push(t);
+      for (const bin of fitOrder) {
+        if (bin.tracks.length >= capacity) continue;
+        if (bin.tracks.some((x) => x.isHotfix)) continue;
+        if (binCollides(bin.tracks, t)) continue;
+        bin.tracks.push(t);
         placed = true;
         break;
       }
-      if (!placed) layerBins.push([t]);
+      if (!placed) {
+        let collideOffset = -1;
+        const collided: string[] = [];
+        for (const bin of layerBins) {
+          const hits = collidingIds(bin.tracks, t);
+          if (hits.length === 0) continue;
+          collideOffset = Math.max(collideOffset, bin.layerOffset);
+          for (const id of hits) {
+            if (!collided.includes(id)) collided.push(id);
+          }
+        }
+        layerBins.push({
+          tracks: [t],
+          layerOffset: collideOffset >= 0 ? collideOffset + 1 : 0,
+          collisionBlockedBy: collided,
+        });
+      }
     }
 
     for (const bin of layerBins) {
       const blocked = new Set<string>();
-      for (const t of bin) {
+      for (const t of bin.tracks) {
         for (const d of t.blockedBy) {
           if (live.some((x) => x.id === d)) blocked.add(d);
         }
       }
+      for (const d of bin.collisionBlockedBy) blocked.add(d);
       bins.push({
-        layer: L,
-        trackIds: bin.map((t) => t.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+        layer: L + bin.layerOffset,
+        trackIds: bin.tracks.map((t) => t.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
         blockedByTracks: [...blocked].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
       });
     }

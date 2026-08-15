@@ -10,6 +10,7 @@
  *   toplevel()                     git rev-parse --show-toplevel
  *   tags()                         git tag --list  (lexicographic)
  *   tagsLatest()                   git --no-pager tag --list --sort=-v:refname | head -1
+ *   mergeBase(ref)                 git merge-base HEAD ref
  *   diffNamesBetween(from, to)     git --no-pager diff --name-only from..to
  *   logFirstWithPhrase(phrase, f)  git log -1 --format=%ai -S "phrase" -- f
  *   logSubjectsSince(since, f)     git log --format=%s --after=since -- f
@@ -41,6 +42,8 @@ export type GitGateway = {
   tags(): string[];
   /** Latest tag by `sort=-v:refname` semantics, or null. */
   tagsLatest(): string | null;
+  /** merge-base of HEAD and `ref`, or null if the ref is missing. */
+  mergeBase(ref: string): string | null;
   /** File names changed between two refs (e.g., latestTag..HEAD). */
   diffNamesBetween(from: string, to: string): string[];
   /** Date of the most recent commit that added/removed `phrase` in `file`. */
@@ -97,6 +100,13 @@ export function createGitGateway(deps: GitGatewayDeps): GitGateway {
       if (!r.ok) return null;
       const lines = splitLines(r.stdout);
       return lines[0] ?? null;
+    },
+
+    mergeBase(ref: string): string | null {
+      const r = spawn(['merge-base', 'HEAD', ref], cwd);
+      if (!r.ok) return null;
+      const out = r.stdout.trim();
+      return out === '' ? null : out;
     },
 
     diffNamesBetween(from: string, to: string): string[] {

@@ -127,13 +127,9 @@ MAX_TRACKS_PER_GROUP: 8
 SHARED_INFRA_STATUS: missing
 
 ## PACKING
-STATUS: fail
+STATUS: skip
 FINDINGS:
-- written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
-- written groups [(none)]
-- packer bins    [2A | 2B | 3A]
-
-BINS: 3
+- No unshipped Tracks to pack
 
 ## PARALLELISM_BUDGET
 IN_FLIGHT_TRACKS: 2

@@ -44,13 +44,16 @@ describe('packTracks', () => {
     expect(r.bins[0]!.layer).toBe(0);
   });
 
-  test('colliding tracks spill to the next bin in the same layer', () => {
+  test('colliding tracks spill to a later layer, not a ready sibling', () => {
     const r = packTracks([t('1A', ['shared.ts']), t('1B', ['shared.ts']), t('1C', ['other.ts'])]);
     expect(r.bins).toHaveLength(2);
-    expect(r.bins.every((b) => b.layer === 0)).toBe(true);
-    const ids = r.bins.map((b) => b.trackIds.join(','));
-    expect(ids).toContain('1A,1C');
-    expect(ids).toContain('1B');
+    const ready = r.bins.find((b) => b.trackIds.includes('1A'))!;
+    const later = r.bins.find((b) => b.trackIds.includes('1B'))!;
+    expect(ready.trackIds).toEqual(['1A', '1C']);
+    expect(ready.layer).toBe(0);
+    expect(later.trackIds).toEqual(['1B']);
+    expect(later.layer).toBe(1);
+    expect(later.blockedByTracks).toEqual(['1A']);
   });
 
   test('blocked-by creates a later layer', () => {
@@ -73,7 +76,10 @@ describe('packTracks', () => {
     expect(withScan.trackIds).not.toContain('1B');
     expect(withScan.trackIds).toContain('1A');
     expect(withScan.trackIds).toContain('1C');
-    expect(r.bins.find((b) => b.trackIds.includes('1B'))!.trackIds).toEqual(['1B']);
+    const later = r.bins.find((b) => b.trackIds.includes('1B'))!;
+    expect(later.trackIds).toEqual(['1B']);
+    expect(later.layer).toBeGreaterThan(withScan.layer);
+    expect(later.blockedByTracks).toContain('1A');
   });
 
   test('overflow of 10 disjoint tracks yields two ready bins, not a chain', () => {
@@ -84,6 +90,23 @@ describe('packTracks', () => {
     expect(r.bins.every((b) => b.blockedByTracks.length === 0)).toBe(true);
     const sizes = r.bins.map((b) => b.trackIds.length).sort((a, b) => b - a);
     expect(sizes).toEqual([6, 4]);
+  });
+
+  test('three-way same-file chain is layers 0, 1, 2', () => {
+    const r = packTracks([
+      t('1A', ['shared.ts']),
+      t('1B', ['shared.ts']),
+      t('1C', ['shared.ts']),
+    ]);
+    expect(r.bins).toHaveLength(3);
+    const a = r.bins.find((b) => b.trackIds.includes('1A'))!;
+    const b = r.bins.find((b) => b.trackIds.includes('1B'))!;
+    const c = r.bins.find((b) => b.trackIds.includes('1C'))!;
+    expect(a.layer).toBe(0);
+    expect(b.layer).toBe(1);
+    expect(c.layer).toBe(2);
+    expect(b.blockedByTracks).toEqual(['1A']);
+    expect(c.blockedByTracks).toEqual(['1A', '1B']);
   });
 
   test('hotfix sits alone', () => {

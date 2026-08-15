@@ -282,7 +282,7 @@ Hard rule: **1 Track = 1 PR = 1 LLM session.** The audit enforces this with **se
 
 Cap is **weight ≤ 4** (one L, two M, four S, or 2S+1M). `max_tasks_per_track` is 5.
 
-**Deletions are cheap.** A delete/remove/trim task, or `~N lines (del)`, is weight S regardless of N. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
+**Deletions are cheap.** A task tagged `~N lines (del)` (or `(deletion)` / `(deletions)`) is weight S regardless of N. Title verbs are not enough — "Trim pair-review.md" without `(del)` is a write-task. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
 
 **Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A single directory touch (`src/`) is a scan-scope Track — the packer will sit it alone.
 
@@ -306,7 +306,7 @@ Group assignment is **the packer's job**, not a theme judgment.
 
 `PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
 
-**Groups are launch batches of 4–6 parallel-safe Tracks** (hard max 8). Same files → different Groups (or one merged Track). Unrelated files → same Group. A 1-track Group is legal only as a Hotfix or a scan-scope Track whose `_touches:` collides with every other unpacked Track in the layer.
+**Groups are launch batches of 4–6 parallel-safe Tracks** (hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (7+ disjoint Tracks) stays parallel. A 1-track Group is legal only as a Hotfix or a scan-scope Track whose `_touches:` collides with every other unpacked Track in the layer.
 
 Do not sequence Groups "to cap concurrent WIP." That throttle is `parallelism_cap` (default 6) at launch time.
 

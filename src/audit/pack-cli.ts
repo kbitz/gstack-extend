@@ -40,7 +40,6 @@ export function runPackCli(argv: string[]): string {
   if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive)));
 
   if (materialize) {
-    const ctx = { roadmap: parsed } as AuditCtx;
     // Walk numeric order and emit old implicit edges for unspecified groups.
     const groups = [...parsed.value.groups].sort(
       (a, b) => Number.parseInt(a.num, 10) - Number.parseInt(b.num, 10),
@@ -56,7 +55,6 @@ export function runPackCli(argv: string[]): string {
       prev = g.num;
     }
     if (!any) lines.push('- (none — every Group already has an explicit annotation or is first)');
-    void ctx;
     return lines.join('\n') + '\n';
   }
 

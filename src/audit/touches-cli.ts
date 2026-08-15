@@ -1,8 +1,8 @@
 /**
  * touches-cli.ts — `bin/roadmap-touches` entry.
  *
- *   drift --track <id>   hard-fail if the working tree touches a path
- *                        no `_touches:_` entry covers
+ *   drift --track <id>   hard-fail if committed/staged/unstaged/untracked
+ *                        paths are not covered by `_touches:_`
  *   report-cross-group   print soft overlaps across Groups
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -43,8 +43,20 @@ function covers(declared: string[], path: string): boolean {
   return false;
 }
 
-function gitPaths(repoRoot: string): string[] {
-  return createGitGateway({ cwd: repoRoot }).workingTreePaths();
+const DEFAULT_BASE_REFS = ['origin/HEAD', 'origin/main', 'origin/master', 'main', 'master'];
+
+function driftPaths(repoRoot: string): { ok: boolean; paths: string[] } {
+  const git = createGitGateway({ cwd: repoRoot });
+  if (git.toplevel() === null) return { ok: false, paths: [] };
+  let base: string | null = null;
+  for (const ref of DEFAULT_BASE_REFS) {
+    base = git.mergeBase(ref);
+    if (base !== null) break;
+  }
+  const committed = base !== null ? git.diffNamesBetween(base, 'HEAD') : [];
+  const dirty = git.workingTreePaths();
+  const paths = [...new Set([...committed, ...dirty])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return { ok: true, paths };
 }
 
 export function runDrift(repoRoot: string, trackId: string): { ok: boolean; text: string } {
@@ -53,9 +65,12 @@ export function runDrift(repoRoot: string, trackId: string): { ok: boolean; text
   if (track === undefined) {
     return { ok: false, text: `TRACK_NOT_FOUND: ${trackId}\n` };
   }
-  const changed = gitPaths(repoRoot);
+  const changed = driftPaths(repoRoot);
+  if (!changed.ok) {
+    return { ok: false, text: `DRIFT: fail\nTRACK: ${trackId}\nNOT_A_REPO: ${repoRoot}\n` };
+  }
   const undeclared: string[] = [];
-  for (const p of changed) {
+  for (const p of changed.paths) {
     if (!covers(track.touches, p)) undeclared.push(p);
   }
   if (undeclared.length === 0) {
@@ -108,13 +123,20 @@ export function runReportCrossGroup(repoRoot: string): string {
 }
 
 export function runTouchesCli(argv: string[]): { ok: boolean; text: string } {
-  const repoRoot = argv.find((a) => !a.startsWith('--') && a !== 'drift' && a !== 'report-cross-group')
-    ?? process.cwd();
+  const ti = argv.indexOf('--track');
+  const trackId = ti >= 0 ? (argv[ti + 1] ?? '') : '';
+  const skip = new Set<number>();
+  if (ti >= 0) {
+    skip.add(ti);
+    if (ti + 1 < argv.length) skip.add(ti + 1);
+  }
+  const repoRoot =
+    argv.find(
+      (a, i) => !skip.has(i) && !a.startsWith('--') && a !== 'drift' && a !== 'report-cross-group',
+    ) ?? process.cwd();
   if (argv.includes('report-cross-group')) {
     return { ok: true, text: runReportCrossGroup(repoRoot) };
   }
-  const ti = argv.indexOf('--track');
-  const trackId = ti >= 0 ? (argv[ti + 1] ?? '') : '';
   if (trackId === '') {
     return { ok: false, text: 'usage: roadmap-touches drift --track <id> [repo]\n' };
   }

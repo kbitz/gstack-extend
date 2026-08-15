@@ -565,6 +565,71 @@ describe('parseRoadmap — card fields + session weight', () => {
     expect(t.sizeLabelMismatches ?? r.value.sizeLabelMismatches).toEqual([]);
   });
 
+  test('title verb without (del) is not a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Trim skill',
+      '_1 task . ~M . low risk . [skills/pair-review.md]_',
+      '_touches: skills/pair-review.md_',
+      '- **Trim pair-review.md** -- rewrite. _skills/pair-review.md, ~100 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(2);
+    expect(t.deleteOnly).toBe(false);
+  });
+
+  test('Implement trim() helper is not a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Util',
+      '_1 task . ~M . low risk . [src/trim.ts]_',
+      '_touches: src/trim.ts_',
+      '- **Implement trim() helper** -- add util. _src/trim.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(2);
+    expect(t.deleteOnly).toBe(false);
+  });
+
+  test('(del) hint without a title verb is still a delete', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Drop',
+      '_1 task . ~L . low risk . [src/old.ts]_',
+      '_touches: src/old.ts_',
+      '- **Drop the unused helper** -- gone. _src/old.ts, ~40 lines (del)._ (L)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.sessionWeight).toBe(1);
+    expect(t.deleteOnly).toBe(true);
+  });
+
+  test('mixed delete + write is not deleteOnly', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: Mix',
+      '_2 tasks . ~M . low risk . [src/a.ts]_',
+      '_touches: src/a.ts_',
+      '- **Delete dead helper** -- gone. _src/old.ts, ~10 lines (del)._ (L)',
+      '- **Write new** -- . _src/a.ts, ~80 lines._ (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.deleteOnly).toBe(false);
+    expect(t.sessionWeight).toBe(3);
+  });
+
   test('two M write-tasks sum to weight 4', () => {
     const md = [
       '## Current Plan',
