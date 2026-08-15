@@ -32,11 +32,13 @@ _produces: locked SHARED:conductor-visibility-head, exact-set section-list drift
 - **Drift test: advisory/fail lists vs CANONICAL_SECTIONS** -- named parser on the two GSTACK REVIEW REPORT comma-lists; exact sets; fail-on-empty; SIZE_LABEL_MISMATCH is a known fossil (SIZE body label), not a section. Do not edit skills/roadmap.md. _tests/skill-protocols.test.ts, ~50 lines._ (S)
 - **Shared SKILLS parser + explicit cohorts** -- extract `tests/helpers/parse-setup-skills.ts`; audit-compliance consumes it; protocol membership is an explicit 5/6/4 split (init is install-only). _tests/helpers/parse-setup-skills.ts (new), tests/audit-compliance.test.ts, tests/skill-protocols.test.ts, ~40 lines._ (S)
 
-##### Track 15B: `migrations/v*.sh` runner in `bin/update-run`
-_1 task . ~30 LOC . low risk . [bin/update-run + migrations/ + tests]_
-_touches: bin/update-run, migrations/, tests/update.test.ts_
-_produces: version-gated migrations runner after pull + setup_
-- **Migrations runner parity for gstack-extend upgrades** -- after git pull + `./setup` in `bin/update-run`, run any `migrations/v*.sh` newer than the old VERSION and not newer than the new VERSION. Idempotent; per-script error emits `MIGRATION_WARN` and continues. _bin/update-run, migrations/ (new), tests/update.test.ts, ~30 lines._ (S)
+##### Track 15B: `migrations/v*.sh` runner + applied/failed ledger
+_3 tasks . ~M . medium risk . [update-run helper + ledger + upgrade-skill warn]_
+_touches: bin/update-run, bin/lib/run-migrations.sh (new), migrations/.gitkeep (new), tests/update.test.ts, tests/helpers/touchfiles.ts, skills/gstack-extend-upgrade.md_
+_produces: on-disk migrations helper, STATE_DIR applied/failed ledger, MIGRATION_WARN visible in /gstack-extend-upgrade_
+- **On-disk helper + ledger** -- after setup, before checkout-restore, exec pulled `bin/lib/run-migrations.sh`. Version window selects candidates; ledger is the applied-set. Failed scripts retry on the next update-run even when OLD==NEW. `set -e` must not turn a script exit into UPGRADE_FAILED. _bin/update-run, bin/lib/run-migrations.sh (new), ~80 lines._ (M)
+- **Fixture tests** -- window filter, fail-soft + same-VERSION retry, version order, absent dir, old-binary chicken-and-egg. `migrations/.gitkeep` satisfies touchfiles I1. _tests/update.test.ts, tests/helpers/touchfiles.ts, migrations/.gitkeep (new), ~120 lines._ (M)
+- **Warn visibility** -- on UPGRADE_OK, if stdout has MIGRATION_WARN, name the script and say re-run retries it. Outside SHARED:upgrade-flow. _skills/gstack-extend-upgrade.md, ~8 lines._ (S)
 
 ##### Track 15C: Narrow the `docs/`-absent gate + fix archive-path string
 _1 task . ~35 LOC . low risk . [doc-location + state-sections]_
@@ -136,7 +138,7 @@ Track detail per group:
 ```
 Group 15: Canonical Locks ∥ Migrations ∥ Audit Gate ∥ Scaffold Preflight ∥ Init Polish
   +-- Track 15A .......... ~S . 3 tasks (fragments + drift + SKILLS helper)
-  +-- Track 15B .......... ~S . 1 task (migrations runner)
+  +-- Track 15B .......... ~M . helper + ledger + warn visibility
   +-- Track 15C .......... ~S . 1 task (docs/-absent gate + archive path)
   +-- Track 15D .......... ~S . 1 task (realpath preflight)
   +-- Track 15E .......... ~M . 2 tasks (init tests + init code polish)

@@ -122,6 +122,20 @@ fi
 _STAGE="setup"
 "$INSTALL_DIR/setup" --host auto --quiet
 
+# Read NEW after pull so the helper sees the landed VERSION. Insert before
+# checkout-restore so scripts run on the pulled main tree, not a dirty
+# feature branch. A pre-15B update-run that pulled this file will not
+# reach this call site — first reliable hop is the upgrade after 15B.
+_STAGE="read-new-version"
+NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+
+_STAGE="migrations"
+if [ -f "$INSTALL_DIR/bin/lib/run-migrations.sh" ]; then
+  bash "$INSTALL_DIR/bin/lib/run-migrations.sh" \
+    "$INSTALL_DIR" "$STATE_DIR" "$OLD_VERSION" "$NEW_VERSION" \
+    || true
+fi
+
 # Switch back to previous branch if we moved away (best-effort)
 if [ -n "$_PREV_BRANCH" ] && [ "$_PREV_BRANCH" != "main" ]; then
   _STAGE="checkout-restore"
@@ -134,7 +148,6 @@ restore_stash
 
 # ─── Step 3: Write upgrade marker ─────────────────────────────
 _STAGE="write-marker"
-NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 echo "$OLD_VERSION" > "$STATE_DIR/just-upgraded-from"
 
 # Clear cache so next check is fresh

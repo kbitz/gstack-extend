@@ -124,6 +124,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/update.test.ts': [
     'bin/update-check',
     'bin/update-run',
+    'bin/lib/run-migrations.sh',
+    'bin/lib/semver.sh',
+    'migrations/**',
+    'skills/gstack-extend-upgrade.md',
     'setup',
   ],
   // Track 12A — gstack-extend init <project>. The bin sources the registry

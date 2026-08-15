@@ -251,6 +251,7 @@ entry point for checking or upgrading on demand.
 - **One canonical flow** — the upgrade procedure is a single drift-locked block shared by all skill preambles and this skill; no more divergent copies
 - **Fast-forward only** — `bin/update-run` pulls with `--ff-only`; a diverged local `main` fails safely instead of destroying work, and the branch + stash are restored on any mid-run failure
 - **Honest reporting** — every run emits exactly one `UPGRADE_OK` / `UPGRADE_FAILED` line; the skill never claims success without `UPGRADE_OK`
+- **Install migrations** — after setup, `migrations/v*.sh` in the version window run once via an applied/failed ledger. A failed script prints `MIGRATION_WARN` and still reports `UPGRADE_OK`; retry with `bin/update-run`
 - **Disambiguated checks** — a direct check distinguishes "up to date", "checks disabled", and "couldn't reach GitHub" instead of collapsing them to a vague "no update"
 - **Auto-upgrade, snooze, never-ask** — same opt-in UX as gstack core; auto-upgrade is only armed after a confirmed successful run
 

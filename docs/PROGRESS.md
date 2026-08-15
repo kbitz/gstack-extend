@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.24.5.0 | 2026-08-15 | Track 15B — `migrations/v*.sh` runner + applied/failed ledger in `bin/update-run`. Fail-soft `MIGRATION_WARN`; retry on next update-run. `/gstack-extend-upgrade` names the script and points at `bin/update-run` for retry. No production migration this release. |
 | 0.24.4.0 | 2026-08-15 | `/roadmap` drain dispositions: place / defer / kill / discharge (`discharged@<sha>`). Regen re-derives leftover bullets. Packer adjacency is the only derived edge list. Literal claims split premise from task. Constraints can refuse a Track. |
 | 0.24.3.0 | 2026-08-15 | Track 15A locks remaining shared fragments. Conductor visibility head is a `SHARED:` block; roadmap fail/advisory lists are exact-set pinned; `setup` `SKILLS=(` parses through a shared helper with explicit cohorts. |
 | 0.24.2.0 | 2026-08-15 | Packer rename- and regroup-invariant; STYLE_LINT closed-DAG; recycle numbering. **Fixed:** FFD/bin/layer ties break by packIdent (touches + title), never ID or file position. Unordered-collision warns only when the pair is genuinely unordered. Bolt STYLE_LINT 253 → 8. **Added:** `bin/roadmap-renumber --map`; `_tombstone:` reserved numbers (STRUCTURE fail on reuse). **Changed:** Current Plan IDs recycle; Track letters match Group; current-plan origin tags resolve by title. |

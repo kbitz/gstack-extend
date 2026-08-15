@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.5.0] - 2026-08-15
+
+### Added
+
+- **Upgrade-path migrations hook.** After `./setup` and before checkout-restore, `bin/update-run` runs the pulled `bin/lib/run-migrations.sh`. A version window selects candidates; `$STATE_DIR/migrations-applied` and `migrations-failed` are the applied-set. Failed scripts print `MIGRATION_WARN <name> exit=<n>` and retry on the next `update-run` even when OLD==NEW. A script that reads stdin cannot swallow later migrations. No production `migrations/v*.sh` yet — only `migrations/.gitkeep`.
+- **`/gstack-extend-upgrade` names a failed migration.** On `UPGRADE_OK` plus `MIGRATION_WARN`, the skill names the script and tells you to retry with `bin/update-run` (re-running the skill after a successful git pull sees `JUST_UPGRADED` and will not invoke the runner). The shared upgrade-flow block is unchanged.
+
 ## [0.24.4.0] - 2026-08-15
 
 ### Changed
