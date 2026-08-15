@@ -174,6 +174,9 @@ function telemetryEpilogueFor(skill: string): string {
 // session_dir roadmap-proposals.
 const BLOCK_ROADMAP_PROPOSAL_PATH = '<PROPOSAL_DIR>/proposal-{ts}.md';
 const BLOCK_ROADMAP_PROPOSAL_HELPER_CALL = 'session_dir roadmap-proposals';
+const BLOCK_ROADMAP_DISCHARGE_SUMMARY = 'D items discharged';
+const BLOCK_ROADMAP_DISCHARGE_SHA = 'discharged@<sha>';
+const BLOCK_ROADMAP_REDERIVE = 'Regeneration **re-derives**';
 
 // Track 8A — Layout Scaffolding section drift-locks. The flow has subtle
 // load-bearing behavior the audit suggestions depend on:
@@ -198,6 +201,9 @@ const BLOCK_LAYOUT_IDEMPOTENT_NOTE = 'Idempotent re-run';
 const ROADMAP_VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_ROADMAP_PROPOSAL_PATH, label: 'proposal-artifact-path' },
   { block: BLOCK_ROADMAP_PROPOSAL_HELPER_CALL, label: 'proposal-artifact-helper-call' },
+  { block: BLOCK_ROADMAP_DISCHARGE_SUMMARY, label: 'drain-discharge-summary' },
+  { block: BLOCK_ROADMAP_DISCHARGE_SHA, label: 'drain-discharge-sha' },
+  { block: BLOCK_ROADMAP_REDERIVE, label: 'regen-rederive-not-reemit' },
   { block: BLOCK_LAYOUT_SCAFFOLDING_HEADING, label: 'layout-scaffolding-section' },
   { block: BLOCK_LAYOUT_GIT_REV_PARSE, label: 'layout-git-rev-parse-preflight' },
   { block: BLOCK_LAYOUT_GIT_LS_FILES, label: 'layout-git-ls-files-tracked-check' },
