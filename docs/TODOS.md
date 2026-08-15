@@ -1,6 +1,6 @@
 # TODOS
 
-## Upgrade
+## Completed
 
 ### Failed-ledger retry with non-semver NEW aborts the helper
 
@@ -13,6 +13,7 @@
 **Effort:** S
 **Priority:** P1
 **Depends on:** None
+**Completed:** v0.24.6.0 (2026-08-15)
 
 ### Setup-fail after pull drops in-window migrations forever
 
@@ -25,6 +26,7 @@
 **Effort:** S
 **Priority:** P1
 **Depends on:** None
+**Completed:** v0.24.6.0 (2026-08-15)
 
 ### Helper-path tests before the first real `v*.sh`
 
@@ -37,5 +39,4 @@
 **Effort:** S
 **Priority:** P2
 **Depends on:** The two P1 upgrade items above (same PR is fine)
-
-## Completed
+**Completed:** v0.24.6.0 (2026-08-15)

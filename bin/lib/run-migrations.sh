@@ -38,6 +38,16 @@ finish() {
   exit 0
 }
 
+# Clear hop-from only after a completed candidate scan (including
+# empty/absent). Contract failures must leave hop-from so a later hop
+# still has the pre-pull window.
+finish_scan() {
+  if [ -n "${STATE_DIR:-}" ]; then
+    rm -f "$STATE_DIR/migrations-hop-from"
+  fi
+  finish
+}
+
 INSTALL_DIR="${1:-}"
 STATE_DIR="${2:-}"
 OLD_VERSION="${3:-}"
@@ -72,7 +82,7 @@ fi
 
 MIGDIR="$INSTALL_DIR/migrations"
 if [ ! -d "$MIGDIR" ]; then
-  finish
+  finish_scan
 fi
 
 mkdir -p "$STATE_DIR"
@@ -157,7 +167,7 @@ rm -f "$_CANDS"
 
 if [ ! -s "$_SORTED" ]; then
   rm -f "$_SORTED"
-  finish
+  finish_scan
 fi
 
 while IFS= read -r _line; do
@@ -172,7 +182,11 @@ while IFS= read -r _line; do
   if [ -n "$_WINDOW_OK" ] && in_window "$_ver"; then
     _should=1
   elif ledger_has "$FAILED" "$_base"; then
-    if semver_lte "$_ver" "$NEW_VERSION"; then
+    if is_semver "$NEW_VERSION"; then
+      if semver_lte "$_ver" "$NEW_VERSION"; then
+        _should=1
+      fi
+    else
       _should=1
     fi
   fi
@@ -191,4 +205,4 @@ while IFS= read -r _line; do
   fi
 done < "$_SORTED"
 rm -f "$_SORTED"
-finish
+finish_scan

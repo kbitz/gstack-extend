@@ -766,6 +766,196 @@ echo "UPGRADE_OK \$OLD \$NEW"
       expect(skill).toContain('JUST_UPGRADED');
     });
   });
+
+  describe('Track 15B follow-up (hop-from + helper paths)', () => {
+    const okScript = `#!/usr/bin/env bash
+printf 'ok\\n' >> "$STATE_DIR/ran-ok"
+`;
+    const failScript = `#!/usr/bin/env bash
+printf 'fail\\n' >> "$STATE_DIR/ran-fail"
+exit 1
+`;
+
+    function makeHelperInstall(
+      name: string,
+      scripts: Record<string, string> = {},
+      opts: { semver?: boolean; migrationsDir?: boolean } = {},
+    ): { install: string; state: string; home: string } {
+      const install = join(baseTmp, name, 'install');
+      const state = join(baseTmp, name, 'state');
+      const home = join(baseTmp, name, 'home');
+      mkdirSync(join(install, 'bin', 'lib'), { recursive: true });
+      mkdirSync(state, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      if (opts.semver !== false) {
+        writeFileSync(join(install, 'bin', 'lib', 'semver.sh'), readFileSync(SEMVER_LIB));
+      }
+      if (opts.migrationsDir !== false) {
+        mkdirSync(join(install, 'migrations'), { recursive: true });
+        for (const [scriptName, body] of Object.entries(scripts)) {
+          writeFileSync(join(install, 'migrations', scriptName), body);
+        }
+      }
+      return { install, state, home };
+    }
+
+    function runHelper(
+      install: string,
+      state: string,
+      oldV: string,
+      newV: string,
+      home: string,
+    ) {
+      return runBin(RUN_MIGRATIONS, [install, state, oldV, newV], {
+        home,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: state,
+      });
+    }
+
+    test('helper missing-args: MIGRATION_WARN helper exit=missing-args, exit 0', () => {
+      const { install, state, home } = makeHelperInstall('helper-missing-args');
+      writeFileSync(join(state, 'migrations-hop-from'), '1.0.0\n');
+      const result = runBin(RUN_MIGRATIONS, [install, state], {
+        home,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: state,
+      });
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('MIGRATION_WARN helper exit=missing-args');
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(join(state, 'migrations-hop-from'), 'utf8')).toBe('1.0.0\n');
+    });
+
+    test('helper missing semver.sh: exit=semver-missing, hop-from kept', () => {
+      const { install, state, home } = makeHelperInstall('helper-no-semver', {}, { semver: false });
+      writeFileSync(join(state, 'migrations-hop-from'), '1.0.0\n');
+      const result = runHelper(install, state, '1.0.0', '1.1.0', home);
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('MIGRATION_WARN helper exit=semver-missing');
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(join(state, 'migrations-hop-from'), 'utf8')).toBe('1.0.0\n');
+    });
+
+    test('helper bad-version NEW=unknown: no unbound abort, retries failed name', () => {
+      const { install, state, home } = makeHelperInstall('helper-unknown-new', {
+        'v1.1.0.sh': okScript,
+      });
+      writeFileSync(join(state, 'migrations-failed'), 'v1.1.0.sh\n');
+      const result = runHelper(install, state, '1.1.0', 'unknown', home);
+      const out = result.stdout + result.stderr;
+      expect(result.exitCode).toBe(0);
+      expect(out).toContain('MIGRATION_WARN helper exit=bad-version');
+      expect(out).not.toContain('unbound variable');
+      expect(readFileSync(join(state, 'ran-ok'), 'utf8')).toBe('ok\n');
+      expect(readFileSync(join(state, 'migrations-applied'), 'utf8')).toContain('v1.1.0.sh');
+    });
+
+    test('failed name newer than semver NEW is not retried', () => {
+      const { install, state, home } = makeHelperInstall('helper-failed-upper', {
+        'v1.2.0.sh': okScript,
+      });
+      writeFileSync(join(state, 'migrations-failed'), 'v1.2.0.sh\n');
+      const result = runHelper(install, state, '1.1.0', '1.1.0', home);
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(join(state, 'ran-ok'))).toBe(false);
+      expect(readFileSync(join(state, 'migrations-failed'), 'utf8')).toContain('v1.2.0.sh');
+    });
+
+    test('empty migrations/ (.gitkeep only): no MIGRATION_WARN, hop-from cleared', () => {
+      const { install, state, home } = makeHelperInstall('helper-empty-mig');
+      writeFileSync(join(install, 'migrations', '.gitkeep'), '');
+      writeFileSync(join(state, 'migrations-hop-from'), '1.0.0\n');
+      const result = runHelper(install, state, '1.0.0', '1.1.0', home);
+      const out = result.stdout + result.stderr;
+      expect(result.exitCode).toBe(0);
+      expect(out).not.toContain('MIGRATION_WARN');
+      expect(existsSync(join(state, 'migrations-hop-from'))).toBe(false);
+    });
+
+    test('symlink and non-semver name are skipped', () => {
+      const { install, state, home } = makeHelperInstall('helper-skip-names', {
+        'vfoo.sh': okScript,
+      });
+      writeFileSync(join(install, 'migrations', 'real.sh'), okScript);
+      symlinkSync(join(install, 'migrations', 'real.sh'), join(install, 'migrations', 'v1.1.0.sh'));
+      const result = runHelper(install, state, '1.0.0', '1.1.0', home);
+      expect(result.exitCode).toBe(0);
+      expect(existsSync(join(state, 'ran-ok'))).toBe(false);
+    });
+
+    test('fail then succeed clears migrations-failed', () => {
+      const { install, state, home } = makeHelperInstall('helper-fail-then-ok', {
+        'v1.1.0.sh': failScript,
+      });
+      const first = runHelper(install, state, '1.0.0', '1.1.0', home);
+      expect(first.stdout + first.stderr).toContain('MIGRATION_WARN v1.1.0.sh exit=1');
+      expect(readFileSync(join(state, 'migrations-failed'), 'utf8')).toContain('v1.1.0.sh');
+
+      writeFileSync(join(install, 'migrations', 'v1.1.0.sh'), okScript);
+      const second = runHelper(install, state, '1.1.0', '1.1.0', home);
+      expect(second.exitCode).toBe(0);
+      expect(readFileSync(join(state, 'ran-ok'), 'utf8')).toBe('ok\n');
+      expect(readFileSync(join(state, 'migrations-applied'), 'utf8')).toContain('v1.1.0.sh');
+      expect(readFileSync(join(state, 'migrations-failed'), 'utf8')).not.toContain('v1.1.0.sh');
+    });
+
+    test('unexpected helper abort emits MIGRATION_WARN helper and keeps hop-from', () => {
+      const { install, state, home } = makeHelperInstall('helper-abort', {
+        'v1.1.0.sh': okScript,
+      });
+      writeFileSync(join(state, 'migrations-hop-from'), '1.0.0\n');
+      chmodSync(state, 0o555);
+      const result = runHelper(install, state, '1.0.0', '1.1.0', home);
+      chmodSync(state, 0o755);
+      const out = result.stdout + result.stderr;
+      expect(result.exitCode).toBe(0);
+      expect(out).toMatch(/MIGRATION_WARN helper/);
+      expect(readFileSync(join(state, 'migrations-hop-from'), 'utf8')).toBe('1.0.0\n');
+      expect(existsSync(join(state, 'ran-ok'))).toBe(false);
+    });
+
+    test('setup-fail after pull: hop-from keeps window for the next hop', () => {
+      const repo = createFixtureRepo('mig-setup-fail');
+      pushNewVersion(`${baseTmp}/mig-setup-fail-remote`, '1.1.0', {
+        ...migrationPayload({ 'v1.1.0.sh': okScript }),
+        setup: '#!/usr/bin/env bash\nexit 1\n',
+      });
+      const stateDir = join(baseTmp, 'mig-setup-fail-state');
+      const homeDir = join(baseTmp, 'mig-setup-fail-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+
+      const first = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const out1 = first.stdout + first.stderr;
+      expect(out1).toContain('UPGRADE_FAILED stage=setup');
+      expect(readFileSync(join(stateDir, 'migrations-hop-from'), 'utf8').trim()).toBe('1.0.0');
+      expect(existsSync(join(stateDir, 'ran-ok'))).toBe(false);
+
+      const work = `${baseTmp}/mig-setup-fail-remote-work2`;
+      spawnSync('git', ['clone', '--quiet', `${baseTmp}/mig-setup-fail-remote`, work]);
+      writeFileSync(join(work, 'setup'), '#!/usr/bin/env bash\necho "setup ran"\n');
+      chmodSync(join(work, 'setup'), 0o755);
+      spawnSync('git', ['-C', work, 'add', 'setup']);
+      spawnSync('git', ['-C', work, 'commit', '-m', 'fix setup', '--quiet']);
+      spawnSync('git', ['-C', work, 'push', 'origin', 'main', '--quiet']);
+      rmSync(work, { recursive: true, force: true });
+
+      const second = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const out2 = second.stdout + second.stderr;
+      expect(out2).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
+      expect(existsSync(join(stateDir, 'migrations-hop-from'))).toBe(false);
+    });
+  });
 });
 
 // ─── setup ───────────────────────────────────────────────────────────
