@@ -49,6 +49,8 @@ export type PackTrack = {
   /** Track IDs that must ship before this one (track-level `_blocked-by:` only). */
   blockedBy: string[];
   isHotfix?: boolean;
+  /** Document/parse index. Tie-break everywhere; never sort by ID. */
+  ord?: number;
 };
 
 export type PackedBin = {
@@ -56,6 +58,8 @@ export type PackedBin = {
   trackIds: string[];
   /** Track IDs in earlier layers that block any member of this bin. */
   blockedByTracks: string[];
+  /** Min parse index of members — same-layer tie-break. */
+  ord: number;
 };
 
 export type PackResult = {
@@ -237,8 +241,14 @@ export function packTracks(
   const maxPerBin = opts.maxPerBin ?? PACK_HARD_MAX;
   const capacity = fillCap(target, maxPerBin);
 
-  const live = tracks.filter((t) => t.id !== '');
+  const live = tracks
+    .filter((t) => t.id !== '')
+    .map((t, i) => ({ ...t, ord: t.ord ?? i }));
   if (live.length === 0) return { bins: [], criticalPath: [], cycles: [] };
+
+  const byId = new Map(live.map((t) => [t.id, t]));
+  const ordOf = (id: string): number => byId.get(id)?.ord ?? 0;
+  const cmpOrd = (a: string, b: string): number => ordOf(a) - ordOf(b);
 
   const { layers, cycles } = longestPathLayer(live);
   const byLayer = new Map<number, PackTrack[]>();
@@ -258,7 +268,7 @@ export function packTracks(
       const da = schedulingTouches(a.touches).length;
       const db = schedulingTouches(b.touches).length;
       if (db !== da) return db - da;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      return (a.ord ?? 0) - (b.ord ?? 0);
     });
 
     const layerBins: LayerBin[] = [];
@@ -306,10 +316,12 @@ export function packTracks(
         }
       }
       for (const d of bin.collisionBlockedBy) blocked.add(d);
+      const trackIds = bin.tracks.map((t) => t.id).sort(cmpOrd);
       bins.push({
         layer: L + bin.layerOffset,
-        trackIds: bin.tracks.map((t) => t.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-        blockedByTracks: [...blocked].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+        trackIds,
+        blockedByTracks: [...blocked].sort(cmpOrd),
+        ord: Math.min(...bin.tracks.map((t) => t.ord ?? 0)),
       });
     }
   }
@@ -350,9 +362,7 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
   const relayered = bins.map((b, i) => ({ ...b, layer: layerOf(i) }));
   return relayered.sort((a, b) => {
     if (a.layer !== b.layer) return a.layer - b.layer;
-    const a0 = a.trackIds[0] ?? '';
-    const b0 = b.trackIds[0] ?? '';
-    return a0 < b0 ? -1 : a0 > b0 ? 1 : 0;
+    return a.ord - b.ord;
   });
 }
 
@@ -360,32 +370,89 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
  * Compare a written Group partition against the packer.
  * Returns findings (empty = match).
  */
-/** Colliding tracks with no `_blocked-by` path either way. */
-export function unorderedCollisions(tracks: PackTrack[]): string[] {
-  const byId = new Map(tracks.map((t) => [t.id, t]));
+/** Optional written Group DAG — STYLE_LINT closes this with the packer bin DAG. */
+export type CollisionContext = {
+  trackGroup?: Map<string, string>;
+  groupDeps?: Map<string, readonly string[]>;
+};
+
+function closedReach(ids: Iterable<string>, preds: (id: string) => readonly string[]): Map<string, Set<string>> {
   const reach = new Map<string, Set<string>>();
-  function reachable(from: string): Set<string> {
+  function of(from: string): Set<string> {
     const cached = reach.get(from);
     if (cached !== undefined) return cached;
     const seen = new Set<string>();
-    const stack = [...(byId.get(from)?.blockedBy ?? [])];
+    const stack = [...preds(from)];
     while (stack.length > 0) {
       const id = stack.pop()!;
       if (seen.has(id)) continue;
       seen.add(id);
-      for (const d of byId.get(id)?.blockedBy ?? []) stack.push(d);
+      for (const d of preds(id)) stack.push(d);
     }
     reach.set(from, seen);
     return seen;
   }
+  for (const id of ids) of(id);
+  return reach;
+}
+
+function orderedBy(reach: Map<string, Set<string>>, a: string, b: string): boolean {
+  return (reach.get(a)?.has(b) ?? false) || (reach.get(b)?.has(a) ?? false);
+}
+
+/**
+ * Colliding tracks whose order is genuinely undetermined.
+ * Suppress when a track `_blocked-by` path, the packer bin DAG, or the
+ * written Group `_Depends on:` DAG already orders the pair.
+ */
+export function unorderedCollisions(tracks: PackTrack[], ctx: CollisionContext = {}): string[] {
+  const live = tracks.filter((t) => t.id !== '');
+  const byId = new Map(live.map((t) => [t.id, t]));
+  const trackReach = closedReach(byId.keys(), (id) => byId.get(id)?.blockedBy ?? []);
+
+  const packed = packTracks(live);
+  const trackBin = new Map<string, string>();
+  const binPreds = new Map<string, string[]>();
+  for (let i = 0; i < packed.bins.length; i++) {
+    const key = String(i);
+    const bin = packed.bins[i]!;
+    for (const id of bin.trackIds) trackBin.set(id, key);
+    binPreds.set(key, []);
+  }
+  for (let i = 0; i < packed.bins.length; i++) {
+    const key = String(i);
+    const preds: string[] = [];
+    for (const tid of packed.bins[i]!.blockedByTracks) {
+      const src = trackBin.get(tid);
+      if (src !== undefined && src !== key && !preds.includes(src)) preds.push(src);
+    }
+    binPreds.set(key, preds);
+  }
+  const binReach = closedReach(binPreds.keys(), (id) => binPreds.get(id) ?? []);
+
+  const groupDeps = ctx.groupDeps ?? new Map<string, readonly string[]>();
+  const groupReach = closedReach(groupDeps.keys(), (id) => groupDeps.get(id) ?? []);
+  const trackGroup = ctx.trackGroup;
+
   const findings: string[] = [];
-  for (let i = 0; i < tracks.length; i++) {
-    for (let j = i + 1; j < tracks.length; j++) {
-      const a = tracks[i]!;
-      const b = tracks[j]!;
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const a = live[i]!;
+      const b = live[j]!;
       if (!touchesIntersect(a.touches, b.touches)) continue;
-      if (reachable(a.id).has(b.id) || reachable(b.id).has(a.id)) continue;
-      const [x, y] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+      if (orderedBy(trackReach, a.id, b.id)) continue;
+      const ba = trackBin.get(a.id);
+      const bb = trackBin.get(b.id);
+      if (ba !== undefined && bb !== undefined && orderedBy(binReach, ba, bb)) continue;
+      const ga = trackGroup?.get(a.id);
+      const gb = trackGroup?.get(b.id);
+      if (ga !== undefined && gb !== undefined) {
+        if (ga === gb) continue;
+        if (orderedBy(groupReach, ga, gb)) continue;
+      }
+      const ao = a.ord ?? i;
+      const bo = b.ord ?? j;
+      const [x, y] = ao <= bo ? [a.id, b.id] : [b.id, a.id];
       findings.push(
         `unordered collision ${x} ∥ ${y} — declare _blocked-by or accept arbitrary order`,
       );

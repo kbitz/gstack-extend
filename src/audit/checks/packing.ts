@@ -19,7 +19,8 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
   const groupByNum = new Map(groups.map((g) => [g.num, g]));
 
   const out: PackTrack[] = [];
-  for (const t of tracks) {
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i]!;
     if (t.state === 'shipped' || t.legacy) continue;
     const g = groupByNum.get(t.groupNum);
     if (g?.isHotfix) continue;
@@ -28,6 +29,7 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
       touches: t.touches,
       blockedBy: t.blockedBy.filter((id) => liveIds.has(id)),
       isHotfix: false,
+      ord: i,
     });
   }
   return out;

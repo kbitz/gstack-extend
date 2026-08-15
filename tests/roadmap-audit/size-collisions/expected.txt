@@ -143,10 +143,9 @@ FINDINGS:
 FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT
-STATUS: warn
+STATUS: pass
 FINDINGS:
-unordered collision 1A ∥ 1B — declare _blocked-by or accept arbitrary order
-
+- (none)
 
 ## DOC_INVENTORY
 STATUS: info

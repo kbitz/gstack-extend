@@ -177,11 +177,100 @@ describe('packTracks', () => {
     expect(out).toContain('bin 2:');
   });
 
-  test('unordered collision is suppressed when _blocked-by orders the pair', () => {
+  test('packer collision-spill orders a same-file pair — no STYLE_LINT', () => {
     const colliding = [t('1A', ['shared.ts']), t('1B', ['shared.ts'])];
-    expect(unorderedCollisions(colliding)).toHaveLength(1);
+    expect(unorderedCollisions(colliding)).toEqual([]);
     const ordered = [t('1A', ['shared.ts']), t('1B', ['shared.ts'], ['1A'])];
     expect(unorderedCollisions(ordered)).toEqual([]);
+  });
+
+  test('unordered collision warns only when no track, bin, or group path', () => {
+    // Fill the first layer-0 bin (cap 6) so 8A is a ready sibling of 1A,
+    // not a roommate. 9A chains off 8A and also touches 1A's file — the
+    // packer never sees them in the same layer, so only a Group DAG
+    // (or an explicit _blocked-by) can order the pair.
+    const tracks = [
+      t('1A', ['shared.ts']),
+      t('0A', ['a.ts']),
+      t('0B', ['b.ts']),
+      t('0C', ['c.ts']),
+      t('0D', ['d.ts']),
+      t('0E', ['e.ts']),
+      t('8A', ['f.ts']),
+      t('8B', ['g.ts'], ['8A']),
+      t('9A', ['shared.ts'], ['8B']),
+    ];
+    expect(unorderedCollisions(tracks)).toEqual([
+      'unordered collision 1A ∥ 9A — declare _blocked-by or accept arbitrary order',
+    ]);
+    const groupDeps = new Map<string, string[]>([
+      ['1', []],
+      ['8', []],
+      ['9', ['1']],
+    ]);
+    const trackGroup = new Map([
+      ['1A', '1'],
+      ['0A', '1'],
+      ['0B', '1'],
+      ['0C', '1'],
+      ['0D', '1'],
+      ['0E', '1'],
+      ['8A', '8'],
+      ['8B', '8'],
+      ['9A', '9'],
+    ]);
+    expect(unorderedCollisions(tracks, { trackGroup, groupDeps })).toEqual([]);
+  });
+
+  test('packing is invariant under bijective ID rename', () => {
+    const tracks = [
+      t('95A', ['a.ts']),
+      t('93A', ['b.ts']),
+      t('95B', ['c.ts']),
+      t('93B', ['d.ts']),
+      t('95C', ['e.ts']),
+      t('93C', ['f.ts']),
+    ];
+    tracks.forEach((x, i) => {
+      x.ord = i;
+    });
+    const map: Record<string, string> = {
+      '95A': 'A1',
+      '93A': 'Z9',
+      '95B': 'A2',
+      '93B': 'Z8',
+      '95C': 'A3',
+      '93C': 'Z7',
+    };
+    const renamed = tracks.map((x) => ({
+      ...x,
+      id: map[x.id]!,
+      blockedBy: x.blockedBy.map((id) => map[id] ?? id),
+    }));
+    const opts = { target: 4, maxPerBin: 4 };
+    const before = packTracks(tracks, opts);
+    const after = packTracks(renamed, opts);
+    const norm = (bins: { trackIds: string[] }[], remap?: Record<string, string>) =>
+      bins
+        .map((bin) =>
+          bin.trackIds
+            .map((id) => remap?.[id] ?? id)
+            .sort()
+            .join(','),
+        )
+        .sort();
+    expect(norm(after.bins)).toEqual(norm(before.bins, map));
+  });
+
+  test('FFD tie-breaks by document order, not ID', () => {
+    const tracks = [t('95A', ['a.ts']), t('93A', ['b.ts']), t('95B', ['c.ts']), t('93B', ['d.ts'])];
+    tracks.forEach((x, i) => {
+      x.ord = i;
+    });
+    const r = packTracks(tracks, { target: 2, maxPerBin: 2 });
+    expect(r.bins).toHaveLength(2);
+    expect(r.bins[0]!.trackIds).toEqual(['95A', '93A']);
+    expect(r.bins[1]!.trackIds).toEqual(['95B', '93B']);
   });
 
   test('hotfix sits alone', () => {
