@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0.0] - 2026-08-15
+
+### Changed
+
+- **The packer is the scheduler.** `bin/roadmap-pack` fills bins up to `parallelism_cap` from track `_blocked-by:` and `_touches:` only. Group `_Depends on:` is output you paste after naming the bins — writing it does not change the schedule. Output includes `CRITICAL_PATH` and ready-to-paste `DEPENDS` lines.
+- **Pack a draft, not the live file.** `/roadmap` Step 2 runs `bin/roadmap-pack --from /tmp/draft-tracks.md` (or `--stdin`) so first-run empty is not a mystery. `BINS: EMPTY` means no unshipped Tracks (the hint says why). `BINS: CYCLE` means a `_blocked-by` loop — no fake schedule.
+- **SIZE is 5-warn / 6-fail.** Weight 5 prints `WEIGHT_WARN` (raise `roadmap_max_session_weight` if this repo ships that as one PR). Weight ≥6 still fails. XL is 5, not an automatic split.
+- **Colliding tracks without an edge warn.** STYLE_LINT `unordered collision A ∥ B` when two tracks share a file and neither `_blocked-by` the other. Declare the edge or accept arbitrary order.
+
+### Fixed
+
+- Task titles with italics, trailing `_Source:` after `(S)`, and compound tags like `(S-M)` no longer drop silently. Done-marker bullets (`✓`) are not weighted. Family-ID splits (`101C` → `101C.1`) show up in the regen rename table even when titles diverge.
+
 ## [0.23.0.0] - 2026-08-14
 
 ### Added
