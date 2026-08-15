@@ -34,7 +34,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
@@ -44,6 +44,7 @@ const UPDATE_RUN = join(ROOT, 'bin', 'update-run');
 const UPDATE_CHECK = join(ROOT, 'bin', 'update-check');
 const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
+const RUN_MIGRATIONS = join(ROOT, 'bin', 'lib', 'run-migrations.sh');
 const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
 
 // Mirrors the SKILLS array in setup. Hardcoded rather than parsed from
@@ -141,14 +142,36 @@ function createFixtureRepoWithRealSetup(name: string): string {
   return dir;
 }
 
-function pushNewVersion(remoteDir: string, version: string): void {
+function pushNewVersion(
+  remoteDir: string,
+  version: string,
+  extraFiles?: Record<string, string>,
+): void {
   const work = `${remoteDir}-work`;
   spawnSync('git', ['clone', '--quiet', remoteDir, work]);
   writeFileSync(join(work, 'VERSION'), `${version}\n`);
   spawnSync('git', ['-C', work, 'add', 'VERSION']);
+  if (extraFiles) {
+    for (const [rel, content] of Object.entries(extraFiles)) {
+      mkdirSync(join(work, dirname(rel)), { recursive: true });
+      writeFileSync(join(work, rel), content);
+      spawnSync('git', ['-C', work, 'add', rel]);
+    }
+  }
   spawnSync('git', ['-C', work, 'commit', '-m', `bump to ${version}`, '--quiet']);
   spawnSync('git', ['-C', work, 'push', 'origin', 'main', '--quiet']);
   rmSync(work, { recursive: true, force: true });
+}
+
+function migrationPayload(scripts: Record<string, string>): Record<string, string> {
+  const files: Record<string, string> = {
+    'bin/lib/semver.sh': readFileSync(SEMVER_LIB, 'utf8'),
+    'bin/lib/run-migrations.sh': readFileSync(RUN_MIGRATIONS, 'utf8'),
+  };
+  for (const [name, body] of Object.entries(scripts)) {
+    files[`migrations/${name}`] = body;
+  }
+  return files;
 }
 
 // ─── bin/update-run ─────────────────────────────────────────────────
@@ -518,6 +541,229 @@ describe('bin/update-run', () => {
 
     test('no just-upgraded-from marker written on failure', () => {
       expect(existsSync(join(stateDir, 'just-upgraded-from'))).toBe(false);
+    });
+  });
+
+  // ─── Track 15B: migrations runner + ledger ─────────────────────────
+  describe('Track 15B migrations runner', () => {
+    const okScript = `#!/usr/bin/env bash
+printf 'ok\\n' >> "$STATE_DIR/ran-ok"
+`;
+    const failScript = `#!/usr/bin/env bash
+printf 'fail\\n' >> "$STATE_DIR/ran-fail"
+exit 1
+`;
+    const earlyScript = `#!/usr/bin/env bash
+printf 'early\\n' >> "$STATE_DIR/ran-order"
+`;
+    const lateScript = `#!/usr/bin/env bash
+printf 'late\\n' >> "$STATE_DIR/ran-order"
+`;
+
+    test('absent migrations/ dir: UPGRADE_OK, no MIGRATION_WARN', () => {
+      const repo = createFixtureRepo('mig-absent');
+      pushNewVersion(`${baseTmp}/mig-absent-remote`, '1.1.0', migrationPayload({}));
+      const stateDir = join(baseTmp, 'mig-absent-state');
+      const homeDir = join(baseTmp, 'mig-absent-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const out = result.stdout + result.stderr;
+      expect(out).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(out).not.toContain('MIGRATION_WARN');
+    });
+
+    test('in-window script runs once; second same-VERSION run does not re-run', () => {
+      const repo = createFixtureRepo('mig-once');
+      pushNewVersion(`${baseTmp}/mig-once-remote`, '1.1.0', migrationPayload({
+        'v1.1.0.sh': okScript,
+      }));
+      const stateDir = join(baseTmp, 'mig-once-state');
+      const homeDir = join(baseTmp, 'mig-once-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const first = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(first.stdout + first.stderr).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
+      expect(readFileSync(join(stateDir, 'migrations-applied'), 'utf8')).toContain('v1.1.0.sh');
+
+      const second = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(second.stdout + second.stderr).toContain('UPGRADE_OK 1.1.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
+    });
+
+    test('older-than-OLD skipped; newer-than-NEW skipped; ==OLD skipped; ==NEW runs', () => {
+      const repo = createFixtureRepo('mig-window');
+      pushNewVersion(`${baseTmp}/mig-window-remote`, '1.1.0', migrationPayload({
+        'v0.9.0.sh': `#!/usr/bin/env bash\nprintf 'old\\n' >> "$STATE_DIR/ran-window"\n`,
+        'v1.0.0.sh': `#!/usr/bin/env bash\nprintf 'eqold\\n' >> "$STATE_DIR/ran-window"\n`,
+        'v1.1.0.sh': `#!/usr/bin/env bash\nprintf 'eqnew\\n' >> "$STATE_DIR/ran-window"\n`,
+        'v1.2.0.sh': `#!/usr/bin/env bash\nprintf 'future\\n' >> "$STATE_DIR/ran-window"\n`,
+      }));
+      const stateDir = join(baseTmp, 'mig-window-state');
+      const homeDir = join(baseTmp, 'mig-window-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(result.stdout + result.stderr).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-window'), 'utf8')).toBe('eqnew\n');
+    });
+
+    test('failing script: MIGRATION_WARN + UPGRADE_OK + same-VERSION retry', () => {
+      const repo = createFixtureRepo('mig-fail');
+      pushNewVersion(`${baseTmp}/mig-fail-remote`, '1.1.0', migrationPayload({
+        'v1.1.0.sh': failScript,
+      }));
+      const stateDir = join(baseTmp, 'mig-fail-state');
+      const homeDir = join(baseTmp, 'mig-fail-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const first = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const out1 = first.stdout + first.stderr;
+      expect(out1).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(out1).toContain('MIGRATION_WARN v1.1.0.sh exit=1');
+      expect(out1).not.toContain('UPGRADE_FAILED');
+      expect(readFileSync(join(stateDir, 'migrations-failed'), 'utf8')).toContain('v1.1.0.sh');
+      expect(readFileSync(join(stateDir, 'ran-fail'), 'utf8')).toBe('fail\n');
+
+      const second = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const out2 = second.stdout + second.stderr;
+      expect(out2).toContain('UPGRADE_OK 1.1.0 1.1.0');
+      expect(out2).toContain('MIGRATION_WARN v1.1.0.sh exit=1');
+      expect(readFileSync(join(stateDir, 'ran-fail'), 'utf8')).toBe('fail\nfail\n');
+    });
+
+    test('two in-window scripts run in version order', () => {
+      const repo = createFixtureRepo('mig-order');
+      pushNewVersion(`${baseTmp}/mig-order-remote`, '1.1.0', migrationPayload({
+        'v1.0.10.sh': lateScript,
+        'v1.0.9.sh': earlyScript,
+      }));
+      const stateDir = join(baseTmp, 'mig-order-state');
+      const homeDir = join(baseTmp, 'mig-order-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(result.stdout + result.stderr).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-order'), 'utf8')).toBe('early\nlate\n');
+    });
+
+    test('script that reads stdin does not skip a later script', () => {
+      const repo = createFixtureRepo('mig-stdin');
+      pushNewVersion(`${baseTmp}/mig-stdin-remote`, '1.1.0', migrationPayload({
+        'v1.0.9.sh': `#!/usr/bin/env bash
+cat >/dev/null
+printf 'ate\\n' >> "$STATE_DIR/ran-stdin"
+`,
+        'v1.0.10.sh': `#!/usr/bin/env bash
+printf 'later\\n' >> "$STATE_DIR/ran-stdin"
+`,
+      }));
+      const stateDir = join(baseTmp, 'mig-stdin-state');
+      const homeDir = join(baseTmp, 'mig-stdin-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(result.stdout + result.stderr).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(readFileSync(join(stateDir, 'ran-stdin'), 'utf8')).toBe('ate\nlater\n');
+    });
+
+    test('later script still runs after an earlier one fails', () => {
+      const repo = createFixtureRepo('mig-continue');
+      pushNewVersion(`${baseTmp}/mig-continue-remote`, '1.1.0', migrationPayload({
+        'v1.0.9.sh': failScript,
+        'v1.0.10.sh': okScript,
+      }));
+      const stateDir = join(baseTmp, 'mig-continue-state');
+      const homeDir = join(baseTmp, 'mig-continue-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const out = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      const text = out.stdout + out.stderr;
+      expect(text).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(text).toContain('MIGRATION_WARN v1.0.9.sh exit=1');
+      expect(readFileSync(join(stateDir, 'ran-ok'), 'utf8')).toBe('ok\n');
+      expect(readFileSync(join(stateDir, 'migrations-applied'), 'utf8')).toContain('v1.0.10.sh');
+      expect(readFileSync(join(stateDir, 'migrations-failed'), 'utf8')).toContain('v1.0.9.sh');
+    });
+
+    test('old update-run without the call site does not run pulled scripts', () => {
+      const repo = createFixtureRepo('mig-oldbin');
+      pushNewVersion(`${baseTmp}/mig-oldbin-remote`, '1.1.0', migrationPayload({
+        'v1.1.0.sh': okScript,
+      }));
+      const stub = join(baseTmp, 'old-update-run');
+      writeFileSync(stub, `#!/usr/bin/env bash
+set -euo pipefail
+INSTALL_DIR="\${1:-}"
+OLD=$(tr -d '[:space:]' < "\$INSTALL_DIR/VERSION")
+git -C "\$INSTALL_DIR" fetch origin
+git -C "\$INSTALL_DIR" pull --ff-only origin main
+"\$INSTALL_DIR/setup" --host auto --quiet
+NEW=$(tr -d '[:space:]' < "\$INSTALL_DIR/VERSION")
+echo "UPGRADE_OK \$OLD \$NEW"
+`);
+      chmodSync(stub, 0o755);
+      const stateDir = join(baseTmp, 'mig-oldbin-state');
+      const homeDir = join(baseTmp, 'mig-oldbin-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+      const result = runBin(stub, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+      expect(result.stdout + result.stderr).toContain('UPGRADE_OK 1.0.0 1.1.0');
+      expect(existsSync(join(stateDir, 'ran-ok'))).toBe(false);
+      expect(existsSync(join(repo, 'bin', 'lib', 'run-migrations.sh'))).toBe(true);
+    });
+
+    test('gstack-extend-upgrade skill names MIGRATION_WARN outside SHARED:upgrade-flow', () => {
+      const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
+      const shared = skill.slice(
+        skill.indexOf('<!-- SHARED:upgrade-flow -->'),
+        skill.indexOf('<!-- /SHARED:upgrade-flow -->'),
+      );
+      expect(shared).not.toContain('MIGRATION_WARN');
+      expect(skill).toContain('MIGRATION_WARN');
+      expect(skill).toContain('bin/update-run');
+      expect(skill).toContain('JUST_UPGRADED');
     });
   });
 });
