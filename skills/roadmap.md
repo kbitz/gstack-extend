@@ -262,13 +262,77 @@ for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
 
 This is the LLM-owned step. Hold the full picture in mind and **emit a complete `## In Progress` + `## Current Plan` + `## Future` block from scratch**. Don't surgically edit existing entries; the whole upcoming plan is volatile.
 
+### Verify at drain time
+
+Inbox items and leftover plan bullets are observations, not facts.
+The inbox→drain latency is the bug: a claim can be true when filed
+and false when published. Routing (`KEEP`/`KILL`/`PROMPT`) is a prior
+on *kind*; it does not decide whether the work is still open. Check
+the tree at HEAD **now**. Do not transcribe an inbox sentence or a
+previous ROADMAP.md bullet as present-tense fact.
+
+Copying a leftover Current Plan / Future bullet into the proposal
+without re-checking is a defect. Regeneration **re-derives**; it does
+not re-emit.
+
+**Four drain dispositions** (every inbox item and every leftover
+bullet lands in exactly one):
+
+| Disposition | Meaning | Evidence |
+|-------------|---------|----------|
+| **place** | still open work | none |
+| **defer** | real, not committing now | one-line why |
+| **kill** | judgment — shouldn't do it | one-line why |
+| **discharge** | measurement — already done | `discharged@<sha>` plus one line of evidence |
+
+Kill and discharge are not interchangeable. Kill is "don't do this."
+Discharge is "already true, here's the SHA." The authored-false rate
+on a run is `discharged / (placed + discharged)`. Report both counts
+in the proposal summary. Kill-count is **not** a quality gate.
+
+`route_source_tag` still returns `KEEP|KILL|PROMPT` only. Discharge
+is decided at drain, after the tree check — never by the source tag.
+
+**Literal-bearing claims** (file:line, caller/count facts, "zero
+callers", "exactly N") are a distinct class. Work-order cards
+("extract the helper") are not. For a literal claim you are about
+to publish:
+
+- Split **premise** from **task**. They rot at different rates.
+  "foo() has zero callers" is the premise; "delete it" is the task.
+  If the premise is false, discharge or kill — do not emit the task.
+- **Cite** the inherited source when the fact came from another
+  artifact (`_Source: docs/…` or the inbox `[source:]` tag). A
+  citation is how a correction travels back. Dropping it at drain
+  is a defect.
+- Re-grep the premise this turn. An optional `verified@<sha>` on
+  *that* bullet is fine; do not stamp work-order cards.
+- Prefer a path + symbol or grep-able string (`fnName`, `"exact
+  string"`) over bare `path:line`. Line numbers decay.
+
+**Standing constraints are admission criteria**, not style. A
+constraint ("zero users", "docs only", "hotfix = regression") can
+refuse a Track, not merely shape how it is written. If the Track
+exists only because the constraint was read as "how," kill it.
+
+**Cross-document disagreement is a finding.** If a card cites
+`_read-first: docs/designs/…` (or a drain item cites another
+artifact) and the card contradicts that doc, surface it — update
+or kill, do not silently merge. Do not walk every design doc on
+every regen; only cited ones.
+
+**Exported numbers need a producer.** Session-weight and `~N lines`
+are estimates. A number another artifact will cite must be computed
+in that artifact, or the plan must name the command that produces
+it. Do not invent a `_regen:` field.
+
 ### What to look at, holistically
 
 Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan (re-derived against HEAD, not copied) + inbox items (verified at drain time, not observation time) + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -314,7 +378,7 @@ Group assignment is **the packer's job**, not a theme judgment.
    On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
-5. Paste the packer's adjacency (or the audit's `GROUP_DEPS` ADJACENCY after apply) into the Execution Map. Do not hand-write a line. Document order is not execution order.
+5. Paste the packer's adjacency (or the audit's `GROUP_DEPS` ADJACENCY after apply) into the Execution Map. Do not hand-write a line. Do **not** add a second critical-path, edge list, or "derived from the adjacency" prose block — if it is a function of the bins, the packer already emitted it. A hand-written copy will drift. Document order is not execution order.
 
 `PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
 
@@ -407,8 +471,13 @@ Format:
 - N Groups newly added to Current Plan
 - M items deferred to Future
 - K items killed (with reasons)
+- D items discharged (already done — sha + one-line evidence each)
 - J Hotfix Groups proposed
 - Migration: v1 → v2 (when applicable)
+
+## Discharged
+- **<title>** — discharged@<sha> — <one-line evidence>
+
 ```
 
 ### AskUserQuestion clusters
@@ -434,7 +503,7 @@ The v1 placement-batch and deferral-batch clusters no longer exist. There's noth
 Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
 - **Whole-block replacement.** The existing `## In Progress`, `## Current Plan`, and `## Future` content is fully replaced with the regenerated content. The existing `## Shipped` content (which lives at the tail of the document) is preserved verbatim, or constructed from v1 `✓ Complete` Groups during migration.
-- **TODOS.md drain.** Every inbox item that the proposal placed (into Current Plan, Future, or killed) is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
+- **TODOS.md drain.** Every inbox item that the proposal placed, deferred, killed, or discharged is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
 - **No helper invocations.** There's no split-track helper anymore. All edits are direct file writes.
 - **Track / Group completion conventions:**
   - **In-progress Group with shipped Tracks**: shipped Tracks stay co-located with the Group, marked `✓ Shipped (vX.Y.Z.W)` inline.
@@ -455,11 +524,11 @@ The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PACKIN
 
 ### TODOS.md drain orphan check
 
-Before commit, assert that every item the proposal placed/killed/deferred is gone from `## Unprocessed`. Any orphan = something didn't apply. Escalate with the orphan list and current diff state.
+Before commit, assert that every item the proposal placed/killed/deferred/discharged is gone from `## Unprocessed`. Any orphan = something didn't apply. Escalate with the orphan list and current diff state.
 
 ### Apply summary
 
-Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <D> drained from inbox."`.
+Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."`
 
 **ID renames table.** After `bin/roadmap-renumber` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
@@ -815,6 +884,7 @@ It is always OK to stop and say "this is too hard for me" or "I'm not confident 
 - Regeneration attempted 3 times and audit still fails → STOP and escalate.
 - Freshness scan ambiguous (can't tell if a TODO is done) → STOP and escalate.
 - Reorganization scope exceeds what you can verify against current code → STOP and escalate.
+- A literal-bearing claim cannot be verified against the tree → STOP and escalate (do not publish it).
 
 <!-- SHARED:escalation-format -->
 Escalation format:

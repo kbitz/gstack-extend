@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.4.0] - 2026-08-15
+
+### Changed
+
+- **/roadmap drain can discharge already-done work.** Inbox items that already landed get `discharged@<sha>` plus one line of evidence, distinct from kill (judgment). Each regen reports both counts so the authored-false rate is visible. Leftover Current Plan / Future bullets are re-checked against HEAD, not copied forward.
+- **Packer adjacency is the only derived edge list.** Do not add a second hand-written critical path next to the generated Execution Map.
+- **Literal claims are a distinct class.** Tree-facts (caller counts, "exactly N") split premise from task, keep the source cite, and re-grep this turn. Work-order cards stay unstamped.
+- **Standing constraints can refuse a Track**, not just shape how it is written.
+
 ## [0.24.3.0] - 2026-08-15
 
 ### Added
