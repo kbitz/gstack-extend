@@ -155,14 +155,18 @@ function computeCriticalPath(bins: PackedBin[]): string[] {
     }
   }
   const memo = new Map<number, number[]>();
+  const walking = new Set<number>();
   function pathFrom(i: number): number[] {
     const cached = memo.get(i);
     if (cached !== undefined) return cached;
+    if (walking.has(i)) return [i];
+    walking.add(i);
     let best: number[] = [i];
     for (const j of succ[i]!) {
       const p = pathFrom(j);
       if (p.length + 1 > best.length) best = [i, ...p];
     }
+    walking.delete(i);
     memo.set(i, best);
     return best;
   }
@@ -301,7 +305,7 @@ export function packTracks(
 
   return {
     bins,
-    criticalPath: computeCriticalPath(bins),
+    criticalPath: cycles.length > 0 ? [] : computeCriticalPath(bins),
     cycles,
   };
 }
@@ -361,7 +365,7 @@ export function packingDrift(written: string[][], packed: PackResult): string[] 
 }
 
 export function formatPackOutput(packed: PackResult, opts: { emptyHint?: string } = {}): string {
-  if (packed.cycles.length > 0 && packed.bins.length === 0) {
+  if (packed.cycles.length > 0) {
     return `BINS: CYCLE\n${packed.cycles.map((c) => `- ${c}`).join('\n')}\n`;
   }
   if (packed.bins.length === 0) {

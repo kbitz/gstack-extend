@@ -134,6 +134,15 @@ describe('packTracks', () => {
     expect(formatPackOutput(r)).toContain('BINS: EMPTY');
   });
 
+  test('blocked-by loop is BINS: CYCLE, not a schedule', () => {
+    const r = packTracks([t('1A', ['a.ts'], ['1B']), t('1B', ['b.ts'], ['1A'])]);
+    expect(r.cycles.length).toBeGreaterThan(0);
+    const out = formatPackOutput(r);
+    expect(out).toContain('BINS: CYCLE');
+    expect(out).toMatch(/1A.*1B|1B.*1A/);
+    expect(out).not.toContain('bin 1');
+  });
+
   test('DEPENDS paste line names the earlier bin', () => {
     const r = packTracks([t('1A', ['a.ts']), t('2A', ['b.ts'], ['1A'])]);
     const out = formatPackOutput(r);
