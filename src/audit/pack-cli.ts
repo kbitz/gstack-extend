@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { formatPackOutput, packTracks } from './lib/pack.ts';
+import { fillCap, formatPackOutput, packTracks } from './lib/pack.ts';
 import { tracksForPacker } from './checks/packing.ts';
 import { parallelismCap } from './lib/parallelism-cap.ts';
 import { mergeShippedArchive, parseRoadmap } from './parsers/roadmap.ts';
@@ -83,17 +83,18 @@ export function runPackCli(argv: string[], stdinText?: string): string {
     const claude =
       readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
     const ctx = { roadmap: parsed, parallelismCap: parallelismCap(claude) } as AuditCtx;
-    const packed = packTracks(tracksForPacker(ctx), { target: ctx.parallelismCap });
+    const cap = fillCap(ctx.parallelismCap);
+    const packed = packTracks(tracksForPacker(ctx), { target: cap, maxPerBin: cap });
     lines.push(formatPackOutput(packed).trimEnd());
     return lines.join('\n') + '\n';
   }
 
   const claude =
     readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
-  const cap = parallelismCap(claude);
+  const cap = fillCap(parallelismCap(claude));
   const ctx = { roadmap: parsed, parallelismCap: cap } as AuditCtx;
   const input = tracksForPacker(ctx);
-  const packed = packTracks(input, { target: cap });
+  const packed = packTracks(input, { target: cap, maxPerBin: cap });
   const headingCount = (live.match(/^#{3,5} Track /gm) ?? []).length;
   let emptyHint = 'no unshipped Tracks';
   if (input.length === 0 && headingCount > 0) {

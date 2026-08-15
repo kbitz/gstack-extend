@@ -316,7 +316,7 @@ Group assignment is **the packer's job**, not a theme judgment.
 
 `PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
 
-**Groups are launch batches filled up to `parallelism_cap`** (default 6, hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (more disjoint Tracks than the cap) stays a ready sibling. A 1-track Group is legal whenever the packer emits one (Hotfix, scan-scope, or leftover singleton) — tool behavior is the rule.
+**Groups are launch batches filled up to `parallelism_cap`** (default 6, hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (more disjoint Tracks than the cap) stays a ready sibling — the leftover is never absorbed past the fill cap. Bins are printed in topological order; paste `DEPENDS` as Group numbers in that order. A 1-track Group is legal whenever the packer emits one (Hotfix, scan-scope, or leftover singleton) — tool behavior is the rule.
 
 Do not hand-sequence Groups "to cap concurrent WIP." The packer already fills to `parallelism_cap`. A Group may launch when every Group in its `←` set has landed, regardless of document order; document order is priority, not a gate.
 

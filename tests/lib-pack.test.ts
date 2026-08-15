@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  fillCap,
   formatPackOutput,
   packTracks,
   packingDrift,
@@ -11,6 +12,16 @@ import {
 function t(id: string, touches: string[], blockedBy: string[] = []): PackTrack {
   return { id, touches, blockedBy };
 }
+
+describe('fillCap', () => {
+  test('default is 6, never above hard max 8', () => {
+    expect(fillCap()).toBe(6);
+    expect(fillCap(6, 8)).toBe(6);
+    expect(fillCap(8, 8)).toBe(8);
+    expect(fillCap(10, 8)).toBe(8);
+    expect(fillCap(4, 8)).toBe(4);
+  });
+});
 
 describe('touchesIntersect', () => {
   test('disjoint files', () => {
@@ -84,12 +95,28 @@ describe('packTracks', () => {
     expect(later.blockedByTracks).toContain('1A');
   });
 
-  test('seven disjoint tracks absorb the singleton tail under hard max 8', () => {
+  test('seven disjoint tracks stay [6,1] — fill cap is one number, not absorb-to-8', () => {
     const tracks = Array.from({ length: 7 }, (_, i) => t(`${i}A`, [`f${i}.ts`]));
     const r = packTracks(tracks, { target: 6, maxPerBin: 8 });
-    expect(r.bins).toHaveLength(1);
-    expect(r.bins[0]!.trackIds).toHaveLength(7);
-    expect(r.bins[0]!.layer).toBe(0);
+    expect(r.bins).toHaveLength(2);
+    expect(r.bins.every((b) => b.layer === 0)).toBe(true);
+    const sizes = r.bins.map((b) => b.trackIds.length).sort((a, b) => b - a);
+    expect(sizes).toEqual([6, 1]);
+  });
+
+  test('collision displacement re-layers dependents', () => {
+    const r = packTracks([
+      t('102A', ['sparkle.ts']),
+      t('102B', ['sparkle.ts']),
+      t('103A.1', ['dmg.ts'], ['102B']),
+    ]);
+    const blocker = r.bins.find((b) => b.trackIds.includes('102B'))!;
+    const child = r.bins.find((b) => b.trackIds.includes('103A.1'))!;
+    expect(blocker.layer).toBeLessThan(child.layer);
+    expect(child.blockedByTracks).toContain('102B');
+    const out = formatPackOutput(r);
+    expect(out.indexOf('102B')).toBeLessThan(out.indexOf('103A.1'));
+    expect(out).toMatch(/bin 3:.*_Depends on: Group <bin 2>_/);
   });
 
   test('overflow of 10 disjoint tracks yields two ready bins, not a chain', () => {
