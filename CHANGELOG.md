@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.6.0] - 2026-08-15
+
+### Fixed
+
+- **A failed setup no longer loses the upgrade window.** `bin/update-run` writes the pre-pull version to `$STATE_DIR/migrations-hop-from`. If setup dies after the pull, the next `update-run` still sees the old version and runs the in-window scripts. The helper clears hop-from only after a completed scan.
+- **A failed migration retry no longer crashes when VERSION is unreadable.** The failed-ledger path skips `semver_lte` unless NEW is semver, then retries every failed name instead of aborting under `set -u`.
+
 ## [0.24.5.1] - 2026-08-15
 
 ### Changed
