@@ -86,6 +86,27 @@ OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo
 _STAGE="mkdir-state"
 mkdir -p "$STATE_DIR"
 
+# Persist pre-pull OLD so a setup/helper miss cannot collapse the next
+# hop to OLD==NEW with an empty window. Write only if absent or not
+# semver. Helper finish_scan clears it; the helper EXIT trap does not.
+_HOP_FROM="$STATE_DIR/migrations-hop-from"
+_hop_is_semver() {
+  case "$1" in
+    *[!0-9.]*) return 1 ;;
+    [0-9]*.[0-9]*.[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+_HOP_EXISTING=""
+if [ -f "$_HOP_FROM" ]; then
+  _HOP_EXISTING=$(tr -d '[:space:]' < "$_HOP_FROM" || true)
+fi
+if ! _hop_is_semver "$_HOP_EXISTING"; then
+  if _hop_is_semver "$OLD_VERSION"; then
+    printf '%s\n' "$OLD_VERSION" > "$_HOP_FROM"
+  fi
+fi
+
 _STAGE="read-branch"
 _PREV_BRANCH=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || true)
 
@@ -128,6 +149,13 @@ _STAGE="setup"
 # reach this call site — first reliable hop is the upgrade after 15B.
 _STAGE="read-new-version"
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+
+if [ -f "$_HOP_FROM" ]; then
+  _HOP_OLD=$(tr -d '[:space:]' < "$_HOP_FROM" || true)
+  if _hop_is_semver "$_HOP_OLD"; then
+    OLD_VERSION="$_HOP_OLD"
+  fi
+fi
 
 _STAGE="migrations"
 if [ -f "$INSTALL_DIR/bin/lib/run-migrations.sh" ]; then
