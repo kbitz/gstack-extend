@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  formatPackOutput,
   packTracks,
   packingDrift,
   touchesIntersect,
+  unorderedCollisions,
   type PackTrack,
 } from '../src/audit/lib/pack.ts';
 
@@ -115,6 +117,44 @@ describe('packTracks', () => {
     expect(c.layer).toBe(2);
     expect(b.blockedByTracks).toEqual(['1A']);
     expect(c.blockedByTracks).toEqual(['1A', '1B']);
+  });
+
+  test('critical path follows the longest blocked-by chain', () => {
+    const r = packTracks([
+      t('1A', ['a.ts']),
+      t('2A', ['b.ts'], ['1A']),
+      t('3A', ['c.ts'], ['2A']),
+    ]);
+    expect(r.criticalPath).toEqual(['1A', '2A', '3A']);
+    expect(formatPackOutput(r)).toContain('CRITICAL_PATH: 3 waves through 1A → 2A → 3A');
+  });
+
+  test('empty pack is EMPTY not (none)', () => {
+    const r = packTracks([]);
+    expect(formatPackOutput(r)).toContain('BINS: EMPTY');
+  });
+
+  test('blocked-by loop is BINS: CYCLE, not a schedule', () => {
+    const r = packTracks([t('1A', ['a.ts'], ['1B']), t('1B', ['b.ts'], ['1A'])]);
+    expect(r.cycles.length).toBeGreaterThan(0);
+    const out = formatPackOutput(r);
+    expect(out).toContain('BINS: CYCLE');
+    expect(out).toMatch(/1A.*1B|1B.*1A/);
+    expect(out).not.toContain('bin 1');
+  });
+
+  test('DEPENDS paste line names the earlier bin', () => {
+    const r = packTracks([t('1A', ['a.ts']), t('2A', ['b.ts'], ['1A'])]);
+    const out = formatPackOutput(r);
+    expect(out).toContain('_Depends on: Group <bin 1>_');
+    expect(out).toContain('bin 2:');
+  });
+
+  test('unordered collision is suppressed when _blocked-by orders the pair', () => {
+    const colliding = [t('1A', ['shared.ts']), t('1B', ['shared.ts'])];
+    expect(unorderedCollisions(colliding)).toHaveLength(1);
+    const ordered = [t('1A', ['shared.ts']), t('1B', ['shared.ts'], ['1A'])];
+    expect(unorderedCollisions(ordered)).toEqual([]);
   });
 
   test('hotfix sits alone', () => {

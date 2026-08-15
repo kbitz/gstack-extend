@@ -29,6 +29,7 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
   const maxWeight = ceiling('max_session_weight');
 
   const findings: string[] = [];
+  const weightWarns: string[] = [];
   let modernCount = 0;
   const legacyTracks: string[] = [];
 
@@ -42,9 +43,13 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
     if (t.tasksCount > maxTasks) {
       findings.push(`- ${t.id}: tasks=${t.tasksCount} exceeds max_tasks_per_track=${maxTasks}`);
     }
-    if (t.sessionWeight > maxWeight) {
+    if (t.sessionWeight > maxWeight && t.sessionWeight >= 6) {
       findings.push(
         `- ${t.id}: session_weight=${t.sessionWeight} exceeds max_session_weight=${maxWeight} — split into multiple Tracks`,
+      );
+    } else if (t.sessionWeight > maxWeight) {
+      weightWarns.push(
+        `- ${t.id}: session_weight=${t.sessionWeight} > max_session_weight=${maxWeight} — warn (hard-fail is ≥6); set roadmap_max_session_weight if this repo ships weight-5 as one PR`,
       );
     }
     if (t.untaggedWriteTasks > 0) {
@@ -73,6 +78,17 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
     body.push('FINDINGS:');
     body.push(...findings);
     body.push('');
+  }
+
+  const tagNotes = ctx.roadmap.value.effortTagFindings ?? [];
+  if (tagNotes.length > 0) {
+    body.push('EFFORT_TAGS:');
+    for (const n of tagNotes) body.push(`- ${n}`);
+  }
+
+  if (weightWarns.length > 0) {
+    body.push('WEIGHT_WARN:');
+    body.push(...weightWarns);
   }
 
   const mismatches = ctx.roadmap.value.sizeLabelMismatches;

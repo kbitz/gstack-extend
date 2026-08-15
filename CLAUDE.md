@@ -27,7 +27,7 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`. New `PACKING` fixtures live under `tests/roadmap-audit/packing-ok/`.
 
-`bin/roadmap-pack` and `bin/roadmap-touches` are the packing and `_touches:` drift CLIs (`src/audit/pack-cli.ts`, `src/audit/touches-cli.ts`). `pack --materialize` prints old implicit previous-Group edges. `touches drift --track <id>` unions merge-base..HEAD with the working tree. `touches report-cross-group` prints soft overlaps.
+`bin/roadmap-pack` and `bin/roadmap-touches` are the packing and `_touches:` drift CLIs (`src/audit/pack-cli.ts`, `src/audit/touches-cli.ts`). `pack --from <path>` / `--stdin` pack a draft; `BINS: EMPTY` means no unshipped Tracks and `BINS: CYCLE` is a `_blocked-by` loop. Group `_Depends on:` is output, not packer input. `pack --materialize` prints old implicit previous-Group edges. `touches drift --track <id>` unions merge-base..HEAD with the working tree. `touches report-cross-group` prints soft overlaps.
 
 To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` semantics change):
 

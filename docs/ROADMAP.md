@@ -17,223 +17,156 @@ _(no Tracks currently mid-flight)_
 
 ## Current Plan
 
-### Group 14: Fix `parsers-roadmap` Group 6 Completeness Failure
+### Group 15: Canonical Locks ∥ Migrations ∥ Audit Gate ∥ Scaffold Preflight ∥ Init Polish
 
 _Depends on: none_
 
-Pre-existing P1: `tests/parsers-roadmap.test.ts:484` asserts Group 6 is NOT
-complete, but the parser marks it complete. Fails on clean `origin/main`;
-`/ship` skips it on every run. Unblocks the green `bun run test` baseline.
-
-##### Track 14A: Fix Group 6 completeness parse (or test expectation)
-_1 task . ~40 LOC . low risk . [parser + its test]_
-_touches: src/parsers/roadmap.ts, tests/parsers-roadmap.test.ts_
-- **Reconcile Group 6 completeness** -- the parser's `isComplete` heuristic infers completion from the surrounding `## Shipped` Bun-migration lineage context above Group 6. Either fix the parser to match current `## Shipped` semantics OR update the test's expected value if the parser is correct and ROADMAP intent changed. Read assertion (lines 479-485) + `src/parsers/roadmap.ts`. _src/parsers/roadmap.ts, tests/parsers-roadmap.test.ts, ~40 lines._ (S) _Source: [ship:track=13A]._
-
-### Group 15: Canonical Fragment Extraction + Skill-Prose Drift Test
-
-_Depends on: none_
-
-Skill simplification pre-work — identifies byte-identical fragments
-across the four review-skill files and locks them via
-`REQUIRED_VERBATIM_BLOCKS` assertions before the trim Tracks land. Also
-folds in the deferred drift test for `## SECTION_NAME` references in
-`skills/roadmap.md` advisory lists; both add assertion families to the
-same file so they ship as one PR.
+Packer layer 0. Five file-disjoint Tracks. In-flight count is 5 (cap 6).
 
 ##### Track 15A: Extract canonical fragments + add REQUIRED_VERBATIM_BLOCKS + section-name drift test
-_2 tasks . ~110 LOC . low risk . [skill-protocols test only]_
-_touches: tests/skill-protocols.test.ts_
-- **Extract canonical shared fragments + lock via test** -- read the appended graft sections across pair-review, full-review, review-apparatus, test-plan; identify byte-identical fragments (Completion Status Protocol enum, Escalation opener, Escalation format, Confusion Protocol head, GSTACK REVIEW REPORT table header); pick the tightest variant of each as canonical; add per-fragment assertions to `tests/skill-protocols.test.ts` so future drift is caught. _tests/skill-protocols.test.ts, ~80 lines._ (S)
-- **Drift test: skill prose section-name lists vs CANONICAL_SECTIONS** -- assert every `## SECTION_NAME` referenced in advisory-section lists in `skills/roadmap.md` matches `CANONICAL_SECTIONS` from `src/audit/sections.ts`. Pairs with `tests/audit-invariants.test.ts` (fixture-lock) and `tests/audit-compliance.test.ts` (skill registry) as a third structural-invariants check. Strikethrough-aware parsing or whitelist file optional. _tests/skill-protocols.test.ts, ~30 lines._ (S)
+_3 tasks . ~130 LOC . low risk . [skill-protocols test + SKILLS helper]_
+_touches: tests/skill-protocols.test.ts, tests/helpers/parse-setup-skills.ts (new)_
+_out: 16A, 16B, 16C, 16D, 17A_
+_produces: locked REQUIRED_VERBATIM_BLOCKS, section-name drift assertions, and a shared SKILLS-list parser_
+- **Extract canonical shared fragments + lock via test** -- identify byte-identical graft fragments across pair-review, full-review, review-apparatus, test-plan; add per-fragment assertions. _tests/skill-protocols.test.ts, ~80 lines._ (S)
+- **Drift test: skill prose section-name lists vs CANONICAL_SECTIONS** -- assert every `## SECTION_NAME` in `skills/roadmap.md` advisory lists matches `CANONICAL_SECTIONS`. _tests/skill-protocols.test.ts, ~30 lines._ (S)
+- **Deduplicate SKILLS list** -- extract `tests/helpers/parse-setup-skills.ts` and consume it from the protocols test so `setup` and the test cannot drift. _tests/helpers/parse-setup-skills.ts (new), tests/skill-protocols.test.ts, ~20 lines._ (S)
 
-### Group 16: Skill-File Trims (parallel)
+##### Track 15B: `migrations/v*.sh` runner in `bin/update-run`
+_1 task . ~30 LOC . low risk . [bin/update-run + migrations/ + tests]_
+_touches: bin/update-run, migrations/, tests/update.test.ts_
+_produces: version-gated migrations runner after pull + setup_
+- **Migrations runner parity for gstack-extend upgrades** -- after git pull + `./setup` in `bin/update-run`, run any `migrations/v*.sh` newer than the old VERSION and not newer than the new VERSION. Idempotent; per-script error emits `MIGRATION_WARN` and continues. _bin/update-run, migrations/ (new), tests/update.test.ts, ~30 lines._ (S)
 
-Group 13 (Telemetry parity) shipped in v0.22.0.0, so its `SHARED:telemetry-*`
-blocks are now part of the canonical surface the trims must preserve.
-Group 15 (canonical-fragment extraction, immediately preceding) is the
-remaining prerequisite. Tracks 16A-16D are file-disjoint and run fully
-in parallel.
+##### Track 15C: Narrow the `docs/`-absent gate + fix archive-path string
+_1 task . ~35 LOC . low risk . [doc-location + state-sections]_
+_touches: src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts, src/audit/checks/state-sections.ts_
+_produces: DOC_LOCATION docs/-absent only fires on a gstack-extend signal; MIGRATION_NEEDED points at the archived spec_
+- **Tighten docs/-absent gate + fix archive path** -- replace the `hasClaude` gate with a gstack-extend signal (roadmap-audit shim, projects registry entry, or `docs/ROADMAP.md`). Fixture: CLAUDE.md-only repo must NOT fire. Same PR: point `state-sections.ts` MIGRATION_NEEDED at `docs/archive/roadmap-v2-state-model.md`. _src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts, src/audit/checks/state-sections.ts, ~35 lines._ (S)
+
+##### Track 15D: Add realpath preflight to Layout Scaffolding skill prose
+_1 task . ~30 LOC . low risk . [skills/roadmap.md]_
+_touches: skills/roadmap.md_
+_out: 16E_
+_produces: Layout Scaffolding refuses scaffold dirs whose realpath is outside the repo_
+- **Realpath preflight for Layout Scaffolding skill prose** -- after the exists-or-is-directory check, resolve each scaffold dir and halt if the target is outside the repo root. Name the resolved path. Document the chezmoi/stow exception. _skills/roadmap.md, ~30 lines._ (S)
+
+##### Track 15E: 12A init-surface polish + test coverage
+_2 tasks . ~200 LOC . low risk . [init bin + setup + init tests]_
+_touches: tests/init-bin.test.ts, tests/init-registry.test.ts, tests/init-templates.test.ts, tests/setup-init-wire.test.ts, tests/helpers/init-scope.ts (new), bin/gstack-extend, setup_
+_out: 16E_
+_produces: init test coverage, DRY CANONICAL_FILES, and a fail-soft setup self-register guard_
+- **Init test coverage + mkScope helper** -- (a) audit-failure path (PATH-shim non-zero `roadmap-audit` → exit 1 + "audit FAILED" + "--migrate" + files on disk); (b) 5–10 parallel `registry_upsert` stay valid JSON; (c) `validate_name` edges (`..`, `.`, leading-dash, empty, Unicode); (d) `lang_detect` precedence; (e) setup self-register fail-soft on corrupt `projects.json`; (g) extract `mkScope` to `tests/helpers/init-scope.ts`. _tests/init-*.test.ts, tests/helpers/init-scope.ts (new), ~120 lines._ (M)
+- **Init code polish** -- (f) `render_all` map ↔ `CANONICAL_FILES` DRY; (h) `env -u GSTACK_EXTEND_STATE_DIR` guard on setup self-register; (j) trim fresh-init audit output to non-pass sections. Multi-hop readlink walker (old item i) shipped in v0.22.3.0. _bin/gstack-extend, setup, ~80 lines._ (M)
+
+### Group 16: Skill-File Trims ∥ Layout Scaffold Extract
+
+_Depends on: Group 15_
+
+Packer layer 1. Trims wait on 15A's fragment lock. Layout extract waits on 15D (preflight lands in `skills/roadmap.md`) and 15E (`bin/gstack-extend` polish).
 
 ##### Track 16A: Trim `pair-review.md`
-_1 task . ~100 LOC (deletions) . low risk . [pair-review skill file]_
+_1 task . ~100 lines (del) . low risk . [pair-review skill file]_
 _touches: skills/pair-review.md_
-- **Duplication-only trim per scope discipline** -- only remove (a) literal duplication within the skill, (b) word-level redundancy, (c) obviously stale refs (e.g., removed features), (d) dead cross-references. Gate on `tests/skill-protocols.test.ts` passing unchanged. _skills/pair-review.md, ~100 lines (deletions)._ (M)
+_blocked-by: Track 15A_
+_out: 17A_
+_read-first: 15A_
+_produces: pair-review.md with only unique prose; locked fragments untouched_
+- **Duplication-only trim per scope discipline** -- remove literal duplication, word-level redundancy, stale refs, and dead cross-references. Do not touch `SHARED:` blocks. Gate on `tests/skill-protocols.test.ts` still passing. _skills/pair-review.md, ~100 lines (del)._ (S)
 
 ##### Track 16B: Trim `full-review.md`
-_1 task . ~80 LOC (deletions) . low risk . [full-review skill file]_
+_1 task . ~80 lines (del) . low risk . [full-review skill file]_
 _touches: skills/full-review.md_
-- **Duplication-only trim per scope discipline** -- same rules as 16A, applied to full-review.md. _skills/full-review.md, ~80 lines._ (M)
+_blocked-by: Track 15A_
+_out: 17A_
+_read-first: 15A_
+_produces: full-review.md with only unique prose; locked fragments untouched_
+- **Duplication-only trim per scope discipline** -- same rules as 16A. _skills/full-review.md, ~80 lines (del)._ (S)
 
 ##### Track 16C: Trim `review-apparatus.md`
-_1 task . ~50 LOC (deletions) . low risk . [review-apparatus skill file]_
+_1 task . ~50 lines (del) . low risk . [review-apparatus skill file]_
 _touches: skills/review-apparatus.md_
-- **Duplication-only trim per scope discipline** -- same rules as 16A, applied to review-apparatus.md (smallest skill, calibration target). _skills/review-apparatus.md, ~50 lines._ (S)
+_blocked-by: Track 15A_
+_out: 17A_
+_read-first: 15A_
+_produces: review-apparatus.md with only unique prose; locked fragments untouched_
+- **Duplication-only trim per scope discipline** -- same rules as 16A. _skills/review-apparatus.md, ~50 lines (del)._ (S)
 
 ##### Track 16D: Trim `test-plan.md`
-_1 task . ~80 LOC (deletions) . low risk . [test-plan skill file]_
+_1 task . ~80 lines (del) . low risk . [test-plan skill file]_
 _touches: skills/test-plan.md_
-- **Duplication-only trim per scope discipline** -- same rules as 16A, applied to test-plan.md. _skills/test-plan.md, ~80 lines._ (M)
+_blocked-by: Track 15A_
+_out: 17A_
+_read-first: 15A_
+_produces: test-plan.md with only unique prose; locked fragments untouched_
+- **Duplication-only trim per scope discipline** -- same rules as 16A. _skills/test-plan.md, ~80 lines (del)._ (S)
+
+##### Track 16E: Extract Layout Scaffolding into shared helper
+_1 task . ~120 LOC . low risk . [shared lib extraction]_
+_touches: skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend_
+_blocked-by: Track 15D, Track 15E_
+_read-first: 15D, 15E_
+_produces: one layout-scaffold helper consumed by /roadmap and `gstack-extend init`_
+- **Layout Scaffolding shared helper** -- pull the inline Layout Scaffolding logic out of `skills/roadmap.md` into `bin/lib/layout-scaffold.sh`. Replace 12A's inline mkdir+refusal in `bin/gstack-extend` with a call to the same helper. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
 
 ### Group 17: Promote Canonical Fragments to `SKILL.md.tmpl`
 
 _Depends on: Group 15, Group 16_
 
-Consumes canonical extraction + trims. Once skills are trimmed and
-fragments are locked,
-promote them into a shared template so new skills inherit automatically
-and cross-cutting protocol additions become single-source instead of
-N-skill grafts.
+Packer layer 2. Consumes the locked fragments and the trimmed skill files. Serialized after Group 15 (setup collision with 15E) via the 15 → 16 → 17 chain.
 
 ##### Track 17A: Promote canonical fragments into a shared template
 _1 task . ~150 LOC . low risk . [shared template + setup integration]_
-_touches: .claude/skills/SKILL.md.tmpl, setup_
-- **Promote canonical fragments into a shared template** -- once Group 15 has identified which fragments rhyme and Group 16 has trimmed, promote them into `.claude/skills/SKILL.md.tmpl`. New skills inherit automatically. _.claude/skills/SKILL.md.tmpl, setup integration, ~150 lines._ (M)
-
-### Group 18: Migrations Runner Parity for `gstack-extend` Upgrades
-
-_Depends on: none_
-
-Mirrors gstack's `gstack-upgrade/SKILL.md` Step 4.75. `bin/update-run`
-already has `OLD_VERSION`/`NEW_VERSION` in hand; this Group adds a
-`migrations/v*.sh` runner so future breaking state changes (renamed
-config keys, moved state dirs, orphaned files) ship with a migration
-path instead of stranding existing installs.
-
-##### Track 18A: `migrations/v*.sh` runner in `bin/update-run`
-_1 task . ~30 LOC . low risk . [bin/update-run + migrations/ + tests]_
-_touches: bin/update-run, migrations/, tests/update.test.ts_
-- **Migrations runner parity for gstack-extend upgrades** -- after the git pull + `./setup` in `bin/update-run`, run any `migrations/v*.sh` script whose version is newer than the old `VERSION` and not newer than the new `VERSION`. Idempotent (re-running on the same install is a no-op), non-fatal on per-script error (emit `MIGRATION_WARN` line but continue). Reference impl: gstack `gstack-upgrade/SKILL.md` Step 4.75. _bin/update-run, migrations/ (new dir), tests/update.test.ts, ~30 lines._ (S)
-
-### Group 19: Tighten `docs/`-Absent Audit Gate
-
-Sequenced after Group 18 (the default preceding-Group dependency) to cap
-concurrent WIP in the audit/infra lane; no hard technical dependency.
-Source: pre-landing `/review` codex round on Track 10A (formerly Track
-8A). Narrows the `DOC_LOCATION` "docs/ directory absent" finding's
-trigger from any-CLAUDE.md to a stronger gstack-extend signal, so
-running `bin/roadmap-audit` on a generic Claude Code repo (or in fleet
-contexts) doesn't emit a hard `DOC_LOCATION fail` telling the user to
-scaffold a layout they didn't opt into.
-
-##### Track 19A: Narrow the gate to a gstack-extend-specific signal
-_1 task . ~30 LOC . low risk . [doc-location check + test]_
-_touches: src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts_
-- **Tighten docs/-absent gate** -- replace the `hasClaude` gate in `src/audit/checks/doc-location.ts` with one of (or a disjunction over): presence of a `bin/roadmap-audit` shim at repo root, an entry in `~/.gstack-extend/projects.yaml` once that registry exists, or `docs/ROADMAP.md` anywhere in the worktree. Add a fixture exercising the new gate on a CLAUDE.md-but-no-roadmap-audit-shim repo (must NOT fire). Keep the existing fixture (CLAUDE.md + gstack-extend signal) firing. _src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts, ~30 lines._ (S)
-
-### Group 20: Realpath Preflight for Layout Scaffolding (non-solo contexts)
-
-_Depends on: none_
-
-Group 13 (Telemetry parity) shipped in v0.22.0.0; the previously-noted
-collision on `skills/roadmap.md` is resolved. Group 20 amends the Layout
-Scaffolding section preflight in `skills/roadmap.md` as defense-in-depth
-against malicious-repo clones where `docs` is a symlink to an external
-directory; mirrors the `is_safe_install_path` pattern Track 5A shipped
-for the install context.
-
-##### Track 20A: Add realpath preflight to Layout Scaffolding skill prose
-_1 task . ~30 LOC . low risk . [skills/roadmap.md skill prose only]_
-_touches: skills/roadmap.md_
-- **Realpath preflight for Layout Scaffolding skill prose** -- in the Preflight section of Layout Scaffolding, after the "every scaffold path either doesn't exist OR exists as a directory" check, add a step that resolves each scaffold directory via realpath (or `cd -P && pwd -P`) and refuses to proceed if the resolved target lives outside the repo root. Include the resolved-target value in the halt message so the user can see what tripped. Document the chezmoi/stow exception path in the same halt message (legitimately symlinks `docs/` outside the worktree; user must set up manually). Mirror the `is_safe_install_path` pattern Track 5A shipped for install. _skills/roadmap.md, ~30 lines._ (S)
-
-### Group 21: Extract Layout Scaffolding into Shared Helper
-
-_Depends on: Group 20, Group 22_
-
-Sibling to Group 12 (shipped v0.21.0.0). Track 12A shipped an inline minimal
-scaffold (mkdir + canonical-file refusal) in `bin/gstack-extend`. The richer
-~85-line Layout Scaffolding logic lives in `skills/roadmap.md` (lines 567-658).
-Until extracted, the two flows duplicate the same canonical-path knowledge with
-drift risk. Collides with Group 20 on `skills/roadmap.md` and with Group 22 on
-`bin/gstack-extend`, so it lands after both. Source:
-[plan-ceo-review:track=12A] reviewer finding #1.
-
-##### Track 21A: Extract Layout Scaffolding into shared helper
-_1 task . ~120 LOC . low risk . [shared lib extraction]_
-_touches: skills/roadmap.md, bin/lib/layout-scaffold.sh, bin/gstack-extend_
-- **Layout Scaffolding shared helper** -- pull the ~85 lines of Layout Scaffolding logic currently inline in `skills/roadmap.md` (lines 567-658) into a shared helper consumable by both `/roadmap` (in-flight project fix) and `gstack-extend init` (day-zero scaffold). 12A's inline minimal scaffold gets replaced by a call to the same helper so future audit-gate refinements update one place. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
-
-### Group 22: Track 12A Init Polish
-
-_Depends on: Group 20_
-
-Low-priority polish bundle surfaced by pre-landing `/review` on Track 12A
-(merged v0.21.0.0). None blocking; mostly test-coverage hardening + small
-refactors on the `gstack-extend init` surface. Consolidated into one Track.
-Sequenced in the scaffolding lane (Group 20 → 22 → 21) to cap concurrent WIP;
-the only hard edge is Group 21 depending on this Group's `bin/gstack-extend` work.
-
-##### Track 22A: 12A init-surface polish + test coverage
-_1 task . ~200 LOC . low risk . [init bin + registry + init tests]_
-_touches: bin/gstack-extend, bin/lib/projects-registry.sh, tests/init-*.test.ts, tests/helpers/init-scope.ts, skills/gstack-extend-init.md_
-- **Init polish + coverage** -- (a) audit-failure path test (PATH-shim non-zero `roadmap-audit`, assert exit 1 + "audit FAILED" + "--migrate" hint + files-on-disk); (b) concurrent registry-write test (5-10 parallel `registry_upsert`, assert valid JSON); (c) `validate_name` edge-case tests (`..`, `.`, leading-dash, empty, Unicode); (d) `lang_detect` precedence tests; (e) setup self-register fail-soft test (corrupt projects.json → exit 0 + note); (f) `render_all` map ↔ CANONICAL_FILES DRY refactor; (g) extract shared `mkScope` tmpdir helper to `tests/helpers/init-scope.ts`; (h) `env -u GSTACK_EXTEND_STATE_DIR` guard on setup self-register; (i) mirror multi-hop readlink walker in skill preamble; (j) trim fresh-init audit output to non-pass sections. Registry slug-collision + orphan items deferred to a future `doctor` Track. _~200 lines._ (M) _Source: [review:track=12A]._
+_touches: .claude/skills/SKILL.md.tmpl (new), setup_
+_blocked-by: Track 15A, Track 15E, Track 16A, Track 16B, Track 16C, Track 16D_
+_read-first: 15A, 16A, 16B, 16C, 16D_
+_produces: SKILL.md.tmpl carrying canonical fragments; new skills inherit them_
+- **Promote canonical fragments into a shared template** -- write `.claude/skills/SKILL.md.tmpl` from the fragments 15A locked and 16A–D left intact. Wire `setup` so new skills inherit the template. _.claude/skills/SKILL.md.tmpl (new), setup, ~150 lines._ (M)
 
 ### Execution Map
 
-Adjacency list:
+Adjacency list (from `bin/roadmap-pack`):
 ```
-- Group 14 ← {}
 - Group 15 ← {}
 - Group 16 ← {15}
 - Group 17 ← {15, 16}
-- Group 18 ← {}
-- Group 19 ← {18}
-- Group 20 ← {}
-- Group 21 ← {20, 22}
-- Group 22 ← {20}
 ```
 
 Track detail per group:
 ```
-Group 14: Fix parsers-roadmap Group 6 completeness (P1)
-  +-- Track 14A .......... ~S . 1 task
+Group 15: Canonical Locks ∥ Migrations ∥ Audit Gate ∥ Scaffold Preflight ∥ Init Polish
+  +-- Track 15A .......... ~S . 3 tasks (fragments + drift + SKILLS helper)
+  +-- Track 15B .......... ~S . 1 task (migrations runner)
+  +-- Track 15C .......... ~S . 1 task (docs/-absent gate + archive path)
+  +-- Track 15D .......... ~S . 1 task (realpath preflight)
+  +-- Track 15E .......... ~M . 2 tasks (init tests + init code polish)
 
-Group 15: Canonical fragments + section-name drift test
-  +-- Track 15A .......... ~S . 2 tasks
-
-Group 16: Skill-file trims (parallel)
-  +-- Track 16A .......... ~M . 1 task (trim pair-review)
-  +-- Track 16B .......... ~M . 1 task (trim full-review)
+Group 16: Skill-File Trims ∥ Layout Scaffold Extract
+  +-- Track 16A .......... ~S . 1 task (trim pair-review)
+  +-- Track 16B .......... ~S . 1 task (trim full-review)
   +-- Track 16C .......... ~S . 1 task (trim review-apparatus)
-  +-- Track 16D .......... ~M . 1 task (trim test-plan)
+  +-- Track 16D .......... ~S . 1 task (trim test-plan)
+  +-- Track 16E .......... ~S . 1 task (layout-scaffold helper)
 
 Group 17: SKILL.md.tmpl promotion
   +-- Track 17A .......... ~M . 1 task
-
-Group 18: Migrations runner parity
-  +-- Track 18A .......... ~S . 1 task
-
-Group 19: Tighten docs/-absent audit gate
-  +-- Track 19A .......... ~S . 1 task
-
-Group 20: Realpath preflight for Layout Scaffolding
-  +-- Track 20A .......... ~S . 1 task
-
-Group 21: Extract Layout Scaffolding into shared helper
-  +-- Track 21A .......... ~S . 1 task
-
-Group 22: Track 12A init polish
-  +-- Track 22A .......... ~M . 1 task
 ```
 
-**Total: 0 phases . 9 groups . 10 tracks remaining.**
+**Total: 0 phases . 3 groups . 11 tracks remaining.**
 
 ---
 
 ## Future
 
-- **Major version boundary detection** — When VERSION bumps to a new major (e.g., 0.x → 1.x), `/roadmap` should detect the boundary and offer to promote items from `## Future` into the current scope. Add detection logic to `src/audit/` and re-triage flow to `skills/roadmap.md`. _Source: prior Track 6A; deferred because it requires an external 0.x → 1.x bump to validate against, and the project is at 0.20.x with no major bump on the horizon. M effort (~80 LOC)._
-- **Multi-agent test orchestration** — Each test group assigned to a separate Conductor agent. session.yaml as coordination point, groups as independent files so agents don't conflict. Parallel testing for large suites (15-20 items). _Deferred because: depends on /pair-review v1 proven reliable and Conductor agent API maturity. L effort (~2 weeks human / ~2 hours CC)._
-- **Shared-infra auto-detect from git history** — Compute the shared-infra list automatically by scanning the last 20 merged PRs for files modified in ≥40% of them. Replaces `docs/shared-infra.txt` hand-maintenance. _Deferred because: ships hand-curated list first; revisit after 4+ weeks of cohort usage. M effort (~1 day human / ~30 min CC)._
-- **Cohort retrospective telemetry** — Log per-cohort merge outcomes (parallel tracks merged clean? hotfix count? mid-flight splits?) to `~/.gstack/analytics/cohort-outcomes.jsonl`. Data-driven tuning of the size-cap ceilings. _Deferred because: requires 10+ real cohorts of usage data before signal emerges. M effort (~1 day human / ~40 min CC)._
-- **Eval persistence + reader + comparator + regression gate** — Port `tests/helpers/eval-store.ts` from gstack proper (types, `getProjectEvalDir` with lazy memoization + design-doc fallback, transcript writer); reader (`findPreviousRun`, `compareEvalResults`, `extractToolSummary`, `totalToolCount`, `findBudgetRegressions`, `assertNoBudgetRegression`, `runBudgetCheck`); active `tests/skill-budget-regression.test.ts`. _Deferred because: no Track in this codebase currently produces eval-store data; shipping types + a skipped test alone would just bury infrastructure under a permanently-skipped test. Unblocks the day a Track that captures skill transcripts exists. M effort (~400–500 LOC)._
-- **gbrain-sync allowlist for `~/.gstack/projects/*/evals/`** — Once a transcript producer exists, add the evals dir to gbrain-sync's allowlist (or denylist) in gstack proper so transcripts don't auto-sync to a private GitHub repo. _Deferred because: requires the producer to land first; cross-repo (gstack proper, not gstack-extend). S effort (~30 min)._
-- **Eval dir retention / pruning policy** — Time-based ('drop files >30 days'), count-based ('keep last N per branch + tier'), or scenario-indexed ('prune older runs of the same {skill, scenario, model}') pruning of `~/.gstack/projects/<slug>/evals/`. _Deferred because: no eval-write rate exists yet to design against; pairs with the eval-persistence item above. S–M effort._
-- **Audit fail-taxonomy calibration** — Review `src/audit/` STATUS emit decisions; downgrade `ARCHIVE_CANDIDATES` to warn; design narrow waiver mechanism for `SIZE` (per-track + reason + optional expiry, NOT vague italic markers). _Deferred because: a separate `/plan-eng-review` on the audit's policy surface, not in scope for any current Group. M effort._
-- **Deduplicate SKILLS list across `setup` + `tests/skill-protocols.test.ts`** — Extract to `tests/helpers/parse-setup-skills.ts` and consume from the protocols test. Closes the third drift channel for the canonical skill list. _Deferred because: pairs naturally with Group 15's canonical extraction work. S effort._
-- **Codex host support in `setup`** — `setup --host claude|codex|auto` flag (and matching uninstall path) targeting `~/.codex/skills/{skill}/SKILL.md` so Codex CLI users can consume the gstack-extend skills. Pre-existing TODOS work captures Codex-specific gates: frontmatter `description:` ≤ 1024 chars (4 of 5 skills exceed today; re-measure after Group 16 simplification), preamble probe path fallthrough, cross-skill reference fix at `skills/test-plan.md:232`. _Deferred until after Group 16 simplification settles description lengths. S-M effort._
-- **Update `state-sections.ts` MIGRATION_NEEDED message to new archive path** — `src/audit/checks/state-sections.ts:74` emits a `MIGRATION_NEEDED` error pointing at `docs/designs/roadmap-v2-state-model.md`. The doc was archived to `docs/archive/roadmap-v2-state-model.md` on 2026-05-14. The error message will mis-route any user who triggers it. _Deferred because: /roadmap's hard gate is doc-only — TS source string update belongs in a code-touching PR. Trivially absorbed into the next audit-touching Track (G19) or a hotfix. S effort (~3 lines)._
+- **Major version boundary detection** — When VERSION bumps to a new major (e.g., 0.x → 1.x), `/roadmap` should detect the boundary and offer to promote items from `## Future` into the current scope. Add detection logic to `src/audit/` and re-triage flow to `skills/roadmap.md`. _Source: prior Track 6A; deferred because it needs an external 0.x → 1.x bump to validate against, and the project is at 0.23.x with no major bump on the horizon._
+- **Multi-agent test orchestration** — Each test group assigned to a separate Conductor agent. session.yaml as coordination point, groups as independent files so agents don't conflict. Parallel testing for large suites (15-20 items). _Deferred because: depends on /pair-review v1 proven reliable and Conductor agent API maturity._
+- **Shared-infra auto-detect from git history** — Compute the shared-infra list automatically by scanning the last 20 merged PRs for files modified in ≥40% of them. Replaces `docs/shared-infra.txt` hand-maintenance. _Deferred because: ships hand-curated list first; revisit after 4+ weeks of cohort usage._
+- **Cohort retrospective telemetry** — Log per-cohort merge outcomes (parallel tracks merged clean? hotfix count? mid-flight splits?) to `~/.gstack/analytics/cohort-outcomes.jsonl`. Data-driven tuning of the size-cap ceilings. _Deferred because: requires 10+ real cohorts of usage data before signal emerges._
+- **Eval persistence + reader + comparator + regression gate** — Port `tests/helpers/eval-store.ts` from gstack proper (types, `getProjectEvalDir` with lazy memoization + design-doc fallback, transcript writer); reader (`findPreviousRun`, `compareEvalResults`, `extractToolSummary`, `totalToolCount`, `findBudgetRegressions`, `assertNoBudgetRegression`, `runBudgetCheck`); active `tests/skill-budget-regression.test.ts`. _Deferred because: no Track in this codebase currently produces eval-store data._
+- **gbrain-sync allowlist for `~/.gstack/projects/*/evals/`** — Once a transcript producer exists, add the evals dir to gbrain-sync's allowlist (or denylist) in gstack proper so transcripts don't auto-sync to a private GitHub repo. _Deferred because: requires the producer to land first; cross-repo (gstack proper, not gstack-extend)._
+- **Eval dir retention / pruning policy** — Time-based, count-based, or scenario-indexed pruning of `~/.gstack/projects/<slug>/evals/`. _Deferred because: no eval-write rate exists yet to design against._
+- **Audit fail-taxonomy calibration** — Review `src/audit/` STATUS emit decisions; downgrade `ARCHIVE_CANDIDATES` to warn; design narrow waiver mechanism for `SIZE` (per-track + reason + optional expiry). _Deferred because: a separate `/plan-eng-review` on the audit's policy surface._
+- **Frontmatter `description:` ≤ 1024 for Codex** — 4 of 5 skills exceeded the Codex description cap at last measure. Re-measure after Group 16 trims; shorten any that still overflow. Host install itself shipped in v0.22.3.0. _Leftover from the old Codex-host Future item._
 
 ## Shipped
 
@@ -289,3 +222,6 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 
 #### Group 13: Telemetry Parity with Gstack ✓ Shipped (v0.22.0.0)
 - Track 13A — _shipped (v0.22.0.0): bin/gstack-extend-telemetry wrapper + canonical preamble/epilogue blocks in 5 skill files. Every extend skill activation now writes start + end lines to ~/.gstack/analytics/skill-usage.jsonl with extend:<skill> name and source:gstack-extend field; mind-meld retro / /retro pick up extend activity with zero downstream changes. Wrapper falls back silently when gstack isn't installed. Drift-lock test extracts canonical blocks from skills/full-review.md and asserts each other skill embeds the templated variant. Opportunistic contract test catches future gstack flag renames._
+
+#### Group 14: Fix `parsers-roadmap` Group 6 Completeness Failure ✓ Shipped (v0.22.0.2)
+- Track 14A — _shipped (v0.22.0.2): dropped volatile live-ROADMAP assertions; added a synthetic state-section enclosure fixture. Parser untouched._

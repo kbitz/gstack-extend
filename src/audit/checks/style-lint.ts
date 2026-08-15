@@ -13,10 +13,15 @@
  * string verbatim and renders via `echo -e`, no ` -` adornment.
  */
 
+import { tracksForPacker } from './packing.ts';
+import { unorderedCollisions } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
   const warnings: string[] = [...ctx.roadmap.value.styleLintWarnings];
+  for (const w of unorderedCollisions(tracksForPacker(ctx))) {
+    warnings.push(w);
+  }
 
   // 2. Intra-group track dep cycles.
   for (const cyc of ctx.roadmap.value.trackDepCycles) {

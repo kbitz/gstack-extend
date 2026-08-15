@@ -120,6 +120,7 @@ function defaultParsedRoadmap(overrides: Partial<ParsedRoadmap> = {}): ParserRes
       hasV2Grammar: false,
       futureBullets: [],
       futureMalformed: [],
+      effortTagFindings: [],
       ...overrides,
     },
     errors: [],

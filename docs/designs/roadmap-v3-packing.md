@@ -5,8 +5,8 @@ LLM drafts Tracks; `bin/roadmap-pack` assigns Groups.
 
 ## Rules
 
-- Unspecified `_Depends on:_` is **none**. Serial is opt-in.
-- Session weight: S=1, M=2, L=4, XL=forbidden. Cap 4. A task tagged `~N lines (del)` is S; title verbs are not enough.
+- Unspecified Group `_Depends on:_` is **none**. Serial is opt-in. Group `_Depends on:` is packer **output** (`DEPENDS` lines), not input. Pack from a draft with `--from` / `--stdin`. `BINS: EMPTY` = no unshipped Tracks; `BINS: CYCLE` = `_blocked-by` loop.
+- Session weight: S=1, M=2, L=4, XL=5. Weight 5 warns (`WEIGHT_WARN`); ≥6 fails. A task tagged `~N lines (del)` is S; title verbs are not enough.
 - Markdown-only and delete-only Tracks skip the code file-fanout cap.
 - Shared docs are not collisions. `CLAUDE.md` is, one Track per Group.
 - `PACKING` fails when written Groups ≠ packer bins. Live `Hotfix:` Groups are excluded from both sides.

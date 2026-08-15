@@ -89,6 +89,7 @@ export function computeRenames(oldRoadmap: string, newRoadmap: string): Rename[]
     group: new Set(),
     track: new Set(),
   };
+  const claimedNew = new Set<string>();
   for (const e of oldEntities) {
     if (e.title === '') continue;
     if (seenOldTitles[e.kind].has(e.title)) continue; // first-occurrence wins
@@ -96,7 +97,26 @@ export function computeRenames(oldRoadmap: string, newRoadmap: string): Rename[]
     const newId = newByTitle[e.kind].get(e.title);
     if (newId === undefined) continue;
     if (newId === e.id) continue;
+    claimedNew.add(`${e.kind}:${newId}`);
     renames.push({ kind: e.kind, oldId: e.id, newId, title: e.title });
+  }
+
+  // Family-ID splits: 101C → 101C.1 when title matching missed (split
+  // titles often change) but the new ID is the old ID plus a dot suffix.
+  const usedOld = new Set(renames.map((r) => `${r.kind}:${r.oldId}`));
+  const newByKind: Record<EntityKind, Entity[]> = { group: [], track: [] };
+  for (const e of newEntities) newByKind[e.kind].push(e);
+  for (const e of oldEntities) {
+    if (e.kind !== 'track') continue;
+    if (usedOld.has(`track:${e.id}`)) continue;
+    const kids = newByKind.track
+      .filter((n) => n.id === `${e.id}.1` || n.id.startsWith(`${e.id}.`))
+      .sort((a, b) => (a.id < b.id ? -1 : 1));
+    const kid = kids[0];
+    if (kid === undefined) continue;
+    if (claimedNew.has(`track:${kid.id}`)) continue;
+    claimedNew.add(`track:${kid.id}`);
+    renames.push({ kind: 'track', oldId: e.id, newId: kid.id, title: kid.title });
   }
   return renames;
 }

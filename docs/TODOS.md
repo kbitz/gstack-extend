@@ -2,4 +2,4 @@
 
 ## Unprocessed
 
-_(inbox empty — all items routed into docs/ROADMAP.md)_
+_(inbox empty — v0.23 packer dogfood items implemented on this branch)_

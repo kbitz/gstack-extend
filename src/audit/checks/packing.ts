@@ -3,9 +3,8 @@
  *
  * Builds PackTracks from unshipped, non-legacy, non-hotfix-group Tracks.
  * Hotfix Groups are not packer bins — STRUCTURE owns the 1-track rule.
- * Group-level `_Depends on: Group N` (explicit list) inherits as
- * blocked-by every live Track in those Groups. Unspecified group deps
- * are none (v3) and do not create edges.
+ * Packer input is track-level `_blocked-by:` + `_touches:` only.
+ * Group-level `_Depends on:` is derived output / validation, not input.
  */
 
 import { packingDrift, packTracks, type PackResult, type PackTrack } from '../lib/pack.ts';
@@ -14,7 +13,6 @@ import type { AuditCtx, CheckResult } from '../types.ts';
 export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
   const groups = ctx.roadmap.value.groups;
   const tracks = ctx.roadmap.value.tracks;
-  const byId = new Map(tracks.map((t) => [t.id, t]));
   const liveIds = new Set(
     tracks.filter((t) => t.state !== 'shipped' && !t.legacy).map((t) => t.id),
   );
@@ -25,23 +23,10 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
     if (t.state === 'shipped' || t.legacy) continue;
     const g = groupByNum.get(t.groupNum);
     if (g?.isHotfix) continue;
-    const blocked = new Set(t.blockedBy.filter((id) => liveIds.has(id)));
-    if (g !== undefined && g.deps.kind === 'list') {
-      for (const depNum of g.deps.depNums) {
-        const depG = groupByNum.get(depNum);
-        if (depG === undefined) continue;
-        for (const tid of depG.trackIds) {
-          const depT = byId.get(tid);
-          if (depT === undefined) continue;
-          if (depT.state === 'shipped' || depT.legacy) continue;
-          if (tid !== t.id) blocked.add(tid);
-        }
-      }
-    }
     out.push({
       id: t.id,
       touches: t.touches,
-      blockedBy: [...blocked],
+      blockedBy: t.blockedBy.filter((id) => liveIds.has(id)),
       isHotfix: false,
     });
   }
@@ -69,7 +54,7 @@ export function writtenUnshippedGroups(ctx: AuditCtx): string[][] {
 function missingCollisionDeps(ctx: AuditCtx, packed: PackResult): string[] {
   const trackGroup = new Map(ctx.roadmap.value.tracks.map((t) => [t.id, t.groupNum]));
   const groupByNum = new Map(ctx.roadmap.value.groups.map((g) => [g.num, g]));
-  const findings: string[] = [];
+  const counts = new Map<string, number>();
   for (const bin of packed.bins) {
     if (bin.blockedByTracks.length === 0) continue;
     const binGroups = new Set<string>();
@@ -85,12 +70,18 @@ function missingCollisionDeps(ctx: AuditCtx, packed: PackResult): string[] {
         if (aNum === undefined || aNum === gNum) continue;
         const listed = g.deps.kind === 'list' && g.deps.depNums.includes(aNum);
         if (!listed) {
-          findings.push(
-            `- Group ${gNum} is packer-blocked by Group ${aNum} (${blocker} → ${bin.trackIds.join(',')}) but has no \`_Depends on: Group ${aNum}_\``,
-          );
+          const key = `${gNum}\t${aNum}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
         }
       }
     }
+  }
+  const findings: string[] = [];
+  for (const [key, n] of [...counts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const [gNum, aNum] = key.split('\t');
+    findings.push(
+      `- Group ${gNum} ← Group ${aNum} missing \`_Depends on: Group ${aNum}_\` (${n} track-level edge${n === 1 ? '' : 's'})`,
+    );
   }
   return findings;
 }
@@ -105,7 +96,7 @@ export function runCheckPacking(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const packed = packTracks(input);
+  const packed = packTracks(input, { target: ctx.parallelismCap });
   const written = writtenUnshippedGroups(ctx);
   const drift = packingDrift(written, packed);
   const edgeGaps = missingCollisionDeps(ctx, packed);
