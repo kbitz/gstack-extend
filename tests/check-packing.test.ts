@@ -143,6 +143,21 @@ describe('packing hotfix contract', () => {
     expect(lines[0]).toContain('2 track-level edges');
   });
 
+  test('seven disjoint tracks at cap 6 are two bins, not one of 7', () => {
+    const ids = ['1A', '1B', '1C', '1D', '1E', '1F', '1G'];
+    const ctx = makeCtx({
+      parallelismCap: 6,
+      parsedRoadmap: {
+        groups: [group('1', 'Wide', ids)],
+        tracks: ids.map((id) => track(id, '1', { touches: [`src/${id}.ts`] })),
+      },
+    });
+    const r = runCheckPacking(ctx);
+    expect(r.status).toBe('fail');
+    expect(r.body.join('\n')).toContain('packer bins');
+    expect(r.body.join('\n')).not.toMatch(/packer bins\s+\[[^\]]*1A,1B,1C,1D,1E,1F,1G\]/);
+  });
+
   test('hotfix-only plan skips PACKING', () => {
     const ctx = makeCtx({
       parsedRoadmap: {

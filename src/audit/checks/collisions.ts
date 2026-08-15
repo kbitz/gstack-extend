@@ -18,12 +18,11 @@
  *   STATUS: pass | fail | skip
  *   FINDINGS: per-collision (or "- (none)")
  *   [GROUP_SIZE_WARNINGS:]
- *   MAX_TRACKS_PER_GROUP: N
+ *   MAX_TRACKS_PER_GROUP: N   (fillCap(parallelism_cap) — not a separate ceiling)
  *   SHARED_INFRA_STATUS: missing | loaded
  */
 
-import { ceiling } from '../lib/effort.ts';
-import { isSharedDoc, normalizeTouch, touchesIntersect } from '../lib/pack.ts';
+import { fillCap, isSharedDoc, normalizeTouch, touchesIntersect } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckCollisions(ctx: AuditCtx): CheckResult {
@@ -35,7 +34,7 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const maxTracksPerGroup = ceiling('max_tracks_per_group');
+  const maxTracksPerGroup = fillCap(ctx.parallelismCap);
   const sharedSet = ctx.sharedInfra.status === 'loaded' ? ctx.sharedInfra.files : new Set<string>();
   const trackById = new Map(ctx.roadmap.value.tracks.map((t) => [t.id, t]));
 
@@ -55,7 +54,7 @@ export function runCheckCollisions(ctx: AuditCtx): CheckResult {
 
     if (tracks.length > maxTracksPerGroup) {
       groupSizeWarnings.push(
-        `- Group ${g.num}: ${tracks.length} active tracks exceeds max_tracks_per_group=${maxTracksPerGroup}`,
+        `- Group ${g.num}: ${tracks.length} active tracks exceeds fill cap ${maxTracksPerGroup} (parallelism_cap)`,
       );
     }
 

@@ -7,7 +7,7 @@
  * Group-level `_Depends on:` is derived output / validation, not input.
  */
 
-import { packingDrift, packTracks, type PackResult, type PackTrack } from '../lib/pack.ts';
+import { fillCap, packingDrift, packTracks, type PackResult, type PackTrack } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
@@ -96,7 +96,8 @@ export function runCheckPacking(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const packed = packTracks(input, { target: ctx.parallelismCap });
+  const cap = fillCap(ctx.parallelismCap);
+  const packed = packTracks(input, { target: cap, maxPerBin: cap });
   const written = writtenUnshippedGroups(ctx);
   const drift = packingDrift(written, packed);
   const edgeGaps = missingCollisionDeps(ctx, packed);

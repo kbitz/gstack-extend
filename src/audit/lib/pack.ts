@@ -2,14 +2,17 @@
  * pack.ts — theme-blind Track packer and scheduler.
  *
  * Input: unshipped Tracks with `_touches:_` and `_blocked-by:`.
- * Output: layers × bins. A bin is a launch Group (target = parallelism_cap,
- * hard max 8). Objective: minimize dependency layers, fill bins up to cap.
+ * Output: layers × bins. A bin is a launch Group. Fill width is one number
+ * (`fillCap` = min(parallelism_cap, hard max 8)). FFD and tail-absorb
+ * both use it — a leftover over the cap stays a ready sibling, never a
+ * bin of 7 when the ceiling is 6.
  *
- * Layers are serial (explicit blocked-by, plus collision spill).
+ * Layers are serial (explicit blocked-by, plus collision spill). After
+ * packing, layers are recomputed from the bin DAG so a displaced blocker
+ * sits before its dependents. Bins are returned in topological order so
+ * DEPENDS `Group <bin N>` is paste-ready.
  * Capacity overflow stays in the same layer (parallel ready).
  * File-collision spill is a later layer — never two ready bins on one path.
- * Thin waves are usually group-dep inheritance (removed); the packer
- * fills to cap and reports CRITICAL_PATH so a human can see the cost.
  *
  * Shared docs are excluded from collision. A path ending in `/` is a
  * directory prefix. `path (new)` is the same path without the marker.
@@ -19,6 +22,14 @@
  */
 
 export const PACK_TARGET = 6;
+export const PACK_HARD_MAX = 8;
+
+/** Single fill width for FFD and tail-absorb. */
+export function fillCap(target = PACK_TARGET, hardMax = PACK_HARD_MAX): number {
+  const t = target > 0 ? target : PACK_TARGET;
+  const h = hardMax > 0 ? hardMax : PACK_HARD_MAX;
+  return Math.min(t, h);
+}
 
 export const SHARED_DOC_PATHS = new Set([
   'docs/ROADMAP.md',
@@ -223,8 +234,8 @@ export function packTracks(
   opts: { target?: number; maxPerBin?: number } = {},
 ): PackResult {
   const target = opts.target ?? PACK_TARGET;
-  const maxPerBin = opts.maxPerBin ?? 8;
-  const capacity = Math.min(target, maxPerBin);
+  const maxPerBin = opts.maxPerBin ?? PACK_HARD_MAX;
+  const capacity = fillCap(target, maxPerBin);
 
   const live = tracks.filter((t) => t.id !== '');
   if (live.length === 0) return { bins: [], criticalPath: [], cycles: [] };
@@ -285,7 +296,7 @@ export function packTracks(
       }
     }
 
-    absorbTails(layerBins, maxPerBin);
+    absorbTails(layerBins, capacity);
 
     for (const bin of layerBins) {
       const blocked = new Set<string>();
@@ -303,11 +314,46 @@ export function packTracks(
     }
   }
 
+  const ordered = relayerAndSort(bins);
   return {
-    bins,
-    criticalPath: cycles.length > 0 ? [] : computeCriticalPath(bins),
+    bins: ordered,
+    criticalPath: cycles.length > 0 ? [] : computeCriticalPath(ordered),
     cycles,
   };
+}
+
+/** Recompute layers from the bin DAG, then sort so bin index = paste order. */
+export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
+  if (bins.length === 0) return bins;
+  const idx = new Map<string, number>();
+  for (let i = 0; i < bins.length; i++) {
+    for (const id of bins[i]!.trackIds) idx.set(id, i);
+  }
+  const memo = new Map<number, number>();
+  const walking = new Set<number>();
+  function layerOf(i: number): number {
+    const cached = memo.get(i);
+    if (cached !== undefined) return cached;
+    if (walking.has(i)) return 0;
+    walking.add(i);
+    let maxDep = -1;
+    for (const b of bins[i]!.blockedByTracks) {
+      const j = idx.get(b);
+      if (j === undefined || j === i) continue;
+      maxDep = Math.max(maxDep, layerOf(j));
+    }
+    walking.delete(i);
+    const layer = maxDep + 1;
+    memo.set(i, layer);
+    return layer;
+  }
+  const relayered = bins.map((b, i) => ({ ...b, layer: layerOf(i) }));
+  return relayered.sort((a, b) => {
+    if (a.layer !== b.layer) return a.layer - b.layer;
+    const a0 = a.trackIds[0] ?? '';
+    const b0 = b.trackIds[0] ?? '';
+    return a0 < b0 ? -1 : a0 > b0 ? 1 : 0;
+  });
 }
 
 /**
@@ -372,7 +418,7 @@ export function formatPackOutput(packed: PackResult, opts: { emptyHint?: string 
     return `BINS: EMPTY (${opts.emptyHint ?? 'no unshipped Tracks'})\n`;
   }
   const lines: string[] = ['BINS:'];
-  const ordered = [...packed.bins].sort((a, b) => a.layer - b.layer);
+  const ordered = relayerAndSort(packed.bins);
   for (let i = 0; i < ordered.length; i++) {
     const b = ordered[i]!;
     const deps = b.blockedByTracks.length === 0 ? '{}' : `{${b.blockedByTracks.join(',')}}`;

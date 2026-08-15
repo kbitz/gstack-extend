@@ -25,7 +25,7 @@ export type CeilingKey =
   | 'max_tasks_per_track'
   | 'max_loc_per_track'
   | 'max_files_per_track'
-  | 'max_tracks_per_group'
+  | 'max_tracks_per_group' // unused by audit; group width is fillCap(parallelism_cap)
   | 'max_session_weight';
 
 const EFFORT_DEFAULTS: Record<EffortTier, number> = {
