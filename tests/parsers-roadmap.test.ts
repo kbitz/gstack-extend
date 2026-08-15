@@ -781,4 +781,20 @@ describe('mergeShippedArchive', () => {
     expect(m.value.groups).toEqual([]);
     expect(m.value.tracks).toEqual([]);
   });
+
+  test('unions tombstones; active order wins on overlap', () => {
+    const active = parseRoadmap(
+      '## Current Plan\n_tombstone: 84, 90_\n#### Group 2: Live\n',
+      deps(),
+    );
+    const archive = parseRoadmap(
+      '## Shipped\n_tombstone: 90, 86_\n#### Group 1: Old\n',
+      deps(),
+    );
+    expect(mergeShippedArchive(active, archive).value.tombstones).toEqual(['84', '90', '86']);
+    expect(mergeShippedArchive(active, parseRoadmap('', deps())).value.tombstones).toEqual([
+      '84',
+      '90',
+    ]);
+  });
 });

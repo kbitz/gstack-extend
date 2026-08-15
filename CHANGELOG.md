@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Packing is invariant under ID rename and regroup.** FFD, bin membership, and same-layer order tie-break by packIdent (scheduling touches + normalized title), never by ID or live document order. Write-then-renumber is a fixpoint. Identical packIdent pairs warn in STYLE_LINT.
+- **Packing is invariant under ID rename and regroup.** FFD, bin membership, and same-layer order tie-break by packIdent (scheduling touches + title with IDs stripped), never by ID or live document order. Write-then-renumber is a fixpoint. Identical packIdent pairs warn in STYLE_LINT. STYLE_LINT closes the bin DAG at the same fillCap as PACKING.
+- **`roadmap-renumber` only rewrites real IDs.** Group numbers need a `Group ` / `group=` left context (a bare `6` is a count). Track IDs skip filenames, `item=`, and version tails. Maps reject kind flips and duplicate destinations. STRUCTURE fails an unshipped Track whose letter is not its Group.
 - **STYLE_LINT unordered-collision uses the closed DAG.** Warn only when a colliding pair has no path in `_blocked-by`, the packer bin DAG, or written Group `_Depends on:`. Packer-serialized same-file pairs and wave-1-vs-wave-9 pairs stop flooding the lint. Bolt @ 3db617c7: 253 warns → 8 (the remaining 8 are parallel branches with no path).
 
 ### Added

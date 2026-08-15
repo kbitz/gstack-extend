@@ -145,6 +145,15 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     );
   }
 
+  for (const t of ctx.roadmap.value.tracks) {
+    if (t.state === 'shipped' || t.legacy) continue;
+    if (t.groupNum === '0') continue;
+    if (new RegExp(`^${t.groupNum}[A-Z]`).test(t.id)) continue;
+    findings.push(
+      `- Track ${t.id} is not a letter of Group ${t.groupNum} — recycle so the letter matches the Group`,
+    );
+  }
+
   const trackIds = new Set(ctx.roadmap.value.tracks.map((t) => t.id));
   for (const t of ctx.roadmap.value.tracks) {
     if (t.state === 'shipped' || t.legacy) continue;

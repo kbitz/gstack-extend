@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { runCheckStructure } from '../src/audit/checks/structure.ts';
-import type { GroupInfo } from '../src/audit/parsers/roadmap.ts';
+import type { GroupInfo, TrackInfo } from '../src/audit/parsers/roadmap.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
 
 function group(num: string, state: GroupInfo['state']): GroupInfo {
@@ -52,5 +52,41 @@ describe('STRUCTURE tombstones', () => {
     });
     const r = runCheckStructure(ctx);
     expect(r.status).toBe('pass');
+  });
+
+  test('unshipped Track letter must match its Group', () => {
+    const wrong: TrackInfo = {
+      id: '92A',
+      groupNum: '91',
+      state: 'current-plan',
+      isComplete: false,
+      title: 'Wrong letter',
+      touches: ['a.ts'],
+      filesCount: 1,
+      tasksCount: 1,
+      loc: 0,
+      sessionWeight: 1,
+      deleteOnly: false,
+      markdownOnly: false,
+      out: [],
+      readFirst: [],
+      produces: null,
+      blockedBy: [],
+      legacy: false,
+      deps: [],
+      depsFreetext: false,
+      bannedPrSplit: false,
+      untaggedWriteTasks: 0,
+    };
+    const ctx = makeCtx({
+      roadmap: CARD,
+      parsedRoadmap: {
+        groups: [group('91', 'current-plan')],
+        tracks: [wrong],
+      },
+    });
+    const r = runCheckStructure(ctx);
+    expect(r.status).toBe('fail');
+    expect(r.body.some((l) => l.includes('92A') && l.includes('Group 91'))).toBe(true);
   });
 });

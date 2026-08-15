@@ -29,7 +29,15 @@ export function parseMapArg(raw: string): RenameMap {
     if (!ID_RE.test(oldId) || !ID_RE.test(newId)) {
       throw new Error(`bad map ids: ${oldId}=${newId}`);
     }
+    const oldGroup = /^[0-9]+$/.test(oldId);
+    const newGroup = /^[0-9]+$/.test(newId);
+    if (oldGroup !== newGroup) {
+      throw new Error(`kind flip: ${oldId}=${newId}`);
+    }
     if (map.has(oldId)) throw new Error(`duplicate old id: ${oldId}`);
+    for (const dest of map.values()) {
+      if (dest === newId) throw new Error(`duplicate new id: ${newId}`);
+    }
     map.set(oldId, newId);
   }
   if (map.size === 0) throw new Error('empty map');
@@ -71,20 +79,25 @@ export type ApplyResult = {
   skippedHistorical: { id: string; snippet: string }[];
 };
 
-export function applyRenames(text: string, map: RenameMap): ApplyResult {
+function applyOne(text: string, map: RenameMap, kind: 'track' | 'group'): ApplyResult {
   if (map.size === 0) return { text, replaced: 0, skippedHistorical: [] };
   const olds = [...map.keys()].sort((a, b) => b.length - a.length);
-  // `.` is sentence punctuation (`Track 101A.`) unless a digit follows (`101A.1`).
-  const re = new RegExp(
-    `(?<![0-9A-Za-z])(${olds.map(escapeRe).join('|')})(?![0-9A-Za-z])(?!\\.[0-9])`,
-    'g',
-  );
+  const alt = olds.map(escapeRe).join('|');
+  // Tracks: not inside a token, path, version, or `item=`. `101A.` is sentence-final.
+  // Groups: only `Group 91` / `group=91` — a bare `6` is a count, not an ID.
+  const re =
+    kind === 'group'
+      ? new RegExp(`(?<=Group |group=)(${alt})(?![0-9A-Za-z])(?!\\.[0-9A-Za-z])`, 'g')
+      : new RegExp(
+          `(?<!item=)(?<![0-9A-Za-z./-])(${alt})(?![0-9A-Za-z])(?!\\.[0-9A-Za-z])`,
+          'g',
+        );
   const skippedHistorical: { id: string; snippet: string }[] = [];
   let replaced = 0;
   const parts: string[] = [];
   let last = 0;
   for (const m of text.matchAll(re)) {
-    const match = m[0];
+    const match = m[1] ?? m[0];
     const offset = m.index ?? 0;
     parts.push(text.slice(last, offset));
     if (isHistoricalContext(text, offset, match.length)) {
@@ -106,6 +119,19 @@ export function applyRenames(text: string, map: RenameMap): ApplyResult {
   }
   parts.push(text.slice(last));
   return { text: parts.join(''), replaced, skippedHistorical };
+}
+
+export function applyRenames(text: string, map: RenameMap): ApplyResult {
+  if (map.size === 0) return { text, replaced: 0, skippedHistorical: [] };
+  const tracks = new Map([...map].filter(([oldId]) => !/^[0-9]+$/.test(oldId)));
+  const groups = new Map([...map].filter(([oldId]) => /^[0-9]+$/.test(oldId)));
+  const first = applyOne(text, tracks, 'track');
+  const second = applyOne(first.text, groups, 'group');
+  return {
+    text: second.text,
+    replaced: first.replaced + second.replaced,
+    skippedHistorical: [...first.skippedHistorical, ...second.skippedHistorical],
+  };
 }
 
 export function formatRenamesList(map: RenameMap): string {

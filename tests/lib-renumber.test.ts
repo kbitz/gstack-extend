@@ -20,6 +20,11 @@ describe('parseMapArg', () => {
     expect(() => parseMapArg('foo')).toThrow('bad map entry');
     expect(() => parseMapArg('101A=')).toThrow('bad map entry');
   });
+
+  test('rejects kind flip and duplicate dest', () => {
+    expect(() => parseMapArg('101=91A')).toThrow('kind flip');
+    expect(() => parseMapArg('101A=91A,101B=91A')).toThrow('duplicate new id');
+  });
 });
 
 describe('parseMapFile', () => {
@@ -68,6 +73,41 @@ describe('applyRenames', () => {
   test('rewrites sentence-final Track 101A.', () => {
     const map = parseMapArg('101A=91A');
     expect(applyRenames('See Track 101A.', map).text).toBe('See Track 91A.');
+  });
+
+  test('does not rewrite IDs inside filenames', () => {
+    const map = parseMapArg('101A=91A');
+    const src = '_touches: tests/track-101A.test.ts_\n_read-first: docs/designs/track-101A.md_';
+    expect(applyRenames(src, map).text).toBe(src);
+    expect(applyRenames(src, map).replaced).toBe(0);
+  });
+
+  test('does not rewrite item= or version tails', () => {
+    const map = parseMapArg('101=91,14=80,1=2');
+    const src = '[pair-review:group=101,item=101] shipped (v0.18.14.1)';
+    const r = applyRenames(src, map);
+    expect(r.text).toBe('[pair-review:group=91,item=101] shipped (v0.18.14.1)');
+    expect(r.replaced).toBe(1);
+  });
+
+  test('bare group numbers in prose are not IDs', () => {
+    const map = parseMapArg('6=7');
+    const src = 'Target capacity is 6 tracks.\n#### Group 6: Live';
+    const r = applyRenames(src, map);
+    expect(r.text).toBe('Target capacity is 6 tracks.\n#### Group 7: Live');
+    expect(r.replaced).toBe(1);
+  });
+
+  test('skips ids on a _tombstone: line', () => {
+    const map = parseMapArg('84=91,86=92,84A=91A');
+    const r = applyRenames(
+      '_tombstone: 84, 86, 90_\n#### Group 84: Live\n##### Track 84A: Card',
+      map,
+    );
+    expect(r.text).toContain('_tombstone: 84, 86, 90_');
+    expect(r.text).toContain('Group 91: Live');
+    expect(r.text).toContain('Track 91A: Card');
+    expect(r.skippedHistorical).toEqual([]);
   });
 
   test('longest token wins: 101A.1 before 101A', () => {

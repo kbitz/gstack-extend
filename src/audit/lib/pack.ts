@@ -99,12 +99,22 @@ export function isSharedDoc(path: string): boolean {
   return SHARED_DOC_PATHS.has(path) || SHARED_DOC_PATHS.has(stripped);
 }
 
+/** IDs are paint — strip Group/Track tokens so remapping a title does not change FFD. */
+const PAINT_ID_RE = /(?:^|\s)[0-9]+(?:[a-z](?:\.[0-9]+)?)?(?=\s|$)/g;
+
+function titleKey(title: string): string {
+  return normalizeTitle(title)
+    .replace(PAINT_ID_RE, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/g, '');
+}
+
 /** Rename- and regroup-stable FFD key. Touches + title; never ID or file position. */
 export function packIdent(t: Pick<PackTrack, 'touches' | 'title'>): string {
   const paths = schedulingTouches(t.touches)
     .map((n) => n.path)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  return `${paths.join('\n')}\0${normalizeTitle(t.title ?? '')}`;
+  return `${paths.join('\n')}\0${titleKey(t.title ?? '')}`;
 }
 
 export function schedulingTouches(touches: string[]): TouchNorm[] {
@@ -398,10 +408,6 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
   });
 }
 
-/**
- * Compare a written Group partition against the packer.
- * Returns findings (empty = match).
- */
 /** Two live tracks with the same packIdent — last-resort FFD order is arbitrary. */
 export function identCollisions(tracks: PackTrack[]): string[] {
   const byKey = new Map<string, string[]>();
@@ -427,6 +433,8 @@ export function identCollisions(tracks: PackTrack[]): string[] {
 export type CollisionContext = {
   trackGroup?: Map<string, string>;
   groupDeps?: Map<string, readonly string[]>;
+  /** Must match PACKING's fillCap. Default packTracks cap invents a different bin DAG. */
+  packOpts?: { target?: number; maxPerBin?: number };
 };
 
 function closedReach(ids: Iterable<string>, preds: (id: string) => readonly string[]): Map<string, Set<string>> {
@@ -463,7 +471,7 @@ export function unorderedCollisions(tracks: PackTrack[], ctx: CollisionContext =
   const byId = new Map(live.map((t) => [t.id, t]));
   const trackReach = closedReach(byId.keys(), (id) => byId.get(id)?.blockedBy ?? []);
 
-  const packed = packTracks(live);
+  const packed = packTracks(live, ctx.packOpts);
   const trackBin = new Map<string, string>();
   const binPreds = new Map<string, string[]>();
   for (let i = 0; i < packed.bins.length; i++) {
@@ -514,6 +522,7 @@ export function unorderedCollisions(tracks: PackTrack[], ctx: CollisionContext =
   return findings;
 }
 
+/** Compare a written Group partition against the packer. Empty = match. */
 export function packingDrift(written: string[][], packed: PackResult): string[] {
   const normalize = (sets: string[][]) =>
     sets

@@ -229,6 +229,44 @@ describe('packTracks', () => {
     expect(unorderedCollisions(tracks, { trackGroup, groupDeps })).toEqual([]);
   });
 
+  test('closed DAG suppresses a 2-edge chain, not just a direct edge', () => {
+    const chained = [
+      t('1A', ['shared.ts']),
+      t('8B', ['g.ts'], ['1A']),
+      t('9A', ['shared.ts'], ['8B']),
+    ];
+    expect(unorderedCollisions(chained)).toEqual([]);
+    const hop = [t('1A', ['shared.ts']), t('8A', ['f.ts']), t('9A', ['shared.ts'], ['8A'])];
+    const groupDeps = new Map<string, string[]>([
+      ['1', []],
+      ['8', ['1']],
+      ['9', ['8']],
+    ]);
+    const trackGroup = new Map([
+      ['1A', '1'],
+      ['8A', '8'],
+      ['9A', '9'],
+    ]);
+    expect(unorderedCollisions(hop, { trackGroup, groupDeps })).toEqual([]);
+  });
+
+  test('unorderedCollisions uses packOpts cap for the bin DAG', () => {
+    const tracks = [
+      t('1A', ['shared.ts']),
+      t('0A', ['a.ts']),
+      t('0B', ['b.ts']),
+      t('0C', ['c.ts']),
+      t('0D', ['d.ts']),
+      t('0E', ['e.ts']),
+      t('8A', ['f.ts']),
+      t('9A', ['shared.ts'], ['8A']),
+    ];
+    expect(unorderedCollisions(tracks, { packOpts: { target: 8, maxPerBin: 8 } })).toEqual([]);
+    expect(unorderedCollisions(tracks, { packOpts: { target: 6, maxPerBin: 6 } })).toEqual([
+      'unordered collision 1A ∥ 9A — declare _blocked-by or accept arbitrary order',
+    ]);
+  });
+
   test('packing is invariant under bijective ID rename', () => {
     const tracks = [
       t('95A', ['a.ts'], [], 'alpha'),
@@ -298,6 +336,34 @@ describe('packTracks', () => {
     expect(identCollisions(tracks)).toEqual([
       'identical pack identity 1A ∥ 1B — same touches and title; FFD order is arbitrary',
     ]);
+  });
+
+  test('empty title keys on touches; IDs in titles are paint', () => {
+    expect(packIdent({ touches: ['a.ts'] })).toBe(packIdent({ touches: ['a.ts'], title: '' }));
+    expect(packIdent({ touches: ['b.ts'] })).not.toBe(packIdent({ touches: ['a.ts'] }));
+    expect(packIdent({ touches: ['a.ts (new)'] })).toBe(
+      packIdent({ touches: ['a.ts'], title: '' }),
+    );
+    expect(packIdent({ touches: ['x.ts'], title: 'Follow-up to 101B' })).toBe(
+      packIdent({ touches: ['x.ts'], title: 'Follow-up to 91B' }),
+    );
+    expect(identCollisions([t('1A', ['same.ts']), t('1B', ['same.ts'])])).toHaveLength(1);
+    expect(identCollisions([t('1A', ['a.ts']), t('1B', ['b.ts'])])).toEqual([]);
+  });
+
+  test('identCollisions uses normalized title and ignores empty ids', () => {
+    expect(
+      identCollisions([
+        t('1A', ['same.ts'], [], 'Hotfix: Twin'),
+        t('1B', ['same.ts'], [], 'twin ✓ Shipped'),
+        { id: '', touches: ['same.ts'], blockedBy: [], title: 'twin' },
+      ]),
+    ).toEqual([
+      'identical pack identity 1A ∥ 1B — same touches and title; FFD order is arbitrary',
+    ]);
+    expect(identCollisions([t('1A', ['same.ts'], [], 'alpha'), t('1B', ['same.ts'], [], 'bravo')])).toEqual(
+      [],
+    );
   });
 
   test('hotfix sits alone', () => {
