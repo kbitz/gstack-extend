@@ -4,6 +4,7 @@ import {
   packTracks,
   packingDrift,
   touchesIntersect,
+  unorderedCollisions,
   type PackTrack,
 } from '../src/audit/lib/pack.ts';
 
@@ -131,6 +132,20 @@ describe('packTracks', () => {
   test('empty pack is EMPTY not (none)', () => {
     const r = packTracks([]);
     expect(formatPackOutput(r)).toContain('BINS: EMPTY');
+  });
+
+  test('DEPENDS paste line names the earlier bin', () => {
+    const r = packTracks([t('1A', ['a.ts']), t('2A', ['b.ts'], ['1A'])]);
+    const out = formatPackOutput(r);
+    expect(out).toContain('_Depends on: Group <bin 1>_');
+    expect(out).toContain('bin 2:');
+  });
+
+  test('unordered collision is suppressed when _blocked-by orders the pair', () => {
+    const colliding = [t('1A', ['shared.ts']), t('1B', ['shared.ts'])];
+    expect(unorderedCollisions(colliding)).toHaveLength(1);
+    const ordered = [t('1A', ['shared.ts']), t('1B', ['shared.ts'], ['1A'])];
+    expect(unorderedCollisions(ordered)).toEqual([]);
   });
 
   test('hotfix sits alone', () => {
