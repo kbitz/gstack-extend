@@ -413,6 +413,57 @@ describe('parseRoadmap — task lines', () => {
     expect(r.value.sizeLabelMismatches).toEqual([]);
   });
 
+  test('trailing _Source: after effort tag still counts', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '- **Reconcile** -- body. (S) _Source: [ship:track=13A]._',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.untaggedWriteTasks).toBe(0);
+    expect(t.sessionWeight).toBe(1);
+  });
+
+  test('inline italics in title still parse', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '- **~~X~~ -- the richest *raw* yield** -- body (M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.sessionWeight).toBe(2);
+    expect(r.value.tracks[0]!.untaggedWriteTasks).toBe(0);
+  });
+
+  test('compound tag is named, not silently untagged', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '- **Implement foo** -- body (S-M)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.untaggedWriteTasks).toBe(1);
+    expect(r.value.effortTagFindings.some((f) => f.includes('(S-M)'))).toBe(true);
+  });
+
+  test('done-marker title is excluded from weight', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '- **G0 ✓ RUN 2026-08-14** -- leftover',
+      '- **Real work** -- body (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.sessionWeight).toBe(1);
+    expect(r.value.tracks[0]!.untaggedWriteTasks).toBe(0);
+    expect(r.value.effortTagFindings.some((f) => f.includes('looks done'))).toBe(true);
+  });
+
   test('declared 0 lines does not trigger /0 (matches bash guard)', () => {
     const md = [
       '## Group 1: A',

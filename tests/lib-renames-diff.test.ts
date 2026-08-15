@@ -148,6 +148,15 @@ describe('computeRenames', () => {
     ]);
   });
 
+  test('family-ID split 101C → 101C.1 even when titles diverge', () => {
+    const oldMd = `### Track 101C: Original card`;
+    const newMd = `### Track 101C.1: Original card (part 1)
+### Track 101C.2: Original card (part 2)`;
+    expect(computeRenames(oldMd, newMd)).toEqual([
+      { kind: 'track', oldId: '101C', newId: '101C.1', title: 'original card (part 1)' },
+    ]);
+  });
+
   test('returns empty list when nothing renamed', () => {
     const md = `## Group 1: Stable
 ### Track 1A: Also Stable`;

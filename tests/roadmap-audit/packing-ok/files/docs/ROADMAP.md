@@ -31,6 +31,7 @@ _Depends on: Group 1_
 ##### Track 2A: Consumer
 _1 task . ~S . low risk . [c.ts]_
 _touches: src/c.ts_
+_blocked-by: Track 1A, Track 1B_
 _read-first: 1A, 1B_
 _produces: c.ts uses both helpers_
 

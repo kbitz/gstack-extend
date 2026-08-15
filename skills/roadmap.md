@@ -201,11 +201,19 @@ doesn't load.
 Before opening ROADMAP.md, determine what has **actually shipped** from git —
 the one signal every repo has:
 
+0. **Is this checkout current?** `git fetch` then compare `HEAD` to
+   `origin/<base>`. If the checkout is behind the branch the plan describes,
+   say so and stop or fast-forward before gathering — a stale tree will miss
+   the packer, the parser, and shipped work.
 1. **git commits** — the real source of truth for what merged, and for what was
    completed last. `git log --oneline -40` plus the scoped queries below, and
    `git tag` / `git describe --tags` for the latest released version where tags
    exist. This is the spine of "what's done."
-2. **CHANGELOG.md / PROGRESS.md** — optional corroboration when present (a
+2. **Track-ID grep** — for every In Progress / Current Plan Track ID, run
+   `git log --since="$LAST_ROADMAP_RUN" --grep="Track <ID>"`. Surface
+   "commit X claims to close Track Y — verify and move to Shipped." Commit
+   bodies that say "Closes the live remainder of Track 82A" count.
+3. **CHANGELOG.md / PROGRESS.md** — optional corroboration when present (a
    version number, a "what's new" note). Don't assume they exist, don't block
    on them, and when a doc and the commits disagree, **the commits win.**
 
@@ -258,7 +266,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and optional `_blocked-by: Track X` for a semantic dep the files do not show. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan + inbox items + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, not document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks in different layers with no edge emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). Renumber Track IDs after grouping settles, starting from the next-available ID after Shipped/In Progress. Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -279,9 +287,9 @@ Hard rule: **1 Track = 1 PR = 1 LLM session.** The audit enforces this with **se
 | S | 1 | a slice (~¼ session) |
 | M | 2 | half session |
 | L | 4 | the whole session — only task on the Track |
-| XL | 5 (forbidden) | split into more Tracks |
+| XL | 5 (warn) | often one real session in mature repos — check shipped history |
 
-Cap is **weight ≤ 4** (one L, two M, four S, or 2S+1M). `max_tasks_per_track` is 5.
+Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you raise `roadmap_max_session_weight`. Before splitting a weight-5 card, check recently-shipped tracks: if this repo ships weight-5 as one PR, set the config and keep the card. Split the genuinely oversized (7+). `max_tasks_per_track` is 5.
 
 **Deletions are cheap.** A task tagged `~N lines (del)` (or `(deletion)` / `(deletions)`) is weight S regardless of N. Title verbs are not enough — "Trim pair-review.md" without `(del)` is a write-task. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
 
@@ -295,21 +303,22 @@ Cap is **weight ≤ 4** (one L, two M, four S, or 2S+1M). `max_tasks_per_track` 
 
 Group assignment is **the packer's job**, not a theme judgment.
 
-1. Draft Tracks only. Each has `_touches:_`, tasks, optional `_blocked-by: Track X`.
-2. Run:
+1. Draft Tracks only. Each has `_touches:_`, tasks, and `_blocked-by: Track X` on every serialized chain. Prefer dotted family IDs for splits (`102A` → `102A.1` / `102A.2`) so design-doc references stay valid.
+2. Pack the **draft**, not the live file:
    ```bash
-   "$_EXTEND_ROOT/bin/roadmap-pack"
+   "$_EXTEND_ROOT/bin/roadmap-pack" --from /tmp/draft-tracks.md
    ```
-   On the first regen after this skill version, also run `"$_EXTEND_ROOT/bin/roadmap-pack" --materialize` and write any implicit previous-Group edges the author still wants as explicit `_Depends on: Group N_`. After that, unspecified = none.
+   Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" --stdin`. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
+   On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
 5. Paste the packer's adjacency (or the audit's `GROUP_DEPS` ADJACENCY after apply) into the Execution Map. Do not hand-write a line. Document order is not execution order.
 
 `PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
 
-**Groups are launch batches of 4–6 parallel-safe Tracks** (hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (7+ disjoint Tracks) stays parallel. A 1-track Group is legal only as a Hotfix or a scan-scope Track whose `_touches:` collides with every other unpacked Track in the layer.
+**Groups are launch batches filled up to `parallelism_cap`** (default 6, hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (more disjoint Tracks than the cap) stays a ready sibling. A 1-track Group is legal whenever the packer emits one (Hotfix, scan-scope, or leftover singleton) — tool behavior is the rule.
 
-Do not sequence Groups "to cap concurrent WIP." That throttle is `parallelism_cap` (default 6) at launch time.
+Do not hand-sequence Groups "to cap concurrent WIP." The packer already fills to `parallelism_cap`. A Group may launch when every Group in its `←` set has landed, regardless of document order; document order is priority, not a gate.
 
 Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
 
@@ -317,7 +326,7 @@ Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`,
 
 ### Renumbering
 
-Renumber upcoming work freely. The next available numeric ID after a regeneration is `max(shipped_group_num, in_progress_group_num) + 1`. Letters within each Group cycle A, B, C…
+Renumber upcoming work freely, except **splits keep a dotted family ID** (`102A.1`, `102A.2`) so existing design docs and source tags still resolve. The next available numeric ID after a regeneration is `max(shipped_group_num, in_progress_group_num) + 1`. Letters within each Group cycle A, B, C…
 
 If a Track has an open PR (rare in practice), the user will call that out during regen review — preserve that ID for the regen. Don't build machinery to detect open PRs automatically.
 
@@ -447,9 +456,9 @@ console.log(formatRenamesTable(computeRenames(oldRoadmap, newRoadmap)));"
 ```
 
 The helper matches by exact normalized title (whitespace-collapsed,
-lowercased, with `Hotfix:` prefix and `✓ Shipped` suffix stripped). Pure
-additions and deletions are dropped; only same-title-different-ID pairs
-are surfaced. Output is empty when nothing renamed — skip the table in
+lowercased, with `Hotfix:` prefix and `✓ Shipped` suffix stripped) and
+by dotted family IDs (`101C` → `101C.1`). Pure additions and deletions
+are dropped. Output is empty when nothing renamed — skip the table in
 that case.
 
 ## Step 4: PROGRESS.md staleness check
@@ -458,9 +467,9 @@ that case.
 is owned by `/document-release`. This step only detects staleness and
 optionally delegates the row append to a scoped subagent.
 
-Compute staleness: parse the latest version from `VERSION` (or `pyproject.toml`)
-and the latest version row in `docs/PROGRESS.md`. If they differ — i.e. one
-or more shipped versions are missing from PROGRESS.md — surface it:
+Compute staleness: collect shipped versions from `CHANGELOG.md` headings
+(and git tags). Diff that set against every version row in `docs/PROGRESS.md`.
+If **any** shipped version is missing — not just when latest ≠ latest — surface it:
 
 ```
 AskUserQuestion: "PROGRESS.md is N versions behind (missing X.Y.Z, …). Append rows now via subagent?"
@@ -577,6 +586,9 @@ _produces: <one line>_
 
 ### Execution Map
 
+A Group may launch when every Group in its ← set has landed, regardless
+of document order; document order is priority, not gating.
+
 Adjacency list (from the packer / GROUP_DEPS — not document order):
 \`\`\`
 - Group 5 ← {}
@@ -607,8 +619,6 @@ structure, no `_touches:_`, no sizing, no IDs.
 
 - **<Item title>** — description. _Source: <where it came from>._
 - **<Item title>** — description.
-
----
 
 ## Shipped
 

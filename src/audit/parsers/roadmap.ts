@@ -28,6 +28,12 @@
  */
 
 import { effortToLoc, isMarkdownOnlyTouches, sessionWeight, type ConfigDeps } from '../lib/effort.ts';
+import {
+  effortFinding,
+  isDoneMarkerTitle,
+  parseEffortTag,
+  parseTaskTitle,
+} from '../lib/task-line.ts';
 import { detectStateRegions, stateAtLine, type LifecycleState } from '../lib/state.ts';
 import type { ParseError, ParserResult } from '../types.ts';
 
@@ -95,6 +101,7 @@ export type ParsedRoadmap = {
   hasV2Grammar: boolean; // true when at least one ## In Progress/Current Plan/Future/Shipped seen
   futureBullets: string[]; // raw bullet lines from ## Future (when v2)
   futureMalformed: string[]; // non-bullet content seen inside ## Future (validation hint)
+  effortTagFindings: string[]; // named bad/aliased/done-marker effort tags
 };
 
 // ─── Helpers (bash parity) ────────────────────────────────────────────
@@ -226,6 +233,7 @@ export function parseRoadmap(
         hasV2Grammar: false,
         futureBullets: [],
         futureMalformed: [],
+        effortTagFindings: [],
       },
       errors,
     };
@@ -269,6 +277,7 @@ export function parseRoadmap(
   // Future bullets and validation hints.
   const futureBullets: string[] = [];
   const futureMalformed: string[] = [];
+  const effortTagFindings: string[] = [];
 
   type Section = 'none' | 'skip' | 'group' | 'track' | 'future';
   let section: Section = 'none';
@@ -518,11 +527,17 @@ export function parseRoadmap(
       section === 'track' &&
       /^- \*\*/.test(line)
     ) {
-      const titleMatch = line.match(/^- \*\*([^*]+)\*\*/);
-      if (!titleMatch) continue;
-      const title = titleMatch[1]!;
-      const effortMatch = line.match(/\((S|M|L|XL)\)[ \t\v\f\r]*$/);
-      const effort = effortMatch ? (effortMatch[1] as 'S' | 'M' | 'L' | 'XL') : null;
+      const title = parseTaskTitle(line);
+      if (title === null) continue;
+      const parsed = parseEffortTag(line);
+      const note = effortFinding(trackId, title, parsed);
+      if (note !== null) effortTagFindings.push(note);
+
+      if (isDoneMarkerTitle(title)) {
+        continue;
+      }
+
+      const effort = parsed.kind === 'ok' || parsed.kind === 'alias' ? parsed.effort : null;
       const declaredLines = extractLinesHint(line);
 
       trackTasks.set(trackId, (trackTasks.get(trackId) ?? 0) + 1);
@@ -680,6 +695,7 @@ export function parseRoadmap(
       hasV2Grammar,
       futureBullets,
       futureMalformed,
+      effortTagFindings,
     },
     errors,
   };

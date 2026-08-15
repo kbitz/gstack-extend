@@ -17,6 +17,7 @@
  *     marked ✓ Complete in its heading.
  */
 
+import { parseEffortTag, parseTaskTitle } from '../lib/task-line.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 type Section = 'none' | 'skip' | 'group' | 'track' | 'future';
@@ -26,8 +27,6 @@ const TRACK_RE = /^#{3,5} Track ([0-9]+[A-Z](?:\.[0-9]+)?):/;
 const FUTURE_RE = /^## Future/i;
 const UNPROCESSED_RE = /^## Unprocessed/i;
 const EXEC_MAP_RE = /^## Execution Map/i;
-const TASK_BOLD_RE = /^- \*\*([^*]+)\*\*/;
-const TASK_EFFORT_RE = /\((S|M|L|XL)\)$/;
 const TASK_FILES_RE = /_\[([^\]]+)\]/;
 
 export function runCheckTaskList(ctx: AuditCtx): CheckResult {
@@ -99,11 +98,11 @@ export function runCheckTaskList(ctx: AuditCtx): CheckResult {
     }
     if (section === 'none' || section === 'skip') continue;
 
-    const taskMatch = line.match(TASK_BOLD_RE);
-    if (taskMatch !== null) {
-      const title = taskMatch[1]!;
-      const effortMatch = line.match(TASK_EFFORT_RE);
-      const effort = effortMatch !== null ? effortMatch[1]! : '?';
+    const title = parseTaskTitle(line);
+    if (title !== null) {
+      const parsed = parseEffortTag(line);
+      const effort =
+        parsed.kind === 'ok' || parsed.kind === 'alias' ? parsed.effort : '?';
       const filesMatch = line.match(TASK_FILES_RE);
       const files = filesMatch !== null ? filesMatch[1]! : '';
       const g = groupNum === '' ? '0' : groupNum;

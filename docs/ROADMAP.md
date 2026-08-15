@@ -118,7 +118,7 @@ Packer layer 2. Consumes the locked fragments and the trimmed skill files. Seria
 ##### Track 17A: Promote canonical fragments into a shared template
 _1 task . ~150 LOC . low risk . [shared template + setup integration]_
 _touches: .claude/skills/SKILL.md.tmpl (new), setup_
-_blocked-by: Track 15A, Track 16A, Track 16B, Track 16C, Track 16D_
+_blocked-by: Track 15A, Track 15E, Track 16A, Track 16B, Track 16C, Track 16D_
 _read-first: 15A, 16A, 16B, 16C, 16D_
 _produces: SKILL.md.tmpl carrying canonical fragments; new skills inherit them_
 - **Promote canonical fragments into a shared template** -- write `.claude/skills/SKILL.md.tmpl` from the fragments 15A locked and 16A–D left intact. Wire `setup` so new skills inherit the template. _.claude/skills/SKILL.md.tmpl (new), setup, ~150 lines._ (M)

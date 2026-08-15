@@ -39,6 +39,23 @@ describe('runCheckSizeCaps', () => {
     expect(r.body.join('\n')).toContain('missing (S|M|L) effort tag');
   });
 
+  test('weight 5 warns, does not fail SIZE', () => {
+    const r = runCheckSizeCaps(
+      makeCtx({ parsedRoadmap: { tracks: [track({ sessionWeight: 5 })] } }),
+    );
+    expect(r.status).toBe('pass');
+    expect(r.body.join('\n')).toContain('WEIGHT_WARN');
+    expect(r.body.join('\n')).toContain('session_weight=5');
+  });
+
+  test('weight 6 still fails SIZE', () => {
+    const r = runCheckSizeCaps(
+      makeCtx({ parsedRoadmap: { tracks: [track({ sessionWeight: 6 })] } }),
+    );
+    expect(r.status).toBe('fail');
+    expect(r.body.join('\n')).toContain('session_weight=6');
+  });
+
   test('tagged write-task does not trip the untagged gate', () => {
     const r = runCheckSizeCaps(makeCtx({ parsedRoadmap: { tracks: [track()] } }));
     expect(r.status).toBe('pass');

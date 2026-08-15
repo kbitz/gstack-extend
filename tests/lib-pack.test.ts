@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  formatPackOutput,
   packTracks,
   packingDrift,
   touchesIntersect,
@@ -115,6 +116,21 @@ describe('packTracks', () => {
     expect(c.layer).toBe(2);
     expect(b.blockedByTracks).toEqual(['1A']);
     expect(c.blockedByTracks).toEqual(['1A', '1B']);
+  });
+
+  test('critical path follows the longest blocked-by chain', () => {
+    const r = packTracks([
+      t('1A', ['a.ts']),
+      t('2A', ['b.ts'], ['1A']),
+      t('3A', ['c.ts'], ['2A']),
+    ]);
+    expect(r.criticalPath).toEqual(['1A', '2A', '3A']);
+    expect(formatPackOutput(r)).toContain('CRITICAL_PATH: 3 waves through 1A → 2A → 3A');
+  });
+
+  test('empty pack is EMPTY not (none)', () => {
+    const r = packTracks([]);
+    expect(formatPackOutput(r)).toContain('BINS: EMPTY');
   });
 
   test('hotfix sits alone', () => {

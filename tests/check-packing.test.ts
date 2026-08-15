@@ -101,6 +101,26 @@ describe('packing hotfix contract', () => {
     expect(runCheckPacking(ctx).status).toBe('pass');
   });
 
+  test('group _Depends on does not inflate packer blocked-by', () => {
+    const ctx = makeCtx({
+      parsedRoadmap: {
+        groups: [
+          group('1', 'First', ['1A', '1B']),
+          group('2', 'Second', ['2A'], { deps: { kind: 'list', depNums: ['1'] }, depsRaw: 'Group 1' }),
+        ],
+        tracks: [
+          track('1A', '1', { touches: ['src/a.ts'] }),
+          track('1B', '1', { touches: ['src/b.ts'] }),
+          track('2A', '2', { touches: ['src/c.ts'], blockedBy: ['1A'] }),
+        ],
+      },
+    });
+    const packed = tracksForPacker(ctx);
+    const two = packed.find((t) => t.id === '2A')!;
+    expect(two.blockedBy).toEqual(['1A']);
+    expect(two.blockedBy).not.toContain('1B');
+  });
+
   test('hotfix-only plan skips PACKING', () => {
     const ctx = makeCtx({
       parsedRoadmap: {

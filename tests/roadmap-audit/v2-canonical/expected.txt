@@ -133,9 +133,9 @@ STATUS: fail
 FINDINGS:
 - written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)
 - written groups [3B | 4A,4B | 5A]
-- packer bins    [3B,4A,4B | 5A]
+- packer bins    [3B,4A,4B,5A]
 
-BINS: 2
+BINS: 1
 
 ## PARALLELISM_BUDGET
 IN_FLIGHT_TRACKS: 3
