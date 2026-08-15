@@ -1087,7 +1087,8 @@ const ADVISORY_LIST_PREFIX =
  * Extract ALL_CAPS section tokens from the two GSTACK REVIEW REPORT
  * comma-lists in skills/roadmap.md. Strip parentheticals and never
  * treat `STATUS` as a section. Fail closed if a list is missing,
- * duplicated, or empty.
+ * duplicated, empty, or a comma-cell has leftover ALL_CAPS after the
+ * first token (missing-comma bypass).
  *
  * Do not harvest every `## ALL_CAPS` heading — `## GSTACK REVIEW REPORT`
  * is not an audit section.
@@ -1098,13 +1099,19 @@ function extractAuditSectionLists(roadmapSkill: string): {
 } {
   const tokenize = (afterColon: string): string[] => {
     const stripped = afterColon.replace(/\([^)]*\)/g, ' ');
-    return stripped
-      .split(',')
-      .map((part) => {
-        const m = /\b([A-Z][A-Z0-9_]*)\b/.exec(part);
-        return m ? m[1] : '';
-      })
-      .filter((name) => name.length > 0 && name !== 'STATUS');
+    const names: string[] = [];
+    for (const part of stripped.split(',')) {
+      const hits = [...part.matchAll(/\b([A-Z][A-Z0-9_]*)\b/g)]
+        .map((m) => m[1])
+        .filter((name): name is string => Boolean(name) && name !== 'STATUS');
+      if (hits.length > 1) {
+        throw new Error(
+          `leftover section token '${hits[1]}' after '${hits[0]}' in skills/roadmap.md list cell`,
+        );
+      }
+      if (hits[0]) names.push(hits[0]);
+    }
+    return names;
   };
 
   const collect = (prefix: string, label: string): string[] => {
@@ -1359,6 +1366,16 @@ describe('Track 15A roadmap advisory-list drift vs CANONICAL_SECTIONS', () => {
   test('list parser throws on duplicate advisory list', () => {
     const dup = `${FAIL_LIST_PREFIX} SIZE.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n${ADVISORY_LIST_PREFIX} STYLE_LINT.\n`;
     expect(() => extractAuditSectionLists(dup)).toThrow('duplicate advisory list');
+  });
+
+  test('list parser throws on leftover ALL_CAPS in a cell (missing comma)', () => {
+    const sample = `${FAIL_LIST_PREFIX} SIZE, PACKING NEW_SECTION.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'NEW_SECTION'");
+  });
+
+  test('list parser throws on leftover ALL_CAPS after a parenthetical', () => {
+    const sample = `${FAIL_LIST_PREFIX} SIZE, GROUP_DEPS (stale-anchor) PHASES.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
+    expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'PHASES'");
   });
 });
 
