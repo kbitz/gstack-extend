@@ -82,6 +82,14 @@ describe('packTracks', () => {
     expect(later.blockedByTracks).toContain('1A');
   });
 
+  test('seven disjoint tracks absorb the singleton tail under hard max 8', () => {
+    const tracks = Array.from({ length: 7 }, (_, i) => t(`${i}A`, [`f${i}.ts`]));
+    const r = packTracks(tracks, { target: 6, maxPerBin: 8 });
+    expect(r.bins).toHaveLength(1);
+    expect(r.bins[0]!.trackIds).toHaveLength(7);
+    expect(r.bins[0]!.layer).toBe(0);
+  });
+
   test('overflow of 10 disjoint tracks yields two ready bins, not a chain', () => {
     const tracks = Array.from({ length: 10 }, (_, i) => t(`${i}A`, [`f${i}.ts`]));
     const r = packTracks(tracks, { target: 6, maxPerBin: 8 });

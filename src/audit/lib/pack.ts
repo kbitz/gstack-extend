@@ -127,6 +127,25 @@ type LayerBin = {
   collisionBlockedBy: string[];
 };
 
+function absorbTails(bins: LayerBin[], maxPerBin: number): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = bins.length - 1; i >= 1; i--) {
+      const last = bins[i]!;
+      const prev = bins[i - 1]!;
+      if (last.layerOffset !== prev.layerOffset) continue;
+      if (prev.tracks.some((x) => x.isHotfix) || last.tracks.some((x) => x.isHotfix)) continue;
+      if (prev.tracks.length + last.tracks.length > maxPerBin) continue;
+      if (last.tracks.some((t) => binCollides(prev.tracks, t))) continue;
+      prev.tracks.push(...last.tracks);
+      bins.splice(i, 1);
+      changed = true;
+      break;
+    }
+  }
+}
+
 function collidingIds(bin: PackTrack[], candidate: PackTrack): string[] {
   const ids: string[] = [];
   for (const existing of bin) {
@@ -201,6 +220,8 @@ export function packTracks(
         });
       }
     }
+
+    absorbTails(layerBins, maxPerBin);
 
     for (const bin of layerBins) {
       const blocked = new Set<string>();

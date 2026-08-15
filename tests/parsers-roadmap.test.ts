@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  mergeShippedArchive,
   parseRoadmap,
   type ParseRoadmapDeps,
 } from '../src/audit/parsers/roadmap.ts';
@@ -254,6 +255,20 @@ describe('parseRoadmap — _touches:_', () => {
     expect(r.value.styleLintWarnings.some((w) => w.includes('whitespace'))).toBe(true);
   });
 
+  test('path (new) is a legal touch token', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '_touches: src/a.ts (new), src/b.ts_',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    const t = r.value.tracks[0]!;
+    expect(t.touches).toEqual(['src/a.ts (new)', 'src/b.ts']);
+    expect(t.legacy).toBe(false);
+    expect(r.value.styleLintWarnings.some((w) => w.includes('whitespace'))).toBe(false);
+  });
+
   test('= in token rejected (kv-store separator)', () => {
     const md = [
       '## Group 1: A',
@@ -363,6 +378,8 @@ describe('parseRoadmap — task lines', () => {
     const t = r.value.tracks[0]!;
     expect(t.tasksCount).toBe(1);
     expect(t.loc).toBe(0);
+    expect(t.untaggedWriteTasks).toBe(1);
+    expect(t.sessionWeight).toBe(0);
   });
 
   test('size label mismatch when declared lines diverges >3x from effort tier', () => {
@@ -547,6 +564,20 @@ describe('parseRoadmap — card fields + session weight', () => {
     expect(t.markdownOnly).toBe(false);
   });
 
+  test('mixed Track-ref and bare IDs are unioned; lowercase is canonicalized', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 1: A',
+      '##### Track 1A: T',
+      '_touches: src/a.ts_',
+      '_blocked-by: Track 15a, 16B_',
+      '- **Do it** -- yes. _src/a.ts, ~20 lines._ (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.blockedBy).toEqual(['15A', '16B']);
+  });
+
   test('delete task is weight S even when tagged L', () => {
     const md = [
       '## Current Plan',
@@ -643,5 +674,32 @@ describe('parseRoadmap — card fields + session weight', () => {
     ].join('\n');
     const r = parseRoadmap(md, deps());
     expect(r.value.tracks[0]!.sessionWeight).toBe(4);
+  });
+});
+
+describe('mergeShippedArchive', () => {
+  test('archive fills gaps; active wins on collision with a warning', () => {
+    const active = parseRoadmap(
+      '## Current Plan\n#### Group 2: Live\n##### Track 2A: New\n',
+      deps(),
+    );
+    const archive = parseRoadmap(
+      '## Shipped\n#### Group 1: Old\n##### Track 1A: Done\n#### Group 2: StaleName\n##### Track 2A: Stale\n',
+      deps(),
+    );
+    const m = mergeShippedArchive(active, archive);
+    expect(m.value.groups.find((g) => g.num === '1')?.state).toBe('shipped');
+    expect(m.value.groups.find((g) => g.num === '2')?.name).toBe('Live');
+    expect(m.value.tracks.map((t) => t.id).sort()).toEqual(['1A', '2A']);
+    expect(m.value.tracks.find((t) => t.id === '1A')?.state).toBe('shipped');
+    expect(m.value.styleLintWarnings.some((w) => w.includes('archive Group 2'))).toBe(true);
+    expect(m.value.styleLintWarnings.some((w) => w.includes('archive Track 2A'))).toBe(true);
+  });
+
+  test('empty archive is a no-op', () => {
+    const active = parseRoadmap('', deps());
+    const m = mergeShippedArchive(active, parseRoadmap('', deps()));
+    expect(m.value.groups).toEqual([]);
+    expect(m.value.tracks).toEqual([]);
   });
 });

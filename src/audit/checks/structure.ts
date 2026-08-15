@@ -136,6 +136,18 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     }
   }
 
+  const trackIds = new Set(ctx.roadmap.value.tracks.map((t) => t.id));
+  for (const t of ctx.roadmap.value.tracks) {
+    if (t.state === 'shipped' || t.legacy) continue;
+    for (const b of t.blockedBy) {
+      if (!trackIds.has(b)) {
+        findings.push(
+          `- Track ${t.id}: _blocked-by: ${b} is not a known Track ID`,
+        );
+      }
+    }
+  }
+
   if (findings.length === 0) {
     return {
       section: 'STRUCTURE',

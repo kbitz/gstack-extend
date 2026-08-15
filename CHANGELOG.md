@@ -17,7 +17,10 @@ All notable changes to this project will be documented in this file.
 - Unspecified `_Depends on:_` is **none**, not "previous Group." Serial is opt-in. First regen after upgrade: run `bin/roadmap-pack --materialize` and write any implicit edges you still want.
 - Default `parallelism_cap` is 6 (was 4).
 - `/roadmap` Step 2 no longer asks the model to compute the collision matrix by hand.
-- Collision-split packer bins are serial (later layer + `_Depends on:`). Capacity overflow stays a ready sibling.
+- Collision-split packer bins are serial (later layer + `_Depends on:`). Capacity overflow stays a ready sibling. A leftover singleton tail is absorbed into the previous bin when it fits under the hard max of 8.
+- Live `Hotfix:` Groups jump the in-flight queue: non-hotfix Groups wait until they ship.
+- `_touches: path (new)` is a legal token. Mixed `_blocked-by: Track 15A, 16B` keeps both IDs; `15a` canonicalizes to `15A`; unknown IDs fail STRUCTURE.
+- Untagged write-tasks fail SIZE (they are not weight 0). Archive ID collisions warn instead of silently dropping the shipped copy.
 
 ## [0.22.3.0] - 2026-08-12
 

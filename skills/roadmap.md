@@ -187,7 +187,8 @@ Granularity rules:
 A **Hotfix** is not a special primitive — it's a Group whose title starts
 with `Hotfix:`, contains exactly one Track, and (when not yet shipped) has
 no current-plan deps. It sits at the head of `## In Progress` or
-`## Current Plan` and jumps the queue. Hotfix is reserved for breaking
+`## Current Plan` and jumps the queue: while any unshipped Hotfix exists,
+other Groups are not in-flight. Hotfix is reserved for breaking
 regressions on shipped behavior, never for deferred scope.
 
 ## Step 1: Gather
@@ -284,7 +285,7 @@ Cap is **weight ≤ 4** (one L, two M, four S, or 2S+1M). `max_tasks_per_track` 
 
 **Deletions are cheap.** A task tagged `~N lines (del)` (or `(deletion)` / `(deletions)`) is weight S regardless of N. Title verbs are not enough — "Trim pair-review.md" without `(del)` is a write-task. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
 
-**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A single directory touch (`src/`) is a scan-scope Track — the packer will sit it alone.
+**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
 
 **The card is the scope.** Do not pre-shrink a Track so `/autoplan` can fill it. Overflow discovered in review goes to `TODOS.md`; the next regen packs it. **No "Ship as N PRs" language ever** (`STRUCTURE: fail`).
 

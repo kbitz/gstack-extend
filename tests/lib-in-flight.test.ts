@@ -78,6 +78,27 @@ describe('computeInFlight', () => {
     expect(r.unknownDeps).toEqual(['2→9']);
   });
 
+  test('live Hotfix blocks every non-hotfix Group', () => {
+    const r = computeInFlight(
+      parsed([
+        group('1', { isHotfix: true, name: 'Hotfix: login' }),
+        group('2'),
+        group('3', { deps: { kind: 'none' } }),
+      ]),
+    );
+    expect(r.inFlight).toEqual(['1']);
+  });
+
+  test('after Hotfix ships, unspecified Groups are ready again', () => {
+    const r = computeInFlight(
+      parsed([
+        group('1', { isHotfix: true, name: 'Hotfix: login', isComplete: true, state: 'shipped' }),
+        group('2'),
+      ]),
+    );
+    expect(r.inFlight).toEqual(['2']);
+  });
+
   test('numeric sort, not doc order — all unspecified are ready', () => {
     const r = computeInFlight(parsed([group('10'), group('2'), group('1')]));
     expect(r.inFlight).toEqual(['1', '2', '10']);

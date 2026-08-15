@@ -29,6 +29,7 @@ function track(id: string, groupNum: string, over: Partial<TrackInfo> = {}): Tra
     deps: [],
     depsFreetext: false,
     bannedPrSplit: false,
+    untaggedWriteTasks: 0,
     ...over,
   };
 }

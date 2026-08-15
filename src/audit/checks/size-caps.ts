@@ -47,6 +47,11 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
         `- ${t.id}: session_weight=${t.sessionWeight} exceeds max_session_weight=${maxWeight} — split into multiple Tracks`,
       );
     }
+    if (t.untaggedWriteTasks > 0) {
+      findings.push(
+        `- ${t.id}: ${t.untaggedWriteTasks} write-task(s) missing (S|M|L) effort tag — untagged writes are not weight 0`,
+      );
+    }
     const skipFanout = t.markdownOnly || t.deleteOnly;
     if (!skipFanout && t.filesCount > maxFiles) {
       findings.push(`- ${t.id}: files=${t.filesCount} exceeds max_files_per_track=${maxFiles}`);

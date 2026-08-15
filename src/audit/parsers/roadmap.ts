@@ -75,6 +75,7 @@ export type TrackInfo = {
   deps: string[];
   depsFreetext: boolean;
   bannedPrSplit: boolean; // body contained "N PRs"/"two PRs"/"PR1"/"PR2"/etc.
+  untaggedWriteTasks: number;
 };
 
 export type SizeLabelMismatch = {
@@ -134,16 +135,28 @@ function parseCommaIds(line: string, prefix: RegExp): string[] {
   return parseCommaList(line, prefix);
 }
 
+function canonicalizeTrackId(raw: string): string {
+  return raw.replace(/^([0-9]+)([A-Za-z])((?:\.[0-9]+)?)$/, (_m, n: string, letter: string, rest: string) => {
+    return `${n}${letter.toUpperCase()}${rest}`;
+  });
+}
+
 function parseTrackRefs(line: string): string[] {
   const ids: string[] = [];
-  const re = /Track[ \t]+([0-9]+[A-Z](?:\.[0-9]+)?)/gi;
+  const push = (raw: string) => {
+    const id = canonicalizeTrackId(raw);
+    if (id !== '' && !ids.includes(id)) ids.push(id);
+  };
+  const re = /Track[ \t]+([0-9]+[A-Za-z](?:\.[0-9]+)?)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(line)) !== null) {
-    if (!ids.includes(m[1]!)) ids.push(m[1]!);
+    push(m[1]!);
   }
-  if (ids.length > 0) return ids;
-  // Bare IDs: "15A, 16B"
-  return parseCommaList(line, /^_blocked-by:/);
+  for (const part of parseCommaList(line, /^_blocked-by:/)) {
+    const bare = part.replace(/^Track[ \t]+/i, '');
+    if (/^[0-9]+[A-Za-z](?:\.[0-9]+)?$/.test(bare)) push(bare);
+  }
+  return ids;
 }
 
 const DELETE_HINT_RE = /\(del(?:etions?)?\)/i;
@@ -243,6 +256,7 @@ export function parseRoadmap(
   const trackLoc = new Map<string, number>();
   const trackWeight = new Map<string, number>();
   const trackDeleteTasks = new Map<string, number>();
+  const trackUntaggedWrites = new Map<string, number>();
   const trackOut = new Map<string, string[]>();
   const trackReadFirst = new Map<string, string[]>();
   const trackProduces = new Map<string, string>();
@@ -415,7 +429,8 @@ export function parseRoadmap(
         for (const f of raw.split(',')) {
           const ft = trim(f);
           if (ft === '') continue;
-          if (/[ \t\v\f\r=]/.test(ft)) {
+          const pathPart = ft.replace(/[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i, '');
+          if (pathPart === '' || /[ \t\v\f\r=]/.test(pathPart)) {
             malformed = true;
             continue;
           }
@@ -538,6 +553,8 @@ export function parseRoadmap(
         }
       } else if (deleted) {
         trackWeight.set(trackId, (trackWeight.get(trackId) ?? 0) + sessionWeight('S'));
+      } else {
+        trackUntaggedWrites.set(trackId, (trackUntaggedWrites.get(trackId) ?? 0) + 1);
       }
     }
 
@@ -649,6 +666,7 @@ export function parseRoadmap(
       deps: trackDeps.get(id) ?? [],
       depsFreetext: trackDepsFreetext.has(id),
       bannedPrSplit: trackBannedPrSplit.has(id),
+      untaggedWriteTasks: trackUntaggedWrites.get(id) ?? 0,
     };
   });
 
@@ -677,29 +695,34 @@ export function mergeShippedArchive(
   const seenTracks = new Set(active.value.tracks.map((t) => t.id));
   const groups = [...active.value.groups];
   const tracks = [...active.value.tracks];
+  const collisionWarnings: string[] = [];
   for (const g of archive.value.groups) {
-    if (!seenGroups.has(g.num)) groups.push({ ...g, state: 'shipped', isComplete: true });
+    if (seenGroups.has(g.num)) {
+      collisionWarnings.push(
+        `archive Group ${g.num} collides with active ROADMAP — active wins, archive copy dropped`,
+      );
+      continue;
+    }
+    groups.push({ ...g, state: 'shipped', isComplete: true });
   }
   for (const t of archive.value.tracks) {
-    if (!seenTracks.has(t.id)) {
-      tracks.push({ ...t, state: 'shipped', isComplete: true });
+    if (seenTracks.has(t.id)) {
+      collisionWarnings.push(
+        `archive Track ${t.id} collides with active ROADMAP — active wins, archive copy dropped`,
+      );
+      continue;
     }
+    tracks.push({ ...t, state: 'shipped', isComplete: true });
   }
   return {
     value: {
       ...active.value,
       groups,
       tracks,
-      styleLintWarnings: [
-        ...active.value.styleLintWarnings,
-        ...archive.value.styleLintWarnings,
-      ],
-      sizeLabelMismatches: [
-        ...active.value.sizeLabelMismatches,
-        ...archive.value.sizeLabelMismatches,
-      ],
+      styleLintWarnings: [...active.value.styleLintWarnings, ...collisionWarnings],
+      sizeLabelMismatches: [...active.value.sizeLabelMismatches],
     },
-    errors: [...active.errors, ...archive.errors],
+    errors: [...active.errors],
   };
 }
 
