@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.24.5.1 | 2026-08-15 | Filed two P1 15B follow-ups (unknown-VERSION failed retry; setup-fail after pull loses hops) plus a P2 helper-path test bundle. Fix before the first real `migrations/v*.sh`. |
 | 0.24.5.0 | 2026-08-15 | Track 15B — `migrations/v*.sh` runner + applied/failed ledger in `bin/update-run`. Fail-soft `MIGRATION_WARN`; retry on next update-run. `/gstack-extend-upgrade` names the script and points at `bin/update-run` for retry. No production migration this release. |
 | 0.24.4.0 | 2026-08-15 | `/roadmap` drain dispositions: place / defer / kill / discharge (`discharged@<sha>`). Regen re-derives leftover bullets. Packer adjacency is the only derived edge list. Literal claims split premise from task. Constraints can refuse a Track. |
 | 0.24.3.0 | 2026-08-15 | Track 15A locks remaining shared fragments. Conductor visibility head is a `SHARED:` block; roadmap fail/advisory lists are exact-set pinned; `setup` `SKILLS=(` parses through a shared helper with explicit cohorts. |

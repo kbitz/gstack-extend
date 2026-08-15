@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.5.1] - 2026-08-15
+
+### Changed
+
+- **Two 15B holes are now on the upgrade backlog, before any real `v*.sh`.** A failed-ledger retry must not crash when VERSION is `unknown`. A setup failure after pull must not drop in-window scripts. Helper-path tests ship with those fixes.
+
 ## [0.24.5.0] - 2026-08-15
 
 ### Added
