@@ -23,10 +23,11 @@ export function runCheckSizeCaps(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const maxTasks = ceiling('max_tasks_per_track');
-  const maxLoc = ceiling('max_loc_per_track');
-  const maxFiles = ceiling('max_files_per_track');
-  const maxWeight = ceiling('max_session_weight');
+  const deps = { stateDir: ctx.env.stateDir };
+  const maxTasks = ceiling('max_tasks_per_track', deps);
+  const maxLoc = ceiling('max_loc_per_track', deps);
+  const maxFiles = ceiling('max_files_per_track', deps);
+  const maxWeight = ceiling('max_session_weight', deps);
 
   const findings: string[] = [];
   const weightWarns: string[] = [];
