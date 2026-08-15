@@ -10,6 +10,7 @@ function track(over: Partial<TrackInfo> = {}): TrackInfo {
     groupNum: '1',
     state: 'current-plan',
     isComplete: false,
+    title: '',
     touches: ['src/a.ts'],
     filesCount: 1,
     tasksCount: 1,

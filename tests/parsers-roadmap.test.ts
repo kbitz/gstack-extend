@@ -181,6 +181,7 @@ describe('parseRoadmap — Tracks', () => {
     expect(r.value.tracks).toHaveLength(1);
     expect(r.value.tracks[0]!.id).toBe('1A');
     expect(r.value.tracks[0]!.groupNum).toBe('1');
+    expect(r.value.tracks[0]!.title).toBe('Foo');
     expect(r.value.tracks[0]!.legacy).toBe(true); // no _touches:_ yet
   });
 
@@ -194,6 +195,7 @@ describe('parseRoadmap — Tracks', () => {
     const md = ['## Group 1: A', '### Track 1A: Foo ✓ Complete', ''].join('\n');
     const r = parseRoadmap(md, deps());
     expect(r.value.tracks[0]!.isComplete).toBe(true);
+    expect(r.value.tracks[0]!.title).toBe('Foo');
   });
 
   test('duplicate Track ID surfaces warning', () => {
@@ -725,6 +727,32 @@ describe('parseRoadmap — card fields + session weight', () => {
     ].join('\n');
     const r = parseRoadmap(md, deps());
     expect(r.value.tracks[0]!.sessionWeight).toBe(4);
+  });
+});
+
+describe('parseRoadmap — _tombstone:', () => {
+  test('collects reserved numbers from Current Plan', () => {
+    const md = [
+      '## Current Plan',
+      '_tombstone: 84, 86, 90_',
+      '#### Group 91: Next',
+      '##### Track 91A: Live',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tombstones).toEqual(['84', '86', '90']);
+  });
+
+  test('ignores _tombstone: inside a Track body', () => {
+    const md = [
+      '## Current Plan',
+      '#### Group 91: Next',
+      '##### Track 91A: Live',
+      '_tombstone: 84_',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tombstones).toEqual([]);
   });
 });
 

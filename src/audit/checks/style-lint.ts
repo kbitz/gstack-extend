@@ -17,7 +17,7 @@
  */
 
 import { tracksForPacker } from './packing.ts';
-import { unorderedCollisions } from '../lib/pack.ts';
+import { identCollisions, unorderedCollisions } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
@@ -27,7 +27,11 @@ export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
   for (const g of ctx.roadmap.value.groups) {
     groupDeps.set(g.num, g.deps.kind === 'list' ? g.deps.depNums : []);
   }
-  for (const w of unorderedCollisions(tracksForPacker(ctx), { trackGroup, groupDeps })) {
+  const packedInput = tracksForPacker(ctx);
+  for (const w of identCollisions(packedInput)) {
+    warnings.push(w);
+  }
+  for (const w of unorderedCollisions(packedInput, { trackGroup, groupDeps })) {
     warnings.push(w);
   }
 

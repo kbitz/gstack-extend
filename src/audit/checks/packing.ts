@@ -29,6 +29,7 @@ export function tracksForPacker(ctx: AuditCtx): PackTrack[] {
       touches: t.touches,
       blockedBy: t.blockedBy.filter((id) => liveIds.has(id)),
       isHotfix: false,
+      title: t.title,
       ord: i,
     });
   }

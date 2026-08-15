@@ -136,6 +136,15 @@ export function runCheckStructure(ctx: AuditCtx): CheckResult {
     }
   }
 
+  const tombstones = new Set(ctx.roadmap.value.tombstones ?? []);
+  for (const g of ctx.roadmap.value.groups) {
+    if (g.state === 'shipped') continue;
+    if (!tombstones.has(g.num)) continue;
+    findings.push(
+      `- Group ${g.num} uses a tombstoned number — pick the next free ID after shipped history`,
+    );
+  }
+
   const trackIds = new Set(ctx.roadmap.value.tracks.map((t) => t.id));
   for (const t of ctx.roadmap.value.tracks) {
     if (t.state === 'shipped' || t.legacy) continue;

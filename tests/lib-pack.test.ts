@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   fillCap,
   formatPackOutput,
+  identCollisions,
+  packIdent,
   packTracks,
   packingDrift,
   touchesIntersect,
@@ -9,8 +11,13 @@ import {
   type PackTrack,
 } from '../src/audit/lib/pack.ts';
 
-function t(id: string, touches: string[], blockedBy: string[] = []): PackTrack {
-  return { id, touches, blockedBy };
+function t(
+  id: string,
+  touches: string[],
+  blockedBy: string[] = [],
+  title = '',
+): PackTrack {
+  return { id, touches, blockedBy, title };
 }
 
 describe('fillCap', () => {
@@ -62,7 +69,7 @@ describe('packTracks', () => {
     expect(r.bins).toHaveLength(2);
     const ready = r.bins.find((b) => b.trackIds.includes('1A'))!;
     const later = r.bins.find((b) => b.trackIds.includes('1B'))!;
-    expect(ready.trackIds).toEqual(['1A', '1C']);
+    expect([...ready.trackIds].sort()).toEqual(['1A', '1C']);
     expect(ready.layer).toBe(0);
     expect(later.trackIds).toEqual(['1B']);
     expect(later.layer).toBe(1);
@@ -224,16 +231,13 @@ describe('packTracks', () => {
 
   test('packing is invariant under bijective ID rename', () => {
     const tracks = [
-      t('95A', ['a.ts']),
-      t('93A', ['b.ts']),
-      t('95B', ['c.ts']),
-      t('93B', ['d.ts']),
-      t('95C', ['e.ts']),
-      t('93C', ['f.ts']),
+      t('95A', ['a.ts'], [], 'alpha'),
+      t('93A', ['b.ts'], [], 'bravo'),
+      t('95B', ['c.ts'], [], 'charlie'),
+      t('93B', ['d.ts'], [], 'delta'),
+      t('95C', ['e.ts'], [], 'echo'),
+      t('93C', ['f.ts'], [], 'foxtrot'),
     ];
-    tracks.forEach((x, i) => {
-      x.ord = i;
-    });
     const map: Record<string, string> = {
       '95A': 'A1',
       '93A': 'Z9',
@@ -262,15 +266,38 @@ describe('packTracks', () => {
     expect(norm(after.bins)).toEqual(norm(before.bins, map));
   });
 
-  test('FFD tie-breaks by document order, not ID', () => {
-    const tracks = [t('95A', ['a.ts']), t('93A', ['b.ts']), t('95B', ['c.ts']), t('93B', ['d.ts'])];
-    tracks.forEach((x, i) => {
-      x.ord = i;
-    });
-    const r = packTracks(tracks, { target: 2, maxPerBin: 2 });
+  test('packing is invariant under document reorder', () => {
+    const tracks = [
+      t('95A', ['a.ts'], [], 'alpha'),
+      t('93A', ['b.ts'], [], 'bravo'),
+      t('95B', ['c.ts'], [], 'charlie'),
+      t('93B', ['d.ts'], [], 'delta'),
+    ];
+    const shuffled = [tracks[3]!, tracks[0]!, tracks[2]!, tracks[1]!];
+    const opts = { target: 2, maxPerBin: 2 };
+    const norm = (bins: { trackIds: string[] }[]) =>
+      bins
+        .map((bin) => [...bin.trackIds].sort().join(','))
+        .sort();
+    expect(norm(packTracks(shuffled, opts).bins)).toEqual(norm(packTracks(tracks, opts).bins));
+  });
+
+  test('FFD tie-breaks by packIdent, not ID or document order', () => {
+    // Same touch-count. Document order and ID order both put Z1 first.
+    // packIdent sorts by path, so a.ts (A1) places before z.ts (Z1).
+    const tracks = [t('Z1', ['z.ts'], [], 'zeta'), t('A1', ['a.ts'], [], 'alpha')];
+    const r = packTracks(tracks, { target: 1, maxPerBin: 1 });
     expect(r.bins).toHaveLength(2);
-    expect(r.bins[0]!.trackIds).toEqual(['95A', '93A']);
-    expect(r.bins[1]!.trackIds).toEqual(['95B', '93B']);
+    expect(r.bins[0]!.trackIds).toEqual(['A1']);
+    expect(r.bins[1]!.trackIds).toEqual(['Z1']);
+    expect(packIdent(tracks[1]!) < packIdent(tracks[0]!)).toBe(true);
+  });
+
+  test('identical packIdent warns', () => {
+    const tracks = [t('1A', ['same.ts'], [], 'Twin'), t('1B', ['same.ts'], [], 'Twin')];
+    expect(identCollisions(tracks)).toEqual([
+      'identical pack identity 1A ∥ 1B — same touches and title; FFD order is arbitrary',
+    ]);
   });
 
   test('hotfix sits alone', () => {

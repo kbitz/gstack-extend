@@ -19,7 +19,13 @@
  *
  * Group-level `_Depends on:` is NOT packer input — only track `_blocked-by:`
  * and file collisions. Group deps are derived output.
+ *
+ * IDs and live document order are display labels. FFD's last tie-break is
+ * packIdent (scheduling touches + normalized title) so write-then-renumber
+ * is a fixpoint.
  */
+
+import { normalizeTitle } from './renames-diff.ts';
 
 export const PACK_TARGET = 6;
 export const PACK_HARD_MAX = 8;
@@ -49,7 +55,9 @@ export type PackTrack = {
   /** Track IDs that must ship before this one (track-level `_blocked-by:` only). */
   blockedBy: string[];
   isHotfix?: boolean;
-  /** Document/parse index. Tie-break everywhere; never sort by ID. */
+  /** Card title. Feeds packIdent; not an ID. */
+  title?: string;
+  /** Document/parse index. Last-resort only (identical packIdent). */
   ord?: number;
 };
 
@@ -58,7 +66,9 @@ export type PackedBin = {
   trackIds: string[];
   /** Track IDs in earlier layers that block any member of this bin. */
   blockedByTracks: string[];
-  /** Min parse index of members — same-layer tie-break. */
+  /** Min packIdent of members — same-layer tie-break. */
+  ident: string;
+  /** Min parse index of members — last resort after ident. */
   ord: number;
 };
 
@@ -87,6 +97,14 @@ export function normalizeTouch(raw: string): TouchNorm {
 export function isSharedDoc(path: string): boolean {
   const stripped = path.replace(/\/+$/, '');
   return SHARED_DOC_PATHS.has(path) || SHARED_DOC_PATHS.has(stripped);
+}
+
+/** Rename- and regroup-stable FFD key. Touches + title; never ID or file position. */
+export function packIdent(t: Pick<PackTrack, 'touches' | 'title'>): string {
+  const paths = schedulingTouches(t.touches)
+    .map((n) => n.path)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return `${paths.join('\n')}\0${normalizeTitle(t.title ?? '')}`;
 }
 
 export function schedulingTouches(touches: string[]): TouchNorm[] {
@@ -247,8 +265,18 @@ export function packTracks(
   if (live.length === 0) return { bins: [], criticalPath: [], cycles: [] };
 
   const byId = new Map(live.map((t) => [t.id, t]));
+  const identOf = (id: string): string => {
+    const t = byId.get(id);
+    return t === undefined ? id : packIdent(t);
+  };
   const ordOf = (id: string): number => byId.get(id)?.ord ?? 0;
-  const cmpOrd = (a: string, b: string): number => ordOf(a) - ordOf(b);
+  const cmpIdent = (a: string, b: string): number => {
+    const ia = identOf(a);
+    const ib = identOf(b);
+    if (ia < ib) return -1;
+    if (ia > ib) return 1;
+    return ordOf(a) - ordOf(b);
+  };
 
   const { layers, cycles } = longestPathLayer(live);
   const byLayer = new Map<number, PackTrack[]>();
@@ -268,7 +296,7 @@ export function packTracks(
       const da = schedulingTouches(a.touches).length;
       const db = schedulingTouches(b.touches).length;
       if (db !== da) return db - da;
-      return (a.ord ?? 0) - (b.ord ?? 0);
+      return cmpIdent(a.id, b.id);
     });
 
     const layerBins: LayerBin[] = [];
@@ -316,11 +344,13 @@ export function packTracks(
         }
       }
       for (const d of bin.collisionBlockedBy) blocked.add(d);
-      const trackIds = bin.tracks.map((t) => t.id).sort(cmpOrd);
+      const trackIds = bin.tracks.map((t) => t.id).sort(cmpIdent);
+      const idents = bin.tracks.map((t) => packIdent(t)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
       bins.push({
         layer: L + bin.layerOffset,
         trackIds,
-        blockedByTracks: [...blocked].sort(cmpOrd),
+        blockedByTracks: [...blocked].sort(cmpIdent),
+        ident: idents[0] ?? '',
         ord: Math.min(...bin.tracks.map((t) => t.ord ?? 0)),
       });
     }
@@ -362,6 +392,8 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
   const relayered = bins.map((b, i) => ({ ...b, layer: layerOf(i) }));
   return relayered.sort((a, b) => {
     if (a.layer !== b.layer) return a.layer - b.layer;
+    if (a.ident < b.ident) return -1;
+    if (a.ident > b.ident) return 1;
     return a.ord - b.ord;
   });
 }
@@ -370,6 +402,27 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
  * Compare a written Group partition against the packer.
  * Returns findings (empty = match).
  */
+/** Two live tracks with the same packIdent — last-resort FFD order is arbitrary. */
+export function identCollisions(tracks: PackTrack[]): string[] {
+  const byKey = new Map<string, string[]>();
+  for (const t of tracks) {
+    if (t.id === '') continue;
+    const k = packIdent(t);
+    const arr = byKey.get(k) ?? [];
+    arr.push(t.id);
+    byKey.set(k, arr);
+  }
+  const out: string[] = [];
+  for (const ids of byKey.values()) {
+    if (ids.length < 2) continue;
+    const listed = [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    out.push(
+      `identical pack identity ${listed.join(' ∥ ')} — same touches and title; FFD order is arbitrary`,
+    );
+  }
+  return out;
+}
+
 /** Optional written Group DAG — STYLE_LINT closes this with the packer bin DAG. */
 export type CollisionContext = {
   trackGroup?: Map<string, string>;

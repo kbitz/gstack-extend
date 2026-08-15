@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Packing is invariant under ID rename.** FFD, bin membership, and same-layer order tie-break by document/parse index, never by ID. Renaming Current Plan tracks no longer re-partitions bins.
+- **Packing is invariant under ID rename and regroup.** FFD, bin membership, and same-layer order tie-break by packIdent (scheduling touches + normalized title), never by ID or live document order. Write-then-renumber is a fixpoint. Identical packIdent pairs warn in STYLE_LINT.
 - **STYLE_LINT unordered-collision uses the closed DAG.** Warn only when a colliding pair has no path in `_blocked-by`, the packer bin DAG, or written Group `_Depends on:`. Packer-serialized same-file pairs and wave-1-vs-wave-9 pairs stop flooding the lint. Bolt @ 3db617c7: 253 warns → 8 (the remaining 8 are parallel branches with no path).
 
 ### Added
@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **Current Plan numbers recycle.** Only SHIPPED IDs are frozen. Regen starts at the first free number after shipped history (skip tombstones). Track letters match their Group. Splits get the next letter; the renames table carries lineage. Dotted split IDs are legacy.
+- **Current Plan numbers recycle.** Only SHIPPED IDs are frozen. Regen starts at the first free number after shipped history. `_tombstone: N, M` is data the audit reads — unshipped Groups may not reuse those numbers. Track letters match their Group. Splits get the next letter; the renames table carries lineage. Dotted split IDs are legacy. Current-plan origin tags resolve by title at inbox drain, not by number.
 
 ## [0.24.1.0] - 2026-08-15
 

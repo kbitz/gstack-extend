@@ -121,6 +121,7 @@ function defaultParsedRoadmap(overrides: Partial<ParsedRoadmap> = {}): ParserRes
       futureBullets: [],
       futureMalformed: [],
       effortTagFindings: [],
+      tombstones: [],
       ...overrides,
     },
     errors: [],
