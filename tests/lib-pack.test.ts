@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   fillCap,
   formatPackOutput,
+  identCollisions,
+  packIdent,
   packTracks,
   packingDrift,
   touchesIntersect,
@@ -9,8 +11,13 @@ import {
   type PackTrack,
 } from '../src/audit/lib/pack.ts';
 
-function t(id: string, touches: string[], blockedBy: string[] = []): PackTrack {
-  return { id, touches, blockedBy };
+function t(
+  id: string,
+  touches: string[],
+  blockedBy: string[] = [],
+  title = '',
+): PackTrack {
+  return { id, touches, blockedBy, title };
 }
 
 describe('fillCap', () => {
@@ -62,7 +69,7 @@ describe('packTracks', () => {
     expect(r.bins).toHaveLength(2);
     const ready = r.bins.find((b) => b.trackIds.includes('1A'))!;
     const later = r.bins.find((b) => b.trackIds.includes('1B'))!;
-    expect(ready.trackIds).toEqual(['1A', '1C']);
+    expect([...ready.trackIds].sort()).toEqual(['1A', '1C']);
     expect(ready.layer).toBe(0);
     expect(later.trackIds).toEqual(['1B']);
     expect(later.layer).toBe(1);
@@ -177,11 +184,186 @@ describe('packTracks', () => {
     expect(out).toContain('bin 2:');
   });
 
-  test('unordered collision is suppressed when _blocked-by orders the pair', () => {
+  test('packer collision-spill orders a same-file pair — no STYLE_LINT', () => {
     const colliding = [t('1A', ['shared.ts']), t('1B', ['shared.ts'])];
-    expect(unorderedCollisions(colliding)).toHaveLength(1);
+    expect(unorderedCollisions(colliding)).toEqual([]);
     const ordered = [t('1A', ['shared.ts']), t('1B', ['shared.ts'], ['1A'])];
     expect(unorderedCollisions(ordered)).toEqual([]);
+  });
+
+  test('unordered collision warns only when no track, bin, or group path', () => {
+    // Fill the first layer-0 bin (cap 6) so 8A is a ready sibling of 1A,
+    // not a roommate. 9A chains off 8A and also touches 1A's file — the
+    // packer never sees them in the same layer, so only a Group DAG
+    // (or an explicit _blocked-by) can order the pair.
+    const tracks = [
+      t('1A', ['shared.ts']),
+      t('0A', ['a.ts']),
+      t('0B', ['b.ts']),
+      t('0C', ['c.ts']),
+      t('0D', ['d.ts']),
+      t('0E', ['e.ts']),
+      t('8A', ['f.ts']),
+      t('8B', ['g.ts'], ['8A']),
+      t('9A', ['shared.ts'], ['8B']),
+    ];
+    expect(unorderedCollisions(tracks)).toEqual([
+      'unordered collision 1A ∥ 9A — declare _blocked-by or accept arbitrary order',
+    ]);
+    const groupDeps = new Map<string, string[]>([
+      ['1', []],
+      ['8', []],
+      ['9', ['1']],
+    ]);
+    const trackGroup = new Map([
+      ['1A', '1'],
+      ['0A', '1'],
+      ['0B', '1'],
+      ['0C', '1'],
+      ['0D', '1'],
+      ['0E', '1'],
+      ['8A', '8'],
+      ['8B', '8'],
+      ['9A', '9'],
+    ]);
+    expect(unorderedCollisions(tracks, { trackGroup, groupDeps })).toEqual([]);
+  });
+
+  test('closed DAG suppresses a 2-edge chain, not just a direct edge', () => {
+    const chained = [
+      t('1A', ['shared.ts']),
+      t('8B', ['g.ts'], ['1A']),
+      t('9A', ['shared.ts'], ['8B']),
+    ];
+    expect(unorderedCollisions(chained)).toEqual([]);
+    const hop = [t('1A', ['shared.ts']), t('8A', ['f.ts']), t('9A', ['shared.ts'], ['8A'])];
+    const groupDeps = new Map<string, string[]>([
+      ['1', []],
+      ['8', ['1']],
+      ['9', ['8']],
+    ]);
+    const trackGroup = new Map([
+      ['1A', '1'],
+      ['8A', '8'],
+      ['9A', '9'],
+    ]);
+    expect(unorderedCollisions(hop, { trackGroup, groupDeps })).toEqual([]);
+  });
+
+  test('unorderedCollisions uses packOpts cap for the bin DAG', () => {
+    const tracks = [
+      t('1A', ['shared.ts']),
+      t('0A', ['a.ts']),
+      t('0B', ['b.ts']),
+      t('0C', ['c.ts']),
+      t('0D', ['d.ts']),
+      t('0E', ['e.ts']),
+      t('8A', ['f.ts']),
+      t('9A', ['shared.ts'], ['8A']),
+    ];
+    expect(unorderedCollisions(tracks, { packOpts: { target: 8, maxPerBin: 8 } })).toEqual([]);
+    expect(unorderedCollisions(tracks, { packOpts: { target: 6, maxPerBin: 6 } })).toEqual([
+      'unordered collision 1A ∥ 9A — declare _blocked-by or accept arbitrary order',
+    ]);
+  });
+
+  test('packing is invariant under bijective ID rename', () => {
+    const tracks = [
+      t('95A', ['a.ts'], [], 'alpha'),
+      t('93A', ['b.ts'], [], 'bravo'),
+      t('95B', ['c.ts'], [], 'charlie'),
+      t('93B', ['d.ts'], [], 'delta'),
+      t('95C', ['e.ts'], [], 'echo'),
+      t('93C', ['f.ts'], [], 'foxtrot'),
+    ];
+    const map: Record<string, string> = {
+      '95A': 'A1',
+      '93A': 'Z9',
+      '95B': 'A2',
+      '93B': 'Z8',
+      '95C': 'A3',
+      '93C': 'Z7',
+    };
+    const renamed = tracks.map((x) => ({
+      ...x,
+      id: map[x.id]!,
+      blockedBy: x.blockedBy.map((id) => map[id] ?? id),
+    }));
+    const opts = { target: 4, maxPerBin: 4 };
+    const before = packTracks(tracks, opts);
+    const after = packTracks(renamed, opts);
+    const norm = (bins: { trackIds: string[] }[], remap?: Record<string, string>) =>
+      bins
+        .map((bin) =>
+          bin.trackIds
+            .map((id) => remap?.[id] ?? id)
+            .sort()
+            .join(','),
+        )
+        .sort();
+    expect(norm(after.bins)).toEqual(norm(before.bins, map));
+  });
+
+  test('packing is invariant under document reorder', () => {
+    const tracks = [
+      t('95A', ['a.ts'], [], 'alpha'),
+      t('93A', ['b.ts'], [], 'bravo'),
+      t('95B', ['c.ts'], [], 'charlie'),
+      t('93B', ['d.ts'], [], 'delta'),
+    ];
+    const shuffled = [tracks[3]!, tracks[0]!, tracks[2]!, tracks[1]!];
+    const opts = { target: 2, maxPerBin: 2 };
+    const norm = (bins: { trackIds: string[] }[]) =>
+      bins
+        .map((bin) => [...bin.trackIds].sort().join(','))
+        .sort();
+    expect(norm(packTracks(shuffled, opts).bins)).toEqual(norm(packTracks(tracks, opts).bins));
+  });
+
+  test('FFD tie-breaks by packIdent, not ID or document order', () => {
+    // Same touch-count. Document order and ID order both put Z1 first.
+    // packIdent sorts by path, so a.ts (A1) places before z.ts (Z1).
+    const tracks = [t('Z1', ['z.ts'], [], 'zeta'), t('A1', ['a.ts'], [], 'alpha')];
+    const r = packTracks(tracks, { target: 1, maxPerBin: 1 });
+    expect(r.bins).toHaveLength(2);
+    expect(r.bins[0]!.trackIds).toEqual(['A1']);
+    expect(r.bins[1]!.trackIds).toEqual(['Z1']);
+    expect(packIdent(tracks[1]!) < packIdent(tracks[0]!)).toBe(true);
+  });
+
+  test('identical packIdent warns', () => {
+    const tracks = [t('1A', ['same.ts'], [], 'Twin'), t('1B', ['same.ts'], [], 'Twin')];
+    expect(identCollisions(tracks)).toEqual([
+      'identical pack identity 1A ∥ 1B — same touches and title; FFD order is arbitrary',
+    ]);
+  });
+
+  test('empty title keys on touches; IDs in titles are paint', () => {
+    expect(packIdent({ touches: ['a.ts'] })).toBe(packIdent({ touches: ['a.ts'], title: '' }));
+    expect(packIdent({ touches: ['b.ts'] })).not.toBe(packIdent({ touches: ['a.ts'] }));
+    expect(packIdent({ touches: ['a.ts (new)'] })).toBe(
+      packIdent({ touches: ['a.ts'], title: '' }),
+    );
+    expect(packIdent({ touches: ['x.ts'], title: 'Follow-up to 101B' })).toBe(
+      packIdent({ touches: ['x.ts'], title: 'Follow-up to 91B' }),
+    );
+    expect(identCollisions([t('1A', ['same.ts']), t('1B', ['same.ts'])])).toHaveLength(1);
+    expect(identCollisions([t('1A', ['a.ts']), t('1B', ['b.ts'])])).toEqual([]);
+  });
+
+  test('identCollisions uses normalized title and ignores empty ids', () => {
+    expect(
+      identCollisions([
+        t('1A', ['same.ts'], [], 'Hotfix: Twin'),
+        t('1B', ['same.ts'], [], 'twin ✓ Shipped'),
+        { id: '', touches: ['same.ts'], blockedBy: [], title: 'twin' },
+      ]),
+    ).toEqual([
+      'identical pack identity 1A ∥ 1B — same touches and title; FFD order is arbitrary',
+    ]);
+    expect(identCollisions([t('1A', ['same.ts'], [], 'alpha'), t('1B', ['same.ts'], [], 'bravo')])).toEqual(
+      [],
+    );
   });
 
   test('hotfix sits alone', () => {

@@ -66,6 +66,7 @@ export type TrackInfo = {
   groupNum: string;
   state: LifecycleState; // shipped | in-progress | current-plan (inherited from Group, unless Track is inline ✓ Shipped)
   isComplete: boolean; // back-compat alias for state === 'shipped'
+  title: string;
   touches: string[];
   filesCount: number;
   tasksCount: number;
@@ -102,6 +103,8 @@ export type ParsedRoadmap = {
   futureBullets: string[]; // raw bullet lines from ## Future (when v2)
   futureMalformed: string[]; // non-bullet content seen inside ## Future (validation hint)
   effortTagFindings: string[]; // named bad/aliased/done-marker effort tags
+  /** Reserved Group numbers that Current Plan / In Progress must not reuse. */
+  tombstones: string[];
 };
 
 // ─── Helpers (bash parity) ────────────────────────────────────────────
@@ -234,6 +237,7 @@ export function parseRoadmap(
         futureBullets: [],
         futureMalformed: [],
         effortTagFindings: [],
+        tombstones: [],
       },
       errors,
     };
@@ -273,6 +277,8 @@ export function parseRoadmap(
   const trackDeps = new Map<string, string[]>();
   const trackDepsFreetext = new Set<string>();
   const trackBannedPrSplit = new Set<string>();
+  const trackTitles = new Map<string, string>();
+  const tombstoneNums: string[] = [];
 
   // Future bullets and validation hints.
   const futureBullets: string[] = [];
@@ -394,13 +400,34 @@ export function parseRoadmap(
       continue;
     }
 
+    // Reserved numbers. Document- or Group-level only — not inside a Track body.
+    if (
+      section !== 'track' &&
+      section !== 'skip' &&
+      section !== 'future' &&
+      /^_tombstone:/i.test(line)
+    ) {
+      let raw = line.replace(/^_tombstone:[ \t\v\f\r]*/i, '');
+      raw = raw.replace(/_[ \t\v\f\r]*$/, '');
+      for (const part of raw.split(',')) {
+        const n = trim(part);
+        if (/^[0-9]+$/.test(n) && !tombstoneNums.includes(n)) tombstoneNums.push(n);
+      }
+      continue;
+    }
+
     // Track heading.
     const trackHeading = line.match(TRACK_HEADING_RE);
     if (trackHeading) {
       trackId = trackHeading[1]!;
+      let headingTitle = trim(line.replace(TRACK_HEADING_RE, ''));
+      if (COMPLETE_SUFFIX_RE.test(headingTitle)) {
+        headingTitle = trim(headingTitle.replace(COMPLETE_SUFFIX_RE, ''));
+      }
       if (COMPLETE_SUFFIX_RE.test(line)) {
         trackInlineComplete.add(trackId);
       }
+      if (!trackTitles.has(trackId)) trackTitles.set(trackId, headingTitle);
       if (trackOrder.includes(trackId)) {
         styleLintWarnings.push(
           `${trackId}: duplicate track ID (another track earlier in ROADMAP.md also uses '${trackId}') — rename one; track IDs must be globally unique`,
@@ -666,6 +693,7 @@ export function parseRoadmap(
       groupNum: trackGroup.get(id) ?? '0',
       state,
       isComplete: state === 'shipped',
+      title: trackTitles.get(id) ?? '',
       touches,
       filesCount: trackFilesCount.get(id) ?? 0,
       tasksCount,
@@ -696,6 +724,7 @@ export function parseRoadmap(
       futureBullets,
       futureMalformed,
       effortTagFindings,
+      tombstones: tombstoneNums,
     },
     errors,
   };
@@ -730,6 +759,10 @@ export function mergeShippedArchive(
     }
     tracks.push({ ...t, state: 'shipped', isComplete: true });
   }
+  const tombstones = [...active.value.tombstones];
+  for (const n of archive.value.tombstones) {
+    if (!tombstones.includes(n)) tombstones.push(n);
+  }
   return {
     value: {
       ...active.value,
@@ -737,6 +770,7 @@ export function mergeShippedArchive(
       tracks,
       styleLintWarnings: [...active.value.styleLintWarnings, ...collisionWarnings],
       sizeLabelMismatches: [...active.value.sizeLabelMismatches],
+      tombstones,
     },
     errors: [...active.errors],
   };

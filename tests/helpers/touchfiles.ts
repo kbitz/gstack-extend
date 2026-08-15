@@ -75,8 +75,12 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-audit',
     'bin/roadmap-pack',
     'bin/roadmap-touches',
+    'bin/roadmap-renumber',
     'src/audit/**',
     'tests/roadmap-audit/**',
+  ],
+  'tests/renumber-cli.test.ts': [
+    'bin/roadmap-renumber',
   ],
   'tests/audit-cli-contract.test.ts': [
     'bin/roadmap-audit',
