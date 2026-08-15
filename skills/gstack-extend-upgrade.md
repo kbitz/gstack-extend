@@ -137,3 +137,9 @@ Once `bin/update-run` reports `UPGRADE_OK <old> <new>`, the upgrade is installed
 the *next* invocation — the current session keeps running the version it loaded.
 Point the user at `$_EXTEND_ROOT/CHANGELOG.md` for what changed between `{old}` and
 `{new}` if they want the details.
+
+If the same stdout also contains `MIGRATION_WARN <script> exit=<n>`, the git
+upgrade succeeded but a one-shot install migration failed. Name the script.
+Tell the user to retry with `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` —
+re-running this skill after `UPGRADE_OK` will see `JUST_UPGRADED` / up-to-date
+and will not invoke the runner. Do **not** treat `MIGRATION_WARN` as `UPGRADE_FAILED`.
