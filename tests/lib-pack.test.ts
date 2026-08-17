@@ -3,6 +3,7 @@ import {
   fillCap,
   formatPackOutput,
   identCollisions,
+  isSharedDoc,
   packIdent,
   packTracks,
   packingDrift,
@@ -43,6 +44,17 @@ describe('touchesIntersect', () => {
     expect(touchesIntersect(['docs/ROADMAP.md', 'src/a.ts'], ['docs/ROADMAP.md', 'src/b.ts'])).toBe(
       false,
     );
+  });
+
+  test('docs/roadmap-future.md is a shared doc and does not collide', () => {
+    expect(isSharedDoc('docs/roadmap-future.md')).toBe(true);
+    expect(isSharedDoc('docs/roadmap-shipped.md')).toBe(true);
+    expect(
+      touchesIntersect(
+        ['docs/roadmap-future.md', 'src/a.ts'],
+        ['docs/roadmap-future.md', 'src/b.ts'],
+      ),
+    ).toBe(false);
   });
 
   test('directory prefix', () => {

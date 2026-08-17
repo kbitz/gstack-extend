@@ -852,4 +852,33 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(out).toContain('Long body.');
     expect(out).not.toContain('Second sentence');
   });
+
+  test('singular (1 item) pointer is accepted', () => {
+    const r = parseRoadmap('## Future\n\nDeferred: docs/roadmap-future.md (1 item)\n', deps());
+    expect(r.value.futurePointer).toEqual({ declaredCount: 1 });
+    expect(r.value.futureMalformed).toEqual([]);
+  });
+
+  test('mergeFutureArchive empty satellite is a no-op', () => {
+    const active = parseRoadmap(
+      '## Future\nDeferred: docs/roadmap-future.md (0 items)\n',
+      deps(),
+    );
+    const archive = parseRoadmap('# Future\n\n## Future\n', deps());
+    const m = mergeFutureArchive(active, archive);
+    expect(m.value.futureBullets).toEqual([]);
+    expect(m.value.futurePointer).toEqual({ declaredCount: 0 });
+  });
+
+  test('formatFutureIndex handles non-bold titles and title-only bullets', () => {
+    const out = formatFutureIndex([
+      '- Bare title — first sentence. Rest.',
+      '- **Title only**',
+    ]);
+    expect(out).toContain('FUTURE_INDEX: 2');
+    expect(out).toContain('- **Bare title** — first sentence.');
+    expect(out).not.toContain('Rest.');
+    expect(out).toContain('- **Title only**');
+    expect(out).not.toMatch(/Title only.*—/);
+  });
 });

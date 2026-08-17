@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { runCheckFuture } from '../src/audit/checks/future.ts';
+import { runCheckStateSections } from '../src/audit/checks/state-sections.ts';
 import { makeCtx } from './helpers/audit-ctx.ts';
 
 const LIVE = `# Roadmap
@@ -91,6 +92,18 @@ describe('runCheckFuture split states', () => {
     expect(r.body.join('\n')).toContain('FUTURE_FILE_MALFORMED');
   });
 
+  test('0-item split with empty satellite passes', () => {
+    const ctx = makeCtx({
+      roadmap: LIVE.replace('(1 items)', '(0 items)'),
+      paths: { roadmap: 'docs/ROADMAP.md', futureArchive: 'docs/roadmap-future.md' },
+    });
+    ctx.files.futureArchive = '# Future\n\n## Future\n';
+    const r = runCheckFuture(ctx);
+    expect(r.status).toBe('pass');
+    expect(r.body.join('\n')).toContain('FUTURE_BULLET_COUNT: 0');
+    expect(r.body.join('\n')).toContain('FUTURE_SOURCE: file');
+  });
+
   test('legacy inline bullets still pass', () => {
     const ctx = makeCtx({
       roadmap: `# Roadmap\n\n## Future\n\n- **Old style** — still inline.\n`,
@@ -100,5 +113,18 @@ describe('runCheckFuture split states', () => {
     expect(r.status).toBe('pass');
     expect(r.body.join('\n')).toContain('FUTURE_BULLET_COUNT: 1');
     expect(r.body.join('\n')).not.toContain('FUTURE_SOURCE');
+  });
+});
+
+describe('runCheckStateSections shipped pointer', () => {
+  test('archive without History: pointer fails SHIPPED_POINTER_MISSING', () => {
+    const ctx = makeCtx({
+      roadmap: `# Roadmap\n\n## In Progress\n\n## Current Plan\n\n## Future\n\n## Shipped\n`,
+      paths: { roadmap: 'docs/ROADMAP.md', shippedArchive: 'docs/roadmap-shipped.md' },
+      parsedRoadmap: { hasV2Grammar: true, shippedPointer: false },
+    });
+    const r = runCheckStateSections(ctx);
+    expect(r.status).toBe('fail');
+    expect(r.body.join('\n')).toContain('SHIPPED_POINTER_MISSING');
   });
 });
