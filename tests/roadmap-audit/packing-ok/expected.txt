@@ -149,8 +149,9 @@ FILES:
 - docs/PROGRESS.md: 0 TODO patterns (project doc)
 - docs/ROADMAP.md: 3 TODO patterns (project doc)
 - docs/TODOS.md: 1 TODO patterns (project doc)
+- docs/roadmap-shipped.md: 0 TODO patterns (unknown)
 
-TOTAL_FILES: 3
+TOTAL_FILES: 4
 
 ## SCATTERED_TODOS
 STATUS: pass

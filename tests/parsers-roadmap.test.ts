@@ -847,9 +847,8 @@ describe('future pointer + mergeFutureArchive', () => {
       '- **Plain title** — just one line.',
     ]);
     expect(out).toContain('FUTURE_INDEX: 2');
-    expect(out).toContain('Schema split');
-    expect(out).toContain('[autoplan:track-74a]');
-    expect(out).toContain('Long body.');
+    expect(out).toContain('- **Schema split** [autoplan:track-74a] — Long body.');
+    expect(out).not.toContain('**[autoplan:track-74a] Schema split**');
     expect(out).not.toContain('Second sentence');
   });
 
