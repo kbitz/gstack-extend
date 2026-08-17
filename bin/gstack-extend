@@ -301,6 +301,11 @@ render_all() {
     "docs/roadmap-shipped.md|roadmap-shipped.md.tmpl"
   )
 
+  local had_roadmap=0
+  if [ -f "$target/docs/ROADMAP.md" ] || [ -f "$target/ROADMAP.md" ]; then
+    had_roadmap=1
+  fi
+
   local pair dest tmpl content out
   for pair in "${map[@]}"; do
     dest="${pair%%|*}"
@@ -320,6 +325,17 @@ render_all() {
       # behavior contract: user-edited files are always preserved.
       echo "  ~ skipped $dest (already exists; --migrate only backfills missing files)"
       continue
+    fi
+    # Do not plant an empty Future/Shipped satellite next to a ROADMAP
+    # that already existed before this run. /roadmap copies the live
+    # tail on first apply. An empty stub plus leftover inline bullets
+    # is how deferred essays get deleted. Greenfield (no ROADMAP at
+    # start) still writes both satellites after the template ROADMAP.
+    if [ "$had_roadmap" = "1" ]; then
+      if [ "$dest" = "docs/roadmap-future.md" ] || [ "$dest" = "docs/roadmap-shipped.md" ]; then
+        echo "  ~ skipped $dest (ROADMAP already exists; /roadmap migrates the live tail)"
+        continue
+      fi
     fi
     mkdir -p "$(dirname "$out")"
     # printf '%s\n' (not '%s') so VERSION and friends get a trailing

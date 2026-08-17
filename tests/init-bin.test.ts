@@ -199,6 +199,22 @@ describe('init flag matrix', () => {
     expect(readFileSync(join(s.target, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
   });
 
+  test('partial dir + --migrate: does not plant empty satellites next to an existing ROADMAP', () => {
+    const s = mkScope('partial-migrate-existing-roadmap');
+    mkdirSync(join(s.target, 'docs'), { recursive: true });
+    writeFileSync(
+      join(s.target, 'docs', 'ROADMAP.md'),
+      '# Roadmap\n\n## Future\n\n- **Keep me** — live essay.\n',
+    );
+    const r = run(['init', s.target, '--migrate', '--no-prompt'], s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('~ skipped docs/roadmap-future.md');
+    expect(r.stdout).toContain('~ skipped docs/roadmap-shipped.md');
+    expect(existsSync(join(s.target, 'docs', 'roadmap-future.md'))).toBe(false);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-shipped.md'))).toBe(false);
+    expect(readFileSync(join(s.target, 'docs', 'ROADMAP.md'), 'utf8')).toContain('**Keep me**');
+  });
+
   test('onboarded dir + default: refuses with doctor hint, exits 1', () => {
     const s = mkScope('onboarded-default');
     // First init populates everything.

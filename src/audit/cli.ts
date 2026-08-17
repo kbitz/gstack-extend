@@ -117,9 +117,14 @@ export function parseArgs(argv: string[]): Argv {
 
 function findDoc(repoRoot: string, name: string): string | null {
   const root = join(repoRoot, name);
-  if (existsSync(root) && statSync(root).isFile()) return root;
   const docs = join(repoRoot, 'docs', name);
-  if (existsSync(docs) && statSync(docs).isFile()) return docs;
+  // Pointer grammar is locked to docs/roadmap-{future,shipped}.md.
+  // Prefer that path so a leftover root copy cannot hide the live file.
+  const docsFirst = name === 'roadmap-future.md' || name === 'roadmap-shipped.md';
+  const first = docsFirst ? docs : root;
+  const second = docsFirst ? root : docs;
+  if (existsSync(first) && statSync(first).isFile()) return first;
+  if (existsSync(second) && statSync(second).isFile()) return second;
   return null;
 }
 

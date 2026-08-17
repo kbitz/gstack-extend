@@ -3,9 +3,9 @@ name: roadmap
 description: |
   Plan regeneration skill. Maintains ROADMAP.md as a state-organized
   execution plan (## In Progress / ## Current Plan / ## Future / ## Shipped)
-  and regenerates the upcoming plan whole on each substantive run instead
-  of surgically reassessing it. Only shipped work has stable IDs; the rest
-  is volatile and re-thought each run. Spec:
+  and regenerates In Progress + Current Plan whole on each substantive run.
+  Future membership is re-derived; staying-deferred text is kept. Only
+  shipped work has stable IDs. Spec:
   `docs/archive/roadmap-v2-state-model.md`.
   Use when asked to "regenerate the roadmap", "restructure TODOs",
   "clean up the roadmap", "reorganize backlog", "tidy up docs",
@@ -235,7 +235,7 @@ roadmap and the ground truth disagree, the ground truth wins.
 
 Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" --future-index` and Read that output (title + source + first sentence). Do **not** Read `docs/roadmap-future.md` unless promoting an item or its source Track shipped since `LAST_ROADMAP_RUN`. If `docs/roadmap-shipped.md` exists, load **only an ID+title index** (Group/Track headings), not the bodies. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
-**Default split.** If `## Shipped` still has Group/Phase/Track headings (not just the pointer + in-progress sibling Tracks), move that body to `docs/roadmap-shipped.md` as part of apply — no extra question. If `## Future` still has bullets and `docs/roadmap-future.md` is missing, move the bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop.
+**Default split.** If `## Shipped` still has Group/Phase/Track headings (not just the pointer + in-progress sibling Tracks), move that body to `docs/roadmap-shipped.md` as part of apply — no extra question. If `## Future` still has bullets and `docs/roadmap-future.md` is missing **or has no `- ` bullets** (header-only stub from init `--migrate`), move the live bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop. Never delete live Future bullets to "finish" a split against an empty satellite.
 
 **LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
@@ -259,7 +259,7 @@ for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
 
 **Origin tags vs recycled numbers.** `[pair-review:group=N]` aimed at a **Shipped** or **In Progress** Group keeps using the number (those IDs are stable). A tag aimed at a **Current Plan** Group is resolved by **normalized title** at inbox-drain time, not by number. If `group=91` no longer matches that title, consult the renames table, then ask. Do not invent a second ID namespace.
 
-**Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — the upcoming plan must be re-emitted in v2 grammar. The Shipped region is preserved (existing `✓ Complete` Groups become `## Shipped` entries with frozen IDs); everything else is regenerated from inputs.
+**Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — In Progress + Current Plan must be re-emitted in v2 grammar. Existing `✓ Complete` Groups become `## Shipped` (then migrate to `docs/roadmap-shipped.md`). Existing Future bullets move verbatim into `docs/roadmap-future.md`.
 
 ## Step 2: Regenerate
 
@@ -497,7 +497,7 @@ The proposal is one document, so the question loop is collapsed. Two clusters:
 > B) Revise — specify what to change
 > C) Hold — keep current plan; only apply trivial closures (mark fully-shipped Groups as Shipped, drop empty Tracks)
 
-The v1 placement-batch and deferral-batch clusters no longer exist. There's nothing item-by-item to ask about because the whole upcoming plan is regenerated as one document.
+The v1 placement-batch and deferral-batch clusters no longer exist. In Progress + Current Plan are regenerated as one document; Future apply is a title-keyed membership edit, not a one-shot rewrite.
 
 **Cluster 3 — Ambiguity** (genuine uncertainty between two equally plausible structural shapes): per the Confusion Protocol — name the ambiguity in one sentence, present 2-3 options with tradeoffs.
 

@@ -10,7 +10,7 @@
  *   STATUS: pass | fail | skip
  *   FINDINGS: per-finding (or "- (none)")
  *   FUTURE_BULLET_COUNT: N
- *   FUTURE_SOURCE: inline | file | empty
+ *   FUTURE_SOURCE: file   (omitted for legacy inline / empty)
  */
 
 import { parseRoadmap } from '../parsers/roadmap.ts';
@@ -65,9 +65,15 @@ export function runCheckFuture(ctx: AuditCtx): CheckResult {
     );
   }
   if (archivePath !== null && activeBullets.length > 0) {
-    findings.push(
-      '- SPLIT_INCOMPLETE: Future bullets live in both ROADMAP.md and docs/roadmap-future.md — finish the split',
-    );
+    if (archiveBullets.length === 0) {
+      findings.push(
+        '- SPLIT_INCOMPLETE: ROADMAP still has Future bullets and docs/roadmap-future.md is empty — copy the live bullets into the satellite, then leave the pointer. Do not delete the live bullets.',
+      );
+    } else {
+      findings.push(
+        '- SPLIT_INCOMPLETE: Future bullets live in both ROADMAP.md and docs/roadmap-future.md — finish the split',
+      );
+    }
   }
   if (archivePath !== null && pointer !== null) {
     if (archiveBullets.length === 0 && /^- /m.test(ctx.files.futureArchive)) {

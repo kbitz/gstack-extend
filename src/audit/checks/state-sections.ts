@@ -86,6 +86,11 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
       '- SHIPPED_POINTER_MISSING: docs/roadmap-shipped.md exists but ROADMAP ## Shipped has no History: pointer',
     );
   }
+  if (ctx.roadmap.value.shippedPointer && ctx.paths.shippedArchive === null) {
+    findings.push(
+      '- SHIPPED_FILE_MISSING: ROADMAP points at docs/roadmap-shipped.md but the file is absent',
+    );
+  }
 
   const sectionsPresent = seen.map((s) => s.name).join(', ');
   const tail = [

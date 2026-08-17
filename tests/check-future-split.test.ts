@@ -117,6 +117,18 @@ describe('runCheckFuture split states', () => {
 });
 
 describe('runCheckStateSections shipped pointer', () => {
+  test('empty satellite plus live bullets says copy, not delete', () => {
+    const ctx = makeCtx({
+      roadmap: `# Roadmap\n\n## Future\n\n- **Inline** — leftover.\n\nDeferred: docs/roadmap-future.md (1 items)\n`,
+      paths: { roadmap: 'docs/ROADMAP.md', futureArchive: 'docs/roadmap-future.md' },
+    });
+    ctx.files.futureArchive = '# Future\n\n## Future\n';
+    const r = runCheckFuture(ctx);
+    expect(r.status).toBe('fail');
+    expect(r.body.join('\n')).toContain('SPLIT_INCOMPLETE');
+    expect(r.body.join('\n')).toContain('Do not delete the live bullets');
+  });
+
   test('archive without History: pointer fails SHIPPED_POINTER_MISSING', () => {
     const ctx = makeCtx({
       roadmap: `# Roadmap\n\n## In Progress\n\n## Current Plan\n\n## Future\n\n## Shipped\n`,
@@ -126,5 +138,16 @@ describe('runCheckStateSections shipped pointer', () => {
     const r = runCheckStateSections(ctx);
     expect(r.status).toBe('fail');
     expect(r.body.join('\n')).toContain('SHIPPED_POINTER_MISSING');
+  });
+
+  test('History pointer without file fails SHIPPED_FILE_MISSING', () => {
+    const ctx = makeCtx({
+      roadmap: `# Roadmap\n\n## Shipped\n\nHistory: docs/roadmap-shipped.md\n`,
+      paths: { roadmap: 'docs/ROADMAP.md', shippedArchive: null },
+      parsedRoadmap: { hasV2Grammar: true, shippedPointer: true },
+    });
+    const r = runCheckStateSections(ctx);
+    expect(r.status).toBe('fail');
+    expect(r.body.join('\n')).toContain('SHIPPED_FILE_MISSING');
   });
 });
