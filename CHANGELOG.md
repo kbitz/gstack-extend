@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.25.0.0] - 2026-08-17
+
+### Added
+
+- **`/roadmap` now splits Future and Shipped by default.** Deferred items live in `docs/roadmap-future.md` and keep the review context that used to get crushed to one line. Shipped history lives in `docs/roadmap-shipped.md`. ROADMAP always carries both pointers, even when Future is empty.
+- **`roadmap-audit --future-index`.** Gather loads title, source tag, and first sentence instead of reading the whole Future file. New projects get both satellite files from `gstack-extend init`.
+
+### Changed
+
+- **Future apply is surgical.** Items that stay deferred keep their existing text. Apply deletes killed, discharged, or promoted titles and appends new ones — it does not rewrite the Future file from scratch.
+
+### Fixed
+
+- **An empty Future satellite no longer eats leftover inline bullets.** Init `--migrate` will not plant a header-only stub next to an existing ROADMAP. Audit tells you to copy the live bullets, not delete them. A `History:` pointer with no shipped file now fails instead of silently dropping frozen IDs.
+
 ## [0.24.6.0] - 2026-08-15
 
 ### Fixed
