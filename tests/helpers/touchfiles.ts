@@ -183,6 +183,15 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/telemetry-contract.test.ts': [
     'bin/gstack-extend-telemetry',
   ],
+  // Live ROADMAP + shipped archive are loaded at runtime (not imported).
+  'tests/parsers-phases.test.ts': [
+    'docs/ROADMAP.md',
+    'docs/roadmap-shipped.md',
+  ],
+  'tests/parsers-roadmap.test.ts': [
+    'docs/ROADMAP.md',
+    'docs/roadmap-shipped.md',
+  ],
 };
 
 /**
