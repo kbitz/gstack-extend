@@ -120,6 +120,8 @@ function defaultParsedRoadmap(overrides: Partial<ParsedRoadmap> = {}): ParserRes
       hasV2Grammar: false,
       futureBullets: [],
       futureMalformed: [],
+      futurePointer: null,
+      shippedPointer: false,
       effortTagFindings: [],
       tombstones: [],
       ...overrides,
@@ -166,6 +168,8 @@ export function makeCtx(opts: MakeCtxOpts = {}): AuditCtx {
     todos: opts.todos !== undefined ? 'TODOS.md' : null,
     roadmap: opts.roadmap !== undefined ? 'ROADMAP.md' : null,
     progress: opts.progress !== undefined ? 'PROGRESS.md' : null,
+    futureArchive: null,
+    shippedArchive: null,
     ...opts.paths,
   };
 
@@ -176,6 +180,8 @@ export function makeCtx(opts: MakeCtxOpts = {}): AuditCtx {
     version: opts.version ?? current,
     changelog: opts.changelog ?? '',
     pyproject: opts.pyproject ?? '',
+    futureArchive: '',
+    shippedArchive: '',
   };
 
   return {

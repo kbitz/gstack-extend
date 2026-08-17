@@ -139,6 +139,8 @@ describe('init flag matrix', () => {
     expect(r.stdout).toContain('+ wrote docs/ROADMAP.md');
     expect(r.stdout).toContain('+ wrote docs/TODOS.md');
     expect(r.stdout).toContain('+ wrote docs/PROGRESS.md');
+    expect(r.stdout).toContain('+ wrote docs/roadmap-future.md');
+    expect(r.stdout).toContain('+ wrote docs/roadmap-shipped.md');
     expect(r.stdout).toContain('+ registered');
     expect(r.stdout).toContain('SUCCESS');
 
@@ -148,6 +150,8 @@ describe('init flag matrix', () => {
     expect(existsSync(join(s.target, 'docs', 'ROADMAP.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'TODOS.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'PROGRESS.md'))).toBe(true);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-future.md'))).toBe(true);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-shipped.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'designs'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'archive'))).toBe(true);
 

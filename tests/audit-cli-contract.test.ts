@@ -130,6 +130,13 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     expect(r.stdout).toContain('No ROADMAP.md found');
   });
 
+  test('--future-index prints an index even on an empty repo', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const r = run(['--future-index', repo]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('FUTURE_INDEX: 0');
+  });
+
   test('--scan-state always emits valid JSON', () => {
     const repo = makeEmptyRepo(baseTmp);
     const r = run(['--scan-state', repo]);

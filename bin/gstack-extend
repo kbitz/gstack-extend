@@ -80,6 +80,8 @@ CANONICAL_FILES=(
   docs/ROADMAP.md
   docs/TODOS.md
   docs/PROGRESS.md
+  docs/roadmap-future.md
+  docs/roadmap-shipped.md
 )
 
 CANONICAL_DIRS=(
@@ -295,6 +297,8 @@ render_all() {
     "docs/ROADMAP.md|ROADMAP.md.tmpl"
     "docs/TODOS.md|TODOS.md.tmpl"
     "docs/PROGRESS.md|PROGRESS.md.tmpl"
+    "docs/roadmap-future.md|roadmap-future.md.tmpl"
+    "docs/roadmap-shipped.md|roadmap-shipped.md.tmpl"
   )
 
   local pair dest tmpl content out

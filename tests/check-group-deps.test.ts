@@ -38,7 +38,7 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
       logSubjectsSince: () => [],
       workingTreePaths: () => [],
     },
-    paths: { todos: null, roadmap: 'ROADMAP.md', progress: null },
+    paths: { todos: null, roadmap: 'ROADMAP.md', progress: null, futureArchive: null, shippedArchive: null },
     files: {
       roadmap: '',
       todos: '',
@@ -46,6 +46,8 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
       version: '',
       changelog: '',
       pyproject: '',
+      futureArchive: '',
+      shippedArchive: '',
     },
     exists: {
       rootTodos: false, docsTodos: false, rootRoadmap: false, docsRoadmap: true,

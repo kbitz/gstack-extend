@@ -136,10 +136,12 @@ fi
 
 This skill maintains ROADMAP.md organized by lifecycle state at the top
 level (`## In Progress` / `## Current Plan` / `## Future` / `## Shipped`).
-Active plan sits at the top; shipped history sinks to the tail (or to
-`docs/roadmap-shipped.md` when the tail no longer fits). Every substantive
-run **regenerates** the upcoming plan from scratch instead of surgically
-reassessing it. Only shipped work has stable IDs.
+Active plan sits at the top. Shipped history lives in
+`docs/roadmap-shipped.md`. Deferred items live in `docs/roadmap-future.md`.
+ROADMAP always carries both pointers. Every substantive run **regenerates**
+`## In Progress` + `## Current Plan` from scratch. Future *membership* is
+re-derived (place / defer / kill / discharge); staying-deferred text is
+left untouched. Only shipped work has stable IDs.
 
 Groups are launch batches the packer assigns. Tracks are one-PR cards
 `/autoplan` will read. The grammar lives in this file; the packer is
@@ -169,7 +171,7 @@ entries against it.
 | Shipped         | `## Shipped`         | Phase / Group / Track | Frozen IDs forever, append-only  |
 | In Progress     | `## In Progress`     | Phase / Group        | Volatile (Tracks pinned only by open PR) |
 | Current Plan    | `## Current Plan`    | Phase / Group / Track | Fully volatile — regenerated each run |
-| Future          | `## Future`          | Flat bullets         | Fully volatile — regenerated each run |
+| Future          | `docs/roadmap-future.md` (pointer in ROADMAP) | Flat bullets | Membership re-derived; staying-deferred text kept |
 
 Granularity rules:
 - A **Track** is `shipped` (in `## Shipped`) or unshipped (in `## In Progress`
@@ -230,9 +232,9 @@ roadmap and the ground truth disagree, the ground truth wins.
 "$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
 ```
 
-Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan`, `## Future` — not the `## Shipped` essays). If `docs/roadmap-shipped.md` exists, load **only an ID+title index** (Group/Track headings), not the bodies. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" --future-index` and Read that output (title + source + first sentence). Do **not** Read `docs/roadmap-future.md` unless promoting an item or its source Track shipped since `LAST_ROADMAP_RUN`. If `docs/roadmap-shipped.md` exists, load **only an ID+title index** (Group/Track headings), not the bodies. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
-If `## Shipped` in ROADMAP.md exceeds ~50 KB or ~20 Groups, offer to move it to `docs/roadmap-shipped.md` (leave a pointer line, plus any in-progress Group's shipped sibling Tracks).
+**Default split.** If `## Shipped` still has Group/Phase/Track headings (not just the pointer + in-progress sibling Tracks), move that body to `docs/roadmap-shipped.md` as part of apply — no extra question. If `## Future` still has bullets and `docs/roadmap-future.md` is missing, move the bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop.
 
 **LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
 
@@ -333,7 +335,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
 - **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan (re-derived against HEAD, not copied) + inbox items (verified at drain time, not observation time) + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
-- **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `## Future`. No structure, no IDs, no sizing. Promotion to Current Plan in a future regen is the moment of commitment.
+- **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `docs/roadmap-future.md`. Keep the filed review context (symptom, source, why deferred, load-bearing file/symbol). Do not collapse a review finding to a title. Do not paste a whole design doc — if it needs headings, write `docs/designs/` and point at it. Items that stay deferred keep their existing text; do not rewrite them shorter. Declined / do-not-re-propose records leave Future (proposal killed list only — never `roadmap-shipped.md`). Promotion to Current Plan is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
 ### Adversarial-flagged items have priority
@@ -386,7 +388,7 @@ Group assignment is **the packer's job**, not a theme judgment.
 
 Do not hand-sequence Groups "to cap concurrent WIP." The packer already fills to `parallelism_cap`. A Group may launch when every Group in its `←` set has landed, regardless of document order; document order is priority, not a gate.
 
-Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
+Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`, `roadmap-future.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
 
 `_touches:` is load-bearing. After a Track ships, `bin/roadmap-touches drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack. Directory entries end in `/`. Created files are `path (new)`.
 
@@ -502,7 +504,10 @@ The v1 placement-batch and deferral-batch clusters no longer exist. There's noth
 
 Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
-- **Whole-block replacement.** The existing `## In Progress`, `## Current Plan`, and `## Future` content is fully replaced with the regenerated content. The existing `## Shipped` content (which lives at the tail of the document) is preserved verbatim, or constructed from v1 `✓ Complete` Groups during migration.
+- **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete bullets whose titles were killed, discharged, or promoted; append newly deferred inbox items (full richness); leave every other line in `docs/roadmap-future.md` untouched. Write satellite files first, then ROADMAP.
+- **Always write both pointers** in ROADMAP, including `(0 items)` when Future is empty:
+  `Deferred: docs/roadmap-future.md (N items)` and `History: docs/roadmap-shipped.md`.
+- **Shipped** is append-only in `docs/roadmap-shipped.md`. ROADMAP `## Shipped` is the pointer plus any in-progress Group's shipped sibling Tracks. Existing inline Shipped body is migrated on first apply.
 - **TODOS.md drain.** Every inbox item that the proposal placed, deferred, killed, or discharged is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
 - **No helper invocations.** There's no split-track helper anymore. All edits are direct file writes.
 - **Track / Group completion conventions:**
@@ -620,7 +625,8 @@ The audit enforces this format. Helpers consume it. Skill prose follows it when 
 ```markdown
 # Roadmap
 
-(optional preamble paragraph)
+(short how-to-read + standing constraints that can refuse a Track.
+No regen diary. Constraints are not rewritten unless the user edits them.)
 
 ---
 
@@ -705,28 +711,11 @@ Group 6: <Title>
 
 ## Future
 
-Items we might do but aren't committed to. Plain bullets. No phase/group/track
-structure, no `_touches:_`, no sizing, no IDs.
-
-- **<Item title>** — description. _Source: <where it came from>._
-- **<Item title>** — description.
+Deferred: docs/roadmap-future.md (N items)
 
 ## Shipped
 
-### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
-<one-line summary>
-
-#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 1A — _shipped (vX.Y.Z.W)_
-- Track 1B — _shipped (vX.Y.Z.W)_
-
-#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 2A — _shipped (vX.Y.Z.W)_
-
-(loose Groups not in a Phase are listed at H4 directly under `## Shipped`
-without a Phase wrapper. When history no longer fits, replace this section
-with `History: docs/roadmap-shipped.md` and keep only in-progress Groups'
-shipped sibling Tracks here.)
+History: docs/roadmap-shipped.md
 ```
 
 **Vocabulary** is enforced by the audit's `check_vocab_lint` (banned: Cluster, Workstream, Milestone, Sprint; controlled: Phase only inside an explicit `### Phase N:` block, the `## Future` section, or the file-title line). Don't re-encode the rules here — the audit owns them.
@@ -755,7 +744,8 @@ The audit distinguishes blocker vs advisory:
 | LICENSE | root | License file | Manual |
 | TODOS.md | docs/ | "Inbox" — unprocessed items | /pair-review, /investigate (write), /roadmap (drain) |
 | ROADMAP.md | docs/ | "Execution plan" — state-organized | /roadmap (owns structure) |
-| roadmap-shipped.md | docs/ | Frozen shipped history (optional split) | /roadmap |
+| roadmap-shipped.md | docs/ | Frozen shipped history | /roadmap |
+| roadmap-future.md | docs/ | Deferred bullets (rich review context) | /roadmap |
 | PROGRESS.md | docs/ | "Where we are" — version history, phase status | /roadmap (structure), /document-release (content) |
 | docs/designs/*.md | docs/designs/ | Architecture decisions | /office-hours |
 | docs/archive/*.md | docs/archive/ | Completed/superseded designs | /roadmap (recommends archiving) |
