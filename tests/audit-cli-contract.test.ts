@@ -130,6 +130,35 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     expect(r.stdout).toContain('No ROADMAP.md found');
   });
 
+  test('--future-index prints an index even on an empty repo', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    const r = run(['--future-index', repo]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('FUTURE_INDEX: 0');
+  });
+
+  test('--future-index on a split repo merges satellite bullets', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    writeFileSync(
+      join(repo, 'docs', 'ROADMAP.md'),
+      '# Roadmap\n\n## Future\n\nDeferred: docs/roadmap-future.md (1 items)\n\n## Shipped\n\nHistory: docs/roadmap-shipped.md\n',
+    );
+    writeFileSync(
+      join(repo, 'docs', 'roadmap-future.md'),
+      '# Future\n\n## Future\n\n- **Keep the context** — filed from a review.\n',
+    );
+    writeFileSync(
+      join(repo, 'docs', 'roadmap-shipped.md'),
+      '# Shipped\n\n## Shipped\n',
+    );
+    const r = run(['--future-index', repo]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('FUTURE_INDEX: 1');
+    expect(r.stdout).toContain('Keep the context');
+    expect(r.stdout).toContain('filed from a review.');
+  });
+
   test('--scan-state always emits valid JSON', () => {
     const repo = makeEmptyRepo(baseTmp);
     const r = run(['--scan-state', repo]);

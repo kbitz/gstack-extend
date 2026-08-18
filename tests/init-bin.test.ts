@@ -139,6 +139,8 @@ describe('init flag matrix', () => {
     expect(r.stdout).toContain('+ wrote docs/ROADMAP.md');
     expect(r.stdout).toContain('+ wrote docs/TODOS.md');
     expect(r.stdout).toContain('+ wrote docs/PROGRESS.md');
+    expect(r.stdout).toContain('+ wrote docs/roadmap-future.md');
+    expect(r.stdout).toContain('+ wrote docs/roadmap-shipped.md');
     expect(r.stdout).toContain('+ registered');
     expect(r.stdout).toContain('SUCCESS');
 
@@ -148,6 +150,8 @@ describe('init flag matrix', () => {
     expect(existsSync(join(s.target, 'docs', 'ROADMAP.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'TODOS.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'PROGRESS.md'))).toBe(true);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-future.md'))).toBe(true);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-shipped.md'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'designs'))).toBe(true);
     expect(existsSync(join(s.target, 'docs', 'archive'))).toBe(true);
 
@@ -193,6 +197,22 @@ describe('init flag matrix', () => {
     expect(r.stdout).toContain('+ wrote CHANGELOG.md');
     expect(r.stdout).toContain('+ wrote docs/ROADMAP.md');
     expect(readFileSync(join(s.target, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
+  });
+
+  test('partial dir + --migrate: does not plant empty satellites next to an existing ROADMAP', () => {
+    const s = mkScope('partial-migrate-existing-roadmap');
+    mkdirSync(join(s.target, 'docs'), { recursive: true });
+    writeFileSync(
+      join(s.target, 'docs', 'ROADMAP.md'),
+      '# Roadmap\n\n## Future\n\n- **Keep me** — live essay.\n',
+    );
+    const r = run(['init', s.target, '--migrate', '--no-prompt'], s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('~ skipped docs/roadmap-future.md');
+    expect(r.stdout).toContain('~ skipped docs/roadmap-shipped.md');
+    expect(existsSync(join(s.target, 'docs', 'roadmap-future.md'))).toBe(false);
+    expect(existsSync(join(s.target, 'docs', 'roadmap-shipped.md'))).toBe(false);
+    expect(readFileSync(join(s.target, 'docs', 'ROADMAP.md'), 'utf8')).toContain('**Keep me**');
   });
 
   test('onboarded dir + default: refuses with doctor hint, exits 1', () => {

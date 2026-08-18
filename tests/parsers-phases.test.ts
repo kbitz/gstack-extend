@@ -149,8 +149,10 @@ describe('parsePhases', () => {
 
 describe('parsePhases — real ROADMAP.md', () => {
   test('extracts Phase 1: Bun Test Migration', async () => {
-    const path = `${import.meta.dir}/../docs/ROADMAP.md`;
-    const content = await Bun.file(path).text();
+    // After the default shipped split, Phase 1 lives in the archive.
+    const live = `${import.meta.dir}/../docs/ROADMAP.md`;
+    const archive = `${import.meta.dir}/../docs/roadmap-shipped.md`;
+    const content = `${await Bun.file(live).text()}\n${await Bun.file(archive).text()}`;
     const r = parsePhases(content);
     expect(r.value.phases).toHaveLength(1);
     expect(r.value.phases[0]!.num).toBe('1');

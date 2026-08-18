@@ -75,6 +75,23 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
     );
   }
 
+  // After the shipped split exists, ROADMAP must point at it. Unmigrated
+  // inline ## Shipped with no archive file stays silent — /roadmap migrates.
+  if (
+    ctx.paths.shippedArchive !== null &&
+    !ctx.roadmap.value.shippedPointer &&
+    seen.some((s) => s.name === 'Shipped')
+  ) {
+    findings.push(
+      '- SHIPPED_POINTER_MISSING: docs/roadmap-shipped.md exists but ROADMAP ## Shipped has no History: pointer',
+    );
+  }
+  if (ctx.roadmap.value.shippedPointer && ctx.paths.shippedArchive === null) {
+    findings.push(
+      '- SHIPPED_FILE_MISSING: ROADMAP points at docs/roadmap-shipped.md but the file is absent',
+    );
+  }
+
   const sectionsPresent = seen.map((s) => s.name).join(', ');
   const tail = [
     `GRAMMAR: ${grammar}`,

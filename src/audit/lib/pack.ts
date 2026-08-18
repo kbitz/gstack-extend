@@ -42,6 +42,7 @@ export const SHARED_DOC_PATHS = new Set([
   'docs/TODOS.md',
   'docs/PROGRESS.md',
   'docs/roadmap-shipped.md',
+  'docs/roadmap-future.md',
   'ROADMAP.md',
   'TODOS.md',
   'PROGRESS.md',

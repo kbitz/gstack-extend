@@ -81,6 +81,8 @@ export type AuditFilePaths = {
   todos: string | null;
   roadmap: string | null;
   progress: string | null;
+  futureArchive: string | null;
+  shippedArchive: string | null;
 };
 
 // File contents (empty string when the corresponding file is missing). Parsers
@@ -93,6 +95,8 @@ export type AuditFileContents = {
   version: string; // VERSION file content (raw, no trim)
   changelog: string; // CHANGELOG.md content
   pyproject: string; // pyproject.toml content
+  futureArchive: string;
+  shippedArchive: string;
 };
 
 // Existence flags used by checks that decide on file location, not content.

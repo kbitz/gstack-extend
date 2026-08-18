@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.25.0.0 | 2026-08-17 | `/roadmap` splits Future and Shipped by default. Deferred work lives in `docs/roadmap-future.md` and keeps review context. Shipped history lives in `docs/roadmap-shipped.md`. ROADMAP always carries both pointers. Future apply is surgical — staying-deferred text is kept. `roadmap-audit --future-index` loads title, source tag, and first sentence. Init writes both satellites. An empty Future satellite no longer drops leftover inline bullets. A `History:` pointer with no shipped file now fails. |
 | 0.24.6.0 | 2026-08-15 | Closed the two 15B holes. hop-from keeps the pre-pull window if setup dies. Failed-ledger retry no longer aborts when NEW is `unknown`. Helper-path tests shipped with the fixes. |
 | 0.24.5.1 | 2026-08-15 | Filed two P1 15B follow-ups (unknown-VERSION failed retry; setup-fail after pull loses hops) plus a P2 helper-path test bundle. Fix before the first real `migrations/v*.sh`. |
 | 0.24.5.0 | 2026-08-15 | Track 15B — `migrations/v*.sh` runner + applied/failed ledger in `bin/update-run`. Fail-soft `MIGRATION_WARN`; retry on next update-run. `/gstack-extend-upgrade` names the script and points at `bin/update-run` for retry. No production migration this release. |

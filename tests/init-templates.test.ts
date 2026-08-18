@@ -75,6 +75,17 @@ describe('template substitution', () => {
     expect(currentIdx).toBeGreaterThan(inProgressIdx);
     expect(futureIdx).toBeGreaterThan(currentIdx);
     expect(shippedIdx).toBeGreaterThan(futureIdx);
+    expect(md).toContain('Deferred: docs/roadmap-future.md (0 items)');
+    expect(md).toContain('History: docs/roadmap-shipped.md');
+  });
+
+  test('init writes empty Future and Shipped satellite files', () => {
+    const s = scope('satellites');
+    init(s);
+    const future = readFileSync(join(s.target, 'docs', 'roadmap-future.md'), 'utf8');
+    const shipped = readFileSync(join(s.target, 'docs', 'roadmap-shipped.md'), 'utf8');
+    expect(future).toContain('## Future');
+    expect(shipped).toContain('## Shipped');
   });
 
   test('TODOS.md seeds first-session checklist with [manual] tag', () => {

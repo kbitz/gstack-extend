@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  formatFutureIndex,
+  mergeFutureArchive,
   mergeShippedArchive,
   parseRoadmap,
   type ParseRoadmapDeps,
@@ -568,7 +570,9 @@ describe('parseRoadmap — real-world: gstack-extend ROADMAP.md', () => {
     const path = join(import.meta.dir, '..', 'docs', 'ROADMAP.md');
     const file = Bun.file(path);
     const content = await file.text();
-    const r = parseRoadmap(content, deps());
+    const archivePath = join(import.meta.dir, '..', 'docs', 'roadmap-shipped.md');
+    const archive = await Bun.file(archivePath).text();
+    const r = mergeShippedArchive(parseRoadmap(content, deps()), parseRoadmap(archive, deps()));
     expect(r.errors).toEqual([]);
     // Frozen anchors: Groups 1 and 5 are permanently in `## Shipped`, so the
     // parser resolves them to `shipped` via section enclosure. These never
@@ -796,5 +800,84 @@ describe('mergeShippedArchive', () => {
       '84',
       '90',
     ]);
+  });
+});
+
+describe('future pointer + mergeFutureArchive', () => {
+  test('pointer is not futureMalformed and captures the declared count', () => {
+    const r = parseRoadmap(
+      '## Future\n\nDeferred: docs/roadmap-future.md (4 items)\n\n## Shipped\n\nHistory: docs/roadmap-shipped.md\n',
+      deps(),
+    );
+    expect(r.value.futurePointer).toEqual({ declaredCount: 4 });
+    expect(r.value.futureBullets).toEqual([]);
+    expect(r.value.futureMalformed).toEqual([]);
+    expect(r.value.shippedPointer).toBe(true);
+  });
+
+  test('placeholder italic is not malformed', () => {
+    const r = parseRoadmap('## Future\n_(none)_\n', deps());
+    expect(r.value.futureMalformed).toEqual([]);
+    expect(r.value.futureBullets).toEqual([]);
+  });
+
+  test('mergeFutureArchive fills pointer-only active from the satellite', () => {
+    const active = parseRoadmap(
+      '## Future\nDeferred: docs/roadmap-future.md (1 items)\n',
+      deps(),
+    );
+    const archive = parseRoadmap(
+      '# Future\n\n## Future\n\n- **Keep the context** — filed from review.\n',
+      deps(),
+    );
+    const m = mergeFutureArchive(active, archive);
+    expect(m.value.futureBullets).toEqual(['- **Keep the context** — filed from review.']);
+  });
+
+  test('mergeFutureArchive keeps active bullets when both sides have them', () => {
+    const active = parseRoadmap('## Future\n- **Inline** — still here.\n', deps());
+    const archive = parseRoadmap('## Future\n- **File** — also here.\n', deps());
+    const m = mergeFutureArchive(active, archive);
+    expect(m.value.futureBullets).toEqual(['- **Inline** — still here.']);
+  });
+
+  test('formatFutureIndex prints title, source, first sentence', () => {
+    const out = formatFutureIndex([
+      '- **[autoplan:track-74a] Schema split** — Long body. Second sentence.',
+      '- **Plain title** — just one line.',
+    ]);
+    expect(out).toContain('FUTURE_INDEX: 2');
+    expect(out).toContain('- **Schema split** [autoplan:track-74a] — Long body.');
+    expect(out).not.toContain('**[autoplan:track-74a] Schema split**');
+    expect(out).not.toContain('Second sentence');
+  });
+
+  test('singular (1 item) pointer is accepted', () => {
+    const r = parseRoadmap('## Future\n\nDeferred: docs/roadmap-future.md (1 item)\n', deps());
+    expect(r.value.futurePointer).toEqual({ declaredCount: 1 });
+    expect(r.value.futureMalformed).toEqual([]);
+  });
+
+  test('mergeFutureArchive empty satellite is a no-op', () => {
+    const active = parseRoadmap(
+      '## Future\nDeferred: docs/roadmap-future.md (0 items)\n',
+      deps(),
+    );
+    const archive = parseRoadmap('# Future\n\n## Future\n', deps());
+    const m = mergeFutureArchive(active, archive);
+    expect(m.value.futureBullets).toEqual([]);
+    expect(m.value.futurePointer).toEqual({ declaredCount: 0 });
+  });
+
+  test('formatFutureIndex handles non-bold titles and title-only bullets', () => {
+    const out = formatFutureIndex([
+      '- Bare title — first sentence. Rest.',
+      '- **Title only**',
+    ]);
+    expect(out).toContain('FUTURE_INDEX: 2');
+    expect(out).toContain('- **Bare title** — first sentence.');
+    expect(out).not.toContain('Rest.');
+    expect(out).toContain('- **Title only**');
+    expect(out).not.toMatch(/Title only.*—/);
   });
 });

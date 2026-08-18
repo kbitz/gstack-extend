@@ -80,8 +80,8 @@ Tracks (one PR / one session). `bin/roadmap-pack` assigns Groups. Theme is
 a name, not a partition. Audits the docs, drains TODOS.md, and recommends
 a VERSION bump (`/ship` writes it).
 
-- **Two files, one flow** — TODOS.md is the inbox (other skills write here), ROADMAP.md is the structured execution plan. Optional `docs/roadmap-shipped.md` holds frozen shipped history when the tail no longer fits.
-- **Regenerate, don't patch** — every substantive run rewrites `## In Progress` / `## Current Plan` / `## Future`. Only shipped IDs are frozen.
+- **Inbox + live plan + two tails** — TODOS.md is the inbox, ROADMAP.md is the live plan. `docs/roadmap-shipped.md` is frozen history. `docs/roadmap-future.md` is deferred work (keeps review context). ROADMAP always points at both.
+- **Regenerate, don't patch** — every substantive run rewrites `## In Progress` / `## Current Plan`. Future membership is re-derived; staying-deferred text is kept. Only shipped IDs are frozen.
 - **Deterministic audit** — automated checks (vocabulary, structure, version-tag staleness, versioning, taxonomy, doc location, archive candidates, dependencies, unprocessed, task list, structural fitness, doc inventory, scattered TODOs, session-weight size caps, collisions, packing, style lint, group deps, in-flight groups, origin stats, TODO format)
 - **Session-weight size + collision + packing** — Tracks have explicit `_touches:_` file sets. Size is session weight (S=1, M=2, L=4, XL=5), not line counts. Weight 5 warns (`WEIGHT_WARN`); ≥6 fails. Raise `roadmap_max_session_weight` if this repo ships weight-5 as one PR. Tag deletes `~N lines (del)` — title verbs are not enough. The packer (`bin/roadmap-pack`) is the scheduler: it fills bins from track `_blocked-by:` and `_touches:` only. `PACKING` fails when written Groups disagree. Two tracks that share a file with no path in the closed `_blocked-by` / bin / Group DAG get a STYLE_LINT `unordered collision` warn. Collision-split bins are serial. Shared docs are not collisions. `CLAUDE.md` is one-per-Group. Edit `docs/shared-infra.txt` to tune always-shared files. Design: `docs/designs/roadmap-v3-packing.md`.
 - **Group-level deps (DAG)** — Group `_Depends on:` is packer **output**, not input. Paste the packer's `DEPENDS` lines after you name the bins; writing them does not change the schedule. Unspecified means none (ready). First regen after upgrade: `bin/roadmap-pack --materialize` and write any implicit previous-Group edges you still want. The audit parses annotations, detects cycles + forward refs, warns on drifted name anchors (`STALE_DEPS`), and always emits a topologically-ordered adjacency list.
@@ -106,7 +106,7 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 
 1. **Audit** — Runs `bin/roadmap-audit` against repo docs. Reports vocabulary, structure, size, collisions, packing, group deps, and the rest of the section list.
 2. **Draft Tracks, then pack** — 1 Track = 1 PR = 1 session. Each card has `_touches:_` plus `_out:` / `_read-first:` / `_produces:` / `_blocked-by:`. `/roadmap` Step 2 runs `bin/roadmap-pack --from /tmp/draft-tracks.md` (or `--stdin`). Output includes `CRITICAL_PATH` and ready-to-paste `DEPENDS` lines. Do not re-partition the bins.
-3. **Apply** — Replace `## In Progress` / `## Current Plan` / `## Future`. Drain TODOS.md. Re-audit. `PACKING` must match the packer.
+3. **Apply** — Replace `## In Progress` / `## Current Plan`. Surgically update `docs/roadmap-future.md`. Drain TODOS.md. Re-audit. `PACKING` must match the packer.
 4. **PROGRESS + version** — `/roadmap` flags a stale PROGRESS.md and recommends a VERSION bump. It does not write VERSION (`/ship` does).
 
 ### Documentation Taxonomy
@@ -115,7 +115,8 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 |-----|---------|------------|
 | TODOS.md | Inbox — unprocessed items | /pair-review, /full-review, /investigate, /review-apparatus, manual |
 | ROADMAP.md | Execution plan — state sections, Groups are packer bins | /roadmap |
-| roadmap-shipped.md | Optional frozen shipped history | /roadmap |
+| roadmap-shipped.md | Frozen shipped history | /roadmap |
+| roadmap-future.md | Deferred bullets | /roadmap |
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
 | VERSION | SemVer source of truth | /ship |

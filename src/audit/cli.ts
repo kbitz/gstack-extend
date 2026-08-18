@@ -64,7 +64,12 @@ import { versionGt } from './lib/semver.ts';
 import { loadSharedInfra } from './lib/shared-infra.ts';
 import { parsePhases } from './parsers/phases.ts';
 import { parseProgress } from './parsers/progress.ts';
-import { mergeShippedArchive, parseRoadmap } from './parsers/roadmap.ts';
+import {
+  formatFutureIndex,
+  mergeFutureArchive,
+  mergeShippedArchive,
+  parseRoadmap,
+} from './parsers/roadmap.ts';
 import { parseTodos } from './parsers/todos.ts';
 import {
   collectParseErrors,
@@ -81,16 +86,21 @@ import {
 export type Argv = {
   repoRoot: string | null; // null → resolve via gateway / pwd
   scanState: boolean;
+  futureIndex: boolean;
   prompt: string | null;
 };
 
 export function parseArgs(argv: string[]): Argv {
-  const out: Argv = { repoRoot: null, scanState: false, prompt: null };
+  const out: Argv = { repoRoot: null, scanState: false, futureIndex: false, prompt: null };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--scan-state') {
       out.scanState = true;
+      continue;
+    }
+    if (a === '--future-index') {
+      out.futureIndex = true;
       continue;
     }
     if (a === '--prompt') {
@@ -107,9 +117,14 @@ export function parseArgs(argv: string[]): Argv {
 
 function findDoc(repoRoot: string, name: string): string | null {
   const root = join(repoRoot, name);
-  if (existsSync(root) && statSync(root).isFile()) return root;
   const docs = join(repoRoot, 'docs', name);
-  if (existsSync(docs) && statSync(docs).isFile()) return docs;
+  // Pointer grammar is locked to docs/roadmap-{future,shipped}.md.
+  // Prefer that path so a leftover root copy cannot hide the live file.
+  const docsFirst = name === 'roadmap-future.md' || name === 'roadmap-shipped.md';
+  const first = docsFirst ? docs : root;
+  const second = docsFirst ? root : docs;
+  if (existsSync(first) && statSync(first).isFile()) return first;
+  if (existsSync(second) && statSync(second).isFile()) return second;
   return null;
 }
 
@@ -260,8 +275,14 @@ export function buildAuditCtx(args: {
   // frozen-ID uniqueness; the active file still wins on collision.
   let roadmap = parseRoadmap(roadmapContent);
   const shippedArchivePath = findDoc(repoRoot, 'roadmap-shipped.md');
+  const shippedArchiveContent = readMaybe(shippedArchivePath);
   if (shippedArchivePath !== null) {
-    roadmap = mergeShippedArchive(roadmap, parseRoadmap(readMaybe(shippedArchivePath)));
+    roadmap = mergeShippedArchive(roadmap, parseRoadmap(shippedArchiveContent));
+  }
+  const futureArchivePath = findDoc(repoRoot, 'roadmap-future.md');
+  const futureArchiveContent = readMaybe(futureArchivePath);
+  if (futureArchivePath !== null) {
+    roadmap = mergeFutureArchive(roadmap, parseRoadmap(futureArchiveContent));
   }
   const phases = parsePhases(roadmapContent);
   const todos = parseTodos(todosContent);
@@ -322,7 +343,13 @@ export function buildAuditCtx(args: {
       userPrompt: argv.prompt ?? undefined,
     },
     git,
-    paths: { todos: todosPath, roadmap: roadmapPath, progress: progressPath },
+    paths: {
+      todos: todosPath,
+      roadmap: roadmapPath,
+      progress: progressPath,
+      futureArchive: futureArchivePath,
+      shippedArchive: shippedArchivePath,
+    },
     files: {
       roadmap: roadmapContent,
       todos: todosContent,
@@ -330,6 +357,8 @@ export function buildAuditCtx(args: {
       version: versionContent,
       changelog: changelogContent,
       pyproject: pyprojectContent,
+      futureArchive: futureArchiveContent,
+      shippedArchive: shippedArchiveContent,
     },
     exists,
     designs,
@@ -654,6 +683,9 @@ export function main(argv: string[]): { stdout: string; exitCode: number } {
 
   if (args.scanState) {
     return { stdout: runScanState(ctx, args.prompt) + '\n', exitCode: 0 };
+  }
+  if (args.futureIndex) {
+    return { stdout: formatFutureIndex(ctx.roadmap.value.futureBullets), exitCode: 0 };
   }
   return { stdout: runAudit(ctx), exitCode: 0 };
 }

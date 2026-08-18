@@ -102,10 +102,21 @@ export type ParsedRoadmap = {
   hasV2Grammar: boolean; // true when at least one ## In Progress/Current Plan/Future/Shipped seen
   futureBullets: string[]; // raw bullet lines from ## Future (when v2)
   futureMalformed: string[]; // non-bullet content seen inside ## Future (validation hint)
+  /** `Deferred: docs/roadmap-future.md (N items)` in ## Future. */
+  futurePointer: { declaredCount: number } | null;
+  /** `History: docs/roadmap-shipped.md` in ## Shipped. */
+  shippedPointer: boolean;
   effortTagFindings: string[]; // named bad/aliased/done-marker effort tags
   /** Reserved Group numbers that Current Plan / In Progress must not reuse. */
   tombstones: string[];
 };
+
+/** Pointer in ROADMAP.md ## Future. Count is required. */
+export const FUTURE_POINTER_RE =
+  /^Deferred: docs\/roadmap-future\.md \((\d+) items?\)$/;
+/** Pointer in ROADMAP.md ## Shipped. */
+export const SHIPPED_POINTER_RE = /^History: docs\/roadmap-shipped\.md$/;
+const FUTURE_PLACEHOLDER_RE = /^_\([^)]*\)_$/;
 
 // ─── Helpers (bash parity) ────────────────────────────────────────────
 
@@ -236,6 +247,8 @@ export function parseRoadmap(
         hasV2Grammar: false,
         futureBullets: [],
         futureMalformed: [],
+        futurePointer: null,
+        shippedPointer: false,
         effortTagFindings: [],
         tombstones: [],
       },
@@ -285,10 +298,12 @@ export function parseRoadmap(
   const futureMalformed: string[] = [];
   const effortTagFindings: string[] = [];
 
-  type Section = 'none' | 'skip' | 'group' | 'track' | 'future';
+  type Section = 'none' | 'skip' | 'group' | 'track' | 'future' | 'shipped';
   let section: Section = 'none';
   let groupNum = '';
   let trackId = '';
+  let futurePointer: { declaredCount: number } | null = null;
+  let shippedPointer = false;
 
   const lines = content.split('\n');
 
@@ -299,7 +314,8 @@ export function parseRoadmap(
     // Top-level state section detection.
     const stateMatch = line.match(STATE_HEADING_RE);
     if (stateMatch !== null) {
-      section = stateMatch[1] === 'Future' ? 'future' : 'none';
+      const name = stateMatch[1];
+      section = name === 'Future' ? 'future' : name === 'Shipped' ? 'shipped' : 'none';
       trackId = '';
       groupNum = '';
       continue;
@@ -604,12 +620,23 @@ export function parseRoadmap(
     if (section === 'future') {
       const stripped = trim(line);
       if (stripped === '') continue;
+      const pointer = stripped.match(FUTURE_POINTER_RE);
+      if (pointer !== null) {
+        futurePointer = { declaredCount: Number.parseInt(pointer[1]!, 10) };
+        continue;
+      }
+      if (FUTURE_PLACEHOLDER_RE.test(stripped)) continue;
       if (/^- /.test(stripped)) {
         futureBullets.push(stripped);
         continue;
       }
       // Anything inside ## Future that isn't a bullet is malformed.
       futureMalformed.push(stripped);
+    }
+
+    if (section === 'shipped') {
+      const stripped = trim(line);
+      if (SHIPPED_POINTER_RE.test(stripped)) shippedPointer = true;
     }
   }
 
@@ -723,6 +750,8 @@ export function parseRoadmap(
       hasV2Grammar,
       futureBullets,
       futureMalformed,
+      futurePointer,
+      shippedPointer,
       effortTagFindings,
       tombstones: tombstoneNums,
     },
@@ -774,5 +803,75 @@ export function mergeShippedArchive(
     },
     errors: [...active.errors],
   };
+}
+
+/** Use archive Future bullets when the active file is pointer-only.
+ *  Dual presence is a FUTURE fail — active bullets are kept for other checks. */
+export function mergeFutureArchive(
+  active: ParserResult<ParsedRoadmap>,
+  archive: ParserResult<ParsedRoadmap>,
+): ParserResult<ParsedRoadmap> {
+  if (archive.value.futureBullets.length === 0) return active;
+  if (active.value.futureBullets.length > 0) return active;
+  return {
+    value: {
+      ...active.value,
+      futureBullets: [...archive.value.futureBullets],
+      futureMalformed: [
+        ...active.value.futureMalformed,
+        ...archive.value.futureMalformed,
+      ],
+    },
+    errors: [...active.errors],
+  };
+}
+
+export type FutureIndexRow = {
+  title: string;
+  source: string | null;
+  first: string;
+};
+
+/** One-line index row per Future bullet: title, source tag, first sentence. */
+export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
+  return bullets.map((raw) => {
+    const line = raw.replace(/^- /, '');
+    const bold = line.match(/^\*\*(.+?)\*\*\s*[—–-]+\s*(.*)$/);
+    let title: string;
+    let body: string;
+    if (bold !== null) {
+      title = bold[1]!;
+      body = bold[2]!;
+    } else {
+      const em = line.match(/^(.*?)\s+[—–-]+\s+(.*)$/);
+      if (em !== null) {
+        title = em[1]!.replace(/^\*\*|\*\*$/g, '');
+        body = em[2]!;
+      } else {
+        title = line.replace(/^\*\*|\*\*$/g, '');
+        body = '';
+      }
+    }
+    let source: string | null = null;
+    const srcInTitle = title.match(/^(\[[^\]]+\])\s*(.*)$/);
+    if (srcInTitle !== null) {
+      source = srcInTitle[1]!;
+      title = srcInTitle[2]!;
+    }
+    const first = body.split(/(?<=\.)\s/)[0] ?? body;
+    return { title: title.trim(), source, first: first.trim() };
+  });
+}
+
+export function formatFutureIndex(bullets: string[]): string {
+  const rows = futureIndexRows(bullets);
+  if (rows.length === 0) return 'FUTURE_INDEX: 0\n';
+  const lines = [`FUTURE_INDEX: ${rows.length}`];
+  for (const r of rows) {
+    const src = r.source !== null ? ` ${r.source}` : '';
+    const tail = r.first !== '' ? ` — ${r.first}` : '';
+    lines.push(`- **${r.title}**${src}${tail}`);
+  }
+  return lines.join('\n') + '\n';
 }
 

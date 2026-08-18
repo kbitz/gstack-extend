@@ -31,7 +31,7 @@ FINDINGS:
 - (none)
 
 ## VERSION
-CURRENT: 0.5.0
+CURRENT: 0.1.0.0
 SOURCE: VERSION
 LATEST_TAG: (none)
 RECOMMEND: none
@@ -41,9 +41,10 @@ FINDINGS:
 
 
 ## TAXONOMY
-STATUS: pass
+STATUS: fail
 FINDINGS:
-- (none)
+- PROGRESS.md: missing
+
 
 ## DOC_LOCATION
 STATUS: pass
@@ -61,9 +62,9 @@ FINDINGS:
 - (none)
 
 ## DEPENDENCIES
-STATUS: pass
+STATUS: skip
 FINDINGS:
-- (none)
+- No Depends on: lines found
 
 ## GROUP_DEPS
 STATUS: pass
@@ -71,30 +72,27 @@ FINDINGS:
 - All Group-level dependencies valid (2 groups)
 ADJACENCY:
 - Group 1 ← {}
-- Group 2 ← {1}
+- Group 9 ← {}
 
 ## TASK_LIST
 STATUS: info
 TASK: group=1|track=1A|title=Write helper|effort=S|files=|complete=0
-TASK: group=1|track=1B|title=Write other|effort=S|files=|complete=0
-TASK: group=2|track=2A|title=Consume|effort=S|files=|complete=0
-TOTAL_TASKS: 3
-TOTAL_CURRENT: 3
+TOTAL_TASKS: 1
+TOTAL_CURRENT: 1
 TOTAL_FUTURE: 0
 
 ## STRUCTURAL_FITNESS
 STATUS: info
-GROUP_COUNT: 2
-TRACK_COUNT: 3
-TASK_COUNT: 3
-GROUP_SIZES: 1=2,2=1
-TRACK_SIZES: 1A=1,1B=1,2A=1
-IMBALANCE_RATIO: 2.00
+GROUP_COUNT: 1
+TRACK_COUNT: 1
+TASK_COUNT: 1
+GROUP_SIZES: 1=1
+TRACK_SIZES: 1A=1
 
 ## IN_FLIGHT_GROUPS
 STATUS: info
 IN_FLIGHT: 1
-COMPLETE: 
+COMPLETE: 9
 PRIMARY: 1
 
 ## ORIGIN_STATS
@@ -122,12 +120,12 @@ SHARED_INFRA_STATUS: missing
 STATUS: pass
 FINDINGS:
 - (none)
-BINS: 2
+BINS: 1
 
 ## PARALLELISM_BUDGET
-IN_FLIGHT_TRACKS: 2
+IN_FLIGHT_TRACKS: 1
 CAP: 6
-PER_GROUP: 1=2
+PER_GROUP: 1=1
 STATUS: pass
 FINDINGS:
 - (none)
@@ -136,7 +134,8 @@ FINDINGS:
 STATUS: pass
 FINDINGS:
 - (none)
-FUTURE_BULLET_COUNT: 0
+FUTURE_BULLET_COUNT: 1
+FUTURE_SOURCE: file
 
 ## STYLE_LINT
 STATUS: pass
@@ -146,9 +145,9 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- docs/PROGRESS.md: 0 TODO patterns (project doc)
-- docs/ROADMAP.md: 3 TODO patterns (project doc)
+- docs/ROADMAP.md: 1 TODO patterns (project doc)
 - docs/TODOS.md: 1 TODO patterns (project doc)
+- docs/roadmap-future.md: 0 TODO patterns (unknown)
 - docs/roadmap-shipped.md: 0 TODO patterns (unknown)
 
 TOTAL_FILES: 4
@@ -177,4 +176,4 @@ FINDINGS:
 
 ## MODE
 DETECTED: triage
-REASON: Valid Groups > Tracks structure found (2 groups)
+REASON: Valid Groups > Tracks structure found (1 groups)
