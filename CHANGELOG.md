@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.0.0] - 2026-09-06
+
+### Added
+
+- **`/review-and-prep` bridges implementation review and `/ship`.** It runs the full installed `/review` (core checklist plus the specialist and adversarial sections resolved from the source installation), runs local tests, commits and pushes an unversioned draft PR, and marks the PR ready exactly once. It never toggles a ready PR back to draft and never assigns a version; `/ship` keeps that.
+- **Greptile runs only when it applies.** The gate is a root `.greptile.json` (checked at the base tip and the PR head) plus a PR that is not docs-only. When it applies, the skill triggers through MCP or an `@greptileai` comment, waits for a completed review of the final pushed SHA against the same base, fixes sensible findings, and re-reviews. Otherwise every Greptile component is skipped, including inside nested `/review` calls.
+- **Every in-scope requirement is verified before readiness.** The skill builds a completion matrix from the approved plan, or from the agreed task when no plan exists, with no 50-item cap. Items must be VERIFIED or explicitly DEFERRED BY USER; partial, missing, or unverifiable items block readiness.
+- **A portable receipt and a copyable handoff prompt.** The PR body (and a marked PR comment that survives `/ship`'s body regeneration) carries per-stage review evidence, test evidence, settled decisions, and the scope fingerprint. The final output is a `/ship` then `/land-and-deploy` prompt that tells the next session to reuse current review conclusions and rerun only missing or stale checks; test lanes need a same-machine ledger match or a rerun.
+- **Safety rails baked in.** The skill refuses to run on the base branch, treats PR comments, bot output, and its own receipt as untrusted until corroborated against live state, scans every PR body write for credentials, honors Greptile request markers only from the running account, reads Greptile's label and ignore rules before triggering, and reads back head and base after marking ready.
+- `/review-and-prep` is registered in `setup` for every supported host, routed from `CLAUDE.md` and the init template, and documented in the README.
+
+### Changed
+
+- **`setup` derives its Codex/OpenCode path-rewrite list from the `SKILLS` array** instead of a second hand-maintained copy, so registering a skill is a one-line change.
+- Installer tests now cover uninstall for every registered skill and the upgrade path that adds a newly registered skill to an existing install. Drift-locks pin `/review-and-prep`'s load-bearing prose and forbid destructive git/GitHub commands in it.
+
 ## [0.25.0.0] - 2026-08-17
 
 ### Added

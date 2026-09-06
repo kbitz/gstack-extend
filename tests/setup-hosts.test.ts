@@ -31,6 +31,7 @@ const SKILLS = [
   'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'review-and-prep',
 ] as const;
 
 const baseTmp = makeBaseTmp('setup-hosts-');
@@ -103,7 +104,7 @@ describe('setup --host flags', () => {
     mkdirSync(home, { recursive: true });
     const r = runSetup(['--host', 'claude'], home);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('Installed 7 skills');
+    expect(r.stdout).toContain(`Installed ${SKILLS.length} skills`);
     for (const skill of SKILLS) {
       const skillMd = join(hostDir(home, 'claude'), skill, 'SKILL.md');
       expect(lstatSync(skillMd).isSymbolicLink()).toBe(true);
@@ -190,8 +191,10 @@ describe('setup --host flags', () => {
     runSetup(['--host', 'codex'], home);
     const r = runSetup(['--host', 'codex', '--uninstall'], home);
     expect(r.exitCode).toBe(0);
-    expect(existsSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'))).toBe(false);
-    expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
+    for (const skill of SKILLS) {
+      expect(existsSync(join(hostDir(home, 'codex'), skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(true);
+    }
   });
 
   test('codex rewrite unlinks leftover SKILL.md symlink before write', () => {

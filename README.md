@@ -7,6 +7,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Plan regeneration — packer assigns Groups | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
+| `/review-and-prep` | Local review/tests → draft PR → optional Greptile → mark ready, without versioning | GitHub projects with gstack `/review` | New |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
 | `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
@@ -120,6 +121,53 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
 | VERSION | SemVer source of truth | /ship |
+
+---
+
+## /review-and-prep — Prepare a Reviewed PR for /ship
+
+Runs `/review` and the project's required local checks, then commits and pushes
+to a draft PR. When the repository root contains `.greptile.json` and the PR
+is not docs-only, it triggers Greptile through MCP or `@greptileai review this
+draft`, waits for completion, and fixes sensible findings. Fixes are batched,
+tested locally, and re-reviewed by Greptile on the final pushed commit before
+readiness; missing or failed applicable reviews leave the PR draft.
+Without `.greptile.json`, or for docs-only PRs, every Greptile component is
+skipped, including inside `/review`. Readiness then depends on local
+review/testing and the remaining gates.
+
+Readiness also requires a complete audit of the approved plan (including
+autoplan), or the agreed task requirements when no plan was created. Every
+in-scope item must have implementation/verification evidence or an explicit
+user-approved deferral. Missing plan context and unverified items block
+readiness; long plans are audited in full. The PR receipt preserves the scope,
+plan fingerprint, complete item matrix, and deferral decisions across sessions.
+
+The PR stays draft throughout preparation and is marked ready **once**, at the
+end. The skill never toggles a ready PR back to draft. Reinvoking it resumes the
+same draft and uses a PR-body receipt to track verification across workspaces.
+On completion, it outputs a copyable prompt for a new session to run `/ship`
+and then `/land-and-deploy` on the same PR. The prompt carries the prepared
+commit/tree and base, timestamped review/test evidence, Greptile results or skip
+reason, settled decisions, and remaining release/deploy work. Native evidence
+logs support reuse on the same machine; inline evidence and the PR receipt
+preserve context elsewhere. Freshness and required checks still apply.
+Review evidence identifies each specialist and adversarial pass separately.
+The handoff explicitly tells `/ship` to reuse completed, current checks even
+when its default invocation would rerun them; missing or stale checks still
+run. A generic "review clean" does not stand in for a missing specialist review.
+It checks the repository's existing CI triggers before pushing; draft gating is
+a workflow configuration, not a GitHub-wide guarantee.
+
+```
+/review-and-prep      # Review, test, draft PR, Greptile when applicable, mark ready
+/ship                # Reuse the PR; assign version and finish release work
+/land-and-deploy     # Land the shipped PR and verify deployment when applicable
+```
+
+`/review-and-prep` does not assign a version, prefix the PR title with a version,
+write release changelog entries, merge, or deploy. `/ship` keeps its own checks
+and version/documentation work; its later pushes can trigger another CI run.
 
 ---
 

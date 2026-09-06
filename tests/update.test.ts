@@ -7,7 +7,7 @@
  *   1. bin/update-run: missing-arg, not-git-repo, happy-path on main,
  *      non-main-branch auto-switch + restore, dirty-worktree + branch-switch,
  *      diverged-main ff-only failure.
- *   2. setup: default install (6 skills), --with-native rejected, --uninstall,
+ *   2. setup: default install (every SKILLS entry), --with-native rejected, --uninstall,
  *      foreign-symlink preserved, --bogus rejected, install-time safety
  *      (symlink at $target / regular file at $target / world-writable
  *      $SKILLS_DIR / outside-$HOME), --skills-dir arg validation,
@@ -58,6 +58,7 @@ const REAL_SETUP_SKILLS = [
   'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'review-and-prep',
 ] as const;
 
 const baseTmp = makeBaseTmp('update-test-');
@@ -104,7 +105,10 @@ function createFixtureRepo(name: string): string {
 // createFixtureRepo so the lighter scenarios (happy/branch-switch/dirty/
 // diverged) don't suddenly depend on install-safety semantics and bun
 // availability for their setup invocation.
-function createFixtureRepoWithRealSetup(name: string): string {
+function createFixtureRepoWithRealSetup(
+  name: string,
+  opts: { skills?: readonly string[]; setupText?: string } = {},
+): string {
   const dir = join(baseTmp, name);
   const remoteDir = join(baseTmp, `${name}-remote`);
 
@@ -121,7 +125,7 @@ function createFixtureRepoWithRealSetup(name: string): string {
   // Real setup + its sourced dependency. setup checks for `bun` on PATH at
   // line 16 — the test process inherits the developer's PATH via runBin's
   // env scoping, so bun is available.
-  writeFileSync(join(dir, 'setup'), readFileSync(SETUP));
+  writeFileSync(join(dir, 'setup'), opts.setupText ?? readFileSync(SETUP, 'utf8'));
   chmodSync(join(dir, 'setup'), 0o755);
   writeFileSync(join(dir, 'bin', 'lib', 'install-safety.sh'), readFileSync(INSTALL_SAFETY_LIB));
 
@@ -132,7 +136,7 @@ function createFixtureRepoWithRealSetup(name: string): string {
   // Empty placeholder skill .md files — setup only needs `[ -f $src ]` to
   // pass before creating the symlink. Content is irrelevant; symlink
   // targets just have to exist.
-  for (const skill of REAL_SETUP_SKILLS) {
+  for (const skill of opts.skills ?? REAL_SETUP_SKILLS) {
     writeFileSync(join(dir, 'skills', `${skill}.md`), '');
   }
 
@@ -376,6 +380,87 @@ describe('bin/update-run', () => {
   //
   // The four scenarios above use a stub setup (echo "setup ran"), so they
   // verify update-run's git mechanics but not the setup-after-pull seam.
+  // The path every existing install takes to receive a skill added in a
+  // later release: the fixture starts as a 7-skill install (setup's SKILLS
+  // array without review-and-prep), the pushed version adds the 8th skill
+  // file plus the real 8-entry setup, and update-run's setup-after-pull
+  // must link the new skill without disturbing the old ones.
+  describe('post-upgrade install of a newly registered skill', () => {
+    const NEW_SKILL = 'review-and-prep';
+    const oldSkills = REAL_SETUP_SKILLS.filter((s) => s !== NEW_SKILL);
+    let repo: string;
+    let homeDir: string;
+    let preOut = '';
+    let linkedBeforeUpgrade = true;
+    let result: ReturnType<typeof runBin>;
+
+    beforeAll(() => {
+      const realSetup = readFileSync(SETUP, 'utf8');
+      const oldSetup = realSetup.replace(/^  review-and-prep\n/m, '');
+      if (oldSetup === realSetup) {
+        throw new Error('fixture: could not remove review-and-prep from setup SKILLS');
+      }
+      repo = createFixtureRepoWithRealSetup('upgrade-new-skill', {
+        skills: oldSkills,
+        setupText: oldSetup,
+      });
+      const stateDir = join(baseTmp, 'upgrade-new-skill-state');
+      homeDir = join(baseTmp, 'upgrade-new-skill-home');
+      mkdirSync(stateDir, { recursive: true });
+      mkdirSync(homeDir, { recursive: true });
+
+      // Existing install: the old setup links only the pre-existing skills.
+      const env: Record<string, string> = {
+        PATH: process.env.PATH ?? '/usr/bin:/bin',
+        HOME: homeDir,
+      };
+      if (process.env.TMPDIR !== undefined) env.TMPDIR = process.env.TMPDIR;
+      const pre = spawnSync(join(repo, 'setup'), [], { encoding: 'utf8', env });
+      preOut = (pre.stdout ?? '') + (pre.stderr ?? '');
+      if (pre.status !== 0) {
+        throw new Error(`fixture: pre-upgrade setup failed: ${preOut}`);
+      }
+      linkedBeforeUpgrade = existsSync(join(homeDir, '.claude', 'skills', NEW_SKILL, 'SKILL.md'));
+
+      pushNewVersion(`${baseTmp}/upgrade-new-skill-remote`, '1.4.0', {
+        setup: realSetup,
+        [`skills/${NEW_SKILL}.md`]: '',
+      });
+      result = runBin(UPDATE_RUN, [repo], {
+        home: homeDir,
+        gstackExtendDir: ROOT,
+        gstackExtendStateDir: stateDir,
+      });
+    });
+
+    test('pre-upgrade install linked only the pre-existing skills', () => {
+      expect(preOut).toContain(`Installed ${oldSkills.length} skills`);
+      expect(linkedBeforeUpgrade).toBe(false);
+    });
+
+    test('upgrade succeeds with the new setup', () => {
+      expect(result.stdout + result.stderr).toContain('UPGRADE_OK 1.0.0 1.4.0');
+    });
+
+    test('new skill is linked into the fixture after update-run', () => {
+      const link = join(homeDir, '.claude', 'skills', NEW_SKILL, 'SKILL.md');
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(realpathSync(readlinkSync(link))).toBe(
+        realpathSync(join(repo, 'skills', `${NEW_SKILL}.md`)),
+      );
+    });
+
+    for (const skill of oldSkills) {
+      test(`${skill} stays linked into the fixture after update-run`, () => {
+        const link = join(homeDir, '.claude', 'skills', skill, 'SKILL.md');
+        expect(lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(realpathSync(readlinkSync(link))).toBe(
+          realpathSync(join(repo, 'skills', `${skill}.md`)),
+        );
+      });
+    }
+  });
+
   // This scenario uses createFixtureRepoWithRealSetup so the fixture's
   // setup actually rebuilds ~/.claude/skills/{name}/SKILL.md symlinks
   // pointing into the fixture's skills/ directory. After update-run
@@ -998,11 +1083,11 @@ describe('setup default install', () => {
     r = runSetup([], mockHome);
   });
 
-  test('installs 6 skills to default skills dir', () => {
-    expect(r.stdout + r.stderr).toContain('Installed 7 skills');
+  test('installs all skills to default skills dir', () => {
+    expect(r.stdout + r.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
   });
 
-  for (const skill of ['pair-review', 'review-apparatus', 'test-plan', 'gstack-extend-upgrade']) {
+  for (const skill of REAL_SETUP_SKILLS) {
     test(`creates ${skill} symlink to repo source`, () => {
       const link = join(mockHome, '.claude', 'skills', skill, 'SKILL.md');
       expect(lstatSync(link).isSymbolicLink()).toBe(true);
@@ -1036,14 +1121,16 @@ describe('setup --uninstall', () => {
     r = runSetup(['--uninstall'], mockHome);
   });
 
-  test('uninstalls pair-review', () => {
-    expect(r.stdout + r.stderr).toContain('Removed pair-review');
-  });
+  for (const skill of REAL_SETUP_SKILLS) {
+    test(`uninstalls ${skill}`, () => {
+      expect(r.stdout + r.stderr).toContain(`Removed ${skill}`);
+    });
 
-  test('pair-review symlink removed after uninstall', () => {
-    const link = join(mockHome, '.claude', 'skills', 'pair-review', 'SKILL.md');
-    expect(existsSync(link)).toBe(false);
-  });
+    test(`${skill} symlink removed after uninstall`, () => {
+      const link = join(mockHome, '.claude', 'skills', skill, 'SKILL.md');
+      expect(existsSync(link)).toBe(false);
+    });
+  }
 });
 
 describe('setup --uninstall preserves foreign browse-native symlink', () => {
@@ -1208,7 +1295,7 @@ describe('setup install-time safety: $SKILLS_DIR layer', () => {
     mkdirSync(join(home, '.claude'), { recursive: true });
     symlinkSync(dotfilesDir, join(home, '.claude', 'skills'));
     const r = runSetup([], home);
-    expect(r.stdout + r.stderr).toContain('Installed 7 skills');
+    expect(r.stdout + r.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
     // Symlinks landed inside the dotfiles dir (the resolved target).
     expect(lstatSync(join(dotfilesDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
   });
@@ -1307,7 +1394,7 @@ describe('Track 5A skill preamble probe (CP#3 integration)', () => {
     const home = join(baseTmp, 'cp3-default-home');
     mkdirSync(home, { recursive: true });
     const setupResult = runSetup([], home);
-    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 7 skills');
+    expect(setupResult.stdout + setupResult.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
     const probe = runPreambleProbe(home, null);
     expect(probe.extendRoot).toBe(ROOT);
   });
