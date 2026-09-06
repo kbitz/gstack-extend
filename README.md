@@ -127,14 +127,25 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 ## /review-and-prep — Prepare a Reviewed PR for /ship
 
 Runs `/review` and the project's required local checks, then commits and pushes
-to a draft PR. When the repository root contains `.greptile.json` and the PR
-is not docs-only, it triggers Greptile through MCP or `@greptileai review this
+to a draft PR. When a root `greptile.json` file, `.greptile.json` file, or
+`.greptile/` directory exists at the reviewed base tip or in the intended head
+and the full PR is not docs-only, it triggers Greptile through MCP or `@greptileai review this
 draft`, waits for completion, and fixes sensible findings. Fixes are batched,
 tested locally, and re-reviewed by Greptile on the final pushed commit before
 readiness; missing or failed applicable reviews leave the PR draft.
-Without `.greptile.json`, or for docs-only PRs, every Greptile component is
+Without any root marker at either tip, or for docs-only PRs, every Greptile component is
 skipped, including inside `/review`. Readiness then depends on local
 review/testing and the remaining gates.
+
+Adding, removing, or renaming a marker requires an explicit user policy decision,
+even when another marker remains; additions/removals of configuration files
+inside `.greptile/` also require that decision. Greptile's documented formats are
+[`greptile.json`](https://www.greptile.com/docs/code-review/greptile-json-reference)
+and [`.greptile/`](https://www.greptile.com/docs/code-review/greptile-config-reference),
+with the directory taking precedence. The dotted JSON file remains a local
+enablement signal for existing repos; the workflow verifies effective settings
+instead of assuming the bot reads it. Nested-only config does not enable this
+workflow's root gate.
 
 Readiness also requires a complete audit of the approved plan (including
 autoplan), or the agreed task requirements when no plan was created. Every

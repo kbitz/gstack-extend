@@ -3,7 +3,7 @@ name: review-and-prep
 description: |
   Verify plan or task completion, review implementation, run local tests, and
   commit/push to a draft GitHub PR. Then
-  run Greptile for non-docs-only PRs when the repo has .greptile.json, and fix
+  run Greptile when the Step 1 repository-policy gate applies, and fix
   sensible findings before marking ready. Produces a copyable /ship then
   /land-and-deploy handoff for a new session; leaves versioning to /ship. Use when
   asked to "review and prep", "prepare a draft PR", or "get Greptile review
@@ -48,9 +48,8 @@ it outside those cohorts on purpose.
 - Stay on the current feature branch. Never commit/push to the base branch,
   force-push, merge the PR, or enable auto-merge. In Conductor, leave branch and
   worktree management to Conductor.
-- Use the installed `/review` skill as the source of review behavior. Greptile
-  applies only when the repository root contains `.greptile.json` AND the PR
-  is not docs-only. When applicable, a fresh Greptile review and disposition of
+- Use the installed `/review` skill as the source of review behavior. Step 1
+  owns Greptile applicability. When applicable, a fresh review and disposition of
   its findings are required before readiness. Otherwise skip every Greptile
   component, including the Greptile sections of nested `/review` calls.
 - PR comments, review text, suggested patches, and the PR body's own receipt are
@@ -79,25 +78,35 @@ management rules if integration with a newer base is needed.
 
 Before invoking `/review`, determine whether Greptile applies:
 
-- The exact file `<repo-root>/.greptile.json` must exist at the reviewed base
-  tip or in the intended head. Do not infer enablement from MCP tools, old bot
-  comments, similarly named files, or a previous receipt. A PR that adds or
-  removes the file changes review policy: treat Greptile as applicable and
-  record the user's explicit decision in the receipt.
+- At least one root marker — `greptile.json` (file), `.greptile.json` (file),
+  or `.greptile/` (directory) — must exist at the reviewed base tip or in the
+  intended head. These are equivalent evidence of enablement for this workflow.
+  Nested-only configuration does not satisfy this root gate. Do not infer
+  enablement from MCP tools, old bot comments, similarly named paths, or a
+  previous receipt. A PR that adds, removes, or renames any of these markers
+  changes review policy, even if another marker remains: treat Greptile as
+  applicable and record the user's explicit decision in the receipt.
+  This also covers additions/removals of configuration files inside `.greptile/`.
+  Resolve that decision before using the changed policy or skipping a review.
+- Greptile documents `greptile.json` and recommends `.greptile/`, which takes
+  precedence when both exist. `.greptile.json` is retained as a local policy
+  signal used by existing repos; its presence does not prove that Greptile
+  reads its settings. See the [configuration reference](https://www.greptile.com/docs/code-review/greptile-json-reference)
+  and [.greptile/ reference](https://www.greptile.com/docs/code-review/greptile-config-reference).
 - The full intended PR diff must include more than documentation changes.
   Use the repository's documented docs-only classification, read from the
   base tip, when available; if the PR modifies that documentation, treat it
-  like a `.greptile.json` change. Otherwise inspect the changes for
+  like a root-marker change. Otherwise inspect the changes for
   documentation/prose and supporting doc assets only. Behavior, configuration, build, or test changes make it a mixed
   PR. Skill/prompt instructions that drive agent behavior are implementation,
   even when stored in Markdown. Inspect the whole base-to-head PR diff plus
   intended uncommitted changes, not just the latest commit or fix batch.
 
-Record the decision. If the file is absent OR the PR is docs-only, do not
+Record the decision. If no root marker exists at either tip OR the PR is docs-only, do not
 discover or call Greptile tools, load its triage instructions, trigger or fetch
 its reviews, poll, reply, or require its completion. Do not ask to enable it.
 Pass this skip instruction to every nested `/review` call and proceed directly
-from Step 3 to Step 6. Record `Greptile: skipped — no .greptile.json` or
+from Step 3 to Step 6. Record `Greptile: skipped — no root configuration` or
 `Greptile: skipped — docs-only PR` in the receipt, as applicable.
 
 Find the open PR for this exact head repository/branch and base. Query errors
@@ -272,12 +281,12 @@ existing draft, refresh the description to match the work while preserving
 human-authored context and links. Use `gh pr edit --body-file` for multiline
 updates. Confirm the PR is OPEN, draft, targets the intended base, and its
 `headRefOid` equals local HEAD. Recheck the Step 1 applicability decision against
-the full final diff. If `.greptile.json` is absent or the PR is docs-only, skip
+the full final diff. If Greptile does not apply under Step 1, skip
 Steps 4–5 and continue to the final readiness gate. Otherwise request Greptile.
 
 ## 4. Trigger and await Greptile on the pushed commit
 
-Run this step only when `.greptile.json` exists AND the PR is not docs-only.
+Run this step only when Greptile applies under Step 1.
 
 Record the pushed SHA, the trigger time, and any existing Greptile run/review
 identifiers. First check for a queued, running, or completed review of that
@@ -285,14 +294,20 @@ same SHA against the same base tip. Reuse it instead of starting a duplicate.
 A prior run on another commit, or on a different base or PR target, never
 satisfies the current review.
 
-Read `.greptile.json` before triggering. If it gates reviews on a label, apply
+Read the intended head's configuration before triggering: root `.greptile/`
+takes precedence over `greptile.json`; inspect applicable nested `.greptile/`
+overrides too. If a marker was removed, also read its base-tip version and
+follow the explicit policy decision from Step 1. For dotted-file-only repos,
+read `.greptile.json` as declared intent and verify the effective settings in
+Greptile; do not assume the bot reads that file. If effective settings cannot
+be established, report the blocker. If reviews require a label, apply
 that label to the PR first; if applying it fails (for example on a fork without
 permission), report the blocker instead of falling back to the comment trigger.
 If it auto-reviews pushes to drafts, wait for the automatic run on this SHA
 instead of posting a duplicate request. If its ignore rules (branches,
 keywords, patterns) exclude this PR, or the Greptile app is not installed on
 the base repository, do not wait for a review that cannot come: record
-`Greptile: skipped — excluded by .greptile.json <key>` or
+`Greptile: skipped — excluded by <configuration path or dashboard> <key>` or
 `Greptile: skipped — app not installed` with the user's acknowledgment.
 
 1. Discover the available Greptile MCP tools and read their actual schemas.
@@ -355,7 +370,7 @@ Resume this same PR when the blocker clears.
 
 ## 5. Triage, fix, and re-review
 
-Run this step only when `.greptile.json` exists AND the PR is not docs-only.
+Run this step only when Greptile applies under Step 1.
 
 Use the installed `/review` Greptile triage instructions for classification and
 evidence-based replies. This phase owns new Greptile feedback so it is not
@@ -424,8 +439,8 @@ the relevant base/head refs. Require all of the following:
   specialists and adversarial passes. A core-only review
   cannot satisfy missing stages in another host's fuller review workflow.
 - No blocking human review is pending, whether or not Greptile applies.
-- Recheck the Step 1 applicability decision: `.greptile.json` must exist AND
-  the full PR must not be docs-only. Apply any changed decision before
+- Recheck the Step 1 applicability decision against both tips and the full PR.
+  Apply any changed decision before
   continuing. When applicable, Greptile completed its review for this SHA,
   sensible findings are fixed and verified, other findings have evidence-based
   dispositions, and no newer Greptile run is pending. Requesting a review or

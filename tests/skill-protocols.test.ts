@@ -1241,9 +1241,18 @@ describe('review-and-prep drift-locks', () => {
   });
 
   test('Greptile applicability gate guards Steps 4 and 5', () => {
-    const gate = 'Run this step only when `.greptile.json` exists AND the PR is not docs-only.';
+    const gate = 'Run this step only when Greptile applies under Step 1.';
     expect(content.split(gate).length - 1).toBe(2);
-    expect(content).toContain('Greptile: skipped — no .greptile.json');
+    for (const heading of ['## 4. Trigger', '## 5. Triage']) {
+      const section = content.slice(content.indexOf(heading)).split(/\n## /)[0];
+      expect(section).toContain(gate);
+    }
+    expect(normalized).toContain(
+      '`greptile.json` (file), `.greptile.json` (file), or `.greptile/` (directory)',
+    );
+    expect(normalized).toContain('must exist at the reviewed base tip or in the intended head');
+    expect(normalized).toContain('record the user\'s explicit decision in the receipt');
+    expect(content).toContain('Greptile: skipped — no root configuration');
     expect(content).toContain('Greptile: skipped — docs-only PR');
     expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
   });
