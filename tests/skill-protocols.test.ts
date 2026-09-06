@@ -1282,6 +1282,60 @@ describe('review-and-prep drift-locks', () => {
     expect(step3).toContain('For every blocked push, update the Step 6 receipt');
   });
 
+  test('Greptile-once rule and the no-response fallback', () => {
+    expect(content).toContain('**Greptile-once rule: Never run Greptile more than once per PR.**');
+    expect(content.split('**Greptile-once rule:').length - 1).toBe(1);
+    expect(normalized).toContain('Existing automatic or manual runs count, including failed or cancelled runs.');
+    expect(normalized).toContain('Never request a retry or a second review.');
+    expect(normalized).toContain('A submitted request reserves the allowance even before a run is visible.');
+    expect(content).toContain('**No response after 10 minutes:**');
+    expect(content).toContain('Greptile: unverified — no response after 10 minutes');
+    expect(normalized).toContain(
+      'This fallback does not apply to a known queued/running run or an explicit failure/cancellation.',
+    );
+    expect(normalized).toContain('Never retry a failed run.');
+    expect(normalized).toContain('do not reset the allowance.');
+    expect(normalized).toContain(
+      'A qualifying no-response fallback satisfies this gate without claiming review completion',
+    );
+    expect(normalized).toContain('Do not rerun Greptile or relabel its original base/SHA as current.');
+    expect(normalized).toContain('Never run Greptile more than once per PR, including during /ship');
+    expect(content).not.toContain('15-minute');
+    expect(content).not.toMatch(/one retry per head SHA/);
+    expect(content).not.toContain('three completed Greptile review rounds');
+  });
+
+  test('base merge precedes local review and the first Greptile trigger', () => {
+    const step2 = normalized.split('## 2. Review and verify locally')[1]?.split('## 3. Push')[0] ?? '';
+    expect(step2).toContain('### Merge the latest base before review');
+    expect(step2).toContain(
+      'merge it into the current feature branch before local review/testing and before Greptile.',
+    );
+    expect(step2).toContain('merge-base --is-ancestor origin/main HEAD');
+    expect(step2).toContain('merge --no-edit origin/main');
+  });
+
+  test('manual testing pauses after the draft push and resumes the same draft', () => {
+    expect(content.split('**Manual testing rule:').length - 1).toBe(1);
+    expect(normalized).toContain(
+      'stops this workflow after the draft PR is committed and pushed, before Greptile or readiness.',
+    );
+    expect(normalized).toContain("it does not consume the PR's Greptile allowance.");
+    const step3 = normalized.split('## 3. Push')[1]?.split('## 4. Trigger')[0] ?? '';
+    expect(step3).toContain('### Manual testing checkpoint and resume');
+    expect(step3).toContain('**PAUSED — manual testing required**');
+    expect(step3).toContain('Greptile: postponed — awaiting manual testing');
+    expect(step3).toContain(
+      'Do not enter Steps 4–5, start a Greptile wait timer, mark ready, or emit the `/ship` handoff.',
+    );
+    expect(step3).toContain('return to /review-and-prep resume for this same PR');
+    expect(step3).toContain(
+      'Do not follow a generic /pair-review completion suggestion to go directly to /ship.',
+    );
+    expect(step3).toContain('`session.yaml`, `groups/`, `parked-bugs.md`, and `report.md`');
+    expect(step3).toContain('Accept PASSED and valid PASSED_BY_COVERAGE results');
+  });
+
   test('receipt, final mutation, and handoff anchors', () => {
     expect(content).toContain('`## Review and prep`');
     expect(content).toContain('gh pr ready "<number>" --repo "<base-owner/repo>"');
