@@ -1227,7 +1227,8 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain(
       'Mark it ready exactly once, as the last mutation of a successful run. Never convert a ready PR back to draft.',
     );
-    expect(normalized).toContain('never toggle back or keep pushing after readiness');
+    expect(normalized).toContain('Do not make further preparation pushes after readiness.');
+    expect(content.split('**Draft-once rule:').length - 1).toBe(1);
   });
 
   test('Greptile applicability gate guards Steps 4 and 5', () => {
