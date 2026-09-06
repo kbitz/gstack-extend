@@ -1,5 +1,14 @@
 # TODOS
 
+## Unprocessed
+
+### [review:severity=necessary] Harden /review-and-prep Greptile-once and pause/resume edge cases
+- **Description:** The /ship Claude adversarial pass on PR #102 (v0.26.2.0) found workflow-logic gaps in `skills/review-and-prep.md` that the GPT-6 in-host review did not raise. Under Greptile's default trigger settings, marking a draft ready can start a second run that the Greptile-once rule forbids, and the skill offers no resolution beyond "resolve the trigger conflict." A failed or cancelled run consumes the allowance, cannot be retried, and cannot use the no-response fallback, so the PR has no path to ready unless a policy skip is offered. The PAUSED receipt lives only in the PR body, which /ship regenerates, and /pair-review's own completion path recommends /ship directly. An ambiguous MCP trigger with no visible run and no comment has no bounded exit. A session that dies between an MCP trigger and the first receipt write loses the reservation. The post-fallback rules disagree when a run becomes visible as queued/running before ready. A reviewed SHA that is no longer an ancestor of HEAD still satisfies the gate.
+- **Hypothesis (untested):** Offer a user decision on failure/cancellation and at the fallback boundary instead of a silent block or pass; post the receipt comment at the PAUSED checkpoint and record trigger comment IDs before calling MCP; bound "uncertain" MCP status with a run-history check; require the reviewed SHA to be an ancestor of HEAD or treat the PR as having no usable run.
+- **Effort:** M (human: ~1 day / CC: ~30 min)
+- **Priority:** P2
+- **Context:** Deferred at /ship on 2026-09-06. Each item changes designed behavior the user specified for PR #102 (Greptile-once, the 10-minute fallback), so it needs a product decision rather than a mechanical fix. The full finding list is in the PR #102 body under Adversarial Review.
+
 ## Completed
 
 ### Failed-ledger retry with non-semver NEW aborts the helper

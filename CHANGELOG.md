@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.2.0] - 2026-09-06
+
+### Fixed
+
+- **`/review-and-prep` runs Greptile at most once per PR.** The allowance spans commits, sessions, hosts, nested reviews, and the `/ship` handoff. Existing automatic or manual runs count, and later fixes or base merges are reviewed and tested locally instead of requesting another run. The per-SHA retry and three-round loops are gone.
+- **The latest base is merged before review.** When the fetched target base is not already an ancestor of HEAD, the workflow merges it into the feature branch before local review, tests, and the first Greptile trigger, so the bot reviews the integrated result.
+- **A silent Greptile no longer stalls preparation.** Around 10 minutes the agent checks MCP status directly and, without MCP, verifies the trigger comment was actually posted; a missing trigger gets the first request. After 10 minutes with a correctly posted comment and still no verifiable status or result, preparation continues on local review and records Greptile as unverified. Queued or running reviews keep waiting; explicit failures still block.
+
+### Added
+
+- **Manual testing pauses preparation at the right point.** When required user testing remains, the workflow finishes `/review` and local checks, commits and pushes the draft PR, saves a `PAUSED — manual testing required` receipt, and hands off to `/pair-review` with Greptile postponed and the PR still draft. `/review-and-prep resume` picks up the same draft, maps PASSED and PASSED_BY_COVERAGE results back to the completion matrix, and refreshes only invalidated checks.
+- Drift-locks pin the Greptile-once rule, the base-merge step, the no-response fallback, and the pause/resume checkpoint, and assert the removed retry wording stays gone.
+
+### Changed
+
+- README describes the once-per-PR rule, the base merge, the 10-minute fallback, and the pause/resume flow, including the receipt rows they add.
+
 ## [0.26.1.0] - 2026-09-06
 
 ### Fixed
