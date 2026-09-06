@@ -1244,11 +1244,17 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('must exist at the reviewed base tip or in the intended head');
     expect(normalized).toContain('applicable pending the user\'s explicit decision');
     expect(normalized).toContain('decision overrides that default');
+    expect(normalized).toContain('The explicit decision is required before readiness even when the default review policy is retained.');
     expect(normalized).toContain('Record the default, the decision, and the resulting policy in the receipt');
     expect(normalized).toContain('The full intended PR diff must include more than documentation changes.');
     expect(normalized).toContain('an empty or ignored working-tree directory is not evidence');
     expect(content).toContain('Greptile: skipped — no root configuration');
     expect(content).toContain('Greptile: skipped — docs-only PR');
+    expect(content).toContain('Greptile: skipped — user policy decision <reference>');
+    expect(normalized).toContain('If Greptile does not apply under the rules above, do not discover or call Greptile tools');
+    expect(normalized).toContain('configuration files inside the root `.greptile/`');
+    expect(normalized).toContain('effective configuration unverified — declared intent only');
+    expect(normalized).toContain('Unknown settings do not justify skipping review: the same-SHA completion gate still applies.');
     expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
   });
 

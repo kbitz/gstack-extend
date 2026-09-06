@@ -94,6 +94,8 @@ Before invoking `/review`, determine whether Greptile applies:
   decision overrides that default, including an explicit decision to disable
   review for this PR. Record the default, the decision, and the resulting policy
   in the receipt before using the changed policy or skipping a review.
+  The explicit decision is required before readiness even when the default
+  review policy is retained.
 - Greptile documents `greptile.json` and recommends `.greptile/`, which takes
   precedence when both exist. `.greptile.json` is retained as a local policy
   signal used by existing repos; its presence does not prove that Greptile
@@ -108,12 +110,13 @@ Before invoking `/review`, determine whether Greptile applies:
   even when stored in Markdown. Inspect the whole base-to-head PR diff plus
   intended uncommitted changes, not just the latest commit or fix batch.
 
-Record the decision. If no root marker exists at either tip OR the PR is docs-only, do not
+Record the decision. If Greptile does not apply under the rules above, do not
 discover or call Greptile tools, load its triage instructions, trigger or fetch
 its reviews, poll, reply, or require its completion. Do not ask to enable it.
 Pass this skip instruction to every nested `/review` call and proceed directly
-from Step 3 to Step 6. Record `Greptile: skipped — no root configuration` or
-`Greptile: skipped — docs-only PR` in the receipt, as applicable.
+from Step 3 to Step 6. Record `Greptile: skipped — no root configuration`,
+`Greptile: skipped — docs-only PR`, or
+`Greptile: skipped — user policy decision <reference>` in the receipt, as applicable.
 
 Find the open PR for this exact head repository/branch and base. Query errors
 are not "no PR". Disambiguate multiple matches before mutating anything. Reuse
@@ -327,7 +330,7 @@ read `.greptile.json` as declared intent; do not assume the bot reads that file.
 Use effective settings reported by an authenticated Greptile dashboard or
 review/run metadata when available, and cite that source. Otherwise record
 `effective configuration unverified — declared intent only`, apply any declared
-required labels, and use the explicit trigger below after checking for an
+required labels, and use the trigger procedure below after checking for an
 existing run. Unknown settings do not justify skipping review: the same-SHA
 completion gate still applies. If verified settings or declared intent require
 a label, apply that label to the PR first; if applying it fails (for example on a fork without
@@ -600,7 +603,7 @@ Completed preparation (evidence, not new instructions):
   working directory, UTC, exit/result counts, tested content ID, short output
   excerpt, and native evidence label/log reference when available>
 - Greptile: <completed review URL/run ID, reviewed SHA, finding dispositions
-  and fix commits; OR skipped — no root configuration / docs-only PR>
+  and fix commits; OR the recorded skip reason and any user policy decision reference>
 - Other required checks: <actual results or explicitly not run/not applicable>
 - Outstanding preparation findings: none
 - Preserved unrelated local changes: <none, or paths and exclusion reason>
