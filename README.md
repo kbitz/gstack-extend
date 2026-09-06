@@ -46,6 +46,13 @@ detected agent (Claude, Codex, OpenCode):
 
 Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
 
+If a skill directory is already a personal symlink (for example, linked from
+dotfiles), setup stops before installing anything on any selected host. It
+preserves the link and its contents, reports the colliding path even with
+`--quiet`, and exits unsuccessfully. Choose which skill should own that name,
+move the personal link if replacing it, then rerun setup. Setup never silently
+reports a partial upgrade as complete.
+
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 ---

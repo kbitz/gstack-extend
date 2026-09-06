@@ -10,6 +10,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -207,6 +208,37 @@ describe('setup --host flags', () => {
     expect(runSetup(['--host', 'codex'], home).exitCode).toBe(0);
     expect(realpathSync(join(hostDir(home, 'codex'), 'pair-review', '.extend-root'))).toBeTruthy();
   });
+
+  for (const host of ['claude', 'codex', 'opencode', 'auto'] as const) {
+    test(`--host ${host} preserves a personal skill symlink and installs nothing`, () => {
+      const home = join(baseTmp, `personal-collision-${host}`);
+      const bins = join(baseTmp, `personal-collision-${host}-bins`);
+      plantFakeBins(bins, ['claude', 'codex', 'opencode']);
+      // Last host and last registered skill: catches writes before all preflights finish.
+      const collisionHost = host === 'auto' ? 'opencode' : host;
+      const collisionSkill = SKILLS[SKILLS.length - 1]!;
+      const personal = join(home, 'dotfiles', 'skills', collisionSkill);
+      const root = hostDir(home, collisionHost);
+      const target = join(root, collisionSkill);
+      mkdirSync(personal, { recursive: true });
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(personal, 'SKILL.md'), 'personal skill, keep me\n');
+      symlinkSync(personal, target);
+
+      const r = runSetup(['--host', host, '--quiet'], home, bins);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain(`${target} is a symlink`);
+      expect(readlinkSync(target)).toBe(personal);
+      expect(readFileSync(join(personal, 'SKILL.md'), 'utf8')).toBe('personal skill, keep me\n');
+      expect(readdirSync(personal)).toEqual(['SKILL.md']);
+      for (const checkedHost of ['claude', 'codex', 'opencode'] as const) {
+        const checkedRoot = hostDir(home, checkedHost);
+        const entries = existsSync(checkedRoot) ? readdirSync(checkedRoot) : [];
+        expect(entries).toEqual(checkedHost === collisionHost ? [collisionSkill] : []);
+      }
+      expect(existsSync(join(home, '.gstack-extend', 'projects.json'))).toBe(false);
+    });
+  }
 });
 
 describe('source skill descriptions fit Codex limit', () => {
