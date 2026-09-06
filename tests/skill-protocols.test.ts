@@ -1242,7 +1242,11 @@ describe('review-and-prep drift-locks', () => {
       '`greptile.json` (file), `.greptile.json` (file), or `.greptile/` (directory)',
     );
     expect(normalized).toContain('must exist at the reviewed base tip or in the intended head');
-    expect(normalized).toContain('record the user\'s explicit decision in the receipt');
+    expect(normalized).toContain('applicable pending the user\'s explicit decision');
+    expect(normalized).toContain('decision overrides that default');
+    expect(normalized).toContain('Record the default, the decision, and the resulting policy in the receipt');
+    expect(normalized).toContain('The full intended PR diff must include more than documentation changes.');
+    expect(normalized).toContain('an empty or ignored working-tree directory is not evidence');
     expect(content).toContain('Greptile: skipped — no root configuration');
     expect(content).toContain('Greptile: skipped — docs-only PR');
     expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
@@ -1266,6 +1270,10 @@ describe('review-and-prep drift-locks', () => {
     expect(step3).toContain('Do not rebase, reset, or force-push as rejection recovery');
     expect(step3).toContain('both full tip SHAs, ahead/behind counts');
     expect(step3).toContain('refresh review/test evidence');
+    expect(step3).toContain('a successful remote lookup confirms the branch does not yet exist');
+    expect(step3).toContain('A failed lookup does not prove absence.');
+    expect(step3).toContain('For any other rejection');
+    expect(step3).toContain('For every blocked push, update the Step 6 receipt');
   });
 
   test('receipt, final mutation, and handoff anchors', () => {

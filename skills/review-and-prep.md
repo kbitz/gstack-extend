@@ -82,13 +82,18 @@ Before invoking `/review`, determine whether Greptile applies:
 - At least one root marker — `greptile.json` (file), `.greptile.json` (file),
   or `.greptile/` (directory) — must exist at the reviewed base tip or in the
   intended head. These are equivalent evidence of enablement for this workflow.
+  Inspect Git trees for committed tips; for pending work, count only content
+  intended for the next commit. A directory marker requires a file beneath
+  the root `.greptile/`; an empty or ignored working-tree directory is not evidence.
   Nested-only configuration does not satisfy this root gate. Do not infer
   enablement from MCP tools, old bot comments, similarly named paths, or a
   previous receipt. A PR that adds, removes, or renames any of these markers
   changes review policy, even if another marker remains: treat Greptile as
-  applicable and record the user's explicit decision in the receipt.
-  This also covers additions/removals of configuration files inside `.greptile/`.
-  Resolve that decision before using the changed policy or skipping a review.
+  applicable pending the user's explicit decision. This also covers additions
+  or removals of configuration files inside the root `.greptile/`. The recorded
+  decision overrides that default, including an explicit decision to disable
+  review for this PR. Record the default, the decision, and the resulting policy
+  in the receipt before using the changed policy or skipping a review.
 - Greptile documents `greptile.json` and recommends `.greptile/`, which takes
   precedence when both exist. `.greptile.json` is retained as a local policy
   signal used by existing repos; its presence does not prove that Greptile
@@ -257,10 +262,14 @@ checks before pushing. A no-change rerun does not need an empty commit.
 
 Recheck that an existing PR is still draft immediately before each push. If
 someone marked it ready, stop under the draft-once rule. Push normally to
-the verified feature-branch destination. On rejection, fetch that branch and
-inspect the local/remote tips and graph before retrying. A transient transport
-or authentication failure may be retried normally once resolved, provided the
-remote tip is still an ancestor of the reviewed local HEAD.
+the verified feature-branch destination. On rejection, diagnose the error and
+query the destination ref; fetch it if it exists and inspect the local/remote
+tips and graph before retrying. A transient transport or authentication failure
+may be retried normally once resolved, provided the remote tip is still an
+ancestor of the reviewed local HEAD, or a successful remote lookup confirms
+the branch does not yet exist. A failed lookup does not prove absence.
+For any other rejection (including server hooks, branch protection, or quotas),
+report the diagnosed blocker and stop instead of repeatedly retrying.
 
 **History divergence: stop and hand off to the user.** This includes a rebase
 or amend of already-pushed commits: the rewritten history cannot fast-forward
@@ -269,6 +278,9 @@ branch to make a push pass; that retains both versions of the commits. Do not
 rebase, reset, or force-push as rejection recovery in this workflow, even with
 a lease. Report the destination, both full tip SHAs, ahead/behind counts, and
 the diagnosis; preserve the local work and leave preparation incomplete.
+For every blocked push, update the Step 6 receipt on an existing draft with
+the blocker, completed verification, and remaining reconciliation work. If no
+PR exists yet, retain that evidence in the durable local handoff instead.
 The user or Conductor owns reconciliation outside this workflow. Resume only
 after reconciliation, re-read the branch/PR state, and refresh review/test
 evidence for any changed content or base. Do not push unknown commits
@@ -311,14 +323,18 @@ Read the intended head's configuration before triggering: root `.greptile/`
 takes precedence over `greptile.json`; inspect applicable nested `.greptile/`
 overrides too. If a marker was removed, also read its base-tip version and
 follow the explicit policy decision from Step 1. For dotted-file-only repos,
-read `.greptile.json` as declared intent and verify the effective settings in
-Greptile; do not assume the bot reads that file. If effective settings cannot
-be established, report the blocker. If reviews require a label, apply
-that label to the PR first; if applying it fails (for example on a fork without
+read `.greptile.json` as declared intent; do not assume the bot reads that file.
+Use effective settings reported by an authenticated Greptile dashboard or
+review/run metadata when available, and cite that source. Otherwise record
+`effective configuration unverified — declared intent only`, apply any declared
+required labels, and use the explicit trigger below after checking for an
+existing run. Unknown settings do not justify skipping review: the same-SHA
+completion gate still applies. If verified settings or declared intent require
+a label, apply that label to the PR first; if applying it fails (for example on a fork without
 permission), report the blocker instead of falling back to the comment trigger.
 If it auto-reviews pushes to drafts, wait for the automatic run on this SHA
 instead of posting a duplicate request. If its ignore rules (branches,
-keywords, patterns) exclude this PR, or the Greptile app is not installed on
+keywords, patterns) verifiably exclude this PR, or the Greptile app is not installed on
 the base repository, do not wait for a review that cannot come: record
 `Greptile: skipped — excluded by <configuration path or dashboard> <key>` or
 `Greptile: skipped — app not installed` with the user's acknowledgment.
@@ -486,7 +502,8 @@ should say **prepared**, not claim that readiness or CI succeeded in advance.
 A later `/ship` regenerates the PR body, so before the ready transition also
 post the final receipt once as a PR comment carrying
 `<!-- review-and-prep:receipt:<full-sha> -->`. On resume, honor that comment
-only when its author is the running account.
+only when its author is the running account and its evidence fingerprints are
+corroborated against live state under Boundaries; the marker alone is not proof.
 
 Include the complete completion matrix and its source fingerprint in this
 receipt, with requirement/acceptance text, evidence links or excerpts, and

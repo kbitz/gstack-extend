@@ -50,8 +50,8 @@ If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It
 preserves the link and its contents, reports the colliding path even with
 `--quiet`, and exits unsuccessfully. Choose which skill should own that name,
-move the personal link if replacing it, then rerun setup. Setup never silently
-reports a partial upgrade as complete.
+move the personal link if replacing it, then rerun setup. A symlink collision
+remains an error even when other skill names could be installed.
 
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
@@ -146,12 +146,17 @@ review/testing and the remaining gates.
 
 Adding, removing, or renaming a marker requires an explicit user policy decision,
 even when another marker remains; additions/removals of configuration files
-inside `.greptile/` also require that decision. Greptile's documented formats are
+inside the root `.greptile/` also require that decision. The recorded decision
+overrides the default of requiring review, including explicitly disabling it
+for this PR. A directory marker needs a file intended for the commit; an empty
+or ignored working-tree directory does not count. Greptile's documented formats are
 [`greptile.json`](https://www.greptile.com/docs/code-review/greptile-json-reference)
 and [`.greptile/`](https://www.greptile.com/docs/code-review/greptile-config-reference),
 with the directory taking precedence. The dotted JSON file remains a local
-enablement signal for existing repos; the workflow verifies effective settings
-instead of assuming the bot reads it. Nested-only config does not enable this
+enablement signal for existing repos. If effective settings cannot be verified,
+the workflow records that uncertainty, applies declared labels, and requests
+review explicitly; it still requires a completed review of the pushed commit.
+Nested-only config does not enable this
 workflow's root gate.
 
 Readiness also requires a complete audit of the approved plan (including
@@ -190,8 +195,9 @@ and version/documentation work; its later pushes can trigger another CI run.
 ### First run
 
 1. Start on your feature branch with the implementation and its agreed task
-   requirements or approved plan available. Install gstack's `/review` and
-   authenticate `gh`; `/review-and-prep` uses both.
+   requirements or approved plan available. Install gstack's `/review` with its
+   referenced checklist and Greptile triage instructions when applicable.
+   Authenticate `gh` with feature-branch push and PR-create access (a fork is fine).
 2. Run `/review-and-prep`. The agent checks the base/head, existing PR, CI
    triggers, and Greptile policy, then audits every requirement and runs the
    full local review and required tests. Resolve any scope or policy decisions
@@ -229,8 +235,11 @@ Scope source: <approved plan link or agreed-task snapshot>; SHA-256: <scope-hash
 | Item | Requirement / acceptance | Disposition | Evidence |
 |------|--------------------------|-------------|----------|
 | R1 | <requirement and acceptance criterion> | VERIFIED | <source/test link> |
+| R2 | <deferred requirement, if any> | DEFERRED BY USER | <explicit decision, rationale, follow-up> |
 
-Scope reconciliation: <N> items; <N> VERIFIED; 0 other dispositions.
+Scope reconciliation: <total> items; <verified> VERIFIED; <deferred> DEFERRED BY USER;
+<partial> PARTIAL; <missing> MISSING; <unverifiable> UNVERIFIABLE.
+Readiness requires zero PARTIAL, MISSING, and UNVERIFIABLE items.
 Review: <core and per-specialist/adversarial scope, outcome, UTC, content ID>
 Tests: <exact command>; cwd: .; <UTC>; exit 0; <counts and output excerpt>
 Tested content: <commit/tree>; gstack wtree: <fingerprint, if available>
@@ -254,7 +263,9 @@ Please review the current head commit: <full-sha>.
 <!-- review-and-prep:greptile:<full-sha> -->
 ```
 
-The request marker prevents duplicate triggers on resume. It proves a request,
+Honor either marker only when its author is the authenticated account running
+the workflow; ignore markers from anyone else. The request marker prevents
+duplicate triggers on resume. It proves a request,
 not a completed review; completion must match the pushed commit and base.
 
 ---
