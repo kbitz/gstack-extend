@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
+import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -1045,17 +1046,6 @@ describe('test-plan inherits the item shape and merge gate', () => {
 
 // ─── Track 15A: cohorts, Conductor lock, advisory-list drift ──────────
 
-const EXPECTED_SETUP_SKILLS = [
-  'pair-review',
-  'roadmap',
-  'full-review',
-  'review-apparatus',
-  'test-plan',
-  'gstack-extend-upgrade',
-  'gstack-extend-init',
-  'review-and-prep',
-] as const;
-
 const KNOWN_FOSSILS = ['SIZE_LABEL_MISMATCH'] as const;
 
 const EXPECTED_FAIL_SECTIONS = [
@@ -1237,14 +1227,34 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain(
       'Mark it ready exactly once, as the last mutation of a successful run. Never convert a ready PR back to draft.',
     );
-    expect(normalized).toContain('never toggle back or keep pushing after readiness');
+    expect(normalized).toContain('Do not make further preparation pushes after readiness.');
+    expect(content.split('**Draft-once rule:').length - 1).toBe(1);
   });
 
   test('Greptile applicability gate guards Steps 4 and 5', () => {
-    const gate = 'Run this step only when `.greptile.json` exists AND the PR is not docs-only.';
+    const gate = 'Run this step only when Greptile applies under Step 1.';
     expect(content.split(gate).length - 1).toBe(2);
-    expect(content).toContain('Greptile: skipped — no .greptile.json');
+    for (const heading of ['## 4. Trigger', '## 5. Triage']) {
+      const section = content.slice(content.indexOf(heading)).split(/\n## /)[0];
+      expect(section).toContain(gate);
+    }
+    expect(normalized).toContain(
+      '`greptile.json` (file), `.greptile.json` (file), or `.greptile/` (directory)',
+    );
+    expect(normalized).toContain('must exist at the reviewed base tip or in the intended head');
+    expect(normalized).toContain('applicable pending the user\'s explicit decision');
+    expect(normalized).toContain('decision overrides that default');
+    expect(normalized).toContain('The explicit decision is required before readiness even when the default review policy is retained.');
+    expect(normalized).toContain('Record the default, the decision, and the resulting policy in the receipt');
+    expect(normalized).toContain('The full intended PR diff must include more than documentation changes.');
+    expect(normalized).toContain('an empty or ignored working-tree directory is not evidence');
+    expect(content).toContain('Greptile: skipped — no root configuration');
     expect(content).toContain('Greptile: skipped — docs-only PR');
+    expect(content).toContain('Greptile: skipped — user policy decision <reference>');
+    expect(normalized).toContain('If Greptile does not apply under the rules above, do not discover or call Greptile tools');
+    expect(normalized).toContain('configuration files inside the root `.greptile/`');
+    expect(normalized).toContain('effective configuration unverified — declared intent only');
+    expect(normalized).toContain('Unknown settings do not justify skipping review: the same-SHA completion gate still applies.');
     expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
   });
 
@@ -1256,6 +1266,20 @@ describe('review-and-prep drift-locks', () => {
       'Readiness requires every in-scope item to be VERIFIED or DEFERRED BY USER.',
     );
     expect(normalized).toContain('A core-only review cannot satisfy missing stages');
+  });
+
+  test('rejected pushes hand off rewritten history without merging it back', () => {
+    const step3 = normalized.split('## 3. Push')[1]?.split('## 4. Trigger')[0] ?? '';
+    expect(step3).toContain('**History divergence: stop and hand off to the user.**');
+    expect(step3).toContain('a rebase or amend of already-pushed commits');
+    expect(step3).toContain('Never merge the old remote history back into the rebased branch');
+    expect(step3).toContain('Do not rebase, reset, or force-push as rejection recovery');
+    expect(step3).toContain('both full tip SHAs, ahead/behind counts');
+    expect(step3).toContain('refresh review/test evidence');
+    expect(step3).toContain('a successful remote lookup confirms the branch does not yet exist');
+    expect(step3).toContain('A failed lookup does not prove absence.');
+    expect(step3).toContain('For any other rejection');
+    expect(step3).toContain('For every blocked push, update the Step 6 receipt');
   });
 
   test('receipt, final mutation, and handoff anchors', () => {

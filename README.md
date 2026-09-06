@@ -46,6 +46,13 @@ detected agent (Claude, Codex, OpenCode):
 
 Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
 
+If a skill directory is already a personal symlink (for example, linked from
+dotfiles), setup stops before installing anything on any selected host. It
+preserves the link and its contents, reports the colliding path even with
+`--quiet`, and exits unsuccessfully. Choose which skill should own that name,
+move the personal link if replacing it, then rerun setup. A symlink collision
+remains an error even when other skill names could be installed.
+
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 ---
@@ -127,14 +134,30 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 ## /review-and-prep — Prepare a Reviewed PR for /ship
 
 Runs `/review` and the project's required local checks, then commits and pushes
-to a draft PR. When the repository root contains `.greptile.json` and the PR
-is not docs-only, it triggers Greptile through MCP or `@greptileai review this
+to a draft PR. When a root `greptile.json` file, `.greptile.json` file, or
+`.greptile/` directory exists at the reviewed base tip or in the intended head
+and the full PR is not docs-only, it triggers Greptile through MCP or `@greptileai review this
 draft`, waits for completion, and fixes sensible findings. Fixes are batched,
 tested locally, and re-reviewed by Greptile on the final pushed commit before
 readiness; missing or failed applicable reviews leave the PR draft.
-Without `.greptile.json`, or for docs-only PRs, every Greptile component is
+Without any root marker at either tip, or for docs-only PRs, every Greptile component is
 skipped, including inside `/review`. Readiness then depends on local
 review/testing and the remaining gates.
+
+Adding, removing, or renaming a marker requires an explicit user policy decision,
+even when another marker remains; additions/removals of configuration files
+inside the root `.greptile/` also require that decision. The recorded decision
+overrides the default of requiring review, including explicitly disabling it
+for this PR. A directory marker needs a file intended for the commit; an empty
+or ignored working-tree directory does not count. Greptile's documented formats are
+[`greptile.json`](https://www.greptile.com/docs/code-review/greptile-json-reference)
+and [`.greptile/`](https://www.greptile.com/docs/code-review/greptile-config-reference),
+with the directory taking precedence. The dotted JSON file remains a local
+enablement signal for existing repos. If effective settings cannot be verified,
+the workflow records that uncertainty, applies declared labels, and requests
+review explicitly; it still requires a completed review of the pushed commit.
+Nested-only config does not enable this
+workflow's root gate.
 
 Readiness also requires a complete audit of the approved plan (including
 autoplan), or the agreed task requirements when no plan was created. Every
@@ -168,6 +191,82 @@ a workflow configuration, not a GitHub-wide guarantee.
 `/review-and-prep` does not assign a version, prefix the PR title with a version,
 write release changelog entries, merge, or deploy. `/ship` keeps its own checks
 and version/documentation work; its later pushes can trigger another CI run.
+
+### First run
+
+1. Start on your feature branch with the implementation and its agreed task
+   requirements or approved plan available. Install gstack's `/review` with its
+   referenced checklist and Greptile triage instructions when applicable.
+   Authenticate `gh` with feature-branch push and PR-create access (a fork is fine).
+2. Run `/review-and-prep`. The agent checks the base/head, existing PR, CI
+   triggers, and Greptile policy, then audits every requirement and runs the
+   full local review and required tests. Resolve any scope or policy decisions
+   it identifies.
+3. The agent commits and pushes the work and creates an unversioned draft PR,
+   or resumes the matching draft. If Greptile applies, it requests a draft
+   review, fixes actionable findings, and repeats tests/review on new commits.
+   A timeout or missing evidence leaves the draft available to resume with
+   `/review-and-prep`.
+4. Inspect the PR's `## Review and prep` receipt for the scope matrix, review
+   stages, test results, and Greptile outcome. When all gates pass, the agent
+   marks the PR ready once and returns the PR link plus a continuation prompt.
+5. Paste that prompt into a new session to run `/ship`, followed by
+   `/land-and-deploy`. `/ship` assigns the version and completes release work;
+   deployment verification belongs to `/land-and-deploy`.
+
+An already-ready PR is checked without changing its draft state. A rejected
+push caused by rewritten/divergent history stops for user or Conductor
+reconciliation; the workflow does not merge old commits back in or force-push.
+
+### Receipt and request markers
+
+This abbreviated receipt shows the shape; real receipts include every scope
+item and a separate evidence row for each applicable review stage and check.
+Angle-bracket values below are placeholders, not verified results:
+
+```markdown
+## Review and prep
+
+Status: **prepared** (written while draft; readiness is checked separately).
+Repository: <owner/repo>; PR: <url>; head: <owner:branch>; base: <owner/repo:main>
+Prepared at: <UTC>; HEAD: <full-sha>; Git tree: <tree-sha>; base tip: <base-sha>
+Scope source: <approved plan link or agreed-task snapshot>; SHA-256: <scope-hash>
+
+| Item | Requirement / acceptance | Disposition | Evidence |
+|------|--------------------------|-------------|----------|
+| R1 | <requirement and acceptance criterion> | VERIFIED | <source/test link> |
+| R2 | <deferred requirement, if any> | DEFERRED BY USER | <explicit decision, rationale, follow-up> |
+
+Scope reconciliation: <total> items; <verified> VERIFIED; <deferred> DEFERRED BY USER;
+<partial> PARTIAL; <missing> MISSING; <unverifiable> UNVERIFIABLE.
+Readiness requires zero PARTIAL, MISSING, and UNVERIFIABLE items.
+Review: <core and per-specialist/adversarial scope, outcome, UTC, content ID>
+Tests: <exact command>; cwd: .; <UTC>; exit 0; <counts and output excerpt>
+Tested content: <commit/tree>; gstack wtree: <fingerprint, if available>
+Greptile: <review URL, head/base, findings and fixes; OR explicit skip reason>
+Decisions: <policy changes, findings dispositions, user-approved deferrals>
+Remaining: /ship version/title/changelog and unperformed audits; merge/deploy.
+Deployment context: not inspected.
+```
+
+Before marking ready, the agent mirrors the final receipt in a PR comment with
+`<!-- review-and-prep:receipt:<full-sha> -->`. This preserves evidence if `/ship`
+later regenerates the body. The comment's author and content fingerprints must
+be verified before reusing it.
+
+When MCP cannot trigger an applicable Greptile review, the request comment is:
+
+```text
+@greptileai review this draft
+
+Please review the current head commit: <full-sha>.
+<!-- review-and-prep:greptile:<full-sha> -->
+```
+
+Honor either marker only when its author is the authenticated account running
+the workflow; ignore markers from anyone else. The request marker prevents
+duplicate triggers on resume. It proves a request,
+not a completed review; completion must match the pushed commit and base.
 
 ---
 
