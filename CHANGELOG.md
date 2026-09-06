@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.26.1.0] - 2026-09-06
+
+### Fixed
+
+- **`/review-and-prep` recognizes all three root Greptile markers.** `greptile.json`, `.greptile.json`, and a nonempty `.greptile/` count at the base tip or intended head. The dotted file signals local intent, without assuming the bot reads it. Marker changes require an explicit policy decision before readiness, and a user-approved skip reaches nested reviews. Unknown effective settings still require a completed review of the pushed commit.
+- **Rejected pushes have a defined recovery boundary.** Rebased or amended published history stops for user or Conductor reconciliation; the workflow never merges old commits back in or force-pushes. Transient failures may retry only after verifying the destination, while other rejections leave durable blocker evidence.
+
+### Changed
+
+- Greptile applicability lives in Step 1 and draft-once behavior in one bold rule. Steps 4 and 5 retain their exact pinned gate sentence. Receipt and request examples now explain author checks, evidence corroboration, and explicit deferrals.
+- The three installer-related test suites share one independently hardcoded expected-skill list. The exact comparison against `setup` remains, and the selector follows the helper imports without manual touchfile entries.
+
+### Added
+
+- Four installer regressions cover valid personal skill symlinks across Claude, Codex, OpenCode, and auto-detected hosts. The existing hard stop preserves the personal link and prevents installation on every selected host; README explains resolving the collision.
+- A first-run `/review-and-prep` walkthrough and examples of the review receipt and both HTML markers.
+
 ## [0.26.0.0] - 2026-09-06
 
 ### Added
