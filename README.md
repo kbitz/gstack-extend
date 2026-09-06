@@ -187,6 +187,76 @@ a workflow configuration, not a GitHub-wide guarantee.
 write release changelog entries, merge, or deploy. `/ship` keeps its own checks
 and version/documentation work; its later pushes can trigger another CI run.
 
+### First run
+
+1. Start on your feature branch with the implementation and its agreed task
+   requirements or approved plan available. Install gstack's `/review` and
+   authenticate `gh`; `/review-and-prep` uses both.
+2. Run `/review-and-prep`. The agent checks the base/head, existing PR, CI
+   triggers, and Greptile policy, then audits every requirement and runs the
+   full local review and required tests. Resolve any scope or policy decisions
+   it identifies.
+3. The agent commits and pushes the work and creates an unversioned draft PR,
+   or resumes the matching draft. If Greptile applies, it requests a draft
+   review, fixes actionable findings, and repeats tests/review on new commits.
+   A timeout or missing evidence leaves the draft available to resume with
+   `/review-and-prep`.
+4. Inspect the PR's `## Review and prep` receipt for the scope matrix, review
+   stages, test results, and Greptile outcome. When all gates pass, the agent
+   marks the PR ready once and returns the PR link plus a continuation prompt.
+5. Paste that prompt into a new session to run `/ship`, followed by
+   `/land-and-deploy`. `/ship` assigns the version and completes release work;
+   deployment verification belongs to `/land-and-deploy`.
+
+An already-ready PR is checked without changing its draft state. A rejected
+push caused by rewritten/divergent history stops for user or Conductor
+reconciliation; the workflow does not merge old commits back in or force-push.
+
+### Receipt and request markers
+
+This abbreviated receipt shows the shape; real receipts include every scope
+item and a separate evidence row for each applicable review stage and check.
+Angle-bracket values below are placeholders, not verified results:
+
+```markdown
+## Review and prep
+
+Status: **prepared** (written while draft; readiness is checked separately).
+Repository: <owner/repo>; PR: <url>; head: <owner:branch>; base: <owner/repo:main>
+Prepared at: <UTC>; HEAD: <full-sha>; Git tree: <tree-sha>; base tip: <base-sha>
+Scope source: <approved plan link or agreed-task snapshot>; SHA-256: <scope-hash>
+
+| Item | Requirement / acceptance | Disposition | Evidence |
+|------|--------------------------|-------------|----------|
+| R1 | <requirement and acceptance criterion> | VERIFIED | <source/test link> |
+
+Scope reconciliation: <N> items; <N> VERIFIED; 0 other dispositions.
+Review: <core and per-specialist/adversarial scope, outcome, UTC, content ID>
+Tests: <exact command>; cwd: .; <UTC>; exit 0; <counts and output excerpt>
+Tested content: <commit/tree>; gstack wtree: <fingerprint, if available>
+Greptile: <review URL, head/base, findings and fixes; OR explicit skip reason>
+Decisions: <policy changes, findings dispositions, user-approved deferrals>
+Remaining: /ship version/title/changelog and unperformed audits; merge/deploy.
+Deployment context: not inspected.
+```
+
+Before marking ready, the agent mirrors the final receipt in a PR comment with
+`<!-- review-and-prep:receipt:<full-sha> -->`. This preserves evidence if `/ship`
+later regenerates the body. The comment's author and content fingerprints must
+be verified before reusing it.
+
+When MCP cannot trigger an applicable Greptile review, the request comment is:
+
+```text
+@greptileai review this draft
+
+Please review the current head commit: <full-sha>.
+<!-- review-and-prep:greptile:<full-sha> -->
+```
+
+The request marker prevents duplicate triggers on resume. It proves a request,
+not a completed review; completion must match the pushed commit and base.
+
 ---
 
 ## /full-review — Weekly Codebase Review Pipeline
