@@ -154,7 +154,7 @@ rewrite_skill_body() {
   local tmp
   tmp="$(mktemp)"
   local sed_args=()
-  for skill in gstack-extend-upgrade gstack-extend-init pair-review review-apparatus review-and-prep test-plan full-review roadmap gstack-extend; do
+  for skill in "${SKILLS[@]}" gstack-extend; do
     sed_args+=(-e "s|~/.claude/skills/${skill}|${host_root}/${skill}|g")
   done
   sed "${sed_args[@]}" "$src" > "$tmp"
