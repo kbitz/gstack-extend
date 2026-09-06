@@ -19,20 +19,10 @@ import {
 import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
-
-const SKILLS = [
-  'pair-review',
-  'roadmap',
-  'full-review',
-  'review-apparatus',
-  'test-plan',
-  'gstack-extend-upgrade',
-  'gstack-extend-init',
-  'review-and-prep',
-] as const;
 
 const baseTmp = makeBaseTmp('setup-hosts-');
 afterAll(() => {

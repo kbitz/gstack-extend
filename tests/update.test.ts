@@ -38,6 +38,7 @@ import { dirname, join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
+import { EXPECTED_SETUP_SKILLS as REAL_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const UPDATE_RUN = join(ROOT, 'bin', 'update-run');
@@ -46,20 +47,6 @@ const SETUP = join(ROOT, 'setup');
 const SEMVER_LIB = join(ROOT, 'bin', 'lib', 'semver.sh');
 const RUN_MIGRATIONS = join(ROOT, 'bin', 'lib', 'run-migrations.sh');
 const INSTALL_SAFETY_LIB = join(ROOT, 'bin', 'lib', 'install-safety.sh');
-
-// Mirrors the SKILLS array in setup. Hardcoded rather than parsed from
-// setup itself so a malformed setup edit fails the test loudly instead of
-// silently shrinking the symlink check.
-const REAL_SETUP_SKILLS = [
-  'pair-review',
-  'roadmap',
-  'full-review',
-  'review-apparatus',
-  'test-plan',
-  'gstack-extend-upgrade',
-  'gstack-extend-init',
-  'review-and-prep',
-] as const;
 
 const baseTmp = makeBaseTmp('update-test-');
 afterAll(() => {

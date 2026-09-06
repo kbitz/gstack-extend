@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
+import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -1044,17 +1045,6 @@ describe('test-plan inherits the item shape and merge gate', () => {
 });
 
 // ─── Track 15A: cohorts, Conductor lock, advisory-list drift ──────────
-
-const EXPECTED_SETUP_SKILLS = [
-  'pair-review',
-  'roadmap',
-  'full-review',
-  'review-apparatus',
-  'test-plan',
-  'gstack-extend-upgrade',
-  'gstack-extend-init',
-  'review-and-prep',
-] as const;
 
 const KNOWN_FOSSILS = ['SIZE_LABEL_MISMATCH'] as const;
 
