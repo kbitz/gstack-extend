@@ -1258,6 +1258,16 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('A core-only review cannot satisfy missing stages');
   });
 
+  test('rejected pushes hand off rewritten history without merging it back', () => {
+    const step3 = normalized.split('## 3. Push')[1]?.split('## 4. Trigger')[0] ?? '';
+    expect(step3).toContain('**History divergence: stop and hand off to the user.**');
+    expect(step3).toContain('a rebase or amend of already-pushed commits');
+    expect(step3).toContain('Never merge the old remote history back into the rebased branch');
+    expect(step3).toContain('Do not rebase, reset, or force-push as rejection recovery');
+    expect(step3).toContain('both full tip SHAs, ahead/behind counts');
+    expect(step3).toContain('refresh review/test evidence');
+  });
+
   test('receipt, final mutation, and handoff anchors', () => {
     expect(content).toContain('`## Review and prep`');
     expect(content).toContain('gh pr ready "<number>" --repo "<base-owner/repo>"');

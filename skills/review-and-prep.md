@@ -257,9 +257,22 @@ checks before pushing. A no-change rerun does not need an empty commit.
 
 Recheck that an existing PR is still draft immediately before each push. If
 someone marked it ready, stop under the draft-once rule. Push normally to
-the verified feature-branch destination; a rejection needs diagnosis, never a
-force-push. Do not push unknown commits introduced by another actor without
-reviewing and verifying them.
+the verified feature-branch destination. On rejection, fetch that branch and
+inspect the local/remote tips and graph before retrying. A transient transport
+or authentication failure may be retried normally once resolved, provided the
+remote tip is still an ancestor of the reviewed local HEAD.
+
+**History divergence: stop and hand off to the user.** This includes a rebase
+or amend of already-pushed commits: the rewritten history cannot fast-forward
+the published branch. Never merge the old remote history back into the rebased
+branch to make a push pass; that retains both versions of the commits. Do not
+rebase, reset, or force-push as rejection recovery in this workflow, even with
+a lease. Report the destination, both full tip SHAs, ahead/behind counts, and
+the diagnosis; preserve the local work and leave preparation incomplete.
+The user or Conductor owns reconciliation outside this workflow. Resume only
+after reconciliation, re-read the branch/PR state, and refresh review/test
+evidence for any changed content or base. Do not push unknown commits
+introduced by another actor without reviewing and verifying them.
 
 For a new PR, write a concise body with the problem, resulting behavior, scope,
 and actual local verification. Use an unversioned conventional title. Before
