@@ -134,12 +134,30 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 ## /review-and-prep — Prepare a Reviewed PR for /ship
 
 Runs `/review` and the project's required local checks, then commits and pushes
-to a draft PR. When a root `greptile.json` file, `.greptile.json` file, or
+to a draft PR. If required user testing is still pending — app interactions,
+visual inspection, device checks, or other human acceptance — it stops here,
+records the remaining checks in the PR, and recommends `/pair-review` before
+Greptile. After testing and fixes, `/review-and-prep resume` continues on the
+same draft using the recorded results and refreshing affected checks. Already
+recorded user results can satisfy this gate when they cover the current changes.
+This pause also applies when Greptile is skipped; required testing still gates
+readiness. A pair-review report marked done does not waive skipped checks or
+unverified fixes.
+
+Once required user testing is satisfied, when a root `greptile.json` file, `.greptile.json` file, or
 `.greptile/` directory exists at the reviewed base tip or in the intended head
 and the full PR is not docs-only, it triggers Greptile through MCP or `@greptileai review this
-draft`, waits for completion, and fixes sensible findings. Fixes are batched,
-tested locally, and re-reviewed by Greptile on the final pushed commit before
-readiness; missing or failed applicable reviews leave the PR draft.
+draft`, waits for completion, and fixes sensible findings. **Greptile runs at
+most once per PR**, across commits, sessions, and the `/ship` handoff. Existing
+automatic/manual runs count; failed runs are not retried. Before the first run,
+the agent fetches and merges the latest `main` (or the PR's target base) into
+the feature branch when it is behind or diverged, then reviews, tests, and
+pushes the integrated result. Greptile fixes and later changes are reviewed
+and tested locally, without requesting another Greptile run. If 10 minutes of
+monitoring yields no response, MCP cannot verify a review, and the trigger
+comment was posted correctly, preparation proceeds using local review/tests
+and records Greptile as unverified. Known queued/running reviews keep waiting;
+explicit failures remain blockers.
 Without any root marker at either tip, or for docs-only PRs, every Greptile component is
 skipped, including inside `/review`. Readiness then depends on local
 review/testing and the remaining gates.
@@ -155,7 +173,9 @@ and [`.greptile/`](https://www.greptile.com/docs/code-review/greptile-config-ref
 with the directory taking precedence. The dotted JSON file remains a local
 enablement signal for existing repos. If effective settings cannot be verified,
 the workflow records that uncertainty, applies declared labels, and requests
-review explicitly; it still requires a completed review of the pushed commit.
+review explicitly. Readiness requires the single run's completion or the
+documented 10-minute no-response fallback, with local verification covering
+subsequent changes.
 Nested-only config does not enable this
 workflow's root gate.
 
@@ -188,8 +208,16 @@ a workflow configuration, not a GitHub-wide guarantee.
 /land-and-deploy     # Land the shipped PR and verify deployment when applicable
 ```
 
+When the draft needs your testing, the middle of that workflow becomes:
+
+```text
+/review-and-prep         # Review, local checks, commit/push draft; pause
+/pair-review             # Test with you, fix issues, retest
+/review-and-prep resume  # Reuse results; Greptile when applicable, then ready
+```
+
 `/review-and-prep` does not assign a version, prefix the PR title with a version,
-write release changelog entries, merge, or deploy. `/ship` keeps its own checks
+write release changelog entries, merge the PR, or deploy. `/ship` keeps its own checks
 and version/documentation work; its later pushes can trigger another CI run.
 
 ### First run
@@ -203,10 +231,19 @@ and version/documentation work; its later pushes can trigger another CI run.
    full local review and required tests. Resolve any scope or policy decisions
    it identifies.
 3. The agent commits and pushes the work and creates an unversioned draft PR,
-   or resumes the matching draft. If Greptile applies, it requests a draft
-   review, fixes actionable findings, and repeats tests/review on new commits.
-   A timeout or missing evidence leaves the draft available to resume with
-   `/review-and-prep`.
+   or resumes the matching draft. If required user testing remains, it saves a
+   **PAUSED — manual testing required** receipt and stops with a `/pair-review`
+   handoff. Complete the listed checks and return with `/review-and-prep resume`;
+   Greptile stays postponed and the PR stays draft during testing and fixes.
+   Otherwise, if Greptile applies, it reuses an existing run
+   or requests the PR's only draft review, then fixes actionable findings and
+   verifies new commits locally. Around 10 minutes, an unfinished review prompts
+   an MCP status check; queued/running reviews keep waiting. Without MCP, the
+   agent verifies the trigger comment was actually posted and checks bot
+   acknowledgment/reviews/checks. A missing trigger gets the first request;
+   elapsed time alone never justifies a retry. After 10 minutes with a correct
+   posted comment, no verifiable MCP status, and still no response, preparation
+   moves on with local checks and an explicit unverified Greptile outcome.
 4. Inspect the PR's `## Review and prep` receipt for the scope matrix, review
    stages, test results, and Greptile outcome. When all gates pass, the agent
    marks the PR ready once and returns the PR link plus a continuation prompt.
@@ -243,18 +280,29 @@ Readiness requires zero PARTIAL, MISSING, and UNVERIFIABLE items.
 Review: <core and per-specialist/adversarial scope, outcome, UTC, content ID>
 Tests: <exact command>; cwd: .; <UTC>; exit 0; <counts and output excerpt>
 Tested content: <commit/tree>; gstack wtree: <fingerprint, if available>
-Greptile: <review URL, head/base, findings and fixes; OR explicit skip reason>
+User testing: <required items, results, tested builds, fix/retest evidence;
+OR not required with rationale>
+Greptile: <single run URL/ID, trigger time, reviewed SHA/base, findings and fixes,
+local verification of later changes; OR unverified — no response after 10 minutes,
+trigger-comment URL/time and monitoring evidence; OR explicit skip reason>
 Decisions: <policy changes, findings dispositions, user-approved deferrals>
 Remaining: /ship version/title/changelog and unperformed audits; merge/deploy.
 Deployment context: not inspected.
 ```
+
+At the manual-testing pause, status is **PAUSED — manual testing required**,
+the matrix retains its pending items and concrete test actions, and applicable
+Greptile is **postponed — awaiting manual testing**. Resume validates results
+against those items and the tested build. The portable receipt carries the
+results so a local `/pair-review` state path is not the only evidence.
 
 Before marking ready, the agent mirrors the final receipt in a PR comment with
 `<!-- review-and-prep:receipt:<full-sha> -->`. This preserves evidence if `/ship`
 later regenerates the body. The comment's author and content fingerprints must
 be verified before reusing it.
 
-When MCP cannot trigger an applicable Greptile review, the request comment is:
+When no run or submitted request exists and MCP cannot trigger an applicable
+Greptile review, the request comment is:
 
 ```text
 @greptileai review this draft
@@ -265,8 +313,9 @@ Please review the current head commit: <full-sha>.
 
 Honor either marker only when its author is the authenticated account running
 the workflow; ignore markers from anyone else. The request marker prevents
-duplicate triggers on resume. It proves a request,
-not a completed review; completion must match the pushed commit and base.
+duplicate triggers across the entire PR, even after its head changes. It proves
+a request, not a completed review; completion must match the run's recorded
+SHA/base. Read the posted comment back to confirm the actual bot call was sent.
 
 ---
 

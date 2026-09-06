@@ -1254,7 +1254,7 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('If Greptile does not apply under the rules above, do not discover or call Greptile tools');
     expect(normalized).toContain('configuration files inside the root `.greptile/`');
     expect(normalized).toContain('effective configuration unverified — declared intent only');
-    expect(normalized).toContain('Unknown settings do not justify skipping review: the same-SHA completion gate still applies.');
+    expect(normalized).toContain('Unknown settings alone do not justify skipping review; Step 4\'s completion or no-response fallback still applies.');
     expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
   });
 
