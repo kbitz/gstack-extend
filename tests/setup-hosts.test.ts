@@ -191,8 +191,10 @@ describe('setup --host flags', () => {
     runSetup(['--host', 'codex'], home);
     const r = runSetup(['--host', 'codex', '--uninstall'], home);
     expect(r.exitCode).toBe(0);
-    expect(existsSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'))).toBe(false);
-    expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
+    for (const skill of SKILLS) {
+      expect(existsSync(join(hostDir(home, 'codex'), skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(true);
+    }
   });
 
   test('codex rewrite unlinks leftover SKILL.md symlink before write', () => {

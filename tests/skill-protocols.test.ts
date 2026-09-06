@@ -1190,9 +1190,11 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
     expect(extra).toEqual(['gstack-extend-init', 'review-and-prep']);
   });
 
-  test('PROTOCOL and PREAMBLE do not include init', () => {
-    expect(PROTOCOL_SKILLS).not.toContain('gstack-extend-init');
-    expect(PREAMBLE_SKILLS).not.toContain('gstack-extend-init');
+  test('PROTOCOL and PREAMBLE exclude every non-preamble setup skill', () => {
+    for (const s of ['gstack-extend-init', 'review-and-prep']) {
+      expect(PROTOCOL_SKILLS).not.toContain(s);
+      expect(PREAMBLE_SKILLS).not.toContain(s);
+    }
   });
 
   test('CONDUCTOR_SKILLS is the 4 trim-target files, not PROTOCOL', () => {
@@ -1210,6 +1212,89 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
       expect(existsSync(join(ROOT, 'skills', `${name}.md`))).toBe(true);
     }
   });
+});
+
+// ─── review-and-prep drift-locks ────────────────────────────────────
+//
+// review-and-prep is a prompt-file skill outside the SHARED-block cohorts,
+// so nothing else pins its load-bearing prose. Lock the invariants a
+// rewording must not lose: draft-once, the Greptile applicability gate,
+// the completion-matrix vocabulary, the receipt/handoff anchors, and the
+// absence of destructive git/GitHub commands.
+describe('review-and-prep drift-locks', () => {
+  const file = join(ROOT, 'skills', 'review-and-prep.md');
+  const content = readFileSync(file, 'utf8');
+  const normalized = content.replace(/\s+/g, ' ');
+
+  test('allowed-tools includes Agent for specialist and adversarial dispatch', () => {
+    const closeIdx = content.indexOf('\n---', 4);
+    const frontmatter = content.slice(0, closeIdx);
+    expect(frontmatter).toContain('  - Agent\n');
+    expect(frontmatter).toContain('  - Skill\n');
+  });
+
+  test('draft-once invariant', () => {
+    expect(normalized).toContain(
+      'Mark it ready exactly once, as the last mutation of a successful run. Never convert a ready PR back to draft.',
+    );
+    expect(normalized).toContain('never toggle back or keep pushing after readiness');
+  });
+
+  test('Greptile applicability gate guards Steps 4 and 5', () => {
+    const gate = 'Run this step only when `.greptile.json` exists AND the PR is not docs-only.';
+    expect(content.split(gate).length - 1).toBe(2);
+    expect(content).toContain('Greptile: skipped — no .greptile.json');
+    expect(content).toContain('Greptile: skipped — docs-only PR');
+    expect(content).toContain('<!-- review-and-prep:greptile:<full-sha> -->');
+  });
+
+  test('completion matrix vocabulary and readiness rule', () => {
+    expect(normalized).toContain(
+      '**VERIFIED**, **PARTIAL**, **MISSING**, **UNVERIFIABLE**, or **DEFERRED BY USER**',
+    );
+    expect(normalized).toContain(
+      'Readiness requires every in-scope item to be VERIFIED or DEFERRED BY USER.',
+    );
+    expect(normalized).toContain('A core-only review cannot satisfy missing stages');
+  });
+
+  test('receipt, final mutation, and handoff anchors', () => {
+    expect(content).toContain('`## Review and prep`');
+    expect(content).toContain('gh pr ready "<number>" --repo "<base-owner/repo>"');
+    expect(content).toContain('Run /ship, then /land-and-deploy for this prepared PR.');
+    expect(normalized).toContain(
+      'Reuse a receipt claim only after corroborating it against live state',
+    );
+  });
+
+  test('no destructive git/GitHub commands and no co-authorship', () => {
+    expect(content).toContain('Never add co-authorship trailers.');
+    expect(content).not.toMatch(/push\s+(?:-f\b|--force)/);
+    expect(content).not.toContain('--force-with-lease');
+    expect(content).not.toMatch(/gh pr (?:merge|close)/);
+    expect(content).not.toMatch(/gh pr edit[^\n]*--base/);
+    expect(content).not.toContain('reset --hard');
+    expect(content).not.toMatch(/branch -D\b/);
+    expect(content).not.toContain('--undo');
+  });
+});
+
+describe('non-cohort setup skills carry no SHARED or telemetry blocks', () => {
+  const setupSkills = parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8'));
+  const outside = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
+
+  test('the outside set is exactly init and review-and-prep', () => {
+    expect(outside).toEqual(['gstack-extend-init', 'review-and-prep']);
+  });
+
+  for (const skill of outside) {
+    test(`${skill} has no SHARED markers or telemetry hooks`, () => {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      expect(content).not.toMatch(/<!-- \/?SHARED:/);
+      expect(content).not.toContain('_GE_SKILL=');
+      expect(content).not.toContain('gstack-extend-telemetry');
+    });
+  }
 });
 
 describe('Track 15A parseSetupSkills grammar (synthetic)', () => {
