@@ -58,6 +58,7 @@ const REAL_SETUP_SKILLS = [
   'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'review-and-prep',
 ] as const;
 
 const baseTmp = makeBaseTmp('update-test-');
@@ -998,11 +999,11 @@ describe('setup default install', () => {
     r = runSetup([], mockHome);
   });
 
-  test('installs 6 skills to default skills dir', () => {
-    expect(r.stdout + r.stderr).toContain('Installed 7 skills');
+  test('installs all skills to default skills dir', () => {
+    expect(r.stdout + r.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
   });
 
-  for (const skill of ['pair-review', 'review-apparatus', 'test-plan', 'gstack-extend-upgrade']) {
+  for (const skill of REAL_SETUP_SKILLS) {
     test(`creates ${skill} symlink to repo source`, () => {
       const link = join(mockHome, '.claude', 'skills', skill, 'SKILL.md');
       expect(lstatSync(link).isSymbolicLink()).toBe(true);
@@ -1208,7 +1209,7 @@ describe('setup install-time safety: $SKILLS_DIR layer', () => {
     mkdirSync(join(home, '.claude'), { recursive: true });
     symlinkSync(dotfilesDir, join(home, '.claude', 'skills'));
     const r = runSetup([], home);
-    expect(r.stdout + r.stderr).toContain('Installed 7 skills');
+    expect(r.stdout + r.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
     // Symlinks landed inside the dotfiles dir (the resolved target).
     expect(lstatSync(join(dotfilesDir, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
   });
@@ -1307,7 +1308,7 @@ describe('Track 5A skill preamble probe (CP#3 integration)', () => {
     const home = join(baseTmp, 'cp3-default-home');
     mkdirSync(home, { recursive: true });
     const setupResult = runSetup([], home);
-    expect(setupResult.stdout + setupResult.stderr).toContain('Installed 7 skills');
+    expect(setupResult.stdout + setupResult.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
     const probe = runPreambleProbe(home, null);
     expect(probe.extendRoot).toBe(ROOT);
   });

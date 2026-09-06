@@ -28,8 +28,8 @@ import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 const ROOT = join(import.meta.dir, '..');
 
 // Three named cohorts. Do not derive protocol membership from setup's
-// install list — gstack-extend-init is the second utility skill (after
-// upgrade) and has no SHARED protocol / telemetry / Conductor blocks.
+// install list — init and review-and-prep are utility/orchestration skills
+// without the legacy SHARED protocol / telemetry / Conductor blocks.
 // 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
 // rule stay per-skill. Keep "Action receipt format".
 // 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
@@ -1053,6 +1053,7 @@ const EXPECTED_SETUP_SKILLS = [
   'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'review-and-prep',
 ] as const;
 
 const KNOWN_FOSSILS = ['SIZE_LABEL_MISMATCH'] as const;
@@ -1165,7 +1166,7 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
   const setupText = readFileSync(join(ROOT, 'setup'), 'utf8');
   const setupSkills = parseSetupSkills(setupText);
 
-  test('live setup parses to the exact 7-name install list', () => {
+  test('live setup parses to the exact install list', () => {
     expect(setupSkills).toEqual([...EXPECTED_SETUP_SKILLS]);
   });
 
@@ -1184,9 +1185,9 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
     expect(extra).toEqual(['gstack-extend-upgrade']);
   });
 
-  test("SETUP \\ PREAMBLE === ['gstack-extend-init']", () => {
+  test("SETUP \\ PREAMBLE contains init and review-and-prep", () => {
     const extra = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
-    expect(extra).toEqual(['gstack-extend-init']);
+    expect(extra).toEqual(['gstack-extend-init', 'review-and-prep']);
   });
 
   test('PROTOCOL and PREAMBLE do not include init', () => {
@@ -1384,4 +1385,3 @@ describe('Track 15A roadmap advisory-list drift vs CANONICAL_SECTIONS', () => {
     expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'PHASES'");
   });
 });
-

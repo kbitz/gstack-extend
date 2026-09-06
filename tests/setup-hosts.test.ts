@@ -31,6 +31,7 @@ const SKILLS = [
   'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'review-and-prep',
 ] as const;
 
 const baseTmp = makeBaseTmp('setup-hosts-');
@@ -103,7 +104,7 @@ describe('setup --host flags', () => {
     mkdirSync(home, { recursive: true });
     const r = runSetup(['--host', 'claude'], home);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('Installed 7 skills');
+    expect(r.stdout).toContain(`Installed ${SKILLS.length} skills`);
     for (const skill of SKILLS) {
       const skillMd = join(hostDir(home, 'claude'), skill, 'SKILL.md');
       expect(lstatSync(skillMd).isSymbolicLink()).toBe(true);
