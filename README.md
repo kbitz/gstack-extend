@@ -136,6 +136,13 @@ Without `.greptile.json`, or for docs-only PRs, every Greptile component is
 skipped, including inside `/review`. Readiness then depends on local
 review/testing and the remaining gates.
 
+Readiness also requires a complete audit of the approved plan (including
+autoplan), or the agreed task requirements when no plan was created. Every
+in-scope item must have implementation/verification evidence or an explicit
+user-approved deferral. Missing plan context and unverified items block
+readiness; long plans are audited in full. The PR receipt preserves the scope,
+plan fingerprint, complete item matrix, and deferral decisions across sessions.
+
 The PR stays draft throughout preparation and is marked ready **once**, at the
 end. The skill never toggles a ready PR back to draft. Reinvoking it resumes the
 same draft and uses a PR-body receipt to track verification across workspaces.
@@ -145,6 +152,10 @@ commit/tree and base, timestamped review/test evidence, Greptile results or skip
 reason, settled decisions, and remaining release/deploy work. Native evidence
 logs support reuse on the same machine; inline evidence and the PR receipt
 preserve context elsewhere. Freshness and required checks still apply.
+Review evidence identifies each specialist and adversarial pass separately.
+The handoff explicitly tells `/ship` to reuse completed, current checks even
+when its default invocation would rerun them; missing or stale checks still
+run. A generic "review clean" does not stand in for a missing specialist review.
 It checks the repository's existing CI triggers before pushing; draft gating is
 a workflow configuration, not a GitHub-wide guarantee.
 
