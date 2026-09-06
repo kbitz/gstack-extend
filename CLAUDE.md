@@ -53,6 +53,7 @@ Key routing rules:
 - QA, test the site, find bugs → invoke qa
 - Code review, check my diff → invoke review
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
+- Resume review and prep after manual testing, continue the paused draft PR → invoke review-and-prep with args "resume"
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
 - Design system, brand → invoke design-consultation
