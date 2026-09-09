@@ -111,6 +111,7 @@ SKILLS=(
   gstack-extend-upgrade
   gstack-extend-init
   review-and-prep
+  implement
 )
 
 LEGACY_SKILLS=(
