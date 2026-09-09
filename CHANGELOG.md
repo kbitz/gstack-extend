@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.0.0] - 2026-09-09
+
+### Added
+
+- **New `/implement` skill fills the gap between planning and shipping.** Executes an approved plan, runs a light 1:1 completeness check against it (not a full review matrix), and hands off a copyable `/review-and-prep` prompt for a fresh session in the same workspace and branch. It never commits, pushes, creates PRs, or does release work — the workflow is now `/autoplan → /implement → /review-and-prep → /ship → /land-and-deploy`.
+- Equivalent implementations require rationale and evidence; dropping or deferring in-scope work requires an explicit user decision; unfinished implementation blocks a successful handoff.
+- `setup`, `CLAUDE.md`, README, and the init `CLAUDE.md.tmpl` all route to the new skill. Installer and protocol tests confirm `/implement` is registered on upgrade and pin its load-bearing behavior.
+
 ## [0.26.2.0] - 2026-09-06
 
 ### Fixed
