@@ -7,6 +7,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/pair-review` | Pair testing session manager | Any project (web, native, CLI) | Stable |
 | `/roadmap` | Plan regeneration — packer assigns Groups | Any project | Stable |
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
+| `/implement` | Build an approved plan → light completeness check → review-and-prep handoff | Any project with a plan | New |
 | `/review-and-prep` | Local review/tests → draft PR → optional Greptile → mark ready, without versioning | GitHub projects with gstack `/review` | New |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
@@ -128,6 +129,41 @@ bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
 | PROGRESS.md | Version history + phase status | /roadmap, /document-release |
 | CHANGELOG.md | User-facing release notes | /document-release |
 | VERSION | SemVer source of truth | /ship |
+
+---
+
+## /implement — Build the Plan and Hand Off for Review
+
+Executes an approved plan, checks that every in-scope item was built or explicitly
+addressed, and generates a copyable `/review-and-prep` prompt for a fresh session
+in the same workspace. Reads the full plan and accepted review decisions, including
+autoplan's implementation tasks. An optional scope selects one Track or other
+agreed subset of a larger plan.
+
+Equivalent implementation changes get a rationale and evidence. Dropped or deferred
+requirements need an explicit user decision. The completeness pass uses source and
+targeted checks, plus any repository-documented verification. Required manual
+checks carry forward with concrete actions and expected results; unfinished
+implementation blocks a successful handoff.
+
+```text
+/implement                              # Use the plan established in this session
+/implement docs/designs/feature.md       # Build this approved plan
+/implement docs/designs/feature.md Track 2A  # Limit scope to the agreed Track
+```
+
+The workflow becomes:
+
+1. `/autoplan`, then hand its approved plan to a fresh implementation session.
+2. `/implement`, then paste its `/review-and-prep` prompt into a fresh session
+   in the same workspace, where the uncommitted implementation remains available.
+3. `/review-and-prep`, then follow its `/ship` and `/land-and-deploy` handoff
+   (or complete required `/pair-review` testing and resume first).
+
+`/implement` leaves committing, pushing, PR creation, and release work to the later
+stages. Its handoff includes plan coverage, deviations, check results, and pending
+verification. Long handoff documents and transient plans are saved durably outside
+ephemeral workspaces unless they belong in tracked project documentation.
 
 ---
 

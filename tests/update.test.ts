@@ -368,12 +368,12 @@ describe('bin/update-run', () => {
   // The four scenarios above use a stub setup (echo "setup ran"), so they
   // verify update-run's git mechanics but not the setup-after-pull seam.
   // The path every existing install takes to receive a skill added in a
-  // later release: the fixture starts as a 7-skill install (setup's SKILLS
-  // array without review-and-prep), the pushed version adds the 8th skill
-  // file plus the real 8-entry setup, and update-run's setup-after-pull
+  // later release: the fixture starts with setup's SKILLS array without
+  // implement, the pushed version adds that skill file plus the current
+  // setup, and update-run's setup-after-pull
   // must link the new skill without disturbing the old ones.
   describe('post-upgrade install of a newly registered skill', () => {
-    const NEW_SKILL = 'review-and-prep';
+    const NEW_SKILL = 'implement';
     const oldSkills = REAL_SETUP_SKILLS.filter((s) => s !== NEW_SKILL);
     let repo: string;
     let homeDir: string;
@@ -383,9 +383,9 @@ describe('bin/update-run', () => {
 
     beforeAll(() => {
       const realSetup = readFileSync(SETUP, 'utf8');
-      const oldSetup = realSetup.replace(/^  review-and-prep\n/m, '');
+      const oldSetup = realSetup.replace(new RegExp(`^  ${NEW_SKILL}\\n`, 'm'), '');
       if (oldSetup === realSetup) {
-        throw new Error('fixture: could not remove review-and-prep from setup SKILLS');
+        throw new Error(`fixture: could not remove ${NEW_SKILL} from setup SKILLS`);
       }
       repo = createFixtureRepoWithRealSetup('upgrade-new-skill', {
         skills: oldSkills,
