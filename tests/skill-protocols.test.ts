@@ -1348,6 +1348,17 @@ describe('review-and-prep drift-locks', () => {
     );
   });
 
+  test('ship handoff stays short and defers to /ship and /land-and-deploy', () => {
+    const step7 = content.slice(content.indexOf('## 7. Emit'));
+    const prompt = step7.split('```text\n')[1]?.split('\n```')[0] ?? '';
+    expect(prompt).toContain('Run /ship, then /land-and-deploy for this prepared PR.');
+    expect(prompt).toContain("reuse them where /ship's own rules allow");
+    expect(prompt.split('\n').length).toBeLessThanOrEqual(12);
+    for (const rehash of ['REUSE', 'Remaining /ship work', 'CHANGELOG', 'land via', 'Deployment', 'ledger']) {
+      expect(prompt).not.toContain(rehash);
+    }
+  });
+
   test('no destructive git/GitHub commands and no co-authorship', () => {
     expect(content).toContain('Never add co-authorship trailers.');
     expect(content).not.toMatch(/push\s+(?:-f\b|--force)/);
