@@ -225,16 +225,14 @@ plan fingerprint, complete item matrix, and deferral decisions across sessions.
 The PR stays draft throughout preparation and is marked ready **once**, at the
 end. The skill never toggles a ready PR back to draft. Reinvoking it resumes the
 same draft and uses a PR-body receipt to track verification across workspaces.
-On completion, it outputs a copyable prompt for a new session to run `/ship`
-and then `/land-and-deploy` on the same PR. The prompt carries the prepared
-commit/tree and base, timestamped review/test evidence, Greptile results or skip
-reason, settled decisions, and remaining release/deploy work. Native evidence
-logs support reuse on the same machine; inline evidence and the PR receipt
-preserve context elsewhere. Freshness and required checks still apply.
-Review evidence identifies each specialist and adversarial pass separately.
-The handoff explicitly tells `/ship` to reuse completed, current checks even
-when its default invocation would rerun them; missing or stale checks still
-run. A generic "review clean" does not stand in for a missing specialist review.
+On completion, it outputs a short copyable prompt for a new session to run
+`/ship` and then `/land-and-deploy` on the same PR. The prompt names the PR,
+the prepared HEAD, the plan, and Greptile's status, and points to the receipt
+comment, which the next session trusts only when its author and SHA match live
+state. It does not restate those skills' procedures or override their rules, so
+`/ship` still runs its own checklist and reuses only what its own rules allow. Review evidence in
+the receipt identifies each specialist and adversarial pass separately, so a
+generic "review clean" does not stand in for a missing specialist review.
 It checks the repository's existing CI triggers before pushing; draft gating is
 a workflow configuration, not a GitHub-wide guarantee.
 
@@ -322,8 +320,7 @@ Greptile: <single run URL/ID, trigger time, reviewed SHA/base, findings and fixe
 local verification of later changes; OR unverified — no response after 10 minutes,
 trigger-comment URL/time and monitoring evidence; OR explicit skip reason>
 Decisions: <policy changes, findings dispositions, user-approved deferrals>
-Remaining: /ship version/title/changelog and unperformed audits; merge/deploy.
-Deployment context: not inspected.
+Not run: <checks not run or not applicable, with reasons; or none>
 ```
 
 At the manual-testing pause, status is **PAUSED — manual testing required**,
