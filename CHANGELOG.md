@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.1.0] - 2026-09-14
+
+### Changed
+
+- **`/review-and-prep` hands off to `/ship` and `/land-and-deploy` with a short prompt again.** The copyable prompt now names the PR, the prepared HEAD, the plan, the receipt comment, and Greptile's status, then lets `/ship` and `/land-and-deploy` run their own procedures. The old prompt restated both skills' steps, overrode `/ship`'s re-run rules, and inlined the whole review record, roughly 100 lines that fought the skills it handed off to.
+- The prompt points at the receipt comment by URL, author, and marker, and tells the next session to trust it only when the author and SHA match live state. It also says to update this PR rather than open another, lists any unrelated local changes to leave uncommitted, and marks Greptile findings as already triaged so only newer feedback gets handled.
+
+### Removed
+
+- The receipt no longer records deployment context or "remaining /ship work", since nothing read either. The README example receipt shows a "Not run" row instead, and drift-lock tests pin the new prompt's fields and keep `/ship` procedure out of it.
+
 ## [0.27.0.0] - 2026-09-09
 
 ### Added
