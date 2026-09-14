@@ -227,9 +227,10 @@ end. The skill never toggles a ready PR back to draft. Reinvoking it resumes the
 same draft and uses a PR-body receipt to track verification across workspaces.
 On completion, it outputs a short copyable prompt for a new session to run
 `/ship` and then `/land-and-deploy` on the same PR. The prompt names the PR,
-the prepared HEAD, and Greptile's status, and points to the receipt; it does not
-restate those skills' procedures or override their rules, so `/ship` still runs
-its own checklist and reuses only what its own rules allow. Review evidence in
+the prepared HEAD, the plan, and Greptile's status, and points to the receipt
+comment, which the next session trusts only when its author and SHA match live
+state. It does not restate those skills' procedures or override their rules, so
+`/ship` still runs its own checklist and reuses only what its own rules allow. Review evidence in
 the receipt identifies each specialist and adversarial pass separately, so a
 generic "review clean" does not stand in for a missing specialist review.
 It checks the repository's existing CI triggers before pushing; draft gating is
