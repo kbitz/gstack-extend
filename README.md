@@ -17,7 +17,10 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 All nine skills support optional local telemetry. See [telemetry setup, author
 quickstart, and fidelity checks](docs/telemetry.md); inspect it with
 `gstack-extend doctor telemetry`. These rows are separate from `mm retro-fleet`'s
-transcript-derived skill counts.
+transcript-derived skill counts. Independently of gstack's telemetry tier, each
+finished run also appends a local-only row recording which harness, model, and
+effort level ran it; this is on by default and never uploaded
+([execution provenance](docs/telemetry.md#execution-provenance)).
 
 ## Installation
 

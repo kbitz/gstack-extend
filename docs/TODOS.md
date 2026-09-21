@@ -9,6 +9,14 @@
 - **Priority:** P2
 - **Context:** Deferred at /ship on 2026-09-06. Each item changes designed behavior the user specified for PR #102 (Greptile-once, the 10-minute fallback), so it needs a product decision rather than a mechanical fix. The full finding list is in the PR #102 body under Adversarial Review.
 
+### [manual] File upstream: gstack-skill-start accepts --model and drops it
+
+- **Description:** gstack's `gstack-skill-start` parses `--model` into `MODEL_OVERLAY` for the preamble but never persists it, and `gstack-telemetry-log` writes a fixed row with no model or agent field. No row in `~/.gstack/analytics/skill-usage.jsonl` can say which vendor ran a gstack skill. gstack-extend's own skills now record this in the local-only `stage-runs.jsonl` (see docs/telemetry.md, Execution provenance); gstack's skills still cannot.
+- **Hypothesis (untested):** Upstream could read the harness session logs the way `bin/lib/telemetry.py` does, rather than trusting a `--model` value the model supplies about itself.
+- **Effort:** S (human: ~1h to write the issue / CC: ~10min)
+- **Priority:** P2
+- **Context:** Found on 2026-09-21 while adding execution provenance to the gstack-extend telemetry wrapper. The fix is upstream and cannot be made here. Hand-run skills keep producing rows through the transition to orchestrated runs, so the gap persists until gstack records it.
+
 ### [plan-ceo-review:defer=true] In-flight marker and crash detection for extend telemetry
 
 - **Description:** Persist start state durably so a finish that loses its arguments can still be paired, and so an abandoned session is finalized rather than vanishing. The originally proposed form wrote `~/.gstack/analytics/extend-inflight/<session-id>` and swept stale markers. A narrower form (start/finish state handoff under `~/.gstack-extend/`, no sweep) was accepted into the telemetry track itself; this TODO covers only the remaining crash-detection half.
