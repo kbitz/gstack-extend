@@ -1,29 +1,12 @@
 /**
- * telemetry-contract.test.ts — opportunistic flag-surface guard against
- * upstream gstack drift.
- *
- * bin/gstack-extend-telemetry is a thin wrapper that exec's gstack's own
- * gstack-telemetry-log with `--source gstack-extend` prepended. If a future
- * gstack release renames any of the flags we depend on (--source, --skill,
- * --duration, --outcome, --session-id, --event-type), our wrapper silently
- * stops attributing extend activity in ~/.gstack/analytics/skill-usage.jsonl
- * — no test fails, no error, just dead telemetry the user only notices when
- * mind-meld retro shows zero extend events for a week.
- *
- * Strategy: opportunistic. When gstack-telemetry-log is on PATH or the
- * canonical install path resolves, run it with each flag we depend on and
- * confirm it either parses the flag or ignores it gracefully (exit 0).
- * When gstack isn't installed, every test SKIPS — gstack-extend works as a
- * standalone tool when its soft-dep is missing, so the contract test is
- * irrelevant in that environment.
- *
- * Isolation: GSTACK_HOME=$tmpdir via makeTelemetryFixture — never writes to
- * the developer's real ~/.gstack/analytics/.
+ * Optional real-upstream schema/flag contract. The deterministic telemetry tests
+ * run without gstack. Real logger/config copies omit the network sync helper;
+ * HOME and all inherited state overrides are isolated by telemetry-env.
  */
 
 import { describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { REAL_GSTACK_ROOT, REAL_GSTACK_BIN, makeTelemetryFixture } from './helpers/telemetry-env';
 
@@ -32,7 +15,7 @@ const HAS_GSTACK = existsSync(GSTACK_TELEMETRY_LOG);
 
 // Flags our wrapper depends on. If gstack renames any of these, downstream
 // extend telemetry breaks silently.
-const REQUIRED_FLAGS = ['--source', '--skill', '--duration', '--outcome', '--session-id', '--event-type'] as const;
+const REQUIRED_FLAGS = ['--source', '--skill', '--duration', '--outcome', '--session-id', '--event-type', '--no-sweep'] as const;
 
 describe('gstack-telemetry-log contract (opportunistic)', () => {
   test.if(!HAS_GSTACK)('SKIPPED — gstack not installed at ~/.claude/skills/gstack/', () => {
@@ -52,11 +35,12 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
   // are silently dropped (so we can't detect rename via parser errors), but
   // we CAN assert the helper exits 0 and writes nothing (when tier=off) or a
   // single row (when tier=community).
-  test.if(HAS_GSTACK)('all 6 required flags accepted in a single invocation', () => {
+  test.if(HAS_GSTACK)('all 7 required flags accepted in a single invocation', () => {
     const fix = makeTelemetryFixture('community', 'real');
     const r = spawnSync(
-      GSTACK_TELEMETRY_LOG,
+      join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'),
       [
+        '--no-sweep',
         '--source', 'gstack-extend',
         '--skill', 'extend:contract-test',
         '--duration', '7',
@@ -86,7 +70,7 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
   // — but the renamed field would land as null / default. Each per-flag test
   // asserts the corresponding field appears with the supplied value in the
   // resulting jsonl row, so a silent rename trips the test.
-  const PER_FLAG_CASES: Record<typeof REQUIRED_FLAGS[number], { value: string; field: string; expected: string | number }> = {
+  const PER_FLAG_CASES: Record<Exclude<typeof REQUIRED_FLAGS[number], '--no-sweep'>, { value: string; field: string; expected: string | number }> = {
     '--source':     { value: 'gstack-extend',       field: 'source',     expected: 'gstack-extend' },
     '--skill':      { value: 'extend:contract-flag', field: 'skill',      expected: 'extend:contract-flag' },
     '--duration':   { value: '42',                   field: 'duration_s', expected: 42 },
@@ -95,6 +79,7 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
     '--event-type': { value: 'skill_run',            field: 'event_type', expected: 'skill_run' },
   };
   for (const flag of REQUIRED_FLAGS) {
+    if (flag === '--no-sweep') continue;
     test.if(HAS_GSTACK)(`single-flag round-trip: ${flag} → ${PER_FLAG_CASES[flag].field}`, () => {
       const fix = makeTelemetryFixture('community', 'real');
       // Every invocation needs --skill (required for record-keeping); add the
@@ -109,7 +94,7 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
         // --session-id: override the auto-generated tag
         args[3] = PER_FLAG_CASES[flag].value;
       }
-      const r = spawnSync(GSTACK_TELEMETRY_LOG, args, {
+      const r = spawnSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), args, {
         env: fix.env, encoding: 'utf8', timeout: 10_000,
       });
       expect(r.status).toBe(0);
@@ -120,4 +105,25 @@ describe('gstack-telemetry-log contract (opportunistic)', () => {
       expect(rows[0][PER_FLAG_CASES[flag].field]).toBe(PER_FLAG_CASES[flag].expected);
     });
   }
+});
+
+
+describe('foreign pending marker regression', () => {
+  test.if(HAS_GSTACK)('--no-sweep preserves another session and emits no phantom row', () => {
+    const fix = makeTelemetryFixture('community', 'real');
+    const dir = join(fix.home, '.gstack', 'analytics');
+    mkdirSync(dir, { recursive: true });
+    const marker = join(dir, '.pending-OTHER');
+    writeFileSync(marker, JSON.stringify({ skill: 'qa', session_id: 'OTHER', ts: '2026-09-20T00:00:00Z' }));
+    const wrapper = join(import.meta.dir, '../bin/gstack-extend-telemetry');
+    const start = spawnSync(wrapper, ['start', '--skill', 'extend:contract-test'], { env: fix.env, encoding: 'utf8' });
+    expect(start.status).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    const result = spawnSync(wrapper, ['finish', '--skill', 'extend:contract-test', '--outcome', 'success'],
+      { env: fix.env, encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(fix.readJsonl()).toHaveLength(2);
+    expect(fix.readJsonl().some(row => row.outcome === 'unknown')).toBe(false);
+  });
 });

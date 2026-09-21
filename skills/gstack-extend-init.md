@@ -50,6 +50,33 @@ If the bin is missing, tell the user: "gstack-extend isn't installed or its CLI 
 
 # /gstack-extend-init — Bootstrap a new project
 
+<!-- SHARED:telemetry-start -->
+### Telemetry start
+
+Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if [ ! -x "$_GE_BIN" ]; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if [ ! -x "$_GE_BIN" ]; then
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      case "$_GE_ROOT" in /*)
+        if [ -x "$_GE_ROOT/bin/gstack-extend-telemetry" ]; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi ;;
+      esac
+    fi
+  done
+fi
+if [ -x "$_GE_BIN" ]; then
+  "$_GE_BIN" start --skill "extend:gstack-extend-init" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-start -->
+
 This skill is a thin conversational wrapper around `gstack-extend init`. The CLI does the actual work (scaffold, render, register, audit); the skill gathers arguments and reports.
 
 ## Step 1 — Gather the target
@@ -124,3 +151,30 @@ The `--no-prompt` flag makes the CLI fail loudly on any unresolvable input rathe
 - **DONE** — exit 0, project onboarded, "Next 30 minutes" printed.
 - **DONE_WITH_CONCERNS** — exit 1 from audit, files left in place. Surface the failing audit sections.
 - **BLOCKED** — bin not found, registry corrupt, permission errors. State the blocker, suggest the fix.
+
+<!-- SHARED:telemetry-finish -->
+### Telemetry finish
+
+Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if [ ! -x "$_GE_BIN" ]; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if [ ! -x "$_GE_BIN" ]; then
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      case "$_GE_ROOT" in /*)
+        if [ -x "$_GE_ROOT/bin/gstack-extend-telemetry" ]; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi ;;
+      esac
+    fi
+  done
+fi
+if [ -x "$_GE_BIN" ]; then
+  "$_GE_BIN" finish --skill "extend:gstack-extend-init" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-finish -->

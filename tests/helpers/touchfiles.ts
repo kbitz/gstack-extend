@@ -179,9 +179,23 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // already registers skills/** above for the canonical-block drift assertions.
   'tests/telemetry.test.ts': [
     'bin/gstack-extend-telemetry',
+    'bin/gstack-extend',
+    'bin/lib/telemetry*.py',
+    'setup',
+    'skills/**',
   ],
   'tests/telemetry-contract.test.ts': [
     'bin/gstack-extend-telemetry',
+    'bin/gstack-extend',
+    'bin/lib/telemetry*.py',
+    'setup',
+  ],
+  'tests/telemetry-doctor.test.ts': [
+    'bin/gstack-extend',
+    'bin/gstack-extend-telemetry',
+    'bin/lib/telemetry*.py',
+    'setup',
+    'skills/**',
   ],
   // Live ROADMAP + shipped archive are loaded at runtime (not imported).
   'tests/parsers-phases.test.ts': [

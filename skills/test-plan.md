@@ -112,29 +112,32 @@ Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell us
 Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
 <!-- /SHARED:upgrade-flow -->
 
-<!-- SHARED:telemetry-preamble -->
-## Telemetry (preamble — run after the upgrade-flow block above)
+<!-- SHARED:telemetry-start -->
+### Telemetry start
 
-Marks each skill activation in `~/.gstack/analytics/skill-usage.jsonl` with `source:gstack-extend` (and an `extend:<skill>` name) so mind-meld retro can attribute activity across both ecosystems. The first line sets the per-skill name; the rest is byte-identical across all gstack-extend skills (locked by `tests/skill-protocols.test.ts`).
-
-After running, note the `GE_TELEMETRY:` echo line — paste the `session=` and `start=` values into the epilogue block at skill-done time.
+Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-_GE_SKILL="extend:test-plan"
-_GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
-_GE_TEL_START=$(date +%s)
-_GE_SESSION_ID="$$-$_GE_TEL_START-$RANDOM"
-if [ "${_GE_TEL:-off}" != "off" ]; then
-  mkdir -p ~/.gstack/analytics
-  _GE_REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null)
-  _GE_REPO=$(basename "${_GE_REPO_TOP:-unknown}")
-  _GE_GVER=$(cat ~/.claude/skills/gstack/VERSION 2>/dev/null | tr -d '[:space:]' || echo "unknown")
-  _GE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  printf '%s\n' '{"skill":"'"$_GE_SKILL"'","ts":"'"$_GE_TS"'","repo":"'"$_GE_REPO"'","source":"gstack-extend"}' >> ~/.gstack/analytics/skill-usage.jsonl 2>/dev/null || true
-  echo "GE_TELEMETRY: session=$_GE_SESSION_ID start=$_GE_TEL_START"
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if [ ! -x "$_GE_BIN" ]; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if [ ! -x "$_GE_BIN" ]; then
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      case "$_GE_ROOT" in /*)
+        if [ -x "$_GE_ROOT/bin/gstack-extend-telemetry" ]; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi ;;
+      esac
+    fi
+  done
 fi
+if [ -x "$_GE_BIN" ]; then
+  "$_GE_BIN" start --skill "extend:test-plan" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
 ```
-<!-- /SHARED:telemetry-preamble -->
+<!-- /SHARED:telemetry-start -->
 
 ---
 
@@ -990,27 +993,29 @@ The REPORT runs once per `/test-plan run` invocation, at the moment of handoff t
 pair-review. pair-review's own session rollup runs afterward per its own GSTACK
 REVIEW REPORT rules.
 
-<!-- SHARED:telemetry-epilogue -->
-## Telemetry (epilogue — run last, after the GSTACK REVIEW REPORT)
+<!-- SHARED:telemetry-finish -->
+### Telemetry finish
 
-Replace `_GE_TEL_START` and `_GE_SESSION_ID` with the values the preamble's `GE_TELEMETRY:` line emitted; set `_GE_OUTCOME` per the Completion Status Protocol (`success` / `error` / `abort` / `unknown`). The wrapper at `bin/gstack-extend-telemetry` adds `--source gstack-extend` automatically and falls back silently if gstack isn't installed.
+Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-_GE_SKILL="extend:test-plan"
-_GE_TEL_START=$(date +%s)               # REPLACE with start= value from preamble's GE_TELEMETRY line
-_GE_SESSION_ID="$$-$_GE_TEL_START-$RANDOM"      # REPLACE with session= value from preamble's GE_TELEMETRY line
-_GE_OUTCOME="success"                   # success | error | abort | unknown
-_GE_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || true)
-_GE_TEL_END=$(date +%s)
-_GE_TEL_DUR=$(( _GE_TEL_END - _GE_TEL_START ))
-if [ "${_GE_TEL:-off}" != "off" ]; then
-  _GE_BIN=""
-  if command -v gstack-extend-telemetry >/dev/null 2>&1; then
-    _GE_BIN="gstack-extend-telemetry"
-  elif [ -x "$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry" ]; then
-    _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"
-  fi
-  [ -n "$_GE_BIN" ] && "$_GE_BIN" --skill "$_GE_SKILL" --duration "$_GE_TEL_DUR" --outcome "$_GE_OUTCOME" --session-id "$_GE_SESSION_ID" 2>/dev/null || true
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if [ ! -x "$_GE_BIN" ]; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if [ ! -x "$_GE_BIN" ]; then
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      case "$_GE_ROOT" in /*)
+        if [ -x "$_GE_ROOT/bin/gstack-extend-telemetry" ]; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi ;;
+      esac
+    fi
+  done
 fi
+if [ -x "$_GE_BIN" ]; then
+  "$_GE_BIN" finish --skill "extend:test-plan" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
 ```
-<!-- /SHARED:telemetry-epilogue -->
+<!-- /SHARED:telemetry-finish -->

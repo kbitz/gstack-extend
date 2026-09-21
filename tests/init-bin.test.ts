@@ -76,7 +76,7 @@ describe('dispatcher', () => {
     expect(r.stderr).toContain('Usage: gstack-extend');
   });
 
-  test.each(['list', 'status', 'doctor', 'migrate'])(
+  test.each(['list', 'status', 'migrate'])(
     '%s subcommand prints reserved-namespace message and exits 0',
     (sub) => {
       const s = mkScope(`stub-${sub}`);
@@ -85,6 +85,18 @@ describe('dispatcher', () => {
       expect(r.stdout).toContain('reserved namespace');
     },
   );
+
+  test('doctor with no subcommand prints telemetry usage and exits 0', () => {
+    const r = run(['doctor'], mkScope('doctor-bare'));
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Usage: gstack-extend doctor telemetry');
+  });
+
+  test('doctor with unknown subcommand prints telemetry usage and exits 0', () => {
+    const r = run(['doctor', 'nope'], mkScope('doctor-nope'));
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Usage: gstack-extend doctor telemetry');
+  });
 });
 
 describe('init argument validation', () => {

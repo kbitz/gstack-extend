@@ -28,9 +28,10 @@ import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
-// Three named cohorts. Do not derive protocol membership from setup's
+// Orthogonal memberships: SHARED protocol, upgrade preamble, and telemetry.
+// Do not derive protocol membership from setup's
 // install list — init, review-and-prep, and implement are utility/workflow skills
-// without the legacy SHARED protocol / telemetry / Conductor blocks.
+// without the legacy SHARED protocol / upgrade preamble / Conductor blocks.
 // 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
 // rule stay per-skill. Keep "Action receipt format".
 // 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
@@ -55,6 +56,7 @@ const CONDUCTOR_SKILLS = [
   'test-plan',
 ] as const;
 
+const TELEMETRY_SKILLS = [...EXPECTED_SETUP_SKILLS];
 const SKILLS = PROTOCOL_SKILLS;
 
 const REQUIRED_SECTIONS = [
@@ -144,11 +146,11 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
   { block: BLOCK_CONFUSION_HEAD, label: 'confusion-head' },
 ];
 
-// ─── Track 13A: telemetry-preamble + telemetry-epilogue blocks ──────────
+// ─── Track 13A: telemetry-start + telemetry-finish blocks ──────────
 //
-// The 5 extend skills carry two bash blocks each (preamble + epilogue) that
+// All 9 extend skills carry two bash blocks each (start + finish) that
 // emit telemetry to ~/.gstack/analytics/skill-usage.jsonl with --source
-// gstack-extend marking. Only the `_GE_SKILL="extend:<name>"` line differs
+// gstack-extend marking. Only the quoted `--skill "extend:<name>"` argument differs
 // per skill; everything else is byte-identical across the cohort.
 //
 // Rather than redefining the canonical text in TypeScript (escaping bash
@@ -156,8 +158,8 @@ const VERBATIM_BLOCKS: Array<{ block: string; label: string }> = [
 // each block from skills/full-review.md as the canonical source, then
 // template the skill name to match the file under test. Mirrors the
 // Track 10A SHARED:upgrade-flow extraction pattern below.
-const TELEMETRY_PREAMBLE_RE = /<!-- SHARED:telemetry-preamble -->[\s\S]*?<!-- \/SHARED:telemetry-preamble -->/;
-const TELEMETRY_EPILOGUE_RE = /<!-- SHARED:telemetry-epilogue -->[\s\S]*?<!-- \/SHARED:telemetry-epilogue -->/;
+const TELEMETRY_PREAMBLE_RE = /<!-- SHARED:telemetry-start -->[\s\S]*?<!-- \/SHARED:telemetry-start -->/;
+const TELEMETRY_EPILOGUE_RE = /<!-- SHARED:telemetry-finish -->[\s\S]*?<!-- \/SHARED:telemetry-finish -->/;
 const fullReviewContent = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
 const PREAMBLE_MATCH = TELEMETRY_PREAMBLE_RE.exec(fullReviewContent);
 const EPILOGUE_MATCH = TELEMETRY_EPILOGUE_RE.exec(fullReviewContent);
@@ -293,22 +295,29 @@ describe('verbatim graft blocks (shared across all 5 skills)', () => {
 });
 
 describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill name)', () => {
+  test('upgrade activation precedes its actual upgrade work', () => {
+    const content = readFileSync(join(ROOT, 'skills/gstack-extend-upgrade.md'), 'utf8');
+    expect(content.indexOf('<!-- SHARED:telemetry-start -->')).toBeLessThan(content.indexOf('bin/update-check'));
+  });
+  test('telemetry covers exactly the installed cohort', () => {
+    expect([...TELEMETRY_SKILLS].sort()).toEqual(parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8')).sort());
+  });
   test('canonical preamble block extracted from skills/full-review.md', () => {
     expect(CANONICAL_TELEMETRY_PREAMBLE).not.toBe('');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('<!-- SHARED:telemetry-preamble -->');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('_GE_SKILL="extend:full-review"');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('source":"gstack-extend"');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('GE_TELEMETRY: session=');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('<!-- SHARED:telemetry-start -->');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('--skill "extend:full-review"');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('"$_GE_BIN" start --skill');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('.extend-root');
   });
   test('canonical epilogue block extracted from skills/full-review.md', () => {
     expect(CANONICAL_TELEMETRY_EPILOGUE).not.toBe('');
-    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('<!-- SHARED:telemetry-epilogue -->');
-    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('_GE_SKILL="extend:full-review"');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('<!-- SHARED:telemetry-finish -->');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('--skill "extend:full-review"');
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('bin/gstack-extend-telemetry');
-    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('--session-id "$_GE_SESSION_ID"');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_BIN" finish --skill');
   });
 
-  for (const skill of SKILLS) {
+  for (const skill of TELEMETRY_SKILLS) {
     const file = join(ROOT, 'skills', `${skill}.md`);
     let content: string;
     try {
@@ -316,19 +325,19 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     } catch {
       continue;
     }
-    test(`${skill} embeds the canonical telemetry-preamble block (skill name: extend:${skill})`, () => {
+    test(`${skill} embeds the canonical telemetry-start block (skill name: extend:${skill})`, () => {
       const expected = telemetryPreambleFor(skill);
       if (!content.includes(expected)) {
         throw new Error(
-          `${skill} drift in SHARED:telemetry-preamble — propagate canonical text from skills/full-review.md`,
+          `${skill} drift in SHARED:telemetry-start — propagate canonical text from skills/full-review.md`,
         );
       }
     });
-    test(`${skill} embeds the canonical telemetry-epilogue block (skill name: extend:${skill})`, () => {
+    test(`${skill} embeds the canonical telemetry-finish block (skill name: extend:${skill})`, () => {
       const expected = telemetryEpilogueFor(skill);
       if (!content.includes(expected)) {
         throw new Error(
-          `${skill} drift in SHARED:telemetry-epilogue — propagate canonical text from skills/full-review.md`,
+          `${skill} drift in SHARED:telemetry-finish — propagate canonical text from skills/full-review.md`,
         );
       }
     });
@@ -1500,7 +1509,7 @@ describe('implement drift-locks', () => {
   });
 });
 
-describe('non-cohort setup skills carry no SHARED or telemetry blocks', () => {
+describe('non-preamble setup skills carry only telemetry SHARED blocks', () => {
   const setupSkills = parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8'));
   const outside = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
 
@@ -1509,11 +1518,10 @@ describe('non-cohort setup skills carry no SHARED or telemetry blocks', () => {
   });
 
   for (const skill of outside) {
-    test(`${skill} has no SHARED markers or telemetry hooks`, () => {
+    test(`${skill} has only telemetry markers and no protocol/upgrade/Conductor blocks`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      expect(content).not.toMatch(/<!-- \/?SHARED:/);
-      expect(content).not.toContain('_GE_SKILL=');
-      expect(content).not.toContain('gstack-extend-telemetry');
+      const markers = [...content.matchAll(/<!-- (\/?SHARED:[^ ]+) -->/g)].map(match => match[1]);
+      expect(markers).toEqual(['SHARED:telemetry-start', '/SHARED:telemetry-start', 'SHARED:telemetry-finish', '/SHARED:telemetry-finish']);
     });
   }
 });

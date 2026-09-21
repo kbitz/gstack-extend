@@ -27,6 +27,18 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
+Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
+`TELEMETRY_SKILLS` covers all nine setup skills; protocol/preamble cohorts stay
+narrow. The three utility/workflow skills may carry only telemetry SHARED markers.
+Telemetry tests execute canonical skill blocks in independent processes, isolate
+HOME and all state overrides, and test generated host copies without PATH wiring.
+For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
+skill-protocols, audit-compliance, setup-hosts, setup-init-wire, and touchfiles
+suites explicitly: diff selection uses committed `base...HEAD`, not working edits.
+See [docs/telemetry.md](docs/telemetry.md) for the local sink, doctor report, and
+its separation from transcript-derived `mm retro-fleet` counts. `duration_s` is
+session wall-clock, not model/token spend; values above 86400 seconds become null.
+
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`. New `PACKING` fixtures live under `tests/roadmap-audit/packing-ok/`.
 
 `bin/roadmap-pack`, `bin/roadmap-touches`, and `bin/roadmap-renumber` are the packing, `_touches:` drift, and ID-rewrite CLIs (`src/audit/pack-cli.ts`, `src/audit/touches-cli.ts`, `src/audit/renumber-cli.ts`). `pack --from <path>` / `--stdin` pack a draft; `BINS: EMPTY` means no unshipped Tracks and `BINS: CYCLE` is a `_blocked-by` loop. Group `_Depends on:` is output, not packer input. `pack --materialize` prints old implicit previous-Group edges. Packer tie-breaks by packIdent (scheduling touches + normalized title), never ID or live document order — rename and regroup must not change partitions. `_tombstone: N, M` reserves numbers; STRUCTURE fails an unshipped Group that reuses one. `touches drift --track <id>` unions merge-base..HEAD with the working tree. `touches report-cross-group` prints soft overlaps. `renumber --map old=new,…` rewrites Current Plan IDs in one atomic pass (lookarounds, not `\b`); dated-historical mentions stay put.
