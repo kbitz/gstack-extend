@@ -134,7 +134,7 @@ Stream the output. Three outcomes:
 
 ## Step 5 — Subcommand stubs
 
-If the user asks for `list`, `status`, `doctor`, or `migrate` (the bulk operation, not the `--migrate` flag), the CLI prints `coming in a future Group`. Acknowledge: "Those subcommands are reserved namespace; not implemented yet. For now, `gstack-extend init --migrate <dir>` covers single-project backfill."
+If the user asks for `list`, `status`, or `migrate` (the bulk operation, not the `--migrate` flag), the CLI prints `coming in a future Group`. Acknowledge: "Those subcommands are reserved namespace; not implemented yet. For now, `gstack-extend init --migrate <dir>` covers single-project backfill." `gstack-extend doctor telemetry` is implemented (a local telemetry fidelity report); project drift checks under `doctor` remain future work.
 
 ## Headless invocation
 

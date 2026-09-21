@@ -9,7 +9,7 @@
 - **Priority:** P2
 - **Context:** Deferred at /ship on 2026-09-06. Each item changes designed behavior the user specified for PR #102 (Greptile-once, the 10-minute fallback), so it needs a product decision rather than a mechanical fix. The full finding list is in the PR #102 body under Adversarial Review.
 
-### [plan-ceo-review:severity=necessary] In-flight marker and crash detection for extend telemetry
+### [plan-ceo-review:defer=true] In-flight marker and crash detection for extend telemetry
 
 - **Description:** Persist start state durably so a finish that loses its arguments can still be paired, and so an abandoned session is finalized rather than vanishing. The originally proposed form wrote `~/.gstack/analytics/extend-inflight/<session-id>` and swept stale markers. A narrower form (start/finish state handoff under `~/.gstack-extend/`, no sweep) was accepted into the telemetry track itself; this TODO covers only the remaining crash-detection half.
 - **Hypothesis (untested):** With the state handoff landed, pairing is already high enough that crash detection adds little; measure before building.
@@ -17,10 +17,10 @@
 - **Cons:** Rebuilds the phantom-row failure class that Track 13A finding R2 (commit `bc9f9f9`) deliberately removed. Concurrent same-skill sessions have no defined marker-selection rule. A legitimate 4.6-hour run exists in the live data, so any age bound is a guess. Cannot observe an invocation whose start never ran.
 - **Effort:** L (human: ~3d / CC: ~1.5h)
 - **Priority:** P3
-- **Depends on:** the telemetry track's doctor command, which supplies the baseline that decides whether this is needed
+- **Depends on:** None. The doctor command (`gstack-extend doctor telemetry`) shipped with the telemetry track; its 30-day report after rollout supplies the baseline that decides whether this is needed
 - **Context:** Deferred at /autoplan on 2026-09-20. Gate it on measured per-skill pairing. Note that `pair-review`, `review-and-prep` and `test-plan` are resumable by design and legitimately show more starts than finishes, so a low ratio for those is not evidence for this work.
 
-### [plan-ceo-review:severity=nice-to-have] Spike a gstack-extend-shipped PreToolUse Skill hook
+### [plan-ceo-review:defer=true] Spike a gstack-extend-shipped PreToolUse Skill hook
 
 - **Description:** Test whether a hook shipped by gstack-extend's `setup` can capture skill activation deterministically, independent of whether the model executes a bash block. gstack already ships five hooks under `hosts/claude/hooks/`, so the pattern is established in this ecosystem.
 - **Hypothesis (untested):** A hook is the only mechanism that fixes "the model skipped the block," which is the one failure mode no in-skill instrumentation can catch.
@@ -31,7 +31,7 @@
 - **Depends on:** None
 - **Context:** Deferred at /autoplan on 2026-09-20. Verified during that review: `~/.claude/settings.json` already registers `PreToolUse matcher:"Skill"` pointing at the personal config repo's `log-skill-usage`, and that script works when fed a correct event. But its output file has never persisted on this machine even though `full-review` is allowlisted and has run, and its `analytics/` directory is gitignored so there is no history to audit. Prove it fires in situ before designing on it.
 
-### [plan-ceo-review:severity=minor] Price the upstream gstack patch before forking telemetry state
+### [plan-ceo-review:defer=true] Price the upstream gstack patch before forking telemetry state
 
 - **Description:** Evaluate patching gstack's finalize loop to skip extend-namespaced markers instead of routing extend state around it.
 - **Hypothesis (untested):** The upstream change is a one-line `-not -name '.pending-extend-*'`, which would be cheaper than maintaining divergence.
@@ -42,16 +42,16 @@
 - **Depends on:** the marker TODO above; if that is dropped, this closes with it
 - **Context:** Deferred at /autoplan on 2026-09-20. Track 13A R2 explicitly anticipated "a future cross-repo Track that namespaces markers and patches gstack proper to skip them." Both repos have the same owner.
 
-### [plan-eng-review:severity=nice-to-have] Replace the five SHARED-block cohorts with a per-skill capability table
+### [plan-eng-review:defer=true] Replace the five SHARED-block cohorts with a per-skill capability table
 
-- **Description:** `tests/skill-protocols.test.ts` maintains PROTOCOL, PREAMBLE, CONDUCTOR and NON_PREAMBLE_SETUP cohorts, plus a TELEMETRY cohort after the telemetry track lands, plus an independently hardcoded expected list. Replace them with one declarative table: one row per skill, one column per SHARED block.
+- **Description:** `tests/skill-protocols.test.ts` maintains PROTOCOL, PREAMBLE, CONDUCTOR and NON_PREAMBLE_SETUP cohorts, plus the TELEMETRY cohort the telemetry track added, plus an independently hardcoded expected list. Replace them with one declarative table: one row per skill, one column per SHARED block.
 - **Hypothesis (untested):** One table removes the class of bug where two overlapping cohorts disagree about the same skill.
 - **Pros:** Adding a SHARED block becomes a column rather than a cohort plus three invariants.
 - **Cons:** Refactors the file that guards every skill contract, and it is the most-churned file in the repo (11 touches in 30 days).
 - **Effort:** M (human: ~1d / CC: ~30min)
 - **Priority:** P3
-- **Depends on:** the telemetry track's cohort edits
-- **Context:** Deferred at /autoplan on 2026-09-20 as FINDING 10.1. Deliberately out of that track's blast radius. Related trap found in the same review: the exclusion invariant at `tests/skill-protocols.test.ts:1503` asserts three skills carry no SHARED marker at all, so it must be narrowed rather than deleted when telemetry lands.
+- **Depends on:** None (the telemetry cohort has landed)
+- **Context:** Deferred at /autoplan on 2026-09-20 as FINDING 10.1. Deliberately out of that track's blast radius. Related trap found in the same review: the exclusion invariant that asserted three skills carry no SHARED marker at all was narrowed rather than deleted when telemetry landed (now the "non-preamble setup skills carry only telemetry SHARED blocks" describe in `tests/skill-protocols.test.ts`).
 
 
 ## Completed

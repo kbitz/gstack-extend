@@ -101,6 +101,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols.test.ts': [
     'skills/**',
     'setup',
+    // The telemetry drift lock also compares docs/telemetry.md's copied blocks to the canonical text.
+    'docs/telemetry.md',
   ],
   'tests/audit-compliance.test.ts': [
     'skills/**',
@@ -175,11 +177,17 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'scripts/init-templates/**',
   ],
   // Track 13A — telemetry wrapper + per-skill emit blocks. The unit/integration
-  // tests spawn bin/gstack-extend-telemetry through a shell; skill-protocols
-  // already registers skills/** above for the canonical-block drift assertions.
+  // tests spawn bin/gstack-extend-telemetry through a shell. telemetry.test.ts also
+  // executes the shipped skills/** blocks and setup-generated host copies, so it
+  // registers skills/** and setup itself; skill-protocols registers skills/** above
+  // for the canonical-block drift assertions. The wide entries below over-select on
+  // purpose: a missed dependency is worse than an extra ~40s run.
   'tests/telemetry.test.ts': [
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
+    // bin/gstack-extend sources these at startup; the round-trip test runs its doctor subcommand.
+    'bin/lib/install-safety.sh',
+    'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
     'setup',
     'skills/**',
@@ -193,6 +201,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/telemetry-doctor.test.ts': [
     'bin/gstack-extend',
     'bin/gstack-extend-telemetry',
+    'bin/lib/install-safety.sh',
+    'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
     'setup',
     'skills/**',

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from datetime import datetime, timezone, timedelta
 
@@ -12,8 +13,9 @@ SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-pla
 RESUMABLE = {"pair-review", "review-and-prep", "test-plan"}
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30
+MAX_DAYS = 365000
 CAVEAT = ("Transcript counts are advisory: Claude-only, local-only, retention-deleted; "
-          "includes nested subagents/ files (71% of recent files in the planning sample). "
+          "includes nested subagents/ files. "
           "Fleet aggregates are not comparable to this local sink.")
 
 
@@ -79,7 +81,6 @@ def transcripts(since, now):
 
 
 def extend_binary():
-    import shutil
     binary = shutil.which("gstack-extend-telemetry")
     if binary:
         return binary
@@ -201,11 +202,11 @@ def main(args):
         if flag in ("-h", "--help"):
             print("Usage: gstack-extend doctor telemetry [--days N] [--json]")
             return
-        if flag == "--days" and args and args[0].isascii() and args[0].isdigit() and len(args[0]) <= 6:
+        if flag == "--days" and args and args[0].isascii() and args[0].isdigit() and len(args[0]) <= len(str(MAX_DAYS)):
             days = int(args.pop(0))
-            if 1 <= days <= 365000:
+            if 1 <= days <= MAX_DAYS:
                 continue
-        message = "Invalid arguments: use doctor telemetry [--days N] [--json], with N from 1 to 365000."
+        message = f"Invalid arguments: use doctor telemetry [--days N] [--json], with N from 1 to {MAX_DAYS}."
         print(json.dumps(dict(error=message)) if as_json else message)
         return
     result = report(days)
@@ -229,7 +230,8 @@ def main(args):
             print(f"  legacy={stat['legacy']} duplicate-starts={stat['duplicate_starts']} "
                   f"retried-finishes={stat['retried_finishes']} crossing-window={stat['crossing_window']}")
         if stat["schedule_marker_work"]:
-            print("  Decision rule triggered: schedule deferred marker work (E6); diagnose skipped starts separately.")
+            print("  Decision rule triggered: schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection); "
+                  "diagnose skipped starts separately.")
     print("Diagnostics: " + json.dumps(result["issues"], sort_keys=True))
     print(CAVEAT)
     print(result["duration_note"])

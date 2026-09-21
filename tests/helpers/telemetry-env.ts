@@ -3,11 +3,23 @@
  * overrides reach the child. The real logger/config are copied without the
  * network sync helper; stub mode exercises CI without an installed gstack.
  */
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, symlinkSync, chmodSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, symlinkSync, chmodSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..', '..');
+// Fixture homes are removed at process exit (the repo's exit-time cleanup convention). Each home holds a link into
+// the real repo's bin/; rmSync unlinks a symlink without following it.
+const fixtureHomes: string[] = [];
+process.on('exit', () => {
+  for (const home of fixtureHomes) {
+    try {
+      rmSync(home, { recursive: true, force: true });
+    } catch {
+      // Best effort: a test may have left a directory unwritable.
+    }
+  }
+});
 export const HELPER_BIN = join(ROOT, 'bin', 'gstack-extend-telemetry');
 export const REAL_GSTACK_ROOT = join(process.env.HOME ?? '', '.claude', 'skills', 'gstack');
 export const REAL_GSTACK_BIN = join(REAL_GSTACK_ROOT, 'bin');
@@ -22,6 +34,7 @@ export type TelemetryFixture = {
 
 export function makeTelemetryFixture(tier: TelemetryTier, mode: FixtureMode = 'stub'): TelemetryFixture {
   const home = mkdtempSync(join(tmpdir(), 'gx-tel-'));
+  fixtureHomes.push(home);
   mkdirSync(join(home, '.gstack'), { recursive: true });
   writeFileSync(join(home, '.gstack', 'config.yaml'), `telemetry: ${tier}\n`);
   const upstream = join(home, '.claude/skills/gstack');

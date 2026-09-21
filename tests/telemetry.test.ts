@@ -1,10 +1,11 @@
 /** Telemetry checks use isolated homes and execute the shipped blocks in separate processes. */
 
 import { describe, test, expect } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
-import { HELPER_BIN, REAL_GSTACK_ROOT, makeTelemetryFixture } from './helpers/telemetry-env';
+import { spawn, spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { HELPER_BIN, REAL_GSTACK_ROOT, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
+import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
 const HAS_GSTACK = existsSync(REAL_GSTACK_ROOT);
 const ROOT = join(import.meta.dir, '..');
@@ -62,12 +63,16 @@ describe('shipped blocks and installation lookup', () => {
       const rows = fix.readJsonl();
       expect(rows).toHaveLength(2);
       expect(rows[0].session_id).toBe(rows[1].session_id);
-    });
+    }, 30_000);
   }
   test('missing python3 is a silent no-op and diagnosable without failing the skill', () => {
     const fix = makeTelemetryFixture('community');
+    // A PATH holding only bash makes python3 provably absent on every host; a bare /bin still ships python3 on usr-merged Linux.
+    const bare = join(fix.home, 'no-python');
+    mkdirSync(bare);
+    symlinkSync(Bun.which('bash')!, join(bare, 'bash'));
     const args = ['start', '--skill', 'extend:roadmap'];
-    const env = { ...fix.env, PATH: '/bin' };
+    const env = { ...fix.env, PATH: bare };
     const quiet = spawnSync(HELPER_BIN, args, { env, encoding: 'utf8', timeout: 10_000 });
     expect(quiet.status).toBe(0);
     expect(quiet.stdout).toBe('');
@@ -81,19 +86,25 @@ describe('shipped blocks and installation lookup', () => {
     expect(debug.stderr).toContain('python3 unavailable');
     expect(fix.readJsonl()).toHaveLength(0);
   });
-  test('cwd pathlib.py is not imported by gstack-extend-telemetry', () => {
+  test('a PYTHONPATH pointing at the cwd cannot inject a module into gstack-extend-telemetry', () => {
     const fix = makeTelemetryFixture('community');
     const repo = join(fix.home, 'repo');
     mkdirSync(repo);
-    writeFileSync(join(repo, 'pathlib.py'), 'print("PLANTED")\n');
+    // Python never puts the cwd on sys.path for a script run, so only PYTHONPATH can reach it: the -I in the shim is what
+    // ignores it. Plant a module only telemetry.py imports; the python stubs for gstack-config/logger inherit the env and
+    // never import uuid, so they are not hijacked.
+    writeFileSync(join(repo, 'uuid.py'), 'print("PLANTED")\n');
     const r = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
-      env: fix.env,
+      env: { ...fix.env, PYTHONPATH: '.' },
       cwd: repo,
       encoding: 'utf8',
       timeout: 10_000,
     });
     expect(r.status).toBe(0);
     expect(r.stdout + r.stderr).not.toContain('PLANTED');
+    // Positive controls: the shim really ran (a hijacked import would have crashed it silently).
+    expect(r.stdout).toMatch(/^GE_TELEMETRY: session=/);
+    expect(fix.readJsonl()).toHaveLength(1);
   });
   test('HOME .extend-root with relative content does not execute a cwd binary', () => {
     const fix = makeTelemetryFixture('community', 'absent');
@@ -162,7 +173,10 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
       const debug = runHelper({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args);
       expect(debug.stderr).toContain('tier off, missing, or invalid');
       expect(debug.stderr).toContain('gstack-config set telemetry community');
+      expect(debug.stdout).toBe('');
       expect(fix.readJsonl()).toHaveLength(0);
+      // "No new rows or handoffs": a disabled tier must not even create the state directory.
+      expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
     });
   }
   test('missing config and missing gstack are silent no-ops with corrective diagnostics', () => {
@@ -233,7 +247,7 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
         expect(rows[1].session_id).toBe(rows[0].session_id);
         expect(existsSync(join(other, 'analytics/skill-usage.jsonl'))).toBe(false);
       }
-    });
+    }, 30_000);
   }
   test('valid/leading-zero/future start values and session validation are safe', () => {
     const fix = makeTelemetryFixture('community');
@@ -247,7 +261,7 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
       expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', '1', '--session-id', sid]).stderr).toBe('');
     }
     expect(fix.readJsonl()).toHaveLength(3);
-  });
+  }, 30_000);
 });
 
 
@@ -414,4 +428,454 @@ describe('repository + skill state handoff', () => {
     expect(rows[2].session_id).toBe(rows[0].session_id);
     expect(rows[3].session_id).toBe(rows[1].session_id);
   });
+});
+
+// ─── Argument contract, robustness, failure boundary, binary resolution, concurrency ───
+
+const DEBUG = { GSTACK_EXTEND_TELEMETRY_DEBUG: '1' };
+
+function handoffs(fix: TelemetryFixture) {
+  const dir = join(fix.home, '.gstack-extend/telemetry');
+  return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
+
+function runAsync(env: Record<string, string>, args: string[], cwd?: string) {
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>(resolve => {
+    const child = spawn(HELPER_BIN, args, { env, cwd });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('close', status => resolve({ status, stdout, stderr }));
+  });
+}
+
+describe('completion argument contract', () => {
+  test('optional flags reach the logger intact; callers cannot override source/event type or drop --no-sweep', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const pwned = join(fix.home, 'pwned');
+    // Shell metacharacters must travel as ONE argv element, never through a shell.
+    const message = `bad; $(touch ${pwned}) "double" 'single' \`tick\``;
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    // --no-sweep sits mid-list on purpose: it must not swallow the next flag.
+    const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--no-sweep', '--outcome', 'error',
+      '--used-browse', 'true', '--error-class', 'Boom', '--error-message', message, '--failed-step', 'step one',
+      '--source', 'evil', '--event-type', 'attack_attempt']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe('');
+    const args = fix.readStubArgs()[0].split('\t');
+    for (const [flag, value] of [['--outcome', 'error'], ['--used-browse', 'true'], ['--error-class', 'Boom'],
+      ['--error-message', message], ['--failed-step', 'step one']]) {
+      expect(args[args.indexOf(flag) + 1]).toBe(value);
+    }
+    expect(args.filter(a => a === '--source')).toHaveLength(1);
+    expect(args[args.indexOf('--source') + 1]).toBe('gstack-extend');
+    expect(args).not.toContain('--event-type');
+    expect(args).not.toContain('evil');
+    expect(args.filter(a => a === '--no-sweep')).toHaveLength(1);
+    expect(existsSync(pwned)).toBe(false);
+    expect(fix.readJsonl()[1]).toMatchObject({ event_type: 'skill_run', source: 'gstack-extend', outcome: 'error' });
+  }, 30_000);
+
+  test('duration is wall-clock seconds since start, clamped at zero; legacy flags keep working', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const now = Math.floor(Date.now() / 1000);
+    // Returns the --duration handed to the logger, or null when the call was skipped.
+    const forwarded = (args: string[]) => {
+      const before = fix.readStubArgs().length;
+      expect(runHelper(fix.env, args).status).toBe(0);
+      const calls = fix.readStubArgs();
+      if (calls.length === before) return null;
+      const parts = calls[calls.length - 1].split('\t');
+      return Number(parts[parts.indexOf('--duration') + 1]);
+    };
+    const near = (value: number | null, expected: number) => value !== null && value >= expected && value <= expected + 60;
+    expect(near(forwarded(['finish', '--skill', 'extend:roadmap', '--start', String(now - 30), '--session-id', 'sid-a']), 30)).toBe(true);
+    expect(forwarded(['finish', '--skill', 'extend:roadmap', '--start', String(now + 500), '--session-id', 'sid-b'])).toBe(0);
+    // Legacy bare flags: --duration is honoured verbatim, but a valid --start still wins.
+    expect(forwarded(['--skill', 'extend:roadmap', '--duration', '42', '--session-id', 'sid-c'])).toBe(42);
+    expect(near(forwarded(['--skill', 'extend:roadmap', '--duration', '5', '--start', String(now - 30), '--session-id', 'sid-d']), 30)).toBe(true);
+    // Skipped: explicit finish ignores --duration; legacy still needs a valid duration and session.
+    expect(forwarded(['finish', '--skill', 'extend:roadmap', '--duration', '5', '--session-id', 'sid-e'])).toBeNull();
+    expect(forwarded(['--skill', 'extend:roadmap', '--duration', 'abc', '--session-id', 'sid-f'])).toBeNull();
+    expect(forwarded(['--skill', 'extend:roadmap', '--duration', '5'])).toBeNull();
+  }, 30_000);
+
+  test('help goes to stdout; malformed flag arity skips quietly with an actionable debug hint', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    for (const flag of ['--help', '-h']) {
+      const r = runHelper(fix.env, [flag]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"');
+      expect(r.stdout).toContain('GSTACK_EXTEND_TELEMETRY_DEBUG=1');
+      expect(r.stderr).toBe('');
+    }
+    const cases: Array<[string[], string]> = [
+      [['finish', '--skill', '--outcome', 'success'], 'invalid flag or missing value for'],
+      [['finish', '--skill', 'extend:roadmap', '--bogus', 'x'], 'invalid flag or missing value for'],
+      [['unexpected-word'], 'invalid flag or missing value for'],
+      [[], 'invalid --skill'],
+    ];
+    for (const [args, hint] of cases) {
+      const quiet = runHelper(fix.env, args);
+      expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+      const debug = runHelper({ ...fix.env, ...DEBUG }, args);
+      expect(debug.status).toBe(0);
+      expect(debug.stderr).toContain(hint);
+      expect(debug.stderr).toContain('docs/telemetry.md');
+    }
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toEqual([]);
+
+    // A flag must never be consumed as the previous flag's value: with valid state and a trailing
+    // "--outcome --bogus", swallowing would still look well formed and log outcome "--bogus".
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const swallowed = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', '--bogus']);
+    expect(swallowed.status).toBe(0);
+    expect(swallowed.stderr).toContain("invalid flag or missing value for '--outcome'");
+    expect(fix.readStubArgs()).toHaveLength(0);
+    expect(fix.readJsonl()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('handoff robustness', () => {
+  test('a corrupt or hostile handoff never crashes finish; an integer start is honoured; the next start replaces bad state', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const file = join(fix.home, '.gstack-extend/telemetry', handoffs(fix)[0]);
+    const corrupt = ['garbage{{', '[]', '"string"', '', '{"session_id":"abc","start":true}',
+      '{"session_id":"abc","start":-5}', '{"session_id":"bad id","start":"5"}', '{"session_id":"abc","start":"not-a-number"}'];
+    for (const content of corrupt) {
+      writeFileSync(file, content);
+      const finish = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+      expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
+      expect(fix.readJsonl()).toHaveLength(1);
+    }
+    const debug = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap']);
+    expect(debug.stderr).toContain('missing or malformed start/session state');
+    // JSON integers (not just strings) are a valid start; the matching handoff is then consumed.
+    writeFileSync(file, JSON.stringify({ session_id: 'from-state', start: Math.floor(Date.now() / 1000) - 20 }));
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(fix.readJsonl()[1]).toMatchObject({ session_id: 'from-state', event_type: 'skill_run' });
+    expect(fix.readJsonl()[1].duration_s).toBeGreaterThanOrEqual(20);
+    expect(existsSync(file)).toBe(false);
+    // Recovery: bad state left behind is overwritten by the next start and pairs normally.
+    writeFileSync(file, 'garbage{{');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const rows = fix.readJsonl();
+    expect(rows.at(-1)!.session_id).toBe(rows.at(-2)!.session_id);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('outside a repository the row says unknown and each directory keeps its own handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    // The ceiling keeps git from discovering a repository above the temporary home.
+    const env = { ...fix.env, GIT_CEILING_DIRECTORIES: fix.home };
+    const [a, b] = ['plain-a', 'plain-b'].map(name => {
+      const dir = join(fix.home, name);
+      mkdirSync(dir);
+      return dir;
+    });
+    const start = (cwd: string, extra: Record<string, string> = {}) =>
+      spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: { ...env, ...extra }, cwd, encoding: 'utf8' });
+    const traced = start(a, DEBUG);
+    expect(traced.status).toBe(0);
+    // Debug trace goes to stderr; stdout carries only the handoff line.
+    expect(traced.stdout).toMatch(/^GE_TELEMETRY: session=extend-[0-9a-f-]{36} start=\d+\n$/);
+    expect(traced.stderr).toContain('tier=community');
+    expect(traced.stderr).toContain('sink=' + join(fix.home, '.gstack/analytics/skill-usage.jsonl'));
+    expect(start(b).status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(2);
+    const finish = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env, cwd: a });
+    expect(finish.status).toBe(0);
+    const rows = fix.readJsonl();
+    expect(rows.map(row => row.repo ?? null)).toEqual(['unknown', 'unknown', null]);
+    expect(rows[2].session_id).toBe(rows[0].session_id);
+    expect(handoffs(fix)).toHaveLength(1);
+  }, 30_000);
+
+  test('an unwritable sink at finish keeps the handoff, skips the logger, and recovers once repaired', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const blocked = join(fix.home, 'not-a-directory');
+    writeFileSync(blocked, '');
+    const args = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
+    // GSTACK_HOME keeps the config lookup working while the sink (STATE_DIR only) is blocked.
+    const broken = { ...fix.env, GSTACK_STATE_DIR: blocked, GSTACK_HOME: join(fix.home, '.gstack') };
+    const quiet = runHelper(broken, args);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    const debug = runHelper({ ...broken, ...DEBUG }, args);
+    expect(debug.stderr).toContain('sink unwritable');
+    expect(debug.stderr).toContain('repair permissions');
+    expect(fix.readStubArgs()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(runHelper(fix.env, args).status).toBe(0);
+    const rows = fix.readJsonl();
+    expect(rows).toHaveLength(2);
+    expect(rows[1].session_id).toBe(rows[0].session_id);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+});
+
+describe('failure boundary', () => {
+  test('unexpected runtime failures are contained: exit 0, no stdout, diagnosis only in debug mode', () => {
+    const args = ['start', '--skill', 'extend:roadmap'];
+    // (1) A config helper that cannot be executed (bad interpreter) fails inside capture().
+    const brokenConfig = makeTelemetryFixture('community', 'stub');
+    const config = join(brokenConfig.home, '.claude/skills/gstack/bin/gstack-config');
+    writeFileSync(config, '#!/nonexistent/interpreter\n');
+    chmodSync(config, 0o755);
+    const quiet = runHelper(brokenConfig.env, args);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    const debug = runHelper({ ...brokenConfig.env, ...DEBUG }, args);
+    expect(debug.status).toBe(0);
+    expect(debug.stdout).toBe('');
+    expect(debug.stderr).toContain('FileNotFoundError');
+    expect(debug.stderr).toContain('gstack-extend doctor telemetry');
+    expect(brokenConfig.readJsonl()).toHaveLength(0);
+
+    // (2) A logger that cannot run at finish keeps the handoff, and a retry after repair pairs.
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    const original = readFileSync(logger, 'utf8');
+    expect(runHelper(fix.env, args).status).toBe(0);
+    writeFileSync(logger, '#!/nonexistent/interpreter\n');
+    chmodSync(logger, 0o755);
+    const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
+    const quietFinish = runHelper(fix.env, finish);
+    expect([quietFinish.status, quietFinish.stdout, quietFinish.stderr]).toEqual([0, '', '']);
+    expect(runHelper({ ...fix.env, ...DEBUG }, finish).stderr).toContain('FileNotFoundError');
+    expect(fix.readJsonl()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
+    writeFileSync(logger, original);
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, finish).status).toBe(0);
+    const rows = fix.readJsonl();
+    expect(rows).toHaveLength(2);
+    expect(rows[1].session_id).toBe(rows[0].session_id);
+    expect(handoffs(fix)).toHaveLength(0);
+
+    // (3) No git executable on PATH must never fail or pollute the skill.
+    const noGit = makeTelemetryFixture('community', 'stub');
+    const shim = join(noGit.home, 'shim');
+    mkdirSync(shim);
+    for (const tool of ['bash', 'dirname', 'python3']) {
+      const found = Bun.which(tool);
+      if (found) symlinkSync(found, join(shim, tool));
+    }
+    const env = { ...noGit.env, PATH: shim };
+    const noGitQuiet = runHelper(env, args);
+    expect([noGitQuiet.status, noGitQuiet.stdout, noGitQuiet.stderr]).toEqual([0, '', '']);
+    const noGitDebug = runHelper({ ...env, ...DEBUG }, args);
+    expect(noGitDebug.status).toBe(0);
+    expect(noGitDebug.stdout).not.toContain('Traceback');
+    expect(noGitDebug.stderr).not.toContain('Traceback');
+  }, 30_000);
+
+  test('finish does not wait on a process the logger leaves running with inherited stdio', () => {
+    // Upstream backgrounds its network sync with inherited stdio. Finish redirects the logger's output to DEVNULL so that
+    // it never waits on that sync; capturing the pipes instead would stall every finish until the sync exits.
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    writeFileSync(logger, '#!/bin/bash\n(sleep 8) &\nexit 0\n');
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const began = Date.now();
+    const r = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: fix.env, encoding: 'utf8', timeout: 12_000 });
+    expect(r.status).toBe(0);
+    expect(Date.now() - began).toBeLessThan(3000);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+});
+
+describe('binary resolution and invocation forms', () => {
+  test('helper lookup order is PATH, then GSTACK_DIR, then the canonical install; non-executable helpers are ignored', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const canonical = join(fix.home, '.claude/skills/gstack/bin');
+    const clone = (dir: string) => {
+      mkdirSync(dir, { recursive: true });
+      for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+        writeFileSync(join(dir, name), readFileSync(join(canonical, name)));
+        chmodSync(join(dir, name), 0o755);
+      }
+      return dir;
+    };
+    const logger = (env: Record<string, string>) => {
+      const r = runHelper({ ...env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+      expect(r.status).toBe(0);
+      return r.stderr.match(/logger=(\S+) config=(\S+)/)!.slice(1);
+    };
+    expect(logger(fix.env)).toEqual([join(canonical, 'gstack-telemetry-log'), join(canonical, 'gstack-config')]);
+    const viaDir = clone(join(fix.home, 'gstack-dir/bin'));
+    const gstackDir = { ...fix.env, GSTACK_DIR: join(fix.home, 'gstack-dir') };
+    expect(logger(gstackDir)).toEqual([join(viaDir, 'gstack-telemetry-log'), join(viaDir, 'gstack-config')]);
+    const viaPath = clone(join(fix.home, 'path-bin'));
+    expect(logger({ ...gstackDir, PATH: viaPath + ':' + fix.env.PATH }))
+      .toEqual([join(viaPath, 'gstack-telemetry-log'), join(viaPath, 'gstack-config')]);
+
+    // Without the execute bit the logger counts as absent.
+    chmodSync(join(canonical, 'gstack-telemetry-log'), 0o644);
+    const absent = runHelper({ ...fix.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+    expect(absent.status).toBe(0);
+    expect(absent.stderr).toContain('gstack absent or gstack-config unavailable');
+    chmodSync(join(canonical, 'gstack-telemetry-log'), 0o755);
+
+    // Empty-string overrides fall back to the defaults under HOME instead of the cwd.
+    const rowsBefore = fix.readJsonl().length;
+    const blank = runHelper({ ...fix.env, GSTACK_STATE_DIR: '', GSTACK_EXTEND_STATE_DIR: '', GSTACK_DIR: '' },
+      ['start', '--skill', 'extend:roadmap']);
+    expect(blank.status).toBe(0);
+    expect(blank.stderr).toBe('');
+    expect(fix.readJsonl()).toHaveLength(rowsBefore + 1);
+    expect(handoffs(fix)).toHaveLength(1);
+
+    // An empty GSTACK_DIR must never turn into "./bin": helpers planted in an untrusted cwd stay unexecuted.
+    const untrusted = makeTelemetryFixture('community', 'absent');
+    const planted = join(untrusted.home, 'planted');
+    const ran = join(untrusted.home, 'planted-ran');
+    mkdirSync(join(planted, 'bin'), { recursive: true });
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      writeFileSync(join(planted, 'bin', name), `#!/bin/sh\ntouch "${ran}"\necho community\n`);
+      chmodSync(join(planted, 'bin', name), 0o755);
+    }
+    const hostile = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'],
+      { env: { ...untrusted.env, ...DEBUG, GSTACK_DIR: '' }, cwd: planted, encoding: 'utf8' });
+    expect(hostile.status).toBe(0);
+    expect(hostile.stderr).toContain('gstack absent or gstack-config unavailable');
+    expect(existsSync(ran)).toBe(false);
+    expect(untrusted.readJsonl()).toHaveLength(0);
+  }, 30_000);
+
+  test('runs through absolute/relative symlinks, a relative $0 and PATH lookup; a missing lib is a quiet no-op', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const bin = join(fix.home, '.local/bin');
+    mkdirSync(bin, { recursive: true });
+    // A private install (script + lib/) that only a link-relative "../../tool/..." target can reach:
+    // resolving that target against the caller's cwd instead of the link's directory must fail.
+    const tool = join(fix.home, 'tool');
+    mkdirSync(join(tool, 'lib'), { recursive: true });
+    copyFileSync(HELPER_BIN, join(tool, 'gstack-extend-telemetry'));
+    chmodSync(join(tool, 'gstack-extend-telemetry'), 0o755);
+    copyFileSync(join(ROOT, 'bin/lib/telemetry.py'), join(tool, 'lib/telemetry.py'));
+    const elsewhere = join(fix.home, 'elsewhere');
+    mkdirSync(elsewhere);
+    symlinkSync(HELPER_BIN, join(bin, 'abs-link'));
+    symlinkSync(relative(realpathSync(bin), realpathSync(join(tool, 'gstack-extend-telemetry'))), join(bin, 'rel-link'));
+    symlinkSync('../../tool/gstack-extend-telemetry', join(bin, 'gstack-extend-telemetry'));
+    // A chain of links (chain-2 -> chain-1 -> abs-link -> the script) must resolve like bin/gstack-extend does.
+    symlinkSync('abs-link', join(bin, 'chain-1'));
+    symlinkSync('chain-1', join(bin, 'chain-2'));
+    const args = ['start', '--skill', 'extend:roadmap'];
+    const attempts = [
+      () => spawnSync(join(bin, 'abs-link'), args, { env: fix.env, cwd: elsewhere, encoding: 'utf8' }),
+      () => spawnSync(join(bin, 'rel-link'), args, { env: fix.env, cwd: elsewhere, encoding: 'utf8' }),
+      () => spawnSync('gstack-extend-telemetry', args, { env: { ...fix.env, PATH: bin + ':' + fix.env.PATH }, cwd: elsewhere, encoding: 'utf8' }),
+      () => spawnSync('./gstack-extend-telemetry', args, { env: fix.env, cwd: join(ROOT, 'bin'), encoding: 'utf8' }),
+      () => spawnSync(join(bin, 'chain-2'), args, { env: fix.env, cwd: elsewhere, encoding: 'utf8' }),
+    ];
+    attempts.forEach((attempt, index) => {
+      const r = attempt();
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/^GE_TELEMETRY: session=extend-/);
+      expect(fix.readJsonl()).toHaveLength(index + 1);
+    });
+
+    // A copy of the script with no lib/ beside it must skip quietly and explain itself in debug mode.
+    const lonely = join(fix.home, 'lonely');
+    mkdirSync(lonely);
+    copyFileSync(HELPER_BIN, join(lonely, 'gstack-extend-telemetry'));
+    chmodSync(join(lonely, 'gstack-extend-telemetry'), 0o755);
+    const quiet = spawnSync(join(lonely, 'gstack-extend-telemetry'), args, { env: fix.env, encoding: 'utf8' });
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    const debug = spawnSync(join(lonely, 'gstack-extend-telemetry'), args, { env: { ...fix.env, ...DEBUG }, encoding: 'utf8' });
+    expect(debug.status).toBe(0);
+    expect(debug.stderr).toContain('telemetry.py missing');
+    expect(debug.stderr).toContain('re-run ./setup');
+    expect(fix.readJsonl()).toHaveLength(attempts.length);
+
+    // Skill-block ladder: relative and dangling .extend-root pointers must not shadow a later valid one.
+    const blocks = makeTelemetryFixture('community', 'stub');
+    rmSync(join(blocks.home, '.claude/skills/gstack-extend'), { recursive: true });
+    for (const [host, name, content] of [['.claude/skills', 'aaa', 'relative/path\n'], ['.claude/skills', 'bbb', '/nonexistent/root\n'], ['.codex/skills', 'ccc', ROOT + '\n']]) {
+      mkdirSync(join(blocks.home, host, name), { recursive: true });
+      writeFileSync(join(blocks.home, host, name, '.extend-root'), content);
+    }
+    expect(executeBlock(blocks.env, 'start').status).toBe(0);
+    expect(blocks.readJsonl()).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('concurrent sessions', () => {
+  test('parallel starts keep the sink line-intact and the handoffs whole', async () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const env = { ...fix.env, GIT_CEILING_DIRECTORIES: fix.home };
+    const dir = (name: string) => {
+      const path = join(fix.home, name);
+      mkdirSync(path);
+      return path;
+    };
+    const separate = Array.from({ length: 12 }, (_, index) => dir('work-' + index));
+    const shared = dir('shared');
+    const start = ['start', '--skill', 'extend:roadmap'];
+    // 12 independent slots plus 10 racers for a single shared slot.
+    const results = await Promise.all([
+      ...separate.map(cwd => runAsync(env, start, cwd)),
+      ...Array.from({ length: 10 }, () => runAsync(env, start, shared)),
+    ]);
+    for (const result of results) {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+    }
+    // readJsonl() throws on a torn line; every start must be a complete row with its own session.
+    const rows = fix.readJsonl();
+    expect(rows).toHaveLength(22);
+    expect(new Set(rows.map(row => row.session_id)).size).toBe(22);
+    expect(rows.every(row => row.event_type === 'skill_start')).toBe(true);
+    // 13 slots, all whole JSON, no leftover temporary files, each naming a session that was emitted.
+    const names = handoffs(fix);
+    expect(names).toHaveLength(13);
+    expect(names.every(name => /^[0-9a-f]{64}\.json$/.test(name))).toBe(true);
+    const emitted = new Set(rows.map(row => row.session_id));
+    const winners = names.map(name => JSON.parse(readFileSync(join(fix.home, '.gstack-extend/telemetry', name), 'utf8')));
+    for (const winner of winners) {
+      expect(emitted.has(winner.session_id)).toBe(true);
+      expect(/^[0-9]+$/.test(winner.start)).toBe(true);
+    }
+    // Finishing the raced slot pairs with whichever start won it, then consumes only that slot.
+    const finish = await runAsync(env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], shared);
+    expect(finish.status).toBe(0);
+    const after = fix.readJsonl();
+    expect(after).toHaveLength(23);
+    expect(winners.map(winner => winner.session_id)).toContain(after[22].session_id);
+    expect(handoffs(fix)).toHaveLength(12);
+  }, 30_000);
+});
+
+describe('writer and reader agree for every installed skill', () => {
+  for (const mode of ['stub', 'real'] as const) {
+    test.if(mode === 'stub' || HAS_GSTACK)("each skill's own blocks produce a v1 start/finish pair the doctor counts as paired (" + mode + ')', () => {
+      const fix = makeTelemetryFixture('community', mode);
+      for (const skill of EXPECTED_SETUP_SKILLS) {
+        const path = join(ROOT, 'skills', skill + '.md');
+        expect(executeBlock(fix.env, 'start', path).status).toBe(0);
+        expect(executeBlock(fix.env, 'finish', path).status).toBe(0);
+      }
+      const rows = fix.readJsonl();
+      expect(rows).toHaveLength(EXPECTED_SETUP_SKILLS.length * 2);
+      const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'], { env: fix.env, encoding: 'utf8', timeout: 20_000 });
+      expect(doctor.status).toBe(0);
+      const report = JSON.parse(doctor.stdout);
+      for (const skill of EXPECTED_SETUP_SKILLS) {
+        const own = rows.filter(row => row.skill === 'extend:' + skill);
+        expect(own.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+        expect(own[1].session_id).toBe(own[0].session_id);
+        expect(report.skills.find((entry: { skill: string }) => entry.skill === skill)).toMatchObject({
+          activations: 1, completions: 1, paired: 1, denominator: 1, pairing_percent: 100, status: 'paired',
+          unpaired_start: 0, unpaired_finish: 0, deferred_finish: 0, legacy: 0,
+        });
+      }
+    }, 60_000);
+  }
 });

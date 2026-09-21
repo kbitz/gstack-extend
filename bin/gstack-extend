@@ -486,8 +486,8 @@ cmd_init() {
   case "$state:$migrate:$dry_run" in
     onboarded:0:*)
       echo "gstack-extend init: $target_abs is already onboarded." >&2
-      echo "  Run \`gstack-extend doctor\` to check for drift (coming in a future Group)." >&2
-      echo "  Or use \`--migrate\` to re-register (refreshes path/remote)." >&2
+      echo "  Project drift checks are not implemented yet (coming in a future Group)." >&2
+      echo "  Use \`--migrate\` to re-register (refreshes path/remote)." >&2
       return 1
       ;;
     partial:0:*)

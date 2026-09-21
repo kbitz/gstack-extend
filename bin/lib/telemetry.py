@@ -16,6 +16,11 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+INT64_MAX = 2**63 - 1  # the logger stores durations as 64-bit integers
+INT64_DIGITS = len(str(INT64_MAX))
+CONFIG_TIMEOUT_S = 10  # git and gstack-config lookups
+LOGGER_TIMEOUT_S = 15  # the delegated completion logger
+
 
 def debug(problem, fix):
     if os.environ.get("GSTACK_EXTEND_TELEMETRY_DEBUG") == "1":
@@ -26,11 +31,11 @@ def integer(value):
     # Validate before conversion/arithmetic, including input length and overflow.
     if isinstance(value, bool):
         return None
-    if isinstance(value, int) and 0 <= value <= 9223372036854775807:
+    if isinstance(value, int) and 0 <= value <= INT64_MAX:
         return value
-    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,19}", value):
+    if isinstance(value, str) and re.fullmatch(rf"[0-9]{{1,{INT64_DIGITS}}}", value):
         number = int(value)
-        if number <= 9223372036854775807:
+        if number <= INT64_MAX:
             return number
     return None
 
@@ -54,7 +59,7 @@ def sink_path():
 
 def capture(args):
     result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            text=True, timeout=10)
+                            text=True, timeout=CONFIG_TIMEOUT_S)
     return result.stdout.removesuffix("\n") if result.returncode == 0 else ""
 
 
@@ -83,6 +88,7 @@ def main(args):
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
+        print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  Missing/malformed start and session values fall back to the repository + skill handoff.")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
@@ -90,6 +96,8 @@ def main(args):
     legacy = not args or args[0] not in ("start", "finish")
     command = args.pop(0) if not legacy else "finish"
     values = {}
+    # --source and --event-type are accepted but never forwarded, so callers cannot override them;
+    # --duration counts only for legacy finish calls.
     flags = {"--skill", "--start", "--session-id", "--duration", "--outcome",
              "--used-browse", "--error-class", "--error-message", "--failed-step",
              "--event-type", "--source"}
@@ -170,7 +178,9 @@ def main(args):
     for flag in ("--outcome", "--used-browse", "--error-class", "--error-message", "--failed-step"):
         if flag in values:
             delegated.extend([flag, values[flag]])
-    result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+    # DEVNULL is load-bearing: upstream backgrounds its network sync with inherited stdio, so capturing
+    # the output here would make finish wait on that sync until the timeout.
+    result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=LOGGER_TIMEOUT_S)
     if result.returncode:
         debug("gstack-telemetry-log failed", "run gstack-extend doctor telemetry and check your gstack install")
         return

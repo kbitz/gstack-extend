@@ -316,6 +316,30 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('bin/gstack-extend-telemetry');
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_BIN" finish --skill');
   });
+  // Drift locks use content.includes(), which cannot see a duplicated block, a finish that precedes
+  // its start, or a skill whose frontmatter forbids the Bash tool the blocks need. Duplicated starts
+  // would emit an unpaired activation per invocation; a missing Bash grant silently disables telemetry.
+  test('every skill has exactly one start before exactly one finish, allows Bash, and docs/telemetry.md copies the canonical blocks', () => {
+    const problems: string[] = [];
+    for (const skill of TELEMETRY_SKILLS) {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      const count = (needle: string) => content.split(needle).length - 1;
+      for (const kind of ['start', 'finish']) {
+        if (count(`<!-- SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one opening telemetry-${kind} marker`);
+        if (count(`<!-- /SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one closing telemetry-${kind} marker`);
+        if (count(`"$_GE_BIN" ${kind} --skill "extend:${skill}"`) !== 1) problems.push(`${skill}: expected exactly one ${kind} invocation`);
+      }
+      if (content.indexOf('<!-- SHARED:telemetry-start -->') > content.indexOf('<!-- SHARED:telemetry-finish -->')) {
+        problems.push(`${skill}: finish block precedes start block`);
+      }
+      const frontmatter = /^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '';
+      if (!/^\s+- Bash\s*$/m.test(frontmatter)) problems.push(`${skill}: allowed-tools must include Bash`);
+    }
+    const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
+    if (TELEMETRY_PREAMBLE_RE.exec(docs)?.[0] !== CANONICAL_TELEMETRY_PREAMBLE) problems.push('docs/telemetry.md start block differs from the canonical block');
+    if (TELEMETRY_EPILOGUE_RE.exec(docs)?.[0] !== CANONICAL_TELEMETRY_EPILOGUE) problems.push('docs/telemetry.md finish block differs from the canonical block');
+    expect(problems).toEqual([]);
+  });
 
   for (const skill of TELEMETRY_SKILLS) {
     const file = join(ROOT, 'skills', `${skill}.md`);

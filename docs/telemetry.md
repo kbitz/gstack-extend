@@ -47,7 +47,9 @@ Activation directly appends a JSON-escaped v1 skill_start row. Completion delega
 to gstack-telemetry-log with --source gstack-extend and **--no-sweep**. Upstream
 still owns its richer completion schema and tier-dependent sync. Start never
 invokes a sweeper. Neither path creates a .pending-* marker or finalizes other
-sessions. This repairs the old wrapper's missing --no-sweep defect.
+sessions. This repairs the old wrapper's missing --no-sweep defect. The flag needs
+gstack 1.80.0.0 or newer: an older logger ignores it and still finalizes other
+sessions' markers, so upgrade gstack first.
 
 Routing activation through the logger would put background network sync on the
 skill-start critical path, a cost identified in the earlier design. Direct
@@ -199,8 +201,9 @@ counts, window-crossing completions, and parse diagnostics.
 
 Transcripts are read recursively, including subagents/, with tool-use IDs
 deduplicated. They are **Claude-only, local-only, retention-deleted** and do not
-cover Codex or other hosts. In the planning sample, 71% of recent transcript
-files were nested under subagents. These counts are advisory, never ratio inputs.
+cover Codex or other hosts. In a sample taken on 2026-09-20 during planning, 71%
+of recent transcript files were nested under subagents. These counts are advisory,
+never ratio inputs.
 A skipped start has no row and cannot be detected by in-skill telemetry; perfect
 pairing does not establish complete invocation coverage.
 
@@ -228,7 +231,7 @@ This is a pre-rollout baseline, not a zero-percent failure score.
 
 After rollout, collect a fresh 30-day report and publish per-skill pairing.
 If any skill is below 95% with an eligible start denominator and nonzero local
-transcript invocations, **schedule the deferred marker work (E6)** rather than
+transcript invocations, **schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection)** rather than
 re-arguing that trigger. Doctor exposes schedule_marker_work in JSON and a
 decision message in text. Deferred resumable runs are excluded. Missing
 transcripts or zero eligible starts provide insufficient evidence for the trigger.

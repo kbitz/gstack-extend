@@ -1,11 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
-const CLI = join(import.meta.dir, '../bin/gstack-extend');
+const ROOT = join(import.meta.dir, '..');
+const CLI = join(ROOT, 'bin/gstack-extend');
 function run(env: Record<string, string>, args = ['--json']) {
   return spawnSync(CLI, ['doctor', 'telemetry', ...args], { env, encoding: 'utf8', timeout: 10_000 });
 }
@@ -106,4 +107,252 @@ describe('doctor telemetry', () => {
       expect(JSON.parse(result.stdout).error).toContain('Invalid arguments');
     });
   }
+});
+
+// ─── Coverage-audit additions: decision rule, classification, rendering, degradation ───
+
+const IS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
+const stat = (report: any, name: string) => report.skills.find((s: { skill: string }) => s.skill === name);
+const pairedRows = (skill: string, count: number) =>
+  Array.from({ length: count }, (_, i) => [row(skill, 'p' + i), row(skill, 'p' + i, 'skill_run')]).flat();
+const skillUse = (skill: unknown, id?: unknown, timestamp: unknown = ts()) => ({
+  timestamp,
+  message: { content: [{ type: 'tool_use', name: 'Skill', ...(id === undefined ? {} : { id }), input: { skill } }] },
+});
+function transcript(home: string, lines: unknown[], file = 'session.jsonl') {
+  const folder = join(home, '.claude/projects/repo');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, file), lines.map(line => typeof line === 'string' ? line : JSON.stringify(line)).join('\n') + '\n');
+  return folder;
+}
+
+describe('doctor decision rule', () => {
+  const cases = [
+    { name: 'exactly 95% is on target', paired: 19, unpaired: 1, transcripts: 'used', expected: { status: 'paired', percent: 95, schedule: false, seen: 1 } },
+    { name: 'just under 95% with observed invocations triggers', paired: 18, unpaired: 1, transcripts: 'used', expected: { status: 'below target', percent: 94.74, schedule: true, seen: 1 } },
+    { name: '100% is on target', paired: 3, unpaired: 0, transcripts: 'used', expected: { status: 'paired', percent: 100, schedule: false, seen: 1 } },
+    { name: 'no transcript folder is insufficient evidence', paired: 0, unpaired: 1, transcripts: 'missing', expected: { status: 'below target', percent: 0, schedule: false, seen: null } },
+    { name: 'transcripts with zero invocations are insufficient evidence', paired: 0, unpaired: 1, transcripts: 'empty', expected: { status: 'below target', percent: 0, schedule: false, seen: 0 } },
+  ];
+  test('marker work needs <95% pairing, the 30-day window and observed transcript invocations', () => {
+    for (const c of cases) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      seed(fix.home, [...pairedRows('roadmap', c.paired), ...Array.from({ length: c.unpaired }, (_, i) => row('roadmap', 'u' + i))]);
+      if (c.transcripts === 'used') transcript(fix.home, [skillUse('roadmap', 'invocation')]);
+      if (c.transcripts === 'empty') transcript(fix.home, [skillUse('qa', 'someone-else')]);
+      const found = stat(JSON.parse(run(fix.env).stdout), 'roadmap');
+      // Include the case name in the compared object so a failure identifies the row.
+      expect({ name: c.name, status: found.status, percent: found.pairing_percent, schedule: found.schedule_marker_work, seen: found.transcripts })
+        .toEqual({ name: c.name, ...c.expected });
+    }
+  }, 30_000);
+});
+
+describe('doctor report contents', () => {
+  test('classifies rows: foreign/unknown ignored, bad timestamps counted, legacy shapes visible, activity counts include legacy', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const naive = ts(1).replace(/\.\d+Z$/, '');
+    seed(fix.home, [
+      row('roadmap', 'ok'), row('roadmap', 'ok', 'skill_run'),
+      { ...row('roadmap', 'naive'), ts: naive },                           // no timezone: treated as UTC, in window
+      { ...row('roadmap', 'bad-ts'), ts: 'garbage' },                       // unparseable
+      { ...row('roadmap', 'num-ts'), ts: 12345 },                           // not a string
+      { ...row('roadmap', 'unknown'), skill: 'extend:not-a-skill' },        // not an installed skill
+      { skill: 'qa', ts: ts(), outcome: 'success', duration_s: 3 },         // gstack-native row, no source
+      { ...row('roadmap', 'foreign'), source: 'gstack' },                   // another source
+      { ...row('roadmap', 'v-bool'), v: true },                             // bool is not schema v1
+      { ...row('roadmap', 'v-str'), v: '1' },
+      { ...row('roadmap', 'v-two'), v: 2 },
+      { ...row('roadmap', 'odd-event'), event_type: 'weird' },
+      { source: 'gstack-extend', skill: 'extend:implement', ts: ts(), outcome: 'success' },  // legacy completion
+    ]);
+    const result = run(fix.env);
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.issues).toEqual({ malformed_lines: 0, unreadable_files: 0, invalid_timestamps: 2, nameless_rows: 0 });
+    // 1 paired start + 1 naive start + 4 legacy shapes = 6 activations; 1 completion.
+    expect(stat(report, 'roadmap')).toMatchObject({
+      activations: 6, completions: 1, legacy: 4, paired: 1, unpaired_start: 1, denominator: 2, pairing_percent: 50,
+    });
+    expect(stat(report, 'implement')).toMatchObject({ activations: 0, completions: 1, legacy: 1, denominator: 0, status: 'insufficient evidence' });
+    expect(report.skills.map((s: { skill: string }) => s.skill)).toEqual([...EXPECTED_SETUP_SKILLS]);
+  });
+
+  test('text report: decision line only when triggered, detail lines, unavailable transcripts, missing sink', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    seed(fix.home, [
+      row('roadmap', 'lost'), row('roadmap', 'ok'), row('roadmap', 'ok', 'skill_run'), row('roadmap', 'ok'),
+      { ...row('implement', 'legacy'), v: undefined },
+    ]);
+    transcript(fix.home, [skillUse('roadmap', 'invocation')]);
+    const lines = run(fix.env, []).stdout.split('\n');
+    expect(lines[0]).toBe('Telemetry fidelity — last 30 days — tier: community');
+    expect(lines[1]).toBe('Sink: ' + join(fix.home, '.gstack/analytics/skill-usage.jsonl') + ' (present)');
+    const roadmap = lines.findIndex(line => line.startsWith('roadmap '));
+    expect(lines[roadmap]).toMatch(/^roadmap\s+3\s+1\s+1\/2\s+0\s+0\s+1\s+50\.0% below target$/);
+    expect(lines[roadmap + 1]).toBe('  legacy=0 duplicate-starts=1 retried-finishes=0 crossing-window=0');
+    expect(lines[roadmap + 2]).toBe('  Decision rule triggered: schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection); diagnose skipped starts separately.');
+    const implement = lines.findIndex(line => line.startsWith('implement '));
+    expect(lines[implement]).toMatch(/^implement\s+1\s+0\s+0\/0\s+0\s+0\s+0\s+insufficient evidence$/);
+    expect(lines[implement + 1]).toBe('  legacy=1 duplicate-starts=0 retried-finishes=0 crossing-window=0');
+    expect(lines.filter(line => line.includes('Decision rule triggered'))).toHaveLength(1);
+    const diagnostics = lines.find(line => line.startsWith('Diagnostics: '))!;
+    expect(JSON.parse(diagnostics.slice('Diagnostics: '.length))).toEqual({ invalid_timestamps: 0, malformed_lines: 0, nameless_rows: 0, unreadable_files: 0 });
+
+    const bare = makeTelemetryFixture('community', 'stub');
+    const text = run(bare.env, []).stdout;
+    expect(text).toContain('(missing)');
+    expect(text.match(/insufficient evidence/g)).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+    expect(text.match(/\bunavailable\b/g)).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+    expect(text).not.toContain('Decision rule triggered');
+  });
+
+  test('transcript scan normalises skill names, de-duplicates by id, and reports malformed/unreadable files separately', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const folder = transcript(fix.home, [
+      skillUse('/roadmap', 'r1'), skillUse('gstack-extend:roadmap', 'r2'), skillUse('extend:roadmap', 'r3'), skillUse('roadmap', 'r4'),
+      skillUse('roadmap', 'r4'),                                    // same tool_use id twice: one invocation
+      skillUse('qa', 'q1'), skillUse('extend:not-a-skill', 'q2'),   // not extend skills
+      skillUse('full-review'), skillUse('full-review'),             // no id: distinct positions stay distinct
+      skillUse('implement', 9),                                     // non-string id is skipped
+      skillUse('roadmap', 'old', ts(40)),                           // outside the window
+      skillUse('roadmap', 'no-time', 'garbage'),                    // unparseable timestamp
+      { timestamp: ts(), message: { content: 'plain text' } },      // string content
+      { timestamp: ts(), message: { content: [{ type: 'tool_use', name: 'Bash', id: 'b', input: { skill: 'roadmap' } }] } },
+      { timestamp: ts(), message: { content: [{ type: 'tool_use', name: 'Skill', id: 'nd', input: 'roadmap' }] } },
+      '{not json',
+    ]);
+    mkdirSync(join(folder, 'directory.jsonl'));
+    const report = JSON.parse(run(fix.env).stdout);
+    expect(stat(report, 'roadmap').transcripts).toBe(4);
+    expect(stat(report, 'full-review').transcripts).toBe(2);
+    expect(stat(report, 'implement').transcripts).toBe(0);
+    expect(report.transcript_issues).toEqual({ malformed_lines: 1, unreadable_files: 1 });
+    expect(report.issues).toMatchObject({ malformed_lines: 0, unreadable_files: 0 });
+  });
+});
+
+describe('doctor environment and arguments', () => {
+  test('reports the tier and resolves the telemetry binary with the same ladder as the skill blocks', () => {
+    const wired = makeTelemetryFixture('community', 'stub');
+    const canonical = join(wired.home, '.claude/skills/gstack-extend/bin/gstack-extend-telemetry');
+    expect(JSON.parse(run(wired.env).stdout)).toMatchObject({ tier: 'community', diagnostic: null, telemetry_binary: canonical });
+
+    // PATH wins over the canonical install.
+    const shim = join(wired.home, 'shim');
+    mkdirSync(shim);
+    writeFileSync(join(shim, 'gstack-extend-telemetry'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(shim, 'gstack-extend-telemetry'), 0o755);
+    const viaPath = JSON.parse(run({ ...wired.env, PATH: shim + ':' + wired.env.PATH }).stdout);
+    expect(viaPath.telemetry_binary).toBe(join(shim, 'gstack-extend-telemetry'));
+
+    // Disabled telemetry keeps historical rows visible.
+    const off = makeTelemetryFixture('off', 'stub');
+    seed(off.home, [row('roadmap', 'a'), row('roadmap', 'a', 'skill_run')]);
+    const offReport = JSON.parse(run(off.env).stdout);
+    expect(offReport.tier).toBe('off');
+    expect(stat(offReport, 'roadmap')).toMatchObject({ activations: 1, completions: 1, paired: 1, pairing_percent: 100 });
+
+    // No gstack and no wiring: the tier is unavailable and the binary unresolvable.
+    const bare = makeTelemetryFixture('community', 'absent');
+    expect(JSON.parse(run(bare.env).stdout)).toMatchObject({ tier: 'unavailable', telemetry_binary: null });
+
+    // setup's .extend-root pointers: relative or dangling ones are ignored...
+    const point = (fix: typeof bare, host: string, content: string) => {
+      const dir = join(fix.home, host, 'some-skill');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, '.extend-root'), content);
+      return JSON.parse(run(fix.env).stdout);
+    };
+    const relative = point(bare, '.codex/skills', '.\n');
+    expect(relative.telemetry_binary).toBeNull();
+    expect(relative.diagnostic).toContain('unresolvable');
+    expect(point(bare, '.config/opencode/skills', '/nonexistent/root\n').telemetry_binary).toBeNull();
+    // ...while an absolute pointer resolves from every host directory.
+    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills']) {
+      const resolved = point(makeTelemetryFixture('community', 'absent'), host, ROOT + '\n');
+      expect(resolved).toMatchObject({ telemetry_binary: join(ROOT, 'bin/gstack-extend-telemetry'), diagnostic: null });
+    }
+    // A stale pointer earlier in the ladder must not shadow a valid one later on.
+    const stale = makeTelemetryFixture('community', 'absent');
+    point(stale, '.claude/skills', '.\n');
+    expect(point(stale, '.codex/skills', ROOT + '\n').telemetry_binary).toBe(join(ROOT, 'bin/gstack-extend-telemetry'));
+  }, 30_000);
+
+  test('--days accepts 1..365000 ASCII digits; anything else is a one-line diagnostic; help prints usage', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const message = 'Invalid arguments: use doctor telemetry [--days N] [--json], with N from 1 to 365000.';
+    for (const [args, days] of [[['--days', '365000', '--json'], 365000], [['--days', '007', '--json'], 7], [['--json', '--days', '7'], 7]] as const) {
+      const result = run(fix.env, [...args]);
+      expect([result.status, result.stderr, JSON.parse(result.stdout).days]).toEqual([0, '', days]);
+    }
+    for (const args of [['--days', '365001'], ['--days', '1234567'], ['--days', '٣'], ['--days', '+5'], ['--days=7']]) {
+      const result = run(fix.env, [...args, '--json']);
+      expect([result.status, result.stderr, JSON.parse(result.stdout)]).toEqual([0, '', { error: message }]);
+    }
+    // Text mode reports the same problem as plain text, never JSON.
+    const text = run(fix.env, ['--days', '0']);
+    expect([text.status, text.stderr, text.stdout]).toEqual([0, '', message + '\n']);
+    for (const args of [['--help'], ['-h'], ['--json', '--help']]) {
+      const help = run(fix.env, args);
+      expect([help.status, help.stderr, help.stdout]).toEqual([0, '', 'Usage: gstack-extend doctor telemetry [--days N] [--json]\n']);
+    }
+  }, 30_000);
+});
+
+describe('doctor degraded environments', () => {
+  test('unreadable input and a crashed interpreter degrade to a diagnostic and exit zero', () => {
+    // A sink that cannot be read as a file is counted, not fatal.
+    const asDirectory = makeTelemetryFixture('community', 'stub');
+    mkdirSync(join(asDirectory.home, '.gstack/analytics/skill-usage.jsonl'), { recursive: true });
+    const counted = run(asDirectory.env);
+    expect([counted.status, counted.stderr]).toEqual([0, '']);
+    expect(JSON.parse(counted.stdout).issues.unreadable_files).toBe(1);
+
+    // An analytics directory that cannot be searched: never a traceback, always valid output.
+    // (Older Pythons raise PermissionError from Path.exists() and report one line; newer ones treat an
+    // unsearchable sink as missing and print a full report. Accept either, on whatever python3 the host has.)
+    if (!IS_ROOT) {
+      const locked = makeTelemetryFixture('community', 'stub');
+      seed(locked.home, [row('roadmap', 'x')]);
+      const dir = join(locked.home, '.gstack/analytics');
+      chmodSync(dir, 0o000);
+      try {
+        const json = run(locked.env);
+        expect([json.status, json.stderr]).toEqual([0, '']);
+        const body = JSON.parse(json.stdout);
+        if (body.error !== undefined) expect(body.error).toMatch(/^Telemetry report unavailable: PermissionError/);
+        else expect(body.skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+        const text = run(locked.env, []);
+        expect([text.status, text.stderr]).toEqual([0, '']);
+        expect(text.stdout).not.toContain('Traceback');
+        expect(text.stdout).toMatch(/^(Telemetry report unavailable: PermissionError|Telemetry fidelity)/);
+      } finally {
+        chmodSync(dir, 0o755);
+      }
+    }
+
+    // The dispatcher's fallback when python itself fails: one line, exit zero, both output modes.
+    const crashed = makeTelemetryFixture('community', 'stub');
+    const shim = join(crashed.home, 'shim');
+    mkdirSync(shim);
+    writeFileSync(join(shim, 'python3'), '#!/bin/sh\nexit 3\n');
+    chmodSync(join(shim, 'python3'), 0o755);
+    const env = { ...crashed.env, PATH: shim + ':' + crashed.env.PATH };
+    for (const args of [['--json'], []]) {
+      const result = run(env, args);
+      expect([result.status, result.stdout]).toEqual([0, 'Telemetry report unavailable. Check python3 and re-run ./setup. See docs/telemetry.md.\n']);
+    }
+  }, 30_000);
+
+  test('modules planted in the cwd are never imported by the doctor', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const repo = join(fix.home, 'repo');
+    mkdirSync(repo);
+    for (const module of ['pathlib.py', 'json.py', 'telemetry.py']) writeFileSync(join(repo, module), 'print("PLANTED")\n');
+    const r = spawnSync(CLI, ['doctor', 'telemetry', '--json'], { env: fix.env, cwd: repo, encoding: 'utf8', timeout: 10_000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout + r.stderr).not.toContain('PLANTED');
+    expect(JSON.parse(r.stdout).skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+  }, 30_000);
 });

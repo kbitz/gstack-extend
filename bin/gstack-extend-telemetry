@@ -8,15 +8,24 @@ if ! command -v python3 >/dev/null 2>&1; then
   fi
   exit 0
 fi
-# Resolve through ~/.local/bin symlinks without putting cwd on sys.path.
+# Walk symlink chains (e.g. ~/.local/bin links) the way bin/gstack-extend does, without
+# putting cwd on sys.path. Telemetry is optional, so a link loop is a quiet skip.
 _src=$0
-if [ -L "$_src" ]; then
+_hops=0
+while [ -L "$_src" ]; do
+  _hops=$((_hops + 1))
+  if [ "$_hops" -gt 40 ]; then
+    if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+      echo 'telemetry skipped: symlink loop resolving the wrapper. Fix: repair the symlink. See docs/telemetry.md.' >&2
+    fi
+    exit 0
+  fi
   _resolved=$(readlink "$_src")
   case "$_resolved" in
     /*) _src=$_resolved ;;
-    *) _src=$(dirname -- "$0")/$_resolved ;;
+    *) _src=$(dirname -- "$_src")/$_resolved ;;
   esac
-fi
+done
 case "$_src" in
   /*) ;;
   *) _src=$PWD/$_src ;;
