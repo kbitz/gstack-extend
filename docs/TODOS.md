@@ -53,6 +53,13 @@
 - **Depends on:** None (the telemetry cohort has landed)
 - **Context:** Deferred at /autoplan on 2026-09-20 as FINDING 10.1. Deliberately out of that track's blast radius. Related trap found in the same review: the exclusion invariant that asserted three skills carry no SHARED marker at all was narrowed rather than deleted when telemetry landed (now the "non-preamble setup skills carry only telemetry SHARED blocks" describe in `tests/skill-protocols.test.ts`).
 
+### [ship] Follow-ups deferred from the telemetry coverage review
+
+- **Description:** Small gaps found while reviewing the telemetry track (PR #105) and deliberately left out. (1) The wrapper finds gstack's helpers only under `~/.claude/skills/gstack/bin`, so a Codex-only or OpenCode-only machine records nothing; probe the host runtime roots too and have the doctor warn when neither helper resolves. (2) `setup --uninstall` removes the `gstack-extend` link from `~/.local/bin` but not the `gstack-extend-telemetry` link it also wired. (3) `finish` run from a different repository root than `start` silently drops the completion, and a `finish` whose start was skipped adopts an abandoned earlier handoff (no age bound; needs a product call because resumable skills legitimately span days). (4) The upgrade preambles in the six preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and execute `$_EXTEND_ROOT/bin/update-check`; harden them the way the telemetry blocks now are. (5) The `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` tests register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did).
+- **Effort:** M (human: ~1d / CC: ~45min)
+- **Priority:** P3
+- **Context:** Deferred at /ship on 2026-09-21. The concurrent same-skill handoff collision and the unbounded doctor transcript walk are accepted limits documented in `docs/telemetry.md`, so they are not repeated here.
+
 
 ## Completed
 

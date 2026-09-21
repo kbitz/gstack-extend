@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.2.0] - 2026-09-21
+
+### Added
+
+- **All nine skills now record local start and finish telemetry.** `/implement`, `/review-and-prep`, `/gstack-extend-init`, and `/gstack-extend-upgrade` join the five that already did. Each run appends a start row and a finish row that share a session ID to `~/.gstack/analytics/skill-usage.jsonl`, with the session's wall-clock duration and reported outcome. Nothing is recorded when telemetry is off, and a missing gstack or Python 3.9+ skips telemetry without failing the skill. `GSTACK_EXTEND_TELEMETRY_DEBUG=1` explains any skip.
+- **`gstack-extend doctor telemetry [--days N] [--json]` shows whether it is working.** Per-skill starts, finishes, pairing percentage, and a decision message when a skill drops under 95% with real usage behind it. `/pair-review`, `/review-and-prep`, and `/test-plan` are resumable, so their open starts are reported separately instead of counting against the ratio. It also warns about a stale wrapper, an old gstack logger, or a wrapper copied without its library, and always exits 0. `docs/telemetry.md` covers setup, the sink, and why these rows are separate from `mm retro-fleet`'s transcript counts.
+
+### Changed
+
+- **The telemetry blocks in each skill are two short calls with nothing to copy.** Start and finish call `gstack-extend-telemetry start|finish`; finish recovers the session and start time from a per-repository, per-skill handoff, so skills no longer paste `session=`/`start=` values between blocks or do their own arithmetic. Finish records outcome `unknown` until the skill sets the real result.
+- **The wrapper is found safely.** The lookup walks PATH, the canonical install, then `.extend-root` pointers, and accepts only an absolute file that speaks the current protocol. A relative PATH entry such as `node_modules/.bin` can no longer run a helper planted in a repository, an older wrapper another checkout linked onto PATH is skipped, and the blocks work when zsh is the agent's shell. `setup` now writes the `.extend-root` pointer for Claude installs too, while a customized regular-file `SKILL.md` stays protected on install and uninstall.
+- `gstack-extend doctor` with no subcommand prints the telemetry usage line instead of "coming in a future Group".
+
+### Fixed
+
+- **Finishing an extend skill no longer disturbs other running gstack sessions.** The old wrapper let gstack's cleanup sweep other sessions' in-flight markers and log them as crashed runs. Completions now pass `--no-sweep` (gstack 1.80.0.0 or newer); an older logger is skipped with an explanation instead.
+- A failed run whose message starts with `--` (for example `--error-message "--dry-run rejected"`) is recorded instead of dropped, and an explicit session ID no longer borrows another session's start time.
+- The wrapper follows chains of symlinks, distinguishes repositories whose paths differ only by a carriage return, and the doctor no longer hangs on or loses its report to a FIFO, an absurdly nested JSON line, or an unrunnable config helper.
+- Drift-lock tests pin the nine blocks and their documented copy, and the telemetry suites now remove their temporary directories.
+
 ## [0.27.1.0] - 2026-09-14
 
 ### Changed
