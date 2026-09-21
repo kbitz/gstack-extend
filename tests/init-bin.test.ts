@@ -76,7 +76,7 @@ describe('dispatcher', () => {
     expect(r.stderr).toContain('Usage: gstack-extend');
   });
 
-  test.each(['list', 'status', 'doctor', 'migrate'])(
+  test.each(['list', 'status', 'migrate'])(
     '%s subcommand prints reserved-namespace message and exits 0',
     (sub) => {
       const s = mkScope(`stub-${sub}`);
@@ -85,6 +85,18 @@ describe('dispatcher', () => {
       expect(r.stdout).toContain('reserved namespace');
     },
   );
+
+  test('doctor with no subcommand prints telemetry usage and exits 0', () => {
+    const r = run(['doctor'], mkScope('doctor-bare'));
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Usage: gstack-extend doctor telemetry');
+  });
+
+  test('doctor with unknown subcommand prints telemetry usage and exits 0', () => {
+    const r = run(['doctor', 'nope'], mkScope('doctor-nope'));
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Usage: gstack-extend doctor telemetry');
+  });
 });
 
 describe('init argument validation', () => {
@@ -215,7 +227,7 @@ describe('init flag matrix', () => {
     expect(readFileSync(join(s.target, 'docs', 'ROADMAP.md'), 'utf8')).toContain('**Keep me**');
   });
 
-  test('onboarded dir + default: refuses with doctor hint, exits 1', () => {
+  test('onboarded dir + default: refuses with a --migrate hint, exits 1', () => {
     const s = mkScope('onboarded-default');
     // First init populates everything.
     const r1 = run(['init', s.target, '--no-prompt'], s);
@@ -224,7 +236,10 @@ describe('init flag matrix', () => {
     const r2 = run(['init', s.target, '--no-prompt'], s);
     expect(r2.exitCode).toBe(1);
     expect(r2.stderr).toContain('already onboarded');
-    expect(r2.stderr).toContain('doctor');
+    // `doctor` now only reports telemetry, so the hint must not send users there for drift checks.
+    expect(r2.stderr).toContain('drift checks are not implemented yet');
+    expect(r2.stderr).toContain('--migrate');
+    expect(r2.stderr).not.toContain('gstack-extend doctor');
   });
 
   test('onboarded dir + --migrate: re-registers (idempotent)', () => {

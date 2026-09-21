@@ -23,6 +23,34 @@ allowed-tools:
 
 # /review-and-prep
 
+<!-- SHARED:telemetry-start -->
+### Telemetry start
+
+Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _ge_ok "$_GE_BIN"; then
+  _GE_BIN=""
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+    fi
+  done
+fi
+if [ -n "$_GE_BIN" ]; then
+  "$_GE_BIN" start --skill "extend:review-and-prep" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-start -->
+
 Own the interval between implementation and `/ship`:
 
 `merge latest base → /review → local tests → commit/push → draft PR → pause for /pair-review if user testing is pending → resume → Greptile once when applicable → fixes/local review/tests/push → ready → /ship`
@@ -52,10 +80,10 @@ Greptile trigger and evidence-based replies, and the
 final ready transition. Honor narrower session permissions. Do not ask again
 for those routine actions. Creating or discussing this skill is not invoking it.
 
-This skill deliberately carries none of the shared preamble, telemetry, or
-Conductor blocks used by the review and planning skills. It orchestrates
-installed skills and stores its evidence in the PR, so the protocol tests pin
-it outside those cohorts on purpose.
+This skill carries shared telemetry blocks but excludes the shared upgrade
+preamble, protocol, and Conductor blocks used by the review and planning
+skills. It orchestrates installed skills and stores its evidence in the PR;
+protocol tests keep these memberships separate.
 
 ## Boundaries
 
@@ -764,3 +792,31 @@ Read back live readiness before producing this prompt on an already-complete
 rerun too. Do not publish new PR comments or push code after the ready transition
 just to store the handoff; the pre-ready receipt and copyable final response
 carry it across sessions.
+
+<!-- SHARED:telemetry-finish -->
+### Telemetry finish
+
+Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _ge_ok "$_GE_BIN"; then
+  _GE_BIN=""
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+    fi
+  done
+fi
+if [ -n "$_GE_BIN" ]; then
+  "$_GE_BIN" finish --skill "extend:review-and-prep" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-finish -->

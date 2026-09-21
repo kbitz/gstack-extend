@@ -9,6 +9,58 @@
 - **Priority:** P2
 - **Context:** Deferred at /ship on 2026-09-06. Each item changes designed behavior the user specified for PR #102 (Greptile-once, the 10-minute fallback), so it needs a product decision rather than a mechanical fix. The full finding list is in the PR #102 body under Adversarial Review.
 
+### [plan-ceo-review:defer=true] In-flight marker and crash detection for extend telemetry
+
+- **Description:** Persist start state durably so a finish that loses its arguments can still be paired, and so an abandoned session is finalized rather than vanishing. The originally proposed form wrote `~/.gstack/analytics/extend-inflight/<session-id>` and swept stale markers. A narrower form (start/finish state handoff under `~/.gstack-extend/`, no sweep) was accepted into the telemetry track itself; this TODO covers only the remaining crash-detection half.
+- **Hypothesis (untested):** With the state handoff landed, pairing is already high enough that crash detection adds little; measure before building.
+- **Pros:** Closes the last gap where an abandoned run leaves no honest record.
+- **Cons:** Rebuilds the phantom-row failure class that Track 13A finding R2 (commit `bc9f9f9`) deliberately removed. Concurrent same-skill sessions have no defined marker-selection rule. A legitimate 4.6-hour run exists in the live data, so any age bound is a guess. Cannot observe an invocation whose start never ran.
+- **Effort:** L (human: ~3d / CC: ~1.5h)
+- **Priority:** P3
+- **Depends on:** None. The doctor command (`gstack-extend doctor telemetry`) shipped with the telemetry track; its 30-day report after rollout supplies the baseline that decides whether this is needed
+- **Context:** Deferred at /autoplan on 2026-09-20. Gate it on measured per-skill pairing. Note that `pair-review`, `review-and-prep` and `test-plan` are resumable by design and legitimately show more starts than finishes, so a low ratio for those is not evidence for this work.
+
+### [plan-ceo-review:defer=true] Spike a gstack-extend-shipped PreToolUse Skill hook
+
+- **Description:** Test whether a hook shipped by gstack-extend's `setup` can capture skill activation deterministically, independent of whether the model executes a bash block. gstack already ships five hooks under `hosts/claude/hooks/`, so the pattern is established in this ecosystem.
+- **Hypothesis (untested):** A hook is the only mechanism that fixes "the model skipped the block," which is the one failure mode no in-skill instrumentation can catch.
+- **Pros:** Structural fix rather than a shorter instruction. Would also cover gstack's own skills.
+- **Cons:** Claude Code only. `hosts/grok/config.toml` sets `hooks = false`, and Codex and OpenCode have no equivalent surface, while `setup` installs to all of them. It would be an additive layer, not a replacement, so total mechanisms increase.
+- **Effort:** M (human: ~1d / CC: ~30min)
+- **Priority:** P2
+- **Depends on:** None
+- **Context:** Deferred at /autoplan on 2026-09-20. Verified during that review: `~/.claude/settings.json` already registers `PreToolUse matcher:"Skill"` pointing at the personal config repo's `log-skill-usage`, and that script works when fed a correct event. But its output file has never persisted on this machine even though `full-review` is allowlisted and has run, and its `analytics/` directory is gitignored so there is no history to audit. Prove it fires in situ before designing on it.
+
+### [plan-ceo-review:defer=true] Price the upstream gstack patch before forking telemetry state
+
+- **Description:** Evaluate patching gstack's finalize loop to skip extend-namespaced markers instead of routing extend state around it.
+- **Hypothesis (untested):** The upstream change is a one-line `-not -name '.pending-extend-*'`, which would be cheaper than maintaining divergence.
+- **Pros:** Keeps extend on gstack's shared state model.
+- **Cons:** Cross-repo coordination; needs a gstack release before extend can depend on it.
+- **Effort:** S (human: ~4h / CC: ~20min)
+- **Priority:** P3
+- **Depends on:** the marker TODO above; if that is dropped, this closes with it
+- **Context:** Deferred at /autoplan on 2026-09-20. Track 13A R2 explicitly anticipated "a future cross-repo Track that namespaces markers and patches gstack proper to skip them." Both repos have the same owner.
+
+### [plan-eng-review:defer=true] Replace the five SHARED-block cohorts with a per-skill capability table
+
+- **Description:** `tests/skill-protocols.test.ts` maintains PROTOCOL, PREAMBLE, CONDUCTOR and NON_PREAMBLE_SETUP cohorts, plus the TELEMETRY cohort the telemetry track added, plus an independently hardcoded expected list. Replace them with one declarative table: one row per skill, one column per SHARED block.
+- **Hypothesis (untested):** One table removes the class of bug where two overlapping cohorts disagree about the same skill.
+- **Pros:** Adding a SHARED block becomes a column rather than a cohort plus three invariants.
+- **Cons:** Refactors the file that guards every skill contract, and it is the most-churned file in the repo (11 touches in 30 days).
+- **Effort:** M (human: ~1d / CC: ~30min)
+- **Priority:** P3
+- **Depends on:** None (the telemetry cohort has landed)
+- **Context:** Deferred at /autoplan on 2026-09-20 as FINDING 10.1. Deliberately out of that track's blast radius. Related trap found in the same review: the exclusion invariant that asserted three skills carry no SHARED marker at all was narrowed rather than deleted when telemetry landed (now the "non-preamble setup skills carry only telemetry SHARED blocks" describe in `tests/skill-protocols.test.ts`).
+
+### [ship] Follow-ups deferred from the telemetry coverage review
+
+- **Description:** Small gaps found while reviewing the telemetry track (PR #105) and deliberately left out. (1) The wrapper finds gstack's helpers only under `~/.claude/skills/gstack/bin`, so a Codex-only or OpenCode-only machine records nothing; probe the host runtime roots too and have the doctor warn when neither helper resolves. (2) `setup --uninstall` removes the `gstack-extend` link from `~/.local/bin` but not the `gstack-extend-telemetry` link it also wired. (3) `finish` run from a different repository root than `start` silently drops the completion, and a `finish` whose start was skipped adopts an abandoned earlier handoff (no age bound; needs a product call because resumable skills legitimately span days). (4) The upgrade preambles in the six preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and execute `$_EXTEND_ROOT/bin/update-check`; harden them the way the telemetry blocks now are. (5) The `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` tests register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did).
+- **Effort:** M (human: ~1d / CC: ~45min)
+- **Priority:** P3
+- **Context:** Deferred at /ship on 2026-09-21. The concurrent same-skill handoff collision and the unbounded doctor transcript walk are accepted limits documented in `docs/telemetry.md`, so they are not repeated here.
+
+
 ## Completed
 
 ### Failed-ledger retry with non-semver NEW aborts the helper

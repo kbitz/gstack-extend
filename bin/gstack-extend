@@ -7,7 +7,7 @@
 #                      run post-render audit. See `init --help` for flags.
 #   list               (reserved namespace) — coming in a future Group
 #   status             (reserved namespace) — coming in a future Group
-#   doctor             (reserved namespace) — coming in a future Group
+#   doctor telemetry   Report local skill telemetry fidelity (always exits 0)
 #   migrate            (reserved namespace) — coming in a future Group
 #                      (single-project backfill is `init --migrate <dir>`)
 #
@@ -486,8 +486,8 @@ cmd_init() {
   case "$state:$migrate:$dry_run" in
     onboarded:0:*)
       echo "gstack-extend init: $target_abs is already onboarded." >&2
-      echo "  Run \`gstack-extend doctor\` to check for drift (coming in a future Group)." >&2
-      echo "  Or use \`--migrate\` to re-register (refreshes path/remote)." >&2
+      echo "  Project drift checks are not implemented yet (coming in a future Group)." >&2
+      echo "  Use \`--migrate\` to re-register (refreshes path/remote)." >&2
       return 1
       ;;
     partial:0:*)
@@ -609,7 +609,7 @@ Subcommands:
                      `gstack-extend init --help` for flags.
   list               (coming in a future Group)
   status             (coming in a future Group)
-  doctor             (coming in a future Group)
+  doctor telemetry   Local telemetry fidelity [--days N] [--json].
   migrate            (coming in a future Group — see `init --migrate` for
                      per-project backfill today)
 
@@ -627,7 +627,21 @@ shift || true
 # stack message after the user-facing error.
 case "$cmd" in
   init)        cmd_init "$@" || exit $? ;;
-  list|status|doctor|migrate)
+  doctor)
+    if [ "${1:-}" = "telemetry" ]; then
+      shift
+      # Conditional invocation contains failures under set -e and the ERR trap.
+      # -E -s: ignore PYTHON* variables and user site-packages, as the wrapper's -I does. Not -I itself: it also
+      # drops the script directory from sys.path, and the doctor imports its sibling telemetry.py.
+      if ! python3 -B -E -s "$SCRIPT_DIR/lib/telemetry-doctor.py" "$@"; then
+        printf '%s\n' 'Telemetry report unavailable. Check python3 and re-run ./setup. See docs/telemetry.md.'
+      fi
+    else
+      printf '%s\n' 'Usage: gstack-extend doctor telemetry [--days N] [--json]'
+    fi
+    exit 0
+    ;;
+  list|status|migrate)
     printf 'gstack-extend %s: %s\n' "$cmd" "$COMING_SOON_MSG"
     exit 0
     ;;

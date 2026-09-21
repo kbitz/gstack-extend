@@ -1,41 +1,45 @@
 #!/usr/bin/env bash
-# gstack-extend-telemetry — thin wrapper around gstack's gstack-telemetry-log.
-#
-# Marks every event with --source gstack-extend so mind-meld retro can
-# distinguish extend-skill activity from gstack-skill activity in the
-# shared ~/.gstack/analytics/skill-usage.jsonl sink.
-#
-# Silent no-op when gstack-telemetry-log is not findable (gstack not
-# installed) — extend skills run fine without telemetry.
-#
-# Lookup order:
-#   1. PATH (command -v gstack-telemetry-log)
-#   2. $GSTACK_DIR/bin/gstack-telemetry-log (matches gstack's own convention)
-#   3. ~/.claude/skills/gstack/bin/gstack-telemetry-log (canonical install)
-#
-# Honors GSTACK_HOME / GSTACK_STATE_DIR by inheritance (bash env passes
-# through to the child process). Tests MUST set GSTACK_HOME=$tmpdir to
-# avoid polluting the user's real ~/.gstack/analytics/.
-#
-# Usage:
-#   gstack-extend-telemetry --skill extend:roadmap --duration 142 \
-#     --outcome success --session-id "12345-1710756600"
-#
-# NOTE: set -uo pipefail (no -e) — telemetry must never crash a skill.
+# Optional telemetry: activation writes directly, completion delegates with --no-sweep.
+# State and JSON handling live in bin/lib/telemetry.py. See docs/telemetry.md.
+# telemetry-protocol: start-finish-v1
+# (The skill blocks grep this exact line, so an older wrapper on PATH is skipped instead of
+# receiving `start` calls it would misfile. Keep it in sync with PROTOCOL_MARKER in lib/telemetry.py.)
 set -uo pipefail
-
-_GTL=""
-if command -v gstack-telemetry-log >/dev/null 2>&1; then
-  _GTL="gstack-telemetry-log"
-elif [ -n "${GSTACK_DIR:-}" ] && [ -x "$GSTACK_DIR/bin/gstack-telemetry-log" ]; then
-  _GTL="$GSTACK_DIR/bin/gstack-telemetry-log"
-elif [ -x "$HOME/.claude/skills/gstack/bin/gstack-telemetry-log" ]; then
-  _GTL="$HOME/.claude/skills/gstack/bin/gstack-telemetry-log"
-else
+if ! command -v python3 >/dev/null 2>&1; then
+  if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+    echo 'telemetry skipped: python3 unavailable. Fix: install python3. See docs/telemetry.md.' >&2
+  fi
   exit 0
 fi
-
-# Prepend --source gstack-extend; later --source on the command line wins
-# per gstack-telemetry-log's case-based arg parser (last flag overrides).
-"$_GTL" --source gstack-extend "$@" 2>/dev/null || true
+# Walk symlink chains (e.g. ~/.local/bin links) the way bin/gstack-extend does. Telemetry
+# is optional, so a link loop is a quiet skip.
+_src=$0
+_hops=0
+while [ -L "$_src" ]; do
+  _hops=$((_hops + 1))
+  if [ "$_hops" -gt 40 ]; then  # matches coreutils SYMLOOP_MAX and bin/gstack-extend
+    if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+      echo 'telemetry skipped: symlink loop resolving the wrapper. Fix: repair the symlink. See docs/telemetry.md.' >&2
+    fi
+    exit 0
+  fi
+  _resolved=$(readlink "$_src")
+  case "$_resolved" in
+    /*) _src=$_resolved ;;
+    *) _src=$(dirname -- "$_src")/$_resolved ;;
+  esac
+done
+case "$_src" in
+  /*) ;;
+  *) _src=$PWD/$_src ;;
+esac
+_py=$(dirname -- "$_src")/lib/telemetry.py
+if [ ! -f "$_py" ]; then
+  if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+    echo 'telemetry skipped: telemetry.py missing. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+  fi
+  exit 0
+fi
+# -I ignores PYTHONPATH and user site-packages, so an injected module cannot be imported.
+python3 -B -I "$_py" "$@"
 exit 0

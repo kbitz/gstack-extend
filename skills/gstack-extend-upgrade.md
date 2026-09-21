@@ -11,7 +11,35 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-## Preamble (run first)
+<!-- SHARED:telemetry-start -->
+### Telemetry start
+
+Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _ge_ok "$_GE_BIN"; then
+  _GE_BIN=""
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+    fi
+  done
+fi
+if [ -n "$_GE_BIN" ]; then
+  "$_GE_BIN" start --skill "extend:gstack-extend-upgrade" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-start -->
+
+## Preamble (after telemetry start)
 
 ```bash
 _SKILL_SRC=$(readlink ~/.claude/skills/gstack-extend-upgrade/SKILL.md 2>/dev/null \
@@ -143,3 +171,31 @@ upgrade succeeded but a one-shot install migration failed. Name the script.
 Tell the user to retry with `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` —
 re-running this skill after `UPGRADE_OK` will see `JUST_UPGRADED` / up-to-date
 and will not invoke the runner. Do **not** treat `MIGRATION_WARN` as `UPGRADE_FAILED`.
+
+<!-- SHARED:telemetry-finish -->
+### Telemetry finish
+
+Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+
+```bash
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
+if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _ge_ok "$_GE_BIN"; then
+  _GE_BIN=""
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
+      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
+      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+    fi
+  done
+fi
+if [ -n "$_GE_BIN" ]; then
+  "$_GE_BIN" finish --skill "extend:gstack-extend-upgrade" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
+  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
+fi
+true
+```
+<!-- /SHARED:telemetry-finish -->

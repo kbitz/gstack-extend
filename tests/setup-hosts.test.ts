@@ -99,6 +99,8 @@ describe('setup --host flags', () => {
     for (const skill of SKILLS) {
       const skillMd = join(hostDir(home, 'claude'), skill, 'SKILL.md');
       expect(lstatSync(skillMd).isSymbolicLink()).toBe(true);
+      // The telemetry blocks fall back to this pointer when the wrapper is not on PATH (e.g. a non-canonical clone).
+      expect(readFileSync(join(hostDir(home, 'claude'), skill, '.extend-root'), 'utf8').trim()).toBe(ROOT);
     }
     expect(existsSync(join(hostDir(home, 'codex'), 'pair-review'))).toBe(false);
     expect(existsSync(join(hostDir(home, 'opencode'), 'pair-review'))).toBe(false);
@@ -199,6 +201,76 @@ describe('setup --host flags', () => {
     expect(runSetup(['--host', 'codex'], home).exitCode).toBe(0);
     expect(readFileSync(source, 'utf8')).toBe(before);
     expect(lstatSync(join(destDir, 'SKILL.md')).isSymbolicLink()).toBe(false);
+  });
+
+  test('a Claude install leaves the pointer beside each symlink and uninstall removes it', () => {
+    const home = join(baseTmp, 'claude-pointer-uninstall');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    for (const skill of SKILLS) expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(true);
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    for (const skill of SKILLS) {
+      expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(false);
+    }
+  });
+
+  test('a detached, customized Claude SKILL.md stays protected even though a pointer sits beside it', () => {
+    const home = join(baseTmp, 'claude-customized');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const skillMd = join(hostDir(home, 'claude'), 'implement', 'SKILL.md');
+    rmSync(skillMd);
+    writeFileSync(skillMd, 'CUSTOMIZED BY USER\n');
+    const again = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(again.exitCode).toBe(0);
+    expect(again.stderr).toContain('is a regular file, not overwriting');
+    expect(lstatSync(skillMd).isSymbolicLink()).toBe(false);
+    expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+  });
+
+  for (const host of ['codex', 'opencode'] as const) {
+    test(`a stale ${host} generated copy is refreshed on reinstall and removed on uninstall`, () => {
+      const home = join(baseTmp, `generated-copy-${host}`);
+      mkdirSync(home, { recursive: true });
+      expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+      const skillMd = join(hostDir(home, host), 'implement', 'SKILL.md');
+      writeFileSync(skillMd, 'STALE GENERATED COPY\n');
+      const again = runSetup(['--host', host, '--quiet'], home);
+      expect(again.exitCode).toBe(0);
+      expect(again.stderr).not.toContain('not overwriting');
+      expect(readFileSync(skillMd, 'utf8')).not.toContain('STALE GENERATED COPY');
+      expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+      expect(existsSync(skillMd)).toBe(false);
+      expect(existsSync(join(hostDir(home, host), 'implement', '.extend-root'))).toBe(false);
+    });
+  }
+
+  test('--skills-dir uninstall (no host) never removes a regular-file SKILL.md, even beside a matching pointer', () => {
+    const home = join(baseTmp, 'skills-dir-uninstall');
+    const dir = join(home, 'legacy-skills');
+    const skillDir = join(dir, 'roadmap');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), 'CUSTOMIZED BY USER\n');
+    writeFileSync(join(skillDir, '.extend-root'), ROOT + '\n');
+    const r = runSetup(['--skills-dir', dir, '--uninstall', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(skillDir, 'SKILL.md'), 'utf8')).toBe('CUSTOMIZED BY USER\n');
+    expect(existsSync(join(skillDir, '.extend-root'))).toBe(true);
+  });
+
+  test('setup never writes through a symlinked .extend-root', () => {
+    const home = join(baseTmp, 'pointer-symlink');
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    const victim = join(home, 'victim.txt');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(victim, 'ORIGINAL\n');
+    symlinkSync(victim, join(dir, '.extend-root'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(victim, 'utf8')).toBe('ORIGINAL\n');
+    expect(readFileSync(join(dir, '.extend-root'), 'utf8').trim()).toBe(ROOT);
   });
 
   test('idempotent second install', () => {

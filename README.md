@@ -14,6 +14,11 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
 | `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | Beta |
 
+All nine skills support optional local telemetry. See [telemetry setup, author
+quickstart, and fidelity checks](docs/telemetry.md); inspect it with
+`gstack-extend doctor telemetry`. These rows are separate from `mm retro-fleet`'s
+transcript-derived skill counts.
+
 ## Installation
 
 **Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
@@ -467,7 +472,9 @@ gstack-extend init ./headless --no-prompt         # headless mode for scripts/CI
 
 The CLI is wired into `~/.local/bin/gstack-extend` by `setup` (PATH-permitting); invoke directly via `~/.claude/skills/gstack-extend/bin/gstack-extend init ...` if `~/.local/bin` isn't in your PATH. The `/gstack-extend-init` slash skill wraps the same CLI with conversational UX for Claude Code sessions.
 
-Reserved subcommands (stubs today): `list`, `status`, `doctor`, `migrate`. Each prints `coming in a future Group — reserving namespace`.
+`doctor telemetry [--days N] [--json]` reports local skill telemetry fidelity and
+always exits zero. Project drift checks remain future work.
+Reserved subcommands (stubs today): `list`, `status`, `migrate`.
 
 ---
 
