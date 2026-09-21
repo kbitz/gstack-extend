@@ -183,11 +183,16 @@ def usage_logger():
         debug("gstack absent or gstack-config unavailable", "run setup in your gstack checkout")
         return None
     try:
-        tier = capture([config, "get", "telemetry"]).strip()
+        result = subprocess.run([config, "get", "telemetry"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                timeout=CONFIG_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError) as error:
         # Provenance does not depend on gstack. A transient helper failure must be retried, not treated as tier off.
         debug(f"gstack-config failed ({type(error).__name__}: {error})", "run gstack-extend doctor telemetry")
         return "retry"
+    if result.returncode != 0:
+        debug(f"gstack-config failed (exit {result.returncode})", "run gstack-extend doctor telemetry")
+        return "retry"
+    tier = os.fsdecode(result.stdout).strip()
     if tier not in ("anonymous", "community"):
         debug(f"telemetry tier off, missing, or invalid ({tier!r})", "run gstack-config set telemetry community")
         return None
@@ -518,6 +523,15 @@ def main(args):
     except OSError as error:
         debug(f"state handoff unwritable at {state_file}: {error.strerror}",
               "repair GSTACK_EXTEND_STATE_DIR permissions")
+        # An explicit finish can still record skill-usage. The gstack sink is not this state directory.
+        if command != "start" and logger:
+            explicit = values.get("--session-id")
+            explicit_start = integer(values.get("--start"))
+            explicit_duration = integer(values.get("--duration")) if legacy else None
+            if valid_session(explicit) and (explicit_start is not None or explicit_duration is not None):
+                if explicit_start is not None:
+                    explicit_duration = max(0, int(time.time()) - explicit_start)
+                delegate(logger, skill, explicit, explicit_duration, values)
         return
     state = read_json(state_file)
     if command == "start":
