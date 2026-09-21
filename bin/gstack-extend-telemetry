@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Optional telemetry: activation writes directly, completion delegates with --no-sweep.
 # State and JSON handling live in bin/lib/telemetry.py. See docs/telemetry.md.
+# telemetry-protocol: start-finish-v1
+# (The skill blocks grep this exact line, so an older wrapper on PATH is skipped instead of
+# receiving `start` calls it would misfile. Keep it in sync with PROTOCOL_MARKER in lib/telemetry.py.)
 set -uo pipefail
 if ! command -v python3 >/dev/null 2>&1; then
   if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then

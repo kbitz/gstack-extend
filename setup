@@ -281,11 +281,12 @@ install_into_dir() {
     mkdir -p "$target"
     if [ "$host" = "claude" ]; then
       ln -snf "$src" "$target/SKILL.md"
-      rm -f "$target/.extend-root"
     else
       rewrite_skill_body "$src" "$target/SKILL.md" "$host"
-      printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
     fi
+    # Every host gets the pointer: the telemetry blocks fall back to it when the wrapper is not on PATH,
+    # which matters for a Claude install from a clone outside ~/.claude/skills/gstack-extend.
+    printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
     installed=$((installed + 1))
   done
   log "Installed $installed skills into $skills_dir"

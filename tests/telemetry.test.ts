@@ -18,8 +18,8 @@ function skillBlock(path: string, kind: 'start' | 'finish') {
   if (!code) throw new Error('Missing executable block in ' + path);
   return code;
 }
-function executeBlock(env: Record<string, string>, kind: 'start' | 'finish', path = join(ROOT, 'skills/full-review.md')) {
-  return spawnSync('bash', ['-euc', skillBlock(path, kind)], { env, encoding: 'utf8', timeout: 10_000 });
+function executeBlock(env: Record<string, string>, kind: 'start' | 'finish', path = join(ROOT, 'skills/full-review.md'), cwd?: string) {
+  return spawnSync('bash', ['-euc', skillBlock(path, kind)], { env, cwd, encoding: 'utf8', timeout: 10_000 });
 }
 
 describe('shipped blocks and installation lookup', () => {
@@ -38,7 +38,7 @@ describe('shipped blocks and installation lookup', () => {
     const fix = makeTelemetryFixture('community');
     const bin = join(fix.home, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'gstack-extend-telemetry'), '#!/bin/bash\nprintf "path-resolved\\n"\n');
+    writeFileSync(join(bin, 'gstack-extend-telemetry'), '#!/bin/bash\n# telemetry-protocol: start-finish-v1\nprintf "path-resolved\\n"\n');
     chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
     const r = executeBlock({ ...fix.env, PATH: bin + ':' + fix.env.PATH }, 'start');
     expect(r.status).toBe(0);
@@ -145,6 +145,64 @@ describe('shipped blocks and installation lookup', () => {
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('unresolvable');
   });
+  test('a relative PATH entry never runs a wrapper planted in the cwd, even one carrying the protocol line', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'repo');
+    const ran = join(fix.home, 'planted-ran');
+    mkdirSync(join(repo, 'node_modules/.bin'), { recursive: true });
+    const planted = join(repo, 'node_modules/.bin/gstack-extend-telemetry');
+    writeFileSync(planted, `#!/bin/bash\n# telemetry-protocol: start-finish-v1\n: > "${ran}"\n`);
+    chmodSync(planted, 0o755);
+    const r = executeBlock({ ...fix.env, PATH: 'node_modules/.bin:' + fix.env.PATH }, 'start', undefined, repo);
+    expect(r.status).toBe(0);
+    expect(existsSync(ran)).toBe(false);
+    // The block fell through to the canonical install and still recorded the start.
+    expect(fix.readJsonl()).toHaveLength(1);
+  });
+  test('a stale wrapper without the protocol line is skipped in favor of a compatible install, or explained when none exists', () => {
+    const fix = makeTelemetryFixture('community');
+    const bin = join(fix.home, 'stale-bin');
+    const ran = join(fix.home, 'stale-ran');
+    mkdirSync(bin);
+    // Shaped like the pre-protocol wrapper, which forwarded every argument (including `start`) to the logger.
+    writeFileSync(join(bin, 'gstack-extend-telemetry'), `#!/bin/bash\n: > "${ran}"\n`);
+    chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
+    const env = { ...fix.env, PATH: bin + ':' + fix.env.PATH };
+    expect(executeBlock(env, 'start').status).toBe(0);
+    expect(executeBlock(env, 'finish').status).toBe(0);
+    expect(existsSync(ran)).toBe(false);
+    expect(fix.readJsonl().map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+
+    // With no compatible install behind it, the stale wrapper is still never run.
+    const alone = makeTelemetryFixture('community', 'absent');
+    const aloneBin = join(alone.home, 'stale-bin');
+    mkdirSync(aloneBin);
+    writeFileSync(join(aloneBin, 'gstack-extend-telemetry'), `#!/bin/bash\n: > "${ran}"\n`);
+    chmodSync(join(aloneBin, 'gstack-extend-telemetry'), 0o755);
+    const r = executeBlock({ ...alone.env, PATH: aloneBin + ':' + alone.env.PATH, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, 'start');
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('unresolvable or stale');
+    expect(existsSync(ran)).toBe(false);
+  });
+  test('the protocol line the blocks grep for is the one the wrapper and helper carry', () => {
+    const marker = skillBlock(join(ROOT, 'skills/full-review.md'), 'start').match(/grep -q '([^']+)'/)?.[1];
+    expect(marker).toBe('telemetry-protocol: start-finish-v1');
+    expect(readFileSync(HELPER_BIN, 'utf8')).toContain('# ' + marker);
+    expect(readFileSync(join(ROOT, 'bin/lib/telemetry.py'), 'utf8')).toContain('PROTOCOL_MARKER = b"' + marker + '"');
+  });
+  test.if(Boolean(Bun.which('zsh')))('the ladder survives zsh unmatched-glob errors and finds the .extend-root pointer', () => {
+    const fix = makeTelemetryFixture('community');
+    // No PATH wrapper and no canonical install: only a Codex-style pointer exists, so two of the three globs match nothing.
+    rmSync(join(fix.home, '.claude/skills/gstack-extend'), { recursive: true });
+    const pointer = join(fix.home, '.codex/skills/full-review');
+    mkdirSync(pointer, { recursive: true });
+    writeFileSync(join(pointer, '.extend-root'), ROOT + '\n');
+    const r = spawnSync(Bun.which('zsh')!, ['-fc', skillBlock(join(ROOT, 'skills/full-review.md'), 'start')], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toContain('no matches found');
+    expect(r.stdout).toMatch(/^GE_TELEMETRY: session=/);
+    expect(fix.readJsonl()).toHaveLength(1);
+  }, 30_000);
   test('unwired install is silent by default and diagnosable without exit 127', () => {
     const fix = makeTelemetryFixture('community', 'absent');
     for (const kind of ['start', 'finish'] as const) {
@@ -384,7 +442,7 @@ describe('repository + skill state handoff', () => {
   });
   test('logger failure stays silent and keeps the matching handoff', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), '#!/bin/bash\nexit 1\n');
+    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), '#!/bin/bash\n# --no-sweep\nexit 1\n');
     chmodSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), 0o755);
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     const quiet = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
@@ -451,6 +509,36 @@ function runAsync(env: Record<string, string>, args: string[], cwd?: string) {
 }
 
 describe('completion argument contract', () => {
+  test('a value that merely starts with -- is forwarded, not mistaken for a missing value', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const message = '--dry-run flag rejected by the CLI';
+    const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'error', '--error-message', message]);
+    expect(r.status).toBe(0);
+    const args = fix.readStubArgs()[0].split('\t');
+    expect(args[args.indexOf('--error-message') + 1]).toBe(message);
+    expect(fix.readJsonl()).toHaveLength(2);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('a logger without --no-sweep support is not delegated to; the handoff is kept and debug explains the upgrade', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    // gstack before 1.80.0.0 ignores the flag and would finalize other sessions' markers as phantom rows.
+    writeFileSync(logger, '#!/bin/bash\necho "$@" >> "$HOME/logger-called"\n');
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
+    const quiet = runHelper(fix.env, finish);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    const debug = runHelper({ ...fix.env, ...DEBUG }, finish);
+    expect(debug.stderr).toContain('lacks --no-sweep');
+    expect(debug.stderr).toContain('gstack-upgrade');
+    expect(existsSync(join(fix.home, 'logger-called'))).toBe(false);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(fix.readJsonl()).toHaveLength(1);
+  });
+
   test('optional flags reach the logger intact; callers cannot override source/event type or drop --no-sweep', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const pwned = join(fix.home, 'pwned');
@@ -527,10 +615,10 @@ describe('completion argument contract', () => {
     expect(fix.readJsonl()).toHaveLength(0);
     expect(handoffs(fix)).toEqual([]);
 
-    // A flag must never be consumed as the previous flag's value: with valid state and a trailing
-    // "--outcome --bogus", swallowing would still look well formed and log outcome "--bogus".
+    // A flag must never be consumed as the previous flag's value: with valid state and "--outcome --used-browse true",
+    // swallowing would still look well formed and log outcome "--used-browse".
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
-    const swallowed = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', '--bogus']);
+    const swallowed = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', '--used-browse', 'true']);
     expect(swallowed.status).toBe(0);
     expect(swallowed.stderr).toContain("invalid flag or missing value for '--outcome'");
     expect(fix.readStubArgs()).toHaveLength(0);
@@ -641,7 +729,7 @@ describe('failure boundary', () => {
     const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
     const original = readFileSync(logger, 'utf8');
     expect(runHelper(fix.env, args).status).toBe(0);
-    writeFileSync(logger, '#!/nonexistent/interpreter\n');
+    writeFileSync(logger, '#!/nonexistent/interpreter\n# --no-sweep\n');
     chmodSync(logger, 0o755);
     const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
     const quietFinish = runHelper(fix.env, finish);
@@ -679,7 +767,7 @@ describe('failure boundary', () => {
     // it never waits on that sync; capturing the pipes instead would stall every finish until the sync exits.
     const fix = makeTelemetryFixture('community', 'stub');
     const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
-    writeFileSync(logger, '#!/bin/bash\n(sleep 8) &\nexit 0\n');
+    writeFileSync(logger, '#!/bin/bash\n# --no-sweep\n(sleep 8) &\nexit 0\n');
     chmodSync(logger, 0o755);
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     const began = Date.now();
@@ -746,6 +834,26 @@ describe('binary resolution and invocation forms', () => {
     expect(hostile.stderr).toContain('gstack absent or gstack-config unavailable');
     expect(existsSync(ran)).toBe(false);
     expect(untrusted.readJsonl()).toHaveLength(0);
+  }, 30_000);
+
+  test('relative PATH or GSTACK_DIR entries never resolve gstack helpers from an untrusted cwd', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const repo = join(fix.home, 'repo');
+    const ran = join(fix.home, 'planted-ran');
+    for (const dir of ['node_modules/.bin', 'planted/bin']) {
+      mkdirSync(join(repo, dir), { recursive: true });
+      for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+        writeFileSync(join(repo, dir, name), `#!/bin/sh\n: > "${ran}"\necho community\n`);
+        chmodSync(join(repo, dir, name), 0o755);
+      }
+    }
+    const env = { ...fix.env, PATH: 'node_modules/.bin:' + fix.env.PATH, GSTACK_DIR: 'planted' };
+    const options = { env, cwd: repo, encoding: 'utf8' as const, timeout: 10_000 };
+    expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], options).status).toBe(0);
+    expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], options).status).toBe(0);
+    expect(existsSync(ran)).toBe(false);
+    // The canonical stubs were used instead.
+    expect(fix.readJsonl()).toHaveLength(2);
   }, 30_000);
 
   test('runs through absolute/relative symlinks, a relative $0 and PATH lookup; a missing lib is a quiet no-op', () => {

@@ -1,7 +1,8 @@
 """Optional local telemetry helpers.
 
 The guarded shell entrypoint runs this module as __main__. The doctor report
-imports capture, resolve, and sink_path so both CLIs share one sink ladder.
+imports capture, resolve, sink_path, and the wrapper checks so both CLIs share
+one sink ladder and one compatibility rule.
 """
 import hashlib
 import json
@@ -20,6 +21,9 @@ INT64_MAX = 2**63 - 1  # the logger stores durations as 64-bit integers
 INT64_DIGITS = len(str(INT64_MAX))
 CONFIG_TIMEOUT_S = 10  # git and gstack-config lookups
 LOGGER_TIMEOUT_S = 15  # the delegated completion logger
+# The skill blocks in skills/*.md grep the wrapper for this exact text (also a comment in bin/gstack-extend-telemetry).
+# Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
+PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 
 
 def debug(problem, fix):
@@ -44,12 +48,35 @@ def valid_session(value):
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", value)
 
 
+def executable(path):
+    # Absolute only: a relative PATH or GSTACK_DIR entry (e.g. node_modules/.bin) must never
+    # resolve to a file planted in the current repository.
+    return bool(path) and os.path.isabs(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
 def resolve(name):
     candidates = [shutil.which(name)]
     if os.environ.get("GSTACK_DIR"):
         candidates.append(str(Path(os.environ["GSTACK_DIR"]) / "bin" / name))
     candidates.append(str(Path.home() / ".claude/skills/gstack/bin" / name))
-    return next((p for p in candidates if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+    return next((p for p in candidates if executable(p)), None)
+
+
+def compatible_wrapper(path):
+    # An older wrapper forwards the unknown positional `start` to the logger and writes a garbage completion row,
+    # so a wrapper without the protocol marker is treated as absent.
+    try:
+        return executable(path) and PROTOCOL_MARKER in Path(path).read_bytes()
+    except OSError:
+        return False
+
+
+def supports_no_sweep(logger):
+    # gstack before 1.80.0.0 ignores --no-sweep and still finalizes other sessions' in-flight markers.
+    try:
+        return b"--no-sweep" in Path(logger).read_bytes()
+    except OSError:
+        return False
 
 
 def sink_path():
@@ -105,7 +132,9 @@ def main(args):
         flag = args.pop(0)
         if flag == "--no-sweep":
             continue  # Always forced on completion; start never invokes a sweeper.
-        if flag not in flags or not args or args[0].startswith("--"):
+        # A value that merely starts with "--" (--error-message "--dry-run rejected") is fine; only a
+        # following flag means this flag's value is missing.
+        if flag not in flags or not args or args[0] in flags or args[0] == "--no-sweep":
             debug(f"invalid flag or missing value for {flag!r}", "run gstack-extend-telemetry --help")
             return
         values[flag] = args.pop(0)
@@ -166,6 +195,10 @@ def main(args):
         # Session wall-clock including human wait time, NOT model/token spend.
         # Upstream nulls durations above 86400 seconds.
         duration = max(0, int(time.time()) - start)
+    if not supports_no_sweep(logger):
+        # Delegating anyway would let an old logger finalize other sessions' markers as phantom rows.
+        debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before 1.80.0.0)", "run gstack-upgrade")
+        return
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
         with sink.open("a", encoding="utf-8"):
@@ -173,7 +206,7 @@ def main(args):
     except OSError as error:
         debug(f"sink unwritable at {sink}: {error.strerror}", "repair permissions on the telemetry state directory")
         return
-    delegated = [logger, "--source", "gstack-extend", "--no-sweep", "--skill", skill,
+    delegated =[logger, "--source", "gstack-extend", "--no-sweep", "--skill", skill,
                  "--session-id", sid, "--duration", str(duration)]
     for flag in ("--outcome", "--used-browse", "--error-class", "--error-message", "--failed-step"):
         if flag in values:

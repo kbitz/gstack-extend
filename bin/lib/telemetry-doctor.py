@@ -1,12 +1,11 @@
 """Read-only local fidelity report. Transcripts are advisory, never a denominator."""
 import json
-import os
 from pathlib import Path
 import shutil
 import sys
 from datetime import datetime, timezone, timedelta
 
-from telemetry import capture, resolve, sink_path
+from telemetry import capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep
 
 SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-plan",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement")
@@ -80,26 +79,30 @@ def transcripts(since, now):
     return counts, issues
 
 
-def extend_binary():
-    binary = shutil.which("gstack-extend-telemetry")
-    if binary:
-        return binary
-    canonical = Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry"
-    if canonical.is_file() and os.access(canonical, os.X_OK):
-        return str(canonical)
+def wrapper_candidates():
+    # The ladder the skill blocks walk: PATH, the canonical install, then setup's .extend-root pointers.
+    yield shutil.which("gstack-extend-telemetry")
+    yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
     for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
                       Path.home() / ".config/opencode/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
-                root = Path(pointer.read_text().strip())
-                if not root.is_absolute():
-                    continue
-                candidate = root / "bin/gstack-extend-telemetry"
-                if candidate.is_file() and os.access(candidate, os.X_OK):
-                    return str(candidate)
+                root = pointer.read_text().strip()
             except OSError:
                 continue
-    return None
+            yield str(Path(root) / "bin/gstack-extend-telemetry")
+
+
+def extend_binary():
+    """Return (compatible wrapper, stale wrapper). A stale wrapper is executable but predates the start/finish
+    protocol, so the skill blocks skip it."""
+    stale = None
+    for candidate in wrapper_candidates():
+        if compatible_wrapper(candidate):
+            return candidate, stale
+        if stale is None and executable(candidate):
+            stale = candidate
+    return None, stale
 
 
 def report(days):
@@ -184,9 +187,19 @@ def report(days):
                                         stat["pairing_percent"] < PAIRING_TARGET_PERCENT and (stat["transcripts"] or 0) > 0)
     config = resolve("gstack-config")
     tier = capture([config, "get", "telemetry"]).strip() if config else "unavailable"
-    binary = extend_binary()
+    binary, stale = extend_binary()
+    logger = resolve("gstack-telemetry-log")
+    no_sweep = supports_no_sweep(logger) if logger else None
+    warnings = []
+    if stale:
+        warnings.append(f"Stale gstack-extend-telemetry at {stale} predates the start/finish protocol and is skipped; "
+                        "re-run ./setup from the current checkout.")
+    if no_sweep is False:
+        warnings.append("gstack-telemetry-log lacks --no-sweep (gstack before 1.80.0.0), so completions are skipped; "
+                        "run gstack-upgrade.")
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
+                stale_wrapper=stale, logger_supports_no_sweep=no_sweep, warnings=warnings,
                 diagnostic=None if binary else "gstack-extend-telemetry unresolvable; re-run ./setup. See docs/telemetry.md.",
                 transcript_caveat=CAVEAT, transcript_issues=transcript_issues, issues=issues,
                 duration_note="duration_s is session wall-clock, not model/token spend; values above 86400s are null.",
@@ -217,6 +230,8 @@ def main(args):
     print(f"Sink: {result['sink']} ({'present' if result['sink_exists'] else 'missing'})")
     if result["diagnostic"]:
         print(result["diagnostic"])
+    for warning in result["warnings"]:
+        print(warning)
     print("skill                  activation completion paired/eligible deferred unpaired-finish transcripts status")
     for stat in result["skills"]:
         ratio = f"{stat['paired']}/{stat['denominator']}"

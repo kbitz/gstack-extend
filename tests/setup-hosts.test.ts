@@ -99,6 +99,8 @@ describe('setup --host flags', () => {
     for (const skill of SKILLS) {
       const skillMd = join(hostDir(home, 'claude'), skill, 'SKILL.md');
       expect(lstatSync(skillMd).isSymbolicLink()).toBe(true);
+      // The telemetry blocks fall back to this pointer when the wrapper is not on PATH (e.g. a non-canonical clone).
+      expect(readFileSync(join(hostDir(home, 'claude'), skill, '.extend-root'), 'utf8').trim()).toBe(ROOT);
     }
     expect(existsSync(join(hostDir(home, 'codex'), 'pair-review'))).toBe(false);
     expect(existsSync(join(hostDir(home, 'opencode'), 'pair-review'))).toBe(false);

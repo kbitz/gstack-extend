@@ -241,7 +241,7 @@ describe('doctor environment and arguments', () => {
     // PATH wins over the canonical install.
     const shim = join(wired.home, 'shim');
     mkdirSync(shim);
-    writeFileSync(join(shim, 'gstack-extend-telemetry'), '#!/bin/sh\nexit 0\n');
+    writeFileSync(join(shim, 'gstack-extend-telemetry'), '#!/bin/sh\n# telemetry-protocol: start-finish-v1\nexit 0\n');
     chmodSync(join(shim, 'gstack-extend-telemetry'), 0o755);
     const viaPath = JSON.parse(run({ ...wired.env, PATH: shim + ':' + wired.env.PATH }).stdout);
     expect(viaPath.telemetry_binary).toBe(join(shim, 'gstack-extend-telemetry'));
@@ -277,6 +277,39 @@ describe('doctor environment and arguments', () => {
     const stale = makeTelemetryFixture('community', 'absent');
     point(stale, '.claude/skills', '.\n');
     expect(point(stale, '.codex/skills', ROOT + '\n').telemetry_binary).toBe(join(ROOT, 'bin/gstack-extend-telemetry'));
+  }, 30_000);
+
+  test('warns about a stale wrapper and a logger without --no-sweep, and never resolves a relative PATH wrapper', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const canonical = join(fix.home, '.claude/skills/gstack-extend/bin/gstack-extend-telemetry');
+    const staleDir = join(fix.home, 'stale-bin');
+    mkdirSync(staleDir);
+    writeFileSync(join(staleDir, 'gstack-extend-telemetry'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(staleDir, 'gstack-extend-telemetry'), 0o755);
+    const env = { ...fix.env, PATH: staleDir + ':' + fix.env.PATH };
+    // The compatible canonical install wins; the stale wrapper ahead of it on PATH is skipped and reported.
+    const report = JSON.parse(run(env).stdout);
+    expect(report).toMatchObject({ telemetry_binary: canonical, stale_wrapper: join(staleDir, 'gstack-extend-telemetry'), diagnostic: null, logger_supports_no_sweep: true });
+    expect(report.warnings.join('\n')).toContain('predates the start/finish protocol');
+    expect(run(env, []).stdout).toContain('Stale gstack-extend-telemetry');
+
+    // A logger that ignores --no-sweep is flagged.
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    writeFileSync(logger, '#!/bin/sh\nexit 0\n');
+    chmodSync(logger, 0o755);
+    const old = JSON.parse(run(fix.env).stdout);
+    expect(old.logger_supports_no_sweep).toBe(false);
+    expect(old.warnings.join('\n')).toContain('lacks --no-sweep');
+    expect(run(fix.env, []).stdout).toContain('lacks --no-sweep');
+
+    // A relative PATH entry never resolves the wrapper, even one that carries the protocol line.
+    const bare = makeTelemetryFixture('community', 'absent');
+    const repo = join(bare.home, 'repo');
+    mkdirSync(join(repo, 'node_modules/.bin'), { recursive: true });
+    writeFileSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), '#!/bin/sh\n# telemetry-protocol: start-finish-v1\nexit 0\n');
+    chmodSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), 0o755);
+    const relative = spawnSync(CLI, ['doctor', 'telemetry', '--json'], { env: { ...bare.env, PATH: 'node_modules/.bin:' + bare.env.PATH }, cwd: repo, encoding: 'utf8', timeout: 10_000 });
+    expect(JSON.parse(relative.stdout)).toMatchObject({ telemetry_binary: null, stale_wrapper: null });
   }, 30_000);
 
   test('--days accepts 1..365000 ASCII digits; anything else is a one-line diagnostic; help prints usage', () => {
