@@ -11,13 +11,13 @@ if ! command -v python3 >/dev/null 2>&1; then
   fi
   exit 0
 fi
-# Walk symlink chains (e.g. ~/.local/bin links) the way bin/gstack-extend does, without
-# putting cwd on sys.path. Telemetry is optional, so a link loop is a quiet skip.
+# Walk symlink chains (e.g. ~/.local/bin links) the way bin/gstack-extend does. Telemetry
+# is optional, so a link loop is a quiet skip.
 _src=$0
 _hops=0
 while [ -L "$_src" ]; do
   _hops=$((_hops + 1))
-  if [ "$_hops" -gt 40 ]; then
+  if [ "$_hops" -gt 40 ]; then  # matches coreutils SYMLOOP_MAX and bin/gstack-extend
     if [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
       echo 'telemetry skipped: symlink loop resolving the wrapper. Fix: repair the symlink. See docs/telemetry.md.' >&2
     fi
@@ -40,6 +40,6 @@ if [ ! -f "$_py" ]; then
   fi
   exit 0
 fi
-# -I keeps cwd off sys.path so a planted pathlib.py cannot run.
+# -I ignores PYTHONPATH and user site-packages, so an injected module cannot be imported.
 python3 -B -I "$_py" "$@"
 exit 0

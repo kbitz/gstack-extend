@@ -1,14 +1,15 @@
-import { describe, test, expect } from 'bun:test';
+import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeTelemetryFixture } from './helpers/telemetry-env';
+import { PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
+afterAll(cleanupTelemetryFixtures);
 const ROOT = join(import.meta.dir, '..');
 const CLI = join(ROOT, 'bin/gstack-extend');
-function run(env: Record<string, string>, args = ['--json']) {
-  return spawnSync(CLI, ['doctor', 'telemetry', ...args], { env, encoding: 'utf8', timeout: 10_000 });
+function run(env: Record<string, string>, args = ['--json'], cwd?: string) {
+  return spawnSync(CLI, ['doctor', 'telemetry', ...args], { env, cwd, encoding: 'utf8', timeout: 10_000 });
 }
 function seed(home: string, rows: unknown[]) {
   const dir = join(home, '.gstack/analytics');
@@ -109,7 +110,7 @@ describe('doctor telemetry', () => {
   }
 });
 
-// ─── Coverage-audit additions: decision rule, classification, rendering, degradation ───
+// ─── Decision rule, classification, rendering, degradation ───
 
 const IS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
 const stat = (report: any, name: string) => report.skills.find((s: { skill: string }) => s.skill === name);
@@ -191,7 +192,7 @@ describe('doctor report contents', () => {
     const roadmap = lines.findIndex(line => line.startsWith('roadmap '));
     expect(lines[roadmap]).toMatch(/^roadmap\s+3\s+1\s+1\/2\s+0\s+0\s+1\s+50\.0% below target$/);
     expect(lines[roadmap + 1]).toBe('  legacy=0 duplicate-starts=1 retried-finishes=0 crossing-window=0');
-    expect(lines[roadmap + 2]).toBe('  Decision rule triggered: schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection); diagnose skipped starts separately.');
+    expect(lines[roadmap + 2]).toBe('  Decision rule triggered: schedule the deferred in-flight marker and crash-detection work; diagnose skipped starts separately.');
     const implement = lines.findIndex(line => line.startsWith('implement '));
     expect(lines[implement]).toMatch(/^implement\s+1\s+0\s+0\/0\s+0\s+0\s+0\s+insufficient evidence$/);
     expect(lines[implement + 1]).toBe('  legacy=1 duplicate-starts=0 retried-finishes=0 crossing-window=0');
@@ -241,7 +242,7 @@ describe('doctor environment and arguments', () => {
     // PATH wins over the canonical install.
     const shim = join(wired.home, 'shim');
     mkdirSync(shim);
-    writeFileSync(join(shim, 'gstack-extend-telemetry'), '#!/bin/sh\n# telemetry-protocol: start-finish-v1\nexit 0\n');
+    writeFileSync(join(shim, 'gstack-extend-telemetry'), '#!/bin/sh\n' + PROTOCOL_LINE + 'exit 0\n');
     chmodSync(join(shim, 'gstack-extend-telemetry'), 0o755);
     const viaPath = JSON.parse(run({ ...wired.env, PATH: shim + ':' + wired.env.PATH }).stdout);
     expect(viaPath.telemetry_binary).toBe(join(shim, 'gstack-extend-telemetry'));
@@ -262,7 +263,8 @@ describe('doctor environment and arguments', () => {
       const dir = join(fix.home, host, 'some-skill');
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, '.extend-root'), content);
-      return JSON.parse(run(fix.env).stdout);
+      // Run from the repo root so a relative pointer like "." WOULD resolve to a real wrapper if it were honoured.
+      return JSON.parse(run(fix.env, ['--json'], ROOT).stdout);
     };
     const relative = point(bare, '.codex/skills', '.\n');
     expect(relative.telemetry_binary).toBeNull();
@@ -293,6 +295,17 @@ describe('doctor environment and arguments', () => {
     expect(report.warnings.join('\n')).toContain('predates the start/finish protocol');
     expect(run(env, []).stdout).toContain('Stale gstack-extend-telemetry');
 
+    // With nothing compatible behind it, the stale wrapper is reported and the binary stays unresolvable.
+    const alone = makeTelemetryFixture('community', 'absent');
+    const aloneDir = join(alone.home, 'stale-bin');
+    mkdirSync(aloneDir);
+    writeFileSync(join(aloneDir, 'gstack-extend-telemetry'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(aloneDir, 'gstack-extend-telemetry'), 0o755);
+    const aloneReport = JSON.parse(run({ ...alone.env, PATH: aloneDir + ':' + alone.env.PATH }).stdout);
+    expect(aloneReport).toMatchObject({ telemetry_binary: null, stale_wrapper: join(aloneDir, 'gstack-extend-telemetry') });
+    expect(aloneReport.diagnostic).toContain('unresolvable');
+    expect(aloneReport.warnings.join('\n')).toContain('predates the start/finish protocol');
+
     // A logger that ignores --no-sweep is flagged.
     const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
     writeFileSync(logger, '#!/bin/sh\nexit 0\n');
@@ -306,7 +319,7 @@ describe('doctor environment and arguments', () => {
     const bare = makeTelemetryFixture('community', 'absent');
     const repo = join(bare.home, 'repo');
     mkdirSync(join(repo, 'node_modules/.bin'), { recursive: true });
-    writeFileSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), '#!/bin/sh\n# telemetry-protocol: start-finish-v1\nexit 0\n');
+    writeFileSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), '#!/bin/sh\n' + PROTOCOL_LINE + 'exit 0\n');
     chmodSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), 0o755);
     const relative = spawnSync(CLI, ['doctor', 'telemetry', '--json'], { env: { ...bare.env, PATH: 'node_modules/.bin:' + bare.env.PATH }, cwd: repo, encoding: 'utf8', timeout: 10_000 });
     expect(JSON.parse(relative.stdout)).toMatchObject({ telemetry_binary: null, stale_wrapper: null });
@@ -378,12 +391,14 @@ describe('doctor degraded environments', () => {
     }
   }, 30_000);
 
-  test('modules planted in the cwd are never imported by the doctor', () => {
+  test('a PYTHONPATH pointing at planted modules never reaches the doctor', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const repo = join(fix.home, 'repo');
     mkdirSync(repo);
+    // Python never puts the cwd on sys.path for a script run, so only PYTHONPATH can inject: the launcher's -E -s is what
+    // ignores it (the wrapper's -I does the same). Without it the planted json.py runs and the report never prints.
     for (const module of ['pathlib.py', 'json.py', 'telemetry.py']) writeFileSync(join(repo, module), 'print("PLANTED")\n');
-    const r = spawnSync(CLI, ['doctor', 'telemetry', '--json'], { env: fix.env, cwd: repo, encoding: 'utf8', timeout: 10_000 });
+    const r = run({ ...fix.env, PYTHONPATH: '.' }, ['--json'], repo);
     expect(r.status).toBe(0);
     expect(r.stdout + r.stderr).not.toContain('PLANTED');
     expect(JSON.parse(r.stdout).skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);

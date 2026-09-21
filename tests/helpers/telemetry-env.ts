@@ -8,18 +8,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..', '..');
-// Fixture homes are removed at process exit (the repo's exit-time cleanup convention). Each home holds a link into
-// the real repo's bin/; rmSync unlinks a symlink without following it.
+// Fixture homes are removed by cleanupTelemetryFixtures(), which every telemetry test file registers with afterAll
+// (process 'exit' handlers never fire under `bun test`). Each home holds a link into the real repo's bin/; rmSync
+// unlinks a symlink without following it.
 const fixtureHomes: string[] = [];
-process.on('exit', () => {
-  for (const home of fixtureHomes) {
+export function cleanupTelemetryFixtures() {
+  for (const home of fixtureHomes.splice(0)) {
     try {
       rmSync(home, { recursive: true, force: true });
     } catch {
       // Best effort: a test may have left a directory unwritable.
     }
   }
-});
+}
+// What the skill blocks and the doctor require of a wrapper, and what the wrapper requires of a logger. Fixture
+// scripts that stand in for either must carry these lines, or they are (correctly) treated as stale/old.
+export const PROTOCOL_LINE = '# telemetry-protocol: start-finish-v1\n';
+export const NO_SWEEP_LINE = '# --no-sweep\n';
 export const HELPER_BIN = join(ROOT, 'bin', 'gstack-extend-telemetry');
 export const REAL_GSTACK_ROOT = join(process.env.HOME ?? '', '.claude', 'skills', 'gstack');
 export const REAL_GSTACK_BIN = join(REAL_GSTACK_ROOT, 'bin');

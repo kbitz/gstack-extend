@@ -5,7 +5,7 @@ import shutil
 import sys
 from datetime import datetime, timezone, timedelta
 
-from telemetry import capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep
+from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep
 
 SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-plan",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement")
@@ -87,7 +87,11 @@ def wrapper_candidates():
                       Path.home() / ".config/opencode/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
-                root = pointer.read_text().strip()
+                # Regular files only (a FIFO or device would block), bounded like a path should be.
+                if not pointer.is_file():
+                    continue
+                with pointer.open(encoding="utf-8", errors="replace") as stream:
+                    root = stream.read(4096).strip()
             except OSError:
                 continue
             yield str(Path(root) / "bin/gstack-extend-telemetry")
@@ -195,8 +199,8 @@ def report(days):
         warnings.append(f"Stale gstack-extend-telemetry at {stale} predates the start/finish protocol and is skipped; "
                         "re-run ./setup from the current checkout.")
     if no_sweep is False:
-        warnings.append("gstack-telemetry-log lacks --no-sweep (gstack before 1.80.0.0), so completions are skipped; "
-                        "run gstack-upgrade.")
+        warnings.append(f"gstack-telemetry-log lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP}), so "
+                        "completions are skipped; run gstack-upgrade.")
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
                 stale_wrapper=stale, logger_supports_no_sweep=no_sweep, warnings=warnings,
@@ -245,7 +249,7 @@ def main(args):
             print(f"  legacy={stat['legacy']} duplicate-starts={stat['duplicate_starts']} "
                   f"retried-finishes={stat['retried_finishes']} crossing-window={stat['crossing_window']}")
         if stat["schedule_marker_work"]:
-            print("  Decision rule triggered: schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection); "
+            print("  Decision rule triggered: schedule the deferred in-flight marker and crash-detection work; "
                   "diagnose skipped starts separately.")
     print("Diagnostics: " + json.dumps(result["issues"], sort_keys=True))
     print(CAVEAT)

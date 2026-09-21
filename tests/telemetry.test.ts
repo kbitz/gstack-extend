@@ -1,13 +1,14 @@
 /** Telemetry checks use isolated homes and execute the shipped blocks in separate processes. */
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { HELPER_BIN, REAL_GSTACK_ROOT, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
+import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
 const HAS_GSTACK = existsSync(REAL_GSTACK_ROOT);
+afterAll(cleanupTelemetryFixtures);
 const ROOT = join(import.meta.dir, '..');
 function skillBlock(path: string, kind: 'start' | 'finish') {
   const text = readFileSync(path, 'utf8');
@@ -38,15 +39,15 @@ describe('shipped blocks and installation lookup', () => {
     const fix = makeTelemetryFixture('community');
     const bin = join(fix.home, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'gstack-extend-telemetry'), '#!/bin/bash\n# telemetry-protocol: start-finish-v1\nprintf "path-resolved\\n"\n');
+    writeFileSync(join(bin, 'gstack-extend-telemetry'), '#!/bin/bash\n' + PROTOCOL_LINE + 'printf "path-resolved\\n"\n');
     chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
     const r = executeBlock({ ...fix.env, PATH: bin + ':' + fix.env.PATH }, 'start');
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('path-resolved\n');
     expect(fix.readJsonl()).toHaveLength(0);
   });
-  for (const host of ['codex', 'opencode']) {
-    test('setup-generated ' + host + ' copy resolves .extend-root without PATH wiring or GSTACK_EXTEND_DIR', () => {
+  for (const host of ['claude', 'codex', 'opencode']) {
+    test('setup-generated ' + host + ' install resolves .extend-root without PATH wiring or GSTACK_EXTEND_DIR', () => {
       const fix = makeTelemetryFixture('community');
       rmSync(join(fix.home, '.claude/skills/gstack-extend'), { recursive: true });
       const setupTools = join(fix.home, 'setup-tools');
@@ -54,7 +55,7 @@ describe('shipped blocks and installation lookup', () => {
       symlinkSync(process.execPath, join(setupTools, 'bun'));
       const result = spawnSync(join(ROOT, 'setup'), ['--host', host, '--quiet'], { env: { ...fix.env, PATH: setupTools + ':' + fix.env.PATH }, encoding: 'utf8', timeout: 20_000 });
       expect(result.status).toBe(0);
-      const hostDir = host === 'codex' ? '.codex/skills' : '.config/opencode/skills';
+      const hostDir = host === 'claude' ? '.claude/skills' : host === 'codex' ? '.codex/skills' : '.config/opencode/skills';
       const path = join(fix.home, hostDir, 'full-review/SKILL.md');
       expect(existsSync(join(fix.home, hostDir, 'full-review/.extend-root'))).toBe(true);
       expect(existsSync(join(fix.home, '.local/bin/gstack-extend-telemetry'))).toBe(false);
@@ -151,7 +152,7 @@ describe('shipped blocks and installation lookup', () => {
     const ran = join(fix.home, 'planted-ran');
     mkdirSync(join(repo, 'node_modules/.bin'), { recursive: true });
     const planted = join(repo, 'node_modules/.bin/gstack-extend-telemetry');
-    writeFileSync(planted, `#!/bin/bash\n# telemetry-protocol: start-finish-v1\n: > "${ran}"\n`);
+    writeFileSync(planted, `#!/bin/bash\n${PROTOCOL_LINE}: > "${ran}"\n`);
     chmodSync(planted, 0o755);
     const r = executeBlock({ ...fix.env, PATH: 'node_modules/.bin:' + fix.env.PATH }, 'start', undefined, repo);
     expect(r.status).toBe(0);
@@ -183,6 +184,27 @@ describe('shipped blocks and installation lookup', () => {
     expect(r.status).toBe(0);
     expect(r.stderr).toContain('unresolvable or stale');
     expect(existsSync(ran)).toBe(false);
+  });
+  test('a FIFO named like the wrapper, or as a pointer, is never read: the ladder neither hangs nor runs it', () => {
+    const fix = makeTelemetryFixture('community');
+    const bin = join(fix.home, 'fifo-bin');
+    mkdirSync(bin);
+    expect(spawnSync('mkfifo', [join(bin, 'gstack-extend-telemetry')]).status).toBe(0);
+    chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
+    // A blocking read would run into the spawn timeout and leave status null.
+    const viaPath = executeBlock({ ...fix.env, PATH: bin + ':' + fix.env.PATH }, 'start');
+    expect(viaPath.status).toBe(0);
+    expect(fix.readJsonl()).toHaveLength(1);
+
+    // The same for a FIFO pointer, with no canonical install and a valid pointer behind it.
+    const pointers = makeTelemetryFixture('community');
+    rmSync(join(pointers.home, '.claude/skills/gstack-extend'), { recursive: true });
+    mkdirSync(join(pointers.home, '.claude/skills/aaa'), { recursive: true });
+    expect(spawnSync('mkfifo', [join(pointers.home, '.claude/skills/aaa/.extend-root')]).status).toBe(0);
+    mkdirSync(join(pointers.home, '.codex/skills/full-review'), { recursive: true });
+    writeFileSync(join(pointers.home, '.codex/skills/full-review/.extend-root'), ROOT + '\n');
+    expect(executeBlock(pointers.env, 'start').status).toBe(0);
+    expect(pointers.readJsonl()).toHaveLength(1);
   });
   test('the protocol line the blocks grep for is the one the wrapper and helper carry', () => {
     const marker = skillBlock(join(ROOT, 'skills/full-review.md'), 'start').match(/grep -q '([^']+)'/)?.[1];
@@ -442,7 +464,7 @@ describe('repository + skill state handoff', () => {
   });
   test('logger failure stays silent and keeps the matching handoff', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), '#!/bin/bash\n# --no-sweep\nexit 1\n');
+    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), '#!/bin/bash\n' + NO_SWEEP_LINE + 'exit 1\n');
     chmodSync(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'), 0o755);
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     const quiet = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
@@ -729,7 +751,7 @@ describe('failure boundary', () => {
     const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
     const original = readFileSync(logger, 'utf8');
     expect(runHelper(fix.env, args).status).toBe(0);
-    writeFileSync(logger, '#!/nonexistent/interpreter\n# --no-sweep\n');
+    writeFileSync(logger, '#!/nonexistent/interpreter\n' + NO_SWEEP_LINE);
     chmodSync(logger, 0o755);
     const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
     const quietFinish = runHelper(fix.env, finish);
@@ -760,6 +782,14 @@ describe('failure boundary', () => {
     expect(noGitDebug.status).toBe(0);
     expect(noGitDebug.stdout).not.toContain('Traceback');
     expect(noGitDebug.stderr).not.toContain('Traceback');
+    expect(noGit.readJsonl()).toHaveLength(0);
+    // Positive control: with git added to the same directory the helper runs, so its absence is what silenced it.
+    const git = Bun.which('git');
+    if (git) {
+      symlinkSync(git, join(shim, 'git'));
+      expect(runHelper(env, args).stdout).toMatch(/^GE_TELEMETRY: session=/);
+      expect(noGit.readJsonl()).toHaveLength(1);
+    }
   }, 30_000);
 
   test('finish does not wait on a process the logger leaves running with inherited stdio', () => {
@@ -767,7 +797,7 @@ describe('failure boundary', () => {
     // it never waits on that sync; capturing the pipes instead would stall every finish until the sync exits.
     const fix = makeTelemetryFixture('community', 'stub');
     const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
-    writeFileSync(logger, '#!/bin/bash\n# --no-sweep\n(sleep 8) &\nexit 0\n');
+    writeFileSync(logger, '#!/bin/bash\n' + NO_SWEEP_LINE + '(sleep 8) &\nexit 0\n');
     chmodSync(logger, 0o755);
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     const began = Date.now();
@@ -834,6 +864,31 @@ describe('binary resolution and invocation forms', () => {
     expect(hostile.stderr).toContain('gstack absent or gstack-config unavailable');
     expect(existsSync(ran)).toBe(false);
     expect(untrusted.readJsonl()).toHaveLength(0);
+  }, 30_000);
+
+  test('a relative symlink chain across directories resolves each hop against its own link; a link loop is a quiet skip', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const [a, b, elsewhere] = ['a', 'b', 'elsewhere'].map(name => { const dir = join(fix.home, name); mkdirSync(dir); return dir; });
+    // b/tool -> ../a/hop -> <relative path to the real script>. The second hop must resolve against a/ (the link's own
+    // directory), not b/ (the first link's) or the caller's cwd, or lib/telemetry.py is never found.
+    symlinkSync(relative(realpathSync(a), HELPER_BIN), join(a, 'hop'));
+    symlinkSync('../a/hop', join(b, 'tool'));
+    const r = spawnSync(join(b, 'tool'), ['start', '--skill', 'extend:roadmap'], { env: fix.env, cwd: elsewhere, encoding: 'utf8', timeout: 10_000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^GE_TELEMETRY: session=extend-/);
+    expect(fix.readJsonl()).toHaveLength(1);
+
+    // The kernel refuses to exec a looping link, so hand the shim source to bash with a looping $0.
+    symlinkSync('loop-b', join(a, 'loop-a'));
+    symlinkSync('loop-a', join(a, 'loop-b'));
+    const source = readFileSync(HELPER_BIN, 'utf8');
+    const args = ['start', '--skill', 'extend:roadmap'];
+    const quiet = spawnSync('bash', ['-c', source, join(a, 'loop-a'), ...args], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    const debug = spawnSync('bash', ['-c', source, join(a, 'loop-a'), ...args], { env: { ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, encoding: 'utf8', timeout: 10_000 });
+    expect(debug.status).toBe(0);
+    expect(debug.stderr).toContain('symlink loop');
+    expect(fix.readJsonl()).toHaveLength(1);
   }, 30_000);
 
   test('relative PATH or GSTACK_DIR entries never resolve gstack helpers from an untrusted cwd', () => {

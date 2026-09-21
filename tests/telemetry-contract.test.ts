@@ -4,11 +4,13 @@
  * HOME and all inherited state overrides are isolated by telemetry-env.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REAL_GSTACK_ROOT, REAL_GSTACK_BIN, makeTelemetryFixture } from './helpers/telemetry-env';
+import { REAL_GSTACK_ROOT, REAL_GSTACK_BIN, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
+
+afterAll(cleanupTelemetryFixtures);
 
 const GSTACK_TELEMETRY_LOG = join(REAL_GSTACK_BIN, 'gstack-telemetry-log');
 const HAS_GSTACK = existsSync(GSTACK_TELEMETRY_LOG);

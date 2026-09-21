@@ -24,6 +24,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 # The skill blocks in skills/*.md grep the wrapper for this exact text (also a comment in bin/gstack-extend-telemetry).
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
+MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
 
 
 def debug(problem, fix):
@@ -50,7 +51,8 @@ def valid_session(value):
 
 def executable(path):
     # Absolute only: a relative PATH or GSTACK_DIR entry (e.g. node_modules/.bin) must never
-    # resolve to a file planted in the current repository.
+    # resolve to a file planted in the current repository. This is not a trust check: an
+    # absolute PATH entry that points into a repo (direnv, npm run) still resolves there.
     return bool(path) and os.path.isabs(path) and os.path.isfile(path) and os.access(path, os.X_OK)
 
 
@@ -63,8 +65,9 @@ def resolve(name):
 
 
 def compatible_wrapper(path):
-    # An older wrapper forwards the unknown positional `start` to the logger and writes a garbage completion row,
-    # so a wrapper without the protocol marker is treated as absent.
+    # A version-compatibility probe, not a trust boundary (anyone can add the line). An older wrapper forwards the
+    # unknown positional `start` to the logger and writes a garbage completion row, so a wrapper without the
+    # protocol marker is treated as absent.
     try:
         return executable(path) and PROTOCOL_MARKER in Path(path).read_bytes()
     except OSError:
@@ -72,7 +75,8 @@ def compatible_wrapper(path):
 
 
 def supports_no_sweep(logger):
-    # gstack before 1.80.0.0 ignores --no-sweep and still finalizes other sessions' in-flight markers.
+    # A text sniff: the logger source must mention the flag. gstack before MIN_GSTACK_FOR_NO_SWEEP ignores
+    # --no-sweep and still finalizes other sessions' in-flight markers. Test stubs advertise it with a comment.
     try:
         return b"--no-sweep" in Path(logger).read_bytes()
     except OSError:
@@ -197,7 +201,8 @@ def main(args):
         duration = max(0, int(time.time()) - start)
     if not supports_no_sweep(logger):
         # Delegating anyway would let an old logger finalize other sessions' markers as phantom rows.
-        debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before 1.80.0.0)", "run gstack-upgrade")
+        debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP})",
+              "run gstack-upgrade")
         return
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
@@ -206,7 +211,7 @@ def main(args):
     except OSError as error:
         debug(f"sink unwritable at {sink}: {error.strerror}", "repair permissions on the telemetry state directory")
         return
-    delegated =[logger, "--source", "gstack-extend", "--no-sweep", "--skill", skill,
+    delegated = [logger, "--source", "gstack-extend", "--no-sweep", "--skill", skill,
                  "--session-id", sid, "--duration", str(duration)]
     for flag in ("--outcome", "--used-browse", "--error-class", "--error-message", "--failed-step"):
         if flag in values:

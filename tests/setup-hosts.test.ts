@@ -203,6 +203,46 @@ describe('setup --host flags', () => {
     expect(lstatSync(join(destDir, 'SKILL.md')).isSymbolicLink()).toBe(false);
   });
 
+  test('a Claude install leaves the pointer beside each symlink and uninstall removes it', () => {
+    const home = join(baseTmp, 'claude-pointer-uninstall');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    for (const skill of SKILLS) expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(true);
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    for (const skill of SKILLS) {
+      expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(false);
+    }
+  });
+
+  test('a detached, customized Claude SKILL.md stays protected even though a pointer sits beside it', () => {
+    const home = join(baseTmp, 'claude-customized');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const skillMd = join(hostDir(home, 'claude'), 'implement', 'SKILL.md');
+    rmSync(skillMd);
+    writeFileSync(skillMd, 'CUSTOMIZED BY USER\n');
+    const again = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(again.exitCode).toBe(0);
+    expect(again.stderr).toContain('is a regular file, not overwriting');
+    expect(lstatSync(skillMd).isSymbolicLink()).toBe(false);
+    expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+  });
+
+  test('setup never writes through a symlinked .extend-root', () => {
+    const home = join(baseTmp, 'pointer-symlink');
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    const victim = join(home, 'victim.txt');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(victim, 'ORIGINAL\n');
+    symlinkSync(victim, join(dir, '.extend-root'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(victim, 'utf8')).toBe('ORIGINAL\n');
+    expect(readFileSync(join(dir, '.extend-root'), 'utf8').trim()).toBe(ROOT);
+  });
+
   test('idempotent second install', () => {
     const home = join(baseTmp, 'idempotent');
     mkdirSync(home, { recursive: true });

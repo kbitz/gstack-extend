@@ -49,7 +49,9 @@ still owns its richer completion schema and tier-dependent sync. Start never
 invokes a sweeper. Neither path creates a .pending-* marker or finalizes other
 sessions. This repairs the old wrapper's missing --no-sweep defect. The flag needs
 gstack 1.80.0.0 or newer: an older logger ignores it and still finalizes other
-sessions' markers, so upgrade gstack first.
+sessions' markers, so finish checks that the logger mentions the flag and, if it
+does not, writes nothing, keeps the handoff, and (in debug mode) says to upgrade
+gstack. Start never uses the logger, so it is unaffected.
 
 Routing activation through the logger would put background network sync on the
 skill-start critical path, a cost identified in the earlier design. Direct
@@ -105,9 +107,13 @@ substitutes that exact string. Each block has one telemetry invocation; its guar
 only resolves the install and contains a missing binary. Lookup is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
 $HOME host skill directories (setup writes one for Claude, Codex, and OpenCode).
-A candidate must be an absolute path and carry the `telemetry-protocol:
+A candidate must be an absolute regular file and carry the `telemetry-protocol:
 start-finish-v1` line, so a relative PATH entry such as node_modules/.bin, or an
 older wrapper another checkout re-linked onto PATH, is skipped instead of run.
+The line is a version-compatibility probe, not a trust check, and the same
+absolute-path rule protects the wrapper's lookup of gstack's own helpers. It does
+not protect other commands: a relative PATH entry still affects git, python3, and
+everything else an agent runs, so remove such entries from PATH.
 The first line of the guard keeps an unmatched pointer glob from aborting the
 block under zsh. GSTACK_EXTEND_DIR is not required. CWD-relative pointers are
 ignored. Existing setup wiring already handles this binary, and upgrade invokes
@@ -119,14 +125,14 @@ setup again.
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-setopt +o nomatch 2>/dev/null || true
-_ge_ok() { case "$1" in /*) [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
-    if [ -r "$_GE_PTR" ]; then
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
@@ -147,14 +153,14 @@ true
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-setopt +o nomatch 2>/dev/null || true
-_ge_ok() { case "$1" in /*) [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
+_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
-    if [ -r "$_GE_PTR" ]; then
+    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
@@ -184,9 +190,10 @@ input, unwritable sink/state, or upstream failure with corrective commands.
 The skill guard and doctor diagnose an unresolvable extend binary: a missing
 binary cannot diagnose itself. Normal skip paths remain silent. Missing Python
 is diagnosed by the shell guard in debug mode, or by doctor. Doctor also warns
-(text mode, and `warnings` in JSON) about a stale wrapper that predates the
-start/finish protocol and about a gstack logger without --no-sweep; both mean
-completions or starts are being skipped rather than misfiled.
+(text mode, and `warnings` plus `stale_wrapper` and `logger_supports_no_sweep` in
+JSON) about a stale wrapper that predates the start/finish protocol and about a
+gstack logger without --no-sweep; both mean completions or starts are being
+skipped rather than misfiled.
 
 Every installed skill appears, including zero-row skills. Activity counts include
 legacy rows, but ratios exclude them. JSON also includes duplicate/retry/legacy
@@ -242,7 +249,7 @@ This is a pre-rollout baseline, not a zero-percent failure score.
 
 After rollout, collect a fresh 30-day report and publish per-skill pairing.
 If any skill is below 95% with an eligible start denominator and nonzero local
-transcript invocations, **schedule the deferred marker work (docs/TODOS.md: In-flight marker and crash detection)** rather than
+transcript invocations, **schedule the deferred in-flight marker and crash-detection work** rather than
 re-arguing that trigger. Doctor exposes schedule_marker_work in JSON and a
 decision message in text. Deferred resumable runs are excluded. Missing
 transcripts or zero eligible starts provide insufficient evidence for the trigger.

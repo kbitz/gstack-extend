@@ -178,8 +178,16 @@ rewrite_skill_body() {
   fi
 }
 
+# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode. Claude
+# installs are symlinks, so there the pointer must never make a user's detached, customized SKILL.md look generated.
+generated_copy() {
+  local target="$1" host="${2:-}"
+  [ "$host" != "claude" ] && [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
+}
+
 uninstall_from_dir() {
   local skills_dir="$1"
+  local host="${2:-}"
   local skill target link_target expected
   for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
     target="$skills_dir/$skill"
@@ -206,7 +214,7 @@ uninstall_from_dir() {
       else
         log "Skipped $skill (symlink points elsewhere)"
       fi
-    elif [ -f "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]; then
+    elif generated_copy "$target" "$host"; then
       local baked
       baked="$(cat "$target/.extend-root" 2>/dev/null || true)"
       if [ "$baked" = "$SCRIPT_DIR" ]; then
@@ -223,6 +231,7 @@ uninstall_from_dir() {
 
 preflight_dir() {
   local skills_dir="$1"
+  local host="${2:-}"
   if ! is_safe_install_path "$skills_dir"; then
     echo "$USAGE" >&2
     exit 1
@@ -239,7 +248,7 @@ preflight_dir() {
       echo "$USAGE" >&2
       exit 1
     fi
-    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ ! -f "$target/.extend-root" ]; then
+    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
       continue
     fi
@@ -275,7 +284,7 @@ install_into_dir() {
     src="$SCRIPT_DIR/skills/${skill}.md"
     [ -f "$src" ] || continue
     target="$skills_dir/$skill"
-    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ ! -f "$target/.extend-root" ]; then
+    if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       continue
     fi
     mkdir -p "$target"
@@ -286,6 +295,7 @@ install_into_dir() {
     fi
     # Every host gets the pointer: the telemetry blocks fall back to it when the wrapper is not on PATH,
     # which matters for a Claude install from a clone outside ~/.claude/skills/gstack-extend.
+    rm -f "$target/.extend-root"
     printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
     installed=$((installed + 1))
   done
@@ -322,9 +332,9 @@ if [ "$UNINSTALL" -eq 1 ]; then
   if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
     uninstall_from_dir "$SKILLS_DIR"
   else
-    [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)"
-    [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)"
-    [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)"
+    [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
+    [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)" codex
+    [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)" opencode
   fi
 
   if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "claude" ] || [ "$HOST" = "auto" ]; }; then
@@ -347,13 +357,13 @@ fi
 
 # ─── Install ───────────────────────────────────────────────────────
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
-  preflight_dir "$(host_skills_dir claude)"
+  preflight_dir "$(host_skills_dir claude)" claude
 fi
 if [ "$INSTALL_CODEX" -eq 1 ]; then
-  preflight_dir "$(host_skills_dir codex)"
+  preflight_dir "$(host_skills_dir codex)" codex
 fi
 if [ "$INSTALL_OPENCODE" -eq 1 ]; then
-  preflight_dir "$(host_skills_dir opencode)"
+  preflight_dir "$(host_skills_dir opencode)" opencode
 fi
 
 [ "$INSTALL_CLAUDE" -eq 1 ] && install_into_dir "$(host_skills_dir claude)" claude

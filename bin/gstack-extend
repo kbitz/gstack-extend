@@ -631,7 +631,8 @@ case "$cmd" in
     if [ "${1:-}" = "telemetry" ]; then
       shift
       # Conditional invocation contains failures under set -e and the ERR trap.
-      if ! python3 -B "$SCRIPT_DIR/lib/telemetry-doctor.py" "$@"; then
+      # -E -s: ignore PYTHON* variables and user site-packages, as the wrapper's -I does.
+      if ! python3 -B -E -s "$SCRIPT_DIR/lib/telemetry-doctor.py" "$@"; then
         printf '%s\n' 'Telemetry report unavailable. Check python3 and re-run ./setup. See docs/telemetry.md.'
       fi
     else
