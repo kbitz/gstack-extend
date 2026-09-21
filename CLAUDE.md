@@ -37,7 +37,11 @@ skill-protocols, audit-compliance, setup-hosts, setup-init-wire, and touchfiles
 suites explicitly: diff selection uses committed `base...HEAD`, not working edits.
 See [docs/telemetry.md](docs/telemetry.md) for the local sink, doctor report, and
 its separation from transcript-derived `mm retro-fleet` counts. `duration_s` is
-session wall-clock, not model/token spend; values above 86400 seconds become null.
+session wall-clock, not model/token spend; skill-usage values above 86400 seconds
+become null. Finish also appends a local-only provenance row (agent, model, effort
+read from the harness's own session log; schema shared with the orchestrator) to
+`~/.gstack-extend/analytics/stage-runs.jsonl`, gated by the `provenance` config key,
+not gstack's tier.
 
 Add a fixture by creating a new directory with a `files/` subtree (and optional one-line `args` file), then run `UPDATE_SNAPSHOTS=1` to seed `expected.txt`. New `PACKING` fixtures live under `tests/roadmap-audit/packing-ok/`.
 

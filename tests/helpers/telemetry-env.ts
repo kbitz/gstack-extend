@@ -34,6 +34,8 @@ export type TelemetryFixture = {
   home: string;
   env: Record<string, string>;
   readJsonl: () => Array<Record<string, any>>;
+  /** Local-only provenance rows (stage-runs.jsonl under the gstack-extend state directory). */
+  readLedger: () => Array<Record<string, any>>;
   readStubArgs: () => string[];
 };
 
@@ -101,14 +103,13 @@ with (sink / 'skill-usage.jsonl').open('a') as f:
       chmodSync(join(upstreamBin, name), 0o755);
     }
   }
+  const readRows = (file: string) =>
+    existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   return {
     home,
     env: { HOME: home, PATH: '/usr/bin:/bin' },
-    readJsonl: () => {
-      const file = join(home, '.gstack/analytics/skill-usage.jsonl');
-      if (!existsSync(file)) return [];
-      return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line));
-    },
+    readJsonl: () => readRows(join(home, '.gstack/analytics/skill-usage.jsonl')),
+    readLedger: () => readRows(join(home, '.gstack-extend/analytics/stage-runs.jsonl')),
     readStubArgs: () => {
       const file = join(home, 'captured-args.txt');
       return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean) : [];

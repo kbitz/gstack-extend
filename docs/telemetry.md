@@ -1,16 +1,21 @@
 # Skill telemetry
 
 All nine installed skills carry optional start and finish calls. They record local
-frequency, session wall-clock duration, and reported outcome. They do not measure
-model effort, token spend, or output quality. Python 3.9+ provides JSON escaping
-and state handling; missing Python or gstack skips telemetry without failing the
-skill.
+frequency, session wall-clock duration, and reported outcome, and finish records
+which harness, model, and effort level ran the skill (see
+[Execution provenance](#execution-provenance)). They do not measure token spend or
+output quality. Python 3.9+ provides JSON escaping and state handling; missing
+Python skips telemetry without failing the skill, and missing gstack skips only the
+skill-usage rows.
 
-## Two different datasets
+## Three datasets
 
 - **skill-usage.jsonl** contains local, model-invoked skill telemetry. It answers
   which observed runs started, finished, and reported an outcome, and how long
   their sessions lasted.
+- **stage-runs.jsonl** contains one local-only provenance row per finished run. It
+  answers which harness, model, and effort level ran each stage, in a schema shared
+  with the pipeline orchestrator.
 - **mm retro-fleet** counts Claude Code transcript tool-use records whose name is
   Skill, gathered across machines by mind-meld. Instrumenting these skills does
   not change those counts. Fleet totals cannot be the denominator of a local
@@ -33,9 +38,11 @@ gstack-config get telemetry
 gstack-config set telemetry off
 ~~~
 
-The off tier (also missing, unreadable, or invalid config) produces no new rows
-or handoffs. Anonymous and community tiers enable local rows. Enabling is an
-explicit choice: gstack-config set telemetry community.
+The off tier (also missing, unreadable, or invalid config) produces no new
+skill-usage rows. Anonymous and community tiers enable them, and also let
+gstack-telemetry-sync upload the file. Enabling is an explicit choice:
+gstack-config set telemetry community. Provenance rows have their own switch; with
+both off, start and finish write nothing, not even a handoff.
 
 The sink exactly follows **gstack-telemetry-log**: GSTACK_STATE_DIR, defaulting to
 $HOME/.gstack, then analytics/skill-usage.jsonl. **gstack-config** instead reads
@@ -68,8 +75,13 @@ $HOME/.gstack-extend), under telemetry/<hash>.json. The hash includes repository
 root plus skill. Finish recovers missing or malformed start/session values from
 it; each valid explicit --start or --session-id takes precedence. A flag followed
 directly by another flag (a missing value) skips the call; a value that merely
-starts with -- is accepted. Without valid state, finish writes nothing. A successful finish
-consumes only its matching handoff; explicit retries can still supply their IDs.
+starts with -- is accepted. Without valid state, finish writes nothing. A finish that
+wrote every enabled output consumes only its matching handoff. After a partial
+failure the handoff records which output was written, so a retry never duplicates
+either row; explicit retries can still supply their IDs. A start whose
+skill-usage append fails still saves that handoff when provenance is on, and
+finish records the provenance row without sending a skill-usage completion for
+the start that never landed.
 State is separate from gstack analytics. There is no sweep, age bound, crash
 detection, historical backfill, or inferred failure.
 
@@ -78,6 +90,74 @@ share a slot; the later start replaces it. Explicit start/session flags are the
 escape hatch. Different Conductor workspaces have different roots and separate
 slots. Handoffs are local: cross-machine resumes must carry explicit values to
 emit an identifiable completion; that row may remain unpaired locally.
+
+## Execution provenance
+
+skill-usage.jsonl has no model or agent field, and gstack-skill-start drops its
+`--model` argument (upstream), so no gstack row says which vendor ran a stage.
+Finish therefore also appends one row per run to
+$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl (default
+`$HOME/.gstack-extend/analytics/stage-runs.jsonl`). **The file is local-only**:
+gstack-telemetry-sync never reads it, so branch and work item never leave the
+machine. It is created mode 0600, and a symlink at that path is not followed. The schema is shared with the separately specced pipeline orchestrator,
+which is to write the same fields, in the same order, with its own `source`:
+
+| Field | Hand-run value |
+|---|---|
+| stage | Skill name without `extend:`, e.g. `roadmap` |
+| agent | `claude`, `codex`, or `grok`: the harness, not the model |
+| model | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
+| effort | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
+| rung | Always 0: a hand-run skill has no fallback chain |
+| outcome | `success`, `error`, `abort`, or `unknown`; any other value becomes `unknown` |
+| started_at, duration_s | UTC start; session wall-clock seconds including human waits, never capped |
+| session_id | The `extend-<uuid>` shared with the skill-usage start and finish rows |
+| repo | origin's owner/name (never its host or credentials); the root's name without origin; null outside git |
+| branch | Branch at finish; null outside git or when detached |
+| work_item | Null unless finish passes `--work-item` |
+| source | `gstack-extend` |
+
+**Nothing is guessed.** Agent, model, and effort come from the harness's own
+session log for the stage's window. Any value the wrapper cannot verify is null,
+never a configured default:
+
+- **Claude Code** exports CLAUDECODE and CLAUDE_CODE_SESSION_ID. The transcript
+  `~/.claude/projects/*/<session>.jsonl` (CLAUDE_CONFIG_DIR honored) records model
+  and effort on every response. Only the stage's own responses count: sidechain
+  (subagent) and synthetic entries are skipped, and a skill run inside a subagent,
+  whose parent transcript sits idle, gets null rather than the parent's model.
+  Claude can start a command before appending the response that issued it, so a
+  window with no response yet is re-read for up to a second.
+- **Codex** exports CODEX_THREAD_ID. Its rollout
+  `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (CODEX_HOME honored)
+  opens each turn with a `turn_context` carrying model and effort. The turn open
+  when the stage began counts, since a skill usually runs inside one turn.
+- **Grok Build** sets GROK_AGENT=1 and GROK_SESSION_ID. The wrapper reads that
+  session's `events.jsonl` under `~/.grok/sessions/<encoded directory>/`
+  (GROK_HOME honored): model from `turn_started`, or from summary.json when the
+  log has no turn, and effort from summary.json. A session id that is missing or
+  not a single file leaves model and effort null. With no session id, only one
+  events log changed since the stage began is attributable; zero or several
+  leave model and effort null.
+
+Logs are read from their last 8 MiB. The model/effort pair behind the most turns
+in the window wins, ties going to the later pair, so a mid-stage fallback shows
+only when it carried the stage. A nested harness (codex exec run from Claude Code)
+inherits the outer markers: the harness whose log holds the latest turn is the one
+running the command, and with no log to compare the agent is null. A failed
+detection costs only the detected values, never the row.
+
+Explicit finish flags override detection: `--agent claude|codex|grok`, `--model`,
+`--effort`, and `--work-item`. When `--agent` names a different harness than the
+detected one, the detected model and effort are dropped. These flags never reach
+gstack's logger.
+
+**Switch.** Provenance is on by default and independent of gstack's tier, because
+its rows stay local while enabling the tier also enables the upload. Turn it off
+with `"$HOME/.claude/skills/gstack-extend/bin/config" set provenance false` (`off`
+also works). A missing config stays on. An unreadable config stays off: a file
+that cannot be read is not evidence the switch is still on. With provenance on, start writes the handoff even when the tier is
+off, and a missing or broken gstack costs only the skill-usage rows.
 
 ## Author quickstart
 
@@ -97,6 +177,9 @@ value copied. Expect two rows sharing a session_id:
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
 {"v":1,"event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:03Z","duration_s":3,"outcome":"success","source":"gstack-extend"}
 ~~~
+
+Finish also appends one provenance row to stage-runs.jsonl (see
+[Execution provenance](#execution-provenance)).
 
 The completion example omits upstream metadata. No event key is introduced:
 historical rows already use that key for prepared-not-started. **duration_s is
@@ -188,8 +271,10 @@ GSTACK_EXTEND_TELEMETRY_DEBUG=1 gstack-extend-telemetry start --skill "extend:ro
 
 Doctor is read-only and always exits zero for missing/empty sinks, malformed
 JSON, partial tails, and bad arguments. Debug mode prints the resolved binaries,
-tier and sink, and explains missing gstack/config, disabled tiers, rejected
-input, unwritable sink/state, or upstream failure with corrective commands.
+tier and sink, the provenance switch and sink, and the detected agent, model, and
+effort. It explains missing gstack/config, disabled tiers, rejected input,
+unwritable sinks/state, or upstream failure with corrective commands. Doctor
+reports skill-usage.jsonl only.
 The skill guard and doctor diagnose an unresolvable extend binary: a missing
 binary cannot diagnose itself. Normal skip paths remain silent. Missing Python
 is diagnosed by the shell guard in debug mode, or by doctor. Doctor also warns

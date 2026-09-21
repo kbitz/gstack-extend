@@ -2,8 +2,8 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync, utimesSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
@@ -244,21 +244,32 @@ describe('shipped blocks and installation lookup', () => {
 
 describe('tier gates, escaping, sink resolution and diagnostics', () => {
   for (const tier of ['off', 'invalid', '']) {
-    test('tier ' + JSON.stringify(tier) + ' writes nothing and explains the skip only in debug mode', () => {
+    test('tier ' + JSON.stringify(tier) + ' writes no skill-usage rows and explains the skip only in debug mode', () => {
       const fix = makeTelemetryFixture('off');
       writeFileSync(join(fix.home, '.gstack/config.yaml'), 'telemetry: ' + tier + '\n');
       const args = ['start', '--skill', 'extend:roadmap'];
+      // Provenance has its own switch, so a disabled tier still hands off to finish for the local-only row.
       const quiet = runHelper(fix.env, args);
-      expect(quiet.status).toBe(0);
-      expect(quiet.stdout).toBe('');
-      expect(quiet.stderr).toBe('');
+      expect([quiet.status, quiet.stderr]).toEqual([0, '']);
+      expect(quiet.stdout).toMatch(/^GE_TELEMETRY: session=extend-/);
       const debug = runHelper({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args);
       expect(debug.stderr).toContain('tier off, missing, or invalid');
       expect(debug.stderr).toContain('gstack-config set telemetry community');
-      expect(debug.stdout).toBe('');
+      expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
       expect(fix.readJsonl()).toHaveLength(0);
-      // "No new rows or handoffs": a disabled tier must not even create the state directory.
-      expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
+      expect(fix.readLedger()).toHaveLength(1);
+
+      // Both switches off: "no new rows or handoffs", and no state beyond the config file itself.
+      const off = makeTelemetryFixture('off');
+      writeFileSync(join(off.home, '.gstack/config.yaml'), 'telemetry: ' + tier + '\n');
+      mkdirSync(join(off.home, '.gstack-extend'));
+      writeFileSync(join(off.home, '.gstack-extend/config'), 'provenance=false\n');
+      const silent = runHelper(off.env, args);
+      expect([silent.status, silent.stdout, silent.stderr]).toEqual([0, '', '']);
+      expect(runHelper({ ...off.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args).stdout).toBe('');
+      expect(runHelper(off.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+      expect(readdirSync(join(off.home, '.gstack-extend'))).toEqual(['config']);
+      expect(off.readJsonl()).toHaveLength(0);
     });
   }
   test('missing config and missing gstack are silent no-ops with corrective diagnostics', () => {
@@ -770,11 +781,17 @@ describe('handoff robustness', () => {
 describe('failure boundary', () => {
   test('unexpected runtime failures are contained: exit 0, no stdout, diagnosis only in debug mode', () => {
     const args = ['start', '--skill', 'extend:roadmap'];
-    // (1) A config helper that cannot be executed (bad interpreter) fails inside capture().
+    // (1) A config helper that cannot be executed (bad interpreter) fails inside capture(). It costs only the
+    // skill-usage rows: provenance does not depend on gstack.
     const brokenConfig = makeTelemetryFixture('community', 'stub');
     const config = join(brokenConfig.home, '.claude/skills/gstack/bin/gstack-config');
     writeFileSync(config, '#!/nonexistent/interpreter\n');
     chmodSync(config, 0o755);
+    const provenanceOnly = runHelper(brokenConfig.env, args);
+    expect([provenanceOnly.status, provenanceOnly.stderr]).toEqual([0, '']);
+    expect(provenanceOnly.stdout).toMatch(/^GE_TELEMETRY: session=/);
+    mkdirSync(join(brokenConfig.home, '.gstack-extend'), { recursive: true });
+    writeFileSync(join(brokenConfig.home, '.gstack-extend/config'), 'provenance=off\n');
     const quiet = runHelper(brokenConfig.env, args);
     expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
     const debug = runHelper({ ...brokenConfig.env, ...DEBUG }, args);
@@ -1104,6 +1121,374 @@ describe('writer and reader agree for every installed skill', () => {
           unpaired_start: 0, unpaired_finish: 0, deferred_finish: 0, legacy: 0,
         });
       }
+      // The same blocks leave one provenance row per run, named by the bare skill.
+      expect(fix.readLedger().map(row => row.stage)).toEqual([...EXPECTED_SETUP_SKILLS]);
     }, 60_000);
   }
+});
+
+// ─── Execution provenance: the local-only stage-runs.jsonl row ───
+
+const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
+  'repo', 'branch', 'work_item', 'source'];
+const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+const writeJsonl = (file: string, records: object[]) => {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+};
+const claudeTurn = (at: number, id: string, model: string, effort: string | null, extra: object = {}) =>
+  ({ type: 'assistant', timestamp: iso(at), effort, message: { id, model, role: 'assistant' }, ...extra });
+const codexTurn = (at: number, model: string, effort: string) =>
+  ({ timestamp: iso(at), type: 'turn_context', payload: { model, effort } });
+
+/** start, then write harness logs (given the start epoch), then finish; returns the newest provenance row. */
+function provenanceRun(fix: TelemetryFixture, env: Record<string, string> = {}, logs: (start: number) => void = () => {},
+  finishArgs: string[] = [], cwd?: string) {
+  const options = { env: { ...fix.env, ...env }, cwd, encoding: 'utf8' as const, timeout: 15_000 };
+  const start = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], options);
+  expect([start.status, start.stderr]).toEqual([0, '']);
+  const epoch = Number(start.stdout.match(/start=(\d+)/)![1]);
+  logs(epoch);
+  const finish = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', ...finishArgs], options);
+  expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
+  return { row: fix.readLedger().at(-1)!, epoch, sid: start.stdout.match(/session=(\S+)/)![1] };
+}
+
+describe('execution provenance', () => {
+  test("one row per finished run in exactly the shared schema, whatever gstack's tier", () => {
+    const fix = makeTelemetryFixture('off');
+    const repo = join(fix.home, 'widget');
+    mkdirSync(repo);
+    for (const args of [['init', '-q'], ['symbolic-ref', 'HEAD', 'refs/heads/feature/x'], ['remote', 'add', 'origin', 'git@github.com:acme/widget.git']]) {
+      expect(spawnSync('git', ['-C', repo, ...args], { env: fix.env }).status).toBe(0);
+    }
+    const { row, epoch, sid } = provenanceRun(fix, {}, undefined, ['--outcome', 'success'], repo);
+    expect(Object.keys(row)).toEqual(SCHEMA);
+    expect(row).toMatchObject({ stage: 'roadmap', agent: null, model: null, effort: null, rung: 0, outcome: 'success',
+      session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend' });
+    expect(row.started_at).toBe(iso(epoch).replace(/\.\d{3}Z$/, 'Z'));
+    expect(Number.isInteger(row.duration_s) && row.duration_s >= 0).toBe(true);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('repo is owner/name from origin, never its host or credentials; the root name without origin; null outside git', () => {
+    const fix = makeTelemetryFixture('off');
+    const cases: Array<[string | null, string]> = [
+      ['https://user:s3cret@github.com/acme/widget.git', 'acme/widget'],
+      ['https://user:s3cret@github.com/acme/widget.git?access_token=TOKEN', 'acme/widget'],
+      ['https://github.com/acme/widget.git#TOKEN', 'acme/widget'],
+      ['ssh://git@example.com:2222/acme/widget.git/', 'acme/widget'],
+      ['https://github.com/acme/widget', 'acme/widget'],
+      [null, 'plain-root'],
+    ];
+    cases.forEach(([remote, expected], index) => {
+      const repo = join(fix.home, remote ? 'case-' + index : 'plain-root');
+      mkdirSync(repo);
+      expect(spawnSync('git', ['init', '-q', repo], { env: fix.env }).status).toBe(0);
+      if (remote) expect(spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', remote], { env: fix.env }).status).toBe(0);
+      expect(provenanceRun(fix, {}, undefined, [], repo).row.repo).toBe(expected);
+    });
+    const ledger = JSON.stringify(fix.readLedger());
+    expect(ledger).not.toContain('s3cret');
+    expect(ledger).not.toContain('TOKEN');
+    const single = join(fix.home, 'single-seg');
+    mkdirSync(single);
+    expect(spawnSync('git', ['init', '-q', single], { env: fix.env }).status).toBe(0);
+    expect(spawnSync('git', ['-C', single, 'remote', 'add', 'origin', 'https://git.internal.example/widget.git'],
+      { env: fix.env }).status).toBe(0);
+    expect(provenanceRun(fix, {}, undefined, [], single).row.repo).toBe('single-seg');
+    expect(JSON.stringify(fix.readLedger())).not.toContain('git.internal.example');
+    const outside = join(fix.home, 'outside');
+    mkdirSync(outside);
+    expect(provenanceRun(fix, { GIT_CEILING_DIRECTORIES: fix.home }, undefined, [], outside).row)
+      .toMatchObject({ repo: null, branch: null });
+  }, 30_000);
+
+  test('with the tier on both outputs share a session; the provenance switch silences only the local row', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { row } = provenanceRun(fix, {}, undefined, ['--outcome', 'error', '--agent', 'claude', '--model', 'claude-opus-5',
+      '--effort', 'xhigh', '--work-item', '4D']);
+    expect(fix.readJsonl().map(usage => usage.session_id)).toEqual([row.session_id, row.session_id]);
+    expect(row).toMatchObject({ outcome: 'error', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: '4D' });
+    // Provenance overrides stay local: gstack's logger never sees them.
+    const forwarded = fix.readStubArgs()[0].split('\t');
+    for (const flag of ['--agent', '--model', '--effort', '--work-item']) expect(forwarded).not.toContain(flag);
+    for (const value of ['false', 'off']) {
+      writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=' + value + '\n');
+      expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+      expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    }
+    expect(fix.readJsonl()).toHaveLength(6);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=true\n');
+    provenanceRun(fix);
+    expect(fix.readLedger()).toHaveLength(2);
+  }, 30_000);
+
+  test('Claude: responses inside the stage name the model and effort; sidechains, synthetic and earlier turns do not', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = '0c7f2e29-0000-4000-8000-000000000001';
+    const transcript = join(fix.home, '.claude/projects/-some-workspace', sid + '.jsonl');
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid };
+    const { row } = provenanceRun(fix, env, start => {
+      const now = Date.now() / 1000;
+      writeJsonl(transcript, [
+        claudeTurn(start - 60, 'm0', 'claude-fable-5', 'low'),
+        claudeTurn(now, 'm1', 'claude-opus-5', 'xhigh'),
+        claudeTurn(now, 'm2', 'claude-opus-5', 'xhigh'),
+        // One response split across three entries counts once, so it cannot outvote the two above.
+        ...[1, 2, 3].map(() => claudeTurn(now, 'm3', 'claude-sonnet-5', 'high')),
+        // Subagent (sidechain) and synthetic responses would outvote the stage's own if they were counted.
+        ...['s1', 's2', 's3'].map(id => claudeTurn(now, id, 'claude-haiku-4-5', 'low', { isSidechain: true })),
+        ...['x1', 'x2', 'x3'].map(id => claudeTurn(now, id, '<synthetic>', null)),
+        { type: 'user', timestamp: iso(now), message: { role: 'user', content: 'ok' } },
+      ]);
+    });
+    expect(row).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+    // A per-turn effort override is the level that turn actually used.
+    const perTurn = provenanceRun(fix, env, () =>
+      writeJsonl(transcript, [claudeTurn(Date.now() / 1000, 'p1', 'claude-opus-5', 'xhigh', { perTurnEffort: 'max' })])).row;
+    expect(perTurn.effort).toBe('max');
+    // A skill run by a subagent leaves the parent transcript idle: its earlier turn must not be inherited.
+    const idle = provenanceRun(fix, env, start => writeJsonl(transcript, [claudeTurn(start - 5, 'p2', 'claude-opus-5', 'xhigh')])).row;
+    expect(idle).toMatchObject({ agent: 'claude', model: null, effort: null });
+  }, 30_000);
+
+  test('Codex: the turn open when the stage began supplies model and effort from the rollout', () => {
+    const fix = makeTelemetryFixture('off');
+    const tid = '01a0c487-19ac-7903-89d9-d1642a113349';
+    const rollout = join(fix.home, '.codex/sessions/2026/09/21', `rollout-2026-09-21T11-13-03-${tid}.jsonl`);
+    const { row } = provenanceRun(fix, { CODEX_THREAD_ID: tid }, start => writeJsonl(rollout, [
+      { timestamp: iso(start - 900), type: 'session_meta', payload: { id: tid } },
+      codexTurn(start - 600, 'gpt-5-codex', 'low'),
+      codexTurn(start - 30, 'gpt-6-astra', 'high'),
+      { timestamp: iso(start - 29), type: 'event_msg', payload: { type: 'token_count' } },
+    ]));
+    expect(row).toMatchObject({ agent: 'codex', model: 'gpt-6-astra', effort: 'high' });
+  });
+
+  test('nested harness markers resolve to the log with the latest turn; markers without logs stay unverifiable', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = '0c7f2e29-0000-4000-8000-000000000002';
+    const tid = '01a0c487-0000-7000-8000-000000000002';
+    const transcript = join(fix.home, '.claude/projects/-outer', sid + '.jsonl');
+    const rollout = join(fix.home, '.codex/sessions/2026/09/21', `rollout-2026-09-21T00-00-00-${tid}.jsonl`);
+    const both = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid, CODEX_THREAD_ID: tid };
+    // codex exec launched from Claude Code: the outer transcript went quiet when it launched the inner run.
+    const inner = provenanceRun(fix, both, start => {
+      writeJsonl(transcript, [claudeTurn(start - 20, 'o1', 'claude-opus-5', 'xhigh')]);
+      writeJsonl(rollout, [codexTurn(start - 5, 'gpt-6-astra', 'high')]);
+    }).row;
+    expect(inner).toMatchObject({ agent: 'codex', model: 'gpt-6-astra', effort: 'high' });
+    // The reverse nesting: Claude's transcript holds the latest turn.
+    const outer = provenanceRun(fix, both, start => {
+      writeJsonl(transcript, [claudeTurn(Date.now() / 1000, 'o2', 'claude-opus-5', 'xhigh')]);
+      writeJsonl(rollout, [codexTurn(start - 300, 'gpt-6-astra', 'high')]);
+    }).row;
+    expect(outer).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+    // Two markers and no logs to compare: nothing is verifiable. One marker alone still names its harness.
+    expect(provenanceRun(fix, { CLAUDECODE: '1', CODEX_THREAD_ID: 'no-such-thread' }).row)
+      .toMatchObject({ agent: null, model: null, effort: null });
+    expect(provenanceRun(fix, { CLAUDECODE: '1' }).row).toMatchObject({ agent: 'claude', model: null, effort: null });
+  }, 30_000);
+
+  test('Grok: exactly one session active in this directory since the stage began is attributed; two are not', () => {
+    const fix = makeTelemetryFixture('off');
+    const work = join(fix.home, 'grok-work');
+    mkdirSync(work);
+    const place = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(work)));
+    const session = (id: string, model: string) => {
+      writeJsonl(join(place, id, 'events.jsonl'), [{ ts: iso(Date.now() / 1000 - 40), type: 'turn_started', model_id: model }]);
+      writeFileSync(join(place, id, 'summary.json'), JSON.stringify({ current_model_id: model, reasoning_effort: 'high' }));
+    };
+    expect(provenanceRun(fix, { GROK_AGENT: '1' }, () => session('a', 'grok-4.6'), [], work).row)
+      .toMatchObject({ agent: 'grok', model: 'grok-4.6', effort: 'high' });
+    expect(provenanceRun(fix, { GROK_AGENT: '1' }, () => { session('a', 'grok-4.6'); session('b', 'grok-4.6-mini'); }, [], work).row)
+      .toMatchObject({ agent: 'grok', model: null, effort: null });
+    // A profile name in GROK_AGENT is user configuration; Grok's shell sets exactly "1".
+    expect(provenanceRun(fix, { GROK_AGENT: 'my-profile' }, undefined, [], work).row.agent).toBeNull();
+  }, 30_000);
+
+  test('explicit flags override detection; values from another harness are dropped; bad values are ignored', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = '0c7f2e29-0000-4000-8000-000000000003';
+    const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid };
+    const logs = () => writeJsonl(join(fix.home, '.claude/projects/-w', sid + '.jsonl'),
+      [claudeTurn(Date.now() / 1000, 'm1', 'claude-opus-5', 'xhigh')]);
+    expect(provenanceRun(fix, env, logs, ['--agent', 'codex', '--model', 'gpt-6-astra', '--effort', 'high',
+      '--work-item', '4D', '--outcome', 'abort']).row)
+      .toMatchObject({ agent: 'codex', model: 'gpt-6-astra', effort: 'high', work_item: '4D', outcome: 'abort' });
+    expect(provenanceRun(fix, env, logs, ['--agent', 'codex']).row)
+      .toMatchObject({ agent: 'codex', model: null, effort: null, outcome: 'unknown' });
+    expect(provenanceRun(fix, env, logs, ['--agent', 'claude', '--effort', 'max']).row)
+      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'max' });
+    expect(provenanceRun(fix, env, logs, ['--agent', 'gpt', '--model', 'bad\u0007id', '--work-item', ' ', '--outcome', 'exploded']).row)
+      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: null, outcome: 'unknown' });
+  }, 30_000);
+
+  test('a finish retried after a partial failure never duplicates either row', () => {
+    const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
+    // gstack's logger fails first: provenance is recorded once, the skill-usage completion on the repaired retry.
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    const original = readFileSync(logger, 'utf8');
+    writeFileSync(logger, '#!/bin/bash\n' + NO_SWEEP_LINE + 'exit 1\n');
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(fix.env, finish).status).toBe(0);
+    expect(runHelper(fix.env, finish).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
+    writeFileSync(logger, original);
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, finish).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readJsonl().map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+    expect(handoffs(fix)).toHaveLength(0);
+
+    // The provenance sink fails first: the delivered completion is not sent again.
+    const other = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(other.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const blocker = join(other.home, '.gstack-extend/analytics');
+    writeFileSync(blocker, '');
+    const quiet = runHelper(other.env, finish);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    expect(runHelper({ ...other.env, ...DEBUG }, finish).stderr).toContain('provenance sink unwritable');
+    expect(other.readJsonl()).toHaveLength(2);
+    rmSync(blocker);
+    expect(runHelper(other.env, finish).status).toBe(0);
+    expect(other.readLedger()).toHaveLength(1);
+    expect(other.readJsonl()).toHaveLength(2);
+    expect(handoffs(other)).toHaveLength(0);
+  }, 30_000);
+
+  test('legacy finishes date the row from their duration; an unrepresentable start is null, never a crash', () => {
+    const fix = makeTelemetryFixture('off');
+    const before = Math.floor(Date.now() / 1000);
+    expect(runHelper(fix.env, ['--skill', 'extend:roadmap', '--duration', '42', '--session-id', 'sid-legacy', '--outcome', 'success']).status).toBe(0);
+    const after = Math.ceil(Date.now() / 1000);
+    const legacy = fix.readLedger()[0];
+    expect(legacy).toMatchObject({ session_id: 'sid-legacy', duration_s: 42, outcome: 'success' });
+    const began = Date.parse(legacy.started_at) / 1000;
+    expect(began >= before - 42 && began <= after - 42).toBe(true);
+    const future = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', '9223372036854775807', '--session-id', 'sid-future']);
+    expect([future.status, future.stdout, future.stderr]).toEqual([0, '', '']);
+    expect(fix.readLedger()[1]).toMatchObject({ session_id: 'sid-future', started_at: null, duration_s: 0 });
+  });
+
+  test('provenance duration stays wall-clock past a day while skill-usage nulls it', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const start = String(Math.floor(Date.now() / 1000) - 90000);
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', start, '--session-id', 'sid-long',
+      '--outcome', 'success']).status).toBe(0);
+    expect(fix.readLedger()[0].duration_s).toBeGreaterThanOrEqual(90000);
+    expect(fix.readJsonl().at(-1).duration_s).toBeNull();
+  });
+
+  test('a failed skill-usage start does not invent a completion; provenance off writes no handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const blocked = join(fix.home, 'not-a-directory');
+    writeFileSync(blocked, '');
+    const blockedEnv = { ...fix.env, GSTACK_STATE_DIR: blocked, GSTACK_HOME: join(fix.home, '.gstack') };
+    const start = runHelper(blockedEnv, ['start', '--skill', 'extend:roadmap']);
+    expect(start.status).toBe(0);
+    expect(start.stdout).toMatch(/^GE_TELEMETRY: session=/);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=false\n');
+    const quiet = runHelper(blockedEnv, ['start', '--skill', 'extend:roadmap']);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('equal turn counts resolve to the later model and effort', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = '0c7f2e29-0000-4000-8000-000000000004';
+    const transcript = join(fix.home, '.claude/projects/-w', sid + '.jsonl');
+    const { row } = provenanceRun(fix, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid }, () => {
+      const now = Date.now() / 1000;
+      writeJsonl(transcript, [
+        claudeTurn(now, 'a', 'claude-opus-5', 'xhigh'),
+        claudeTurn(now + 0.01, 'b', 'claude-sonnet-5', 'high'),
+      ]);
+    });
+    expect(row).toMatchObject({ model: 'claude-sonnet-5', effort: 'high' });
+  });
+
+  test('a session id with a slash or past 128 characters is not used as a glob', () => {
+    const fix = makeTelemetryFixture('off');
+    const planted = join(fix.home, '.claude/projects/-w', 'secret-model.jsonl');
+    writeJsonl(planted, [claudeTurn(Date.now() / 1000, 'm', 'claude-opus-5', 'xhigh')]);
+    for (const sid of ['*', '../-w/secret-model', 'a'.repeat(129)]) {
+      const row = provenanceRun(fix, { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid }).row;
+      expect(row).toMatchObject({ agent: 'claude', model: null, effort: null });
+    }
+  }, 15_000);
+
+  test('a FIFO transcript does not block finish', () => {
+    const fix = makeTelemetryFixture('off');
+    const sid = 'fifo-session';
+    const transcript = join(fix.home, '.claude/projects/-w', sid + '.jsonl');
+    mkdirSync(dirname(transcript), { recursive: true });
+    expect(spawnSync('mkfifo', [transcript]).status).toBe(0);
+    const start = String(Math.floor(Date.now() / 1000) - 1);
+    const finish = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--start', start, '--session-id', 'sid-fifo',
+      '--outcome', 'success'], {
+      env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid }, encoding: 'utf8', timeout: 5_000,
+    });
+    expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
+    expect(fix.readLedger()[0]).toMatchObject({ agent: 'claude', model: null, session_id: 'sid-fifo' });
+  });
+
+  test('a FIFO at the provenance sink does not block finish', () => {
+    const fix = makeTelemetryFixture('off');
+    const dir = join(fix.home, '.gstack-extend/analytics');
+    mkdirSync(dir, { recursive: true });
+    expect(spawnSync('mkfifo', [join(dir, 'stage-runs.jsonl')]).status).toBe(0);
+    const finish = spawnSync(HELPER_BIN, ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-sinkfifo',
+      '--outcome', 'success'], { env: fix.env, encoding: 'utf8', timeout: 5_000 });
+    expect([finish.status, finish.stdout]).toEqual([0, '']);
+  });
+
+  test('Grok ignores a stale events log and reads summary.json when the fresh log has no turn', () => {
+    const fix = makeTelemetryFixture('off');
+    const work = join(fix.home, 'grok-stale');
+    mkdirSync(work);
+    const place = join(fix.home, '.grok/sessions', encodeURIComponent(realpathSync(work)));
+    const stale = provenanceRun(fix, { GROK_AGENT: '1' }, start => {
+      const log = join(place, 'old', 'events.jsonl');
+      writeJsonl(log, [{ ts: iso(start - 100), type: 'turn_started', model_id: 'grok-old' }]);
+      utimesSync(log, start - 50, start - 50);
+      writeFileSync(join(place, 'old', 'summary.json'), JSON.stringify({ current_model_id: 'grok-old', reasoning_effort: 'low' }));
+    }, [], work).row;
+    expect(stale).toMatchObject({ agent: 'grok', model: null, effort: null });
+    const fresh = provenanceRun(fix, { GROK_AGENT: '1' }, () => {
+      writeJsonl(join(place, 'new', 'events.jsonl'), [{ ts: iso(Date.now() / 1000), type: 'phase_changed' }]);
+      writeFileSync(join(place, 'new', 'summary.json'), JSON.stringify({ current_model_id: 'grok-4.7', reasoning_effort: 'high' }));
+    }, [], work).row;
+    expect(fresh).toMatchObject({ agent: 'grok', model: 'grok-4.7', effort: 'high' });
+    // GROK_SESSION_ID names one session even when a sibling log is also fresh.
+    const picked = provenanceRun(fix, { GROK_AGENT: '1', GROK_SESSION_ID: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, () => {
+      writeJsonl(join(place, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'events.jsonl'),
+        [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-4.7' }]);
+      writeFileSync(join(place, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'summary.json'),
+        JSON.stringify({ current_model_id: 'grok-4.7', reasoning_effort: 'high' }));
+      writeJsonl(join(place, 'sibling', 'events.jsonl'),
+        [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-other' }]);
+    }, [], work).row;
+    expect(picked).toMatchObject({ agent: 'grok', model: 'grok-4.7', effort: 'high' });
+  });
+
+  test('an unreadable provenance config records nothing', () => {
+    const fix = makeTelemetryFixture('off');
+    mkdirSync(join(fix.home, '.gstack-extend/config'), { recursive: true });
+    expect(runHelper(fix.env, ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-closed']).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(0);
+  });
 });
