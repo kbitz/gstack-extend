@@ -321,8 +321,21 @@ describe('doctor environment and arguments', () => {
     mkdirSync(join(repo, 'node_modules/.bin'), { recursive: true });
     writeFileSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), '#!/bin/sh\n' + PROTOCOL_LINE + 'exit 0\n');
     chmodSync(join(repo, 'node_modules/.bin/gstack-extend-telemetry'), 0o755);
-    const relative = spawnSync(CLI, ['doctor', 'telemetry', '--json'], { env: { ...bare.env, PATH: 'node_modules/.bin:' + bare.env.PATH }, cwd: repo, encoding: 'utf8', timeout: 10_000 });
+    const relative = run({ ...bare.env, PATH: 'node_modules/.bin:' + bare.env.PATH }, ['--json'], repo);
     expect(JSON.parse(relative.stdout)).toMatchObject({ telemetry_binary: null, stale_wrapper: null });
+  }, 30_000);
+
+  test('pointer files that are not plain short paths (FIFO, invalid UTF-8, oversized, multi-line) never hang or crash the doctor', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const pointer = (host: string, name: string) => { const dir = join(fix.home, host, name); mkdirSync(dir, { recursive: true }); return join(dir, '.extend-root'); };
+    expect(spawnSync('mkfifo', [pointer('.claude/skills', 'aaa')]).status).toBe(0);
+    writeFileSync(pointer('.claude/skills', 'bbb'), Buffer.from([0xff, 0xfe, 0x2f, 0x0a]));
+    writeFileSync(pointer('.claude/skills', 'ccc'), '/' + 'x'.repeat(10_000) + '\n');
+    // Like the skill block's `read -r`, only the first line counts; a second line is ignored, not appended.
+    writeFileSync(pointer('.codex/skills', 'ddd'), ROOT + '\nignored second line\n');
+    const r = run(fix.env);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ telemetry_binary: join(ROOT, 'bin/gstack-extend-telemetry'), diagnostic: null });
   }, 30_000);
 
   test('--days accepts 1..365000 ASCII digits; anything else is a one-line diagnostic; help prints usage', () => {

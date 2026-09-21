@@ -231,6 +231,36 @@ describe('setup --host flags', () => {
     expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
   });
 
+  for (const host of ['codex', 'opencode'] as const) {
+    test(`a stale ${host} generated copy is refreshed on reinstall and removed on uninstall`, () => {
+      const home = join(baseTmp, `generated-copy-${host}`);
+      mkdirSync(home, { recursive: true });
+      expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+      const skillMd = join(hostDir(home, host), 'implement', 'SKILL.md');
+      writeFileSync(skillMd, 'STALE GENERATED COPY\n');
+      const again = runSetup(['--host', host, '--quiet'], home);
+      expect(again.exitCode).toBe(0);
+      expect(again.stderr).not.toContain('not overwriting');
+      expect(readFileSync(skillMd, 'utf8')).not.toContain('STALE GENERATED COPY');
+      expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+      expect(existsSync(skillMd)).toBe(false);
+      expect(existsSync(join(hostDir(home, host), 'implement', '.extend-root'))).toBe(false);
+    });
+  }
+
+  test('--skills-dir uninstall (no host) never removes a regular-file SKILL.md, even beside a matching pointer', () => {
+    const home = join(baseTmp, 'skills-dir-uninstall');
+    const dir = join(home, 'legacy-skills');
+    const skillDir = join(dir, 'roadmap');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), 'CUSTOMIZED BY USER\n');
+    writeFileSync(join(skillDir, '.extend-root'), ROOT + '\n');
+    const r = runSetup(['--skills-dir', dir, '--uninstall', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(skillDir, 'SKILL.md'), 'utf8')).toBe('CUSTOMIZED BY USER\n');
+    expect(existsSync(join(skillDir, '.extend-root'))).toBe(true);
+  });
+
   test('setup never writes through a symlinked .extend-root', () => {
     const home = join(baseTmp, 'pointer-symlink');
     const dir = join(hostDir(home, 'claude'), 'roadmap');

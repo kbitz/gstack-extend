@@ -185,27 +185,29 @@ describe('shipped blocks and installation lookup', () => {
     expect(r.stderr).toContain('unresolvable or stale');
     expect(existsSync(ran)).toBe(false);
   });
-  test('a FIFO named like the wrapper, or as a pointer, is never read: the ladder neither hangs nor runs it', () => {
-    const fix = makeTelemetryFixture('community');
-    const bin = join(fix.home, 'fifo-bin');
-    mkdirSync(bin);
-    expect(spawnSync('mkfifo', [join(bin, 'gstack-extend-telemetry')]).status).toBe(0);
-    chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
-    // A blocking read would run into the spawn timeout and leave status null.
-    const viaPath = executeBlock({ ...fix.env, PATH: bin + ':' + fix.env.PATH }, 'start');
-    expect(viaPath.status).toBe(0);
-    expect(fix.readJsonl()).toHaveLength(1);
+  test('a FIFO named like the wrapper, or as a pointer, is never read: neither block hangs or runs it', () => {
+    for (const kind of ['start', 'finish'] as const) {
+      const rows = kind === 'start' ? 1 : 0;
+      const fix = makeTelemetryFixture('community');
+      const bin = join(fix.home, 'fifo-bin');
+      mkdirSync(bin);
+      expect(spawnSync('mkfifo', [join(bin, 'gstack-extend-telemetry')]).status).toBe(0);
+      chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
+      // A blocking read would run into the spawn timeout and leave status null.
+      expect(executeBlock({ ...fix.env, PATH: bin + ':' + fix.env.PATH }, kind).status).toBe(0);
+      expect(fix.readJsonl()).toHaveLength(rows);
 
-    // The same for a FIFO pointer, with no canonical install and a valid pointer behind it.
-    const pointers = makeTelemetryFixture('community');
-    rmSync(join(pointers.home, '.claude/skills/gstack-extend'), { recursive: true });
-    mkdirSync(join(pointers.home, '.claude/skills/aaa'), { recursive: true });
-    expect(spawnSync('mkfifo', [join(pointers.home, '.claude/skills/aaa/.extend-root')]).status).toBe(0);
-    mkdirSync(join(pointers.home, '.codex/skills/full-review'), { recursive: true });
-    writeFileSync(join(pointers.home, '.codex/skills/full-review/.extend-root'), ROOT + '\n');
-    expect(executeBlock(pointers.env, 'start').status).toBe(0);
-    expect(pointers.readJsonl()).toHaveLength(1);
-  });
+      // The same for a FIFO pointer, with no canonical install and a valid pointer behind it.
+      const pointers = makeTelemetryFixture('community');
+      rmSync(join(pointers.home, '.claude/skills/gstack-extend'), { recursive: true });
+      mkdirSync(join(pointers.home, '.claude/skills/aaa'), { recursive: true });
+      expect(spawnSync('mkfifo', [join(pointers.home, '.claude/skills/aaa/.extend-root')]).status).toBe(0);
+      mkdirSync(join(pointers.home, '.codex/skills/full-review'), { recursive: true });
+      writeFileSync(join(pointers.home, '.codex/skills/full-review/.extend-root'), ROOT + '\n');
+      expect(executeBlock(pointers.env, kind).status).toBe(0);
+      expect(pointers.readJsonl()).toHaveLength(rows);
+    }
+  }, 30_000);
   test('the protocol line the blocks grep for is the one the wrapper and helper carry', () => {
     const marker = skillBlock(join(ROOT, 'skills/full-review.md'), 'start').match(/grep -q '([^']+)'/)?.[1];
     expect(marker).toBe('telemetry-protocol: start-finish-v1');
@@ -868,11 +870,12 @@ describe('binary resolution and invocation forms', () => {
 
   test('a relative symlink chain across directories resolves each hop against its own link; a link loop is a quiet skip', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    const [a, b, elsewhere] = ['a', 'b', 'elsewhere'].map(name => { const dir = join(fix.home, name); mkdirSync(dir); return dir; });
-    // b/tool -> ../a/hop -> <relative path to the real script>. The second hop must resolve against a/ (the link's own
-    // directory), not b/ (the first link's) or the caller's cwd, or lib/telemetry.py is never found.
+    const [a, b, elsewhere] = ['a', 'b/x/y', 'elsewhere/z/w'].map(name => { const dir = join(fix.home, name); mkdirSync(dir, { recursive: true }); return dir; });
+    // b/x/y/tool -> ../../../a/hop -> <relative path to the real script>. The second hop must resolve against a/ (the
+    // link's own directory), not b/x/y (the first link's) or the caller's cwd; the directories sit at different depths
+    // (a shallowest) so resolving against the wrong one lands somewhere else and lib/telemetry.py is never found.
     symlinkSync(relative(realpathSync(a), HELPER_BIN), join(a, 'hop'));
-    symlinkSync('../a/hop', join(b, 'tool'));
+    symlinkSync('../../../a/hop', join(b, 'tool'));
     const r = spawnSync(join(b, 'tool'), ['start', '--skill', 'extend:roadmap'], { env: fix.env, cwd: elsewhere, encoding: 'utf8', timeout: 10_000 });
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/^GE_TELEMETRY: session=extend-/);

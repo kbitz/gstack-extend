@@ -8,7 +8,7 @@ import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REAL_GSTACK_ROOT, REAL_GSTACK_BIN, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
+import { REAL_GSTACK_BIN, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 
 afterAll(cleanupTelemetryFixtures);
 

@@ -9,7 +9,7 @@
  *   - recursive file-tree copy (matches bash `cp -R src/. dst/`)
  *
  * Cleanup convention: callers create one base tmpdir at describe()-time, pass
- * it to every setupRepo() call, and register `process.on('exit')` cleanup.
+ * it to every setupRepo() call, and register `afterAll` cleanup (`process.on('exit')` handlers never fire under `bun test`).
  * Per-test repos live as subdirs of the base tmpdir so they vanish together.
  */
 
@@ -120,7 +120,7 @@ export function copyDirSync(src: string, dst: string): void {
 
 /**
  * Allocate a fresh base tmpdir for a test file; caller is responsible for
- * registering exit-time cleanup (typically `process.on('exit', () => rmSync(...))`).
+ * registering cleanup (use `afterAll(() => rmSync(...))`: `process.on('exit')` handlers never fire under `bun test`).
  */
 export function makeBaseTmp(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

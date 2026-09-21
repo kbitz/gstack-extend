@@ -87,11 +87,12 @@ def wrapper_candidates():
                       Path.home() / ".config/opencode/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
-                # Regular files only (a FIFO or device would block), bounded like a path should be.
+                # Regular files only (a FIFO or device would block). Like the skill block's `IFS= read -r`, take
+                # the first line, bounded, without stripping anything but the newline.
                 if not pointer.is_file():
                     continue
                 with pointer.open(encoding="utf-8", errors="replace") as stream:
-                    root = stream.read(4096).strip()
+                    root = stream.readline(4096).rstrip("\n")
             except OSError:
                 continue
             yield str(Path(root) / "bin/gstack-extend-telemetry")

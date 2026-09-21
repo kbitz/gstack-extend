@@ -51,7 +51,10 @@ sessions. This repairs the old wrapper's missing --no-sweep defect. The flag nee
 gstack 1.80.0.0 or newer: an older logger ignores it and still finalizes other
 sessions' markers, so finish checks that the logger mentions the flag and, if it
 does not, writes nothing, keeps the handoff, and (in debug mode) says to upgrade
-gstack. Start never uses the logger, so it is unaffected.
+gstack. Start never invokes the logger, so an old logger does not affect it. Start
+rows are ordinary rows in gstack's shared sink, which gstack's own dashboards
+(`gstack-analytics`, `/retro`) do not know about, so they may count a start as a
+run; the old activation rows behaved the same way.
 
 Routing activation through the logger would put background network sync on the
 skill-start critical path, a cost identified in the earlier design. Direct
@@ -196,7 +199,9 @@ gstack logger without --no-sweep; both mean completions or starts are being
 skipped rather than misfiled.
 
 Every installed skill appears, including zero-row skills. Activity counts include
-legacy rows, but ratios exclude them. JSON also includes duplicate/retry/legacy
+legacy rows, but ratios exclude them. Completions the pre-rollout wrapper wrote
+carry the current row shape but no matching start, so they show as unpaired-finish
+until they age out of the window. JSON also includes duplicate/retry/legacy
 counts, window-crossing completions, and parse diagnostics.
 
 | Case | Treatment |

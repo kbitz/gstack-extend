@@ -180,9 +180,12 @@ rewrite_skill_body() {
 
 # A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode. Claude
 # installs are symlinks, so there the pointer must never make a user's detached, customized SKILL.md look generated.
+# Only those two hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
+# symlink installs) never removes or overwrites a regular file.
 generated_copy() {
   local target="$1" host="${2:-}"
-  [ "$host" != "claude" ] && [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
+  case "$host" in codex|opencode) ;; *) return 1 ;; esac
+  [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
 uninstall_from_dir() {
@@ -231,7 +234,7 @@ uninstall_from_dir() {
 
 preflight_dir() {
   local skills_dir="$1"
-  local host="${2:-}"
+  local host="$2"
   if ! is_safe_install_path "$skills_dir"; then
     echo "$USAGE" >&2
     exit 1
