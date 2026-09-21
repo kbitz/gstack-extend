@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.0.0] - 2026-09-21
+
+### Added
+
+- **Skill-finish telemetry now records the execution provenance behind each local run.** When enabled, `gstack-extend-telemetry finish` writes the harness, model, and effort to a separate local ledger at `~/.gstack-extend/analytics/stage-runs.jsonl`, so you can distinguish how a skill actually ran without sending that data through gstack telemetry.
+
+### Fixed
+
+- **Provenance recording refuses unsafe local paths.** FIFOs, symlinks, and extra hard links at its configuration, handoff, skill-usage, or ledger paths are skipped instead of being read or written, so a telemetry attempt cannot block a skill or write into an aliased file.
+- **Skill-usage retries survive a broken provenance configuration or handoff directory.** A best-effort provenance failure no longer prevents the existing skill-usage telemetry path from retrying.
+
 ## [0.27.2.0] - 2026-09-21
 
 ### Added
