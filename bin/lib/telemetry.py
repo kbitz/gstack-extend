@@ -56,8 +56,15 @@ def executable(path):
     return bool(path) and os.path.isabs(path) and os.path.isfile(path) and os.access(path, os.X_OK)
 
 
+def which(name):
+    # shutil.which stops at the first PATH hit, so a relative entry (node_modules/.bin) could hide a real
+    # absolute helper behind it. Search only the absolute entries.
+    entries = [entry for entry in os.environ.get("PATH", os.defpath).split(os.pathsep) if os.path.isabs(entry)]
+    return shutil.which(name, path=os.pathsep.join(entries)) if entries else None
+
+
 def resolve(name):
-    candidates = [shutil.which(name)]
+    candidates = [which(name)]
     if os.environ.get("GSTACK_DIR"):
         candidates.append(str(Path(os.environ["GSTACK_DIR"]) / "bin" / name))
     candidates.append(str(Path.home() / ".claude/skills/gstack/bin" / name))
@@ -89,9 +96,10 @@ def sink_path():
 
 
 def capture(args):
-    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            text=True, timeout=CONFIG_TIMEOUT_S)
-    return result.stdout.removesuffix("\n") if result.returncode == 0 else ""
+    # Bytes, not text=True: universal-newline decoding would turn a path containing \r into \n and make
+    # distinct repositories share a handoff key.
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
+    return os.fsdecode(result.stdout).removesuffix("\n") if result.returncode == 0 else ""
 
 
 def read_state(path):
@@ -189,7 +197,8 @@ def main(args):
     start = integer(values.get("--start"))
     duration = integer(values.get("--duration")) if legacy else None
     # A valid legacy duration already supplies the time half of the handoff.
-    if start is None and duration is None:
+    if start is None and duration is None and state.get("session_id") == sid:
+        # Only the handoff of the SAME session may supply the start; another session's would misdate this one.
         start = integer(state.get("start"))
     if not valid_session(sid) or (start is None and duration is None):
         debug("missing or malformed start/session state",
@@ -232,6 +241,10 @@ def main(args):
 
 
 if __name__ == "__main__":
+    if sys.version_info[:2] < (3, 9):
+        # str.removesuffix needs 3.9; without this every call would die in the boundary below with no explanation.
+        debug("python3 older than 3.9", "install python3 3.9 or newer")
+        sys.exit(0)
     try:
         main(sys.argv[1:])
     except Exception as error:

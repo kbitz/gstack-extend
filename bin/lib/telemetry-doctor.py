@@ -1,11 +1,11 @@
 """Read-only local fidelity report. Transcripts are advisory, never a denominator."""
 import json
 from pathlib import Path
-import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 
-from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep
+from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep, which
 
 SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-plan",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement")
@@ -39,7 +39,8 @@ def lines(path, issues):
                     if not isinstance(row, dict):
                         raise ValueError("not an object")
                     yield row
-                except ValueError:
+                except (ValueError, RecursionError):
+                    # RecursionError: one absurdly nested line must not discard the whole report.
                     issues["malformed_lines"] += 1
     except OSError:
         issues["unreadable_files"] += 1
@@ -53,6 +54,9 @@ def transcripts(since, now):
         return {skill: None for skill in SKILLS}, issues
     seen = set()
     for path in folder.rglob("*.jsonl"):
+        if not path.is_file():  # a FIFO or device named like a transcript would block the read
+            issues["unreadable_files"] += 1
+            continue
         for index, row in enumerate(lines(path, issues)):
             ts = timestamp(row.get("timestamp"))
             if ts is None or not since <= ts <= now:
@@ -81,7 +85,7 @@ def transcripts(since, now):
 
 def wrapper_candidates():
     # The ladder the skill blocks walk: PATH, the canonical install, then setup's .extend-root pointers.
-    yield shutil.which("gstack-extend-telemetry")
+    yield which("gstack-extend-telemetry")
     yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
     for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
                       Path.home() / ".config/opencode/skills"):
@@ -121,7 +125,9 @@ def report(days):
              for skill in SKILLS}
     starts, finishes = {}, {}
     sink = sink_path()
-    if sink.exists():
+    if sink.exists() and not sink.is_file():
+        issues["unreadable_files"] += 1  # a directory, FIFO, or device: counted, never opened
+    if sink.is_file():
         for row in lines(sink, issues):
             name = row.get("skill")
             if row.get("source") != "gstack-extend":
@@ -191,11 +197,21 @@ def report(days):
         stat["schedule_marker_work"] = (days == DECISION_WINDOW_DAYS and stat["pairing_percent"] is not None and
                                         stat["pairing_percent"] < PAIRING_TARGET_PERCENT and (stat["transcripts"] or 0) > 0)
     config = resolve("gstack-config")
-    tier = capture([config, "get", "telemetry"]).strip() if config else "unavailable"
+    tier = "unavailable"
+    if config:
+        try:
+            tier = capture([config, "get", "telemetry"]).strip()
+        except (OSError, subprocess.SubprocessError):
+            pass  # a config helper that cannot run leaves the tier unavailable; the pairing stats still print
     binary, stale = extend_binary()
     logger = resolve("gstack-telemetry-log")
     no_sweep = supports_no_sweep(logger) if logger else None
     warnings = []
+    if binary and not (Path(binary).resolve().parent / "lib/telemetry.py").is_file():
+        # The skill blocks accept any wrapper carrying the protocol line, so a copied lone script is selected and
+        # then silently does nothing; say so here.
+        warnings.append(f"gstack-extend-telemetry at {binary} has no lib/telemetry.py beside it (a copied script?), so "
+                        "every call is a silent no-op; re-run ./setup.")
     if stale:
         warnings.append(f"Stale gstack-extend-telemetry at {stale} predates the start/finish protocol and is skipped; "
                         "re-run ./setup from the current checkout.")
@@ -260,6 +276,9 @@ def main(args):
 
 
 if __name__ == "__main__":
+    if sys.version_info[:2] < (3, 9):
+        print("Telemetry report unavailable: python3 3.9 or newer is required. See docs/telemetry.md.")
+        sys.exit(0)
     try:
         main(sys.argv[1:])
     except Exception as error:

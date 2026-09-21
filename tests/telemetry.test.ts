@@ -533,6 +533,42 @@ function runAsync(env: Record<string, string>, args: string[], cwd?: string) {
 }
 
 describe('completion argument contract', () => {
+  test('an explicit --session-id never borrows the start time of a different session\'s handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const sid = fix.readJsonl()[0].session_id;
+    const other = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--session-id', 'extend-unrelated', '--outcome', 'success']);
+    expect(other.status).toBe(0);
+    expect(other.stderr).toContain('missing or malformed start/session state');
+    expect(fix.readJsonl()).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
+    // The handoff's own session still pairs from an explicit id alone.
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--session-id', sid, '--outcome', 'success']).status).toBe(0);
+    expect(fix.readJsonl().map(row => row.session_id)).toEqual([sid, sid]);
+  });
+
+  test('repositories whose paths differ only by CR versus LF keep separate handoffs', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    for (const name of ['repo\rx', 'repo\nx']) {
+      const cwd = join(fix.home, name);
+      mkdirSync(cwd);
+      expect(spawnSync('git', ['init', '-q', cwd], { env: fix.env }).status).toBe(0);
+      expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: fix.env, cwd, encoding: 'utf8' }).status).toBe(0);
+    }
+    expect(handoffs(fix)).toHaveLength(2);
+  });
+
+  test('python older than 3.9 is a quiet, diagnosable skip instead of an AttributeError in the boundary', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    // Pre-import everything the module needs, then fake the version so only the module's own guard sees 3.8.
+    const code = "import sys, runpy, hashlib, json, os, pathlib, re, shutil, subprocess, tempfile, time, uuid, datetime\n" +
+      "p = sys.argv[1]; sys.argv = [p] + sys.argv[2:]; sys.version_info = (3, 8, 0, 'final', 0); runpy.run_path(p, run_name='__main__')";
+    const run = (env: Record<string, string>) => spawnSync('python3', ['-c', code, join(ROOT, 'bin/lib/telemetry.py'), 'start', '--skill', 'extend:roadmap'], { env, encoding: 'utf8', timeout: 10_000 });
+    const quiet = run(fix.env);
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    expect(run({ ...fix.env, ...DEBUG }).stderr).toContain('older than 3.9');
+    expect(fix.readJsonl()).toHaveLength(0);
+  });
   test('a value that merely starts with -- is forwarded, not mistaken for a missing value', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
@@ -891,6 +927,32 @@ describe('binary resolution and invocation forms', () => {
     const debug = spawnSync('bash', ['-c', source, join(a, 'loop-a'), ...args], { env: { ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, encoding: 'utf8', timeout: 10_000 });
     expect(debug.status).toBe(0);
     expect(debug.stderr).toContain('symlink loop');
+    expect(fix.readJsonl()).toHaveLength(1);
+  }, 30_000);
+
+  test('a relative PATH entry does not hide an absolute helper behind it', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const canonical = join(fix.home, '.claude/skills/gstack/bin');
+    const pathBin = join(fix.home, 'path-bin');
+    mkdirSync(pathBin);
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      copyFileSync(join(canonical, name), join(pathBin, name));
+      chmodSync(join(pathBin, name), 0o755);
+    }
+    // Only the PATH copy remains, so the run works only if the search continues past the rejected relative hit.
+    rmSync(canonical, { recursive: true });
+    const repo = join(fix.home, 'repo');
+    const ran = join(fix.home, 'planted-ran');
+    mkdirSync(join(repo, 'relbin'), { recursive: true });
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      writeFileSync(join(repo, 'relbin', name), `#!/bin/sh\n: > "${ran}"\necho community\n`);
+      chmodSync(join(repo, 'relbin', name), 0o755);
+    }
+    const env = { ...fix.env, PATH: 'relbin:' + pathBin + ':' + fix.env.PATH };
+    const r = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env, cwd: repo, encoding: 'utf8', timeout: 10_000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^GE_TELEMETRY: session=/);
+    expect(existsSync(ran)).toBe(false);
     expect(fix.readJsonl()).toHaveLength(1);
   }, 30_000);
 

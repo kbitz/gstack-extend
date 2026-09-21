@@ -1,6 +1,6 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
@@ -402,6 +402,50 @@ describe('doctor degraded environments', () => {
       const result = run(env, args);
       expect([result.status, result.stdout]).toEqual([0, 'Telemetry report unavailable. Check python3 and re-run ./setup. See docs/telemetry.md.\n']);
     }
+  }, 30_000);
+
+  test('hostile inputs never hang or discard the report: FIFO sink or transcript, absurdly nested JSON, unrunnable config helper', () => {
+    const sinkFifo = makeTelemetryFixture('community', 'stub');
+    mkdirSync(join(sinkFifo.home, '.gstack/analytics'), { recursive: true });
+    expect(spawnSync('mkfifo', [join(sinkFifo.home, '.gstack/analytics/skill-usage.jsonl')]).status).toBe(0);
+    const a = JSON.parse(run(sinkFifo.env).stdout);
+    expect(a.issues.unreadable_files).toBe(1);
+    expect(a.skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+
+    const transcriptFifo = makeTelemetryFixture('community', 'stub');
+    mkdirSync(join(transcriptFifo.home, '.claude/projects/repo'), { recursive: true });
+    expect(spawnSync('mkfifo', [join(transcriptFifo.home, '.claude/projects/repo/hang.jsonl')]).status).toBe(0);
+    expect(JSON.parse(run(transcriptFifo.env).stdout).transcript_issues.unreadable_files).toBe(1);
+
+    // One deeply nested line must count as malformed, not take the pairing stats down with it.
+    const nested = makeTelemetryFixture('community', 'stub');
+    seed(nested.home, [row('roadmap', 'a'), row('roadmap', 'a', 'skill_run'), '['.repeat(3000) + ']'.repeat(3000)]);
+    const c = JSON.parse(run(nested.env).stdout);
+    expect(c.error).toBeUndefined();
+    expect(c.issues.malformed_lines).toBe(1);
+    expect(stat(c, 'roadmap')).toMatchObject({ paired: 1 });
+
+    // A config helper that cannot run leaves the tier unavailable; everything else still prints.
+    const broken = makeTelemetryFixture('community', 'stub');
+    const config = join(broken.home, '.claude/skills/gstack/bin/gstack-config');
+    writeFileSync(config, '#!/nonexistent/interpreter\n');
+    chmodSync(config, 0o755);
+    const d = JSON.parse(run(broken.env).stdout);
+    expect(d.tier).toBe('unavailable');
+    expect(d.skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);
+  }, 60_000);
+
+  test('warns when the selected wrapper has no lib/telemetry.py beside it', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const copy = join(fix.home, 'copied-bin');
+    mkdirSync(copy);
+    copyFileSync(join(ROOT, 'bin/gstack-extend-telemetry'), join(copy, 'gstack-extend-telemetry'));
+    chmodSync(join(copy, 'gstack-extend-telemetry'), 0o755);
+    const report = JSON.parse(run({ ...fix.env, PATH: copy + ':' + fix.env.PATH }).stdout);
+    expect(report.telemetry_binary).toBe(join(copy, 'gstack-extend-telemetry'));
+    expect(report.warnings.join('\n')).toContain('no lib/telemetry.py beside it');
+    // A healthy install carries no such warning.
+    expect(JSON.parse(run(fix.env).stdout).warnings).toEqual([]);
   }, 30_000);
 
   test('a PYTHONPATH pointing at planted modules never reaches the doctor', () => {
