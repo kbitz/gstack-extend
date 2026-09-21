@@ -2,7 +2,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync, utimesSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
@@ -1455,6 +1455,41 @@ describe('execution provenance', () => {
       '--outcome', 'success'], { env: fix.env, encoding: 'utf8', timeout: 5_000 });
     expect([finish.status, finish.stdout]).toEqual([0, '']);
   });
+
+  test('a FIFO config, a FIFO handoff, a FIFO skill-usage sink, and a hard-linked ledger do not block finish', () => {
+    const finishOf = (env: Record<string, string>) => spawnSync(HELPER_BIN,
+      ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-guard', '--outcome', 'success'],
+      { env, encoding: 'utf8', timeout: 5_000 });
+    const configFifo = makeTelemetryFixture('off');
+    const config = join(configFifo.home, '.gstack-extend/config');
+    mkdirSync(join(configFifo.home, '.gstack-extend'));
+    expect(spawnSync('mkfifo', [config]).status).toBe(0);
+    expect(finishOf(configFifo.env).status).toBe(0);
+
+    const handoff = makeTelemetryFixture('off');
+    expect(runHelper(handoff.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const slot = join(handoff.home, '.gstack-extend/telemetry', handoffs(handoff)[0]);
+    rmSync(slot);
+    expect(spawnSync('mkfifo', [slot]).status).toBe(0);
+    expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'],
+      { env: handoff.env, encoding: 'utf8', timeout: 5_000 }).status).toBe(0);
+
+    const usage = makeTelemetryFixture('community', 'stub');
+    const sink = join(usage.home, '.gstack/analytics/skill-usage.jsonl');
+    mkdirSync(join(usage.home, '.gstack/analytics'), { recursive: true });
+    expect(spawnSync('mkfifo', [sink]).status).toBe(0);
+    expect(finishOf(usage.env).status).toBe(0);
+
+    const linked = makeTelemetryFixture('off');
+    const uploaded = join(linked.home, '.gstack/analytics/skill-usage.jsonl');
+    const ledger = join(linked.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    mkdirSync(join(linked.home, '.gstack/analytics'), { recursive: true });
+    mkdirSync(join(linked.home, '.gstack-extend/analytics'), { recursive: true });
+    writeFileSync(uploaded, '');
+    linkSync(uploaded, ledger);
+    expect(finishOf(linked.env).status).toBe(0);
+    expect(readFileSync(uploaded, 'utf8')).toBe('');
+  }, 30_000);
 
   test('Grok ignores a stale events log and reads summary.json when the fresh log has no turn', () => {
     const fix = makeTelemetryFixture('off');

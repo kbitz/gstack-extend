@@ -99,7 +99,7 @@ Finish therefore also appends one row per run to
 $GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl (default
 `$HOME/.gstack-extend/analytics/stage-runs.jsonl`). **The file is local-only**:
 gstack-telemetry-sync never reads it, so branch and work item never leave the
-machine. It is created mode 0600, and a symlink at that path is not followed. The schema is shared with the separately specced pipeline orchestrator,
+machine. It is created mode 0600. A symlink, FIFO, or extra hard link at that path is not written. The provenance config and the finish handoff are read the same way, so none of those stand-ins can stall a skill. The schema is shared with the separately specced pipeline orchestrator,
 which is to write the same fields, in the same order, with its own `source`:
 
 | Field | Hand-run value |

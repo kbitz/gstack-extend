@@ -4,6 +4,7 @@ The guarded shell entrypoint runs this module as __main__. The doctor report
 imports capture, resolve, sink_path, and the wrapper checks so both CLIs share
 one sink ladder and one compatibility rule.
 """
+import errno
 import fcntl
 import hashlib
 import json
@@ -119,12 +120,28 @@ def capture(args):
     return os.fsdecode(result.stdout).removesuffix("\n") if result.returncode == 0 else ""
 
 
+def read_capped(path, limit):
+    # O_NONBLOCK plus a regular-file check: a FIFO or a symlink must not stall finish, and a hard
+    # link must not pour provenance into the file gstack uploads.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+            raise OSError(errno.EINVAL, "refusing a non-private or oversized file")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            return stream.read(limit)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def read_json(path):
     try:
-        data = json.loads(path.read_text())
-        return data if isinstance(data, dict) else {}
+        data = json.loads(read_capped(path, 1 << 20).decode("utf-8"))
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_state(path, state):
@@ -148,9 +165,10 @@ def append_row(path, row, name):
         # O_NONBLOCK: a FIFO with no reader would otherwise block in open(). A FIFO that does open
         # is still not a ledger; refuse it before writing.
         descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             os.close(descriptor)
-            debug(f"{name} is not a regular file at {path}", "remove the symlink or FIFO and retry")
+            debug(f"{name} is not a private regular file at {path}", "remove the symlink, FIFO, or extra link and retry")
             return False
         with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, ensure_ascii=True, separators=(",", ":")) + "\n")
@@ -163,12 +181,13 @@ def append_row(path, row, name):
 def provenance_enabled(state_root):
     # The bin/config key=value store (first match wins, like its awk reader). Rows are local-only, so on unless disabled.
     try:
-        lines = (state_root / "config").read_text(encoding="utf-8", errors="replace").splitlines()
+        raw = read_capped(state_root / "config", 1 << 20)
     except FileNotFoundError:
         return True
     except OSError:
-        # Missing means default on. Unreadable is not evidence the switch is still on.
+        # Missing means default on. A FIFO, symlink, or unreadable file is not evidence the switch is still on.
         return False
+    lines = raw.decode("utf-8", "replace").splitlines()
     for line in lines:
         key, separator, value = line.partition("=")
         if separator and key == "provenance":
@@ -209,8 +228,13 @@ def delegate(logger, skill, sid, duration, values):
     sink = sink_path()
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
-        with sink.open("a", encoding="utf-8"):
-            pass
+        # Same private-file rules as the ledger, without writing. A blocking open here holds the repo+skill lock.
+        descriptor = os.open(sink, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        info = os.fstat(descriptor)
+        os.close(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            debug(f"sink is not a private regular file at {sink}", "remove the symlink, FIFO, or extra link and retry")
+            return False
     except OSError as error:
         debug(f"sink unwritable at {sink}: {error.strerror}", "repair permissions on the telemetry state directory")
         return False
