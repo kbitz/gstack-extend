@@ -98,6 +98,12 @@ def paying_pool(history,stamp):
 
 
 def scan(store,context):
+    # Checkpoint read and commit must not interleave across processes.
+    with store.lock('quota-index'):
+        return _scan(store,context)
+
+
+def _scan(store,context):
     histories={}
     with store.transaction():
         for kind in ('claude','codex','cursor'):

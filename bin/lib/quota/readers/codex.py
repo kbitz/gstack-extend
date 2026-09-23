@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import time
 from ..common import QuotaError, fixture_dir, now, number, run_vendor, timestamp
-from ..identity import fresh_codex_token
+from ..identity import bind, fresh_codex_token, identity
 from .transport import response
 
 
@@ -69,8 +69,21 @@ def rollout(context, deadline):
     return best
 
 
+def current_account_rollout(store, context, recent):
+    """Keep a rollout only when it was written during the current account period."""
+    if not recent:
+        return None
+    stamp, _body = recent
+    evidence = identity(store, 'codex', context)
+    history = bind(store, 'codex', context, evidence)
+    period = (history.get('periods') or [None])[-1]
+    if period and period.get('pool')==evidence.get('pool') and period['start']<=stamp and (period.get('end') is None or stamp<period['end']):
+        return recent
+    return None
+
+
 def read(store, context, deadline):
-    recent = rollout(context, min(deadline,time.monotonic()+.4)) if not fixture_dir() else None
+    recent = current_account_rollout(store, context, rollout(context, min(deadline,time.monotonic()+.4))) if not fixture_dir() else None
     if recent:
         stamp, body = recent
         source = 'codex-rollout'
