@@ -71,6 +71,12 @@ export function matchGlob(file: string, pattern: string): boolean {
  * list small — every entry is hand-maintained drift surface.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
+  'tests/quota.test.ts': [
+    'bin/gstack-extend', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
+    'bin/lib/telemetry*.py', 'tests/quota_cases.py', 'tests/fixtures/quota/**',
+    'docs/quota-ledger.md',
+    'scripts/scrub-quota-fixture.ts',
+  ],
   'tests/audit-snapshots.test.ts': [
     'bin/roadmap-audit',
     'bin/roadmap-pack',

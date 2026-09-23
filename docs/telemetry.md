@@ -14,10 +14,9 @@ skill-usage rows.
   which observed runs started, finished, and reported an outcome, and how long
   their sessions lasted.
 - **stage-runs.jsonl** contains one local-only provenance row per finished run. It
-  answers which harness, model, and effort level ran each stage, in a schema shared
-  with the pipeline orchestrator.
-- **mm retro-fleet** counts Claude Code transcript tool-use records whose name is
-  Skill, gathered across machines by mind-meld. Instrumenting these skills does
+  answers which harness, model, and effort level ran each stage, in the documented schema any caller can join.
+- **Transcript-derived counts from other tools** count transcript tool-use records
+  whose name is Skill, potentially gathered across machines. Instrumenting these skills does
   not change those counts. Fleet totals cannot be the denominator of a local
   telemetry ratio.
 
@@ -99,13 +98,13 @@ Finish therefore also appends one row per run to
 $GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl (default
 `$HOME/.gstack-extend/analytics/stage-runs.jsonl`). **The file is local-only**:
 gstack-telemetry-sync never reads it, so branch and work item never leave the
-machine. It is created mode 0600. A symlink, FIFO, or extra hard link at that path is not written. The provenance config and the finish handoff are read the same way, so none of those stand-ins can stall a skill. The schema is shared with the separately specced pipeline orchestrator,
-which is to write the same fields, in the same order, with its own `source`:
+machine. It is created mode 0600. A symlink, FIFO, or extra hard link at that path is not written. The provenance config and the finish handoff are read the same way, so none of those stand-ins can stall a skill. The schema is gstack-extend’s documented contract. External callers can join it
+by session_id and use their own source labels:
 
 | Field | Hand-run value |
 |---|---|
 | stage | Skill name without `extend:`, e.g. `roadmap` |
-| agent | `claude`, `codex`, or `grok`: the harness, not the model |
+| agent | `claude`, `codex`, `cursor`, or `grok`: the harness, not the model |
 | model | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
 | effort | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
 | rung | Always 0: a hand-run skill has no fallback chain |
@@ -116,6 +115,8 @@ which is to write the same fields, in the same order, with its own `source`:
 | branch | Branch at finish; null outside git or when detached |
 | work_item | Null unless finish passes `--work-item` |
 | source | `gstack-extend` |
+| route | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
+| entrypoint_raw | The selected harness entrypoint marker, when present |
 
 **Nothing is guessed.** Agent, model, and effort come from the harness's own
 session log for the stage's window. Any value the wrapper cannot verify is null,
@@ -129,7 +130,7 @@ never a configured default:
   Claude can start a command before appending the response that issued it, so a
   window with no response yet is re-read for up to a second.
 - **Codex** exports CODEX_THREAD_ID. Its rollout
-  `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread>.jsonl` (CODEX_HOME honored)
+  `~/.codex/sessions/year/month/day/rollout-*-<thread>.jsonl` (CODEX_HOME honored)
   opens each turn with a `turn_context` carrying model and effort. The turn open
   when the stage began counts, since a skill usually runs inside one turn.
 - **Grok Build** sets GROK_AGENT=1 and GROK_SESSION_ID. The wrapper reads that
@@ -143,11 +144,13 @@ never a configured default:
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows
 only when it carried the stage. A nested harness (codex exec run from Claude Code)
-inherits the outer markers: the harness whose log holds the latest turn is the one
-running the command, and with no log to compare the agent is null. A failed
+inherits the outer markers: process ancestry chooses the nearest marked harness
+by argv[0] basename, then command name. Arguments never enter logs or output.
+When ancestry is unavailable, the latest comparable log wins; without evidence
+the agent remains null. A failed
 detection costs only the detected values, never the row.
 
-Explicit finish flags override detection: `--agent claude|codex|grok`, `--model`,
+Explicit finish flags override detection: `--agent claude|codex|cursor|grok`, `--model`,
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
 gstack's logger.
@@ -348,3 +351,12 @@ Diagnose skipped starts separately: markers cannot repair a command never run.
 This is a baseline plus a future decision rule, not a claim that this rollout
 already demonstrates 95% capture. This change ships no hook, gstack sweep patch,
 or marker/crash detection subsystem.
+
+## Cursor and quota
+
+Cursor is an execution harness (`agent: cursor`), independently of the vendor of
+the selected model. Local native SDK runs supply model and effort when readable;
+otherwise these are null. Cursor transcript activity supports nested-harness
+detection. Billed model and consumption belong to the separate
+[quota ledger](quota-ledger.md). Telemetry start and finish never start a quota
+sampler or write quota records. Only explicit quota commands read vendor usage.

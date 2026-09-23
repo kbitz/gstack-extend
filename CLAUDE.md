@@ -33,13 +33,13 @@ narrow. The three utility/workflow skills may carry only telemetry SHARED marker
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
-skill-protocols, audit-compliance, setup-hosts, setup-init-wire, and touchfiles
+skill-protocols, audit-compliance, setup-hosts, setup-init-wire, touchfiles, and quota
 suites explicitly: diff selection uses committed `base...HEAD`, not working edits.
 See [docs/telemetry.md](docs/telemetry.md) for the local sink, doctor report, and
-its separation from transcript-derived `mm retro-fleet` counts. `duration_s` is
+its separation from transcript-derived skill counts produced by other tools. `duration_s` is
 session wall-clock, not model/token spend; skill-usage values above 86400 seconds
 become null. Finish also appends a local-only provenance row (agent, model, effort
-read from the harness's own session log; schema shared with the orchestrator) to
+read from the harness's own session log; documented schema for external consumers) to
 `~/.gstack-extend/analytics/stage-runs.jsonl`, gated by the `provenance` config key,
 not gstack's tier.
 
@@ -86,3 +86,12 @@ Key routing rules:
 - Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;" _(beta)_
 - Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade
 - Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init _(beta)_
+
+## Consumer independence
+
+Describe consumers generically. No shipped code, docs, fixtures or release text names or requires personal tooling.
+
+Quota fixtures: pipe `gstack-extend quota probe KIND --raw` directly into
+`bun scripts/scrub-quota-fixture.ts` and save only the scrubber output. Never
+paste a raw response into an agent session. Wrap scrubbed endpoint bodies in
+`{status, delay_ms, error, body}` and run `bun test tests/quota.test.ts`.

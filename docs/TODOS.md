@@ -69,6 +69,65 @@
 - **Context:** Deferred at /ship on 2026-09-21. The concurrent same-skill handoff collision and the unbounded doctor transcript walk are accepted limits documented in `docs/telemetry.md`, so they are not repeated here.
 
 
+### [manual] Revalidate telemetry and execution-provenance contracts for an external consumer
+
+- **Description:** v0.27.2.0 and v0.28.0.0 shipped skill telemetry and local execution provenance. An external consumer needs to join its own orchestrated run records against these rows. Revalidate the contract against actual emitted data: whether rows appear for every run, whether the producer is identifiable per row, whether the live schema matches `docs/telemetry.md`, and which join keys are stable. Record observed coverage, gaps, and join evidence; this is verification work, not construction, and release claims are not acceptance evidence.
+- **Effort:** M (human: ~1d / CC: ~30min)
+- **Priority:** P0
+- **Depends on:** None
+- **Context:** External delivery dependency for an external consumer, an orchestration layer that spawns gstack pipeline stages across vendors. Unblocks 1 downstream track. Across these four P0 items, 7 of its 21 tracks can be built against fixtures but cannot close until the dependencies land; these entries schedule work previously recorded only in the consuming project.
+
+### [manual] Quota ledger, with Cursor capacity as an open question
+
+- **Description:** Nothing measures quota spent per stage per configuration; all current figures are wall-clock. Codex and Claude expose readable remaining-capacity endpoints. The Grok Build endpoint is unusable for this purpose because Grok now runs through Cursor (`cursor-agent` or natively in Conductor). Whether Cursor capacity is readable, and whether the CLI and Conductor routes share a pool, are open questions. Acceptance requires evidence of consumption attributable to stage and configuration, documented capacity-read results and pool relationships, and distinct model-vendor and capacity-pool fields: review independence follows the vendor, while capacity follows the pool, which may serve several vendors. A failed capacity read must degrade to a local consumption ledger and must never be interpreted as "no quota."
+- **Effort:** L (human: ~3d / CC: ~1.5h; provisional pending planning)
+- **Priority:** P0
+- **Depends on:** None
+- **Context:** Unblocks 4 downstream tracks for an external consumer, making this the most blocking of the four P0 dependencies. A separate planning session is underway; this entry records the problem and required acceptance evidence, leaving the design to that session.
+
+### [manual] Re-scope review independence for the Cursor harness
+
+- **Description:** The measured Grok Build review composition was Grok structured, Grok adversarial, and Astra as author, with no Claude participating; the planned fix targets that shape. Grok Build is no longer the harness, so that measurement is historical. Probe the Cursor route now in use and document the actual voice composition before deciding whether a fix is needed: the collapse may persist, differ, or have disappeared. Acceptance for any fix is that every review carries at least one voice from a vendor that neither wrote the code nor ran the primary review, provable from recorded execution provenance rather than assignment.
+- **Effort:** M (human: ~1d / CC: ~30min; fix scope depends on the probe)
+- **Priority:** P0
+- **Depends on:** None for the probe; any fix depends on its findings and a verified execution-provenance contract for acceptance
+- **Context:** Unblocks 3 downstream tracks for an external consumer. Probe the current route before scheduling the historical fix; coordinate final acceptance with the telemetry and execution-provenance revalidation above so downstream independence claims rest on observed vendor participation.
+
+### [manual] Shadow merge gate and complexity budget
+
+- **Description:** Add a standalone `bin/merge-gate` that answers "would merge: yes/no, and why" for any PR, including whether it exceeds a complexity budget covering net lines, new files, new dependencies, and new public API. It operates only in shadow mode. Acceptance requires versioned verdicts with raw reasons, preserved decision-time evidence so later backtests cannot use hindsight, and demonstrable inability to perform a merge. The consuming project builds and scores the backtest against its own defect set; that backtest is not a dependency of this work.
+- **Effort:** L (human: ~3d / CC: ~1.5h)
+- **Priority:** P0
+- **Depends on:** None; the consuming project's backtest is downstream
+- **Context:** Unblocks 1 downstream track for an external consumer by supplying shadow verdicts and the preserved evidence needed for its backtest. This can proceed independently of the quota and review-independence work; merge execution is outside its scope.
+
+### [plan-ceo-review:defer=true] Publish the quota ledger's transcript-parsing corpus for other token readers
+
+- **Description:** The quota ledger adds another parser for Claude JSONL, Codex rollouts and Cursor transcripts beside `bin/lib/telemetry.py`. Other tools that count tokens from the same logs will drift from it on subtle rules: the ledger keeps the highest-`output_tokens` entry per Claude message id because streaming partials carry low counts (121 of 418 split message ids differed in this repo's transcripts), counts Codex increments within counter epochs, and treats a forked rollout's line-2 `session_meta` as a copy. Publish the scrubbed fixtures with their expected token totals as a documented, versioned corpus that any reader can run to check parity. gstack-extend depends on no outside reader.
+- **Hypothesis (untested):** A corpus of expected totals, rather than a shared parser module, gives other tools parity with no dependency in either direction.
+- **Effort:** M (human: ~1d / CC: ~30min)
+- **Priority:** P3
+- **Depends on:** The quota ledger track (its fixtures become the corpus)
+- **Context:** Deferred at /autoplan on 2026-09-23 (CEO native voice, finding 10). Outside the quota track's blast radius. Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/quota-ledger-plan.md`.
+
+### [plan-eng-review:defer=true] Opt-in per-skill quota hook for hand-run skills
+
+- **Description:** The quota ledger track records quota only through explicit `gstack-extend quota` commands and the `quota sample` start/attach/finish lifecycle. Hand-run gstack-extend skills (roadmap, pair-review, implement, and the rest) record no quota. A follow-up would let telemetry start/finish spawn the quota sampler for the running skill, off by default and enabled per machine.
+- **Hypothesis (untested):** Calling `quota sample` from the hook keeps it small; the hard parts are the attribution rules already designed in the quota plan: the quota-only telemetry handoff, retried finishes, pause and resume across harness sessions, nested extend skills, skills run inside Claude subagents, and deduplication against a caller that also brackets the stage.
+- **Effort:** M (human: ~1-2d / CC: ~1h)
+- **Priority:** P3
+- **Depends on:** The quota ledger track
+- **Context:** Deferred at /autoplan on 2026-09-23 when the user chose caller-driven sampling first. The hook must ship opt-in: an upgrade alone must never start vendor API calls. The deferred rules are listed in the plan's Review record (`~/.gstack/projects/kbitz-gstack-extend/quota-ledger-plan.md`, requirement U-01).
+
+### [manual] Keep gstack-extend independent of the maintainer's personal tooling
+
+- **Description:** gstack-extend should stand on its own. Its features must be usable by any caller, and no shipped artifact (code, docs, tests, TODOS entries, CHANGELOG, commit or PR text) should require or name the maintainer's private orchestrator or personal cross-machine tooling. Several current references do: (1) `README.md:19` and `CLAUDE.md:39` contrast telemetry rows with a personal tool's transcript counts; (2) `docs/telemetry.md:17-22` explains that difference by name (the quota ledger track rewords this section); (3) the Context lines of the four P0 `[manual]` entries above (telemetry revalidation, quota ledger, review independence, shadow merge gate) name the consuming orchestrator; (4) `CLAUDE.md:42`, `docs/telemetry.md:17-18` and `docs/telemetry.md:102` describe the provenance schema as shared with a specific orchestrator, when it should read as gstack-extend's own documented contract that any consumer can join against. Reword each generically, for example "an external consumer" or "transcript-derived counts from other tools". Historical entries in `CHANGELOG.md`, `docs/PROGRESS.md` and `docs/roadmap-shipped.md` are release history; decide separately whether to leave or reword them. Add a short consumer-agnostic rule to `CLAUDE.md` so new work follows it.
+- **Hypothesis (untested):** A local-only check (names supplied by the maintainer's environment, never committed) can flag regressions before review without the repository naming the tools it guards against.
+- **Effort:** S (human: ~2h / CC: ~15min)
+- **Priority:** P2
+- **Depends on:** None
+- **Context:** Raised by the maintainer on 2026-09-23 during /autoplan of the quota ledger (plan requirements G-01 and G-02), after reviewers found these references.
+
 ## Completed
 
 ### Failed-ledger retry with non-semver NEW aborts the helper

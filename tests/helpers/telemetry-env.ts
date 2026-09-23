@@ -42,6 +42,12 @@ export type TelemetryFixture = {
 export function makeTelemetryFixture(tier: TelemetryTier, mode: FixtureMode = 'stub'): TelemetryFixture {
   const home = mkdtempSync(join(tmpdir(), 'gx-tel-'));
   fixtureHomes.push(home);
+  const processBin = join(home, 'process-fixtures');
+  mkdirSync(processBin);
+  // A fixture's simulated harness markers must not discover the test runner's
+  // real parent harness. Dedicated ancestry cases inject their process table.
+  writeFileSync(join(processBin, 'ps'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(processBin, 'ps'), 0o755);
   mkdirSync(join(home, '.gstack'), { recursive: true });
   writeFileSync(join(home, '.gstack', 'config.yaml'), `telemetry: ${tier}\n`);
   const upstream = join(home, '.claude/skills/gstack');
@@ -107,7 +113,7 @@ with (sink / 'skill-usage.jsonl').open('a') as f:
     existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
   return {
     home,
-    env: { HOME: home, PATH: '/usr/bin:/bin' },
+    env: { HOME: home, PATH: processBin + ':/usr/bin:/bin' },
     readJsonl: () => readRows(join(home, '.gstack/analytics/skill-usage.jsonl')),
     readLedger: () => readRows(join(home, '.gstack-extend/analytics/stage-runs.jsonl')),
     readStubArgs: () => {

@@ -16,8 +16,8 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 
 All nine skills support optional local telemetry. See [telemetry setup, author
 quickstart, and fidelity checks](docs/telemetry.md); inspect it with
-`gstack-extend doctor telemetry`. These rows are separate from `mm retro-fleet`'s
-transcript-derived skill counts. Independently of gstack's telemetry tier, each
+`gstack-extend doctor telemetry`. These rows are separate from transcript-derived
+skill counts produced by other tools. Independently of gstack's telemetry tier, each
 finished run also appends a local-only row recording which harness, model, and
 effort level ran it; this is on by default and never uploaded
 ([execution provenance](docs/telemetry.md#execution-provenance)).
@@ -540,3 +540,11 @@ Built by [@kbitz](https://github.com/kbitz) with assistance from [Claude Code](h
 ## License
 
 [MIT](LICENSE)
+
+## Quota ledger
+
+Check remaining capacity with `gstack-extend quota status --refresh`, bracket
+a caller’s stage with `quota sample`, and compare consumption with `quota runs`
+and `quota summary`. Only explicit quota commands sample vendors. Adapters are
+experimental; unknown reads never mean unlimited capacity. See the
+[quick start and JSON contract](docs/quota-ledger.md).

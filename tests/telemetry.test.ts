@@ -1130,7 +1130,7 @@ describe('writer and reader agree for every installed skill', () => {
 // ─── Execution provenance: the local-only stage-runs.jsonl row ───
 
 const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
-  'repo', 'branch', 'work_item', 'source'];
+  'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw'];
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const writeJsonl = (file: string, records: object[]) => {
   mkdirSync(dirname(file), { recursive: true });
@@ -1155,6 +1155,20 @@ function provenanceRun(fix: TelemetryFixture, env: Record<string, string> = {}, 
 }
 
 describe('execution provenance', () => {
+  test('Cursor is detected with leaked outer markers and quota enabled never starts a sampler', () => {
+    const fix = makeTelemetryFixture('off');
+    mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+    writeFileSync(join(fix.home, '.gstack-extend/config'), 'quota=on\n');
+    const env = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'cursor-session', CURSOR_INVOKED_AS: 'cursor-agent', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'outer-session' };
+    const { row } = provenanceRun(fix, env, start => {
+      writeJsonl(join(fix.home, '.claude/projects/project/outer-session.jsonl'), [claudeTurn(start - 100, 'old', 'claude-fixture', 'high')]);
+      writeJsonl(join(fix.home, '.cursor/projects/project/agent-transcripts/cursor-session/transcript.jsonl'), [{ role: 'assistant', message: 'fixture' }]);
+    });
+    expect(row).toMatchObject({ agent: 'cursor', route: 'cli', model: null, effort: null });
+    expect(existsSync(join(fix.home, '.gstack-extend/quota'))).toBe(false);
+    expect(fix.readJsonl()).toHaveLength(0);
+  });
+
   test("one row per finished run in exactly the shared schema, whatever gstack's tier", () => {
     const fix = makeTelemetryFixture('off');
     const repo = join(fix.home, 'widget');

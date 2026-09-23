@@ -1,0 +1,45 @@
+{
+  "as_of": "2026-09-23T12:00:00.000Z",
+  "coverage": {
+    "as_of": "2026-09-23T12:00:00.000Z",
+    "bytes_read": "MEASURED",
+    "complete": true,
+    "discovery_operations": "MEASURED",
+    "roots": [
+      {
+        "agent": "claude",
+        "complete": true,
+        "root": "$HOME/.claude/projects",
+        "why": []
+      },
+      {
+        "agent": "codex",
+        "complete": true,
+        "root": "$HOME/.codex/sessions",
+        "why": []
+      },
+      {
+        "agent": "cursor",
+        "complete": true,
+        "root": "$HOME/.cursor/projects",
+        "why": []
+      },
+      {
+        "agent": "cursor-sdk",
+        "complete": true,
+        "root": "$HOME/Library/Application Support/com.conductor.app/cursor-sdk-store",
+        "why": []
+      },
+      {
+        "agent": "grok",
+        "complete": true,
+        "root": "$HOME/.grok/sessions",
+        "why": []
+      }
+    ],
+    "uncovered_roots": [],
+    "unresolved_events": 0
+  },
+  "runs": [],
+  "v": 1
+}
