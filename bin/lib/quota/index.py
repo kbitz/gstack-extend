@@ -218,8 +218,11 @@ def scan(store,context):
                             state['cwd']=sdk_agents.get(fact['session'])
                             start_at=fact.get('start') or fact['ts']
                             end_at=fact.get('end') or fact['ts']
-                            state['first']=start_at if state.get('first') is None else min(state['first'],start_at)
-                            state['last']=end_at if state.get('last') is None else max(state['last'],end_at)
+                            bounds=state.setdefault('bounds',{})
+                            slot=bounds.setdefault(fact['session'],{})
+                            slot['first']=start_at if slot.get('first') is None else min(slot['first'],start_at)
+                            slot['last']=end_at if slot.get('last') is None else max(slot['last'],end_at)
+                            state['first'],state['last']=slot['first'],slot['last']
                         kind='cursor' if file['agent']=='cursor-sdk' else file['agent']
                         fact['pool']=paying_pool(histories.get(kind,{}),fact['ts'])
                         sourcekey=file['key']+(':'+str(fact['session']) if file['agent']=='cursor-sdk' else '')
@@ -230,7 +233,8 @@ def scan(store,context):
                         selected['first_seen_at']=(old or {}).get('first_seen_at',now())
                         changed=not old or old.get('tokens')!=selected.get('tokens')
                         selected['revised_at']=now() if changed else old.get('revised_at',now())
-                        facts[fact['id']]=(selected,sourcekey,dict(state))
+                        snapshot={k:v for k,v in state.items() if k!='bounds'}
+                        facts[fact['id']]=(selected,sourcekey,snapshot)
             file.update(offset=offset,line=line,parser=state,size=info.st_size,checked_at=now(),
                         complete=offset>=info.st_size and info.st_size<=FILE_CAP and not file.get('malformed') and not state.get('partial'))
             reason='log_too_large' if info.st_size>FILE_CAP else 'malformed_record' if file.get('malformed') else 'scan_budget' if offset<info.st_size else state.get('partial')
@@ -246,6 +250,13 @@ def scan(store,context):
                     store.put('source',sourcekey,source)
                 if file['agent']!='cursor-sdk':
                     store.put('source',file['key'],dict(state,key=file['key'],agent=file['agent'],root=file['root'],complete=file['complete'],reason=reason))
+                else:
+                    prefix=file['key']+':'
+                    for existing in store.all('source'):
+                        if str(existing.get('key','')).startswith(prefix):
+                            existing['complete']=file['complete']
+                            existing['reason']=reason
+                            store.put('source',existing['key'],existing)
                 store.put('file',file['key'],file)
         except OSError:
             file.update(complete=False,reason='source_unreadable',checked_at=now())

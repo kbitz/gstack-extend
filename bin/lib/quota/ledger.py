@@ -210,7 +210,9 @@ def run_rows(store,state,coverage):
         changed=original.get('pool')!=current.get('pool')
         auth=state['metadata'].get('auth') or 'unknown'
         if auth=='api' and kind=='own':
-            pool_kind,pool='api','pending'
+            # Keep measured tokens on an API row. Subscription intervals exclude
+            # these events by source ownership, so the row must not look pending.
+            pool_kind,pool='api','api'
         elif changed:
             pool='pending'
             why.append('identity_changed')
