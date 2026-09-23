@@ -216,8 +216,10 @@ def scan(store,context):
                     if fact:
                         if file['agent']=='cursor-sdk':
                             state['cwd']=sdk_agents.get(fact['session'])
-                            state['first']=fact.get('start') or fact['ts']
-                            state['last']=fact.get('end') or fact['ts']
+                            start_at=fact.get('start') or fact['ts']
+                            end_at=fact.get('end') or fact['ts']
+                            state['first']=start_at if state.get('first') is None else min(state['first'],start_at)
+                            state['last']=end_at if state.get('last') is None else max(state['last'],end_at)
                         kind='cursor' if file['agent']=='cursor-sdk' else file['agent']
                         fact['pool']=paying_pool(histories.get(kind,{}),fact['ts'])
                         sourcekey=file['key']+(':'+str(fact['session']) if file['agent']=='cursor-sdk' else '')

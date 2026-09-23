@@ -91,12 +91,17 @@ def read(store, context, deadline):
                 store.put('cursor_identity',access[1],cached)
     except QuotaError as error:
         event_error=error.code
+        if error.code=='http_429':
+            with store.transaction():
+                store.put('backoff',access[1],{'retry_at':error.retry_at or now()+300})
     label='Cursor subscription'
     try:
         plan=response('cursor-plan',DASHBOARD+'GetPlanInfo',deadline,access[0],{})
         if isinstance(plan,dict) and isinstance(plan.get('planName'),str) and len(plan['planName'])<80:
             label='Cursor '+plan['planName']
-    except QuotaError:
-        pass  # Capacity remains usable when an optional display label is absent.
+    except QuotaError as error:
+        if error.code=='http_429':
+            with store.transaction():
+                store.put('backoff',access[1],{'retry_at':error.retry_at or now()+300})
     return dict(source='cursor-api2',meters=meters,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
                 pool=cached.get('pool','pending'),plan_label=label,event_reason=event_error),body

@@ -47,7 +47,17 @@ def interval(store,before,after,coverage):
     left,right=before['observed_at'],after['observed_at'] if after else now()
     pool=before['pool']
     all_events=store.usage_between(left,right)
-    facts=[e for e in all_events if e.get('pool')==pool]
+    from .ledger import source_relationship
+    states=store.all('state')
+    sources=store.all('source')
+    api_ids=set()
+    for state in states:
+        if state.get('metadata',{}).get('auth')!='api':
+            continue
+        start,end=state['started_at'],state.get('ended_at') or right
+        owned=[s['key'] for s in sources if (relation:=source_relationship(s,state,states,sources)) and relation[0]=='own']
+        api_ids.update(e['id'] for e in all_events if start<=e.get('ts',start)<end and any(key in e.get('source_keys',[]) for key in owned))
+    facts=[e for e in all_events if e.get('pool')==pool and e['id'] not in api_ids]
     unresolved=[e for e in all_events if e.get('pool') in ('unresolved','pending') and e['agent']==before['pool_kind']]
     complete=coverage['complete'] and not unresolved and pool!='pending'
     previous={m['meter']:m for m in before['meters']}

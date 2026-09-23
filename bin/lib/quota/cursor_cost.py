@@ -115,6 +115,15 @@ def decorate(store,rows):
             if pools:
                 continue
         expanded.append(row)
+    covered={r['session_id'] for r in expanded if r.get('pool_kind')=='cursor'}
+    templates={}
+    for row in rows:
+        templates.setdefault(row['session_id'],row)
+    for session_id,template in templates.items():
+        if session_id in covered:
+            continue
+        for pool in sorted({x['pool'] for x in links if x['session_id']==session_id and x['pool']!='pending'}):
+            expanded.append(dict(template,pool_kind='cursor',pool=pool,sources=[],consumption=None,why=[],settlement='provisional'))
     for row in expanded:
         if row['pool_kind']!='cursor':
             continue
@@ -162,7 +171,14 @@ def settle(store,context,pool=None,since=None):
     evidence=identity(store,'cursor',context)
     if pool and ':' in pool and evidence['pool']!=pool:
         return dict(v=1,updated=0,complete=False,reason='identity_unknown')
-    states=[s for s in store.all('state') if any(a['agent']=='cursor' for a in s['attachments'])]
+    states=store.all('state')
+    sources=store.all('source')
+    from .ledger import source_relationship
+    def cursor_linked(state):
+        if any(a['agent']=='cursor' for a in state['attachments']):
+            return True
+        return any(s.get('agent')=='cursor' and source_relationship(s,state,states,sources) for s in sources)
+    states=[s for s in states if cursor_linked(s)]
     if since is not None:
         states=[s for s in states if (s.get('ended_at') or now())>=since]
     left=min((s['started_at'] for s in states),default=now())-6*3600

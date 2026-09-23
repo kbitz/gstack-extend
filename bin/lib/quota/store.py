@@ -150,7 +150,7 @@ class Store:
             present={meter['meter'] for meter in value['meters']}
             if value['status']=='ok':
                 for entry in self.all('meter'):
-                    if entry['pool']==pool and entry['meter']['meter'] not in present and entry['observed_at']<=value['observed_at']:
+                    if entry['pool']==pool and entry.get('pool_kind')==value['pool_kind'] and entry['meter']['meter'] not in present and entry['observed_at']<=value['observed_at']:
                         entry['absent']=True
                         self.put('meter',entry['key'],entry)
             for meter in value['meters']:

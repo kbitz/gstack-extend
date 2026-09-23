@@ -127,13 +127,25 @@ def status(store,args,context,sampled):
     return dict(v=1,pools=pools,as_of=now(),coverage=coverage)
 
 
+def discovery_key(context):
+    return tuple(context.get(name) for name in ('claude_config_dir','codex_home','cursor_projects_dir','conductor_store','grok_home','cwd','repo_root'))
+
+
+def coverage_for(store,context,cache):
+    key=discovery_key(context)
+    if key not in cache:
+        cache[key]=scan(store,context)
+    return cache[key]
+
+
 def get_runs(store,args,context):
-    coverage=scan(store,context)
+    cache={}
+    coverage=coverage_for(store,context,cache)
     if args.active:
         rows=[]
         for state in store.all('state'):
             if state['ended_at'] is None and (not args.session_id or state['session_id']==args.session_id):
-                own_coverage=coverage if state['metadata']['context']==context else scan(store,state['metadata']['context'])
+                own_coverage=coverage_for(store,state['metadata']['context'],cache)
                 rows.extend(run_rows(store,state,own_coverage))
     else:
         stored=store.all('run')
@@ -141,7 +153,7 @@ def get_runs(store,args,context):
         for state in store.all('state'):
             if state['ended_at'] is None or (args.session_id and state['session_id']!=args.session_id):
                 continue
-            own_coverage=coverage if state['metadata']['context']==context else scan(store,state['metadata']['context'])
+            own_coverage=coverage_for(store,state['metadata']['context'],cache)
             current=run_rows(store,state,own_coverage)
             for row in current:
                 previous=next((r for r in stored if (r['session_id'],r['pool_kind'],r['pool'])==(row['session_id'],row['pool_kind'],row['pool'])),{})
