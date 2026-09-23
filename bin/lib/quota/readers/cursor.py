@@ -95,6 +95,9 @@ def read(store, context, deadline):
             with store.transaction():
                 store.put('backoff',access[1],{'retry_at':error.retry_at or now()+300})
     label='Cursor subscription'
+    if event_error=='http_429':
+        return dict(source='cursor-api2',meters=meters,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
+                    pool=cached.get('pool','pending'),plan_label=label,event_reason=event_error),body
     try:
         plan=response('cursor-plan',DASHBOARD+'GetPlanInfo',deadline,access[0],{})
         if isinstance(plan,dict) and isinstance(plan.get('planName'),str) and len(plan['planName'])<80:

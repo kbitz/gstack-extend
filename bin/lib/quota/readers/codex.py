@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import time
 from ..common import QuotaError, fixture_dir, now, number, run_vendor, timestamp
-from ..identity import bind, fresh_codex_token, identity
+from ..identity import fresh_codex_token, identity
 from .transport import response
 
 
@@ -75,7 +75,10 @@ def current_account_rollout(store, context, recent):
         return None
     stamp, _body = recent
     evidence = identity(store, 'codex', context)
-    history = bind(store, 'codex', context, evidence)
+    # Read the period sample_one already committed. Do not write here: put()
+    # would leave a transaction open for the caller's sample commit.
+    key = store.digest(['codex', context.get('codex_home')], 'binding')
+    history = store.get('bindings', key, {'periods':[]})
     period = (history.get('periods') or [None])[-1]
     if period and period.get('pool')==evidence.get('pool') and period['start']<=stamp and (period.get('end') is None or stamp<period['end']):
         return recent

@@ -84,7 +84,7 @@ def sample_one(root,kind,context,trigger,session_id=None,force=False,deadline=No
                 if context.get('sandboxed') and kind!='codex':
                     raise QuotaError('sandboxed')
                 if context.get('sandboxed') and kind=='codex':
-                    recent_rollout=codex.rollout(context,deadline)
+                    recent_rollout=codex.current_account_rollout(store,context,codex.rollout(context,deadline))
                     if not recent_rollout:
                         raise QuotaError('sandboxed')
                     meters,partial=codex.parse(recent_rollout[1])
