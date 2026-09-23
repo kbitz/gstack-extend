@@ -84,7 +84,9 @@ def relationships(store,states=None):
                 why.append('shared_turn')
             expired=state.get('ended_at') is not None and now()-state['ended_at']>=48*3600
             prior_final=any(r['session_id']==state['session_id'] and r.get('settlement')=='final' for r in runs)
-            final=state.get('ended_at') is not None and end is not None and now()-state['ended_at']>=300 and (fact['stable_reads']>=2 or (fact['revision']>1 and (expired or prior_final)))
+            grace_ends=(state.get('ended_at') or 0)+300
+            observed_after_grace=fact.get('last_read_at',0)>=grace_ends
+            final=state.get('ended_at') is not None and end is not None and observed_after_grace and (fact['stable_reads']>=2 or (fact['revision']>1 and (expired or prior_final)))
             settlement='final' if final else 'expired' if expired else 'provisional'
             if settlement!='final':
                 why.append('pending_settlement' if settlement=='provisional' else 'expired')

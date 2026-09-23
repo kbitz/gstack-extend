@@ -95,6 +95,9 @@ def lifecycle(store,args,context):
             attach_identity(store,state,args)
             if not state['metadata'].get('agent') and getattr(args,'agent',None):
                 state['metadata']['agent']=args.agent
+            if getattr(args,'auth',None):
+                state['metadata']['auth']=args.auth
+                state['metadata']['context']['auth']=args.auth
             with store.transaction():
                 state['lease_at']=now()
                 store.put('state',sid,state)

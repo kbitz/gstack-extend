@@ -113,9 +113,13 @@ def _scan(store,context):
     read_bytes,malformed=0,0
     active_roots={r['root'] for r in reports}
     files=sorted((f for f in store.all('file') if f['root'] in active_roots),key=lambda f:f.get('checked_at',0))
+    visited=set()
+    stopped_early=False
     for file in files:
         if time.monotonic()>=deadline or read_bytes>=BYTE_BUDGET:
+            stopped_early=True
             break
+        visited.add(file['key'])
         path=Path(file['path'])
         try:
             fd=os.open(path,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
@@ -269,6 +273,11 @@ def _scan(store,context):
             with store.transaction():
                 store.put('file',file['key'],file)
     indexed=[f for f in store.all('file') if f['root'] in active_roots]
+    if stopped_early:
+        for report in reports:
+            if any(f['root']==report['root'] and f['key'] not in visited for f in files):
+                report['complete']=False
+                report['why']=sorted(set(report['why']+['scan_budget']))
     for report in reports:
         bad=[f for f in indexed if f['root']==report['root'] and not f.get('complete')]
         if bad:
