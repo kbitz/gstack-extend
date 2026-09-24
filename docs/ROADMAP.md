@@ -49,7 +49,7 @@ _2 tasks . ~90 LOC . low risk . [7 skill preambles + 4 test files]_
 _touches: skills/pair-review.md, skills/full-review.md, skills/review-apparatus.md, skills/test-plan.md, skills/roadmap.md, skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, tests/skill-protocols.test.ts, tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts_
 _out: 17A, 17C, 17D, 17E, 17F, 18A_
 _produces: upgrade preambles that resolve only an absolute, verified extend root; test temp dirs actually cleaned under bun test_
-- **Harden the upgrade preambles** -- the seven preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. Resolve the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,review-apparatus,test-plan,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~60 lines._ (S)
+- **Harden the upgrade preambles** -- six preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. `gstack-extend-init` is the seventh preamble: it uses the same relative `.extend-root` probe, then execs `bin/gstack-extend` rather than `update-check`. Resolve all seven the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,review-apparatus,test-plan,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~60 lines._ (S)
 - **`afterAll` cleanup** -- `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did). _Source: TODOS `[ship]` telemetry coverage follow-ups (5)._ _tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, ~30 lines._ (S)
 
 ##### Track 16E: 12A init-surface polish + test coverage
@@ -126,7 +126,7 @@ _out: 19B_
 _read-first: 16D_
 _produces: test-plan.md with only unique prose and a frontmatter description ≤ 1024 chars; the cap is locked in audit-compliance_
 - **Duplication-only trim per scope discipline** -- same rules as 17C. _skills/test-plan.md, ~80 lines (del)._ (S)
-- **Frontmatter description ≤ 1024** -- `skills/test-plan.md`'s `description:` measures 1025 chars at a646c94; the other eight skills are under the cap. Shorten it and add the cap to audit-compliance describe (A) so no skill regresses. _Source: docs/roadmap-future.md "Frontmatter description ≤ 1024 for Codex" (promoted 2026-09-24)._ _skills/test-plan.md, tests/audit-compliance.test.ts, ~20 lines._ (S)
+- **Frontmatter description ≤ 1024** -- `skills/test-plan.md`'s `description:` measures 1018 chars at a646c94 via `descriptionLen` in `tests/setup-hosts.test.ts`, which already enforces ≤1024. No shorten is required. Add the same cap to audit-compliance describe (A) so no skill regresses. _Source: docs/roadmap-future.md "Frontmatter description ≤ 1024 for Codex" (promoted 2026-09-24)._ _skills/test-plan.md, tests/audit-compliance.test.ts, ~20 lines._ (S)
 
 ### Group 18: Layout Scaffolding Preflight
 
