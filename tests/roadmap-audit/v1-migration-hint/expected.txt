@@ -101,8 +101,6 @@ BY_GROUP:
 STATUS: pass
 FINDINGS:
 - (none)
-SIZE_LABEL_MISMATCH:
-- 1A "Keep a legacy heading": effort=(S) implies ~50 LOC, declared ~5 lines (>3x divergence)
 MAX_TASKS_PER_TRACK: 5
 MAX_SESSION_WEIGHT: 4
 MAX_LOC_PER_TRACK: 300
