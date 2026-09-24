@@ -1,6 +1,6 @@
 # gstack-extend
 
-Extension skills for [gstack](https://github.com/anthropics/gstack).
+Extension skills for [gstack](https://github.com/garrytan/gstack).
 
 | Skill | What it does | Works with | Status |
 |-------|-------------|------------|--------|
@@ -11,7 +11,7 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 | `/review-and-prep` | Local review/tests → draft PR → optional Greptile → mark ready, without versioning | GitHub projects with gstack `/review` | New |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
-| `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | New |
+| `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | Stable |
 | `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | Beta |
 
 All nine skills support optional local telemetry. See [telemetry setup, author
@@ -20,11 +20,12 @@ quickstart, and fidelity checks](docs/telemetry.md); inspect it with
 skill counts produced by other tools. Independently of gstack's telemetry tier, each
 finished run also appends a local-only row recording which harness, model, and
 effort level ran it; this is on by default and never uploaded
-([execution provenance](docs/telemetry.md#execution-provenance)).
+([execution provenance](docs/telemetry.md#execution-provenance)). Turn it off
+with `bin/config set provenance false`.
 
 ## Installation
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
 
 Clone and run setup:
 
@@ -99,7 +100,7 @@ a VERSION bump (`/ship` writes it).
 
 - **Inbox + live plan + two tails** — TODOS.md is the inbox, ROADMAP.md is the live plan. `docs/roadmap-shipped.md` is frozen history. `docs/roadmap-future.md` is deferred work (keeps review context). ROADMAP always points at both.
 - **Regenerate, don't patch** — every substantive run rewrites `## In Progress` / `## Current Plan`. Future membership is re-derived; staying-deferred text is kept. Only shipped IDs are frozen.
-- **Deterministic audit** — automated checks (vocabulary, structure, version-tag staleness, versioning, taxonomy, doc location, archive candidates, dependencies, unprocessed, task list, structural fitness, doc inventory, scattered TODOs, session-weight size caps, collisions, packing, style lint, group deps, in-flight groups, origin stats, TODO format)
+- **Deterministic audit** — automated checks (vocabulary, structure, state sections, phases, version-tag staleness, versioning, taxonomy, doc location, doc type mismatch, archive candidates, dependencies, unprocessed, task list, structural fitness, doc inventory, scattered TODOs, session-weight size caps, collisions, packing, parallelism budget, future, style lint, group deps, in-flight groups, origin stats, TODO format)
 - **Session-weight size + collision + packing** — Tracks have explicit `_touches:_` file sets. Size is session weight (S=1, M=2, L=4, XL=5), not line counts. Weight 5 warns (`WEIGHT_WARN`); ≥6 fails. Raise `roadmap_max_session_weight` if this repo ships weight-5 as one PR. Tag deletes `~N lines (del)` — title verbs are not enough. The packer (`bin/roadmap-pack`) is the scheduler: it fills bins from track `_blocked-by:` and `_touches:` only. `PACKING` fails when written Groups disagree. Two tracks that share a file with no path in the closed `_blocked-by` / bin / Group DAG get a STYLE_LINT `unordered collision` warn. Collision-split bins are serial. Shared docs are not collisions. `CLAUDE.md` is one-per-Group. Edit `docs/shared-infra.txt` to tune always-shared files. Design: `docs/designs/roadmap-v3-packing.md`.
 - **Group-level deps (DAG)** — Group `_Depends on:` is packer **output**, not input. Paste the packer's `DEPENDS` lines after you name the bins; writing them does not change the schedule. Unspecified means none (ready). First regen after upgrade: `bin/roadmap-pack --materialize` and write any implicit previous-Group edges you still want. The audit parses annotations, detects cycles + forward refs, warns on drifted name anchors (`STALE_DEPS`), and always emits a topologically-ordered adjacency list.
 - **Ship gate** — `bin/roadmap-touches drift --track <id>` hard-fails undeclared committed/staged/unstaged/untracked paths. `report-cross-group` prints soft overlaps across Groups. Created files are `path (new)`.
@@ -116,6 +117,7 @@ bin/roadmap-pack --materialize           # old implicit previous-Group edges
 bin/roadmap-touches drift --track 15A    # fail undeclared paths
 bin/roadmap-touches report-cross-group   # soft overlaps across Groups
 bin/roadmap-renumber --map 101A=91A,101=91   # atomic Current Plan ID rewrite
+bin/roadmap-route '[full-review:edge-case]'  # KEEP / KILL / PROMPT default for one source tag
 # BINS: EMPTY = no unshipped Tracks (read the hint). BINS: CYCLE = _blocked-by loop.
 ```
 
@@ -481,7 +483,8 @@ gstack-extend init ./headless --no-prompt         # headless mode for scripts/CI
 The CLI is wired into `~/.local/bin/gstack-extend` by `setup` (PATH-permitting); invoke directly via `~/.claude/skills/gstack-extend/bin/gstack-extend init ...` if `~/.local/bin` isn't in your PATH. The `/gstack-extend-init` slash skill wraps the same CLI with conversational UX for Claude Code sessions.
 
 `doctor telemetry [--days N] [--json]` reports local skill telemetry fidelity and
-always exits zero. Project drift checks remain future work.
+always exits zero. Project drift checks remain future work. `quota` and
+`doctor quota` are covered under [Quota ledger](#quota-ledger).
 Reserved subcommands (stubs today): `list`, `status`, `migrate`.
 
 ---
@@ -553,6 +556,7 @@ a caller's stage with `quota sample`, and compare consumption with `quota runs`
 and `quota summary`. `quota intervals` shows window changes, `quota settle`
 refreshes Cursor charges, and `quota probe KIND --raw` prints one adapter
 response for the fixture scrubber. `gstack-extend doctor quota` reports whether
-the store and adapters are usable. Only explicit quota commands sample vendors.
+the store and adapters are usable. Only explicit quota commands sample vendors;
+`bin/config set quota off` disables them all.
 Adapters are experimental; unknown reads never mean unlimited capacity. See the
 [quick start and JSON contract](docs/quota-ledger.md).
