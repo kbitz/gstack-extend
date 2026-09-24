@@ -53,7 +53,12 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - Track 12A — _shipped (v0.21.0.0): gstack-extend init <project> + skill — full bootstrap (starter ROADMAP/CLAUDE/CHANGELOG/TODOS/PROGRESS/VERSION, docs/ layout, project registry, post-render audit gate), setup CLI symlink + self-registration (#83)_
 
 #### Group 13: Telemetry Parity with Gstack ✓ Shipped (v0.22.0.0)
-- Track 13A — _shipped (v0.22.0.0): bin/gstack-extend-telemetry wrapper + canonical preamble/epilogue blocks in 5 skill files. Every extend skill activation now writes start + end lines to ~/.gstack/analytics/skill-usage.jsonl with extend:<skill> name and source:gstack-extend field; mind-meld retro / /retro pick up extend activity with zero downstream changes. Wrapper falls back silently when gstack isn't installed. Drift-lock test extracts canonical blocks from skills/full-review.md and asserts each other skill embeds the templated variant. Opportunistic contract test catches future gstack flag renames._
+- Track 13A — _shipped (v0.22.0.0): bin/gstack-extend-telemetry wrapper + canonical preamble/epilogue blocks in 5 skill files. Every extend skill activation now writes start + end lines to ~/.gstack/analytics/skill-usage.jsonl with extend:<skill> name and source:gstack-extend field; cross-machine retro tooling and /retro pick up extend activity with zero downstream changes. Wrapper falls back silently when gstack isn't installed. Drift-lock test extracts canonical blocks from skills/full-review.md and asserts each other skill embeds the templated variant. Opportunistic contract test catches future gstack flag renames._
 
 #### Group 14: Fix `parsers-roadmap` Group 6 Completeness Failure ✓ Shipped (v0.22.0.2)
 - Track 14A — _shipped (v0.22.0.2): dropped volatile live-ROADMAP assertions; added a synthetic state-section enclosure fixture. Parser untouched._
+
+#### Group 15: Canonical Locks ∥ Migrations ✓ Shipped (v0.24.3.0 → v0.24.6.0)
+- Track 15A — _shipped (v0.24.3.0): SHARED:conductor-visibility-head lock in four skills, exact-set advisory/fail section-list drift test, shared `parseSetupSkills` helper with explicit SETUP/PROTOCOL/PREAMBLE/CONDUCTOR cohorts (#94)_
+- Track 15B — _shipped (v0.24.5.0 → v0.24.6.0): `bin/lib/run-migrations.sh` version-windowed runner + applied/failed ledger + MIGRATION_WARN in /gstack-extend-upgrade (#96); hop-from persistence and non-semver failed-ledger retry (#98)_
+- _Tracks 15C, 15D, 15E never shipped under this number; re-packed 2026-09-24 as 16F, 18A, 16E. The same regen moved earlier Current Plan IDs: 16A→17C (trim pair-review), 16B→17D (trim full-review), 16C→17E (trim review-apparatus), 16D→17F (trim test-plan), 16E→19A (layout-scaffold extract), 17A→19B (skill template)._

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.0.1] - 2026-09-24
+
+### Changed
+
+- **The roadmap now starts at Groups 16–19, with Group 15 in shipped history.** Inbox items are placed or deferred, and the README matches v0.29.0.0, including the quota ledger section above the license.
+- **Older release notes name external tools generically.** The history of what shipped is unchanged.
+
 ## [0.29.0.0] - 2026-09-24
 
 ### Added
@@ -33,7 +40,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **All nine skills now record local start and finish telemetry.** `/implement`, `/review-and-prep`, `/gstack-extend-init`, and `/gstack-extend-upgrade` join the five that already did. Each run appends a start row and a finish row that share a session ID to `~/.gstack/analytics/skill-usage.jsonl`, with the session's wall-clock duration and reported outcome. Nothing is recorded when telemetry is off, and a missing gstack or Python 3.9+ skips telemetry without failing the skill. `GSTACK_EXTEND_TELEMETRY_DEBUG=1` explains any skip.
-- **`gstack-extend doctor telemetry [--days N] [--json]` shows whether it is working.** Per-skill starts, finishes, pairing percentage, and a decision message when a skill drops under 95% with real usage behind it. `/pair-review`, `/review-and-prep`, and `/test-plan` are resumable, so their open starts are reported separately instead of counting against the ratio. It also warns about a stale wrapper, an old gstack logger, or a wrapper copied without its library, and always exits 0. `docs/telemetry.md` covers setup, the sink, and why these rows are separate from `mm retro-fleet`'s transcript counts.
+- **`gstack-extend doctor telemetry [--days N] [--json]` shows whether it is working.** Per-skill starts, finishes, pairing percentage, and a decision message when a skill drops under 95% with real usage behind it. `/pair-review`, `/review-and-prep`, and `/test-plan` are resumable, so their open starts are reported separately instead of counting against the ratio. It also warns about a stale wrapper, an old gstack logger, or a wrapper copied without its library, and always exits 0. `docs/telemetry.md` covers setup, the sink, and why these rows are separate from a multi-machine retro tool's transcript-derived counts.
 
 ### Changed
 
@@ -301,9 +308,9 @@ Docs-only change. One pre-existing test failure remains (`parsers-roadmap.test.t
 
 ### Added: Telemetry parity with gstack (Track 13A)
 
-Until this version, gstack-extend skills emitted nothing. A mind-meld retro flying over a project saw every gstack skill activation (with duration, outcome, repo, source) and was blind to all gstack-extend activity — the five extend skills (`/full-review`, `/pair-review`, `/review-apparatus`, `/test-plan`, `/roadmap`) could run hundreds of times across a week and the activity log would show zero entries for them.
+Until this version, gstack-extend skills emitted nothing. A cross-machine retro tool flying over a project saw every gstack skill activation (with duration, outcome, repo, source) and was blind to all gstack-extend activity — the five extend skills (`/full-review`, `/pair-review`, `/review-apparatus`, `/test-plan`, `/roadmap`) could run hundreds of times across a week and the activity log would show zero entries for them.
 
-This Track closes that gap. Every extend skill activation now writes two JSON lines to `~/.gstack/analytics/skill-usage.jsonl` — a start line on entry and a full-record end line on completion — marked with both an `extend:<skill>` name prefix AND a `source:gstack-extend` field. The pair lands in the same sink as gstack's own events, so existing readers (mind-meld retro, `/retro`, future cross-tool analytics) pick up extend activity with zero downstream code changes.
+This Track closes that gap. Every extend skill activation now writes two JSON lines to `~/.gstack/analytics/skill-usage.jsonl` — a start line on entry and a full-record end line on completion — marked with both an `extend:<skill>` name prefix AND a `source:gstack-extend` field. The pair lands in the same sink as gstack's own events, so existing readers (cross-machine retro tooling, `/retro`, future cross-tool analytics) pick up extend activity with zero downstream code changes.
 
 **Added: `bin/gstack-extend-telemetry`** — a ~30 LOC wrapper around gstack's existing `gstack-telemetry-log`. It prepends `--source gstack-extend` to every invocation, passes the rest through, and exits 0 silently when `gstack-telemetry-log` isn't on PATH or in the canonical install location. The 3-tier lookup (PATH → `$GSTACK_DIR/bin` → `$HOME/.claude/skills/gstack/bin`) means it works whether the user has gstack symlinked into PATH or just installed at the default location. `set -uo pipefail` (no `-e`) guarantees telemetry never crashes a skill mid-flight. `setup` symlinks the wrapper into `~/.local/bin/` alongside `gstack-extend` via a shared `wire_bin()` helper, so the per-skill epilogue's `command -v gstack-extend-telemetry` lookup resolves cleanly on vendored installs and Conductor workspaces where the canonical `$HOME` fallback path doesn't hold.
 
@@ -315,7 +322,7 @@ This Track closes that gap. Every extend skill activation now writes two JSON li
 
 **Added: integration + contract test coverage** — `tests/telemetry.test.ts` runs the wrapper through 4 unit scenarios (tier=community writes, tier=off skips, missing-gstack no-ops, --source prepending verified via PATH stub) plus 3 end-to-end scenarios that spawn bash subshells executing the preamble + epilogue snippets and assert the resulting jsonl state. `tests/telemetry-contract.test.ts` is opportunistic: when gstack is installed it runs the wrapper against the real `gstack-telemetry-log` and asserts all 6 flags we depend on (`--source`, `--skill`, `--duration`, `--outcome`, `--session-id`, `--event-type`) round-trip correctly to the jsonl schema; when gstack is absent it SKIPs with an explicit marker. Catches drift from a future gstack release that renames a flag and silently breaks our wrapper.
 
-**Test isolation: `tests/helpers/telemetry-env.ts`** — every telemetry test sets `HOME=$tmpdir` and symlinks the real gstack install into `$tmpdir/.claude/skills/gstack/` so the wrapper resolves the real `gstack-telemetry-log` but writes go to `$tmpdir/.gstack/analytics/`. Without this, `bun test` would pollute the developer's real telemetry file with test fixtures forever, corrupting the very dataset mind-meld retro reads. Three fixture modes (`real` / `stub` / `absent`) cover the wrapper's three lookup paths.
+**Test isolation: `tests/helpers/telemetry-env.ts`** — every telemetry test sets `HOME=$tmpdir` and symlinks the real gstack install into `$tmpdir/.claude/skills/gstack/` so the wrapper resolves the real `gstack-telemetry-log` but writes go to `$tmpdir/.gstack/analytics/`. Without this, `bun test` would pollute the developer's real telemetry file with test fixtures forever, corrupting the very dataset cross-machine retro tooling reads. Three fixture modes (`real` / `stub` / `absent`) cover the wrapper's three lookup paths.
 
 Net diff: +369 lines across the 5 skill files + the helper wrapper + the helper module + 3 test files (1153 pass / 1 unrelated pre-existing fail in `parsers-roadmap.test.ts`).
 
@@ -730,7 +737,7 @@ Session state now lives at
 `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/<skill>/`, mirroring
 gstack core's `/context-save` checkpoints/ pattern. Survives Conductor
 workspace archival; per-machine durable (cross-machine layer is delivered by
-mind-meld, not this PR).
+a separate multi-machine sync tool, not this PR).
 
 #### Added: `bin/lib/session-paths.sh`
 
