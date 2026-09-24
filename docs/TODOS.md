@@ -77,14 +77,6 @@
 - **Depends on:** None
 - **Context:** External delivery dependency for an external consumer, an orchestration layer that spawns gstack pipeline stages across vendors. Unblocks 1 downstream track. Across these four P0 items, 7 of its 21 tracks can be built against fixtures but cannot close until the dependencies land; these entries schedule work previously recorded only in the consuming project.
 
-### [manual] Quota ledger, with Cursor capacity as an open question
-
-- **Description:** Nothing measures quota spent per stage per configuration; all current figures are wall-clock. Codex and Claude expose readable remaining-capacity endpoints. The Grok Build endpoint is unusable for this purpose because Grok now runs through Cursor (`cursor-agent` or natively in Conductor). Whether Cursor capacity is readable, and whether the CLI and Conductor routes share a pool, are open questions. Acceptance requires evidence of consumption attributable to stage and configuration, documented capacity-read results and pool relationships, and distinct model-vendor and capacity-pool fields: review independence follows the vendor, while capacity follows the pool, which may serve several vendors. A failed capacity read must degrade to a local consumption ledger and must never be interpreted as "no quota."
-- **Effort:** L (human: ~3d / CC: ~1.5h; provisional pending planning)
-- **Priority:** P0
-- **Depends on:** None
-- **Context:** Unblocks 4 downstream tracks for an external consumer, making this the most blocking of the four P0 dependencies. A separate planning session is underway; this entry records the problem and required acceptance evidence, leaving the design to that session.
-
 ### [manual] Re-scope review independence for the Cursor harness
 
 - **Description:** The measured Grok Build review composition was Grok structured, Grok adversarial, and Astra as author, with no Claude participating; the planned fix targets that shape. Grok Build is no longer the harness, so that measurement is historical. Probe the Cursor route now in use and document the actual voice composition before deciding whether a fix is needed: the collapse may persist, differ, or have disappeared. Acceptance for any fix is that every review carries at least one voice from a vendor that neither wrote the code nor ran the primary review, provable from recorded execution provenance rather than assignment.
@@ -129,6 +121,15 @@
 - **Context:** Raised by the maintainer on 2026-09-23 during /autoplan of the quota ledger (plan requirements G-01 and G-02), after reviewers found these references.
 
 ## Completed
+
+### [manual] Quota ledger, with Cursor capacity as an open question
+
+- **Description:** Nothing measures quota spent per stage per configuration; all current figures are wall-clock. Codex and Claude expose readable remaining-capacity endpoints. The Grok Build endpoint is unusable for this purpose because Grok now runs through Cursor (`cursor-agent` or natively in Conductor). Whether Cursor capacity is readable, and whether the CLI and Conductor routes share a pool, are open questions. Acceptance requires evidence of consumption attributable to stage and configuration, documented capacity-read results and pool relationships, and distinct model-vendor and capacity-pool fields: review independence follows the vendor, while capacity follows the pool, which may serve several vendors. A failed capacity read must degrade to a local consumption ledger and must never be interpreted as "no quota."
+- **Effort:** L (human: ~3d / CC: ~1.5h; provisional pending planning)
+- **Priority:** P0
+- **Depends on:** None
+- **Context:** Unblocks 4 downstream tracks for an external consumer, making this the most blocking of the four P0 dependencies. A separate planning session is underway; this entry records the problem and required acceptance evidence, leaving the design to that session.
+- **Completed:** v0.29.0.0 (2026-09-24)
 
 ### Failed-ledger retry with non-semver NEW aborts the helper
 

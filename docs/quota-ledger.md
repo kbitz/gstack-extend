@@ -69,6 +69,8 @@ Every JSON command emits exactly one object with `v: 1`. Exit codes are 0 for a
 successful command (including unavailable or partial data), 1 for an operational
 failure, and 2 for invalid usage. Errors are
 `{"v":1,"error":{"code":"...","message":"...","fix":"...","doc":"..."}}`.
+When a vendor or exchange backoff is active, that error object also includes
+`retry_at`.
 Report text and fixture banners never contaminate JSON stdout. Additive fields
 preserve the version; removed fields, renames and meaning changes require a new
 version and release notes. The database layout is private. `stage-runs.jsonl`
@@ -85,7 +87,7 @@ outcome joins.
 | `quota intervals` | Consecutive same-pool sample pairs, derived from current indexed events; `as_of`, per-meter changes and coverage. Late records and charge revisions update past intervals. |
 | `quota settle` | Refresh Cursor event facts and recompute affected rows, including previously final or expired rows. |
 | `quota probe KIND --raw` | One foreground response on stdout, intended only for a direct pipe into the fixture scrubber. Raw responses must never be saved or pasted into an agent session. |
-| `doctor quota` | Read-only report: sources, reasons/counts, drift, coverage, bytes, refusals, open/stale runs, pending settlement and exchange counts. Report exits 0 even if the store cannot be read. |
+| `doctor quota` | Read-only report: sources, reasons/counts, drift, coverage, bytes, refusals, open/stale runs, pending settlement and exchange counts. Report exits 0 even if the store cannot be read. Invalid arguments still exit 2. |
 
 All commands support `--json` and help with an example. Filters accept a pool kind
 or full pool ID in `--pool`; `--since` accepts ISO-8601 or durations such as `7d`
