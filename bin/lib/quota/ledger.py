@@ -172,6 +172,8 @@ def source_relationship(source,state,all_states,all_sources=None):
                     s.get('first') is not None and s['first']<end and (s.get('last') or end)>=start]
         if source in candidates:
             return 'own','turn' if len(candidates)==1 else 'unknown',[] if len(candidates)==1 else ['ambiguous']
+    if not own:
+        return None
     parent=source.get('parent')
     seen=set()
     while parent and parent not in own and parent not in seen:
@@ -187,6 +189,41 @@ def source_relationship(source,state,all_states,all_sources=None):
     return 'child','window' if len(eligible)==1 else 'unknown', [] if len(eligible)==1 else ['ambiguous']
 
 
+def source_parents(sources):
+    parents={}
+    for source in sources:
+        parents.setdefault((source.get('agent'),source.get('session')),set()).add(source.get('parent'))
+    return parents
+
+
+def uses_api_auth(source,state,sources,parents=None):
+    """Only explicit sessions and linked children in the same harness inherit auth."""
+    agent=source.get('agent')
+    if state['metadata'].get('auth')!='api':
+        return False
+    own={a['session'] for a in state['attachments'] if a['agent'] in (agent,'unknown')}
+    session=source.get('session')
+    if session in {a['session'] for a in state['attachments']}:
+        return True
+    if not own and agent=='cursor':
+        relation=source_relationship(source,state,[state],sources)
+        return bool(relation and relation[0]=='own' and relation[1]!='unknown')
+    parent=source.get('parent')
+    if not parent:
+        return False
+    parents=source_parents(sources) if parents is None else parents
+    seen=set()
+    while parent and parent not in seen:
+        if parent in own:
+            return True
+        seen.add(parent)
+        candidates=parents.get((agent,parent),set())
+        if len(candidates)!=1:
+            break
+        parent=next(iter(candidates))
+    return False
+
+
 def run_rows(store,state,coverage):
     sid=state['session_id']
     start,end=state['started_at'],state.get('ended_at') or now()
@@ -196,6 +233,7 @@ def run_rows(store,state,coverage):
         all_states.append(state)
     events=store.usage_between(start,end)
     all_sources=store.all('source')
+    parents=source_parents(all_sources)
     for source in all_sources:
         relation=source_relationship(source,state,all_states,all_sources)
         if not relation:
@@ -212,7 +250,8 @@ def run_rows(store,state,coverage):
         current=state.get('identities_at_finish',{}).get(agent) or (identity(store,agent,state['metadata']['context']) if agent in ('claude','codex','cursor') else {})
         changed=original.get('pool')!=current.get('pool')
         auth=state['metadata'].get('auth') or 'unknown'
-        if auth=='api' and kind=='own':
+        api_auth=uses_api_auth(source,state,all_sources,parents)
+        if api_auth:
             # Keep measured tokens on an API row. Subscription intervals exclude
             # these events by source ownership, so the row must not look pending.
             pool_kind,pool='api','api'
@@ -242,7 +281,7 @@ def run_rows(store,state,coverage):
             entry['start_metadata']=state['metadata_conflicts']
         # Each established account gets its own row, even within one session.
         fact_pools=sorted({e.get('pool') for e in facts if e.get('pool') not in (None,'pending','unresolved')})
-        if len(fact_pools)>1 and not changed and auth!='api':
+        if len(fact_pools)>1 and not changed and not api_auth:
             for fact_pool in fact_pools:
                 subset=[e for e in facts if e.get('pool')==fact_pool]
                 groups.setdefault((pool_kind,fact_pool),[]).append(dict(entry,consumption=aggregate(subset),event_ids=[e['id'] for e in subset]))

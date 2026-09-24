@@ -327,6 +327,124 @@ class QuotaTests(unittest.TestCase):
                 output.write('x'*(17 << 20))
             self.assertEqual(identity(self.store,'claude',self.context)['pool'],'pending')
 
+    def test_api_subagents_do_not_charge_subscription_intervals(self):
+        self.args.auth='api'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.write_claude()
+        self.write_claude(7,'child-message',session='child-session')
+        self.write_claude(11,'grandchild-message',session='grandchild-session')
+        self.advance(30)
+        coverage=scan(self.store,self.context)
+        parent=self.store.digest('session-a','session')
+        with self.store.transaction():
+            for source in self.store.all('source'):
+                if source['session']==self.store.digest('child-session','session'):
+                    source['parent']=parent
+                    self.store.put('source',source['key'],source)
+                elif source['session']==self.store.digest('grandchild-session','session'):
+                    source['parent']=self.store.digest('child-session','session')
+                    self.store.put('source',source['key'],source)
+        state=self.store.get('state','run-a')
+        rows=ledger.run_rows(self.store,state,coverage)
+        self.assertEqual({row['pool_kind'] for row in rows},{'api'})
+        self.assertEqual(rows[0]['consumption'][0]['output'],21)
+        before=dict(pool=state['identities']['claude']['pool'],pool_kind='claude',observed_at=state['started_at'],sample_id='before',meters=[])
+        interval=intervals.interval(self.store,before,None,coverage)
+        self.assertEqual(interval['consumption'],[])
+        self.assertEqual(interval['event_count'],0)
+        foreign=dict(agent='codex',session='foreign',parent=parent)
+        self.assertFalse(ledger.uses_api_auth(foreign,state,self.store.all('source')))
+        grandchild=dict(agent='claude',session='grandchild',parent='child')
+        conflicting=[dict(agent='claude',session='child',parent=parent),dict(agent='claude',session='child',parent='other')]
+        self.assertFalse(ledger.uses_api_auth(grandchild,state,conflicting))
+        cycle=[dict(agent='claude',session='child',parent='grandchild'),grandchild]
+        self.assertFalse(ledger.uses_api_auth(grandchild,state,cycle))
+
+    def test_unattached_active_run_keeps_ambient_consumption_unknown(self):
+        self.args.harness_session=None
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.write_claude()
+        self.advance(30)
+        result=json.loads(self.command('runs','--active','--session-id','run-a').stdout)
+        row=result['runs'][0]
+        self.assertIsNone(row['consumption'])
+        self.assertEqual(row['attribution'],'unknown')
+        self.args.phase='attach'
+        self.args.harness_session='session-a'
+        ledger.lifecycle(self.store,self.args,self.context)
+        attached=json.loads(self.command('runs','--active','--session-id','run-a').stdout)
+        self.assertEqual(attached['runs'][0]['consumption'][0]['output'],3)
+
+    def test_explicit_api_auth_without_optional_agent(self):
+        self.args.agent=None
+        self.args.auth='api'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.write_claude()
+        self.advance(30)
+        coverage=scan(self.store,self.context)
+        state=self.store.get('state','run-a')
+        rows=ledger.run_rows(self.store,state,coverage)
+        self.assertEqual({row['pool_kind'] for row in rows},{'api'})
+        self.assertEqual(rows[0]['consumption'][0]['output'],3)
+        before=dict(pool=state['identities']['claude']['pool'],pool_kind='claude',observed_at=state['started_at'],sample_id='before',meters=[])
+        self.assertEqual(intervals.interval(self.store,before,None,coverage)['event_count'],0)
+
+    def test_api_cursor_attachment_without_local_source_is_not_subscription(self):
+        self.args.auth='api'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.args.phase='attach'
+        self.args.agent='cursor'
+        self.args.harness_session='cursor-attachment'
+        ledger.lifecycle(self.store,self.args,self.context)
+        state=self.store.get('state','run-a')
+        self.advance(30)
+        cursor_cost.ingest(self.store,[dict(id='attached-bill',timestamp=now()-10,conversationId='cursor-attachment',owningUser='fixture-owner',model='fixture',chargedCents=25)])
+        self.assertEqual(cursor_cost.relationships(self.store),[])
+        pool=self.store.all('cursor_event')[0]['pool']
+        before=dict(pool=pool,pool_kind='cursor',observed_at=state['started_at'],sample_id='before',meters=[])
+        cursor_cost.record_coverage(self.store,pool,state['started_at'],now(),True)
+        interval=intervals.interval(self.store,before,None,dict(complete=True,roots=[],uncovered_roots=[]))
+        self.assertEqual(interval['event_count'],0)
+        self.assertIsNone(interval['charged_cents'])
+
+    def test_lifecycle_sampling_uses_current_sandbox(self):
+        from quota.cli import main
+        for started_sandboxed in (False,True):
+            session='sandbox-'+str(started_sandboxed)
+            if started_sandboxed:
+                os.environ['CODEX_SANDBOX']='seatbelt'
+            else:
+                os.environ.pop('CODEX_SANDBOX',None)
+            with mock.patch('quota.cli.refresh'),mock.patch('builtins.print'):
+                self.assertEqual(main(['sample','--phase','start','--session-id',session,'--agent','claude','--auth','subscription','--json']),0)
+            if started_sandboxed:
+                os.environ.pop('CODEX_SANDBOX',None)
+            else:
+                os.environ['CODEX_SANDBOX']='seatbelt'
+            for phase in ('attach','finish'):
+                with mock.patch('quota.cli.refresh',return_value=[]) as refresh,mock.patch('builtins.print'):
+                    self.assertEqual(main(['sample','--phase',phase,'--session-id',session,'--harness-session','session-a','--json']),0)
+                    self.assertEqual(refresh.call_args.args[2]['sandboxed'],not started_sandboxed)
+
+    def test_vendor_closed_stdout_timeout_is_an_unavailable_sample(self):
+        from quota.samples import refresh
+        stub=self.fixtures/'bin/claude'
+        stub.write_text('#!/usr/bin/python3\nimport os,time\nos.close(1)\ntime.sleep(30)\n')
+        stub.chmod(0o755)
+        with mock.patch('quota.readers.claude.fixture_dir',return_value=None),mock.patch('quota.samples.budget',return_value=.15):
+            rows=refresh(self.dir/'state',['claude','cursor'],self.context,force=True)
+        self.assertEqual(len(rows),2)
+        failed=next(row for row in rows if row['pool_kind']=='claude')
+        self.assertEqual((failed['status'],failed['reason']),('unavailable','timeout'))
+        self.assertEqual(next(row for row in rows if row['pool_kind']=='cursor')['status'],'ok')
+
+    def test_claude_environment_preserves_custom_root_only(self):
+        from quota.common import vendor_env
+        os.environ['CLAUDE_CONFIG_DIR']=str(self.home/'.claude')
+        self.assertNotIn('CLAUDE_CONFIG_DIR',vendor_env(self.context,'claude'))
+        custom=str(self.home/'custom-claude')
+        self.assertEqual(vendor_env(dict(self.context,claude_config_dir=custom),'claude')['CLAUDE_CONFIG_DIR'],custom)
+
     def test_backoff_force_schema_drift_and_clock_skew(self):
         from quota.samples import sample_one,drift
         sample=sample_one(self.dir/'state','claude',self.context,'periodic')
@@ -597,6 +715,157 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(cursor_cost.relationships(self.store)[0]['settlement'],'expired')
         cursor_cost.ingest(self.store,[dict(record,chargedCents=3,turnStartedAt=(start+5)*1000,turnEndedAt=(start+20)*1000)])
         self.assertEqual(cursor_cost.relationships(self.store)[0]['settlement'],'final')
+
+    def test_cursor_without_events_expires_and_late_events_recover(self):
+        self.args.agent='cursor'
+        self.args.harness_session='conversation-a'
+        ledger.lifecycle(self.store,self.args,self.context)
+        start=now()
+        self.advance(30)
+        self.args.phase='finish'
+        ledger.lifecycle(self.store,self.args,self.context)
+        original=self.store.all('run')
+        self.assertEqual(cursor_cost.decorate(self.store,copy.deepcopy(original))[0]['settlement'],'provisional')
+        self.advance(48*3600)
+        expired=cursor_cost.decorate(self.store,copy.deepcopy(original))[0]
+        self.assertEqual((expired['settlement'],expired['lifecycle']),('expired','expired'))
+        self.assertIn('expired',expired['why'])
+        self.assertIsNone(expired['attributable_cents'])
+        record=dict(id='late-event',timestamp=(start+10)*1000,conversationId='conversation-a',owningUser='fixture-owner',model='grok-fixture',chargedCents=2,
+                    turnStartedAt=(start+5)*1000,turnEndedAt=(start+20)*1000)
+        cursor_cost.ingest(self.store,[record])
+        self.advance(61)
+        cursor_cost.ingest(self.store,[record])
+        recovered=cursor_cost.decorate(self.store,[expired])[0]
+        self.assertEqual(recovered['settlement'],'final')
+        self.assertEqual(recovered['attributable_cents'],2)
+        self.assertNotIn('expired',recovered['why'])
+
+    def test_cursor_intervals_require_account_and_range_event_coverage(self):
+        from quota.samples import sample_one
+        before=sample_one(self.dir/'state','cursor',self.context,'periodic')
+        self.advance(120)
+        after=sample_one(self.dir/'state','cursor',self.context,'periodic',force=True)
+        coverage=dict(complete=True,roots=[],uncovered_roots=[])
+        result=intervals.interval(self.store,before,after,coverage)
+        self.assertTrue(result['complete'])
+        endpoint=self.fixtures/'cursor-events.json'
+        original=endpoint.read_text()
+        endpoint.write_text(json.dumps(dict(status=500,body={})))
+        self.advance(120)
+        failed=sample_one(self.dir/'state','cursor',self.context,'periodic',force=True)
+        self.assertEqual(failed['status'],'ok')  # Capacity still works.
+        result=intervals.interval(self.store,before,failed,coverage)
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['calibration_eligible'])
+        self.assertIn('http_5xx',result['why'])
+        endpoint.write_text(original)
+        self.advance(120)
+        recovered=sample_one(self.dir/'state','cursor',self.context,'periodic',force=True)
+        self.assertTrue(intervals.interval(self.store,before,recovered,coverage)['complete'])
+        self.advance(7*3600)
+        sample_one(self.dir/'state','cursor',self.context,'periodic',force=True)
+        self.assertTrue(intervals.interval(self.store,before,recovered,coverage)['complete'])
+        self.assertFalse(intervals.interval(self.store,dict(before,pool='cursor:other'),recovered,coverage)['complete'])
+        self.assertFalse(intervals.interval(self.store,dict(before,observed_at=before['observed_at']-7*3600),recovered,coverage)['complete'])
+        cursor_cost.record_coverage(self.store,recovered['pool'],before['observed_at'],recovered['observed_at'],False)
+        self.assertFalse(intervals.interval(self.store,before,recovered,coverage)['complete'])
+
+    def test_cursor_settle_records_complete_and_failed_event_coverage(self):
+        from quota.samples import sample_one
+        before=sample_one(self.dir/'state','cursor',self.context,'periodic')
+        self.args.agent='cursor'
+        self.args.harness_session='fixture-conversation'
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.advance(120)
+        after=dict(before,sample_id='after',observed_at=now())
+        coverage=dict(complete=True,roots=[],uncovered_roots=[])
+        result=cursor_cost.settle(self.store,self.context)
+        self.assertTrue(result['complete'])
+        self.assertTrue(intervals.interval(self.store,before,after,coverage)['complete'])
+        # Match the fixture credential identity to the previously observed pool.
+        identities=self.fixtures/'identities.json'
+        data=json.loads(identities.read_text())
+        data['cursor']['id']='fixture-owner'
+        identities.write_text(json.dumps(data))
+        (self.fixtures/'cursor-events.json').write_text(json.dumps(dict(status=500,body={})))
+        result=cursor_cost.settle(self.store,self.context)
+        self.assertEqual(result['reason'],'http_5xx')
+        interval=intervals.interval(self.store,before,after,coverage)
+        self.assertFalse(interval['complete'])
+        self.assertIn('http_5xx',interval['why'])
+
+    def test_cursor_cwd_slug_collapses_adjacent_punctuation(self):
+        cwd=str(self.home/'work trees'/'...punctuation--project')
+        slug='-'.join(part for part in __import__('re').split(r'[^a-zA-Z0-9]+',cwd) if part)
+        path=self.home/'.cursor/projects'/slug/'agent-transcripts'/'native-conversation'/'native-conversation.txt'
+        path.parent.mkdir(parents=True)
+        path.write_text('user:\nfixture prompt\nassistant:\nfixture answer\n')
+        scan(self.store,dict(self.context,cwd=cwd,repo_root=cwd))
+        source=next(source for source in self.store.all('source') if source.get('agent')=='cursor')
+        self.assertEqual(source['cwd'],cwd)
+        self.assertEqual(source['session'],self.store.digest('native-conversation','session'))
+        self.assertEqual(source['reason'],'not_reported')
+        with self.store.transaction():
+            for file in self.store.all('file'):
+                file['parser'].pop('cwd',None)
+                self.store.put('file',file['key'],file)
+        scan(self.store,dict(self.context,cwd=cwd,repo_root=cwd))
+        self.assertEqual(self.store.all('source')[0]['cwd'],cwd)
+
+    def test_native_cursor_api_auth_stays_out_of_subscription_interval(self):
+        self.args.agent='cursor'
+        self.args.auth='api'
+        self.args.harness_session=None
+        ledger.lifecycle(self.store,self.args,self.context)
+        self.advance(30)
+        state=self.store.get('state','run-a')
+        pool=state['identities']['cursor']['pool']
+        source=dict(key='sdk',agent='cursor',session='native',parent=None,native_sdk=True,cwd=self.context['cwd'],first=now()-20,last=now()-5,complete=True)
+        ambiguous=[source,dict(source,key='other',session='another-native')]
+        self.assertFalse(ledger.uses_api_auth(source,state,ambiguous))
+        fact=dict(id='sdk-event',agent='cursor',session='native',source_keys=['sdk'],pool=pool,ts=now()-10,model='fixture',tokens={key:1 for key in usage.CLASSES})
+        with self.store.transaction():
+            self.store.put('source','sdk',source)
+            self.store.put('usage',fact['id'],fact)
+        coverage=dict(complete=True,roots=[],uncovered_roots=[])
+        rows=ledger.run_rows(self.store,state,coverage)
+        self.assertEqual({row['pool_kind'] for row in rows},{'api'})
+        cursor_cost.ingest(self.store,[dict(id='native-bill',timestamp=now()-10,conversationId='native',owningUser='fixture-owner',model='fixture',chargedCents=2)])
+        # Bind the synthetic event to the same already-hashed native session.
+        with self.store.transaction():
+            for event in self.store.all('cursor_event'):
+                event.update(conversation_hash='native',pool=pool)
+                self.store.put('cursor_event',event['id'],event)
+        self.assertEqual(cursor_cost.relationships(self.store),[])
+        self.assertEqual({row['pool_kind'] for row in cursor_cost.decorate(self.store,rows)},{'api'})
+        before=dict(pool=pool,pool_kind='cursor',observed_at=state['started_at'],sample_id='before',meters=[])
+        cursor_cost.record_coverage(self.store,pool,state['started_at'],now(),True)
+        self.assertEqual(intervals.interval(self.store,before,None,coverage)['event_count'],0)
+
+    def test_historical_intervals_load_cursor_coverage_once(self):
+        pool=self.store.pool('cursor','fixture-owner')
+        start=now()
+        with self.store.transaction():
+            for i in range(25):
+                row=dict(sample_id=str(i),pool=pool,pool_kind='cursor',status='ok',observed_at=start+i,meters=[])
+                self.store.put('sample',str(i),row)
+        self.advance(30)
+        cursor_cost.record_coverage(self.store,pool,start,now(),True)
+        with mock.patch.object(self.store,'all',wraps=self.store.all) as reads:
+            rows=intervals.intervals(self.store,dict(complete=True,roots=[],uncovered_roots=[]))
+        self.assertEqual(len(rows),24)
+        self.assertTrue(all(row['complete'] for row in rows))
+        self.assertEqual(sum(call.args==('cursor_coverage',) for call in reads.call_args_list),1)
+        self.advance(10)
+        cursor_cost.record_coverage(self.store,pool,start+4,start+12,False,'http_5xx')
+        self.advance(10)
+        cursor_cost.record_coverage(self.store,pool,start+8,start+18,True)
+        coverage=dict(complete=True,roots=[],uncovered_roots=[])
+        batched=intervals.intervals(self.store,coverage)
+        samples=sorted(self.store.all('sample'),key=lambda row:row['observed_at'])
+        individually=[intervals.interval(self.store,left,right,coverage) for left,right in zip(samples,samples[1:])]
+        self.assertEqual(batched,individually)
 
     def test_cursor_paging_budget_is_independent_from_snapshot(self):
         calls=[]

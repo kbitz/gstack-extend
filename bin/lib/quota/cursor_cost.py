@@ -7,6 +7,13 @@ from .readers import cursor
 from .usage import tokens, aggregate
 
 
+def record_coverage(store,pool,start,end,complete,reason=None):
+    if pool not in (None,'pending','unresolved'):
+        with store.transaction():
+            key=store.digest([pool,start,end],'cursor-coverage')
+            store.put('cursor_coverage',key,dict(pool=pool,start=start,end=end,complete=complete,reason=reason,observed_at=now()))
+
+
 def ingest(store,records,complete=True):
     normalized={}
     for record in records:
@@ -57,16 +64,18 @@ def relationships(store,states=None):
     states=states or store.all('state')
     sources=store.all('source')
     runs=store.all('run')
+    from .ledger import source_relationship, source_parents, uses_api_auth
+    parents=source_parents(sources)
     output=[]
     for fact in store.all('cursor_event'):
         start,end,evidence=boundaries(store,fact)
         matches=[]
         for state in states:
-            sessions={a['session'] for a in state['attachments'] if a['agent']=='cursor'}
+            sessions={a['session'] for a in state['attachments'] if a['agent']=='cursor' and state['metadata'].get('auth')!='api'}
             # Local child evidence, not presence in the account-wide feed.
-            from .ledger import source_relationship
             sessions.update(s['session'] for s in sources if s.get('agent')=='cursor' and
-                            (relationship:=source_relationship(s,state,states,sources)) and relationship[1]!='unknown')
+                            (relationship:=source_relationship(s,state,states,sources)) and relationship[1]!='unknown' and
+                            not uses_api_auth(s,state,sources,parents))
             if fact['conversation_hash'] not in sessions:
                 continue
             left,right=state['started_at'],state.get('ended_at') or now()
@@ -155,15 +164,17 @@ def decorate(store,rows):
         row['attributable_cents']=sum(x['attributable_cents'] for x in relevant if x['attributable_cents'] is not None) if any(x['attributable_cents'] is not None for x in relevant) else None
         row['shared_cents']=sum(x['shared_cents'] for x in relevant if x['shared_cents'] is not None) if any(x['shared_cents'] is not None for x in relevant) else None
         row['revision']=max((x['revision'] for x in relevant),default=row.get('revision',1))
-        row['settlement']='final' if relevant and all(x['settlement']=='final' for x in relevant) else 'expired' if relevant and all(x['settlement']=='expired' for x in relevant) else 'provisional'
+        expired=row.get('ended_at') is not None and now()-row['ended_at']>=48*3600
+        row['settlement']='final' if relevant and all(x['settlement']=='final' for x in relevant) else 'expired' if expired and (not relevant or any(x['settlement']!='final' for x in relevant)) else 'provisional'
         if row['settlement']=='final':
             row['lifecycle']='settled'
             row['settled_at']=max((f['last_read_at'] for f in facts.values()),default=None)
         elif row['settlement']=='expired':
             row['lifecycle']='expired'
+            row['settled_at']=None
         else:
             row['settled_at']=None
-        row['why']=sorted(set([why for why in row.get('why',[]) if why!='no_usage' or not facts]+[why for x in relevant for why in x['why']]))
+        row['why']=sorted(set([why for why in row.get('why',[]) if why not in ('expired','pending_settlement') and (why!='no_usage' or not facts)]+[why for x in relevant for why in x['why']]+(['expired'] if row['settlement']=='expired' else [])))
     return expanded
 
 
@@ -199,7 +210,11 @@ def settle(store,context,pool=None,since=None):
             if pool and ':' in pool:
                 records=[r for r in records if store.pool('cursor',r.get('owningUser'))==pool]
             count=ingest(store,records,complete)
+            pools={store.pool('cursor',r.get('owningUser')) for r in records if isinstance(r,dict)} or {evidence['pool']}
+            for observed_pool in pools:
+                record_coverage(store,observed_pool,left,right,complete)
     except QuotaError as error:
+        record_coverage(store,evidence['pool'],left,right,False,error.code)
         if error.code=='http_429':
             with store.transaction():
                 store.put('backoff',evidence['fingerprint'],dict(retry_at=error.retry_at or now()+300))

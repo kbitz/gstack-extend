@@ -335,6 +335,9 @@ remote_unobservable: other machines and chat surfaces cannot be counted locally.
 Known subagents and attributed children belong to their parent's activity family;
 unrelated local families and foreign Cursor events indicate concurrency. Boundary,
 incomplete and provisionally settled observations are excluded from calibration.
+Cursor completeness also requires a successful, fully paged billing-event read
+for that account covering the entire interval. Missing, failed, or narrower reads
+leave consumption incomplete even when the capacity endpoint succeeds.
 
 Run state becomes stale after 48 hours without activity, remains finishable, and
 is renewed by every sample call. Abandon explicitly records interruption. Finish
@@ -342,6 +345,11 @@ atomically commits consumption, rows and a receipt. No successful acknowledgemen
 precedes commit. Finish overrides start metadata; conflicting earlier identity
 remains as a source. Auth comes from `--auth subscription|api|unknown`, default
 unknown; caller flags win. Explicit API mode never charges a subscription pool.
+Linked children in the same harness inherit that API mode; unrelated or
+cross-harness children do not. An unattached run leaves consumption unknown
+until a harness session is attached, except for the documented unique native
+Cursor match. Network permission always comes from the current invocation,
+including when attaching or finishing a run started in a different sandbox.
 Inside-stage detection recognizes API keys and alternative provider markers.
 Claude account JSON is capped at 16 MiB; larger files leave identity pending.
 
@@ -352,6 +360,9 @@ Claude uses `claude -p /usage --output-format stream-json --verbose
 '{"mcpServers":{}}'`. It parses the assistant event's usage_report limits, with
 legacy limit parsing where supplied. Missing report is schema_changed. There is
 no direct OAuth request, User-Agent imitation, Keychain fallback or consent state.
+The default `~/.claude` config directory is left unset in the child environment;
+setting `CLAUDE_CONFIG_DIR` to that default made the tested CLI omit its usage
+report. An explicitly selected custom directory is still forwarded.
 The pool comes from account JSON and any returned account evidence; disagreement
 leaves it pending. Sampler calls produce no transcript consumption.
 
@@ -370,6 +381,9 @@ Cursor uses only CURSOR_API_KEY, exchanging it at
 auto/API percent denominators are unknown. Snapshot identity comes from the same
 credential's hashed owningUser cache or one event page. Missing identity is shown
 as pending and never assigned a different account's cached sample.
+An existing Cursor CLI login is not read by this adapter. The quota process must
+inherit the API key; a shell startup script that unsets it produces
+`no_credentials` even when Conductor originally supplied it.
 
 | Adapter | macOS / Linux | Inside / outside Conductor | Credential | Trial |
 |---|---|---|---|---|
@@ -398,16 +412,34 @@ while the foreground caller waits for it.
 | Claude flags / sampler conditions | JSON mode omits the report; stream-json plus verbose supplies three limits. 1.3–2.0 seconds, zero tokens/cost, no transcript, no MCP servers. SessionStart sentinel did not fire under safe-mode. Five short-lived internal child processes were observed. | Stream-json reader within snapshot budget; suppress custom hooks/MCP/persistence. |
 | Keychain path | Structured native usage works. | No Keychain access or consent code. |
 | Cursor subagent billing IDs | 27 local subagent IDs checked against 18 recent billing events; none matched. | Do not invent child billing links; expose incomplete child coverage. |
-| Cursor cwd slug | One existing project matched absolute cwd with non-alphanumeric characters replaced by hyphens and leading separators removed. A fresh CLI probe exited before creating a transcript. | Use the observed mapping with local evidence only; no time-only account-feed attribution. |
+| Cursor cwd slug | A fresh 2026-09-24 CLI probe produced three transcripts. Non-alphanumeric runs collapse to one hyphen, with leading/trailing hyphens removed. The corrected reader matched all three cwd paths. | Use the observed mapping with local evidence only; no time-only account-feed attribution. |
 | Codex token classes | 504 local records inspected; 288 included cache_write_input_tokens; input was compatible with inclusive cached read/write counts. | Subtract both caches; absent classes null; fixture locks mapping. |
 | Codex app-server | Fresh-token read completed in 0.63 seconds, no child process observed, auth bytes unchanged. Concurrent account/read used refreshToken false. | Gate spawn on token expiry; no MCP/thread startup. Expired case is a gate refusal. |
 | Cursor exchange | Two exchanges at least 60 seconds apart; old and new tokens both still read capacity (HTTP 200). Native session token was not read. | Per-key cross-process exchange budget; no stored-token mutation. Native-session coexistence remains operational verification. |
 | Comparison reader | Codex reference CLI's weekly percentage matched the implemented rollout reader. Cursor reference CLI rejected this credential route. | Reference tool remains optional, never a runtime dependency; Cursor comparison unavailable. |
 
+### Immediate verification, 2026-09-24
+
+One production refresh returned `ok` for all three adapters in 3.06 seconds.
+Two concurrent live Codex app-server reads left authentication bytes unchanged;
+process-tree observations found no MCP child. Two isolated concurrent commands
+with synthetic expired credentials returned `auth_expired` without starting a
+vendor process. No live credential was revoked or rotated for testing.
+
+A native Cursor CLI process stayed alive across API-key exchanges 61 seconds
+apart. Both old and new tokens still read capacity, and the original token
+successfully resumed the same native conversation; stored login bytes were
+unchanged. This verifies the CLI route. An active Conductor-native session was
+not available, so that exact coexistence check remains pending.
+
+The child-link check again found no billing matches: 36 local child transcripts
+versus 28 recent events. The Codex reference percentage matched; the Cursor
+reference reader still rejected this credential route. These observations do
+not establish 24-hour reliability or support on other hosts.
+
 The Codex protocol is documented in [OpenAI's app-server reference](https://learn.chatgpt.com/docs/app-server).
 The live probe verifies the installed protocol path, not all vendor refresh races.
-Operational verification still requires an expired/revoked-token concurrency trial
-without modifying live credentials, native Cursor coexistence, and each adapter's
-24-hour coverage trial. Until those observations exist, status and doctor retain
+Operational verification still requires exact Conductor-native Cursor coexistence
+and each adapter's 24-hour coverage trial. Until those observations exist, status and doctor retain
 the experimental label. Unknown Cursor exhaustion behavior and future Codex window
 changes remain provider observations, not assumptions encoded as zero/unlimited.

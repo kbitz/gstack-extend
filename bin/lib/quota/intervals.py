@@ -1,3 +1,4 @@
+import heapq
 from .common import now
 from .usage import aggregate
 
@@ -43,22 +44,27 @@ def meter_change(before,after,left,right):
                 below_resolution=below,why=why,resolution=after.get('resolution'))
 
 
-def interval(store,before,after,coverage):
+def interval(store,before,after,coverage,cursor_reads=None):
     left,right=before['observed_at'],after['observed_at'] if after else now()
     pool=before['pool']
     all_events=store.usage_between(left,right)
-    from .ledger import source_relationship
+    from .ledger import uses_api_auth, source_parents
     states=store.all('state')
     sources=store.all('source')
+    parents=source_parents(sources)
     api_ids=set()
+    api_cursor_windows=[]
     for state in states:
         if state.get('metadata',{}).get('auth')!='api':
             continue
         start,end=state['started_at'],state.get('ended_at') or right
-        owned=[s['key'] for s in sources if (relation:=source_relationship(s,state,states,sources)) and relation[0]=='own']
+        owned=[s['key'] for s in sources if uses_api_auth(s,state,sources,parents)]
+        cursor_sessions={s.get('session') for s in sources if s.get('agent')=='cursor' and s['key'] in owned}
+        cursor_sessions.update(a['session'] for a in state['attachments'] if a['agent'] in ('cursor','unknown'))
+        api_cursor_windows.append((start,end,cursor_sessions))
         api_ids.update(e['id'] for e in all_events if start<=e.get('ts',start)<end and any(key in e.get('source_keys',[]) for key in owned))
     facts=[e for e in all_events if e.get('pool')==pool and e['id'] not in api_ids]
-    unresolved=[e for e in all_events if e.get('pool') in ('unresolved','pending') and e['agent']==before['pool_kind']]
+    unresolved=[e for e in all_events if e.get('pool') in ('unresolved','pending') and e['agent']==before['pool_kind'] and e['id'] not in api_ids]
     complete=coverage['complete'] and not unresolved and pool!='pending'
     previous={m['meter']:m for m in before['meters']}
     changes=[]
@@ -68,7 +74,8 @@ def interval(store,before,after,coverage):
                 changes.append(meter_change(previous[meter['meter']],meter,left,right))
             else:
                 changes.append(dict(meter=meter['meter'],change=None,why=['no_before_sample']))
-    cursor_facts=[e for e in store.all('cursor_event') if e['pool']==pool and left<=e['event_ts']<right]
+    cursor_facts=[e for e in store.all('cursor_event') if e['pool']==pool and left<=e['event_ts']<right and not
+                  any(start<=e['event_ts']<end and e['conversation_hash'] in sessions for start,end,sessions in api_cursor_windows)]
     local_sessions={source.get('session') for source in store.all('source')}
     local_sessions.update(a['session'] for state in store.all('state') for a in state['attachments'])
     local_cursor=[e for e in cursor_facts if e['conversation_hash'] in local_sessions]
@@ -77,6 +84,11 @@ def interval(store,before,after,coverage):
     contained=[]
     if before['pool_kind']=='cursor':
         from .cursor_cost import boundaries
+        reads=store.all('cursor_coverage') if cursor_reads is None else cursor_reads
+        candidates=[entry for entry in reads if entry.get('pool')==pool and
+                    entry.get('start',right)<=left and entry.get('end',left)>=right and entry.get('observed_at',left)>=right]
+        feed=max(candidates,key=lambda entry:(entry['observed_at'],not entry['complete']),default={})
+        feed_complete=feed.get('complete',False)
         for event in local_cursor:
             start,end,_=boundaries(store,event)
             if event['ambiguous'] or start is None or end is None or start<left or end>right:
@@ -88,11 +100,13 @@ def interval(store,before,after,coverage):
         api_sessions={e['conversation_hash'] for e in local_cursor}
         facts=[e for e in facts if e.get('session') not in api_sessions]
         facts.extend(dict(e,ts=e['event_ts'],session=e['conversation_hash']) for e in local_cursor if not e['ambiguous'])
-        complete=complete and all(e.get('complete') for e in local_cursor)
+        complete=complete and feed_complete and all(e.get('complete') for e in local_cursor)
     boundary=sum(bool(e.get('boundary') or (e.get('start') is not None and e['start']<left) or
                       (e.get('end') is not None and e['end']>right) or e.get('first_seen_at',right)>right or
                       e.get('revised_at',right)>right) for e in facts)+len(cursor_unknown)
     why=[] if complete else ['incomplete']
+    if before['pool_kind']=='cursor' and not feed_complete:
+        why.append(feed.get('reason') or 'cursor_events_incomplete')
     if unresolved:
         why.append('identity_unknown')
     if cursor_unknown:
@@ -115,10 +129,30 @@ def interval(store,before,after,coverage):
 def intervals(store,coverage):
     previous={}
     result=[]
+    cursor_reads={}
+    for entry in store.all('cursor_coverage'):
+        if entry.get('pool') is not None and entry.get('start') is not None:
+            cursor_reads.setdefault(entry['pool'],[]).append(entry)
+    for entries in cursor_reads.values():
+        entries.sort(key=lambda entry:entry['start'])
+    cursors={}
     for row in sorted(store.all('sample'),key=lambda r:r['observed_at']):
         if row['status']!='ok' or row['pool']=='pending':
             continue
         if row['pool'] in previous:
-            result.append(interval(store,previous[row['pool']],row,coverage))
+            before=previous[row['pool']]
+            entries=cursor_reads.get(row['pool'],[])
+            position,active=cursors.setdefault(row['pool'],(0,[]))
+            # Both sample boundaries advance monotonically per pool. Each read
+            # enters/leaves the heap once instead of rescanning its history.
+            while position<len(entries) and entries[position]['start']<=before['observed_at']:
+                entry=entries[position]
+                heapq.heappush(active,(-entry['observed_at'],entry['complete'],position,entry))
+                position+=1
+            while active and (active[0][3]['end']<row['observed_at'] or active[0][3]['observed_at']<row['observed_at']):
+                heapq.heappop(active)
+            cursors[row['pool']]=(position,active)
+            matching=[active[0][3]] if active else []
+            result.append(interval(store,before,row,coverage,matching))
         previous[row['pool']]=row
     return result

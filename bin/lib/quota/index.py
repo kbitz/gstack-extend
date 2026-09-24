@@ -83,10 +83,10 @@ def source_state(store,file,context):
         else:
             session,parent=None,None
         state.update(session=store.digest(session,'session') if session else None,parent=store.digest(parent,'session') if parent else None)
-        if agent=='cursor':
-            slug=re.sub(r'[^a-zA-Z0-9]','-',context['cwd']).strip('-')
-            if slug in path.parts:
-                state['cwd']=context['cwd']
+    if agent=='cursor':
+        slug=re.sub(r'[^a-zA-Z0-9]+','-',context['cwd']).strip('-')
+        if slug in path.parts:
+            state['cwd']=context['cwd']
     return state
 
 

@@ -179,7 +179,9 @@ def _write_bounded(stream, payload, deadline):
 def vendor_env(context, kind):
     allowed = ('HOME', 'PATH', 'USER', 'TMPDIR', 'LANG')
     result = {key: value for key, value in os.environ.items() if key in allowed}
-    if kind == 'claude':
+    if kind == 'claude' and Path(context['claude_config_dir']) != Path.home()/'.claude':
+        # The default directory must stay unset. Setting it, even to ~/.claude,
+        # makes current Claude omit the /usage report.
         result['CLAUDE_CONFIG_DIR'] = context['claude_config_dir']
     if kind == 'codex':
         result['CODEX_HOME'] = context['codex_home']
@@ -205,7 +207,11 @@ def run_vendor(name, args, context, deadline, requests=None):
             for key, _ in selector.select(min(.05, max(0, deadline-time.monotonic()))):
                 chunk = os.read(key.fd, 65536)
                 if not chunk:
-                    if process.wait(timeout=max(.01, deadline-time.monotonic())) != 0:
+                    try:
+                        code = process.wait(timeout=max(.01, deadline-time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        raise QuotaError('timeout')
+                    if code != 0:
                         raise QuotaError('unsupported_version' if not data else 'schema_changed')
                     return bytes(data)
                 data.extend(chunk)

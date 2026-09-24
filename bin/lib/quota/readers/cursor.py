@@ -75,11 +75,13 @@ def read(store, context, deadline):
     access = token(store,deadline)
     body = response('cursor-period',DASHBOARD+'GetCurrentPeriodUsage',deadline,access[0],{})
     meters, bad = parse(body)
+    observed_at=now()
     cached = store.get('cursor_identity',access[1],{})
     event_error=None
+    left,right=observed_at-6*3600,observed_at+600
+    from ..cursor_cost import ingest, record_coverage
     try:
-        rows, complete, _ = events(store,deadline,now()-6*3600,now()+600,access)
-        from ..cursor_cost import ingest
+        rows, complete, _ = events(store,deadline,left,right,access)
         ingest(store,rows,complete)
         owners = {str(r['owningUser']) for r in rows if isinstance(r,dict) and r.get('owningUser') is not None}
         if len(owners)==1:
@@ -89,14 +91,16 @@ def read(store, context, deadline):
             cached={'pool':pool}
             with store.transaction():
                 store.put('cursor_identity',access[1],cached)
+        record_coverage(store,cached.get('pool'),left,right,complete)
     except QuotaError as error:
         event_error=error.code
+        record_coverage(store,cached.get('pool'),left,right,False,error.code)
         if error.code=='http_429':
             with store.transaction():
                 store.put('backoff',access[1],{'retry_at':error.retry_at or now()+300})
     label='Cursor subscription'
     if event_error=='http_429':
-        return dict(source='cursor-api2',meters=meters,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
+        return dict(source='cursor-api2',meters=meters,observed_at=observed_at,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
                     pool=cached.get('pool','pending'),plan_label=label,event_reason=event_error),body
     try:
         plan=response('cursor-plan',DASHBOARD+'GetPlanInfo',deadline,access[0],{})
@@ -106,5 +110,5 @@ def read(store, context, deadline):
         if error.code=='http_429':
             with store.transaction():
                 store.put('backoff',access[1],{'retry_at':error.retry_at or now()+300})
-    return dict(source='cursor-api2',meters=meters,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
+    return dict(source='cursor-api2',meters=meters,observed_at=observed_at,status='partial' if bad else 'ok',reason='schema_changed' if bad else None,
                 pool=cached.get('pool','pending'),plan_label=label,event_reason=event_error),body

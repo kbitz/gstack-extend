@@ -319,7 +319,8 @@ def human(result):
             for meter in pool.get('meters',[]):
                 age=round(meter['age_s'])
                 reset=max(0,round(meter['resets_at']-now())) if meter['resets_at'] is not None else None
-                lines.append('  '+meter['label']+': '+str(meter['used'])+' / '+str(meter['limit'])+' '+meter['unit']+'; age '+str(age)+'s; resets in '+str(reset)+'s; '+meter['state'])
+                reset_text='resets in '+str(reset)+'s' if reset is not None else 'no reset time'
+                lines.append('  '+meter['label']+': '+str(meter['used'])+' / '+str(meter['limit'])+' '+meter['unit']+'; age '+str(age)+'s; '+reset_text+'; '+meter['state'])
             if pool.get('reason'):
                 lines.append('  '+pool['reason']+'. Fix: '+pool['fix'])
         return '\n'.join(lines)
@@ -369,7 +370,8 @@ def main(argv=None):
                     if args.pool:
                         kinds=[kind for kind in kinds if args.pool==kind or args.pool==identity(store,kind,state['metadata']['context'])['pool']]
                     if state['metadata'].get('auth')!='api':
-                        refresh(root,kinds,state['metadata']['context'],{'start':'run_start','finish':'run_finish','attach':'attach'}[args.phase],args.session_id)
+                        sampling_context=dict(state['metadata']['context'],sandboxed=context['sandboxed'])
+                        refresh(root,kinds,sampling_context,{'start':'run_start','finish':'run_finish','attach':'attach'}[args.phase],args.session_id)
             elif args.pool and args.pool.split(':')[0] in KINDS:
                 kind=args.pool.split(':')[0]
                 if ':' in args.pool and identity(store,kind,context)['pool']!=args.pool:
