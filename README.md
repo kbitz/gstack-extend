@@ -545,10 +545,6 @@ invariants will fail otherwise.
 
 Built by [@kbitz](https://github.com/kbitz) with assistance from [Claude Code](https://claude.com/claude-code) (Anthropic).
 
-## License
-
-[MIT](LICENSE)
-
 ## Quota ledger
 
 Check remaining capacity with `gstack-extend quota status --refresh`, bracket
@@ -560,3 +556,7 @@ the store and adapters are usable. Only explicit quota commands sample vendors;
 `bin/config set quota off` disables them all.
 Adapters are experimental; unknown reads never mean unlimited capacity. See the
 [quick start and JSON contract](docs/quota-ledger.md).
+
+## License
+
+[MIT](LICENSE)
