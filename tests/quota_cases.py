@@ -1108,6 +1108,127 @@ class QuotaTests(unittest.TestCase):
         samples=[row for row in self.store.all('sample') if row['pool_kind']=='claude']
         self.assertEqual(len(samples),1)
 
+    def test_since_human_and_stale_doctor(self):
+        from quota import cli
+        with self.assertRaises(QuotaError):
+            cli.since(parser().parse_args(['status','--days','-1']))
+        self.assertAlmostEqual(cli.since(parser().parse_args(['status','--since','7d'])),now()-7*86400,delta=1)
+        self.assertAlmostEqual(cli.since(parser().parse_args(['status','--since','12h'])),now()-12*3600,delta=1)
+        with self.assertRaises(QuotaError):
+            cli.since(parser().parse_args(['status','--since','nope']))
+        text=cli.human(cli.status(self.store,parser().parse_args(['status']),self.context,[]))
+        self.assertIn('Claude',text)
+        self.store.put('state','stale-run',{'ended_at':None,'lease_at':now()-49*3600,'session_id':'stale-run'})
+        doctor=cli.doctor(self.store,self.context,[],parser().parse_args(['doctor']))
+        self.assertEqual(doctor['stale_runs'],1)
+        self.assertIn('stale 1',cli.human(doctor))
+
+    def test_sample_gates_pool_mismatch_and_probe_blocks(self):
+        from io import StringIO
+        import contextlib
+        from quota.cli import main
+        from quota.identity import identity as account
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['sample','--phase','start','--json']),2)
+        self.assertIn('session-id',captured.getvalue())
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['status','--pool','nope','--json']),2)
+        self.assertEqual(json.loads(captured.getvalue())['error']['code'],'usage')
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['sample','--pool','claude','--json']),0)
+        self.assertIn('samples',json.loads(captured.getvalue()))
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['sample','--pool','claude:not-this-pool','--json']),0)
+        self.assertEqual(json.loads(captured.getvalue())['reason'],'identity_unknown')
+        os.environ['CODEX_SANDBOX']='seatbelt'
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertNotEqual(main(['probe','claude','--raw','--json']),0)
+        self.assertEqual(json.loads(captured.getvalue())['error']['code'],'sandboxed')
+        del os.environ['CODEX_SANDBOX']
+        fingerprint=account(self.store,'claude',self.context)['fingerprint']
+        self.store.put('backoff',fingerprint,{'retry_at':now()+60})
+        self.store.db.commit()
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertNotEqual(main(['probe','claude','--raw','--json']),0)
+        body=json.loads(captured.getvalue())
+        self.assertEqual(body['error']['code'],'http_429')
+        self.assertTrue(str(body['error']['retry_at']).endswith('Z'))
+        captured=StringIO()
+        with contextlib.redirect_stdout(captured):
+            self.assertEqual(main(['doctor','--since','nope','--json']),2)
+        self.assertEqual(json.loads(captured.getvalue())['error']['code'],'usage')
+
+    def test_inferred_auth_token_and_account_switch(self):
+        from quota.identity import bind, fresh_codex_token
+        import base64
+        os.environ['CLAUDE_CODE_SESSION_ID']='sess-a'
+        os.environ['ANTHROPIC_API_KEY']='fixture-key'
+        args=parser().parse_args(['sample','--session-id','run-a','--phase','start','--agent','claude','--harness-session','sess-a'])
+        self.assertEqual(context_from(args)['auth'],'api')
+        del os.environ['ANTHROPIC_API_KEY']
+        self.assertEqual(context_from(args)['auth'],'subscription')
+        payload=base64.urlsafe_b64encode(json.dumps({'exp':now()+1000}).encode()).decode().rstrip('=')
+        path=Path(self.context['codex_home'])/'auth.json'
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_text(json.dumps({'tokens':{'access_token':'header.'+payload+'.sig'}}))
+        self.assertTrue(fresh_codex_token(self.context))
+        path.write_text(json.dumps({'tokens':{'access_token':'not-a-jwt'}}))
+        self.assertFalse(fresh_codex_token(self.context))
+        history=bind(self.store,'claude',self.context,{'pool':'pool-a','fingerprint':'f'})
+        history=bind(self.store,'claude',self.context,{'pool':'pool-b','fingerprint':'f'})
+        self.assertIsNotNone(history['periods'][0]['end'])
+        self.assertEqual(history['periods'][-1]['pool'],'pool-b')
+
+    def test_resolution_retry_cap_and_usage_edges(self):
+        from quota.readers.transport import http_error, response
+        before={'meter':'claude:five_hour','used':10,'resets_at':now()+1000,'window_s':18000}
+        after=dict(before,used=10.2,resolution=1)
+        self.assertTrue(intervals.meter_change(before,after,now()-10,now())['below_resolution'])
+        self.assertEqual(usage.tokens({'inputTokens':10,'cacheReadTokens':4},'cursor-sdk')['input'],6)
+        state={}
+        row={'type':'assistant','timestamp':'2026-09-23T12:00:00Z','message':{'model':'<synthetic>','usage':{'input_tokens':1}}}
+        self.assertIsNone(usage.parse_record(self.store,'claude',row,state,1))
+        state={}
+        row={'type':'assistant','message':{'id':'msg','model':'claude-fixture','usage':{'input_tokens':1}}}
+        self.assertIsNone(usage.parse_record(self.store,'claude',row,state,1))
+        self.assertEqual(state['partial'],'ordering_unknown')
+        capped=http_error(429,'999999999')
+        self.assertLessEqual(capped.retry_at,now()+86400+1)
+        dated=http_error(429,'Wed, 21 Oct 2015 07:28:00 GMT')
+        self.assertIsNotNone(dated.retry_at)
+        (self.fixtures/'slow.json').write_text(json.dumps({'delay_ms':100000,'body':{}}))
+        with self.assertRaises(QuotaError) as timeout:
+            response('slow','http://127.0.0.1',time.monotonic()+1)
+        self.assertEqual(timeout.exception.code,'timeout')
+        with self.assertRaises(QuotaError) as missing:
+            response('absent-fixture','http://127.0.0.1',time.monotonic()+5)
+        self.assertEqual(missing.exception.code,'no_credentials')
+
+    def test_route_ancestor_and_argv0_fallbacks(self):
+        import telemetry
+        os.environ['CLAUDE_CODE_ENTRYPOINT']='sdk-ts'
+        os.environ['CONDUCTOR_SESSION_ID']='conductor-a'
+        self.assertEqual(telemetry.route_for('claude')[0],'conductor')
+        del os.environ['CONDUCTOR_SESSION_ID']
+        self.assertEqual(telemetry.route_for('claude')[0],'sdk')
+        os.environ.pop('CLAUDE_CODE_ENTRYPOINT',None)
+        self.assertEqual(telemetry.route_for('cursor',conductor_match=True)[0],'conductor')
+        for name in ('CLAUDECODE','CURSOR_AGENT','GROK_AGENT','CONDUCTOR_SESSION_ID','CODEX_THREAD_ID'):
+            os.environ.pop(name,None)
+        self.assertEqual(telemetry.route_for('codex')[0],'unknown')
+        os.environ['CONDUCTOR_SESSION_ID']='conductor-a'
+        self.assertEqual(telemetry.route_for('codex')[0],'conductor')
+        self.assertEqual(telemetry.harness_ancestor({'claude'},{10:(0,'','claude')},pid=10),'claude')
+        with mock.patch.object(telemetry.subprocess,'run',side_effect=OSError('ps failed')):
+            self.assertIsNone(telemetry.harness_ancestor({'claude'}))
+        self.assertIsNone(telemetry.process_argv0(-1))
+
     @unittest.skipUnless(os.environ.get('EVALS_ALL')=='1','real-time timing is opt-in')
     def test_real_time_active_budget(self):
         ledger.lifecycle(self.store,self.args,self.context)

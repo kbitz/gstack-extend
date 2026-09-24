@@ -420,9 +420,11 @@ def main(argv=None):
         if error.code=='store_refused' and not report:
             record_refusal(root)
         detail=dict(code=error.code,message=error.message,**{k:v for k,v in explanation(error.code).items() if k!='reason'})
+        if error.retry_at is not None:
+            detail['retry_at']=error.retry_at
         result=dict(v=1,error=detail)
-        print(json.dumps(result) if as_json else human(result),file=sys.stdout if as_json or report else sys.stderr)
-        return 0 if report else error.exit_code
+        print(json.dumps(public(result),separators=(',',':'),allow_nan=False) if as_json else human(result),file=sys.stdout if as_json or report else sys.stderr)
+        return 0 if report and error.code in ('store_error','store_refused') else error.exit_code
     finally:
         if store:
             store.close()
