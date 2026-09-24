@@ -1,0 +1,1 @@
+{"status":200,"delay_ms":0,"error":null,"body":{"billingCycleStart":"1788177600000","billingCycleEnd":"1790769600000","planUsage":{"totalSpend":3200,"includedSpend":3200,"remaining":36800,"limit":40000,"autoPercentUsed":1.2,"apiPercentUsed":7.1}}}

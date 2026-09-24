@@ -16,8 +16,8 @@ Extension skills for [gstack](https://github.com/anthropics/gstack).
 
 All nine skills support optional local telemetry. See [telemetry setup, author
 quickstart, and fidelity checks](docs/telemetry.md); inspect it with
-`gstack-extend doctor telemetry`. These rows are separate from `mm retro-fleet`'s
-transcript-derived skill counts. Independently of gstack's telemetry tier, each
+`gstack-extend doctor telemetry`. These rows are separate from transcript-derived
+skill counts produced by other tools. Independently of gstack's telemetry tier, each
 finished run also appends a local-only row recording which harness, model, and
 effort level ran it; this is on by default and never uploaded
 ([execution provenance](docs/telemetry.md#execution-provenance)).
@@ -170,8 +170,13 @@ The workflow becomes:
 
 `/implement` leaves committing, pushing, PR creation, and release work to the later
 stages. Its handoff includes plan coverage, deviations, check results, and pending
-verification. Long handoff documents and transient plans are saved durably outside
-ephemeral workspaces unless they belong in tracked project documentation.
+verification. Long handoff documents go in tracked project docs when they belong
+in the repo. Otherwise the skill writes the first location that applies:
+`~/.gstack/projects/<slug>/implement/` when that project directory exists, then
+the Conductor workspace's gitignored `.context/implement/`, then
+`~/scratch/gstack-implement/`. A plan that exists only in `.context` is copied
+to `~/.gstack/projects/<slug>/` when that directory exists, otherwise to
+`~/scratch/gstack-implement/`, so a later stage can still read it.
 
 ---
 
@@ -540,3 +545,14 @@ Built by [@kbitz](https://github.com/kbitz) with assistance from [Claude Code](h
 ## License
 
 [MIT](LICENSE)
+
+## Quota ledger
+
+Check remaining capacity with `gstack-extend quota status --refresh`, bracket
+a caller's stage with `quota sample`, and compare consumption with `quota runs`
+and `quota summary`. `quota intervals` shows window changes, `quota settle`
+refreshes Cursor charges, and `quota probe KIND --raw` prints one adapter
+response for the fixture scrubber. `gstack-extend doctor quota` reports whether
+the store and adapters are usable. Only explicit quota commands sample vendors.
+Adapters are experimental; unknown reads never mean unlimited capacity. See the
+[quick start and JSON contract](docs/quota-ledger.md).

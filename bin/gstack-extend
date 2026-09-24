@@ -610,6 +610,8 @@ Subcommands:
   list               (coming in a future Group)
   status             (coming in a future Group)
   doctor telemetry   Local telemetry fidelity [--days N] [--json].
+  quota              Capacity and consumption ledger; `quota --help`.
+  doctor quota       Read-only quota diagnostics [--json].
   migrate            (coming in a future Group — see `init --migrate` for
                      per-project backfill today)
 
@@ -626,8 +628,13 @@ shift || true
 # --name). Without it, every UX-level error tacks on a "_die_with_line"
 # stack message after the user-facing error.
 case "$cmd" in
+  quota)       exec python3 -B -E -s "$SCRIPT_DIR/lib/quota-cli.py" "$@" ;;
   init)        cmd_init "$@" || exit $? ;;
   doctor)
+    if [ "${1:-}" = "quota" ]; then
+      shift
+      exec python3 -B -E -s "$SCRIPT_DIR/lib/quota-cli.py" doctor "$@"
+    fi
     if [ "${1:-}" = "telemetry" ]; then
       shift
       # Conditional invocation contains failures under set -e and the ERR trap.

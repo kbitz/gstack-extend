@@ -1502,13 +1502,23 @@ describe('implement drift-locks', () => {
     expect(normalized).toContain('Treat the plan as read-only.');
   });
 
-  test('handoff stays in the same workspace and uses a durable path', () => {
+  test('handoff stays in the same workspace and uses established state paths', () => {
     expect(normalized).toContain(
       'The next session should use the **same workspace and branch**',
     );
-    expect(content).toContain('~/scratch/gstack-implement/');
+    // Handoff location preference: gstack project dir → Conductor .context → ~/scratch.
+    const gstackAt = content.indexOf('~/.gstack/projects/<slug>/implement/');
+    const contextAt = content.indexOf('.context/implement/');
+    const scratchAt = content.indexOf('~/scratch/gstack-implement/');
+    expect(gstackAt).toBeGreaterThan(-1);
+    expect(contextAt).toBeGreaterThan(gstackAt);
+    expect(scratchAt).toBeGreaterThan(contextAt);
+    expect(normalized).toContain('when `~/.gstack/projects/<slug>/` already exists');
     expect(normalized).toContain(
-      'Never leave the only copy of a needed plan or handoff in `.context`, `/tmp`, or host session memory.',
+      'Never leave the only copy of a needed plan in `.context`, `/tmp`, or host session memory',
+    );
+    expect(normalized).toContain(
+      'copy a transient plan to `~/.gstack/projects/<slug>/` when that directory exists, otherwise `~/scratch/gstack-implement/`',
     );
     expect(normalized).toContain(
       'this checklist is context, not a prepared-PR receipt, a VERIFIED matrix, or permission to skip review',

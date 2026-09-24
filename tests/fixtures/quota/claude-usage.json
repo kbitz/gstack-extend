@@ -1,0 +1,1 @@
+{"status":200,"delay_ms":0,"error":null,"body":{"usage_report":{"rate_limits":{"limits":[{"kind":"session","group":"all","percent":30,"resets_at":"2026-09-23T18:00:00Z","scope":{"model":null,"surface":null},"is_active":true},{"kind":"weekly_all","percent":11,"resets_at":"2026-09-28T12:00:00Z","scope":{}}]}}}}

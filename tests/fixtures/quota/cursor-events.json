@@ -1,0 +1,1 @@
+{"status":200,"delay_ms":0,"error":null,"body":{"totalUsageEventsCount":1,"usageEventsDisplay":[{"timestamp":"1790166600000","model":"grok-fixture","conversationId":"fixture-conversation","owningUser":"fixture-owner","chargedCents":6.19,"tokenUsage":{"inputTokens":10,"cacheReadTokens":20,"outputTokens":5}}]}}

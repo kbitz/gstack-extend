@@ -195,15 +195,26 @@ environment prefixes and URL credentials from recorded commands and excerpts
 only when the scan flags their values. If redact is unavailable, inspect
 manually before emitting.
 
-For a long checklist, save a handoff document and reference its concrete path
+For a long checklist, save a handoff document and reference its absolute path
 in the prompt. Use the project's established tracked documentation location
-when it belongs in the repo; otherwise use a durable location outside an
-ephemeral workspace, such as `~/scratch/gstack-implement/`. Never leave the
-only copy of a needed plan or handoff in `.context`, `/tmp`, or host session
-memory. Copy a transient plan to a durable location with its source recorded.
-Local paths support another session on this machine; a cross-machine handoff
-needs portable plan/checklist contents or a durable shared reference as well.
-Do not commit or push merely to make a handoff portable.
+when it belongs in the repo. Otherwise, use the first location that applies:
+
+1. `~/.gstack/projects/<slug>/implement/` when `~/.gstack/projects/<slug>/`
+   already exists, with `<slug>` from gstack's `gstack-slug` or the repository
+   directory name.
+2. In Conductor, the workspace's gitignored `.context/implement/`. The next
+   session runs in this same workspace, and the handoff is moot once the
+   workspace and its uncommitted work are archived.
+3. `~/scratch/gstack-implement/` as the fallback.
+
+Name the file with the branch and a timestamp. Never leave the only copy of a
+needed plan in `.context`, `/tmp`, or host session memory: later stages outlive
+the workspace, so copy a transient plan to `~/.gstack/projects/<slug>/` when
+that directory exists, otherwise `~/scratch/gstack-implement/`, with its source
+recorded. Local paths support another session on this machine; a
+cross-machine handoff needs portable plan/checklist contents or a durable
+shared reference as well. Do not commit or push merely to make a handoff
+portable.
 
 Adapt this shape and replace every placeholder with concrete information:
 

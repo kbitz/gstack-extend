@@ -1,0 +1,1 @@
+{"status":200,"delay_ms":0,"error":null,"body":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":17,"windowDurationMins":10080,"resetsAt":1790596800},"secondary":null,"planType":"pro"},"rateLimitsByLimitId":null}}

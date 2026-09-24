@@ -30,7 +30,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
-HARNESSES = ("claude", "codex", "grok")
+HARNESSES = ("claude", "codex", "grok", "cursor")
 OUTCOMES = ("success", "error", "abort", "unknown")
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
 
@@ -178,21 +178,32 @@ def append_row(path, row, name):
         return False
 
 
-def provenance_enabled(state_root):
+def config_value(state_root, key, default=None):
     # The bin/config key=value store (first match wins, like its awk reader). Rows are local-only, so on unless disabled.
     try:
         raw = read_capped(state_root / "config", 1 << 20)
     except FileNotFoundError:
-        return True
+        return default
     except OSError:
         # Missing means default on. A FIFO, symlink, or unreadable file is not evidence the switch is still on.
-        return False
+        raise
     lines = raw.decode("utf-8", "replace").splitlines()
     for line in lines:
-        key, separator, value = line.partition("=")
-        if separator and key == "provenance":
-            return value.strip() not in ("false", "off")
-    return True
+        name, separator, value = line.partition("=")
+        if separator and name == key:
+            return value.strip()
+    return default
+
+
+def config_enabled(state_root, key):
+    try:
+        return config_value(state_root, key) not in ("false", "off")
+    except OSError:
+        return False
+
+
+def provenance_enabled(state_root):
+    return config_enabled(state_root, "provenance")
 
 
 def usage_logger():
@@ -302,12 +313,25 @@ def newest(paths):
     return max(found)[2] if found else None
 
 
+def claude_logs(session_id, config_dir=None):
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
+        return []
+    root = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    return list((root / "projects").glob(f"*/{session_id}.jsonl"))
+
+
+def codex_logs(thread_id, codex_home=None):
+    if not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", thread_id):
+        return []
+    root = Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    return list((root / "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+
+
 def claude_turns(session_id):
     # ~/.claude/projects/<cwd slug>/<session id>.jsonl records the model and effort each API response actually used.
     if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
         return []
-    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    log = newest((root / "projects").glob(f"*/{session_id}.jsonl"))
+    log = newest(claude_logs(session_id))
     turns, seen = [], set()
     for record in tail_records(log) if log else ():
         message = record.get("message")
@@ -327,11 +351,10 @@ def claude_turns(session_id):
 
 
 def codex_turns(thread_id):
-    # ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl opens every turn with its model and effort.
+    # Dated ~/.codex/sessions rollouts open every turn with its model and effort.
     if not re.fullmatch(r"[A-Za-z0-9-]{1,128}", thread_id):
         return []
-    root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    log = newest((root / "sessions").glob(f"*/*/*/rollout-*-{thread_id}.jsonl"))
+    log = newest(codex_logs(thread_id))
     turns = []
     for record in tail_records(log) if log else ():
         payload, ts = record.get("payload"), parse_ts(record.get("timestamp"))
@@ -340,10 +363,10 @@ def codex_turns(thread_id):
     return turns
 
 
-def grok_logs(root):
-    sessions = Path(os.environ.get("GROK_HOME") or Path.home() / ".grok") / "sessions"
-    places = {quote(os.getcwd(), safe="")} | ({quote(root, safe="")} if root else set())
-    named = os.environ.get("GROK_SESSION_ID", "")
+def grok_logs(root, cwd=None, grok_home=None, session_id=None):
+    sessions = Path(grok_home or os.environ.get("GROK_HOME") or Path.home() / ".grok") / "sessions"
+    places = {quote(cwd or os.getcwd(), safe="")} | ({quote(root, safe="")} if root else set())
+    named = session_id if session_id is not None else os.environ.get("GROK_SESSION_ID", "")
     # The shell exports the session id. Use that file only; sibling sessions (subagents) are not this run.
     if re.fullmatch(r"[A-Za-z0-9-]{1,128}", named):
         named_logs = []
@@ -389,15 +412,120 @@ def settle(turns, begin, carry):
     return max(counts, key=lambda pair: (counts[pair], last[pair]))
 
 
+def process_argv0(pid):
+    """Read only argv[0]; never format or return the argument vector."""
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+            libc = ctypes.CDLL(None, use_errno=True)
+            mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+            size = ctypes.c_size_t(1 << 20)
+            buffer = ctypes.create_string_buffer(size.value)
+            if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+                return None
+            # argc, executable path, padding, argv[0]. Discard everything else.
+            data = buffer.raw[4:size.value]
+            _, _, data = data.partition(b"\0")
+            return os.fsdecode(data.lstrip(b"\0").split(b"\0", 1)[0])
+        with open(f"/proc/{pid}/cmdline", "rb") as stream:
+            return os.fsdecode(stream.read(4096).split(b"\0", 1)[0])
+    except (OSError, ValueError):
+        return None
+
+
+def harness_ancestor(candidates, table=None, pid=None):
+    """Nearest marked harness; injectable table contains (ppid, argv0, comm)."""
+    names = {"claude": "claude", "codex": "codex", "cursor-agent": "cursor", "agent": "cursor", "grok": "grok"}
+    if table is None:
+        ps = which("ps")
+        if not ps:
+            return None
+        try:
+            result = subprocess.run([ps, "-A", "-o", "pid=,ppid=,comm="], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, timeout=1)
+            table = {}
+            for line in result.stdout.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3:
+                    table[int(parts[0])] = (int(parts[1]), None, os.fsdecode(parts[2]))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+    current, seen = pid or os.getppid(), set()
+    while current in table and current not in seen:
+        seen.add(current)
+        parent, arg0, comm = table[current]
+        arg0 = arg0 if arg0 is not None else process_argv0(current)
+        for name in (arg0, comm):
+            agent = names.get(Path(name).name) if name else None
+            if agent in candidates:
+                return agent
+        current = parent
+    return None
+
+
+def cursor_logs(session_id, projects=None):
+    if not valid_session(session_id):
+        return []
+    root = Path(projects or Path.home() / ".cursor/projects")
+    return list(root.glob(f"*/agent-transcripts/{session_id}.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.txt"))
+
+
+def cursor_sdk_runs(cwd=None, store=None):
+    root = Path(store or Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store")
+    for agents in root.glob("*/agents.ndjson"):
+        candidates = {r.get("agentId") for r in tail_records(agents) if not cwd or r.get("cwd") == cwd}
+        runs = agents.with_name("runs.ndjson")
+        for record in tail_records(runs) if runs.exists() else ():
+            if record.get("agentId") in candidates:
+                yield record
+
+
+def cursor_turns(root, begin):
+    session = os.environ.get("CURSOR_CONVERSATION_ID")
+    matched = [r for r in cursor_sdk_runs(os.getcwd()) if (not session or r.get("agentId") == session)]
+    turns = []
+    for record in matched:
+        model = record.get("model") or {}
+        stamp = parse_ts(record.get("updatedAt"))
+        params = model.get("params") or {}
+        if stamp and isinstance(params, dict):
+            turns.append((stamp, clean(model.get("id")), clean(params.get("effort") or params.get("reasoning_effort"))))
+    if not turns:
+        log = newest(cursor_logs(session))
+        if log:
+            turns.append((log.stat().st_mtime, None, None))
+    return turns
+
+
+def route_for(agent, conductor_match=False):
+    entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else os.environ.get("CURSOR_INVOKED_AS", "") if agent == "cursor" else ""
+    if agent == "claude" and entry.startswith("sdk-"):
+        route = "conductor" if os.environ.get("CONDUCTOR_SESSION_ID") else "sdk"
+    elif agent == "cursor" and conductor_match:
+        route = "conductor"
+    elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
+        route = "cli"
+    elif agent == "codex" and os.environ.get("CONDUCTOR_SESSION_ID"):
+        route = "conductor"
+    else:
+        route = "unknown"
+    return route, clean(entry)
+
+
 def detect(begin, end, root):
     """(agent, model, effort) for the harness running this command, from its own session log; None when unverifiable."""
     readers = []
+    if os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"):
+        readers.append(("cursor", True, lambda: cursor_turns(root, begin)))
     if os.environ.get("CODEX_THREAD_ID"):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
     if os.environ.get("GROK_AGENT") == "1":  # Grok's shell forces this; a user-set profile name is not a marker
         readers.append(("grok", True, lambda: grok_turns(root, begin)))
     if os.environ.get("CLAUDECODE") == "1" or os.environ.get("CLAUDE_CODE_SESSION_ID"):
         readers.append(("claude", False, lambda: claude_turns(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))))
+    nearest = harness_ancestor({agent for agent, _, _ in readers}) if len(readers) > 1 else None
+    if nearest:
+        readers = [reader for reader in readers if reader[0] == nearest]
 
     def turns(read):
         return sorted((turn for turn in read() if turn[0] <= end), key=lambda turn: turn[0])
@@ -472,7 +600,7 @@ def provenance_row(stage, sid, start, duration, values, root):
             model = effort = None  # detected values describe a different harness
         agent = explicit
     elif explicit is not None:
-        trace(f"ignored invalid --agent {explicit!r} (expected claude, codex or grok)")
+        trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor or grok)")
     repo = branch = None
     if root:
         try:
@@ -483,11 +611,21 @@ def provenance_row(stage, sid, start, duration, values, root):
             repo = branch = None
     outcome = values.get("--outcome")
     # Field order is the schema shared with the orchestrator; rung is always 0 for a hand-run skill (no fallback chain).
+    conductor_match=False
+    if agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS"):
+        try:
+            native=[record for record in cursor_sdk_runs(os.getcwd()) if
+                    (not os.environ.get("CURSOR_CONVERSATION_ID") or record.get("agentId")==os.environ["CURSOR_CONVERSATION_ID"]) and
+                    (parse_ts(record.get("startedAt")) or 0)<=now and (parse_ts(record.get("endedAt")) or now)>=begin]
+            conductor_match=len(native)==1
+        except (OSError,ValueError):
+            pass
+    route, entrypoint = route_for(agent,conductor_match)
     return dict(stage=stage, agent=agent, model=clean(values.get("--model")) or model,
                 effort=clean(values.get("--effort")) or effort, rung=0,
                 outcome=outcome if outcome in OUTCOMES else "unknown", started_at=iso(begin), duration_s=duration,
                 session_id=sid, repo=repo, branch=branch, work_item=clean(values.get("--work-item")),
-                source="gstack-extend")
+                source="gstack-extend", route=route, entrypoint_raw=entrypoint)
 
 
 def main(args):
@@ -495,7 +633,7 @@ def main(args):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
-        print("  finish provenance overrides: [--agent claude|codex|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
         print("  Missing/malformed start and session values fall back to the repository + skill handoff.")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
