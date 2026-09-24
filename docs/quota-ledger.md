@@ -415,7 +415,7 @@ while the foreground caller waits for it.
 | Cursor cwd slug | A fresh 2026-09-24 CLI probe produced three transcripts. Non-alphanumeric runs collapse to one hyphen, with leading/trailing hyphens removed. The corrected reader matched all three cwd paths. | Use the observed mapping with local evidence only; no time-only account-feed attribution. |
 | Codex token classes | 504 local records inspected; 288 included cache_write_input_tokens; input was compatible with inclusive cached read/write counts. | Subtract both caches; absent classes null; fixture locks mapping. |
 | Codex app-server | Fresh-token read completed in 0.63 seconds, no child process observed, auth bytes unchanged. Concurrent account/read used refreshToken false. | Gate spawn on token expiry; no MCP/thread startup. Expired case is a gate refusal. |
-| Cursor exchange | Two exchanges at least 60 seconds apart; old and new tokens both still read capacity (HTTP 200). Native session token was not read. | Per-key cross-process exchange budget; no stored-token mutation. Native-session coexistence remains operational verification. |
+| Cursor exchange | Two exchanges at least 60 seconds apart; old and new tokens both still read capacity (HTTP 200). Native session token was not read. | Per-key cross-process exchange budget; no stored-token mutation. CLI and Conductor-native coexistence passed the immediate checks below. |
 | Comparison reader | Codex reference CLI's weekly percentage matched the implemented rollout reader. Cursor reference CLI rejected this credential route. | Reference tool remains optional, never a runtime dependency; Cursor comparison unavailable. |
 
 ### Immediate verification, 2026-09-24
@@ -429,8 +429,15 @@ vendor process. No live credential was revoked or rotated for testing.
 A native Cursor CLI process stayed alive across API-key exchanges 61 seconds
 apart. Both old and new tokens still read capacity, and the original token
 successfully resumed the same native conversation; stored login bytes were
-unchanged. This verifies the CLI route. An active Conductor-native session was
-not available, so that exact coexistence check remains pending.
+unchanged. This verifies the CLI route.
+
+The existing Conductor-native Cursor session also completed two forced Cursor
+pool refreshes on commit `a61298796b6fa3f191282ca0992416044c87d2d7`. Both returned
+`ok`, at `2026-09-24T13:17:43.085Z` and `2026-09-24T13:27:22.058Z`, with an
+explicit 70-second wait after the first command. The second command ran in the
+background and its completed output was read before reporting success. The
+same native session continued responding without an authentication error;
+no second Cursor agent process was launched for this check.
 
 The child-link check again found no billing matches: 36 local child transcripts
 versus 28 recent events. The Codex reference percentage matched; the Cursor
@@ -439,7 +446,7 @@ not establish 24-hour reliability or support on other hosts.
 
 The Codex protocol is documented in [OpenAI's app-server reference](https://learn.chatgpt.com/docs/app-server).
 The live probe verifies the installed protocol path, not all vendor refresh races.
-Operational verification still requires exact Conductor-native Cursor coexistence
-and each adapter's 24-hour coverage trial. Until those observations exist, status and doctor retain
+Each adapter's 24-hour coverage trial remains explicitly deferred by the user.
+Until those observations exist, status and doctor retain
 the experimental label. Unknown Cursor exhaustion behavior and future Codex window
 changes remain provider observations, not assumptions encoded as zero/unlimited.
