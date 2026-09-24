@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.0.1] - 2026-09-24
+
+### Changed
+
+- **The roadmap now starts at Groups 16–19, with Group 15 in shipped history.** Inbox items are placed or deferred, and the README matches v0.29.0.0, including the quota ledger section above the license.
+- **Older release notes name external tools generically.** The history of what shipped is unchanged.
+
 ## [0.29.0.0] - 2026-09-24
 
 ### Added
