@@ -153,6 +153,7 @@ Packer layer 2. Consumes the trimmed skill files, the hardened preambles, the po
 _1 task . ~120 LOC . low risk . [shared lib extraction]_
 _touches: skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend_
 _blocked-by: Track 18A, Track 16E_
+_out: 20A_
 _read-first: 18A, 16E_
 _produces: one layout-scaffold helper consumed by /roadmap and `gstack-extend init`_
 - **Layout Scaffolding shared helper** -- pull the inline Layout Scaffolding logic out of `skills/roadmap.md` into `bin/lib/layout-scaffold.sh`. Replace init's inline mkdir+refusal in `bin/gstack-extend` with a call to the same helper. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
@@ -173,6 +174,20 @@ _read-first: 17A_
 _produces: one declarative table (row per skill, column per SHARED block) driving every cohort assertion_
 - **Capability table** -- `tests/skill-protocols.test.ts` keeps PROTOCOL, PREAMBLE, NON_PREAMBLE_SETUP, CONDUCTOR, and TELEMETRY cohorts plus the independently hardcoded expected list. Replace them with one table; adding a SHARED block becomes a column, not a cohort plus three invariants. Keep the exact comparison against `setup`. _Source: TODOS `[plan-eng-review:defer=true]` FINDING 10.1._ _tests/skill-protocols.test.ts, tests/helpers/expected-setup-skills.ts, tests/helpers/skill-capabilities.ts (new), ~150 lines._ (M)
 
+### Group 20: Roadmap Lifecycle Consistency
+
+_Depends on: Group 19_
+
+Packer layer 3. Waits for the last `skills/roadmap.md` editor (19A).
+
+##### Track 20A: Reconcile In Progress co-location with PACKING
+_1 task . ~40 LOC . low risk . [roadmap skill prose + archived spec, or the packing check]_
+_touches: skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts_
+_blocked-by: Track 19A_
+_read-first: 19A_
+_produces: the lifecycle prose and the PACKING check agree on what happens to a partially shipped Group at regen_
+- **Pick one rule and make both sides say it** -- the model says a Group with shipped Tracks stays in `## In Progress` with `✓` markers until it lands, and that idle Tracks "recycle with the Current Plan"; PACKING packs every unshipped Track and requires each written Group to equal a bin, so marking 15A/15B shipped moved the trims to layer 0 and left {15C, 15D, 15E} matching no bin. Default: drop the co-location prose (skill + archived spec) and state that a partially shipped Group ships its done Tracks and recycles the rest. Alternative: exempt In Progress Groups from PACKING and pin their idle Tracks (stale partition until the Group lands). Either way, the skill's "Hold — trivial closures" option must describe something reachable. _Source: TODOS `[manual]`, found 2026-09-24 closing Group 15._ _skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts, ~40 lines._ (S)
+
 ### Execution Map
 
 A Group may launch when every Group in its ← set has landed, regardless
@@ -184,6 +199,7 @@ Adjacency list (from `bin/roadmap-pack`):
 - Group 17 ← {16}
 - Group 18 ← {16}
 - Group 19 ← {16, 17, 18}
+- Group 20 ← {19}
 ```
 
 Track detail per group:
@@ -211,9 +227,12 @@ Group 19: Layout Scaffold Extract ∥ Skill Template ∥ Capability Table
   +-- Track 19A .......... ~S . 1 task (layout-scaffold helper)
   +-- Track 19B .......... ~M . 1 task (SKILL.md.tmpl + drift-lock)
   +-- Track 19C .......... ~M . 1 task (capability table)
+
+Group 20: Roadmap Lifecycle Consistency
+  +-- Track 20A .......... ~S . 1 task (co-location prose vs PACKING)
 ```
 
-**Total: 0 phases . 4 groups . 16 tracks remaining.**
+**Total: 0 phases . 5 groups . 17 tracks remaining.**
 
 ---
 

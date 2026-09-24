@@ -2,15 +2,6 @@
 
 ## Unprocessed
 
-### [manual] In Progress Groups dissolve on regen whenever PACKING re-partitions their idle Tracks
-
-- **Description:** The roadmap model says a Group with some shipped Tracks stays in `## In Progress` with `✓ Shipped` markers until the whole Group lands, and that idle unshipped Tracks "recycle with the Current Plan". The audit's PACKING check packs every unshipped Track regardless of section and requires each written Group to equal a packer bin. Marking 15A and 15B shipped inside Group 15 satisfied the `_blocked-by: Track 15A` edges on the four trims, the packer moved them to layer 0, and Group 15's remaining {15C, 15D, 15E} no longer matched any bin. The only PACKING-clean closure was to ship Group 15 with two Tracks and renumber the other three. So an In Progress Group survives a regen only when its idle Tracks happen to equal a bin, which makes the co-location rule mostly unreachable.
-- **Hypothesis (untested):** Either exempt In Progress Groups from PACKING (pin their idle Tracks in place until the Group lands, at the cost of a stale partition) or drop the co-location prose from `skills/roadmap.md` and `docs/archive/roadmap-v2-state-model.md` and say plainly that a partially shipped Group ships its done Tracks and recycles the rest. Pick one; the audit and the prose currently disagree.
-- **Effort:** S (human: ~2h / CC: ~15min)
-- **Priority:** P3
-- **Depends on:** None
-- **Context:** Found by /roadmap on 2026-09-24 while closing Group 15 (proposal-20260924T164531Z.md). The "Hold — trivial closures only" option in the skill's approval cluster is unreachable for the same reason whenever shipped Tracks were blockers.
-
 ## Completed
 
 ### [manual] Keep gstack-extend independent of the maintainer's personal tooling
