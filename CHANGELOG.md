@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.0.0] - 2026-09-24
+
+### Added
+
+- **Ask the local quota ledger how much capacity and consumption a run used.** `gstack-extend quota status`, `runs`, `summary`, `sample`, `intervals`, `settle`, and `probe` read Claude, Codex, and Cursor only when you run them. Telemetry start and finish never start a vendor read. Results stay on this machine, account ids are hashed, and `gstack-extend doctor quota` reports whether the store and the adapters are usable. Adapters stay experimental until a full day of live reads exists.
+
+### Changed
+
+- **`/implement` looks for its handoff in the gstack project directory, then `.context`, then `~/scratch`.** The first location that exists is the one the skill writes.
+
+### Fixed
+
+- **Quota errors now include `retry_at` when a vendor or exchange backoff is active.** `doctor` still exits 0 when the store cannot be read, and exits with the real usage code when the arguments are invalid.
+- **A run keeps the auth, pool, and Cursor charges that belong to it.** API usage stays off subscription intervals, another account's Codex rollout is ignored, and a Cursor row with no events expires instead of looking final.
+
 ## [0.28.0.0] - 2026-09-21
 
 ### Added
