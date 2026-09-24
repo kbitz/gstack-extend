@@ -57,3 +57,8 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 
 #### Group 14: Fix `parsers-roadmap` Group 6 Completeness Failure ✓ Shipped (v0.22.0.2)
 - Track 14A — _shipped (v0.22.0.2): dropped volatile live-ROADMAP assertions; added a synthetic state-section enclosure fixture. Parser untouched._
+
+#### Group 15: Canonical Locks ∥ Migrations ✓ Shipped (v0.24.3.0 → v0.24.6.0)
+- Track 15A — _shipped (v0.24.3.0): SHARED:conductor-visibility-head lock in four skills, exact-set advisory/fail section-list drift test, shared `parseSetupSkills` helper with explicit SETUP/PROTOCOL/PREAMBLE/CONDUCTOR cohorts (#94)_
+- Track 15B — _shipped (v0.24.5.0 → v0.24.6.0): `bin/lib/run-migrations.sh` version-windowed runner + applied/failed ledger + MIGRATION_WARN in /gstack-extend-upgrade (#96); hop-from persistence and non-semver failed-ledger retry (#98)_
+- _Tracks 15C, 15D, 15E never shipped under this number; re-packed 2026-09-24 as 16F, 18A, 16E._
