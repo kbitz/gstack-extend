@@ -11,7 +11,7 @@
 - **Effort:** L (human: ~3d / CC: ~1.5h)
 - **Priority:** P2
 - **Depends on:** Track 16B's design doc; Track 16A's revalidated `stage-runs.jsonl` contract
-- **Context:** Deferred at /autoplan on 2026-09-24 (CEO cherry-pick X4, reinforced by the CEO native voice: the probe's join plus verdict table is this checker). The contract is now `docs/designs/review-independence.md` (verdict rules, policy defaults, and the appendix evaluator). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/cursor-review-independence-plan.md`.
+- **Context:** Deferred at /autoplan on 2026-09-24 (CEO cherry-pick X4, reinforced by the CEO native voice: the probe's join plus verdict table is this checker). The contract is now `docs/designs/review-independence.md`: at least one proven independent consumed voice, complete contributing-model coverage, explicit served/requested-only assurance, and the artifact/session/result/gate chain. Its corrected metadata join uses raw branch hashes or collision-checked filename mappings. Workspace and writer candidates alone are not vendor proof. Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/cursor-review-independence-plan.md`.
 
 ### [plan-ceo-review:track=16B,defer=true] Measure whether vendor separation catches more real defects
 
@@ -22,7 +22,7 @@
 - **Effort:** M (human: ~2d / CC: ~1h)
 - **Priority:** P3
 - **Depends on:** A defect set with known outcomes; the shadow merge gate's decision-time evidence (Track 16C) is a candidate harness
-- **Context:** Deferred at /autoplan on 2026-09-24; both CEO voices flagged vendor diversity as an unmeasured premise. `docs/designs/review-independence.md` states the proxy and does not measure it.
+- **Context:** Deferred at /autoplan on 2026-09-24; both CEO voices flagged vendor diversity as an unmeasured premise. `docs/designs/review-independence.md` states the proxy and does not measure its defect-finding value. Its corrected satisfiability table and insufficient-evidence calls establish neither a benefit nor a measured independent review.
 
 ### [plan-eng-review:track=16B,defer=true] Automated test for the review-independence doc's reference evaluator
 
@@ -33,7 +33,7 @@
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3
 - **Depends on:** Track 16B (the doc and its evaluator); Track 16C landing (shared `tests/helpers/touchfiles.ts`)
-- **Context:** Deferred at /autoplan on 2026-09-24 (Eng review). The evaluator, sample rows, and expected output are in `docs/designs/review-independence.md`. Until this test exists, replay extracts that block from the committed doc.
+- **Context:** Deferred at /autoplan on 2026-09-24 (Eng review). The evaluator, sample rows, and expected output are in `docs/designs/review-independence.md`. Until this test exists, the appendix's manual replay extracts named blocks and compares exact ordered output with the corresponding expected blocks. Regression cases must reject missing/supplied proof, unknown contributing models and invalid authors, preserve requested-only assurance, accept an independent specialist alongside a same-vendor outside voice, and detect a mutated expected verdict.
 
 ### [investigate] cursor_turns() cannot read the Conductor store shape
 
@@ -55,10 +55,10 @@
 
 ### [manual] File upstream: gstack review rows need per-voice observed model and vendor
 
-- **Why:** gstack review rows record host, source, `outside_provider`, and `outside_status`, and do not record the model that ran each voice. `outside_provider` is the selected harness, not observed execution. On Cursor the primary vendor is whatever model the session pinned, the outside voice is Codex, and the log cannot show whether any consumed voice is outside the author set and the primary vendor. gstack-extend `stage-runs.jsonl` does not cover these voices, because `/review` is a gstack skill.
+- **Why:** gstack review rows record host, source, `outside_provider`, and `outside_status`, and do not record the model that ran each voice. `outside_provider` is the selected harness, not observed execution. On Cursor the primary vendor requires evidence from the session's contributing models, the outside voice is Codex, and the log cannot show whether any consumed voice is outside the author set and the primary vendor. gstack-extend `stage-runs.jsonl` does not cover these voices, because `/review` is a gstack skill.
 - **Effort:** S (human: ~2h / CC: ~20min)
 - **Priority:** P2
-- **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs were all `grok-4.7`.
+- **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs requested `grok-4.7`. Corrected branch matching finds workspace candidates for all 8 Cursor rows, but no complete execution/result/consumption chain was frozen. Record those bindings alongside models, keeping requested and served evidence separate.
 
 ## Completed
 
