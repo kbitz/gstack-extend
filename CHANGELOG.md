@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.1.0] - 2026-09-25
+
+### Fixed
+
+- **`roadmap-audit` no longer treats a root `CLAUDE.md` as proof the repo uses gstack-extend.** The missing-`docs/` warning now fires only when the audited repo has a real file at `bin/roadmap-audit`, has no `docs/` directory, and has no `TODOS.md`, `ROADMAP.md`, or `PROGRESS.md` at the root. A bare repo, a `CLAUDE.md`-only repo, a global install of the audit tool, and registry membership alone stay quiet. A root project doc still gets placement guidance and suppresses the missing-directory warning.
+- **A v1 roadmap's migration hint names the archived spec.** `MIGRATION_NEEDED` points at `docs/archive/roadmap-v2-state-model.md` in the gstack-extend source checkout.
+
 ## [0.29.0.1] - 2026-09-24
 
 ### Changed
