@@ -1,0 +1,56 @@
+#!/bin/sh
+# Shadow merge gate. Resolves this file through symlinks without dirname so a
+# PATH that contains only bun can still start it.
+set -eu
+
+_json=0
+for _a in "$@"; do
+  case "$_a" in
+    --json|--jsonl) _json=1 ;;
+  esac
+done
+
+_fail() {
+  if [ "$_json" -eq 1 ]; then
+    printf '%s\n' "{\"v\":1,\"error\":{\"code\":\"$1\",\"message\":\"$2\",\"fix\":\"$3\",\"doc\":\"docs/merge-gate.md#errors\"}}"
+  else
+    echo "ERROR $1: $2" >&2
+    echo "FIX: $3" >&2
+  fi
+  exit 1
+}
+
+if ! command -v bun >/dev/null 2>&1; then
+  _fail bun_missing "bun is not on PATH" "install bun from https://bun.sh"
+fi
+
+_src=$0
+_hops=0
+while [ -L "$_src" ]; do
+  _hops=$((_hops + 1))
+  if [ "$_hops" -gt 40 ]; then
+    _fail internal_error "symlink loop resolving merge-gate" "repair the symlink. See docs/merge-gate.md"
+  fi
+  _resolved=$(/usr/bin/readlink "$_src") || _fail internal_error "could not read symlink" "repair the symlink. See docs/merge-gate.md"
+  case "$_resolved" in
+    /*) _src=$_resolved ;;
+    *)
+      _dir=${_src%/*}
+      [ "$_dir" = "$_src" ] && _dir=.
+      _src=${_dir}/${_resolved}
+      ;;
+  esac
+done
+case "$_src" in
+  /*) ;;
+  *) _src=${PWD}/${_src} ;;
+esac
+
+_bindir=${_src%/*}
+_root=${_bindir%/*}
+_cli=${_root}/src/merge-gate/cli.ts
+if [ ! -f "$_cli" ]; then
+  _fail internal_error "merge-gate source missing" "re-run ~/.claude/skills/gstack-extend/setup"
+fi
+
+exec bun --no-env-file --no-install --config=/dev/null "$_cli" "$@"
