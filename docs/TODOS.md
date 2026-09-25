@@ -11,7 +11,7 @@
 - **Effort:** L (human: ~3d / CC: ~1.5h)
 - **Priority:** P2
 - **Depends on:** Track 16B's design doc; Track 16A's revalidated `stage-runs.jsonl` contract
-- **Context:** Deferred at /autoplan on 2026-09-24 (CEO cherry-pick X4, reinforced by the CEO native voice: the probe's join plus verdict table is this checker). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/cursor-review-independence-plan.md`.
+- **Context:** Deferred at /autoplan on 2026-09-24 (CEO cherry-pick X4, reinforced by the CEO native voice: the probe's join plus verdict table is this checker). The contract is now `docs/designs/review-independence.md` (verdict rules, policy defaults, and the appendix evaluator). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/cursor-review-independence-plan.md`.
 
 ### [plan-ceo-review:track=16B,defer=true] Measure whether vendor separation catches more real defects
 
@@ -22,7 +22,7 @@
 - **Effort:** M (human: ~2d / CC: ~1h)
 - **Priority:** P3
 - **Depends on:** A defect set with known outcomes; the shadow merge gate's decision-time evidence (Track 16C) is a candidate harness
-- **Context:** Deferred at /autoplan on 2026-09-24; both CEO voices flagged vendor diversity as an unmeasured premise. The 16B design doc states the proxy explicitly.
+- **Context:** Deferred at /autoplan on 2026-09-24; both CEO voices flagged vendor diversity as an unmeasured premise. `docs/designs/review-independence.md` states the proxy and does not measure it.
 
 ### [plan-eng-review:track=16B,defer=true] Automated test for the review-independence doc's reference evaluator
 
@@ -33,7 +33,32 @@
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3
 - **Depends on:** Track 16B (the doc and its evaluator); Track 16C landing (shared `tests/helpers/touchfiles.ts`)
-- **Context:** Deferred at /autoplan on 2026-09-24 (Eng review). Until it exists, 16B's implementation runs a manual replay that extracts the evaluator from the committed doc.
+- **Context:** Deferred at /autoplan on 2026-09-24 (Eng review). The evaluator, sample rows, and expected output are in `docs/designs/review-independence.md`. Until this test exists, replay extracts that block from the committed doc.
+
+### [investigate] cursor_turns() cannot read the Conductor store shape
+
+- **Symptom:** `cursor_turns()` in `bin/lib/telemetry.py` returns no model for a Conductor-native Cursor run. On 2026-09-25 an isolated copy of one live `agents.ndjson` record and its matching `runs.ndjson` record, with cwd rewritten to the check directory, `CURSOR_AGENT=1`, and the conversation id set to that agent id, produced zero turns. `parse_ts` returned None for integer `updatedAt`, `startedAt`, and `endedAt`. `model.params` on all 40 store runs was a list of `{id,value}`, which the reader requires to be a dict. The same ISO-only `parse_ts` is applied to `startedAt` and `endedAt` around `bin/lib/telemetry.py:616`, so every run for a cwd passes the window test and a Conductor-native route is detected only when exactly one run exists for that cwd. No fixture covers the SDK store shape.
+- **Repro:** Copy one store agent record and its run into an isolated HOME, set the agent cwd to the process cwd, export `CURSOR_AGENT=1` and `CURSOR_CONVERSATION_ID` to the agent id, and call `cursor_turns()`. Expect a turn whose model is `model.id`. Observed: no turns. Reuse `timestamp()` from `bin/lib/quota/common.py:108` for epoch-millisecond times and the quota usage reader's `model.id` path, which does not require dict params.
+- **Effort:** M (human: ~1d / CC: ~30min)
+- **Priority:** P2
+- **Depends on:** Roadmap Track 17B owns `bin/lib/telemetry.py`. Cross-check Track 16A before editing `docs/telemetry.md`.
+- **Context:** Measured during Track 16B (`docs/designs/review-independence.md`, evidence E4). 16A had not published a reader entry on 2026-09-25.
+
+### [investigate] The Cursor and quota sentence overstates what the store reader can read
+
+- **Symptom:** `docs/telemetry.md` section "Cursor and quota" says local native SDK runs supply model and effort when readable, otherwise null. The live Conductor store shape is never readable by `cursor_turns()`, so the null is structural, not an occasional miss. A reader can think a null model means the run did not name one.
+- **Repro:** Read the "Cursor and quota" paragraph, then run the repro on `cursor_turns() cannot read the Conductor store shape`. The store record's `model.id` is `grok-4.7` while the reader returns no turn. Update the sentence, and link `docs/designs/review-independence.md` from that section. Track 16B does not edit `docs/telemetry.md`.
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Priority:** P2
+- **Depends on:** The reader fix above, or a doc change that describes the current failure without waiting for it. Owner of `docs/telemetry.md`. Track 16A had not corrected this sentence as of 2026-09-25.
+- **Context:** `docs/designs/review-independence.md` section 8.
+
+### [manual] File upstream: gstack review rows need per-voice observed model and vendor
+
+- **Why:** gstack review rows record host, source, `outside_provider`, and `outside_status`, and do not record the model that ran each voice. `outside_provider` is the selected harness, not observed execution. On Cursor the primary vendor is whatever model the session pinned, the outside voice is Codex, and the log cannot show whether any consumed voice is outside the author set and the primary vendor. gstack-extend `stage-runs.jsonl` does not cover these voices, because `/review` is a gstack skill.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Priority:** P2
+- **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs were all `grok-4.7`.
 
 ## Completed
 
