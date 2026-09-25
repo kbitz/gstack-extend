@@ -1,12 +1,8 @@
 import { basename } from 'node:path';
-import {
-  DEP_GRAMMAR,
-  LOCKFILES,
-  UNSUPPORTED_MANIFESTS,
-  UNSUPPORTED_SUFFIXES,
-} from './registry.ts';
+import { DEP_GRAMMAR, LOCKFILES, UNSUPPORTED_MANIFESTS, type RegexSpec } from './registry.ts';
 
-export type DepEntry = { name: string; classification: 'remote' | 'local' };
+export type DepClass = 'remote' | 'local' | 'indirect';
+export type DepEntry = { name: string; classification: DepClass };
 
 export type ManifestParse = {
   added: DepEntry[];
@@ -15,6 +11,27 @@ export type ManifestParse = {
 };
 
 export type ManifestKind = 'package.json' | 'requirements' | 'pyproject' | 'gomod' | 'cargo' | 'gemfile' | 'unsupported' | 'lockfile' | 'other';
+
+/**
+ * One statement of a line-oriented manifest: the lines it spans, the entries it
+ * defines, and a grammar violation. A violation counts only when one of its
+ * lines was added (or the manifest is new).
+ */
+type Stmt = { lines: number[]; entries: DepEntry[]; violation: string | null };
+
+const LIMIT = '(documented limitation)';
+const RANK: Record<DepClass, number> = { local: 1, indirect: 2, remote: 3 };
+
+const compiled = new Map<RegexSpec, RegExp>();
+function re(spec: RegexSpec): RegExp {
+  let r = compiled.get(spec);
+  if (!r) {
+    r = new RegExp(spec.source, spec.flags);
+    compiled.set(spec, r);
+  }
+  r.lastIndex = 0;
+  return r;
+}
 
 export function manifestKind(path: string): ManifestKind {
   const base = basename(path);
@@ -25,423 +42,647 @@ export function manifestKind(path: string): ManifestKind {
   if (base === 'go.mod') return 'gomod';
   if (base === 'Cargo.toml') return 'cargo';
   if (base === 'Gemfile') return 'gemfile';
-  if (UNSUPPORTED_MANIFESTS.includes(base) || UNSUPPORTED_SUFFIXES.some(s => base.endsWith(s))) {
-    return 'unsupported';
-  }
+  if (unsupportedLabel(base) !== null) return 'unsupported';
   return 'other';
 }
 
+function unsupportedLabel(base: string): string | null {
+  for (const row of UNSUPPORTED_MANIFESTS) {
+    const hit = row.name.startsWith('*') ? base.endsWith(row.name.slice(1)) : base === row.name;
+    if (hit) return row.label;
+  }
+  return null;
+}
+
 export function unsupportedDetail(path: string): string {
-  const base = basename(path);
-  const label =
-    base === 'pom.xml' ? 'Maven' :
-    base === 'build.gradle' || base === 'build.gradle.kts' ? 'Gradle' :
-    base === 'build.sbt' ? 'sbt' :
-    base === 'composer.json' ? 'Composer' :
-    base === 'Pipfile' ? 'Pipfile' :
-    base === 'setup.py' || base === 'setup.cfg' ? 'setuptools' :
-    base === 'environment.yml' ? 'Conda' :
-    base.endsWith('.gemspec') ? 'gemspec' :
-    base === 'Package.swift' ? 'Swift Package Manager' :
-    base === 'Podfile' ? 'CocoaPods' :
-    base === 'pubspec.yaml' ? 'Pub' :
-    base === 'deno.json' ? 'Deno' :
-    base === 'mix.exs' ? 'Mix' :
-    base.endsWith('.csproj') || base === 'packages.config' ? '.NET' :
-    base;
-  return `${label} manifests are not parsed by collector v1 (documented limitation)`;
+  const label = unsupportedLabel(basename(path)) ?? basename(path);
+  return `${label} manifests are not parsed by collector v1 ${LIMIT}`;
 }
 
 export function parseManifest(kind: ManifestKind, base: string | null, head: string): ManifestParse {
   if (kind === 'package.json') return parsePackageJson(base, head);
-  if (kind === 'requirements') return parseRequirements(base, head);
-  if (kind === 'pyproject') return parsePyproject(base, head);
-  if (kind === 'gomod') return parseGoMod(base, head);
-  if (kind === 'cargo') return parseCargo(base, head);
-  if (kind === 'gemfile') return parseGemfile(base, head);
-  return { added: [], removed: [], unverifiable: null };
+  const read = READERS[kind];
+  if (!read) return { added: [], removed: [], unverifiable: null };
+  const headStmts = read(head);
+  const added = addedMask(base, head);
+  for (const stmt of headStmts) {
+    if (stmt.violation && stmt.lines.some(n => added[n])) {
+      return { added: [], removed: [], unverifiable: stmt.violation };
+    }
+  }
+  const baseStmts = base === null ? [] : read(base);
+  return diffNames(entryMap(baseStmts.flatMap(s => s.entries)), entryMap(headStmts.flatMap(s => s.entries)));
 }
 
-function addedLines(base: string | null, head: string): string[] {
-  if (base === null) return head.split('\n');
+const READERS: Partial<Record<ManifestKind, (text: string) => Stmt[]>> = {
+  requirements: readRequirements,
+  gemfile: readGemfile,
+  gomod: readGoMod,
+  pyproject: text => readToml(text, pyprojectLoc),
+  cargo: text => readToml(text, cargoLoc),
+};
+
+/** Head lines with no matching base line (multiset, whitespace-trimmed). A new manifest is all added. */
+function addedMask(base: string | null, head: string): boolean[] {
+  const headLines = head.split('\n');
+  if (base === null) return headLines.map(() => true);
   const counts = new Map<string, number>();
-  for (const line of base.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1);
-  const added: string[] = [];
-  for (const line of head.split('\n')) {
-    const n = counts.get(line) ?? 0;
-    if (n > 0) counts.set(line, n - 1);
-    else added.push(line);
+  for (const line of base.split('\n')) counts.set(line.trim(), (counts.get(line.trim()) ?? 0) + 1);
+  return headLines.map(line => {
+    const n = counts.get(line.trim()) ?? 0;
+    if (n === 0) return true;
+    counts.set(line.trim(), n - 1);
+    return false;
+  });
+}
+
+function entryMap(entries: DepEntry[]): Map<string, DepEntry> {
+  const map = new Map<string, DepEntry>();
+  for (const entry of entries) {
+    const prev = map.get(entry.name);
+    if (!prev || RANK[entry.classification] > RANK[prev.classification]) map.set(entry.name, entry);
   }
-  return added;
+  return map;
 }
 
 function diffNames(baseNames: Map<string, DepEntry>, headNames: Map<string, DepEntry>): ManifestParse {
-  const added: DepEntry[] = [];
-  const removed: DepEntry[] = [];
-  for (const [name, entry] of headNames) {
-    if (!baseNames.has(name)) added.push(entry);
-  }
-  for (const [name, entry] of baseNames) {
-    if (!headNames.has(name)) removed.push(entry);
-  }
-  added.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  removed.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  const byName = (a: DepEntry, b: DepEntry) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const added = [...headNames.values()].filter(e => !baseNames.has(e.name)).sort(byName);
+  const removed = [...baseNames.values()].filter(e => !headNames.has(e.name)).sort(byName);
   return { added, removed, unverifiable: null };
 }
 
+function normalizePy(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, '-');
+}
+
+// package.json
+
 function parsePackageJson(base: string | null, head: string): ManifestParse {
   const headMap = readPackageJson(head);
-  if (headMap === 'bad') {
-    return { added: [], removed: [], unverifiable: 'package.json could not be parsed (invalid JSON)' };
-  }
   const baseMap = base === null ? new Map<string, DepEntry>() : readPackageJson(base);
-  if (baseMap === 'bad') {
-    return { added: [], removed: [], unverifiable: 'package.json could not be parsed (invalid JSON)' };
+  if (headMap === null || baseMap === null) {
+    return { added: [], removed: [], unverifiable: 'package.json could not be parsed (invalid JSON or a non-string dependency spec)' };
   }
   return diffNames(baseMap, headMap);
 }
 
-function readPackageJson(text: string): Map<string, DepEntry> | 'bad' {
+function readPackageJson(text: string): Map<string, DepEntry> | null {
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    return 'bad';
+    return null;
   }
-  if (json === null || typeof json !== 'object' || Array.isArray(json)) return 'bad';
+  if (json === null || typeof json !== 'object' || Array.isArray(json)) return null;
   const obj = json as Record<string, unknown>;
-  const map = new Map<string, DepEntry>();
+  const entries: DepEntry[] = [];
   for (const section of DEP_GRAMMAR.npm_sections) {
     if (!(section in obj)) continue;
     const value = obj[section];
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'bad';
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
     for (const [name, spec] of Object.entries(value as Record<string, unknown>)) {
-      if (typeof spec !== 'string') return 'bad';
-      const classification = DEP_GRAMMAR.npm_local_prefixes.some(p => spec.startsWith(p)) ? 'local' : 'remote';
-      const prev = map.get(name);
-      if (!prev || (prev.classification === 'local' && classification === 'remote')) {
-        map.set(name, { name, classification });
+      if (typeof spec !== 'string') return null;
+      const local = DEP_GRAMMAR.npm_local_prefixes.some(p => spec.startsWith(p));
+      entries.push({ name, classification: local ? 'local' : 'remote' });
+    }
+  }
+  return entryMap(entries);
+}
+
+// requirements*.txt
+
+function readRequirements(text: string): Stmt[] {
+  const out: Stmt[] = [];
+  const phys = text.split('\n');
+  let buf = '';
+  let lines: number[] = [];
+  for (let i = 0; i < phys.length; i++) {
+    const line = (phys[i] ?? '').replace(/\r$/, '');
+    lines.push(i);
+    if (line.endsWith('\\') && !/^\s*#/.test(line)) {
+      buf += `${line.slice(0, -1)} `;
+      continue;
+    }
+    out.push(requirementStmt(buf + line, lines));
+    buf = '';
+    lines = [];
+  }
+  if (lines.length > 0) out.push(requirementStmt(buf, lines));
+  return out;
+}
+
+function requirementStmt(raw: string, lines: number[]): Stmt {
+  const g = DEP_GRAMMAR.requirements;
+  const ok = (entries: DepEntry[]): Stmt => ({ lines, entries, violation: null });
+  const bad = (why: string): Stmt => ({ lines, entries: [], violation: why });
+  const text = raw.replace(re(g.comment), '').trim();
+  if (text === '') return ok([]);
+  const option = re(g.option).exec(text);
+  if (option) {
+    const flag = option[1] ?? '';
+    const value = (option[2] ?? '').trim();
+    if (g.include_options.includes(flag)) {
+      return bad(`requirements include (${flag}) is not parsed by collector v1 ${LIMIT}`);
+    }
+    if (g.editable_options.includes(flag)) {
+      return ok([{ name: text, classification: re(g.local).test(value) ? 'local' : 'remote' }]);
+    }
+    if (g.ignored_options.includes(flag)) return ok([]);
+    return bad(`requirements option ${flag} is outside the collector v1 grammar ${LIMIT}`);
+  }
+  const noOpts = text.replace(re(g.trailing_option), '');
+  const semi = noOpts.indexOf(';');
+  const body = (semi >= 0 ? noOpts.slice(0, semi) : noOpts).trim();
+  if (re(g.url).test(body)) return ok([{ name: body, classification: 'remote' }]);
+  if (re(g.local).test(body)) return ok([{ name: body, classification: 'local' }]);
+  const m = re(g.requirement).exec(body);
+  if (!m?.[1]) return bad(`requirements line is outside the collector v1 grammar ${LIMIT}`);
+  const direct = (m[2] ?? '').trim();
+  return ok([{ name: normalizePy(m[1]), classification: re(g.local).test(direct) ? 'local' : 'remote' }]);
+}
+
+// Gemfile
+
+function readGemfile(text: string): Stmt[] {
+  const g = DEP_GRAMMAR.gemfile;
+  const out: Stmt[] = [];
+  const phys = text.split('\n');
+  let buf = '';
+  let lines: number[] = [];
+  for (let i = 0; i < phys.length; i++) {
+    const line = (phys[i] ?? '').replace(/\r$/, '').replace(re(g.comment), '').trim();
+    lines.push(i);
+    buf = buf === '' ? line : `${buf} ${line}`;
+    if (/[,\\]$/.test(line)) continue;
+    out.push(gemStmt(buf, lines));
+    buf = '';
+    lines = [];
+  }
+  if (lines.length > 0) out.push(gemStmt(buf, lines));
+  return out;
+}
+
+function gemStmt(text: string, lines: number[]): Stmt {
+  const g = DEP_GRAMMAR.gemfile;
+  if (text === '') return { lines, entries: [], violation: null };
+  const gem = re(g.gem).exec(text);
+  if (gem?.[1]) {
+    return { lines, entries: [{ name: gem[1], classification: re(g.local_option).test(text) ? 'local' : 'remote' }], violation: null };
+  }
+  if (re(g.gemspec).test(text)) {
+    return { lines, entries: [], violation: `Gemfile gemspec line is not parsed by collector v1 ${LIMIT}` };
+  }
+  if (g.allowed.some(spec => re(spec).test(text))) return { lines, entries: [], violation: null };
+  return { lines, entries: [], violation: `Gemfile line is outside the collector v1 grammar ${LIMIT}` };
+}
+
+// go.mod
+
+function readGoMod(text: string): Stmt[] {
+  const g = DEP_GRAMMAR.gomod;
+  const out: Stmt[] = [];
+  const phys = text.split('\n');
+  let block: string | null = null;
+  for (let i = 0; i < phys.length; i++) {
+    const raw = (phys[i] ?? '').replace(/\r$/, '');
+    const indirect = re(g.indirect).test(raw);
+    const line = raw.replace(/\/\/.*$/, '').trim();
+    if (line === '') continue;
+    if (block !== null) {
+      if (line === ')') {
+        block = null;
+        continue;
       }
+      out.push(goStmt(block, line, indirect, [i]));
+      continue;
     }
-  }
-  return map;
-}
-
-function parseRequirements(base: string | null, head: string): ManifestParse {
-  const bad = requirementViolation(addedLines(base, head));
-  if (bad) return { added: [], removed: [], unverifiable: bad };
-  const headMap = readRequirements(head);
-  if (typeof headMap === 'string') return { added: [], removed: [], unverifiable: headMap };
-  const baseMap = base === null ? new Map<string, DepEntry>() : readRequirements(base);
-  if (typeof baseMap === 'string') return { added: [], removed: [], unverifiable: baseMap };
-  return diffNames(baseMap, headMap);
-}
-
-function requirementViolation(lines: string[]): string | null {
-  for (const raw of lines) {
-    const line = stripReqComment(raw).trim();
-    if (line === '') continue;
-    if (/^(-r|--requirement|-c|--constraint)(\s|$)/.test(line)) {
-      return 'requirements include (-r/-c) was added; included files are not parsed by collector v1 (documented limitation)';
+    const m = /^([A-Za-z]+)\s*(.*)$/.exec(line);
+    if (!m?.[1]) {
+      out.push({ lines: [i], entries: [], violation: `go.mod line is outside the collector v1 grammar ${LIMIT}` });
+      continue;
     }
-    if (classifyReq(line) === 'bad') {
-      return 'requirements line is outside the collector v1 grammar (documented limitation)';
+    const directive = m[1];
+    const rest = (m[2] ?? '').trim();
+    if (rest === '(') {
+      block = directive;
+      out.push({ lines: [i], entries: [], violation: goDirectiveViolation(directive) });
+      continue;
     }
-  }
-  return null;
-}
-
-function readRequirements(text: string): Map<string, DepEntry> | string {
-  const map = new Map<string, DepEntry>();
-  for (const raw of text.split('\n')) {
-    const line = stripReqComment(raw).trim();
-    if (line === '') continue;
-    if (/^(-r|--requirement|-c|--constraint)(\s|$)/.test(line)) continue;
-    const item = classifyReq(line);
-    if (item === 'bad') return 'requirements line is outside the collector v1 grammar (documented limitation)';
-    if (!map.has(item.name)) map.set(item.name, item);
-  }
-  return map;
-}
-
-function stripReqComment(line: string): string {
-  let out = '';
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] === '#' && (i === 0 || line[i - 1] === ' ')) break;
-    out += line[i];
+    out.push(goStmt(directive, rest, indirect, [i]));
   }
   return out;
 }
 
-function classifyReq(line: string): DepEntry | 'bad' {
-  let body = line.trim();
-  const semi = indexOutside(body, ';');
-  if (semi >= 0) body = body.slice(0, semi).trim();
-  if (/^(-e|--editable)(\s|$)/.test(body) || /^[a-z][a-z0-9+.-]*:\/\//i.test(body) || body.startsWith('git+')) {
-    const rest = body.replace(/^(-e|--editable)\s+/, '');
-    const local = !/^[a-z][a-z0-9+.-]*:\/\//i.test(rest) && !rest.startsWith('git+') && (/^(\.\.?\/|\/)/.test(rest) || rest.includes('file:'));
-    return { name: line.trim(), classification: local ? 'local' : 'remote' };
+function goDirectiveViolation(directive: string): string | null {
+  const g = DEP_GRAMMAR.gomod;
+  if (directive === g.require || g.ignored_directives.includes(directive)) return null;
+  if (g.unsupported_directives.includes(directive)) {
+    return `go.mod ${directive} is not parsed by collector v1 ${LIMIT}`;
   }
-  if (/^(\.\.?\/|\/)/.test(body) || body.startsWith('file:')) {
-    return { name: body, classification: 'local' };
+  return `go.mod directive ${directive} is outside the collector v1 grammar ${LIMIT}`;
+}
+
+function goStmt(directive: string, rest: string, indirect: boolean, lines: number[]): Stmt {
+  if (directive !== DEP_GRAMMAR.gomod.require) {
+    return { lines, entries: [], violation: goDirectiveViolation(directive) };
   }
-  const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(body);
-  if (!m || !m[1]) return 'bad';
-  const name = m[1].toLowerCase().replace(/[_.]/g, '-');
-  return { name, classification: 'remote' };
+  const m = /^"?([^\s"]+)"?\s+(\S+)$/.exec(rest);
+  if (!m?.[1]) return { lines, entries: [], violation: `go.mod require line is outside the collector v1 grammar ${LIMIT}` };
+  return { lines, entries: [{ name: m[1], classification: indirect ? 'indirect' : 'remote' }], violation: null };
 }
 
-function indexOutside(s: string, ch: string): number {
-  return s.indexOf(ch);
+// TOML (pyproject.toml, Cargo.toml)
+
+type TomlStmt =
+  | { kind: 'table'; path: string[]; array: boolean; lines: number[] }
+  | { kind: 'kv'; table: string[]; inArray: boolean; key: string[]; value: string; lines: number[] }
+  | { kind: 'bad'; lines: number[] };
+
+/**
+ * Where a fully qualified TOML key sits in the dependency grammar:
+ * `table` is an inline table of name to spec, `dep` names one dependency
+ * (`attrs` are the keys below it), `pep508` is an array of PEP 508 strings,
+ * and `pep508-groups` is an inline table of such arrays.
+ */
+type DepLoc =
+  | { kind: 'none' }
+  | { kind: 'unsupported' }
+  | { kind: 'table' }
+  | { kind: 'dep'; name: string; def: string; attrs: string[] }
+  | { kind: 'pep508' }
+  | { kind: 'pep508-groups' };
+
+function startsWithPath(full: string[], prefix: readonly string[]): boolean {
+  return prefix.every((seg, i) => full[i] === seg);
 }
 
-function parseGemfile(base: string | null, head: string): ManifestParse {
-  const bad = gemViolation(addedLines(base, head));
-  if (bad) return { added: [], removed: [], unverifiable: bad };
-  const headMap = readGemfile(head);
-  if (typeof headMap === 'string') return { added: [], removed: [], unverifiable: headMap };
-  const baseMap = base === null ? new Map<string, DepEntry>() : readGemfile(base);
-  if (typeof baseMap === 'string') return { added: [], removed: [], unverifiable: baseMap };
-  return diffNames(baseMap, headMap);
+function depAt(full: string[], idx: number, normalize: (s: string) => string): DepLoc {
+  if (full.length === idx) return { kind: 'table' };
+  const raw = full[idx] ?? '';
+  return { kind: 'dep', name: normalize(raw), def: full.slice(0, idx + 1).join('\0'), attrs: full.slice(idx + 1) };
 }
 
-function gemViolation(lines: string[]): string | null {
-  for (const raw of lines) {
-    const line = raw.replace(/\s+#.*$/, '').trim();
-    if (line === '') continue;
-    if (/^\s*gemspec\b/.test(raw)) {
-      return 'Gemfile gemspec line was added; gemspec dependencies are not parsed by collector v1 (documented limitation)';
+function cargoLoc(full: string[]): DepLoc {
+  const t = DEP_GRAMMAR.cargo.dep_tables;
+  if (t.includes(full[0] ?? '')) return depAt(full, 1, s => s);
+  if (full[0] === 'workspace' && full[1] === 'dependencies') return depAt(full, 2, s => s);
+  if (full[0] === 'target' && full.length >= 3 && t.includes(full[2] ?? '')) return depAt(full, 3, s => s);
+  return { kind: 'none' };
+}
+
+function pyprojectLoc(full: string[]): DepLoc {
+  const p = DEP_GRAMMAR.pyproject;
+  if (full.length === 2 && startsWithPath(full, p.project_dependencies)) return { kind: 'pep508' };
+  if (startsWithPath(full, p.project_optional)) {
+    if (full.length === 2) return { kind: 'pep508-groups' };
+    if (full.length === 3) return { kind: 'pep508' };
+    return { kind: 'unsupported' };
+  }
+  let idx = -1;
+  for (const table of p.poetry_tables) {
+    if (startsWithPath(full, table)) idx = table.length;
+  }
+  if (idx < 0 && full.length >= 5 && startsWithPath(full, p.poetry_group_prefix) && full[4] === p.poetry_group_suffix) idx = 5;
+  if (idx < 0) return { kind: 'none' };
+  if (full.length > idx && p.poetry_skip_keys.includes(full[idx] ?? '')) return { kind: 'none' };
+  return depAt(full, idx, normalizePy);
+}
+
+function readToml(text: string, locate: (full: string[]) => DepLoc): Stmt[] {
+  const out: Stmt[] = [];
+  const defs = new Map<string, { name: string; local: boolean; lines: number[] }>();
+  const define = (loc: { name: string; def: string }, local: boolean, lines: number[]) => {
+    const prev = defs.get(loc.def);
+    if (prev) {
+      prev.local = prev.local || local;
+      prev.lines.push(...lines);
+    } else defs.set(loc.def, { name: loc.name, local, lines: [...lines] });
+  };
+  const bad = (lines: number[], why: string) => out.push({ lines, entries: [], violation: `${why} ${LIMIT}` });
+  const ok = (lines: number[], entries: DepEntry[]) => out.push({ lines, entries, violation: null });
+
+  for (const st of tomlStatements(text)) {
+    if (st.kind === 'bad') {
+      bad(st.lines, 'TOML line could not be parsed by collector v1');
+      continue;
     }
-    if (!gemLineAllowed(line)) {
-      return 'Gemfile line is outside the collector v1 grammar (documented limitation)';
+    if (st.kind === 'table') {
+      const loc = locate(st.path);
+      if (loc.kind === 'none') continue;
+      if (st.array || loc.kind === 'unsupported') {
+        bad(st.lines, 'TOML array of tables under a dependency table is not parsed by collector v1');
+        continue;
+      }
+      if (loc.kind === 'dep') define(loc, false, st.lines);
+      else ok(st.lines, []);
+      continue;
     }
-  }
-  return null;
-}
-
-function gemLineAllowed(line: string): boolean {
-  if (/^gem\s+['"][^'"]+['"]/.test(line)) return true;
-  if (/^source\s+['"][^'"]+['"]/.test(line)) return true;
-  if (/^group\b/.test(line)) return true;
-  if (line === 'end' || line === 'do') return true;
-  if (/^gemspec\b/.test(line)) return true;
-  return false;
-}
-
-function readGemfile(text: string): Map<string, DepEntry> | string {
-  const map = new Map<string, DepEntry>();
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/\s+#.*$/, '').trim();
-    if (line === '' || /^gemspec\b/.test(line)) continue;
-    const m = /^gem\s+['"]([^'"]+)['"]/.exec(line);
-    if (!m) continue;
-    const name = m[1] ?? '';
-    if (!map.has(name)) map.set(name, { name, classification: 'remote' });
-  }
-  return map;
-}
-
-function parseGoMod(base: string | null, head: string): ManifestParse {
-  const bad = goViolation(addedLines(base, head));
-  if (bad) return { added: [], removed: [], unverifiable: bad };
-  return diffNames(readGo(base ?? ''), readGo(head));
-}
-
-function goViolation(lines: string[]): string | null {
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line === '' || line.startsWith('//')) continue;
-    if (/^(replace|exclude|retract)\b/.test(line)) {
-      return 'go.mod replace/exclude/retract was added and is not parsed by collector v1 (documented limitation)';
+    const loc = locate([...st.table, ...st.key]);
+    if (loc.kind === 'none') continue;
+    if (st.inArray || loc.kind === 'unsupported') {
+      bad(st.lines, 'TOML dependency key under an array of tables is not parsed by collector v1');
+      continue;
     }
+    if (loc.kind === 'pep508') {
+      const entries = pep508Array(st.value);
+      if (entries === null) bad(st.lines, 'pyproject dependency array is outside the collector v1 grammar');
+      else ok(st.lines, entries);
+      continue;
+    }
+    if (loc.kind === 'pep508-groups') {
+      const groups = inlineEntries(st.value);
+      const entries = groups?.map(g => pep508Array(g.value));
+      if (!entries || entries.some(e => e === null)) bad(st.lines, 'pyproject optional-dependencies is outside the collector v1 grammar');
+      else ok(st.lines, entries.flatMap(e => e ?? []));
+      continue;
+    }
+    if (loc.kind === 'table') {
+      const specs = inlineEntries(st.value);
+      if (!specs) {
+        bad(st.lines, 'TOML dependency table value is outside the collector v1 grammar');
+        continue;
+      }
+      const entries: DepEntry[] = [];
+      let invalid = false;
+      for (const spec of specs) {
+        const inner = locate([...st.table, ...st.key, ...spec.key]);
+        if (inner.kind === 'none') continue;
+        if (inner.kind !== 'dep') {
+          invalid = true;
+          continue;
+        }
+        const cls = inner.attrs.length === 0 ? classifySpec(spec.value) : (isLocalAttr(inner.attrs, spec.value) ? 'local' : 'remote');
+        if (cls === null) invalid = true;
+        else entries.push({ name: inner.name, classification: cls });
+      }
+      if (invalid) bad(st.lines, 'TOML dependency table value is outside the collector v1 grammar');
+      else ok(st.lines, entries);
+      continue;
+    }
+    if (loc.attrs.length === 0) {
+      const cls = classifySpec(st.value);
+      if (cls === null) {
+        out.push({
+          lines: st.lines,
+          entries: [{ name: loc.name, classification: 'remote' }],
+          violation: `TOML dependency spec is outside the collector v1 grammar ${LIMIT}`,
+        });
+      } else ok(st.lines, [{ name: loc.name, classification: cls }]);
+      continue;
+    }
+    define(loc, isLocalAttr(loc.attrs, st.value), st.lines);
   }
-  return null;
+  for (const def of defs.values()) {
+    ok(def.lines, [{ name: def.name, classification: def.local ? 'local' : 'remote' }]);
+  }
+  return out;
 }
 
-function readGo(text: string): Map<string, DepEntry> {
-  const present = new Set<string>();
-  const direct = new Set<string>();
+function isLocalAttr(attrs: string[], value: string): boolean {
+  const key = attrs[0] ?? '';
+  if (DEP_GRAMMAR.toml_local_attrs.includes(key)) return true;
+  return key === DEP_GRAMMAR.toml_workspace_attr && value.trim() === 'true';
+}
+
+/** A dependency spec: a version string, an inline table, or (Poetry) an array of inline tables. */
+function classifySpec(value: string): 'remote' | 'local' | null {
+  if (tomlString(value) !== null) return 'remote';
+  const table = inlineEntries(value);
+  if (table) return table.some(e => isLocalAttr(e.key, e.value)) ? 'local' : 'remote';
+  const items = tomlArray(value);
+  if (!items) return null;
+  const tables = items.map(inlineEntries);
+  if (tables.length === 0 || tables.some(t => t === null)) return null;
+  return tables.some(t => t?.some(e => isLocalAttr(e.key, e.value))) ? 'local' : 'remote';
+}
+
+function pep508Array(value: string): DepEntry[] | null {
+  const items = tomlArray(value);
+  if (!items) return null;
+  const out: DepEntry[] = [];
+  for (const item of items) {
+    const spec = tomlString(item);
+    if (spec === null) return null;
+    const m = re(DEP_GRAMMAR.pyproject.pep508).exec(spec.split(';')[0]?.trim() ?? '');
+    if (!m?.[1]) return null;
+    const local = re(DEP_GRAMMAR.requirements.local).test((m[2] ?? '').trim());
+    out.push({ name: normalizePy(m[1]), classification: local ? 'local' : 'remote' });
+  }
+  return out;
+}
+
+function tomlStatements(text: string): TomlStmt[] {
   const lines = text.split('\n');
-  let inBlock = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.startsWith('require') && line.endsWith('(')) { inBlock = true; continue; }
-    if (inBlock && line === ')') { inBlock = false; continue; }
-    const single = /^require\s+(\S+)\s+(\S+)/.exec(line);
-    const block = inBlock ? /^(\S+)\s+(\S+)/.exec(line) : null;
-    const m = single ?? block;
-    if (!m || !m[1]) continue;
-    const name = m[1];
-    present.add(name);
-    if (!/\/\/\s*indirect\b/.test(line)) direct.add(name);
-  }
-  const map = new Map<string, DepEntry>();
-  for (const name of direct) map.set(name, { name, classification: 'remote' });
-  for (const name of present) {
-    if (!map.has(name)) map.set(name, { name, classification: 'local' });
-  }
-  return map;
-}
-
-type TomlName = Map<string, DepEntry>;
-
-function parsePyproject(base: string | null, head: string): ManifestParse {
-  return parseTomlDeps(base, head, 'pyproject');
-}
-
-function parseCargo(base: string | null, head: string): ManifestParse {
-  return parseTomlDeps(base, head, 'cargo');
-}
-
-function parseTomlDeps(base: string | null, head: string, kind: 'pyproject' | 'cargo'): ManifestParse {
-  const bad = tomlViolation(addedLines(base, head), kind);
-  if (bad) return { added: [], removed: [], unverifiable: bad };
-  const headMap = readToml(head, kind);
-  if (typeof headMap === 'string') return { added: [], removed: [], unverifiable: headMap };
-  const baseMap = base === null ? new Map<string, DepEntry>() : readToml(base, kind);
-  if (typeof baseMap === 'string') return { added: [], removed: [], unverifiable: baseMap };
-  return diffNames(baseMap, headMap);
-}
-
-function tomlViolation(lines: string[], kind: 'pyproject' | 'cargo'): string | null {
-  return scanToml(lines, kind);
-}
-
-function scanToml(added: string[], kind: 'pyproject' | 'cargo'): string | null {
-  // `added` is the added-line list. Section headers may be unchanged, so the
-  // caller passes only added lines and we treat a quoted key as a violation
-  // when it shows up at all in that list under a dependency-looking key.
-  for (const raw of added) {
-    const line = stripTomlComment(raw).trim();
-    if (line === '' || line.startsWith('[')) continue;
-    if (line.startsWith('[[')) {
-      return 'TOML array of tables under a dependency section is not parsed by collector v1 (documented limitation)';
-    }
-    if (/^['"]/.test(line) || /^[A-Za-z0-9_-]+\.[A-Za-z0-9_]/.test(line)) {
-      return 'dotted or quoted TOML keys are not parsed by collector v1 (documented limitation)';
-    }
-  }
-  void kind;
-  return null;
-}
-
-function readToml(text: string, kind: 'pyproject' | 'cargo'): TomlName | string {
-  const map = new Map<string, DepEntry>();
-  const lines = text.split('\n');
-  let section = '';
+  const out: TomlStmt[] = [];
+  let table: string[] = [];
+  let inArray = false;
   let i = 0;
   while (i < lines.length) {
-    const raw = lines[i] ?? '';
-    const line = stripTomlComment(raw).trim();
+    const start = i;
+    const raw = (lines[i] ?? '').replace(/\r$/, '');
     i++;
-    if (line === '') continue;
-    if (line.startsWith('[[')) return 'TOML array of tables is not parsed by collector v1 (documented limitation)';
-    if (line.startsWith('[')) {
-      section = normalizeSection(line);
+    const trimmed = raw.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed.startsWith('[')) {
+      const header = tomlHeader(trimmed);
+      if (!header) {
+        out.push({ kind: 'bad', lines: [start] });
+        continue;
+      }
+      table = header.path;
+      inArray = header.array;
+      out.push({ kind: 'table', path: header.path, array: header.array, lines: [start] });
       continue;
     }
-    const eq = line.indexOf('=');
-    if (eq < 0) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (value === '[' || value.endsWith('[') && !value.includes(']')) {
-      const collected = [value];
-      while (i < lines.length && !collected.join('\n').includes(']')) {
-        collected.push(lines[i] ?? '');
+    const key = readTomlKey(raw, 0);
+    const eq = key ? skipBlank(raw, key.end) : -1;
+    if (!key || raw[eq] !== '=') {
+      out.push({ kind: 'bad', lines: [start] });
+      continue;
+    }
+    const scan: TomlScan = { depth: 0, str: '', clean: '', malformed: false };
+    feedToml(scan, raw.slice(eq + 1));
+    const used = [start];
+    while ((scan.depth > 0 || scan.str.length === 3) && !scan.malformed && i < lines.length) {
+      feedToml(scan, `\n${(lines[i] ?? '').replace(/\r$/, '')}`);
+      used.push(i);
+      i++;
+    }
+    if (scan.depth !== 0 || scan.str !== '' || scan.malformed) {
+      out.push({ kind: 'bad', lines: used });
+      continue;
+    }
+    out.push({ kind: 'kv', table, inArray, key: key.parts, value: scan.clean.trim(), lines: used });
+  }
+  return out;
+}
+
+function tomlHeader(line: string): { path: string[]; array: boolean } | null {
+  const array = line.startsWith('[[');
+  const key = readTomlKey(line, array ? 2 : 1);
+  if (!key) return null;
+  const close = array ? ']]' : ']';
+  const at = skipBlank(line, key.end);
+  if (!line.startsWith(close, at)) return null;
+  const rest = line.slice(at + close.length).trim();
+  if (rest !== '' && !rest.startsWith('#')) return null;
+  return { path: key.parts, array };
+}
+
+function skipBlank(s: string, pos: number): number {
+  let i = pos;
+  while (i < s.length && (s[i] === ' ' || s[i] === '\t')) i++;
+  return i;
+}
+
+/** A dotted key of bare, "basic", or 'literal' parts starting at `pos`. */
+function readTomlKey(s: string, pos: number): { parts: string[]; end: number } | null {
+  const parts: string[] = [];
+  let i = skipBlank(s, pos);
+  for (;;) {
+    if (s[i] === '"') {
+      let j = i + 1;
+      let part = '';
+      while (j < s.length && s[j] !== '"') {
+        if (s[j] === '\\') {
+          part += s[j + 1] ?? '';
+          j += 2;
+          continue;
+        }
+        part += s[j];
+        j++;
+      }
+      if (j >= s.length) return null;
+      parts.push(part);
+      i = j + 1;
+    } else if (s[i] === "'") {
+      const j = s.indexOf("'", i + 1);
+      if (j < 0) return null;
+      parts.push(s.slice(i + 1, j));
+      i = j + 1;
+    } else {
+      const m = re(DEP_GRAMMAR.toml_bare_key).exec(s.slice(i));
+      if (!m) return null;
+      parts.push(m[0]);
+      i += m[0].length;
+    }
+    i = skipBlank(s, i);
+    if (s[i] !== '.') return { parts, end: i };
+    i = skipBlank(s, i + 1);
+  }
+}
+
+type TomlScan = { depth: number; str: '' | '"' | "'" | '"""' | "'''"; clean: string; malformed: boolean };
+
+/** Advance a value scan: strings, bracket depth, and comments (dropped from `clean`). */
+function feedToml(scan: TomlScan, chunk: string): void {
+  let i = 0;
+  while (i < chunk.length) {
+    const ch = chunk[i] ?? '';
+    if (scan.str === '"""' || scan.str === "'''") {
+      if (chunk.startsWith(scan.str, i)) {
+        scan.clean += scan.str;
+        i += 3;
+        scan.str = '';
+        continue;
+      }
+      const step = scan.str === '"""' && ch === '\\' ? 2 : 1;
+      scan.clean += chunk.slice(i, i + step);
+      i += step;
+      continue;
+    }
+    if (scan.str === '"' || scan.str === "'") {
+      if (ch === '\n') {
+        scan.malformed = true;
+        return;
+      }
+      const step = scan.str === '"' && ch === '\\' ? 2 : 1;
+      if (ch === scan.str) scan.str = '';
+      scan.clean += chunk.slice(i, i + step);
+      i += step;
+      continue;
+    }
+    if (ch === '#') {
+      const nl = chunk.indexOf('\n', i);
+      i = nl < 0 ? chunk.length : nl;
+      continue;
+    }
+    if (chunk.startsWith('"""', i) || chunk.startsWith("'''", i)) {
+      scan.str = chunk.slice(i, i + 3) as '"""' | "'''";
+      scan.clean += scan.str;
+      i += 3;
+      continue;
+    }
+    if (ch === '"' || ch === "'") scan.str = ch;
+    else if (ch === '[' || ch === '{') scan.depth++;
+    else if (ch === ']' || ch === '}') {
+      scan.depth--;
+      if (scan.depth < 0) scan.malformed = true;
+    }
+    scan.clean += ch;
+    i++;
+  }
+}
+
+/** Split at top-level commas, outside strings and nested brackets. */
+function splitTop(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let str = '';
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (str !== '') {
+      if ((str === '"' || str === '"""') && ch === '\\') {
         i++;
+        continue;
       }
-      value = collected.join('\n');
-    }
-    if (!sectionIsDeps(section, kind) && !isProjectArray(section, key, kind)) continue;
-    if (kind === 'pyproject' && DEP_GRAMMAR.poetry_skip_keys.includes(key) && section.startsWith('tool.poetry')) {
-      continue;
-    }
-    if (isProjectArray(section, key, kind) || (section === 'project.optional-dependencies' && value.includes('['))) {
-      for (const name of readStringArray(value)) {
-        if (!map.has(name)) map.set(name, { name, classification: 'remote' });
+      if (body.startsWith(str, i)) {
+        i += str.length - 1;
+        str = '';
       }
       continue;
     }
-    const headerName = depHeaderName(section, kind);
-    const name = headerName ?? key;
-    if (name === '' || name.startsWith('#')) continue;
-    const classification = tomlLocal(value) ? 'local' : 'remote';
-    const prev = map.get(name);
-    if (!prev || (prev.classification === 'local' && classification === 'remote')) {
-      map.set(name, { name, classification });
+    if (body.startsWith('"""', i) || body.startsWith("'''", i)) {
+      str = body.slice(i, i + 3);
+      i += 2;
+    } else if (ch === '"' || ch === "'") str = ch;
+    else if (ch === '[' || ch === '{') depth++;
+    else if (ch === ']' || ch === '}') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(body.slice(start, i));
+      start = i + 1;
     }
   }
-  return map;
+  parts.push(body.slice(start));
+  return parts.map(p => p.trim()).filter(p => p !== '');
 }
 
-function isProjectArray(section: string, key: string, kind: 'pyproject' | 'cargo'): boolean {
-  if (kind !== 'pyproject') return false;
-  if (section === 'project' && (key === 'dependencies' || key === 'optional-dependencies')) return true;
-  return false;
-}
-
-function depHeaderName(section: string, kind: 'pyproject' | 'cargo'): string | null {
-  if (kind !== 'cargo') return null;
-  const m = /^(?:dependencies|dev-dependencies|build-dependencies)\.([^.]+)$/.exec(section);
-  return m?.[1] ?? null;
-}
-
-function sectionIsDeps(section: string, kind: 'pyproject' | 'cargo'): boolean {
-  if (kind === 'cargo') {
-    if (DEP_GRAMMAR.cargo_sections.includes(section)) return true;
-    if (section === 'workspace.dependencies') return true;
-    if (/^target\..+\.(dependencies|dev-dependencies|build-dependencies)$/.test(section)) return true;
-    if (/^(dependencies|dev-dependencies|build-dependencies)\.[^.]+$/.test(section)) return true;
-    return false;
+function tomlString(value: string): string | null {
+  const t = value.trim();
+  if (t.length >= 2 && t[0] === '"' && t.endsWith('"') && !t.startsWith('"""')) {
+    return t.slice(1, -1).replace(/\\(["\\])/g, '$1');
   }
-  if (section === 'project' || section === 'project.optional-dependencies') return true;
-  if (section === 'tool.poetry.dependencies' || section === 'tool.poetry.dev-dependencies') return true;
-  if (/^tool\.poetry\.group\.[^.]+\.dependencies$/.test(section)) return true;
-  return false;
+  if (t.length >= 2 && t[0] === "'" && t.endsWith("'") && !t.startsWith("'''")) return t.slice(1, -1);
+  return null;
 }
 
-function normalizeSection(line: string): string {
-  const m = /^\[+([^[\]]+)\]+/.exec(line);
-  const inner = m?.[1] ?? '';
-  return inner.replace(/['"]/g, '').trim();
+function tomlArray(value: string): string[] | null {
+  const t = value.trim();
+  if (!t.startsWith('[') || !t.endsWith(']')) return null;
+  return splitTop(t.slice(1, -1));
 }
 
-function tomlLocal(value: string): boolean {
-  if (/\bpath\s*=/.test(value)) return true;
-  if (/\bworkspace\s*=\s*true\b/.test(value)) return true;
-  return false;
-}
-
-function readStringArray(value: string): string[] {
-  const names: string[] = [];
-  const re = /['"]([^'"]+)['"]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(value))) {
-    const spec = m[1] ?? '';
-    const name = pep508Name(spec);
-    if (name) names.push(name);
+function inlineEntries(value: string): { key: string[]; value: string }[] | null {
+  const t = value.trim();
+  if (!t.startsWith('{') || !t.endsWith('}')) return null;
+  const out: { key: string[]; value: string }[] = [];
+  for (const part of splitTop(t.slice(1, -1))) {
+    const key = readTomlKey(part, 0);
+    const eq = key ? skipBlank(part, key.end) : -1;
+    if (!key || part[eq] !== '=') return null;
+    out.push({ key: key.parts, value: part.slice(eq + 1).trim() });
   }
-  return names;
-}
-
-function pep508Name(spec: string): string | null {
-  const body = spec.split(';')[0]?.trim() ?? '';
-  const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(body);
-  if (!m?.[1]) return null;
-  return m[1].toLowerCase().replace(/[_.]/g, '-');
-}
-
-function stripTomlComment(line: string): string {
-  let quote: string | null = null;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (quote) {
-      if (ch === '\\') { i++; continue; }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '"' || ch === "'") { quote = ch; continue; }
-    if (ch === '#') return line.slice(0, i);
-  }
-  return line;
+  return out;
 }
