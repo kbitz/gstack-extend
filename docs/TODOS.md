@@ -2,6 +2,15 @@
 
 ## Unprocessed
 
+### [manual] Complete the deferred review-independence empirical study
+
+- **Why:** The limited documentation snapshot defines the independence rule and reproduces its static and reference calculations, but cannot establish the original study's measured review composition. The retained reconstruction contains no execution-chain receipts; original author logs and live Cursor SDK/transcript stores are unavailable in the inspected local sources, while the isolated E4 fixture copy is retained. A policy and metadata candidates cannot prove which models authored a change or supplied a consumed review result.
+- **Acceptance:** Recover authentic original evidence where available, or explicitly scope a fresh dated snapshot before launching it. Validate direct billing evidence and provider parent/child semantics (S14), measure clock skew (S17), freeze and join the four-host cohort (S21), compute grouped measured composition (S22), and verify a real positive review chain (S23). Capture authoring/setup commands and model/content/commit bindings (S24/S25), exact review runtimes and attributable consumption (S32), and replay from the frozen source projections (S36/S38). Audit historical claim citations against those sources, preserving unsupported observations as reported or withdrawing them (S55). A new snapshot cannot retroactively satisfy an original pre-cutoff capture requirement; record the replacement scope explicitly. Bound new attempts before launch, retain missing proof as a result, and keep the native Conductor probe optional and user-run.
+- **Effort:** L (human: ~2d / CC: ~1h plus live-run and settlement waits; source recovery may require another retained copy)
+- **Priority:** P2
+- **Depends on:** Track 16A's contract revalidation; authentic source access and billing capability for the selected routes. The independent checker, runtime reader fix, and vendor-separation value study remain separate work.
+- **Context:** Explicitly deferred by the user on 2026-09-25 when selecting the limited documentation scope for PR #111. Original scope IDs S14, S17, S21, S22, S23, S24, S25, S32, S36, S38 and S55 remain partial in the historical audit; this entry does not mark them verified. Track 16B remains open. See `docs/designs/review-independence.md`, especially sections 3, 7, 9 and 12.
+
 ### [plan-ceo-review:track=16B,defer=true] Review-independence checker CLI
 
 - **Description:** A reusable command that computes the review-independence verdict (PASS or FAIL with closed reason and cause codes) for one review or a set of reviews, from the same records and join rules that `docs/designs/review-independence.md` defines. The design doc's verdict rules, policy defaults, and appendix join spec are its contract; the doc's inline reference evaluator is its starting point.
