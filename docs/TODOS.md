@@ -2,6 +2,39 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=16B,defer=true] Review-independence checker CLI
+
+- **Description:** A reusable command that computes the review-independence verdict (PASS or FAIL with closed reason and cause codes) for one review or a set of reviews, from the same records and join rules that `docs/designs/review-independence.md` defines. The design doc's verdict rules, policy defaults, and appendix join spec are its contract; the doc's inline reference evaluator is its starting point.
+- **Hypothesis (untested):** One checker serves three consumers from one definition: an external orchestrator gating merges on independent review, the shadow merge gate (roadmap Track 16C) as a would-merge reason, and any later vendor-aware routing.
+- **Pros:** Stops each consumer re-implementing the join and the rule; turns the doc's worked example into a tested command.
+- **Cons:** New bin, library, and tests. Its inputs are private, unversioned harness stores (Conductor's Cursor SDK store, Cursor transcripts, Codex rollouts), so it inherits their drift.
+- **Effort:** L (human: ~3d / CC: ~1.5h)
+- **Priority:** P2
+- **Depends on:** Track 16B's design doc; Track 16A's revalidated `stage-runs.jsonl` contract
+- **Context:** Deferred at /autoplan on 2026-09-24 (CEO cherry-pick X4, reinforced by the CEO native voice: the probe's join plus verdict table is this checker). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/cursor-review-independence-plan.md`.
+
+### [plan-ceo-review:track=16B,defer=true] Measure whether vendor separation catches more real defects
+
+- **Description:** The review-independence rule treats "a voice from a vendor that neither wrote the code nor ran the primary review" as a proxy for independent judgment. Nothing here measures that the proxy pays off. Compare unique valid findings, false positives, cost, and latency between cross-vendor and same-vendor voices on reviews with known defects.
+- **Hypothesis (untested):** Cross-vendor voices find more valid issues than a second same-vendor pass; published 2026 comparisons report same-family reviewers passing generated code more often, but not on this repo's review stack.
+- **Pros:** Tells an external consumer whether gating merges on vendor separation is worth its cost and latency.
+- **Cons:** Needs a labeled defect set; review rows record findings per voice only in free text today.
+- **Effort:** M (human: ~2d / CC: ~1h)
+- **Priority:** P3
+- **Depends on:** A defect set with known outcomes; the shadow merge gate's decision-time evidence (Track 16C) is a candidate harness
+- **Context:** Deferred at /autoplan on 2026-09-24; both CEO voices flagged vendor diversity as an unmeasured premise. The 16B design doc states the proxy explicitly.
+
+### [plan-eng-review:track=16B,defer=true] Automated test for the review-independence doc's reference evaluator
+
+- **Description:** `docs/designs/review-independence.md` will carry a reference evaluator as a code block plus sample rows and their expected output. Add a `bun:test` suite that extracts that block, runs it on the sample rows, and asserts the documented output, so the doc's code and its claims cannot drift apart.
+- **Hypothesis (untested):** A doc-extraction test is small (one test file plus one `MANUAL_TOUCHFILES` entry for the markdown dependency).
+- **Pros:** Catches drift automatically on every doc edit instead of relying on a one-time manual replay.
+- **Cons:** Needs a `tests/helpers/touchfiles.ts` entry, a file Track 16C also touches, so it cannot land inside Group 16 without breaking set-disjoint touches.
+- **Effort:** S (human: ~2h / CC: ~15min)
+- **Priority:** P3
+- **Depends on:** Track 16B (the doc and its evaluator); Track 16C landing (shared `tests/helpers/touchfiles.ts`)
+- **Context:** Deferred at /autoplan on 2026-09-24 (Eng review). Until it exists, 16B's implementation runs a manual replay that extracts the evaluator from the committed doc.
+
 ## Completed
 
 ### [manual] Keep gstack-extend independent of the maintainer's personal tooling
