@@ -366,4 +366,28 @@ exit "$(cat "$AUDIT_RECORD/exit")"
     expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(true);
     expect(realpathSync(join(s.localBin, 'gstack-extend'))).toBe(realpathSync(join(install, 'bin', 'gstack-extend')));
   });
+
+  test('registration failure with empty child stderr still prints one HOME retry', () => {
+    const install = join(baseTmp, 'empty-log', 'install');
+    copyInstall(install);
+    const stub = join(install, 'bin', 'gstack-extend');
+    writeFileSync(stub, '#!/bin/sh\nexit 1\n');
+    chmodSync(stub, 0o755);
+    const s = scope('setup-empty-log');
+    const r = runCopied(join(install, 'setup'), s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('Self-registered');
+    expect(r.stderr).toContain('did not complete');
+    expect(r.stderr).toContain('may already exist');
+    expect(r.stderr).not.toContain('Child init retry');
+    expect(r.stderr).toContain(homeRegistry(s.home));
+    expect(r.stderr).toContain('repair');
+    expect(r.stderr).toContain('init --help');
+    const retries = r.stderr.split('\n').filter((line) => line.includes('Retry:'));
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).toContain('env -u GSTACK_EXTEND_STATE_DIR');
+    expect(retries[0]).toContain('--name gstack-extend');
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(true);
+    expect(existsSync(homeRegistry(s.home))).toBe(false);
+  });
 });

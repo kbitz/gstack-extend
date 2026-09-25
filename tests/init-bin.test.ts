@@ -195,6 +195,7 @@ describe('init flag matrix', () => {
     expect(r.stdout).toContain('DRY RUN');
     expect(r.stdout).toContain('+ would create');
     expect(r.stdout).toContain('dry-run complete');
+    expect(r.stderr).not.toContain('gstack-extend init: warning:');
 
     expect(existsSync(s.target)).toBe(false);
     expect(existsSync(join(s.state, 'projects.json'))).toBe(false);
@@ -431,8 +432,35 @@ describe('jq preflight and explicit write failures', () => {
     const preview = run(['init', s.target, '--dry-run', '--no-prompt'], s, env);
     expect(preview.exitCode).toBe(0);
     expect(preview.stderr).toContain('detection is unavailable');
+    expect(preview.stderr).toContain('jq is not installed');
     expect(preview.stdout).toContain('would create');
     expect(existsSync(s.target)).toBe(false);
+  });
+
+  test.each([
+    ['Darwin', 'printf \'%s\\n\' Darwin\nexit 0\n', 'brew install jq'],
+    ['Linux', 'printf \'%s\\n\' Linux\nexit 0\n', 'apt-get install jq'],
+    ['FreeBSD', 'printf \'%s\\n\' FreeBSD\nexit 0\n', 'jq executable is on PATH'],
+    ['uname-fails', 'exit 1\n', 'jq executable is on PATH'],
+  ])('missing jq (%s) names that platform install step and writes nothing', (label, unameBody, hint) => {
+    const s = scope(`no-jq-os-${label}`);
+    const stubDir = mkdtempSync(join(baseTmp, 'uname-'));
+    const uname = join(stubDir, 'uname');
+    writeFileSync(uname, `#!/bin/sh\n${unameBody}`);
+    chmodSync(uname, 0o755);
+    const r = run(['init', s.target, '--no-prompt'], s, { PATH: `${stubDir}:${pathWithout(['jq'])}` });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('missing dependency: jq');
+    expect(r.stderr).toContain(hint);
+    expect(r.stderr).toContain('init --help');
+    if (label === 'Darwin') expect(r.stderr).not.toContain('apt-get install jq');
+    if (label === 'Linux') expect(r.stderr).not.toContain('brew install jq');
+    if (label !== 'Darwin' && label !== 'Linux') {
+      expect(r.stderr).not.toContain('brew install jq');
+      expect(r.stderr).not.toContain('apt-get install jq');
+    }
+    expect(existsSync(s.target)).toBe(false);
+    expect(existsSync(join(s.state, 'projects.json'))).toBe(false);
   });
 
   test('existing partial target without jq is refused before further writes', () => {
@@ -460,6 +488,24 @@ describe('jq preflight and explicit write failures', () => {
     expect(r.stdout).not.toContain('SUCCESS');
   });
 
+  test('corrupt registry on a partial target is a registry error before any onboarded refusal', () => {
+    const s = scope('corrupt-partial');
+    mkdirSync(s.target, { recursive: true });
+    writeFileSync(join(s.target, 'CLAUDE.md'), 'keep-me\n');
+    const reg = join(s.state, 'projects.json');
+    writeFileSync(reg, '{not json');
+    const r = run(['init', s.target, '--no-prompt'], s);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('not valid JSON');
+    expect(r.stderr).toContain(reg);
+    expect(r.stderr).not.toContain('partially onboarded');
+    expect(r.stderr).not.toContain('already onboarded');
+    expect(readFileSync(join(s.target, 'CLAUDE.md'), 'utf8')).toBe('keep-me\n');
+    expect(existsSync(join(s.target, 'VERSION'))).toBe(false);
+    expect(readFileSync(reg, 'utf8')).toBe('{not json');
+    expect(r.stdout).not.toContain('SUCCESS');
+  });
+
   test('dry-run warns when the existing registry is invalid and writes nothing', () => {
     const s = scope('dry-corrupt');
     const reg = join(s.state, 'projects.json');
@@ -467,9 +513,25 @@ describe('jq preflight and explicit write failures', () => {
     const r = run(['init', s.target, '--dry-run', '--no-prompt'], s);
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toContain('detection is unavailable');
+    expect(r.stderr).toContain('existing registry is invalid');
     expect(r.stderr).toContain(reg);
     expect(r.stdout).toContain('would create');
     expect(readFileSync(reg, 'utf8')).toBe('{not json');
+    expect(existsSync(s.target)).toBe(false);
+  });
+
+  test('dry-run with a valid registry does not warn and writes nothing', () => {
+    const s = scope('dry-valid-reg');
+    const reg = join(s.state, 'projects.json');
+    const original = '{"projects":[]}\n';
+    writeFileSync(reg, original);
+    const r = run(['init', s.target, '--dry-run', '--no-prompt'], s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('detection is unavailable');
+    expect(r.stderr).not.toContain('gstack-extend init: warning:');
+    expect(r.stdout).toContain('would create');
+    expect(r.stdout).toContain('dry-run complete');
+    expect(readFileSync(reg, 'utf8')).toBe(original);
     expect(existsSync(s.target)).toBe(false);
   });
 
@@ -486,6 +548,49 @@ describe('jq preflight and explicit write failures', () => {
     expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
     expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
   });
+
+  test('injected mkdir failure on a later canonical directory keeps earlier dirs and skips render', () => {
+    const inst = disposableInstall('mkdir-fail-designs');
+    const resolvedTarget = join(realpathSync(dirname(inst.target)), basename(inst.target));
+    const failAt = join(resolvedTarget, 'docs', 'designs');
+    const r = runInstalled(inst, ['init', inst.target, '--no-prompt'], {
+      GSTACK_EXTEND_INIT_MKDIR_FAIL: failAt,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain(`cannot create directory ${failAt}`);
+    expect(existsSync(resolvedTarget)).toBe(true);
+    expect(existsSync(join(resolvedTarget, 'docs'))).toBe(true);
+    expect(existsSync(failAt)).toBe(false);
+    expect(existsSync(join(resolvedTarget, 'docs', 'archive'))).toBe(false);
+    expect(existsSync(join(resolvedTarget, 'CLAUDE.md'))).toBe(false);
+    expect(r.stdout).not.toContain('+ wrote');
+    expect(r.stdout).not.toContain('SUCCESS');
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+    expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
+  });
+
+  test.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+    'a real unwritable parent fails directory creation before any file or registry write',
+    () => {
+      const s = scope('perm-mkdir');
+      const parent = join(s.home, 'locked');
+      mkdirSync(parent);
+      chmodSync(parent, 0o555);
+      try {
+        const target = join(parent, 'proj');
+        const resolved = join(realpathSync(parent), 'proj');
+        const r = run(['init', target, '--no-prompt'], s);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain(`cannot create directory ${resolved}`);
+        expect(r.stdout).not.toContain('+ wrote');
+        expect(r.stdout).not.toContain('SUCCESS');
+        expect(existsSync(target)).toBe(false);
+        expect(existsSync(join(s.state, 'projects.json'))).toBe(false);
+      } finally {
+        chmodSync(parent, 0o755);
+      }
+    },
+  );
 
   test.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
     'a real unwritable directory fails the write, keeps earlier files, and skips success',
@@ -572,6 +677,25 @@ describe('audit recovery, target, and presentation', () => {
     expect(retry.stdout).toContain(target);
     expect(retry.stdout).toContain('name:           valid-name');
     expect(existsSync(marker)).toBe(false);
+    const cdLine = retry.stdout.split('\n').find((line) => /^\s*1\. cd /.test(line));
+    expect(cdLine).toContain('\\$');
+    expect(cdLine).toContain('\\`');
+    expect(cdLine).toContain('\\"');
+    expect(cdLine).toContain(`"'!'"`);
+    const cdCommand = cdLine!.replace(/^\s*1\.\s*/, '');
+    const probed = runShell(
+      `${cdCommand}\nbun -e 'const s=require("fs").statSync("."); console.log(s.dev+" "+s.ino)'`,
+      inst,
+      {},
+      true,
+    );
+    expect(probed.status, probed.stderr).toBe(0);
+    expect(probed.stderr).not.toContain('event not found');
+    const landed = statSync(target);
+    const [dev, ino] = probed.stdout.trim().split('\n').pop()!.split(' ').map(Number);
+    expect(dev).toBe(landed.dev);
+    expect(ino).toBe(landed.ino);
+    expect(existsSync(marker)).toBe(false);
     const reg = JSON.parse(readFileSync(join(inst.state, 'projects.json'), 'utf8'));
     const registered = statSync(reg.projects[0].path);
     const intended = statSync(target);
@@ -648,6 +772,34 @@ describe('audit recovery, target, and presentation', () => {
     expect(r.stdout).toContain('Next 30 minutes');
     expect(r.stderr).toContain('STDERR-AFTER-PASS');
     expect(r.stdout).not.toContain('STDERR-AFTER-PASS');
+  });
+
+  test('a repeated or conflicting pass status stays visible on fresh success', () => {
+    const inst = disposableInstall('filter-dup-pass');
+    const stdout = [
+      '## DUP_PASS',
+      'duplicate pass body',
+      'STATUS: pass',
+      'STATUS: pass',
+      '## FAIL_THEN_PASS',
+      'conflict body',
+      'STATUS: fail',
+      'STATUS: pass',
+      '## ONLY_PASS',
+      'hidden single pass',
+      'STATUS: pass',
+    ].join('\n');
+    writeFileSync(join(inst.record, 'stdout'), stdout);
+    writeFileSync(join(inst.record, 'exit'), '0\n');
+    const r = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('## DUP_PASS');
+    expect(r.stdout).toContain('duplicate pass body');
+    expect(r.stdout).toContain('## FAIL_THEN_PASS');
+    expect(r.stdout).toContain('conflict body');
+    expect(r.stdout).not.toContain('## ONLY_PASS');
+    expect(r.stdout).not.toContain('hidden single pass');
+    expect(r.stdout).toContain('SUCCESS');
   });
 
   test('all-pass fresh success still prints qualified SUCCESS', () => {
