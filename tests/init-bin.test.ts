@@ -36,6 +36,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS, SECTION_HEADING_RE } from '../src/audit/sections.ts';
+import initSkill from '../skills/gstack-extend-init.md' with { type: 'text' };
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { mkScope } from './helpers/init-scope.ts';
 import { runBin } from './helpers/run-bin.ts';
@@ -154,6 +155,9 @@ describe('init flag matrix', () => {
     const s = scope('empty-default');
     const r = run(['init', s.target, '--no-prompt'], s);
     expect(r.exitCode).toBe(0);
+    const written = r.stdout.split('\n').filter((line) => line.startsWith('  + wrote '))
+      .map((line) => line.slice('  + wrote '.length));
+    expect(written).toEqual(EXPECTED_FILES);
     expect(r.stdout).toContain('+ wrote CLAUDE.md');
     expect(r.stdout).toContain('+ wrote CHANGELOG.md');
     expect(r.stdout).toContain('+ wrote VERSION');
@@ -811,6 +815,7 @@ describe('audit recovery, target, and presentation', () => {
     const parent = join(baseTmp, 'nested-real', 'parent');
     mkdirSync(join(parent, 'docs'), { recursive: true });
     writeFileSync(join(parent, 'docs', 'ROADMAP.md'), 'PARENT_ONLY_MARKER_16E\n');
+    writeFileSync(join(parent, 'PARENT_ONLY_MARKER_16E.md'), '- [ ] one\n- [ ] two\n- [ ] three\n- [ ] four\n- [ ] five\n');
     spawnSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: parent });
     spawnSync('git', ['-C', parent, 'config', 'user.email', 't@t.com']);
     spawnSync('git', ['-C', parent, 'config', 'user.name', 'T']);
@@ -824,11 +829,10 @@ describe('audit recovery, target, and presentation', () => {
   });
 
   test('the init skill still keys on SUCCESS, exits, and next steps', () => {
-    const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-init.md'), 'utf8');
-    expect(skill).toContain('SUCCESS');
-    expect(skill).toContain('Next 30 minutes');
-    expect(skill).toContain('--migrate');
-    expect(skill.toLowerCase()).not.toContain('section count');
-    expect(skill.toLowerCase()).not.toContain('merged stream');
+    expect(initSkill).toContain('SUCCESS');
+    expect(initSkill).toContain('Next 30 minutes');
+    expect(initSkill).toContain('--migrate');
+    expect(initSkill.toLowerCase()).not.toContain('section count');
+    expect(initSkill.toLowerCase()).not.toContain('merged stream');
   });
 });

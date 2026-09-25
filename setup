@@ -406,7 +406,7 @@ if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
   esac
 fi
 
-# shell_quote <text> — double-quote for a copy-paste retry command.
+# _shell_quote <text> — double-quote for a copy-paste retry command.
 _shell_quote() {
   local s=$1
   s=${s//\\/\\\\}
