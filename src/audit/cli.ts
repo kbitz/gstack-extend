@@ -255,6 +255,7 @@ export function buildAuditCtx(args: {
     docsLicense: fileExists(join(repoRoot, 'docs', 'LICENSE')),
     rootLicenseMd: fileExists(join(repoRoot, 'LICENSE.md')),
     docsLicenseMd: fileExists(join(repoRoot, 'docs', 'LICENSE.md')),
+    rootRoadmapAudit: fileExists(join(repoRoot, 'bin', 'roadmap-audit')),
   };
 
   // docs/designs/ scan for ARCHIVE_CANDIDATES.
