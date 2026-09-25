@@ -56,6 +56,7 @@ function makeCtx(groups: GroupInfo[]): AuditCtx {
       rootReadme: false, docsReadme: false, rootChangelog: false, docsChangelog: false,
       rootClaude: false, docsClaude: false, rootVersion: false, docsVersion: false,
       rootLicense: false, docsLicense: false, rootLicenseMd: false, docsLicenseMd: false,
+      rootRoadmapAudit: false,
     },
     designs: [],
     scaffoldExists: new Map(),

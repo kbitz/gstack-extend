@@ -8,14 +8,13 @@
  * Flags:
  *   - DOCS_DIR_DOCS in root only → should be in docs/
  *   - ROOT_DOCS in docs/ only    → should be in root (tools expect them there)
- *   - `docs/` directory absent on a gstack-onboarded project (CLAUDE.md
- *     present at root or docs/) and no project doc lives at root either —
- *     the true greenfield-onboarding case. Gated on CLAUDE.md so this
- *     finding only fires on projects that intend to use gstack/extend
- *     tooling; bare repos that happen to run `roadmap-audit` once stay
- *     silent. Both-exist findings (ROADMAP.md present in both root AND
- *     docs/) are owned by `taxonomy.ts` — adding them here would emit
- *     a duplicate finding.
+ *   - `docs/` directory absent only when the audited repo itself has a
+ *     file at bin/roadmap-audit, docs/ is missing, and no project doc
+ *     lives at root. CLAUDE.md, a globally installed audit binary, and
+ *     registry membership are not signals — those repos stay silent.
+ *     A root project doc still gets placement guidance and suppresses
+ *     this missing-directory finding. Both-exist findings are owned by
+ *     `taxonomy.ts`.
  *
  * Hint text changes when no docs/ directory exists yet ("consider creating
  * docs/" vs "should be in docs/") so the suggestion stays actionable.
@@ -89,17 +88,12 @@ export function runCheckDocLocation(ctx: AuditCtx): CheckResult {
     }
   }
 
-  // Greenfield gstack-onboarded project: CLAUDE.md present (this is a
-  // claude-code-managed project that wants gstack tooling) but `docs/`
-  // doesn't exist yet and no project doc lives at root either. The
-  // CLAUDE.md gate is load-bearing — without it, this finding fires on
-  // every bare repo someone happens to point `roadmap-audit` at, dirtying
-  // almost every snapshot fixture and producing layout pressure for
-  // projects that never opted in.
-  const hasClaude = ctx.exists.rootClaude || ctx.exists.docsClaude;
+  // Repo-local opt-in only: bin/roadmap-audit under the audited repoRoot.
+  // No PATH lookup, no extendDir, no registry. A root project doc already
+  // produces placement guidance, so this finding stays off in that case.
   const hasProjectDocAtRoot =
     ctx.exists.rootTodos || ctx.exists.rootRoadmap || ctx.exists.rootProgress;
-  if (hasClaude && !ctx.exists.docsDir && !hasProjectDocAtRoot) {
+  if (ctx.exists.rootRoadmapAudit && !ctx.exists.docsDir && !hasProjectDocAtRoot) {
     findings.push(
       '- docs/ directory absent — project-level docs (ROADMAP.md/TODOS.md/PROGRESS.md) belong there. Run /roadmap to scaffold.',
     );

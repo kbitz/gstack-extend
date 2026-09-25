@@ -71,7 +71,7 @@ export function runCheckStateSections(ctx: AuditCtx): CheckResult {
   const grammar = ctx.roadmap.value.hasV2Grammar ? 'v2' : 'v1';
   if (grammar === 'v1') {
     findings.push(
-      '- MIGRATION_NEEDED: ROADMAP.md has no state sections. Run /roadmap to regenerate into ## In Progress / ## Current Plan / ## Future / ## Shipped. See docs/designs/roadmap-v2-state-model.md.',
+      '- MIGRATION_NEEDED: ROADMAP.md has no state sections. Run /roadmap to regenerate into ## In Progress / ## Current Plan / ## Future / ## Shipped. See docs/archive/roadmap-v2-state-model.md in the gstack-extend source checkout.',
     );
   }
 
