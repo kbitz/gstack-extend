@@ -202,6 +202,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
     'bin/lib/telemetry*.py',
+    'docs/telemetry.md',
     'setup',
   ],
   'tests/telemetry-doctor.test.ts': [
