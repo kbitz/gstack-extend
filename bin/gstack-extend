@@ -101,16 +101,47 @@ validate_name() {
   local name="$1"
   if [ -z "$name" ]; then
     echo "gstack-extend init: project name is empty" >&2
+    echo "  Pass a valid display name with --name <valid-name>." >&2
     return 1
   fi
   case "$name" in
     *[!a-zA-Z0-9._-]*)
       echo "gstack-extend init: project name '$name' contains invalid characters" >&2
       echo "  Allowed: letters, digits, dot, underscore, hyphen." >&2
+      echo "  Pass a valid display name with --name <valid-name>." >&2
       return 1
       ;;
   esac
   return 0
+}
+
+# shell_quote <text>
+# Double-quote a value for a copy-paste shell command. Escapes \, ", $, `;
+# quote ! separately because interactive Bash expands it inside double quotes.
+shell_quote() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//\$/\\\$}
+  s=${s//\`/\\\`}
+  s=${s//!/\"\'!\'\"}
+  printf '"%s"' "$s"
+}
+
+# init_mkdir <dir>
+# Explicit status: cmd_init is invoked conditionally, so set -e/ERR will not
+# stop the dispatcher when mkdir fails. GSTACK_EXTEND_INIT_MKDIR_FAIL is a
+# test seam that fails creation of one exact path.
+init_mkdir() {
+  local dest="$1"
+  if [ -n "${GSTACK_EXTEND_INIT_MKDIR_FAIL:-}" ] && [ "$dest" = "$GSTACK_EXTEND_INIT_MKDIR_FAIL" ]; then
+    echo "gstack-extend init: cannot create directory $dest" >&2
+    return 1
+  fi
+  if ! mkdir -p -- "$dest"; then
+    echo "gstack-extend init: cannot create directory $dest" >&2
+    return 1
+  fi
 }
 
 # detect_lang <dir>
@@ -279,7 +310,8 @@ render_diff() {
 }
 
 # render_all <target> <dry_run> <KV ARGS...>
-# Renders all six template files into the target dir. Honors dry_run=1.
+# Renders every CANONICAL_FILES entry. The template is that destination's
+# basename plus .tmpl (basenames are unique). Honors dry_run=1.
 # On real write, creates parent dirs as needed. Always skips existing
 # files (--migrate's "backfill missing only" contract). Default mode
 # never reaches the skip branch — scaffold_layout refuses on canonical-
@@ -289,27 +321,14 @@ render_all() {
   shift 2
   local vars=("$@")
 
-  local map
-  map=(
-    "CLAUDE.md|CLAUDE.md.tmpl"
-    "CHANGELOG.md|CHANGELOG.md.tmpl"
-    "VERSION|VERSION.tmpl"
-    "docs/ROADMAP.md|ROADMAP.md.tmpl"
-    "docs/TODOS.md|TODOS.md.tmpl"
-    "docs/PROGRESS.md|PROGRESS.md.tmpl"
-    "docs/roadmap-future.md|roadmap-future.md.tmpl"
-    "docs/roadmap-shipped.md|roadmap-shipped.md.tmpl"
-  )
-
   local had_roadmap=0
   if [ -f "$target/docs/ROADMAP.md" ] || [ -f "$target/ROADMAP.md" ]; then
     had_roadmap=1
   fi
 
-  local pair dest tmpl content out
-  for pair in "${map[@]}"; do
-    dest="${pair%%|*}"
-    tmpl="${pair#*|}"
+  local dest tmpl content out parent
+  for dest in "${CANONICAL_FILES[@]}"; do
+    tmpl="${dest##*/}.tmpl"
     out="$target/$dest"
     if ! content=$(template_substitute "$TEMPLATES_DIR/$tmpl" "${vars[@]}"); then
       return 1
@@ -337,11 +356,17 @@ render_all() {
         continue
       fi
     fi
-    mkdir -p "$(dirname "$out")"
+    parent=$(dirname "$out")
+    if ! init_mkdir "$parent"; then
+      return 1
+    fi
     # printf '%s\n' (not '%s') so VERSION and friends get a trailing
     # newline — POSIX text files must end with \n, and bash command
     # substitution in template_substitute strips the final newline.
-    printf '%s\n' "$content" > "$out"
+    if ! printf '%s\n' "$content" > "$out"; then
+      echo "gstack-extend init: cannot write $out" >&2
+      return 1
+    fi
     echo "  + wrote $dest"
   done
 }
@@ -371,25 +396,134 @@ scaffold_layout() {
     done
     return 0
   fi
-  mkdir -p "$target"
+  if ! init_mkdir "$target"; then
+    return 1
+  fi
   local d
   for d in "${CANONICAL_DIRS[@]}"; do
-    mkdir -p "$target/$d"
+    if ! init_mkdir "$target/$d"; then
+      return 1
+    fi
   done
 }
 
 # run_audit <target>
-# Spawns bin/roadmap-audit in target. Returns the audit's exit code.
-# Captures stdout+stderr; caller decides what to print.
+# Spawns bin/roadmap-audit with the target as cwd and as the positional
+# repo root (so a nested project is not audited at its parent git toplevel).
+# Captures stdout only. Stderr flows to the caller and is not merged.
 run_audit() {
   local target="$1"
-  ( cd "$target" && "$REPO_ROOT/bin/roadmap-audit" 2>&1 ) || return $?
+  ( cd "$target" && "$REPO_ROOT/bin/roadmap-audit" "$target" ) || return $?
+}
+
+# filter_fresh_audit_stdout <raw>
+# On successful fresh default init, omit sections whose single anchored
+# STATUS is exactly pass. Headings match src/audit/sections.ts
+# SECTION_HEADING_RE: ## UPPER_SNAKE with an optional trailing CR.
+# Duplicate or conflicting STATUS lines are ambiguous and kept.
+# Unsectioned text, missing STATUS, and any non-pass status stay.
+# If awk fails, print the original stdout unchanged (presentation only).
+filter_fresh_audit_stdout() {
+  local raw="$1"
+  local filtered
+  if ! filtered=$(printf '%s' "$raw" | awk '
+    function flush(   keep) {
+      if (have == 0) return
+      keep = 1
+      if (status_n == 1 && status_val == "pass") keep = 0
+      if (keep) printf "%s", buf
+      buf = ""
+      have = 0
+      status_n = 0
+      status_val = ""
+    }
+    {
+      line = $0
+      bare = line
+      sub(/\r$/, "", bare)
+      if (bare ~ /^## [A-Z_]+$/) {
+        flush()
+        in_sec = 1
+        buf = line "\n"
+        have = 1
+        next
+      }
+      if (!in_sec) {
+        print
+        next
+      }
+      buf = buf line "\n"
+      have = 1
+      if (bare ~ /^STATUS:[[:space:]]*[^[:space:]]+$/) {
+        val = bare
+        sub(/^STATUS:[[:space:]]*/, "", val)
+        status_n++
+        status_val = val
+      }
+    }
+    END { flush() }
+  '); then
+    printf '%s' "$raw"
+    return 0
+  fi
+  printf '%s' "$filtered"
+}
+
+# require_jq
+# Mutating init needs jq before any scaffold or registry write.
+require_jq() {
+  if command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "gstack-extend init: missing dependency: jq is required to read and update the project registry." >&2
+  case "$(uname -s 2>/dev/null || echo unknown)" in
+    Darwin)
+      echo "  Install jq with Homebrew: brew install jq" >&2
+      ;;
+    Linux)
+      echo "  Install jq with your package manager, for example: apt-get install jq, dnf install jq, or pacman -S jq." >&2
+      ;;
+    *)
+      echo "  Install jq and ensure the jq executable is on PATH." >&2
+      ;;
+  esac
+  echo "  See: gstack-extend init --help" >&2
+  return 1
+}
+
+# preflight_existing_registry
+# Validate a registry that already exists. Do not create an absent one.
+preflight_existing_registry() {
+  local path
+  path=$(registry_path)
+  if [ -f "$path" ]; then
+    registry_validate || return 1
+  fi
+  return 0
+}
+
+# warn_dry_run_state
+# Dry-run still writes nothing. Say when registry or onboarded-state
+# detection cannot be checked.
+warn_dry_run_state() {
+  local why="" path
+  if ! command -v jq >/dev/null 2>&1; then
+    why="jq is not installed"
+  else
+    path=$(registry_path)
+    if [ -f "$path" ] && ! jq -e '.projects | type == "array"' "$path" >/dev/null 2>&1; then
+      why="the existing registry is invalid ($path)"
+    fi
+  fi
+  if [ -n "$why" ]; then
+    echo "gstack-extend init: warning: registry and onboarded-state detection is unavailable because $why. Dry-run writes nothing." >&2
+  fi
 }
 
 # ─── cmd_init ──────────────────────────────────────────────────────────
 
 init_usage() {
-  cat <<'EOF'
+  cat <<EOF
 Usage: gstack-extend init <project> [options]
 
   <project>          Target directory. Created if missing. May be a path or
@@ -398,7 +532,8 @@ Usage: gstack-extend init <project> [options]
 Options:
   --name <NAME>      Display name (defaults to basename of <project>).
                      Must match [a-zA-Z0-9._-]+.
-  --dry-run          Print what would happen; do not touch the filesystem.
+  --dry-run          Preview only. Does not write files, does not update
+                     the registry, and does not run the audit.
   --no-prompt        Headless mode; never read from stdin. Errors exit
                      non-zero loudly.
   --migrate          Backfill missing canonical files on an existing
@@ -407,14 +542,23 @@ Options:
   -h, --help         Show this message.
 
 Exit codes:
-  0   Init succeeded (or dry-run completed with audit-clean projection).
+  0   Init succeeded, or a dry-run preview completed. Dry-run does not
+      run the audit. A completed init does not promise that every audit
+      section passed; retained findings may still need attention.
+      Successful fresh default init omits sections whose own STATUS is
+      exactly pass. Every other section stays visible. Successful
+      --migrate prints the full audit.
   1   Init failed at any step (validation, scaffold, render, register,
-      audit). Rendered files are left in place on audit failure (D3.A);
-      use --migrate to retry after fixing.
+      audit). Rendered files are left in place on audit failure;
+      registration may already have succeeded. Retry with --migrate
+      after addressing the reported errors. See this help.
   2   Usage error (unknown flag, missing required arg).
 
+Full audit output, including pass sections, without rerunning init:
+  $(shell_quote "$REPO_ROOT/bin/roadmap-audit") "<absolute-project-path>"
+
 State location: ~/.gstack-extend/projects.json
-  (override via GSTACK_EXTEND_STATE_DIR for tests).
+  (override via GSTACK_EXTEND_STATE_DIR for tests and direct init).
 EOF
 }
 
@@ -477,6 +621,17 @@ cmd_init() {
   fi
   if ! validate_name "$name"; then
     return 1
+  fi
+
+  # jq and an already-present registry are checked before state detection
+  # so a missing dependency or corrupt file cannot be reported as "partial"
+  # and cannot create a target. An absent registry stays absent until
+  # registration. Dry-run keeps the no-write policy and only warns.
+  if [ "$dry_run" = "1" ]; then
+    warn_dry_run_state
+  else
+    require_jq || return 1
+    preflight_existing_registry || return 1
   fi
 
   # Detect target state — empty / partial / onboarded — and run the flag matrix.
@@ -571,26 +726,40 @@ EOF
   local audit_out audit_exit
   audit_out=$(run_audit "$target_abs") && audit_exit=0 || audit_exit=$?
 
+  local cli_abs="$SCRIPT_DIR/gstack-extend"
+  local quoted_retry
+  quoted_retry="$(shell_quote "$cli_abs") init --migrate --no-prompt --name $(shell_quote "$name") $(shell_quote "$target_abs")"
+
   if [ "$audit_exit" != "0" ]; then
-    # D3.A: leave files on audit failure; print audit output + retry hint.
+    # Leave files and the registry entry. Stderr from the auditor already
+    # reached the caller; replay the captured stdout here in full.
     printf '%s\n' "$audit_out" >&2
     cat >&2 <<EOF
 
 gstack-extend init: post-render audit FAILED (exit $audit_exit).
-  Rendered files have been LEFT IN PLACE so you can inspect them.
-  After fixing the audit findings, re-run with --migrate to re-register:
-    gstack-extend init --migrate $target_abs
+  The audit process did not complete. Rendered files remain in place.
+  Project registration already succeeded.
+  After addressing the reported errors, retry with --migrate.
+  See: gstack-extend init --help
+  Retry: $quoted_retry
 EOF
     return 1
   fi
 
-  printf '%s\n' "$audit_out"
+  local shown="$audit_out"
+  if [ "$state" = "empty" ] && [ "$migrate" = "0" ]; then
+    shown=$(filter_fresh_audit_stdout "$audit_out")
+  fi
+  printf '%s\n' "$shown"
 
+  local quoted_target
+  quoted_target=$(shell_quote "$target_abs")
   cat <<EOF
 
 gstack-extend init: SUCCESS.
+  Canonical scaffolding and registration completed. Retained audit findings may need attention.
   Next 30 minutes:
-    1. cd $target_abs
+    1. cd $quoted_target
     2. /roadmap            (orient yourself + verify canonical layout)
     3. /review-apparatus   (discover testing/debugging gaps)
     4. /full-review        (weekly cadence baseline)
