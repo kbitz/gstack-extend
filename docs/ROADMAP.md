@@ -191,7 +191,7 @@ Packer layer 4. Serialized behind every earlier `skills/roadmap.md` editor (16D,
 
 ##### Track 21A: Narrow the `docs/`-absent gate + fix archive-path string
 _1 task . ~50 LOC . low risk . [doc-location + state-sections + fixtures + docs]_
-_touches: src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/docs-dir-absent-with-claude/expected.txt, tests/roadmap-audit/docs-dir-absent-with-audit/files/bin/roadmap-audit (new), tests/roadmap-audit/docs-dir-absent-with-audit/expected.txt (new), tests/roadmap-audit/v1-migration-hint/files/docs/ROADMAP.md (new), tests/roadmap-audit/v1-migration-hint/expected.txt (new), README.md, skills/roadmap.md, docs/ROADMAP.md_
+_touches: src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/docs-dir-absent-with-claude/expected.txt, tests/roadmap-audit/docs-dir-absent-with-claude/files/CLAUDE.md, tests/roadmap-audit/docs-dir-absent-with-audit/files/bin/roadmap-audit (new), tests/roadmap-audit/docs-dir-absent-with-audit/expected.txt (new), tests/roadmap-audit/v1-migration-hint/files/docs/ROADMAP.md (new), tests/roadmap-audit/v1-migration-hint/expected.txt (new), README.md, skills/roadmap.md, docs/ROADMAP.md_
 _blocked-by: Track 20A_
 _read-first: 20A_
 _produces: DOC_LOCATION docs/-absent only fires on a repo-local bin/roadmap-audit file; MIGRATION_NEEDED points at the archived spec in the gstack-extend checkout_
