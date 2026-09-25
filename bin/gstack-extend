@@ -427,12 +427,15 @@ filter_fresh_audit_stdout() {
   local raw="$1"
   local filtered
   if ! filtered=$(printf '%s' "$raw" | awk '
-    function flush(   keep) {
+    function flush(   keep, i) {
       if (have == 0) return
       keep = 1
       if (status_n == 1 && status_val == "pass") keep = 0
-      if (keep) printf "%s", buf
-      buf = ""
+      for (i = 1; i <= buf_n; i++) {
+        if (keep) printf "%s", buf[i]
+        delete buf[i]
+      }
+      buf_n = 0
       have = 0
       status_n = 0
       status_val = ""
@@ -444,7 +447,7 @@ filter_fresh_audit_stdout() {
       if (bare ~ /^## [A-Z_]+$/) {
         flush()
         in_sec = 1
-        buf = line "\n"
+        buf[++buf_n] = line "\n"
         have = 1
         next
       }
@@ -452,7 +455,7 @@ filter_fresh_audit_stdout() {
         print
         next
       }
-      buf = buf line "\n"
+      buf[++buf_n] = line "\n"
       have = 1
       if (bare ~ /^STATUS:[[:space:]]*[^[:space:]]+$/) {
         val = bare
