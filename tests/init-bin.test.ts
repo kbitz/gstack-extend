@@ -710,6 +710,21 @@ describe('audit recovery, target, and presentation', () => {
     expect(r.stdout).toContain('SUCCESS');
   });
 
+  test.each(['\n', '\r'])('line break %j in a filename requires a manual move suggestion', (lineBreak) => {
+    const s = scope(`filename-move-${lineBreak.charCodeAt(0)}`);
+    mkdirSync(s.target, { recursive: true });
+    const filename = `drawing${lineBreak}v2.md`;
+    const literalName = filename.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+    writeFileSync(join(s.target, filename), '```mermaid\ngraph TD\nA --> B\nB --> C\n```\n');
+    writeFileSync(join(s.target, literalName), 'different file\n');
+    const r = run(['init', s.target, '--no-prompt'], s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(`${literalName}: looks like a design doc`);
+    expect(r.stdout).toContain('Suggested: review and move (no automated suggestion — filename contains line breaks)');
+    expect(r.stdout).not.toContain('Suggested: git mv');
+    expect(readFileSync(join(s.target, literalName), 'utf8')).toBe('different file\n');
+  });
+
   test('successful migrate keeps pass sections on a fresh target and an existing one', () => {
     const fresh = disposableInstall('migrate-fresh');
     writeFileSync(join(fresh.record, 'stdout'), '## VOCAB_LINT\nSTATUS: pass\nMIGRATE-FRESH-PASS\n');
