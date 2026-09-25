@@ -21,6 +21,7 @@ import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
+import { extractCanonicalSpan, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
@@ -145,8 +146,9 @@ describe('setup --host flags', () => {
     mkdirSync(home, { recursive: true });
     runSetup(['--host', 'codex'], home);
     const body = readFileSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'), 'utf8');
-    expect(body).toContain(`${home}/.codex/skills/pair-review/SKILL.md`);
-    expect(body).not.toMatch(/readlink ~\/\.claude\/skills\/pair-review/);
+    const testPlan = readFileSync(join(hostDir(home, 'codex'), 'test-plan', 'SKILL.md'), 'utf8');
+    expect(testPlan).toContain(`${home}/.codex/skills/pair-review/SKILL.md`);
+    expect(testPlan).not.toMatch(/~\/\.claude\/skills\/pair-review/);
     expect(body).not.toMatch(/^allowed-tools:/m);
     expect(descriptionLen(body)).toBeLessThanOrEqual(1024);
   });
@@ -187,6 +189,22 @@ describe('setup --host flags', () => {
     for (const skill of SKILLS) {
       expect(existsSync(join(hostDir(home, 'codex'), skill, 'SKILL.md'))).toBe(false);
       expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(true);
+    }
+  });
+
+  test('codex and opencode copies carry the extend-root resolver', () => {
+    for (const host of ['codex', 'opencode'] as const) {
+      const home = join(baseTmp, `resolver-copy-${host}`);
+      mkdirSync(home, { recursive: true });
+      const r = runSetup(['--host', host], home);
+      expect(r.exitCode).toBe(0);
+      for (const skill of ROOT_RESOLVER_SKILLS) {
+        const source = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+        const copy = readFileSync(join(hostDir(home, host), skill, 'SKILL.md'), 'utf8');
+        expect(copy).toContain(`_ER_SKILL=${skill}`);
+        expect(extractCanonicalSpan(copy)).toBe(extractCanonicalSpan(source));
+        expect(copy.split(GUARD_LINE).length - 1).toBe(source.split(GUARD_LINE).length - 1);
+      }
     }
   });
 

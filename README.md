@@ -502,10 +502,35 @@ entry point for checking or upgrading on demand.
 - **Install migrations** — after setup, `migrations/v*.sh` in the version window run once via an applied/failed ledger. A failed script prints `MIGRATION_WARN` and still reports `UPGRADE_OK`; retry with `bin/update-run`
 - **Disambiguated checks** — a direct check distinguishes "up to date", "checks disabled", and "couldn't reach GitHub" instead of collapsing them to a vague "no update"
 - **Auto-upgrade, snooze, never-ask** — same opt-in UX as gstack core; auto-upgrade is only armed after a confirmed successful run
+- **Install recovery** — project-local (vendored) `.claude/skills/` installs are not supported; `setup --host auto` from the gstack-extend checkout recovers an install that skipped releases
 
 ```
 /gstack-extend-upgrade   # Force a fresh check; upgrade if a newer version exists
 ```
+
+## Troubleshooting
+
+`EXTEND_ROOT_UNVERIFIED` means a skill found a home install pointer but could not verify it. The line names the first rejected candidate. Match the cause to the fix:
+
+| Cause | Fix |
+|---|---|
+| The pointer file is empty | `setup --host auto` from your gstack-extend checkout |
+| The checkout has no `bin/update-check` (moved or deleted) | Re-clone (see Installation), then run that checkout's `setup --host auto` |
+| `bin/update-check` is not a readable executable file | `git checkout -- bin/update-check` in that checkout, then `setup --host auto` |
+| `bin/update-check` lacks `# extend-root-protocol: v1` (older checkout, or not gstack-extend) | `git pull --ff-only` in that checkout, then `setup --host auto` |
+| The pointer names a non-absolute path | `setup --host auto` from your gstack-extend checkout |
+
+Copy-paste checks, replacing `<skill>` and `<root>`:
+
+```bash
+readlink ~/.claude/skills/<skill>/SKILL.md
+cat ~/.codex/skills/<skill>/.extend-root
+grep -x '# extend-root-protocol: v1' <root>/bin/update-check
+```
+
+Running `setup` from a worktree repoints every host at that worktree. Re-run `setup --host auto` from the stable checkout before archiving the worktree.
+
+The resolver probes Claude, then Codex, then OpenCode, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
 
 ---
 

@@ -29,26 +29,53 @@ allowed-tools:
 ## Preamble (run first)
 
 ```bash
-_SKILL_SRC=$(readlink ~/.claude/skills/review-apparatus/SKILL.md 2>/dev/null \
-           || readlink ~/.codex/skills/review-apparatus/SKILL.md 2>/dev/null \
-           || readlink ~/.config/opencode/skills/review-apparatus/SKILL.md 2>/dev/null \
-           || readlink .claude/skills/review-apparatus/SKILL.md 2>/dev/null)
+_ER_SKILL=review-apparatus
+_er_ok() { case "$1" in /*) [ -f "$1/bin/update-check" ] && [ -x "$1/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$1/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
 _EXTEND_ROOT=""
-[ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+_ER_SEEN=""
+for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md; do
+  case "$_ER_SRC" in /*) ;; *) continue ;; esac
+  _ER=$(readlink "$_ER_SRC" 2>/dev/null || true)
+  [ -n "$_ER" ] || continue
+  case "$_ER" in /*) ;; *) _ER="$(dirname "$_ER_SRC")/$_ER" ;; esac
+  _ER=$(dirname "$(dirname "$_ER")")
+  if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+  _ER_SEEN="${_ER_SEEN:-$_ER}"
+done
 if [ -z "$_EXTEND_ROOT" ]; then
-  for _er in ~/.claude/skills/review-apparatus/.extend-root ~/.codex/skills/review-apparatus/.extend-root ~/.config/opencode/skills/review-apparatus/.extend-root .claude/skills/review-apparatus/.extend-root; do
-    [ -f "$_er" ] || continue
-    _EXTEND_ROOT=$(cat "$_er")
-    _SKILL_SRC="$_EXTEND_ROOT/skills/review-apparatus.md"
-    break
+  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root; do
+    case "$_ER_SRC" in /*) ;; *) continue ;; esac
+    [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue
+    _ER=""
+    IFS= read -r _ER < "$_ER_SRC" || true
+    if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+    _ER_SEEN="${_ER_SEEN:-${_ER:-empty:$_ER_SRC}}"
   done
-  unset _er
 fi
-if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
-  _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
+_ER_UNVERIFIED=""
+if [ -z "$_EXTEND_ROOT" ] && [ -n "$_ER_SEEN" ]; then
+  _ER="$_ER_SEEN/bin/update-check"
+  case "$_ER_SEEN" in
+    empty:*) _ER_UNVERIFIED="${_ER_SEEN#empty:} is empty. Fix: run setup --host auto from your gstack-extend checkout" ;;
+    /*) if [ ! -e "$_ER" ]; then _ER_UNVERIFIED="$_ER_SEEN has no bin/update-check (checkout moved or deleted). Fix: re-clone gstack-extend (README: Installation), then run its setup --host auto"
+        elif [ ! -f "$_ER" ] || [ ! -x "$_ER" ] || [ ! -r "$_ER" ]; then _ER_UNVERIFIED="$_ER is not a readable executable file. Fix: git -C \"$_ER_SEEN\" checkout -- bin/update-check, then run \"$_ER_SEEN/setup\" --host auto"
+        else _ER_UNVERIFIED="$_ER lacks the line '# extend-root-protocol: v1' (checkout older than this skill, or not gstack-extend). Fix: git -C \"$_ER_SEEN\" pull --ff-only, then run \"$_ER_SEEN/setup\" --host auto"; fi ;;
+    *) _ER_UNVERIFIED="an install pointer names a non-absolute path ($_ER_SEEN). Fix: run setup --host auto from your gstack-extend checkout" ;;
+  esac
+fi
+unset _ER _ER_SRC _ER_SEEN
+if [ -n "$_EXTEND_ROOT" ]; then
+  echo "EXTEND_ROOT: $_EXTEND_ROOT"
+  printf '_EXTEND_ROOT=%q\n' "$_EXTEND_ROOT"
+  _UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
+elif [ -n "$_ER_UNVERIFIED" ]; then
+  echo "EXTEND_ROOT_UNVERIFIED: $_ER_UNVERIFIED"
 fi
+unset _ER_UNVERIFIED _ER_SKILL
 ```
+
+Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex or ~/.config/opencode. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review, full-review and test-plan then stop, because their tool and session-state steps need the root. review-apparatus continues, skipping the update check and its optional pair-review report skim.
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
@@ -252,10 +279,16 @@ what's there.
 
 ### Step 3: Also note what pair-review tested recently
 
-If a /pair-review session exists for this project (probe via the session-paths
-helper: `source "$_EXTEND_ROOT/bin/lib/session-paths.sh"; ls "$(session_dir
-pair-review)/report.md" 2>/dev/null`), skim the most recent session's report.md
-if present. Previously-tested areas are where CC-assisted verification would
+If a /pair-review session exists for this project, probe via the session-paths helper:
+
+```bash
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+ls "$(session_dir pair-review)/report.md" 2>/dev/null
+```
+
+Skim the most recent session's report.md if present. Previously-tested areas are where CC-assisted verification would
 have helped most, so they inform judgment about
 what apparatus would be valuable.
 
