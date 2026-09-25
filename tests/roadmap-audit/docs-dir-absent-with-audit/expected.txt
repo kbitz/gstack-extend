@@ -43,9 +43,10 @@ FINDINGS:
 
 
 ## DOC_LOCATION
-STATUS: pass
+STATUS: fail
 FINDINGS:
-- (none)
+- docs/ directory absent — project-level docs (ROADMAP.md/TODOS.md/PROGRESS.md) belong there. Run /roadmap to scaffold.
+
 
 ## DOC_TYPE_MISMATCH
 STATUS: pass
@@ -122,9 +123,8 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- CLAUDE.md: 0 TODO patterns (root doc)
-
-TOTAL_FILES: 1
+- (none)
+TOTAL_FILES: 0
 
 ## SCATTERED_TODOS
 STATUS: pass

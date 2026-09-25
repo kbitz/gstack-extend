@@ -107,6 +107,7 @@ const EMPTY_EXISTS: AuditFileExists = {
   docsLicense: false,
   rootLicenseMd: false,
   docsLicenseMd: false,
+  rootRoadmapAudit: false,
 };
 
 function defaultParsedRoadmap(overrides: Partial<ParsedRoadmap> = {}): ParserResult<ParsedRoadmap> {

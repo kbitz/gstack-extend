@@ -1,32 +1,35 @@
 ## VOCAB_LINT
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No ROADMAP.md found
+- (none)
 
 ## STRUCTURE
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No ROADMAP.md found
+- (none)
 
 ## STATE_SECTIONS
-STATUS: skip
+STATUS: fail
 FINDINGS:
-- No ROADMAP.md found
+- MIGRATION_NEEDED: ROADMAP.md has no state sections. Run /roadmap to regenerate into ## In Progress / ## Current Plan / ## Future / ## Shipped. See docs/archive/roadmap-v2-state-model.md in the gstack-extend source checkout.
+
+GRAMMAR: v1
+SECTIONS_PRESENT: 
 
 ## PHASES
 STATUS: skip
-FINDINGS:
-- No ROADMAP.md found
+PHASES:
+- (none declared)
 
 ## PHASE_INVARIANTS
 STATUS: skip
 FINDINGS:
-- No ROADMAP.md found
+- (none declared)
 
 ## VERSION_TAG_STALENESS
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No ROADMAP.md found
+- (none)
 
 ## VERSION
 STATUS: skip
@@ -37,7 +40,6 @@ FINDINGS:
 STATUS: fail
 FINDINGS:
 - TODOS.md: missing (inbox for unprocessed items)
-- ROADMAP.md: missing (run /roadmap to create from TODOS.md)
 - PROGRESS.md: missing
 - VERSION: missing (no VERSION file and no pyproject.toml `version = "..."` field)
 
@@ -60,27 +62,35 @@ FINDINGS:
 ## DEPENDENCIES
 STATUS: skip
 FINDINGS:
-- No ROADMAP.md found
+- No Depends on: lines found
 
 ## GROUP_DEPS
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No Groups in ROADMAP.md
+- All Group-level dependencies valid (1 groups)
+ADJACENCY:
+- Group 1 ← {}
 
 ## TASK_LIST
-STATUS: skip
-TOTAL_TASKS: 0
-TOTAL_CURRENT: 0
+STATUS: info
+TASK: group=1|track=1A|title=Keep a legacy heading|effort=S|files=|complete=0
+TOTAL_TASKS: 1
+TOTAL_CURRENT: 1
 TOTAL_FUTURE: 0
 
 ## STRUCTURAL_FITNESS
-STATUS: skip
+STATUS: info
+GROUP_COUNT: 1
+TRACK_COUNT: 1
+TASK_COUNT: 1
+GROUP_SIZES: 1=1
+TRACK_SIZES: 1A=1
 
 ## IN_FLIGHT_GROUPS
-STATUS: skip
-IN_FLIGHT:
-COMPLETE:
-PRIMARY:
+STATUS: info
+IN_FLIGHT: 1
+COMPLETE: 
+PRIMARY: 1
 
 ## ORIGIN_STATS
 STATUS: skip
@@ -88,31 +98,40 @@ TOTAL_OPEN_ORIGIN: 0
 BY_GROUP:
 
 ## SIZE
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No tracks found
+- (none)
+MAX_TASKS_PER_TRACK: 5
+MAX_SESSION_WEIGHT: 4
+MAX_LOC_PER_TRACK: 300
+MAX_FILES_PER_TRACK: 8
 
 ## COLLISIONS
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No Groups found
+- (none)
+MAX_TRACKS_PER_GROUP: 6
+SHARED_INFRA_STATUS: missing
 
 ## PACKING
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No unshipped Tracks to pack
+- (none)
+BINS: 1
 
 ## PARALLELISM_BUDGET
-STATUS: skip
-IN_FLIGHT_TRACKS: 0
+IN_FLIGHT_TRACKS: 1
 CAP: 6
+PER_GROUP: 1=1
+STATUS: pass
 FINDINGS:
-- No in-flight Groups
+- (none)
 
 ## FUTURE
-STATUS: skip
+STATUS: pass
 FINDINGS:
-- No ROADMAP.md found
+- (none)
+FUTURE_BULLET_COUNT: 0
 
 ## STYLE_LINT
 STATUS: pass
@@ -122,7 +141,7 @@ FINDINGS:
 ## DOC_INVENTORY
 STATUS: info
 FILES:
-- CLAUDE.md: 0 TODO patterns (root doc)
+- docs/ROADMAP.md: 1 TODO patterns (project doc)
 
 TOTAL_FILES: 1
 
@@ -144,5 +163,5 @@ FINDINGS:
 - No TODOS.md found
 
 ## MODE
-DETECTED: overhaul
-REASON: No ROADMAP.md found
+DETECTED: triage
+REASON: Valid Groups > Tracks structure found (1 groups)
