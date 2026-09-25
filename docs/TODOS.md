@@ -2,6 +2,38 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=16A,defer=true] Version stage-runs rows and publish their schema
+**What:** Add a schema version and a gstack-extend producer version to every stage-runs row, publish a machine-readable schema, and record whether `model`/`effort` came from flags or from logs.
+**Why:** 8 of 10 captured rows lack `route` and `entrypoint_raw`; readers can only infer the writer release from key presence, and `agent: cursor` arrived without a marker.
+**Context:** Found by Track 16A. `route` values are written inline in `route_for` (bin/lib/telemetry.py) with no constant. docs/telemetry.md holds the field and value version notes this would replace.
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
+### [plan-ceo-review:track=16A,defer=true] Doctor coverage report over stage-runs and leftover handoffs
+**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs, warn when gstack's tier is off, record the skill in each handoff, and give the deferred marker work a tier-independent trigger.
+**Why:** On a tier-off machine the doctor reports insufficient evidence for every skill and the 95% decision rule never fires; orphaned handoffs name neither skill nor repository.
+**Context:** Track 16A's observed-coverage record was captured by a private script; this report would make it re-runnable anywhere. Define the independent invocation evidence a capture-completeness claim needs.
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+### [plan-ceo-review:track=16A,defer=true] Collision-safe and idempotent run identity
+**What:** Two starts of one skill in one checkout must produce two correctly attributed rows, and repeating a finish (an explicit retry with the original IDs, or a retry after a logger timeout that already wrote) must not duplicate rows.
+**Why:** Today the later start replaces the handoff slot, so the earlier run's finish is recorded under the later run's identity and the later run has no row; a repeated explicit finish appends a second stage-runs row and a second skill_run.
+**Context:** Characterized as current behavior by the collision and explicit-retry tests in tests/telemetry-contract.test.ts; acceptance is those sequences producing exactly one correctly attributed row per run.
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+### [plan-ceo-review:track=16A,defer=true] Decide the repository identity in skill_start rows
+**What:** Decide whether `skill_start.repo` should carry origin `owner/name` instead of the checkout directory name.
+**Why:** The three datasets use three repository identities, so `repo` never joins; under a workspace manager the directory name is the workspace name.
+**Context:** gstack's sync strips `repo` before upload on its jq path (its sed fallback mis-strips a value containing an escaped quote), so the decision mainly affects local consumers. Track 16A documents the divergence and locks it as current behavior.
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
 ## Completed
 
 ### [manual] Keep gstack-extend independent of the maintainer's personal tooling
