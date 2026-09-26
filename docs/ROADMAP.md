@@ -45,11 +45,11 @@ _produces: `bin/merge-gate` answers "would merge: yes/no, and why" for any PR in
 - **Shadow-mode merge gate** -- standalone `bin/merge-gate` that reports would-merge yes/no with raw reasons, including whether the PR exceeds a complexity budget (net lines, new files, new dependencies, new public API). Acceptance: versioned verdicts, decision-time evidence preserved so later backtests cannot use hindsight, and a demonstrable inability to perform a merge. A consumer's backtest against its own defect set is downstream, not in scope. Register the bin in `MANUAL_TOUCHFILES`. _Source: TODOS `[manual]` P0 shadow merge gate._ _bin/merge-gate (new), src/merge-gate/ (new), tests/merge-gate.test.ts (new), tests/helpers/touchfiles.ts, docs/merge-gate.md (new), ~600 lines._ (L)
 
 ##### Track 16D: Harden the upgrade preambles + move test cleanup to `afterAll`
-_2 tasks . ~90 LOC . low risk . [7 skill preambles + 4 test files]_
-_touches: skills/pair-review.md, skills/full-review.md, skills/review-apparatus.md, skills/test-plan.md, skills/roadmap.md, skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, tests/skill-protocols.test.ts, tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts_
+_2 tasks . ~900 LOC incl. tests . medium risk . [7 skills + bin/update-check + 7 test files + README]_
+_touches: skills/pair-review.md, skills/full-review.md, skills/review-apparatus.md, skills/test-plan.md, skills/roadmap.md, skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, tests/skill-protocols.test.ts, tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, bin/update-check, tests/update.test.ts, tests/setup-hosts.test.ts, tests/helpers/extend-root.ts (new), README.md, setup, docs/telemetry.md, skills/implement.md, skills/review-and-prep.md, tests/telemetry.test.ts, bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, tests/helpers/touchfiles.ts_
 _out: 17A, 17C, 17D, 17E, 17F, 18A_
 _produces: upgrade preambles that resolve only an absolute, verified extend root; test temp dirs actually cleaned under bun test_
-- **Harden the upgrade preambles** -- six preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. `gstack-extend-init` is the seventh preamble: it uses the same relative `.extend-root` probe, then execs `bin/gstack-extend` rather than `update-check`. Resolve all seven the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,review-apparatus,test-plan,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~60 lines._ (S)
+- **Harden the upgrade preambles** -- six preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. `gstack-extend-init` is the seventh preamble: it uses the same relative `.extend-root` probe, then execs `bin/gstack-extend` rather than `update-check`. Resolve all seven the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,review-apparatus,test-plan,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~300 lines._ (L)
 - **`afterAll` cleanup** -- `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did). _Source: TODOS `[ship]` telemetry coverage follow-ups (5)._ _tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, ~30 lines._ (S)
 
 ##### Track 16E: 12A init-surface polish + test coverage
@@ -218,7 +218,7 @@ Group 16: Contract Revalidation ∥ Review Independence ∥ Merge Gate ∥ Pream
   +-- Track 16A .......... ~M . 1 task (revalidate telemetry + provenance contracts)
   +-- Track 16B .......... ~M . 1 task (review independence probe)
   +-- Track 16C .......... ~L . 1 task (shadow merge gate)
-  +-- Track 16D .......... ~S . 2 tasks (preamble hardening + afterAll)
+  +-- Track 16D .......... ~L . 2 tasks (preamble hardening + afterAll)
   +-- Track 16E .......... ~M . 2 tasks (init tests + init code polish)
 
 Group 17: Review-and-Prep Hardening ∥ Telemetry Follow-ups ∥ Skill-File Trims

@@ -195,7 +195,7 @@ Copy both complete SHARED blocks below into a skill and replace the quoted
 substitutes that exact string. Each block has one telemetry invocation; its guard
 only resolves the install and contains a missing binary. Lookup is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
-$HOME host skill directories (setup writes one for Claude, Codex, and OpenCode).
+$HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
 start-finish-v1` line, so a relative PATH entry such as node_modules/.bin, or an
 older wrapper another checkout re-linked onto PATH, is skipped instead of run.
@@ -220,7 +220,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -248,7 +248,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi

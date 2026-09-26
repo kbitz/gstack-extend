@@ -3,8 +3,8 @@
 #
 # Usage:
 #   ./setup                                          # Claude (~/.claude/skills/)
-#   ./setup --host auto                              # detect claude/codex/opencode
-#   ./setup --host claude|codex|opencode
+#   ./setup --host auto                              # detect claude/codex/opencode/cursor
+#   ./setup --host claude|codex|opencode|cursor
 #   ./setup --host <host> --uninstall
 #   ./setup --skills-dir <path> --uninstall          # legacy v0.16.0 cleanup
 #   ./setup --quiet
@@ -27,7 +27,7 @@ SKILLS_DIR_GIVEN=0
 UNINSTALL=0
 QUIET=0
 HOST="claude"
-USAGE="Usage: ./setup [--host claude|codex|opencode|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
+USAGE="Usage: ./setup [--host claude|codex|opencode|cursor|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
 
 # shellcheck source=bin/lib/install-safety.sh
 . "$SCRIPT_DIR/bin/lib/install-safety.sh"
@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
       ;;
     --host)
       if [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
-        echo "Error: --host requires claude, codex, opencode, or auto (got: '${2:-<missing>}')" >&2
+        echo "Error: --host requires claude, codex, opencode, cursor, or auto (got: '${2:-<missing>}')" >&2
         echo "$USAGE" >&2
         exit 1
       fi
@@ -82,9 +82,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$HOST" in
-  claude|codex|opencode|auto) ;;
+  claude|codex|opencode|cursor|auto) ;;
   *)
-    echo "Unknown --host value: $HOST (expected claude, codex, opencode, or auto)" >&2
+    echo "Unknown --host value: $HOST (expected claude, codex, opencode, cursor, or auto)" >&2
     echo "$USAGE" >&2
     exit 1
     ;;
@@ -92,7 +92,7 @@ esac
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
   echo "Error: --skills-dir is no longer accepted for install." >&2
-  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode)." >&2
+  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode, ~/.cursor)." >&2
   echo "  Symlinks at any other path will not be discovered." >&2
   echo "" >&2
   echo "  To clean up a v0.16.0-era custom install, use:" >&2
@@ -124,6 +124,7 @@ host_skills_dir() {
     claude) echo "${HOME}/.claude/skills" ;;
     codex) echo "${HOME}/.codex/skills" ;;
     opencode) echo "${HOME}/.config/opencode/skills" ;;
+    cursor) echo "${HOME}/.cursor/skills" ;;
     *) echo "" ;;
   esac
 }
@@ -160,7 +161,7 @@ rewrite_skill_body() {
   done
   sed "${sed_args[@]}" "$src" > "$tmp"
 
-  if [ "$host" = "codex" ]; then
+  if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
     awk '
       BEGIN { fm=0; skip=0 }
       /^---[[:space:]]*$/ {
@@ -178,14 +179,74 @@ rewrite_skill_body() {
   fi
 }
 
-# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode. Claude
+# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode/Cursor. Claude
 # installs are symlinks, so there the pointer must never make a user's detached, customized SKILL.md look generated.
-# Only those two hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
+# Only those three hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
 # symlink installs) never removes or overwrites a regular file.
 generated_copy() {
   local target="$1" host="${2:-}"
-  case "$host" in codex|opencode) ;; *) return 1 ;; esac
+  case "$host" in codex|opencode|cursor) ;; *) return 1 ;; esac
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
+}
+
+# Collapse "." and ".." in an absolute path. The path does not need to exist, so a
+# deleted checkout still compares equal to the absolute pointer setup wrote.
+lex_abs() {
+  local input="$1" part out="" item
+  local -a stack=()
+  case "$input" in
+    /*) ;;
+    *) printf '%s\n' "$input"; return ;;
+  esac
+  input="${input#/}"
+  while [ -n "$input" ]; do
+    part="${input%%/*}"
+    case "$input" in
+      */*) input="${input#*/}" ;;
+      *) input="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        if [ "${#stack[@]}" -gt 0 ]; then
+          unset "stack[$((${#stack[@]} - 1))]"
+        fi
+        ;;
+      *) stack[${#stack[@]}]="$part" ;;
+    esac
+  done
+  for item in "${stack[@]}"; do
+    out="$out/$item"
+  done
+  printf '%s\n' "${out:-/}"
+}
+
+# A SKILL.md symlink is setup's when it targets <checkout>/skills/<skill>.md in this checkout or another gstack-extend
+# checkout (a worktree or an older clone), or in a checkout that no longer exists but that setup's own .extend-root
+# beside the link still names. Any other link (a dotfiles-managed personal skill, say) is user-owned and treated like
+# a user's regular file.
+extend_owned_link() {
+  local link="$1" skill="$2" target root pointer=""
+  target="$(readlink "$link" 2>/dev/null || true)"
+  case "$target" in */skills/"$skill".md) ;; *) return 1 ;; esac
+  case "$target" in /*) ;; *) target="$(dirname "$link")/$target" ;; esac
+  root="$(lex_abs "${target%/skills/"$skill".md}")"
+  if [ -e "$root" ]; then
+    [ -f "$root/setup" ] && [ -f "$root/bin/update-check" ]
+  else
+    [ -f "$(dirname "$link")/.extend-root" ] || return 1
+    IFS= read -r pointer < "$(dirname "$link")/.extend-root" || true
+    [ "$(lex_abs "$pointer")" = "$root" ]
+  fi
+}
+
+# Two skills dirs are the same when their deepest existing ancestors are the same directory (compared by inode, so
+# case variants on a case-insensitive disk match) and the missing parts below them are spelled the same.
+same_skills_dir() {
+  local a="$1" b="$2" rest_a="" rest_b=""
+  while [ ! -d "$a" ]; do rest_a="/$(basename "$a")$rest_a"; a="$(dirname "$a")"; done
+  while [ ! -d "$b" ]; do rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"; done
+  [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
 }
 
 uninstall_from_dir() {
@@ -208,8 +269,12 @@ uninstall_from_dir() {
     fi
     if [ -L "$target/SKILL.md" ]; then
       link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
+      case "$link_target" in
+        /*) ;;
+        *) link_target="$(dirname "$target/SKILL.md")/$link_target" ;;
+      esac
       expected="$SCRIPT_DIR/skills/${skill}.md"
-      if [ "$link_target" = "$expected" ]; then
+      if [ "$(lex_abs "$link_target")" = "$(lex_abs "$expected")" ]; then
         rm -f "$target/SKILL.md"
         rm -f "$target/.extend-root"
         rmdir "$target" 2>/dev/null || true
@@ -255,6 +320,15 @@ preflight_dir() {
       echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
       continue
     fi
+    if [ -L "$target/SKILL.md" ] && ! extend_owned_link "$target/SKILL.md" "$skill"; then
+      if [ -e "$target/SKILL.md" ]; then
+        echo "Warning: $target/SKILL.md links outside a gstack-extend checkout, not overwriting" >&2
+      else
+        echo "Warning: $target/SKILL.md links to a missing file, not overwriting." >&2
+        echo "  If it was a gstack-extend install from a moved checkout, remove the link and re-run setup." >&2
+      fi
+      continue
+    fi
   done
 }
 
@@ -290,6 +364,9 @@ install_into_dir() {
     if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       continue
     fi
+    if [ -L "$target/SKILL.md" ] && ! extend_owned_link "$target/SKILL.md" "$skill"; then
+      continue
+    fi
     mkdir -p "$target"
     if [ "$host" = "claude" ]; then
       ln -snf "$src" "$target/SKILL.md"
@@ -309,6 +386,7 @@ install_into_dir() {
 INSTALL_CLAUDE=0
 INSTALL_CODEX=0
 INSTALL_OPENCODE=0
+INSTALL_CURSOR=0
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
   :
@@ -316,18 +394,40 @@ elif [ "$HOST" = "auto" ]; then
   command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
   command -v codex >/dev/null 2>&1 && INSTALL_CODEX=1
   command -v opencode >/dev/null 2>&1 && INSTALL_OPENCODE=1
+  command -v cursor >/dev/null 2>&1 && INSTALL_CURSOR=1
+  [ -d "${HOME}/.cursor" ] && INSTALL_CURSOR=1
   [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ] && INSTALL_CLAUDE=1
   [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ] && INSTALL_CODEX=1
   [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ] && INSTALL_OPENCODE=1
-  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ]; then
-    INSTALL_CLAUDE=1
-  fi
+  [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ] && INSTALL_CURSOR=1
 elif [ "$HOST" = "claude" ]; then
   INSTALL_CLAUDE=1
 elif [ "$HOST" = "codex" ]; then
   INSTALL_CODEX=1
 elif [ "$HOST" = "opencode" ]; then
   INSTALL_OPENCODE=1
+elif [ "$HOST" = "cursor" ]; then
+  INSTALL_CURSOR=1
+fi
+
+# Cursor also reads other hosts' skill dirs. When ~/.cursor/skills is one of them (a symlink to ~/.claude/skills,
+# say), that host owns it: a Cursor pass would turn its installs into copies, or remove them on uninstall.
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  for _other in claude codex opencode; do
+    if same_skills_dir "$(host_skills_dir cursor)" "$(host_skills_dir "$_other")"; then
+      echo "Warning: $(host_skills_dir cursor) is the $_other skills directory; skipping cursor" >&2
+      INSTALL_CURSOR=0
+      break
+    fi
+  done
+fi
+
+any_host_selected() {
+  [ "$INSTALL_CLAUDE" -eq 1 ] || [ "$INSTALL_CODEX" -eq 1 ] || [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]
+}
+
+if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && ! any_host_selected; then
+  INSTALL_CLAUDE=1
 fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
@@ -338,6 +438,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
     [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)" codex
     [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)" opencode
+    [ "$INSTALL_CURSOR" -eq 1 ] && uninstall_from_dir "$(host_skills_dir cursor)" cursor
   fi
 
   if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "claude" ] || [ "$HOST" = "auto" ]; }; then
@@ -359,6 +460,40 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 # ─── Install ───────────────────────────────────────────────────────
+# Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
+# world-writable) instead of stopping every host; a host named with --host still stops setup.
+if [ "$HOST" = "auto" ]; then
+  _skipped_non_cursor=0
+  for _host in claude codex opencode cursor; do
+    case "$_host" in
+      claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
+      codex) [ "$INSTALL_CODEX" -eq 1 ] || continue ;;
+      opencode) [ "$INSTALL_OPENCODE" -eq 1 ] || continue ;;
+      cursor) [ "$INSTALL_CURSOR" -eq 1 ] || continue ;;
+    esac
+    if ! _unsafe=$(is_safe_install_path "$(host_skills_dir "$_host")" 2>&1); then
+      echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
+      echo "  Fix that directory, then run setup --host $_host." >&2
+      case "$_host" in
+        claude) INSTALL_CLAUDE=0; _skipped_non_cursor=1 ;;
+        codex) INSTALL_CODEX=0; _skipped_non_cursor=1 ;;
+        opencode) INSTALL_OPENCODE=0; _skipped_non_cursor=1 ;;
+        cursor) INSTALL_CURSOR=0 ;;
+      esac
+    fi
+  done
+  # Cursor also reads ~/.claude/skills, so a lone skipped Cursor falls back to Claude as detecting nothing does.
+  # Any other skipped host would not read a Claude install, so that stays a failure.
+  if ! any_host_selected; then
+    if [ "$_skipped_non_cursor" -eq 1 ]; then
+      echo "Error: no detected host has a safe skills directory; nothing installed." >&2
+      echo "$USAGE" >&2
+      exit 1
+    fi
+    INSTALL_CLAUDE=1
+  fi
+fi
+
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   preflight_dir "$(host_skills_dir claude)" claude
 fi
@@ -368,10 +503,14 @@ fi
 if [ "$INSTALL_OPENCODE" -eq 1 ]; then
   preflight_dir "$(host_skills_dir opencode)" opencode
 fi
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  preflight_dir "$(host_skills_dir cursor)" cursor
+fi
 
 [ "$INSTALL_CLAUDE" -eq 1 ] && install_into_dir "$(host_skills_dir claude)" claude
 [ "$INSTALL_CODEX" -eq 1 ] && install_into_dir "$(host_skills_dir codex)" codex
 [ "$INSTALL_OPENCODE" -eq 1 ] && install_into_dir "$(host_skills_dir opencode)" opencode
+[ "$INSTALL_CURSOR" -eq 1 ] && install_into_dir "$(host_skills_dir cursor)" cursor
 
 cli_bin_dir="$HOME/.local/bin"
 

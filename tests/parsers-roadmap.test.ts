@@ -1,6 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   formatFutureIndex,
@@ -9,15 +8,21 @@ import {
   parseRoadmap,
   type ParseRoadmapDeps,
 } from '../src/audit/parsers/roadmap.ts';
+import { makeBaseTmp } from './helpers/fixture-repo.ts';
 
-// Use a known stateDir so effortToLoc never reads ~/.gstack-extend/config.
+const stateDir = makeBaseTmp('parsers-roadmap-');
+afterAll(() => {
+  try {
+    expect(readdirSync(stateDir)).toEqual([]);
+  } finally {
+    try { rmSync(stateDir, { recursive: true, force: true }); } catch { /* */ }
+  }
+});
+
+// The shared stateDir must stay empty. Tests only need a directory so
+// effortToLoc never reads ~/.gstack-extend/config, and no test writes to it.
 function deps(): ParseRoadmapDeps {
-  const tmp = mkdtempSync(join(tmpdir(), 'gse-rm-'));
-  // Best-effort cleanup; tests are short-lived.
-  process.on('exit', () => {
-    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* */ }
-  });
-  return { env: {}, stateDir: tmp, warn: () => {} };
+  return { env: {}, stateDir, warn: () => {} };
 }
 
 describe('parseRoadmap — edges', () => {
