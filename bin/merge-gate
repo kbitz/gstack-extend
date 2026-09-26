@@ -12,7 +12,8 @@ done
 
 _fail() {
   if [ "$_json" -eq 1 ]; then
-    printf '%s\n' "{\"v\":1,\"error\":{\"code\":\"$1\",\"message\":\"$2\",\"fix\":\"$3\",\"doc\":\"docs/merge-gate.md#errors\"}}"
+    # Canonical key order, byte-identical to the CLI's JSON errors.
+    printf '%s\n' "{\"error\":{\"code\":\"$1\",\"doc\":\"docs/merge-gate.md#errors\",\"fix\":\"$3\",\"message\":\"$2\"},\"v\":1}"
   else
     echo "ERROR $1: $2" >&2
     echo "FIX: $3" >&2

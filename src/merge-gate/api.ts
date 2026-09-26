@@ -1,19 +1,10 @@
 import { basename, extname } from 'node:path';
-import { API_RULES } from './registry.ts';
+import { API_RULES, TEST_PATHS, regex, type ApiMatcher, type ApiName, type ApiRule } from './registry.ts';
 
 export type ApiPair = { rule: string; name: string };
 
-const TS_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx', '.mjs', '.cjs']);
-
-export function scanLines(path: string, lines: string[], side: 'added' | 'removed'): ApiPair[] {
-  const ext = extensionOf(path);
-  const pairs: ApiPair[] = [];
-  for (const line of lines) {
-    pairs.push(...matchLine(path, ext, line));
-  }
-  void side;
-  return pairs;
-}
+/** Lines from one side of one hunk, with the function-context text git printed after `@@ ... @@`. */
+export type ScanHunk = { context: string; lines: string[] };
 
 export function extensionOf(path: string): string {
   const base = basename(path);
@@ -21,108 +12,96 @@ export function extensionOf(path: string): string {
   return extname(base);
 }
 
-function matchLine(path: string, ext: string, line: string): ApiPair[] {
-  const out: ApiPair[] = [];
-  if (TS_EXTS.has(ext)) {
-    const decl = apply('ts-decl', line);
-    if (decl) out.push({ rule: 'ts-decl', name: decl });
-    else if (apply('ts-default', line)) out.push({ rule: 'ts-default', name: `default@${path}` });
-    const list = listNames(line);
-    if (list) {
-      if (list.length === 0 && /^\s*export\s*(type\s*)?\{/.test(line) && !line.includes('}')) {
-        out.push({ rule: 'ts-list-open', name: `{multi-line}@${path}` });
-      } else {
-        for (const name of list) out.push({ rule: 'ts-list', name });
+export function rulesFor(path: string): ApiRule[] {
+  const ext = extensionOf(path);
+  return API_RULES.filter(r => r.extensions.includes(ext));
+}
+
+export function hasApiRule(path: string): boolean {
+  return rulesFor(path).length > 0;
+}
+
+export function scanLines(path: string, lines: string[], context = ''): ApiPair[] {
+  return scanHunks(path, [{ context, lines }]);
+}
+
+/**
+ * Every rule and matcher comes from API_RULES; this function only interprets
+ * the table. Rules are chosen by `rulePath` (a rename's old path for its
+ * removed lines); file-keyed names always use `path`.
+ */
+export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): ApiPair[] {
+  const rules = rulesFor(rulePath);
+  const pairs: ApiPair[] = [];
+  if (rules.length === 0) return pairs;
+  const blocks = rules.flatMap(r => r.matchers).filter(m => m.within);
+  for (const hunk of hunks) {
+    const inside = new Map<ApiMatcher, boolean>();
+    for (const m of blocks) inside.set(m, m.within ? regex(m.within.open).test(hunk.context) : false);
+    for (const line of hunk.lines) {
+      const hit = new Set<string>();
+      for (const rule of rules) {
+        if (rule.unless && hit.has(rule.unless)) continue;
+        for (const m of rule.matchers) {
+          if (m.within && (!inside.get(m) || regex(m.within.close).test(line))) continue;
+          const match = regex(m.pattern).exec(line);
+          if (!match) continue;
+          hit.add(rule.id);
+          for (const name of namesOf(m.name, match, path)) pairs.push({ rule: rule.id, name });
+          break;
+        }
       }
-    } else if (/^export\s*(type\s*)?\{/.test(line) && !line.includes('}')) {
-      out.push({ rule: 'ts-list-open', name: `{multi-line}@${path}` });
-    }
-    const star = starName(line);
-    if (star) out.push({ rule: 'ts-star', name: star });
-  }
-  if (ext === '.js' || ext === '.cjs') {
-    if (/^module\.exports\s*=/.test(line)) out.push({ rule: 'js-cjs', name: `module.exports@${path}` });
-    const m = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=/.exec(line);
-    if (m?.[1]) out.push({ rule: 'js-cjs', name: m[1] });
-  }
-  if (ext === '.py') {
-    if (/^\s/.test(line)) return out;
-    const def = /^(?:async\s+)?def\s+([A-Za-z]\w*)/.exec(line);
-    const cls = /^class\s+([A-Za-z]\w*)/.exec(line);
-    const name = def?.[1] ?? cls?.[1];
-    if (name && !name.startsWith('_')) out.push({ rule: 'py-def', name });
-  }
-  if (ext === '.go') {
-    const method = /^func\s+\([^)]*?(\w+)(?:\[[^\]]*\])?\)\s*([A-Z]\w*)/.exec(line);
-    if (method?.[1] && method[2]) out.push({ rule: 'go-exported', name: `${method[1]}.${method[2]}` });
-    else {
-      const fn = /^func\s+([A-Z]\w*)/.exec(line);
-      const ty = /^type\s+([A-Z]\w*)/.exec(line);
-      const vc = /^(?:var|const)\s+([A-Z]\w*)/.exec(line);
-      const name = fn?.[1] ?? ty?.[1] ?? vc?.[1];
-      if (name) out.push({ rule: 'go-exported', name });
+      for (const m of blocks) {
+        if (!m.within) continue;
+        if (inside.get(m)) {
+          if (regex(m.within.close).test(line)) inside.set(m, false);
+        } else if (regex(m.within.open).test(line)) inside.set(m, true);
+      }
     }
   }
-  if (ext === '.rs') {
-    if (/^\s*pub\s*\(/.test(line)) return out;
-    const m = /^\s*pub\s+(?:async\s+)?(?:unsafe\s+)?(?:fn|struct|enum|trait|type|const|static|mod|union)\s+([A-Za-z_]\w*)/.exec(line);
-    if (m?.[1]) out.push({ rule: 'rust-pub', name: m[1] });
+  return pairs;
+}
+
+function namesOf(spec: ApiName, m: RegExpExecArray, path: string): string[] {
+  switch (spec.from) {
+    case 'group': {
+      const name = spec.groups.map(g => m[g]).find(v => v !== undefined && v !== '');
+      return name ? [name] : [];
+    }
+    case 'file':
+      return [`${spec.label}@${path}`];
+    case 'export-list':
+      return exportList(m[spec.group] ?? '', path);
+    case 'idents':
+      return (m[spec.group] ?? '').split(',').map(s => s.trim()).filter(s => regex(spec.keep).test(s));
+    case 'receiver': {
+      const recv = (m[spec.receiver] ?? '').replace(/\[[^\]]*\]/g, '').trim();
+      const type = (recv.split(/\s+/).pop() ?? '').replace(/^\*+/, '');
+      const method = m[spec.group] ?? '';
+      return method === '' ? [] : [type === '' ? method : `${type}.${method}`];
+    }
+    case 'star': {
+      const alias = m[spec.alias];
+      return [alias ? alias : `*:${m[spec.source] ?? ''}`];
+    }
   }
-  return out;
 }
 
-function apply(id: string, line: string): string | null {
-  const rule = API_RULES.find(r => r.id === id);
-  if (!rule) return null;
-  const m = new RegExp(rule.pattern.source, rule.pattern.flags).exec(line);
-  if (!m) return null;
-  if (rule.group === 0) return m[0] ?? '';
-  return m[rule.group] ?? null;
-}
-
-function listNames(line: string): string[] | null {
-  const m = /^export\s*(?:type\s*)?\{([^}]*)\}/.exec(line);
-  if (!m) return null;
-  const body = m[1] ?? '';
-  if (body.trim() === '') return [];
+/** `a`, `a as b`, `type a`, `default as b`, `a as default`; a `default` export is keyed by file. */
+function exportList(body: string, path: string): string[] {
   const names: string[] = [];
   for (const part of body.split(',')) {
-    const bit = part.trim();
+    const bit = part.trim().replace(/^type\s+/, '');
     if (bit === '') continue;
     const as = /\bas\s+([A-Za-z_$][\w$]*)$/.exec(bit);
-    if (as?.[1]) names.push(as[1]);
-    else {
-      const id = /^([A-Za-z_$][\w$]*)/.exec(bit);
-      if (id?.[1]) names.push(id[1]);
-    }
+    const name = as?.[1] ?? /^([A-Za-z_$][\w$]*)/.exec(bit)?.[1];
+    if (name) names.push(name === 'default' ? `default@${path}` : name);
   }
   return names;
 }
 
-function starName(line: string): string | null {
-  const m = /^export\s*\*\s*(?:as\s+(\w+)\s+)?from\s+['"]([^'"]+)/.exec(line);
-  if (!m) return null;
-  if (m[1]) return m[1];
-  return `*:${m[2] ?? ''}`;
-}
-
-export function binExecPair(path: string, status: string, oldMode: string, newMode: string): ApiPair | null {
-  const segments = path.split('/');
-  if (!segments.includes('bin')) return null;
-  const mode = (m: string) => m.slice(-6);
-  if (status === 'A' && mode(newMode) === '100755') return { rule: 'bin-exec', name: path };
-  if (mode(oldMode) === '100644' && mode(newMode) === '100755') return { rule: 'bin-exec', name: path };
-  return null;
-}
-
 export function isTestPath(path: string): boolean {
-  const segments = path.split('/');
-  if (segments.some(s => s === 'test' || s === 'tests' || s === '__tests__' || s === 'spec')) return true;
+  if (path.split('/').some(s => TEST_PATHS.segments.includes(s))) return true;
   const base = basename(path);
-  if (/\.test\.[^.]+$/.test(base) || /\.spec\.[^.]+$/.test(base)) return true;
-  if (base.endsWith('_test.go')) return true;
-  if (base.startsWith('test_') && base.endsWith('.py')) return true;
-  if (base.endsWith('_test.py')) return true;
-  if (base === 'conftest.py') return true;
-  return false;
+  return TEST_PATHS.basenames.some(spec => regex(spec).test(base));
 }

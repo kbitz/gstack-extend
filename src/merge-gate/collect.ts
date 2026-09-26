@@ -1,17 +1,18 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { binExecPair, isTestPath, scanLines } from './api.ts';
+import { dirname, isAbsolute, join } from 'node:path';
+import { hasApiRule, scanHunks } from './api.ts';
 import { canonicalJson } from './canon.ts';
-import { parseBatchCheck, parseCatFileBatch, parseRawNumstat, parseUnified, type FileFact } from './diff.ts';
-import { manifestKind, parseManifest, unsupportedDetail, type ManifestParse } from './deps.ts';
+import { parseBatchCheck, parseCatFileBatch, parseRawNumstat, parseUnified, type FileFact, type PatchFile } from './diff.ts';
+import { manifestKind, parseManifest, unsupportedDetail, type ManifestKind, type ManifestParse } from './deps.ts';
 import type { ApiFact, Evidence, ManifestFact } from './decide.ts';
 import { GateError } from './errors.ts';
-import { createGateway, parseGitVersion, type Gateway } from './exec.ts';
+import { createGateway, parseGitVersion, versionAtLeast, type Gateway } from './exec.ts';
 import {
   API_BLOB_LIMIT,
   API_LINE_LIMIT,
   COLLECTOR_VERSION,
   EMPTY_TREE,
+  GIT_FLOOR,
   RENAME_LIMIT,
 } from './registry.ts';
 import {
@@ -23,7 +24,6 @@ import {
   repoSpecFromRemote,
   repoSpecFromUrl,
   stripRemoteUrl,
-  type RepoIdentity,
 } from './redact.ts';
 
 export type CollectInput = {
@@ -45,221 +45,224 @@ export type CollectInput = {
   debug: boolean;
 };
 
-const ZERO = '0000000000000000000000000000000000000000';
+type Failures = Evidence['collection']['failures'];
+
+/** API patch chunk bounds: estimated output bytes, pathspec count, and pathspec bytes. */
+const CHUNK = { output: 4_000_000, paths: 1000, argvBytes: 256 * 1024 };
+
+let version: string | null = null;
 
 export function installVersion(): string {
+  if (version !== null) return version;
   try {
     const root = dirname(dirname(import.meta.dir));
-    return readFileSync(join(root, 'VERSION'), 'utf8').trim() || 'unknown';
+    version = readFileSync(join(root, 'VERSION'), 'utf8').trim() || 'unknown';
   } catch {
-    return 'unknown';
+    version = 'unknown';
   }
+  return version;
 }
 
 export function collect(input: CollectInput): { evidence: Evidence; canonical: string } {
   const started = input.now();
-  const gateway = createGateway({
-    cwd: input.cwd,
+  const gatewayAt = (cwd: string, safeDirectories: string[] = []) => createGateway({
+    cwd,
     parentEnv: input.env,
     gitTimeoutMs: input.gitTimeoutMs,
     ghTimeoutMs: input.ghTimeoutMs,
     debug: input.debug,
+    safeDirectories,
   });
-  const toplevel = gateway.toplevel();
-  const rooted = createGateway({
-    cwd: toplevel,
-    parentEnv: input.env,
-    gitTimeoutMs: input.gitTimeoutMs,
-    ghTimeoutMs: input.ghTimeoutMs,
-    debug: input.debug,
-  });
-  const versionText = rooted.version();
+  const gateway = gatewayAt(input.cwd);
+  // `git version` runs before any call that passes --attr-source, which older git rejects.
+  const versionText = gateway.version();
+  requireGit(versionText, false);
+  const safe = gateway.safeDirectories();
+  const toplevel = gatewayAt(input.cwd, safe).toplevel();
+  const rooted = gatewayAt(toplevel, safe);
+  const partial = isPartialClone(rooted.partialCloneConfig());
+  if (partial) requireGit(versionText, true);
+
+  const failures: Failures = [];
+  const attributes = infoAttributes(rooted, toplevel);
+  if (attributes !== null) failures.push({ stage: 'attributes', code: 'info_attributes', subjects: [attributes] });
+
+  const originUrl = rooted.remoteUrl(input.remote);
+  const origin = originUrl ? stripRemoteUrl(originUrl) : null;
+  const target = input.mode === 'pr'
+    ? prTarget(rooted, input, originUrl)
+    : { base: resolveRef(rooted, input.baseRef ?? '', input.remote), head: resolveRef(rooted, input.headRef ?? 'HEAD', input.remote), pr: null };
+
+  const mergeBase = rooted.mergeBase(target.base, target.head);
+  if (!mergeBase) {
+    throw new GateError(
+      'no_merge_base',
+      'the base and head commits have no merge base',
+      rooted.isShallow() ? 'git fetch --unshallow' : 'fetch the missing history so the commits share an ancestor',
+    );
+  }
+
+  const build = (files: FileFact[], manifests: ManifestFact[], api: ApiFact[], renameSkipped: boolean) => {
+    const evidence: Evidence = {
+      v: 1,
+      observed_at: input.now().toISOString(),
+      collection_started_at: started.toISOString(),
+      clock_overridden: input.clockOverridden,
+      test_overrides: input.testOverrides,
+      collector_version: COLLECTOR_VERSION,
+      gstack_extend_version: installVersion(),
+      git_version: versionText.trim(),
+      partial_clone: partial,
+      attr_source: EMPTY_TREE,
+      rename_limit: RENAME_LIMIT,
+      rename_detection_skipped: renameSkipped,
+      decision_id: input.decisionId,
+      repo: { origin },
+      git: { base_sha: target.base, head_sha: target.head, merge_base_sha: mergeBase, files },
+      dependencies: { manifests },
+      public_api: { files: api },
+      collection: { complete: failures.length === 0, failures },
+      pr: target.pr,
+    };
+    return { evidence, canonical: canonicalJson(evidence) };
+  };
+
+  const diff = rooted.diffRaw(mergeBase, target.head);
+  if (diff.overflow) {
+    failures.push({ stage: 'diff', code: 'buffer_overflow', subjects: [] });
+    return build([], [], [], false);
+  }
+  if (diff.status !== 0) {
+    throw new GateError('git_failed', firstLine(diff.stderr) || 'git diff failed', 'confirm the commits exist locally and retry');
+  }
+  const parsedDiff = parseRawNumstat(diff.stdout);
+  if (parsedDiff.badStatus.length > 0) {
+    failures.push({ stage: 'diff', code: 'bad_status', subjects: parsedDiff.badStatus });
+  }
+  const files = parsedDiff.files;
+  markLarge(rooted, files, failures);
+  const manifests = loadManifests(rooted, files, failures);
+  const api = loadApi(rooted, mergeBase, target.head, files, failures);
+  return build(files, manifests, api, diff.stderr.includes('inexact rename detection was skipped'));
+}
+
+function requireGit(versionText: string, partial: boolean): void {
+  const floor = partial ? GIT_FLOOR.partial : GIT_FLOOR.full;
+  const need = `${floor.major}.${floor.minor}`;
   const parsed = parseGitVersion(versionText);
   if (!parsed) {
-    throw new GateError('git_unsupported_version', `could not parse git version: ${versionText.trim()}`, 'install git 2.40 or newer');
+    throw new GateError('git_unsupported_version', `could not parse git version: ${versionText.trim()}`, `install git ${need} or newer`);
   }
-  const partial = rooted.partialClone();
-  const floorMinor = partial ? 44 : 40;
-  const ok = parsed.major > 2 || (parsed.major === 2 && parsed.minor >= floorMinor);
-  if (!ok) {
-    const need = partial ? '2.44' : '2.40';
+  if (!versionAtLeast(versionText, floor)) {
     throw new GateError(
       'git_unsupported_version',
       `git ${parsed.major}.${parsed.minor} is below ${need}${partial ? ' (partial clone)' : ''}`,
       `install git ${need} or newer`,
     );
   }
-  const originUrl = rooted.remoteUrl(input.remote);
-  const origin = originUrl ? stripRemoteUrl(originUrl) : null;
+}
+
+/**
+ * `key value` lines from `config --get-regexp`. A key with no value is a
+ * boolean true; any value other than an explicit false marks a partial clone.
+ */
+function isPartialClone(config: string): boolean {
+  return config.split('\n').some(line => {
+    if (line.trim() === '') return false;
+    const space = line.indexOf(' ');
+    if (space < 0) return true;
+    const value = line.slice(space + 1).trim().toLowerCase();
+    return value !== '' && !['false', 'no', 'off', '0'].includes(value);
+  });
+}
+
+/**
+ * git has no switch that ignores `$GIT_DIR/info/attributes`, so a file with
+ * any effective line is recorded as a collection failure.
+ */
+function infoAttributes(gateway: Gateway, toplevel: string): string | null {
+  const rel = gateway.gitPath('info/attributes');
+  const path = isAbsolute(rel) ? rel : join(toplevel, rel);
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? null : rel;
+  }
+  const effective = text.split('\n').some(line => {
+    const t = line.trim();
+    return t !== '' && !t.startsWith('#');
+  });
+  return effective ? rel : null;
+}
+
+function prTarget(
+  gateway: Gateway,
+  input: CollectInput,
+  originUrl: string | null,
+): { base: string; head: string; pr: Evidence['pr'] } {
   const remoteId = originUrl ? parseRemote(originUrl) : null;
-
-  let prBlock: Evidence['pr'] = null;
-  let baseSha = '';
-  let headSha = '';
-
-  if (input.mode === 'pr') {
-    if (!origin || !remoteId) {
-      throw new GateError(
-        'no_remote',
-        `remote '${input.remote}' has no URL`,
-        `add a remote named ${input.remote}, or pass --remote with the base repository`,
-      );
-    }
-    const spec = input.prUrl
-      ? repoSpecFromUrl(input.prUrl)
-      : repoSpecFromRemote(remoteId);
-    const number = input.prUrl?.number ?? input.prNumber ?? '';
-    const first = ghView(rooted, number, spec, input);
-    let raw = first.raw;
-    let rawFirst: Record<string, unknown> | null = null;
-    let retryWait: number | null = null;
-    const state = raw.state;
-    if (state === 'OPEN' && raw.mergeable === 'UNKNOWN') {
-      sleep(input.retryMs);
-      retryWait = input.retryMs;
-      rawFirst = first.raw;
-      const second = ghView(rooted, number, spec, input);
-      raw = second.raw;
-    }
-    const prId = parsePrUrl(String(raw.url ?? ''));
-    if (!prId || !identityMatches(remoteId, prId)) {
-      const want = prId ? `${prId.owner}/${prId.name}` : 'the pull request repository';
-      throw new GateError(
-        'repo_mismatch',
-        `remote ${input.remote} does not match ${want}`,
-        `run from a clone whose ${input.remote} is ${want}`,
-      );
-    }
-    headSha = String(raw.headRefOid);
-    baseSha = String(raw.baseRefOid);
-    const missing: string[] = [];
-    if (!rooted.verifyCommit(headSha)) missing.push('head');
-    if (!rooted.verifyCommit(baseSha)) missing.push('base');
-    if (missing.length > 0) {
-      const bits: string[] = [];
-      if (missing.includes('head')) bits.push(`pull/${number}/head`);
-      if (missing.includes('base')) bits.push(String(raw.baseRefName ?? ''));
-      throw new GateError(
-        'commit_not_local',
-        `missing local commit for ${missing.join(' and ')}`,
-        `git fetch ${input.remote} ${bits.join(' ')}`,
-      );
-    }
-    prBlock = {
+  if (!remoteId) {
+    throw new GateError(
+      'no_remote',
+      originUrl ? `remote '${input.remote}' is not a host/owner/repo URL` : `remote '${input.remote}' has no URL`,
+      `add a remote named ${input.remote}, or pass --remote with the base repository`,
+    );
+  }
+  const spec = input.prUrl ? repoSpecFromUrl(input.prUrl) : repoSpecFromRemote(remoteId);
+  const number = input.prUrl?.number ?? input.prNumber ?? '';
+  const first = ghView(gateway, number, spec);
+  let raw = first;
+  let rawFirst: Record<string, unknown> | null = null;
+  let retryWait: number | null = null;
+  if (raw.state === 'OPEN' && raw.mergeable === 'UNKNOWN') {
+    sleep(input.retryMs);
+    retryWait = input.retryMs;
+    rawFirst = first;
+    raw = ghView(gateway, number, spec);
+  }
+  const prId = parsePrUrl(String(raw.url));
+  if (!prId || !identityMatches(remoteId, prId)) {
+    const want = prId ? `${prId.owner}/${prId.name}` : 'the pull request repository';
+    throw new GateError(
+      'repo_mismatch',
+      `remote ${input.remote} does not match ${want}`,
+      `run from a clone whose ${input.remote} is ${want}`,
+    );
+  }
+  const head = String(raw.headRefOid);
+  const base = String(raw.baseRefOid);
+  const missingHead = !gateway.verifyCommit(head);
+  const missingBase = !gateway.verifyCommit(base);
+  if (missingHead || missingBase) {
+    const refs: string[] = [];
+    if (missingHead) refs.push(`pull/${number}/head`);
+    if (missingBase && typeof raw.baseRefName === 'string' && raw.baseRefName !== '') refs.push(raw.baseRefName);
+    const which = [missingHead ? 'head' : '', missingBase ? 'base' : ''].filter(Boolean).join(' and ');
+    throw new GateError(
+      'commit_not_local',
+      `missing local commit for the pull request ${which}`,
+      `git fetch ${[input.remote, ...refs].map(shellWord).join(' ')}`,
+    );
+  }
+  return {
+    base,
+    head,
+    pr: {
       number: Number(raw.number),
       url: String(raw.url),
       repo: { host: prId.host, owner: prId.owner, name: prId.name },
       raw,
       raw_first: rawFirst,
       retry_wait_ms: retryWait,
-    };
-  } else {
-    const baseRef = input.baseRef ?? '';
-    const headRef = input.headRef ?? 'HEAD';
-    const base = resolveRef(rooted, baseRef, input.remote);
-    const head = resolveRef(rooted, headRef, input.remote);
-    baseSha = base;
-    headSha = head;
-  }
-
-  const mergeBase = rooted.mergeBase(baseSha, headSha);
-  if (!mergeBase) {
-    const shallow = rooted.isShallow();
-    throw new GateError(
-      'no_merge_base',
-      'the base and head commits have no merge base',
-      shallow ? 'git fetch --unshallow' : 'fetch the missing history so the commits share an ancestor',
-    );
-  }
-
-  const diff = rooted.diffRaw(mergeBase, headSha);
-  if (diff.overflow) {
-    const done = finish(input, started, versionText, partial, origin, baseSha, headSha, mergeBase, prBlock, [], [{
-      stage: 'diff', code: 'buffer_overflow', subjects: [],
-    }]);
-    return done;
-  }
-  if (diff.status !== 0 && diff.status !== null) {
-    throw new GateError(
-      'git_failed',
-      firstLine(diff.stderr) || 'git diff failed',
-      'confirm the commits exist locally and retry',
-    );
-  }
-  const renameSkipped = diff.stderr.includes('inexact rename detection was skipped');
-  const parsedDiff = parseRawNumstat(diff.stdout);
-  const failures: Evidence['collection']['failures'] = [];
-  if (parsedDiff.badStatus.length > 0) {
-    failures.push({ stage: 'diff', code: 'bad_status', subjects: parsedDiff.badStatus });
-  }
-
-  const files = markLarge(rooted, parsedDiff.files);
-  const manifests = loadManifests(rooted, files, failures);
-  const apiFiles = loadApi(rooted, mergeBase, headSha, files, failures);
-
-  const observed = input.now();
-  const evidence: Evidence = {
-    v: 1,
-    observed_at: observed.toISOString(),
-    collection_started_at: started.toISOString(),
-    clock_overridden: input.clockOverridden,
-    test_overrides: input.testOverrides,
-    collector_version: COLLECTOR_VERSION,
-    gstack_extend_version: installVersion(),
-    git_version: versionText.trim(),
-    partial_clone: partial,
-    attr_source: EMPTY_TREE,
-    rename_limit: RENAME_LIMIT,
-    rename_detection_skipped: renameSkipped,
-    decision_id: input.decisionId,
-    repo: { origin },
-    git: { base_sha: baseSha, head_sha: headSha, merge_base_sha: mergeBase, files },
-    dependencies: { manifests },
-    public_api: { files: apiFiles },
-    collection: { complete: failures.length === 0, failures },
-    pr: prBlock,
+    },
   };
-  void ZERO;
-  void isTestPath;
-  void binExecPair;
-  return { evidence, canonical: canonicalJson(evidence) };
 }
 
-function finish(
-  input: CollectInput,
-  started: Date,
-  versionText: string,
-  partial: boolean,
-  origin: string | null,
-  baseSha: string,
-  headSha: string,
-  mergeBase: string,
-  pr: Evidence['pr'],
-  files: FileFact[],
-  failures: Evidence['collection']['failures'],
-): { evidence: Evidence; canonical: string } {
-  const evidence: Evidence = {
-    v: 1,
-    observed_at: input.now().toISOString(),
-    collection_started_at: started.toISOString(),
-    clock_overridden: input.clockOverridden,
-    test_overrides: input.testOverrides,
-    collector_version: COLLECTOR_VERSION,
-    gstack_extend_version: installVersion(),
-    git_version: versionText.trim(),
-    partial_clone: partial,
-    attr_source: EMPTY_TREE,
-    rename_limit: RENAME_LIMIT,
-    rename_detection_skipped: false,
-    decision_id: input.decisionId,
-    repo: { origin },
-    git: { base_sha: baseSha, head_sha: headSha, merge_base_sha: mergeBase, files },
-    dependencies: { manifests: [] },
-    public_api: { files: [] },
-    collection: { complete: false, failures },
-    pr,
-  };
-  return { evidence, canonical: canonicalJson(evidence) };
+/** Quote a word for a copy-paste fix line; ref names may hold shell metacharacters. */
+function shellWord(word: string): string {
+  return /^[A-Za-z0-9._/:@%+=-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 function resolveRef(gateway: Gateway, ref: string, remote: string): string {
@@ -270,29 +273,18 @@ function resolveRef(gateway: Gateway, ref: string, remote: string): string {
   throw new GateError('ref_not_found', `ref '${ref}' is not a commit`, hint);
 }
 
-function ghView(
-  gateway: Gateway,
-  number: string,
-  spec: string,
-  input: CollectInput,
-): { raw: Record<string, unknown> } {
-  let result;
-  try {
-    result = gateway.ghPrView(number, spec);
-  } catch (err) {
-    if (err instanceof GateError && err.code === 'gh_missing') throw err;
-    throw err;
-  }
+function ghView(gateway: Gateway, number: string, spec: string): Record<string, unknown> {
+  const result = gateway.ghPrView(number, spec);
   if (result.status === 4) {
-    const host = spec.includes('/') && spec.split('/').length === 3 ? spec.split('/')[0] : 'github.com';
+    const parts = spec.split('/');
+    const host = parts.length === 3 ? parts[0] : 'github.com';
     throw new GateError('gh_auth', firstLine(result.stderr) || 'gh is not authenticated', `gh auth status -h ${host}; gh auth login -h ${host}`);
   }
   if (result.status !== 0) {
-    const line = firstLine(result.stderr) || 'gh pr view failed';
     const multi = /multiple remotes|no default repository|no git remotes/i.test(result.stderr);
     throw new GateError(
       'gh_failed',
-      redact(line),
+      redact(firstLine(result.stderr) || 'gh pr view failed'),
       multi ? 'pass the PR URL instead of a number' : 'confirm gh can view the pull request and retry',
     );
   }
@@ -306,152 +298,189 @@ function ghView(
     throw new GateError('gh_bad_json', 'gh returned a non-object', 'upgrade gh and retry');
   }
   const raw = parsed as Record<string, unknown>;
-  for (const key of ['state', 'url', 'headRefOid', 'baseRefOid', 'number'] as const) {
-    if (raw[key] === undefined || raw[key] === null) {
-      throw new GateError('gh_bad_json', `gh response is missing ${key}`, 'upgrade gh and retry');
-    }
+  const typed = typeof raw.state === 'string' && typeof raw.url === 'string' && typeof raw.number === 'number' &&
+    typeof raw.headRefOid === 'string' && typeof raw.baseRefOid === 'string';
+  if (!typed) {
+    throw new GateError('gh_bad_json', 'gh response is missing or mistypes state, url, number, headRefOid, or baseRefOid', 'upgrade gh and retry');
   }
-  if (typeof raw.state !== 'string' || typeof raw.url !== 'string') {
-    throw new GateError('gh_bad_json', 'gh response has a mistyped field', 'upgrade gh and retry');
-  }
-  if (typeof raw.headRefOid !== 'string' || typeof raw.baseRefOid !== 'string' || typeof raw.number !== 'number') {
-    throw new GateError('gh_bad_json', 'gh response has a mistyped field', 'upgrade gh and retry');
-  }
-  void input;
-  return { raw };
+  return raw;
 }
 
-function markLarge(gateway: Gateway, files: FileFact[]): FileFact[] {
-  const oids: string[] = [];
-  for (const file of files) {
-    if (file.binary || file.submodule || file.status === 'D') continue;
+function hasRule(file: FileFact): boolean {
+  return hasApiRule(file.path) || (file.old_path !== null && hasApiRule(file.old_path));
+}
+
+/** Mark API-scannable files whose line count or either blob exceeds the scan limits. */
+function markLarge(gateway: Gateway, files: FileFact[], failures: Failures): void {
+  const candidates = files.filter(f => !f.binary && !f.submodule && hasRule(f));
+  const oids = new Set<string>();
+  for (const file of candidates) {
     if (file.additions + file.deletions > API_LINE_LIMIT) {
       file.api_skipped = 'too_large';
       continue;
     }
-    if (/^[0-9a-f]{40}$/.test(file.new_oid) && !/^0+$/.test(file.new_oid)) oids.push(file.new_oid);
+    for (const oid of [file.old_oid, file.new_oid]) if (isBlobOid(oid)) oids.add(oid);
   }
-  if (oids.length === 0) return files;
-  const sizes = parseBatchCheck(gateway.catFileBatchCheck(oids));
-  for (const file of files) {
-    const size = sizes.get(file.new_oid);
-    if (size !== undefined && size !== null && size > API_BLOB_LIMIT) file.api_skipped = 'too_large';
+  if (oids.size === 0) return;
+  let sizes: Map<string, number | null>;
+  try {
+    sizes = parseBatchCheck(gateway.catFileBatchCheck([...oids]));
+  } catch (err) {
+    if (!isDegradable(err)) throw err;
+    failures.push({ stage: 'api_size', code: err.code, subjects: candidates.map(f => f.path) });
+    return;
   }
-  return files;
+  for (const file of candidates) {
+    if (file.api_skipped) continue;
+    if ([file.old_oid, file.new_oid].some(oid => (sizes.get(oid) ?? 0) > API_BLOB_LIMIT)) file.api_skipped = 'too_large';
+  }
 }
 
-function loadManifests(gateway: Gateway, files: FileFact[], failures: Evidence['collection']['failures']): ManifestFact[] {
-  const wanted = files.filter(f => {
-    const kind = manifestKind(f.path);
-    if (kind === 'lockfile' || kind === 'other') return false;
-    if (f.status === 'D' && kind === 'unsupported') return false;
-    if (f.status === 'D') return false;
-    return kind !== 'other';
+function isDegradable(err: unknown): err is GateError {
+  return err instanceof GateError && (err.code === 'git_failed' || err.code === 'spawn_timeout');
+}
+
+type ManifestRead = { file: FileFact; kind: ManifestKind; baseOid: string | null };
+
+function loadManifests(gateway: Gateway, files: FileFact[], failures: Failures): ManifestFact[] {
+  const rows: (ManifestFact | ManifestRead)[] = [];
+  for (const file of files) {
+    // A deleted manifest of any kind never makes the change deps_unverifiable (ENG-6).
+    if (file.status === 'D' || file.submodule) continue;
+    const kind = manifestKind(file.path);
+    if (kind === 'lockfile' || kind === 'other') continue;
+    if (kind === 'unsupported') {
+      rows.push(unreadManifest(file, unsupportedDetail(file.path)));
+      continue;
+    }
+    // A rename from another manifest kind, or from a non-manifest, is a new manifest.
+    const sameKind = file.status !== 'A' && manifestKind(file.old_path ?? file.path) === kind;
+    rows.push({ file, kind, baseOid: sameKind ? file.old_oid : null });
+  }
+  const reads = rows.filter((r): r is ManifestRead => 'kind' in r);
+  if (reads.length === 0) return rows as ManifestFact[];
+  const oids = [...new Set(reads.flatMap(r => [r.file.new_oid, r.baseOid ?? '']).filter(isBlobOid))];
+  const blobs = new Map<string, string>();
+  try {
+    for (const blob of parseCatFileBatch(gateway.catFileBatch(oids))) {
+      if (!blob.missing && blob.body) blobs.set(blob.oid, blob.body.toString('utf8'));
+    }
+  } catch (err) {
+    if (!isDegradable(err)) throw err;
+    failures.push({ stage: 'manifest', code: err.code, subjects: reads.map(r => r.file.path) });
+    return rows.map(r => ('kind' in r ? unreadManifest(r.file, 'manifest blob could not be read') : r));
+  }
+  return rows.map(row => {
+    if (!('kind' in row)) return row;
+    const head = blobs.get(row.file.new_oid);
+    const base = row.baseOid === null ? null : blobs.get(row.baseOid);
+    if (head === undefined || base === undefined) {
+      failures.push({ stage: 'manifest', code: 'read_failed', subjects: [row.file.path] });
+      return unreadManifest(row.file, 'manifest blob could not be read');
+    }
+    const parsed: ManifestParse = parseManifest(row.kind, base, head);
+    const fact: ManifestFact = {
+      path: row.file.path,
+      added: parsed.added,
+      removed: parsed.removed,
+      unverifiable: parsed.unverifiable !== null,
+    };
+    if (row.file.path_b64) fact.path_b64 = row.file.path_b64;
+    if (parsed.unverifiable) fact.unverifiable_detail = parsed.unverifiable;
+    return fact;
   });
-  const facts: ManifestFact[] = [];
-  for (const file of wanted) {
-    const kind = manifestKind(file.old_path ?? file.path);
-    const headKind = manifestKind(file.path);
-    if (headKind === 'unsupported' && file.status !== 'D') {
-      facts.push({
-        path: file.path,
-        ...(file.path_b64 ? { path_b64: file.path_b64 } : {}),
-        added: [],
-        removed: [],
-        unverifiable: true,
-        unverifiable_detail: unsupportedDetail(file.path),
-      });
-      continue;
-    }
-    if (headKind === 'lockfile' || headKind === 'other') continue;
-    const oldKind = file.old_path ? manifestKind(file.old_path) : kind;
-    void oldKind;
-    try {
-      const headText = showPath(gateway, file, 'head');
-      const baseText = file.status === 'A' ? null : showPath(gateway, file, 'base');
-      if (headText === null) {
-        failures.push({ stage: 'manifest', code: 'read_failed', subjects: [file.path] });
-        facts.push({ path: file.path, added: [], removed: [], unverifiable: true, unverifiable_detail: 'manifest blob could not be read' });
-        continue;
-      }
-      const parsed: ManifestParse = parseManifest(headKind, baseText, headText);
-      const fact: ManifestFact = {
-        path: file.path,
-        added: parsed.added,
-        removed: parsed.removed,
-        unverifiable: parsed.unverifiable !== null,
-      };
-      if (file.path_b64) fact.path_b64 = file.path_b64;
-      if (parsed.unverifiable) fact.unverifiable_detail = parsed.unverifiable;
-      facts.push(fact);
-    } catch (err) {
-      if (err instanceof GateError && (err.code === 'git_failed' || err.code === 'spawn_timeout')) {
-        failures.push({ stage: 'manifest', code: err.code, subjects: [file.path] });
-        facts.push({ path: file.path, added: [], removed: [], unverifiable: true, unverifiable_detail: 'manifest blob could not be read' });
-        continue;
-      }
-      throw err;
-    }
-  }
-  return facts;
 }
 
-function showPath(gateway: Gateway, file: FileFact, side: 'head' | 'base'): string | null {
-  const oid = side === 'head' ? file.new_oid : file.old_oid;
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid) || /^0+$/.test(oid)) return null;
-  const bodies = parseCatFileBatch(gateway.catFileBatch([oid]));
-  const body = bodies[0];
-  if (!body || body.missing || !body.body) return null;
-  return body.body.toString('utf8');
+function unreadManifest(file: FileFact, detail: string): ManifestFact {
+  const fact: ManifestFact = { path: file.path, added: [], removed: [], unverifiable: true, unverifiable_detail: detail };
+  if (file.path_b64) fact.path_b64 = file.path_b64;
+  return fact;
 }
 
-function loadApi(
-  gateway: Gateway,
-  mergeBase: string,
-  head: string,
-  files: FileFact[],
-  failures: Evidence['collection']['failures'],
-): ApiFact[] {
-  const scan = files.filter(f => !f.binary && !f.submodule && f.api_skipped !== 'too_large' && f.status !== 'D');
-  const facts: ApiFact[] = [];
-  const chunks: FileFact[][] = [];
-  let current: FileFact[] = [];
-  let estimate = 0;
-  for (const file of scan) {
-    const cost = (file.additions + file.deletions) * 80 + 100;
-    if (current.length > 0 && estimate + cost > 4_000_000) {
-      chunks.push(current);
-      current = [];
-      estimate = 0;
-    }
-    current.push(file);
-    estimate += cost;
-  }
-  if (current.length > 0) chunks.push(current);
-  const patches = new Map<string, { added: string[]; removed: string[] }>();
-  for (const chunk of chunks) {
-    if (chunk.length === 0) continue;
-    const result = gateway.diffPatch(mergeBase, head, chunk.map(f => f.path));
-    if (result.overflow || (result.status !== 0 && result.status !== null)) {
-      failures.push({ stage: 'api_patch', code: result.overflow ? 'buffer_overflow' : 'git_failed', subjects: chunk.map(f => f.path) });
-      continue;
-    }
-    for (const [path, body] of parseUnified(result.stdout)) patches.set(path, body);
-  }
+function isBlobOid(oid: string): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid) && !/^0+$/.test(oid);
+}
+
+/**
+ * Scan patches of files with an API rule, deleted files included, so moves
+ * cancel. A rename's old path goes in the same chunk as its new path so git
+ * pairs them the way the raw diff did.
+ */
+function loadApi(gateway: Gateway, mergeBase: string, head: string, files: FileFact[], failures: Failures): ApiFact[] {
+  const ready: FileFact[] = [];
   for (const file of files) {
-    if (file.binary || file.submodule) continue;
+    if (file.binary || file.submodule || !hasRule(file) || file.api_skipped) continue;
+    // A lossy-decoded name cannot be passed back to git as a pathspec.
+    if (file.path_b64 || file.old_path_b64) file.api_skipped = 'non_utf8_path';
+    else ready.push(file);
+  }
+  const patches = new Map<string, PatchFile>();
+  for (const chunk of chunkFiles(ready)) {
+    let code: string | null = null;
+    let stdout: Buffer = Buffer.alloc(0);
+    try {
+      const result = gateway.diffPatch(mergeBase, head, chunk.flatMap(pathspecs));
+      if (result.overflow) code = 'buffer_overflow';
+      else if (result.status !== 0) code = 'git_failed';
+      else stdout = result.stdout;
+    } catch (err) {
+      if (!isDegradable(err)) throw err;
+      code = err.code;
+    }
+    if (code !== null) {
+      failures.push({ stage: 'api_patch', code, subjects: chunk.map(f => f.path) });
+      for (const file of chunk) file.api_skipped = 'patch_failed';
+      continue;
+    }
+    for (const [path, body] of parseUnified(stdout)) patches.set(path, body);
+  }
+  const facts: ApiFact[] = [];
+  for (const file of ready) {
+    if (file.api_skipped) continue;
     const patch = patches.get(file.path);
-    const added = patch ? scanLines(file.path, patch.added, 'added') : [];
-    const removed = patch ? scanLines(file.path, patch.removed, 'removed') : [];
-    if (added.length === 0 && removed.length === 0 && file.api_skipped !== 'too_large') continue;
+    if (!patch) {
+      if (file.additions + file.deletions > 0) file.api_skipped = 'patch_missing';
+      continue;
+    }
+    const added = scanHunks(file.path, patch.hunks.map(h => ({ context: h.context, lines: h.added })));
+    const removed = scanHunks(file.path, patch.hunks.map(h => ({ context: h.context, lines: h.removed })), file.old_path ?? file.path);
+    if (added.length === 0 && removed.length === 0) continue;
     const fact: ApiFact = { path: file.path, added, removed };
     if (file.path_b64) fact.path_b64 = file.path_b64;
     facts.push(fact);
   }
-  void parseBatchCheck;
-  void parseCatFileBatch;
-  void binExecPair;
   return facts;
+}
+
+function pathspecs(file: FileFact): string[] {
+  return file.old_path !== null && file.old_path !== file.path ? [file.old_path, file.path] : [file.path];
+}
+
+function chunkFiles(files: FileFact[]): FileFact[][] {
+  const chunks: FileFact[][] = [];
+  let current: FileFact[] = [];
+  let output = 0;
+  let count = 0;
+  let bytes = 0;
+  for (const file of files) {
+    const specs = pathspecs(file);
+    const cost = (file.additions + file.deletions) * 80 + 100;
+    const size = specs.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0);
+    const full = output + cost > CHUNK.output || count + specs.length > CHUNK.paths || bytes + size > CHUNK.argvBytes;
+    if (current.length > 0 && full) {
+      chunks.push(current);
+      current = [];
+      output = 0;
+      count = 0;
+      bytes = 0;
+    }
+    current.push(file);
+    output += cost;
+    count += specs.length;
+    bytes += size;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
 }
 
 function sleep(ms: number): void {

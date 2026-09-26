@@ -3,7 +3,7 @@ export function redact(text: string): string {
   return text
     .replace(/\b((?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]+)/g, '[REDACTED]')
     .replace(/Authorization:\s*\S+/gi, 'Authorization: [REDACTED]')
-    .replace(/(\/\/)[^/\s:@]+:[^/\s@]+@/g, '$1');
+    .replace(/(\/\/)[^/\s@]+@/g, '$1');
 }
 
 export function firstLine(text: string): string {
@@ -11,8 +11,16 @@ export function firstLine(text: string): string {
   return redact(line).trim();
 }
 
-/** Drop userinfo, query, and fragment. scp-style git@host:path is unchanged. */
+/**
+ * Drop userinfo, query, and fragment. scp-style `git@host:path` is unchanged.
+ * A `file://` or local-path remote keeps only its last path segment, so
+ * evidence never stores an absolute local path (ENG-11).
+ */
 export function stripRemoteUrl(raw: string): string {
+  if (/^file:/i.test(raw) || /^(?:\/|\.\.?(?:\/|$)|~)/.test(raw)) {
+    const last = raw.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+    return `local:${last}`;
+  }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
     try {
       const u = new URL(raw);
@@ -22,7 +30,7 @@ export function stripRemoteUrl(raw: string): string {
       u.hash = '';
       return u.toString();
     } catch {
-      return raw;
+      return raw.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/]*@/i, '$1').replace(/[?#].*$/, '');
     }
   }
   return raw;

@@ -1,11 +1,12 @@
 import { basename } from 'node:path';
 import { isTestPath } from './api.ts';
 import { sha256Canonical } from './canon.ts';
-import { matchGlob } from './glob.ts';
+import { globMatcher } from './glob.ts';
 import {
   API_CAPABLE_EXTENSIONS,
   GATE_VERSION,
   LOCKFILES,
+  OUTPUT_CAPS,
   PR_SIGNAL_TABLE,
   REASON_REGISTRY,
   TEST_DEP_SEGMENTS,
@@ -14,9 +15,8 @@ import {
   type ReasonClass,
   type ReasonCode,
 } from './registry.ts';
+import type { DepEntry } from './deps.ts';
 import type { FileFact } from './diff.ts';
-
-export type DepEntry = { name: string; classification: 'remote' | 'local' };
 
 export type ManifestFact = {
   path: string;
@@ -126,6 +126,8 @@ export type Metrics = {
   unmeasured_api_count: number;
 };
 
+type Excluded = (path: string) => boolean;
+
 const REASON_META = new Map(REASON_REGISTRY.map(r => [r.code, r]));
 
 export function normalizePolicy(policy: Policy): Policy {
@@ -146,24 +148,15 @@ export function decide(
   opts: { evidenceId: string; replay: boolean; gstackVersion: string },
 ): Verdict {
   const policy = normalizePolicy(policyIn);
+  const userExcluded = globMatcher(policy.exclude);
   const reasons: Reason[] = [];
   const excluded: { path: string; reason: string }[] = [];
   const lineFiles: FileFact[] = [];
-  const allFiles: FileFact[] = [];
 
   for (const file of evidence.git.files) {
-    const reason = excludeReason(file, policy.exclude);
-    if (reason === 'binary') {
-      excluded.push({ path: file.path, reason });
-      allFiles.push(file);
-      continue;
-    }
-    if (reason) {
-      excluded.push({ path: file.path, reason });
-      continue;
-    }
-    allFiles.push(file);
-    lineFiles.push(file);
+    const reason = excludeReason(file, userExcluded);
+    if (reason) excluded.push({ path: file.path, reason });
+    else lineFiles.push(file);
   }
 
   let additions = 0;
@@ -178,53 +171,44 @@ export function decide(
     .map(f => ({ path: f.path, churn: f.additions + f.deletions }))
     .sort((a, b) => b.churn - a.churn || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
-  const newFiles = allFiles.filter(f => f.status === 'A' && !f.submodule && !isLock(f.path) && !userExcluded(f.path, policy.exclude)).length;
-  // binaries with status A are in allFiles; lockfiles and submodules and user globs are not.
-  // Recompute new files from original list with the right exclusions.
-  const newFileCount = evidence.git.files.filter(f => {
-    if (f.status !== 'A') return false;
-    if (f.submodule || isLock(f.path)) return false;
-    if (userExcluded(f.path, policy.exclude)) return false;
-    return true;
-  }).length;
-  void newFiles;
+  // New binary files count; lockfiles, submodules, and user-excluded paths do not.
+  const newFiles = evidence.git.files
+    .filter(f => f.status === 'A' && !f.submodule && !isLock(f.path) && !userExcluded(f.path))
+    .map(f => f.path);
 
   const depSubjects: string[] = [];
-  let newDeps = 0;
   const unverifiable: { path: string; detail: string }[] = [];
   for (const manifest of evidence.dependencies.manifests) {
-    if (excludedDepPath(manifest.path, policy.exclude)) continue;
+    if (excludedDepPath(manifest.path, userExcluded)) continue;
     if (manifest.unverifiable) {
       unverifiable.push({ path: manifest.path, detail: manifest.unverifiable_detail ?? 'manifest could not be parsed' });
       continue;
     }
     for (const entry of manifest.added) {
-      if (entry.classification !== 'remote') continue;
-      newDeps++;
-      depSubjects.push(`${manifest.path}:${entry.name}`);
+      if (entry.classification === 'remote') depSubjects.push(`${manifest.path}:${entry.name}`);
     }
   }
 
-  const apiNet = netApi(evidence, policy.exclude);
-  const unmeasured = unmeasuredApi(evidence, policy.exclude);
+  const apiNet = netApi(evidence, userExcluded);
+  const unmeasured = unmeasuredApi(evidence, userExcluded);
 
   const metrics: Metrics = {
     net_lines: net,
     churn,
-    new_files: newFileCount,
-    new_deps: newDeps,
+    new_files: newFiles.length,
+    new_deps: depSubjects.length,
     new_public_api: apiNet.total,
-    top_churn_files: churnRows.slice(0, 3),
-    excluded: excluded.slice(0, 100),
+    top_churn_files: churnRows.slice(0, OUTPUT_CAPS.top_churn),
+    excluded: excluded.slice(0, OUTPUT_CAPS.excluded),
     excluded_count: excluded.length,
     coverage: { new_public_api: unmeasured.length > 0 ? 'partial' : 'complete' },
-    unmeasured_api_files: unmeasured.slice(0, 50),
+    unmeasured_api_files: unmeasured.slice(0, OUTPUT_CAPS.unmeasured_api),
     unmeasured_api_count: unmeasured.length,
   };
 
   budget(reasons, 'net_lines_over_budget', net, policy.max_net_lines, lineFiles.map(f => f.path));
-  budget(reasons, 'new_files_over_budget', newFileCount, policy.max_new_files, evidence.git.files.filter(f => f.status === 'A').map(f => f.path));
-  budget(reasons, 'new_deps_over_budget', newDeps, policy.max_new_deps, depSubjects);
+  budget(reasons, 'new_files_over_budget', newFiles.length, policy.max_new_files, newFiles);
+  budget(reasons, 'new_deps_over_budget', depSubjects.length, policy.max_new_deps, depSubjects);
   budget(reasons, 'new_public_api_over_budget', apiNet.total, policy.max_new_public_api, apiNet.names);
   budget(reasons, 'churn_over_budget', churn, policy.max_churn, churnRows.map(r => r.path));
 
@@ -248,7 +232,7 @@ export function decide(
     info(reasons, 'binary_files_excluded', 'binary files are excluded from line metrics');
   }
   if (unmeasured.length > 0) {
-    info(reasons, 'api_coverage_partial', 'some changed files have no public-API rule in collector v1');
+    info(reasons, 'api_coverage_partial', 'some changed files were not scanned for public API; see metrics.unmeasured_api_files');
   }
 
   const timing = timingOf(evidence);
@@ -304,10 +288,10 @@ function timingOf(evidence: Evidence): 'open' | 'retroactive' | 'unanchored' {
   return 'open';
 }
 
-function excludeReason(file: FileFact, globs: string[]): string | null {
+function excludeReason(file: FileFact, userExcluded: Excluded): string | null {
   if (file.submodule) return 'submodule';
   if (isLock(file.path)) return 'lockfile';
-  if (userExcluded(file.path, globs)) return 'user_glob';
+  if (userExcluded(file.path)) return 'user_glob';
   if (file.binary) return 'binary';
   return null;
 }
@@ -316,26 +300,24 @@ function isLock(path: string): boolean {
   return LOCKFILES.includes(basename(path));
 }
 
-function userExcluded(path: string, globs: string[]): boolean {
-  return globs.some(g => matchGlob(path, g));
-}
-
-function excludedDepPath(path: string, globs: string[]): boolean {
-  if (isLock(path) || userExcluded(path, globs)) return true;
+function excludedDepPath(path: string, userExcluded: Excluded): boolean {
+  if (isLock(path) || userExcluded(path)) return true;
   return path.split('/').some(s => TEST_DEP_SEGMENTS.includes(s));
 }
 
-function netApi(evidence: Evidence, globs: string[]): { total: number; names: string[] } {
+function apiCounted(path: string, userExcluded: Excluded): boolean {
+  return !isTestPath(path) && !userExcluded(path) && !isLock(path);
+}
+
+function netApi(evidence: Evidence, userExcluded: Excluded): { total: number; names: string[] } {
   const counts = new Map<string, number>();
-  const consider = (path: string) => !isTestPath(path) && !userExcluded(path, globs) && !isLock(path);
   for (const file of evidence.public_api.files) {
-    if (!consider(file.path)) continue;
+    if (!apiCounted(file.path, userExcluded)) continue;
     for (const pair of file.added) bump(counts, `${pair.rule}\0${pair.name}`, 1);
     for (const pair of file.removed) bump(counts, `${pair.rule}\0${pair.name}`, -1);
   }
   for (const file of evidence.git.files) {
-    if (!consider(file.path)) continue;
-    if (!file.path.split('/').includes('bin')) continue;
+    if (!apiCounted(file.path, userExcluded) || !file.path.split('/').includes('bin')) continue;
     const mode = (m: string) => m.slice(-6);
     const added = file.status === 'A' && mode(file.new_mode) === '100755';
     const flipped = mode(file.old_mode) === '100644' && mode(file.new_mode) === '100755';
@@ -352,16 +334,15 @@ function netApi(evidence: Evidence, globs: string[]): { total: number; names: st
   return { total, names };
 }
 
-function unmeasuredApi(evidence: Evidence, globs: string[]): { path: string; reason: string }[] {
+function unmeasuredApi(evidence: Evidence, userExcluded: Excluded): { path: string; reason: string }[] {
   const out: { path: string; reason: string }[] = [];
   for (const file of evidence.git.files) {
-    if (file.status === 'D') continue;
-    if (isTestPath(file.path) || userExcluded(file.path, globs) || isLock(file.path) || file.submodule) continue;
-    if (file.api_skipped === 'too_large') {
-      out.push({ path: file.path, reason: 'too_large' });
+    if (file.submodule || !apiCounted(file.path, userExcluded)) continue;
+    if (file.api_skipped) {
+      out.push({ path: file.path, reason: file.api_skipped });
       continue;
     }
-    if (apiCapableUnmeasured(file.path)) out.push({ path: file.path, reason: 'no_rule' });
+    if (file.status !== 'D' && apiCapableUnmeasured(file.path)) out.push({ path: file.path, reason: 'no_rule' });
   }
   return out;
 }
@@ -378,12 +359,10 @@ function bump(map: Map<string, number>, key: string, delta: number): void {
 }
 
 function budget(reasons: Reason[], code: ReasonCode, measured: number, limit: number | null, subjects: string[]): void {
-  if (limit === null) return;
-  if (measured > limit) {
-    const reason = pushReason(reasons, code, `${measured} > ${limit}`, subjects);
-    reason.measured = measured;
-    reason.limit = limit;
-  }
+  if (limit === null || measured <= limit) return;
+  const reason = pushReason(reasons, code, `${measured} > ${limit}`, subjects);
+  reason.measured = measured;
+  reason.limit = limit;
 }
 
 function pushReason(reasons: Reason[], code: ReasonCode, detail: string, subjects: string[]): Reason {
@@ -396,7 +375,7 @@ function pushReason(reasons: Reason[], code: ReasonCode, detail: string, subject
     detail,
   };
   if (meta?.blocking) {
-    reason.subjects = unique.slice(0, 20);
+    reason.subjects = unique.slice(0, OUTPUT_CAPS.subjects);
     reason.subjects_count = unique.length;
   }
   reasons.push(reason);
@@ -405,55 +384,50 @@ function pushReason(reasons: Reason[], code: ReasonCode, detail: string, subject
 
 function info(reasons: Reason[], code: ReasonCode, detail: string): void {
   const meta = REASON_META.get(code);
-  reasons.push({
-    code,
-    class: meta?.class ?? 'info',
-    blocking: false,
-    detail,
-  });
+  reasons.push({ code, class: meta?.class ?? 'info', blocking: false, detail });
 }
 
+/** CEO-S1: every row of PR_SIGNAL_TABLE is read here; a value no row names fails closed. */
 function applyPr(reasons: Reason[], raw: Record<string, unknown>): void {
-  if (raw.isDraft === true) {
-    pushReason(reasons, 'pr_draft', 'pull request is a draft', []);
-  }
+  const t = PR_SIGNAL_TABLE;
+  if (raw.isDraft === true) pushReason(reasons, 'pr_draft', 'pull request is a draft', []);
+
   const mergeable = raw.mergeable;
-  if (mergeable === 'CONFLICTING') {
-    pushReason(reasons, 'merge_conflict', 'GitHub reports mergeable CONFLICTING', []);
-  } else if (mergeable !== 'MERGEABLE') {
-    pushReason(reasons, 'mergeability_unknown', 'GitHub reports mergeable UNKNOWN or the field is absent', []);
+  if (includes(t.mergeable_conflict, mergeable)) {
+    pushReason(reasons, 'merge_conflict', `GitHub reports mergeable ${String(mergeable)}`, []);
+  } else if (!includes(t.mergeable_pass, mergeable)) {
+    pushReason(reasons, 'mergeability_unknown', `GitHub reports mergeable ${mergeable === undefined ? '(absent)' : String(mergeable)}`, []);
   }
+
   const review = raw.reviewDecision;
-  if (review === 'CHANGES_REQUESTED') {
-    pushReason(reasons, 'changes_requested', 'reviewDecision is CHANGES_REQUESTED', []);
-  } else if (review === 'REVIEW_REQUIRED') {
-    pushReason(reasons, 'review_required', 'reviewDecision is REVIEW_REQUIRED', []);
+  if (includes(t.review_changes, review)) {
+    pushReason(reasons, 'changes_requested', `reviewDecision is ${String(review)}`, []);
+  } else if (includes(t.review_required, review)) {
+    pushReason(reasons, 'review_required', `reviewDecision is ${String(review)}`, []);
+  } else if (!includes(t.review_pass, review)) {
+    pushReason(reasons, 'review_required', `reviewDecision ${review === undefined ? 'is absent' : `is ${String(review)}`}, which the mapping does not recognize`, []);
   }
+
   const rollup = raw.statusCheckRollup;
-  const checks = Array.isArray(rollup) ? rollup : [];
-  if (checks.length === 0) {
+  if (!Array.isArray(rollup)) {
+    pushReason(reasons, 'check_state_unknown', 'statusCheckRollup is absent or not a list', []);
+  } else if (rollup.length === 0) {
     info(reasons, 'no_checks_configured', 'statusCheckRollup is empty');
   } else {
-    const failing: string[] = [];
-    const pending: string[] = [];
-    const unknown: string[] = [];
-    for (const item of checks) {
-      if (item === null || typeof item !== 'object') {
-        unknown.push('unknown');
-        continue;
-      }
-      const rec = item as Record<string, unknown>;
-      const name = String(rec.name ?? rec.context ?? 'check');
+    const buckets = { failure: [] as string[], pending: [] as string[], unknown: [] as string[] };
+    for (const item of rollup) {
+      const rec = item !== null && typeof item === 'object' ? (item as Record<string, unknown>) : {};
       const bucket = classifyCheck(rec);
-      if (bucket === 'failure') failing.push(name);
-      else if (bucket === 'pending') pending.push(name);
-      else if (bucket === 'unknown') unknown.push(name);
+      if (bucket === 'failure' || bucket === 'pending' || bucket === 'unknown') {
+        buckets[bucket].push(String(rec.name ?? rec.context ?? 'check'));
+      }
     }
-    if (failing.length) pushReason(reasons, 'checks_failing', `failing checks: ${failing.slice(0, 20).join(', ')}`, failing);
-    if (pending.length) pushReason(reasons, 'checks_pending', `pending checks: ${pending.slice(0, 20).join(', ')}`, pending);
-    if (unknown.length) pushReason(reasons, 'check_state_unknown', `checks in an unknown state: ${unknown.slice(0, 20).join(', ')}`, unknown);
-    if (checks.length === PR_SIGNAL_TABLE.truncation_count) {
-      pushReason(reasons, 'checks_truncated', 'statusCheckRollup has 100 contexts; GitHub may have truncated the page', []);
+    const names = (list: string[]) => list.slice(0, OUTPUT_CAPS.detail_names).join(', ');
+    if (buckets.failure.length) pushReason(reasons, 'checks_failing', `failing checks: ${names(buckets.failure)}`, buckets.failure);
+    if (buckets.pending.length) pushReason(reasons, 'checks_pending', `pending checks: ${names(buckets.pending)}`, buckets.pending);
+    if (buckets.unknown.length) pushReason(reasons, 'check_state_unknown', `checks in an unknown state: ${names(buckets.unknown)}`, buckets.unknown);
+    if (rollup.length === t.truncation_count) {
+      pushReason(reasons, 'checks_truncated', `statusCheckRollup has ${t.truncation_count} contexts; GitHub may have truncated the page`, []);
     }
   }
   if (typeof raw.mergeStateStatus === 'string') {
@@ -462,21 +436,18 @@ function applyPr(reasons: Reason[], raw: Record<string, unknown>): void {
 }
 
 function classifyCheck(rec: Record<string, unknown>): 'success' | 'neutral' | 'failure' | 'pending' | 'unknown' {
+  const t = PR_SIGNAL_TABLE;
   if ('status' in rec || 'conclusion' in rec) {
-    const status = rec.status;
-    if (status !== PR_SIGNAL_TABLE.check_run_pending_status) return 'pending';
-    const conclusion = rec.conclusion;
-    if (includes(PR_SIGNAL_TABLE.check_run_success, conclusion)) return 'success';
-    if (includes(PR_SIGNAL_TABLE.check_run_neutral, conclusion)) return 'neutral';
-    if (includes(PR_SIGNAL_TABLE.check_run_failure, conclusion)) return 'failure';
+    if (rec.status !== t.check_run_completed_status) return 'pending';
+    if (includes(t.check_run_success, rec.conclusion)) return 'success';
+    if (includes(t.check_run_neutral, rec.conclusion)) return 'neutral';
+    if (includes(t.check_run_failure, rec.conclusion)) return 'failure';
     return 'unknown';
   }
   if ('state' in rec) {
-    const state = rec.state;
-    if (includes(PR_SIGNAL_TABLE.status_success, state)) return 'success';
-    if (includes(PR_SIGNAL_TABLE.status_pending, state)) return 'pending';
-    if (includes(PR_SIGNAL_TABLE.status_failure, state)) return 'failure';
-    return 'unknown';
+    if (includes(t.status_success, rec.state)) return 'success';
+    if (includes(t.status_pending, rec.state)) return 'pending';
+    if (includes(t.status_failure, rec.state)) return 'failure';
   }
   return 'unknown';
 }
@@ -485,22 +456,71 @@ function includes(list: readonly (string | null)[], value: unknown): boolean {
   return list.some(item => item === value);
 }
 
+// Structural validation for replay (ENG-7): every field decide reads must have the right type.
+
+type Check = (v: unknown) => boolean;
+
+const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isStr: Check = v => typeof v === 'string';
+const isBool: Check = v => typeof v === 'boolean';
+const isCount: Check = v => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+const nullable = (c: Check): Check => v => v === null || c(v);
+const optional = (c: Check): Check => v => v === undefined || c(v);
+const listOf = (c: Check): Check => v => Array.isArray(v) && v.every(c);
+const shape = (fields: Record<string, Check>): Check => v => isObj(v) && Object.entries(fields).every(([k, c]) => c(v[k]));
+
+const API_SKIPS = ['too_large', 'non_utf8_path', 'patch_missing', 'patch_failed'];
+const DEP_CLASSES = ['remote', 'local', 'indirect'];
+
+const fileFact = shape({
+  path: isStr,
+  path_b64: optional(isStr),
+  old_path: nullable(isStr),
+  old_mode: isStr,
+  new_mode: isStr,
+  status: v => typeof v === 'string' && ['A', 'M', 'D', 'R', 'T'].includes(v),
+  additions: isCount,
+  deletions: isCount,
+  binary: isBool,
+  submodule: isBool,
+  api_skipped: optional(v => typeof v === 'string' && API_SKIPS.includes(v)),
+});
+const depEntry = shape({ name: isStr, classification: v => typeof v === 'string' && DEP_CLASSES.includes(v) });
+const apiPair = shape({ rule: isStr, name: isStr });
+
+const evidenceShape = shape({
+  v: v => v === 1,
+  observed_at: isStr,
+  collection_started_at: isStr,
+  collector_version: v => typeof v === 'number' && Number.isInteger(v) && v >= 1,
+  rename_detection_skipped: isBool,
+  decision_id: nullable(isStr),
+  repo: shape({ origin: nullable(isStr) }),
+  git: shape({ base_sha: isStr, head_sha: isStr, merge_base_sha: isStr, files: listOf(fileFact) }),
+  dependencies: shape({
+    manifests: listOf(shape({
+      path: isStr,
+      added: listOf(depEntry),
+      removed: listOf(depEntry),
+      unverifiable: isBool,
+      unverifiable_detail: optional(isStr),
+    })),
+  }),
+  public_api: shape({ files: listOf(shape({ path: isStr, added: listOf(apiPair), removed: listOf(apiPair) })) }),
+  collection: shape({
+    complete: isBool,
+    failures: listOf(shape({ stage: isStr, code: isStr, subjects: listOf(isStr) })),
+  }),
+  pr: nullable(shape({
+    number: isCount,
+    url: isStr,
+    repo: shape({ host: isStr, owner: isStr, name: isStr }),
+    raw: isObj,
+    raw_first: nullable(isObj),
+    retry_wait_ms: nullable(v => typeof v === 'number' && Number.isFinite(v) && v >= 0),
+  })),
+});
+
 export function validateEvidence(value: unknown): value is Evidence {
-  if (value === null || typeof value !== 'object') return false;
-  const e = value as Record<string, unknown>;
-  if (e.v !== 1) return false;
-  if (typeof e.observed_at !== 'string') return false;
-  if (typeof e.collection_started_at !== 'string') return false;
-  if (typeof e.collector_version !== 'number') return false;
-  if (e.git === null || typeof e.git !== 'object') return false;
-  const git = e.git as Record<string, unknown>;
-  if (typeof git.base_sha !== 'string' || typeof git.head_sha !== 'string' || typeof git.merge_base_sha !== 'string') {
-    return false;
-  }
-  if (!Array.isArray(git.files)) return false;
-  if (e.dependencies === null || typeof e.dependencies !== 'object') return false;
-  if (e.collection === null || typeof e.collection !== 'object') return false;
-  if (e.repo === null || typeof e.repo !== 'object') return false;
-  if (!('pr' in e)) return false;
-  return true;
+  return evidenceShape(value);
 }

@@ -12,8 +12,11 @@ export type FileFact = {
   deletions: number;
   binary: boolean;
   submodule: boolean;
-  api_skipped?: 'too_large';
+  api_skipped?: ApiSkip;
 };
+
+/** Why a file with a public-API rule was not scanned; any of these makes API coverage partial. */
+export type ApiSkip = 'too_large' | 'non_utf8_path' | 'patch_missing' | 'patch_failed';
 
 const STATUS_OK = new Set(['A', 'M', 'D', 'R', 'T']);
 
@@ -144,86 +147,115 @@ function splitNul(buf: Buffer): Buffer[] {
   return out;
 }
 
-export type PatchFile = { added: string[]; removed: string[] };
+export type PatchHunk = { context: string; added: string[]; removed: string[] };
+export type PatchFile = { hunks: PatchHunk[] };
 
+const HUNK_RE = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@ ?(.*)$/;
+
+/**
+ * Read `git diff -U0` output. Header lines are recognized only between hunks;
+ * inside a hunk exactly the `@@ -a,b +c,d @@` line counts are consumed, so a
+ * source line such as `++ b/x` cannot pose as a file header. Files are keyed by
+ * their new path, or their old path when deleted.
+ */
 export function parseUnified(buf: Buffer): Map<string, PatchFile> {
-  const lines = splitLines(buf);
+  const decoder = new TextDecoder('utf-8', { fatal: false });
   const map = new Map<string, PatchFile>();
-  let current: PatchFile | null = null;
-  let key = '';
-  for (const lineBuf of lines) {
-    const line = new TextDecoder('utf-8', { fatal: false }).decode(lineBuf);
-    if (line.startsWith('diff --git ')) {
-      current = null;
-      key = '';
-      continue;
-    }
-    if (line.startsWith('rename to ')) {
-      key = unquoteGitPath(line.slice('rename to '.length));
-      continue;
-    }
-    if (line.startsWith('+++ ')) {
-      const path = pathFromPrefix(line.slice(4), 'b/');
-      if (path !== null) {
-        key = path;
-        current = map.get(key) ?? { added: [], removed: [] };
-        map.set(key, current);
+  let oldPath: string | null = null;
+  let newPath: string | null = null;
+  let hunk: PatchHunk | null = null;
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (const lineBuf of splitLines(buf)) {
+    const line = decoder.decode(lineBuf);
+    if (hunk && (oldLeft > 0 || newLeft > 0)) {
+      const c = line[0];
+      if (c === '+' && newLeft > 0) {
+        hunk.added.push(line.slice(1));
+        newLeft--;
+        continue;
       }
+      if (c === '-' && oldLeft > 0) {
+        hunk.removed.push(line.slice(1));
+        oldLeft--;
+        continue;
+      }
+      if (c === ' ' && oldLeft > 0 && newLeft > 0) {
+        oldLeft--;
+        newLeft--;
+        continue;
+      }
+      if (c === '\\') continue;
+      oldLeft = 0;
+      newLeft = 0;
+    }
+    if (line.startsWith('diff --git ')) {
+      oldPath = null;
+      newPath = null;
+      hunk = null;
       continue;
     }
     if (line.startsWith('--- ')) {
-      const path = pathFromPrefix(line.slice(4), 'a/');
-      if (path !== null && key === '') key = path;
+      oldPath = headerPath(line.slice(4), 'a/');
       continue;
     }
-    if (!current && key !== '') {
-      current = map.get(key) ?? { added: [], removed: [] };
-      map.set(key, current);
+    if (line.startsWith('+++ ')) {
+      newPath = headerPath(line.slice(4), 'b/');
+      continue;
     }
-    if (!current) continue;
-    if (line.startsWith('+') && !line.startsWith('+++')) current.added.push(line.slice(1));
-    else if (line.startsWith('-') && !line.startsWith('---')) current.removed.push(line.slice(1));
+    const m = HUNK_RE.exec(line);
+    if (m) {
+      const key = newPath ?? oldPath;
+      if (key === null) continue;
+      const file = map.get(key) ?? { hunks: [] };
+      map.set(key, file);
+      hunk = { context: m[3] ?? '', added: [], removed: [] };
+      file.hunks.push(hunk);
+      oldLeft = m[1] === undefined ? 1 : Number(m[1]);
+      newLeft = m[2] === undefined ? 1 : Number(m[2]);
+    }
   }
   return map;
 }
 
-function pathFromPrefix(rest: string, prefix: string): string | null {
-  const text = unquoteGitPath(rest.trim());
+/** Git appends one tab to a `---`/`+++` name that contains a space; strip only that. */
+function headerPath(rest: string, prefix: string): string | null {
+  const text = unquoteGitPath(rest.endsWith('\t') ? rest.slice(0, -1) : rest);
   if (text === '/dev/null') return null;
-  if (text.startsWith(prefix)) return text.slice(prefix.length);
-  return text;
+  return text.startsWith(prefix) ? text.slice(prefix.length) : text;
 }
 
+const NAMED_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 };
+
+/** Decode a C-quoted git path. Octal escapes are bytes, so multibyte UTF-8 decodes correctly. */
 export function unquoteGitPath(s: string): string {
-  const trimmed = s.trim();
-  if (trimmed.length < 2 || trimmed[0] !== '"') return trimmed;
-  let body = trimmed;
-  if (body.endsWith('"')) body = body.slice(1, -1);
-  else body = body.slice(1);
-  let out = '';
-  for (let i = 0; i < body.length; i++) {
-    const ch = body[i];
+  if (s.length < 2 || s[0] !== '"' || !s.endsWith('"')) return s;
+  const chars = Array.from(s.slice(1, -1));
+  const bytes: number[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] ?? '';
     if (ch !== '\\') {
-      out += ch ?? '';
+      bytes.push(...Buffer.from(ch, 'utf8'));
       continue;
     }
-    const n = body[i + 1];
-    if (n === undefined) break;
-    if (n === 'n') { out += '\n'; i++; continue; }
-    if (n === 't') { out += '\t'; i++; continue; }
-    if (n === '\\' || n === '"') { out += n; i++; continue; }
-    if (/[0-7]/.test(n)) {
-      const oct = body.slice(i + 1, i + 4);
-      if (/^[0-7]{3}$/.test(oct)) {
-        out += String.fromCharCode(parseInt(oct, 8));
-        i += 3;
-        continue;
-      }
+    const next = chars[i + 1];
+    if (next === undefined) break;
+    const named = NAMED_ESCAPES[next];
+    if (named !== undefined) {
+      bytes.push(named);
+      i++;
+      continue;
     }
-    out += n;
+    const oct = chars.slice(i + 1, i + 4).join('');
+    if (/^[0-7]{3}$/.test(oct)) {
+      bytes.push(parseInt(oct, 8));
+      i += 3;
+      continue;
+    }
+    bytes.push(...Buffer.from(next, 'utf8'));
     i++;
   }
-  return out;
+  return new TextDecoder('utf-8', { fatal: false }).decode(Buffer.from(bytes));
 }
 
 function splitLines(buf: Buffer): Buffer[] {

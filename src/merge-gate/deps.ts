@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { DEP_GRAMMAR, LOCKFILES, UNSUPPORTED_MANIFESTS, type RegexSpec } from './registry.ts';
+import { DEP_GRAMMAR, LOCKFILES, UNSUPPORTED_MANIFESTS, regex as re } from './registry.ts';
 
 export type DepClass = 'remote' | 'local' | 'indirect';
 export type DepEntry = { name: string; classification: DepClass };
@@ -21,17 +21,6 @@ type Stmt = { lines: number[]; entries: DepEntry[]; violation: string | null };
 
 const LIMIT = '(documented limitation)';
 const RANK: Record<DepClass, number> = { local: 1, indirect: 2, remote: 3 };
-
-const compiled = new Map<RegexSpec, RegExp>();
-function re(spec: RegexSpec): RegExp {
-  let r = compiled.get(spec);
-  if (!r) {
-    r = new RegExp(spec.source, spec.flags);
-    compiled.set(spec, r);
-  }
-  r.lastIndex = 0;
-  return r;
-}
 
 export function manifestKind(path: string): ManifestKind {
   const base = basename(path);
@@ -194,8 +183,8 @@ function requirementStmt(raw: string, lines: number[]): Stmt {
   const noOpts = text.replace(re(g.trailing_option), '');
   const semi = noOpts.indexOf(';');
   const body = (semi >= 0 ? noOpts.slice(0, semi) : noOpts).trim();
-  if (re(g.url).test(body)) return ok([{ name: body, classification: 'remote' }]);
   if (re(g.local).test(body)) return ok([{ name: body, classification: 'local' }]);
+  if (re(g.url).test(body)) return ok([{ name: body, classification: 'remote' }]);
   const m = re(g.requirement).exec(body);
   if (!m?.[1]) return bad(`requirements line is outside the collector v1 grammar ${LIMIT}`);
   const direct = (m[2] ?? '').trim();

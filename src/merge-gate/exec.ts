@@ -1,13 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { GateError } from './errors.ts';
-import { EMPTY_TREE, GH_FIELDS, RENAME_LIMIT } from './registry.ts';
+import { EMPTY_TREE, GH_FIELDS, GIT_FLOOR, GIT_PINNED_CONFIG, PARTIAL_CLONE_KEYS, RENAME_LIMIT } from './registry.ts';
 import { firstLine, redact } from './redact.ts';
 
 const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ATTR = `--attr-source=${EMPTY_TREE}`;
+const INSTALL_GIT = `install git ${GIT_FLOOR.full.major}.${GIT_FLOOR.full.minor} or newer`;
+const SAFE_DIRECTORY_READS = [
+  [ATTR, 'config', '--global', '--includes', '--get-all', 'safe.directory'],
+  [ATTR, 'config', '--system', '--includes', '--get-all', 'safe.directory'],
+];
 
+/** `status` is -1 when the child did not exit normally (signal, spawn error). */
 export type SpawnOutcome = {
-  status: number | null;
+  status: number;
   stdout: Buffer;
   stderr: Buffer;
   timedOut: boolean;
@@ -15,38 +21,36 @@ export type SpawnOutcome = {
   overflow: boolean;
 };
 
-export type SpawnFn = (
-  cmd: string,
-  args: string[],
-  opts: { cwd: string; env: NodeJS.ProcessEnv; input?: Buffer; timeoutMs: number },
-) => SpawnOutcome;
-
 export type GatewayOpts = {
   cwd: string;
   parentEnv: NodeJS.ProcessEnv;
   gitTimeoutMs: number;
   ghTimeoutMs: number;
   debug: boolean;
-  stderr?: (s: string) => void;
-  spawn?: SpawnFn;
+  /** `safe.directory` values from the user's global and system config, from `safeDirectories()`. */
+  safeDirectories?: string[];
 };
+
+export type GitResult = { stdout: Buffer; stderr: string; status: number; overflow: boolean };
 
 export type Gateway = {
   version(): string;
-  partialClone(): boolean;
+  safeDirectories(): string[];
+  partialCloneConfig(): string;
+  gitPath(name: 'info/attributes'): string;
   toplevel(): string;
   verifyCommit(ref: string): string | null;
   isShallow(): boolean;
   mergeBase(a: string, b: string): string | null;
   remoteUrl(name: string): string | null;
-  diffRaw(base: string, head: string): { stdout: Buffer; stderr: string; status: number | null; overflow: boolean };
-  diffPatch(base: string, head: string, paths: string[]): { stdout: Buffer; stderr: string; status: number | null; overflow: boolean };
+  diffRaw(base: string, head: string): GitResult;
+  diffPatch(base: string, head: string, paths: string[]): GitResult;
   catFileBatch(oids: string[]): Buffer;
   catFileBatchCheck(oids: string[]): Buffer;
   ghPrView(number: string, repoSpec: string): { stdout: Buffer; stderr: string; status: number };
 };
 
-export function buildChildEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildChildEnv(parent: NodeJS.ProcessEnv, safeDirectories: string[] = []): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(parent)) {
     if (key.startsWith('GIT_')) continue;
@@ -61,13 +65,32 @@ export function buildChildEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   env.GH_NO_UPDATE_NOTIFIER = '1';
   env.GIT_CONFIG_NOSYSTEM = '1';
   env.GIT_CONFIG_GLOBAL = '/dev/null';
+  env.GIT_ATTR_NOSYSTEM = '1';
   env.GIT_NO_REPLACE_OBJECTS = '1';
   env.GIT_LITERAL_PATHSPECS = '1';
-  env.GIT_CONFIG_COUNT = '2';
-  env.GIT_CONFIG_KEY_0 = 'core.quotePath';
-  env.GIT_CONFIG_VALUE_0 = 'false';
-  env.GIT_CONFIG_KEY_1 = 'core.fsmonitor';
-  env.GIT_CONFIG_VALUE_1 = 'false';
+  // Command-line config is protected configuration, so git honors safe.directory
+  // from it; the user's own list survives the empty global config above.
+  const config: [string, string][] = [...GIT_PINNED_CONFIG, ...safeDirectories.map((d): [string, string] => ['safe.directory', d])];
+  env.GIT_CONFIG_COUNT = String(config.length);
+  config.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = key;
+    env[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  return env;
+}
+
+/**
+ * The environment for reading the user's own `safe.directory` list: the
+ * parent's global and system config locations are kept, everything else
+ * matches `buildChildEnv`.
+ */
+function configReadEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = buildChildEnv(parent);
+  delete env.GIT_CONFIG_GLOBAL;
+  delete env.GIT_CONFIG_NOSYSTEM;
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM']) {
+    if (parent[key] !== undefined) env[key] = parent[key];
+  }
   return env;
 }
 
@@ -86,12 +109,13 @@ function defaultSpawn(
   });
   const err = result.error as NodeJS.ErrnoException | undefined;
   const stdout = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? '');
-  const stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? '');
+  let stderr = Buffer.isBuffer(result.stderr) ? result.stderr : Buffer.from(result.stderr ?? '');
+  if (err && stderr.length === 0) stderr = Buffer.from(`${cmd}: ${err.code ?? err.message}`);
   return {
-    status: result.status,
+    status: typeof result.status === 'number' ? result.status : -1,
     stdout,
     stderr,
-    timedOut: err?.code === 'ETIMEDOUT' || result.signal === 'SIGTERM',
+    timedOut: err?.code === 'ETIMEDOUT',
     missing: err?.code === 'ENOENT',
     overflow: err?.code === 'ENOBUFS' || err?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
   };
@@ -118,13 +142,16 @@ export function assertArgvAllowed(cmd: string, args: string[]): void {
 }
 
 function matchGit(args: string[]): boolean {
+  // `git version` runs first and without --attr-source, which older git rejects.
+  if (args.length === 1 && args[0] === 'version') return true;
   if (args[0] !== ATTR) return false;
   const rest = args.slice(1);
   const head = rest[0];
-  if (head === 'version' && rest.length === 1) return true;
-  if (head === 'config' && rest.length === 3 && rest[1] === '--get' && rest[2] === 'extensions.partialClone') {
+  if (head === 'config' && rest.length === 3 && rest[1] === '--get-regexp' && rest[2] === PARTIAL_CLONE_KEYS) {
     return true;
   }
+  if (SAFE_DIRECTORY_READS.some(t => t.length === args.length && t.every((a, i) => args[i] === a))) return true;
+  if (head === 'rev-parse' && rest.length === 3 && rest[1] === '--git-path' && rest[2] === 'info/attributes') return true;
   if (head === 'rev-parse' && rest.length === 2 && rest[1] === '--show-toplevel') return true;
   if (head === 'rev-parse' && rest.length === 2 && rest[1] === '--is-shallow-repository') return true;
   if (
@@ -157,29 +184,31 @@ function matchGit(args: string[]): boolean {
   return false;
 }
 
+const DIFF_RAW = [
+  'diff', '--raw', '--numstat', '-z', '-M', `-l${RENAME_LIMIT}`,
+  '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
+  '--no-ext-diff', '--no-textconv', '--no-abbrev',
+];
+const DIFF_PATCH = [
+  'diff', '-U0', '-M', `-l${RENAME_LIMIT}`,
+  '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
+  '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--no-abbrev',
+];
+
 function matchDiff(rest: string[]): boolean {
-  const raw = [
-    'diff', '--raw', '--numstat', '-z', '-M', `-l${RENAME_LIMIT}`,
-    '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
-    '--no-ext-diff', '--no-textconv', '--no-abbrev',
-  ];
-  const patch = [
-    'diff', '-U0', '-M', `-l${RENAME_LIMIT}`,
-    '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
-    '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--no-abbrev',
-  ];
-  if (startsWith(rest, raw) && rest.length === raw.length + 2) {
-    const a = rest[raw.length];
-    const b = rest[raw.length + 1];
+  if (startsWith(rest, DIFF_RAW) && rest.length === DIFF_RAW.length + 2) {
+    const a = rest[DIFF_RAW.length];
+    const b = rest[DIFF_RAW.length + 1];
     return typeof a === 'string' && typeof b === 'string' && SHA_RE.test(a) && SHA_RE.test(b);
   }
-  if (!startsWith(rest, patch)) return false;
-  const after = rest.slice(patch.length);
-  if (after.length < 3 || after[2] !== '--') return false;
+  if (!startsWith(rest, DIFF_PATCH)) return false;
+  const after = rest.slice(DIFF_PATCH.length);
+  if (after.length < 4 || after[2] !== '--') return false;
   const a = after[0];
   const b = after[1];
   if (typeof a !== 'string' || typeof b !== 'string' || !SHA_RE.test(a) || !SHA_RE.test(b)) return false;
-  return after.slice(3).every(p => typeof p === 'string' && p.length > 0 && !p.startsWith('-'));
+  // Paths follow `--` and GIT_LITERAL_PATHSPECS=1, so a leading dash is a file name, not an option.
+  return after.slice(3).every(p => typeof p === 'string' && p.length > 0);
 }
 
 function matchGh(args: string[]): boolean {
@@ -198,30 +227,27 @@ function startsWith(args: string[], prefix: string[]): boolean {
 }
 
 export function createGateway(opts: GatewayOpts): Gateway {
-  const env = buildChildEnv(opts.parentEnv);
-  const spawn = opts.spawn ?? defaultSpawn;
-  const writeErr = opts.stderr ?? ((s: string) => process.stderr.write(s));
+  const env = buildChildEnv(opts.parentEnv, opts.safeDirectories);
 
-  const run = (cmd: string, args: string[], timeoutMs: number, input?: Buffer): SpawnOutcome => {
+  const run = (cmd: string, args: string[], timeoutMs: number, input?: Buffer, childEnv = env): SpawnOutcome => {
     assertArgvAllowed(cmd, args);
     const started = Date.now();
-    const outcome = spawn(cmd, args, { cwd: opts.cwd, env, input, timeoutMs });
+    const outcome = defaultSpawn(cmd, args, { cwd: opts.cwd, env: childEnv, input, timeoutMs });
     if (opts.debug) {
       const argv = redact([cmd, ...args].join(' '));
-      const ms = Date.now() - started;
-      writeErr(`debug argv=${argv} status=${outcome.status ?? 'null'} duration_ms=${ms}\n`);
+      process.stderr.write(`debug argv=${argv} status=${outcome.status} duration_ms=${Date.now() - started}\n`);
     }
     if (outcome.missing) {
       throw new GateError(
         cmd === 'git' ? 'git_missing' : 'gh_missing',
         `${cmd} is not on PATH`,
-        cmd === 'git' ? 'install git 2.40 or newer' : 'install GitHub CLI (gh) and authenticate',
+        cmd === 'git' ? INSTALL_GIT : 'install GitHub CLI (gh) and authenticate',
       );
     }
     if (outcome.timedOut) {
       throw new GateError(
         'spawn_timeout',
-        `${cmd} exceeded ${timeoutMs}ms`,
+        `${cmd} ${args.find(a => !a.startsWith('-')) ?? ''} exceeded ${timeoutMs}ms`,
         'retry with a larger --timeout, or narrow the diff',
       );
     }
@@ -236,25 +262,62 @@ export function createGateway(opts: GatewayOpts): Gateway {
     return outcome;
   };
 
+  const gitResult = (args: string[]): GitResult => {
+    const outcome = run('git', args, opts.gitTimeoutMs);
+    return { stdout: outcome.stdout, stderr: outcome.stderr.toString('utf8'), status: outcome.status, overflow: outcome.overflow };
+  };
+
+  const batch = (flag: '--batch' | '--batch-check', oids: string[]): Buffer => {
+    for (const oid of oids) assertSha(oid);
+    if (oids.length === 0) return Buffer.alloc(0);
+    const outcome = gitOk([ATTR, 'cat-file', flag], Buffer.from(oids.map(o => `${o}\n`).join('')));
+    if (outcome.status !== 0) {
+      throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'cat-file failed', 'fetch the missing objects and retry');
+    }
+    return outcome.stdout;
+  };
+
   return {
     version() {
-      const outcome = gitOk([ATTR, 'version']);
+      const outcome = gitOk(['version']);
       if (outcome.status !== 0) {
-        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git version failed', 'install git 2.40 or newer');
+        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git version failed', INSTALL_GIT);
       }
       return outcome.stdout.toString('utf8');
     },
-    partialClone() {
-      const outcome = gitOk([ATTR, 'config', '--get', 'extensions.partialClone']);
-      if (outcome.status === 0 && outcome.stdout.toString('utf8').trim() !== '') return true;
-      return false;
+    safeDirectories() {
+      // A missing key (exit 1) or an unreadable config yields no entries; git then applies its own ownership check.
+      const readEnv = configReadEnv(opts.parentEnv);
+      return SAFE_DIRECTORY_READS.flatMap(args => {
+        const outcome = run('git', args, opts.gitTimeoutMs, undefined, readEnv);
+        if (outcome.status !== 0 || outcome.overflow) return [];
+        // An empty value resets git's list, so empty lines are kept in order.
+        const text = outcome.stdout.toString('utf8').replace(/\n$/, '');
+        return text === '' ? [] : text.split('\n');
+      });
+    },
+    partialCloneConfig() {
+      const outcome = gitOk([ATTR, 'config', '--get-regexp', PARTIAL_CLONE_KEYS]);
+      // Exit 1 means no key matched.
+      if (outcome.status === 1) return '';
+      if (outcome.status !== 0) {
+        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git config failed', 'confirm the repository config is readable and retry');
+      }
+      return outcome.stdout.toString('utf8');
+    },
+    gitPath(name: 'info/attributes') {
+      const outcome = gitOk([ATTR, 'rev-parse', '--git-path', name]);
+      if (outcome.status !== 0) {
+        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git rev-parse failed', 'confirm the repository is readable and retry');
+      }
+      return outcome.stdout.toString('utf8').replace(/\n$/, '');
     },
     toplevel() {
       const outcome = gitOk([ATTR, 'rev-parse', '--show-toplevel']);
       if (outcome.status !== 0) {
         throw new GateError('not_a_repo', 'the working directory is not a git repository', 'run from a clone, or pass --repo-root');
       }
-      return outcome.stdout.toString('utf8').trim();
+      return outcome.stdout.toString('utf8').replace(/\n$/, '');
     },
     verifyCommit(ref: string) {
       const outcome = gitOk([ATTR, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
@@ -283,47 +346,22 @@ export function createGateway(opts: GatewayOpts): Gateway {
     diffRaw(base: string, head: string) {
       assertSha(base);
       assertSha(head);
-      const outcome = run('git', [
-        ATTR, 'diff', '--raw', '--numstat', '-z', '-M', `-l${RENAME_LIMIT}`,
-        '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
-        '--no-ext-diff', '--no-textconv', '--no-abbrev', base, head,
-      ], opts.gitTimeoutMs);
-      if (outcome.missing) {
-        throw new GateError('git_missing', 'git is not on PATH', 'install git 2.40 or newer');
-      }
-      return { stdout: outcome.stdout, stderr: outcome.stderr.toString('utf8'), status: outcome.status, overflow: outcome.overflow };
+      return gitResult([ATTR, ...DIFF_RAW, base, head]);
     },
     diffPatch(base: string, head: string, paths: string[]) {
       assertSha(base);
       assertSha(head);
-      const outcome = run('git', [
-        ATTR, 'diff', '-U0', '-M', `-l${RENAME_LIMIT}`,
-        '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
-        '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--no-abbrev',
-        base, head, '--', ...paths,
-      ], opts.gitTimeoutMs);
-      return { stdout: outcome.stdout, stderr: outcome.stderr.toString('utf8'), status: outcome.status, overflow: outcome.overflow };
+      return gitResult([ATTR, ...DIFF_PATCH, base, head, '--', ...paths]);
     },
     catFileBatch(oids: string[]) {
-      for (const oid of oids) assertSha(oid);
-      const outcome = gitOk([ATTR, 'cat-file', '--batch'], Buffer.from(oids.map(o => `${o}\n`).join('')));
-      if (outcome.status !== 0) {
-        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'cat-file failed', 'fetch the missing objects and retry');
-      }
-      return outcome.stdout;
+      return batch('--batch', oids);
     },
     catFileBatchCheck(oids: string[]) {
-      for (const oid of oids) assertSha(oid);
-      if (oids.length === 0) return Buffer.alloc(0);
-      const outcome = gitOk([ATTR, 'cat-file', '--batch-check'], Buffer.from(oids.map(o => `${o}\n`).join('')));
-      if (outcome.status !== 0) {
-        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'cat-file failed', 'fetch the missing objects and retry');
-      }
-      return outcome.stdout;
+      return batch('--batch-check', oids);
     },
     ghPrView(number: string, repoSpec: string) {
       const outcome = run('gh', ['pr', 'view', number, '-R', repoSpec, '--json', GH_FIELDS], opts.ghTimeoutMs);
-      return { stdout: outcome.stdout, stderr: outcome.stderr.toString('utf8'), status: outcome.status ?? 1 };
+      return { stdout: outcome.stdout, stderr: outcome.stderr.toString('utf8'), status: outcome.status };
     },
   };
 }
@@ -334,9 +372,9 @@ export function parseGitVersion(text: string): { major: number; minor: number } 
   return { major: Number(m[1]), minor: Number(m[2]) };
 }
 
-export function versionAtLeast(text: string, major: number, minor: number): boolean {
+export function versionAtLeast(text: string, floor: { major: number; minor: number }): boolean {
   const v = parseGitVersion(text);
   if (!v) return false;
-  if (v.major !== major) return v.major > major;
-  return v.minor >= minor;
+  if (v.major !== floor.major) return v.major > floor.major;
+  return v.minor >= floor.minor;
 }
