@@ -91,7 +91,7 @@ export function collect(input: CollectInput): { evidence: Evidence; canonical: s
   const origin = originUrl ? stripRemoteUrl(originUrl) : null;
   const target = input.mode === 'pr'
     ? prTarget(rooted, input, originUrl)
-    : { base: resolveRef(rooted, input.baseRef ?? '', input.remote), head: resolveRef(rooted, input.headRef ?? 'HEAD', input.remote), pr: null };
+    : { base: resolveRef(rooted, input.baseRef ?? '', input.remote), head: resolveRef(rooted, input.headRef ?? 'HEAD', input.remote), pr: null, observedAt: null };
 
   const mergeBase = rooted.mergeBase(target.base, target.head);
   if (!mergeBase) {
@@ -105,7 +105,7 @@ export function collect(input: CollectInput): { evidence: Evidence; canonical: s
   const build = (files: FileFact[], manifests: ManifestFact[], api: ApiFact[], renameSkipped: boolean) => {
     const evidence: Evidence = {
       v: 1,
-      observed_at: input.now().toISOString(),
+      observed_at: (target.observedAt ?? input.now()).toISOString(),
       collection_started_at: started.toISOString(),
       clock_overridden: input.clockOverridden,
       test_overrides: input.testOverrides,
@@ -181,6 +181,7 @@ function isPartialClone(config: string): boolean {
  * any effective line is recorded as a collection failure.
  */
 function infoAttributes(gateway: Gateway, toplevel: string): string | null {
+  const subject = '.git/info/attributes';
   const rel = gateway.gitPath('info/attributes');
   const path = isAbsolute(rel) ? rel : join(toplevel, rel);
   let text: string;
@@ -188,20 +189,20 @@ function infoAttributes(gateway: Gateway, toplevel: string): string | null {
     text = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    return code === 'ENOENT' || code === 'ENOTDIR' ? null : rel;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? null : subject;
   }
   const effective = text.split('\n').some(line => {
     const t = line.trim();
     return t !== '' && !t.startsWith('#');
   });
-  return effective ? rel : null;
+  return effective ? subject : null;
 }
 
 function prTarget(
   gateway: Gateway,
   input: CollectInput,
   originUrl: string | null,
-): { base: string; head: string; pr: Evidence['pr'] } {
+): { base: string; head: string; pr: Evidence['pr']; observedAt: Date } {
   const remoteId = originUrl ? parseRemote(originUrl) : null;
   if (!remoteId) {
     throw new GateError(
@@ -222,6 +223,9 @@ function prTarget(
     rawFirst = first;
     raw = ghView(gateway, number, spec);
   }
+  // PR signals were observed when the final response completed, before local
+  // object checks and diff work can move the clock past the merge event.
+  const observedAt = input.now();
   const prId = parsePrUrl(String(raw.url));
   if (!prId || !identityMatches(remoteId, prId)) {
     const want = prId ? `${prId.owner}/${prId.name}` : 'the pull request repository';
@@ -249,6 +253,7 @@ function prTarget(
   return {
     base,
     head,
+    observedAt,
     pr: {
       number: Number(raw.number),
       url: String(raw.url),

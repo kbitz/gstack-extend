@@ -443,7 +443,7 @@ function classifySpec(value: string): 'remote' | 'local' | null {
   if (!items) return null;
   const tables = items.map(inlineEntries);
   if (tables.length === 0 || tables.some(t => t === null)) return null;
-  return tables.some(t => t?.some(e => isLocalAttr(e.key, e.value))) ? 'local' : 'remote';
+  return tables.every(t => t?.some(e => isLocalAttr(e.key, e.value))) ? 'local' : 'remote';
 }
 
 function pep508Array(value: string): DepEntry[] | null {

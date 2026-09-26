@@ -20,7 +20,8 @@ import { decide, validateEvidence, type Evidence } from '../src/merge-gate/decid
 import { parseManifest, type ManifestKind } from '../src/merge-gate/deps.ts';
 import { parseUnified, unquoteGitPath } from '../src/merge-gate/diff.ts';
 import { GateError } from '../src/merge-gate/errors.ts';
-import { assertArgvAllowed, buildChildEnv } from '../src/merge-gate/exec.ts';
+import { assertArgvAllowed, buildChildEnv, createGateway } from '../src/merge-gate/exec.ts';
+import { firstLine, redact } from '../src/merge-gate/redact.ts';
 import { matchGlob } from '../src/merge-gate/glob.ts';
 import {
   API_RULES,
@@ -62,8 +63,12 @@ function tmp(prefix: string): string {
   return mkdtempSync(join(baseTmp, prefix));
 }
 
+function fixtureEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, HOME: tmp('home-'), GSTACK_EXTEND_STATE_DIR: tmp('state-') };
+}
+
 function git(repo: string, args: string[], input?: string | Buffer): string {
-  const r = spawnSync(REAL_GIT, ['-C', repo, ...args], { env: { ...process.env, ...DATES }, input });
+  const r = spawnSync(REAL_GIT, ['-C', repo, ...args], { env: { ...fixtureEnv(), ...DATES }, input });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr.toString()}`);
   return r.stdout.toString('utf8').trim();
 }
@@ -443,7 +448,7 @@ describe('public API through collection', () => {
   test('a non-UTF-8 name is stored with path_b64 and left unmeasured (CEO-R4)', () => {
     const repo = newRepo({ 'x.txt': 'x\n' });
     const blob = git(repo, ['hash-object', '-w', '--stdin'], 'export const Latin = 1;\n');
-    const listing = spawnSync(REAL_GIT, ['-C', repo, 'ls-tree', '-z', 'HEAD']).stdout;
+    const listing = spawnSync(REAL_GIT, ['-C', repo, 'ls-tree', '-z', 'HEAD'], { env: fixtureEnv() }).stdout;
     const name = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x2e, 0x74, 0x73]);
     const tree = git(repo, ['mktree', '-z'], Buffer.concat([listing, Buffer.from(`100644 blob ${blob}\t`), name, Buffer.from([0])]));
     const sha = git(repo, ['commit-tree', tree, '-p', 'HEAD', '-m', 'latin']);
@@ -933,6 +938,11 @@ describe('pull request mode', () => {
     const results = await Promise.all(procs.map(async p => ({ status: await p.exited, body: JSON.parse(await new Response(p.stdout).text()) as J })));
     expect(results.map(r => r.status)).toEqual([0, 0]);
     expect(results[0]?.body.evidence_id).toBe(results[1]?.body.evidence_id);
+    const authoritative = results.map(({ body }) => {
+      const { idempotent: _hit, ...verdict } = body;
+      return verdict;
+    });
+    expect(authoritative[0]).toEqual(authoritative[1]);
     expect(readdirSync(join(state, 'merge-gate/decisions')).filter(n => n.endsWith('.json'))).toHaveLength(1);
     expect(readVerdictLog(join(state, 'merge-gate/verdicts.jsonl')).verdicts).toHaveLength(1);
   }, 20_000);
@@ -985,7 +995,7 @@ describe('cannot merge, by construction', () => {
 
   test('allowlist unit checks (forbidden_command)', () => {
     const attr = '--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-    for (const [cmd, args] of [['git', ['merge']], ['git', [attr, 'push']], ['git', [attr, 'fetch', 'origin']], ['gh', ['pr', 'merge', '1']], ['gh', ['api', 'x']], ['git', [attr, 'config', 'user.name', 'x']], ['git', [attr, '-c', 'x=y', 'version']]] as [string, string[]][]) {
+    for (const [cmd, args] of [['git', ['merge']], ['git', [attr, 'commit']], ['git', [attr, 'update-ref', 'HEAD', 'a'.repeat(40)]], ['git', [attr, 'checkout', 'main']], ['git', [attr, 'push']], ['git', [attr, 'fetch', 'origin']], ['gh', ['pr', 'merge', '1']], ['gh', ['api', 'x']], ['git', [attr, 'config', 'user.name', 'x']], ['git', [attr, '-c', 'x=y', 'version']]] as [string, string[]][]) {
       expect(() => assertArgvAllowed(cmd, args)).toThrow(GateError);
     }
     expect(() => assertArgvAllowed('git', ['version'])).not.toThrow();
@@ -1395,7 +1405,10 @@ describe('cli contract', () => {
       'EVIDENCE: not recorded (--no-record)',
       '',
     ].join('\n'));
-    expect(humanPr({ state: 'CLOSED' }).split('\n').slice(3, 10)).toEqual([
+    expect(humanPr({ state: 'CLOSED' })).toBe([
+      'WOULD_MERGE: yes',
+      'MODE: shadow',
+      'GATE: v1',
       'TIMING: retroactive',
       `SUBJECT: github.com/acme/widgets#7 @ ${head}`,
       'VERDICTS: within_budget=yes ready=not checked evidence_complete=yes',
@@ -1403,7 +1416,10 @@ describe('cli contract', () => {
       'TOP_CHURN: a.txt (1)',
       'REASONS:',
       '- retroactive_pr_state: pull request state is CLOSED; PR signals are not applied to a closed observation (info)',
-    ]);
+      'DOCS: docs/merge-gate.md#reasons',
+      'EVIDENCE: not recorded (--no-record)',
+      '',
+    ].join('\n'));
   });
 
   test('human output strips terminal and bidi controls; JSON keeps them (CEO-R3)', () => {
@@ -1470,7 +1486,7 @@ describe('cli contract', () => {
     expect(viaLink.stdout).toContain('gate_version: 1');
     symlinkSync(join(dir, 'loop-b'), join(dir, 'loop-a'));
     symlinkSync(join(dir, 'loop-a'), join(dir, 'loop-b'));
-    const loop = spawnSync(join(dir, 'loop-a'), ['--version'], { encoding: 'utf8' });
+    const loop = spawnSync(join(dir, 'loop-a'), ['--version'], { encoding: 'utf8', env: fixtureEnv() });
     expect(loop.status).not.toBe(0);
   });
 });
@@ -1516,5 +1532,224 @@ describe('doc drift', () => {
     expect(docBlock(doc, 'Example verdict')).toBe(canonicalJson(exampleVerdict()));
     const usage = run(['check', '--json']);
     expect(docBlock(doc, 'Example error')).toBe(usage.stdout.trim());
+  });
+});
+
+
+describe('review regressions: Git trust and error boundaries', () => {
+  test('safe.directory preserves system/global precedence, empty resets, and newline paths', () => {
+    const repo = changeRepo({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
+    const system = join(tmp('config-'), 'system');
+    const global = join(tmp('config-'), 'global');
+    writeFileSync(system, '[safe]\n directory = *\n');
+    writeFileSync(global, '[safe]\n directory =\n');
+    const parentEnv = { ...process.env, GIT_CONFIG_SYSTEM: system, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: '0' };
+    const opts = { cwd: repo, parentEnv, gitTimeoutMs: 5000, ghTimeoutMs: 5000, debug: false };
+    expect(createGateway(opts).safeDirectories()).toEqual(['*', '']);
+    git(repo, ['config', '--file', global, '--add', 'safe.directory', '/allowed/path\nwith-newline']);
+    expect(createGateway(opts).safeDirectories()).toEqual(['*', '', '/allowed/path\nwith-newline']);
+    const foreign = shimDir({ git: `#!/bin/sh\nexport GIT_TEST_ASSUME_DIFFERENT_OWNER=1\nexec '${REAL_GIT}' "$@"\n` });
+    const check = () => run(['check', '--base', 'HEAD~1', '--json', '--no-record'], { cwd: repo, path: foreign, env: parentEnv });
+    expect(code(check())).toBe('not_a_repo');
+    git(repo, ['config', '--file', global, '--add', 'safe.directory', repo]);
+    expect(out(check()).would_merge).toBe(true);
+    writeFileSync(global, '');
+    expect(out(check()).would_merge).toBe(true);
+    parentEnv.GIT_CONFIG_NOSYSTEM = '1';
+    expect(code(check())).toBe('not_a_repo');
+    expect(createGateway(opts).safeDirectories()).toEqual([]);
+  });
+
+  test('an unreadable trust configuration fails closed instead of retaining earlier trust', () => {
+    const repo = changeRepo({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
+    const system = join(tmp('config-'), 'system');
+    const global = join(tmp('config-'), 'global');
+    writeFileSync(system, '[safe]\n directory = *\n');
+    writeFileSync(global, '[invalid');
+    const r = run(['check', '--base', 'HEAD~1', '--json', '--no-record'], {
+      cwd: repo, env: { GIT_CONFIG_SYSTEM: system, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: '0' },
+    });
+    expect(code(r)).toBe('git_failed');
+  });
+
+  for (const operation of ['--verify', 'merge-base']) {
+    for (const failure of ['fatal', 'signal']) {
+      test(`${operation} ${failure} preserves git_failed rather than a missing-result error`, () => {
+        const repo = changeRepo({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
+        const dir = shimDir();
+        const script = join(dir, 'git-error.js');
+        writeFileSync(script, `const { spawnSync } = require('node:child_process')
+const args = process.argv.slice(2)
+if (args.includes('${operation}')) {
+  process.stderr.write('fatal: simulated I/O failure\\n')
+  ${failure === 'signal' ? "process.kill(process.pid, 'SIGKILL')" : 'process.exit(128)'}
+}
+process.exit(spawnSync(${JSON.stringify(REAL_GIT)}, args, { stdio: 'inherit' }).status ?? 1)
+`);
+        rmSync(join(dir, 'git'));
+        writeExec(join(dir, 'git'), `#!/bin/sh\nexec '${BUN}' '${script}' "$@"\n`);
+        const r = run(['check', '--base', 'HEAD~1', '--json', '--no-record'], { cwd: repo, path: dir });
+        expect(code(r)).toBe('git_failed');
+        if (failure === 'fatal') expect(out(r).error.message).toContain('simulated I/O failure');
+      });
+    }
+  }
+
+  test('Authorization redaction removes Basic and Bearer credentials from errors and debug text', () => {
+    const credential = ['synthetic', 'review', 'credential'].join('-');
+    for (const scheme of ['Basic', 'Bearer']) {
+      const header = `Authorization: ${scheme} ${credential}`;
+      expect(firstLine(header)).toBe('Authorization: [REDACTED]');
+      expect(redact(`${header}\nnext line`)).toBe('Authorization: [REDACTED]\nnext line');
+      const pr = prRepo();
+      const r = run(['check', '--pr', '7', '--json', '--no-record'], {
+        cwd: pr.repo, path: shimDir({ gh: [{ exit: 1, stderr: header }] }), env: { GSTACK_EXTEND_MERGE_GATE_DEBUG: '1' },
+      });
+      expect(code(r)).toBe('gh_failed');
+      expect(r.stdout + r.stderr).not.toContain(credential);
+    }
+  });
+});
+
+
+test('caller diff.interHunkContext cannot hide an added multiline export', () => {
+  const before = 'const first = 1;\nconst A = 1;\nconst B = 2;\nconst C = 3;\n\nexport {\n  A,\n  B,\n};\n';
+  const after = before.replace('first = 1', 'first = 2').replace('  B,', '  B,\n  C,');
+  const repo = changeRepo({ 'api.ts': before }, { 'api.ts': after });
+  const plain = checkRecorded(repo, ['--max-new-public-api', '0']);
+  expect(plain.verdict.metrics.new_public_api).toBe(1);
+  expect(plain.verdict.would_merge).toBe(false);
+  git(repo, ['config', 'diff.interHunkContext', '100']);
+  const configured = checkRecorded(repo, ['--max-new-public-api', '0']);
+  expect(configured.evidence).toEqual(plain.evidence);
+  expect(configured.verdict.metrics).toEqual(plain.verdict.metrics);
+  expect(configured.verdict.would_merge).toBe(false);
+});
+
+test('the documented backtest isolates same-number PRs by repository URL', () => {
+  const doc = readFileSync(join(ROOT, 'docs/merge-gate.md'), 'utf8');
+  const query = /jq -s --slurpfile merged \/tmp\/merged.json '([\s\S]*?)' \/tmp\/log.jsonl/.exec(doc)?.[1];
+  expect(query).toBeDefined();
+  const dir = tmp('backtest-');
+  const merged = join(dir, 'merged.json');
+  const log = join(dir, 'log.jsonl');
+  const url = 'https://github.com/acme/widgets/pull/7';
+  writeFileSync(merged, JSON.stringify([{ number: 7, url, mergedAt: NOW, headRefOid: 'a'.repeat(40) }]));
+  writeFileSync(log, [
+    { subject: { pr_number: 7, pr_url: 'https://github.com/other/project/pull/7', decision_id: 'wrong' } },
+    { subject: { pr_number: 7, pr_url: url.toUpperCase(), decision_id: 'wanted' } },
+    { subject: { pr_number: null, pr_url: null, decision_id: null } },
+  ].map(row => JSON.stringify(row)).join('\n'));
+  const result = spawnSync('jq', ['-s', '--slurpfile', 'merged', merged, query!, log], { encoding: 'utf8', env: fixtureEnv() });
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).map((row: J) => row.subject.decision_id)).toEqual(['wanted']);
+});
+
+describe('accepted plan gaps', () => {
+  test('CEO-E1: positive churn allowance and top-three churn ties', () => {
+    const repo = changeRepo(
+      { 'a.txt': '', 'z.txt': '', 'm.txt': '', 'b.txt': '' },
+      { 'a.txt': 'a\n'.repeat(3), 'z.txt': 'z\n'.repeat(3), 'm.txt': 'm\n'.repeat(4), 'b.txt': 'b\n'.repeat(2) },
+    );
+    const verdict = checkQuick(repo, ['--max-churn', '13']);
+    expect(verdict.would_merge).toBe(true);
+    expect(verdict.metrics.churn).toBe(12);
+    expect(verdict.metrics.top_churn_files).toEqual([
+      { path: 'm.txt', churn: 4 }, { path: 'a.txt', churn: 3 }, { path: 'z.txt', churn: 3 },
+    ]);
+  });
+
+  for (const path of ['test/a.ts', 'tests/a.ts', '__tests__/a.ts', 'spec/a.ts', 'a.test.ts', 'a.spec.ts', 'a_test.go', 'test_a.py', 'a_test.py', 'conftest.py']) {
+    test(`CEO-S9: API exclusion ${path}`, () => {
+      const e = evidence();
+      e.git.files[0]!.path = path;
+      e.public_api.files = [{ path, added: [{ rule: 'test-rule', name: 'Public' }], removed: [] }];
+      expect(judge(e, { ...POLICY, max_new_public_api: 0 }).metrics.new_public_api).toBe(0);
+      expect(judge(e, { ...POLICY, max_new_public_api: 0 }).would_merge).toBe(true);
+    });
+  }
+
+  for (const segment of ['test', 'tests', '__tests__', 'spec', 'fixtures', '__fixtures__', 'testdata']) {
+    test(`CEO-S17: dependency exclusion ${segment}`, () => {
+      const path = `nested/${segment}/package.json`;
+      const e = evidence({ dependencies: { manifests: [{ path, added: [{ name: 'remote', classification: 'remote' }], removed: [], unverifiable: false }] } });
+      expect(judge(e).metrics.new_deps).toBe(0);
+      e.dependencies.manifests[0]!.unverifiable = true;
+      expect(judge(e).would_merge).toBe(true);
+    });
+  }
+
+  const parserCases: ParserCase[] = [
+    { name: 'bare requirement URL', kind: 'requirements', base: '', head: 'https://example.test/pkg.whl\n', added: ['remote:https://example.test/pkg.whl'] },
+    { name: 'unchanged constraint include', kind: 'requirements', base: '-c constraints.txt\na==1\n', head: '-c constraints.txt\na==2\n', added: [] },
+    { name: 'Cargo build dependencies', kind: 'cargo', base: '', head: '[build-dependencies]\ncc = "1"\n', added: ['remote:cc'] },
+    { name: 'Cargo target build dependencies', kind: 'cargo', base: '', head: '[target.\'cfg(unix)\'.build-dependencies]\ncc = "1"\n', added: ['remote:cc'] },
+    { name: 'Cargo section move', kind: 'cargo', base: '[dependencies]\nserde = "1"\n', head: '[dev-dependencies]\nserde = "1"\n', added: [] },
+    { name: 'Poetry dev dependencies', kind: 'pyproject', base: '', head: '[tool.poetry.dev-dependencies]\npytest = "8"\n', added: ['remote:pytest'] },
+    { name: 'Poetry section move', kind: 'pyproject', base: '[tool.poetry.dependencies]\nrequests = "2"\n', head: '[tool.poetry.group.dev.dependencies]\nrequests = "2"\n', added: [] },
+    { name: 'project optional section move', kind: 'pyproject', base: '[project]\ndependencies = ["requests"]\n', head: '[project.optional-dependencies]\ndev = [\n "requests",\n]\n', added: [] },
+    { name: 'Gemfile group move', kind: 'gemfile', base: "gem 'rails'\n", head: "group :development do\ngem 'rails'\nend\n", added: [] },
+    { name: 'Go require block move', kind: 'gomod', base: 'require example.test/a v1.0.0\n', head: 'require (\n example.test/a v1.0.0\n)\n', added: [] },
+    { name: 'requirements reorder', kind: 'requirements', base: 'a==1\nb==1\n', head: 'b==2\na==2\n', added: [] },
+    { name: 'Cargo inline table', kind: 'cargo', base: '', head: '[dependencies]\nserde = { version = "1", features = ["derive"] }\n', added: ['remote:serde'] },
+    { name: 'Poetry local subtable', kind: 'pyproject', base: '', head: '[tool.poetry.dependencies.mine]\npath = "../mine"\n', added: ['local:mine'] },
+    { name: 'project direct local reference', kind: 'pyproject', base: '', head: '[project]\ndependencies = ["mine @ file:///tmp/mine"]\n', added: ['local:mine'] },
+    { name: 'Gemfile static flat-array options', kind: 'gemfile', base: '', head: "gem 'rails', platforms: [:ruby, :jruby], require: ['rails/core'], optional: true\n", added: ['remote:rails'] },
+    { name: 'Gemfile dynamic method', kind: 'gemfile', base: '', head: "gem version_for('rails')\n", bad: true },
+    { name: 'Gemfile interpolation', kind: 'gemfile', base: '', head: 'gem "#{name}"\n', bad: true },
+    { name: 'added go exclude', kind: 'gomod', base: '', head: 'exclude example.test/a v1.0.0\n', bad: true },
+    { name: 'added go retract', kind: 'gomod', base: '', head: 'retract v1.0.0\n', bad: true },
+  ];
+  for (const c of parserCases) {
+    test(`ENG-6: ${c.name}`, () => {
+      const parsed = parseManifest(c.kind, c.base, c.head);
+      if (c.bad) expect(parsed.unverifiable).not.toBeNull();
+      else {
+        expect(parsed.unverifiable).toBeNull();
+        expect(parsed.added.map(d => `${d.classification}:${d.name}`).sort()).toEqual(c.added ?? []);
+      }
+    });
+  }
+
+  test('CEO-S9: each named unsupported ecosystem blocks when added', () => {
+    const names = ['pom.xml', 'build.gradle', 'build.gradle.kts', 'build.sbt', 'composer.json', 'Pipfile', 'setup.py', 'setup.cfg', 'environment.yml', 'app.gemspec', 'Package.swift', 'Podfile', 'pubspec.yaml', 'deno.json', 'mix.exs', 'app.csproj', 'packages.config'];
+    const repo = changeRepo({ 'a.txt': 'base\n' }, Object.fromEntries(names.map(name => [name, 'manifest\n'])));
+    const verdict = checkQuick(repo, ['--max-new-files', 'none']);
+    expect(blocking(verdict)).toEqual(['deps_unverifiable']);
+    expect(verdict.reasons.find((r: J) => r.code === 'deps_unverifiable').subjects.sort()).toEqual(names.sort());
+  });
+
+  test('CEO-V3: editing an already executable bin script leaves partial API coverage', () => {
+    const repo = newRepo({ 'bin/tool': '#!/bin/sh\necho old\n' });
+    chmodSync(join(repo, 'bin/tool'), 0o755);
+    commit(repo, {}, 'make executable');
+    commit(repo, { 'bin/tool': '#!/bin/sh\necho new\n' });
+    const verdict = checkQuick(repo);
+    expect(verdict.metrics.new_public_api).toBe(0);
+    expect(verdict.metrics.coverage.new_public_api).toBe('partial');
+    expect(verdict.metrics.unmeasured_api_files).toEqual([{ path: 'bin/tool', reason: 'no_rule' }]);
+    expect(reasonCodes(verdict)).toContain('api_coverage_partial');
+  });
+
+  test('DX-1: missing installed source produces the shim error contract', () => {
+    const dir = tmp('missing-source-');
+    mkdirSync(join(dir, 'bin'));
+    const shim = join(dir, 'bin/merge-gate');
+    writeExec(shim, readFileSync(BIN, 'utf8'));
+    const result = spawnSync(shim, ['--version', '--json'], { encoding: 'utf8', env: { ...fixtureEnv(), PATH: shimDir({ git: 'none' }) } });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout).error).toMatchObject({ code: 'internal_error', message: 'merge-gate source missing' });
+  });
+
+  test('DX-7: TEST=1 still refuses overrides against the default state directory', () => {
+    const r = run(['--version', '--json'], { env: { GSTACK_EXTEND_STATE_DIR: undefined, GSTACK_EXTEND_MERGE_GATE_TEST: '1', GSTACK_EXTEND_MERGE_GATE_NOW: NOW } });
+    expect(code(r)).toBe('test_env_refused');
+    expect(r.status).toBe(1);
+  });
+
+  test('ENG-4: decision ids reject --no-record before collecting', () => {
+    const r = run(['check', '--pr', '7', '--decision-id', 'd1', '--no-record', '--json'], { path: shimDir({ git: 'none' }) });
+    expect(code(r)).toBe('usage');
+    expect(out(r).error.message).toBe('--decision-id cannot be combined with --no-record');
   });
 });

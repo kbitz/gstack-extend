@@ -7,8 +7,8 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const ATTR = `--attr-source=${EMPTY_TREE}`;
 const INSTALL_GIT = `install git ${GIT_FLOOR.full.major}.${GIT_FLOOR.full.minor} or newer`;
 const SAFE_DIRECTORY_READS = [
-  [ATTR, 'config', '--global', '--includes', '--get-all', 'safe.directory'],
-  [ATTR, 'config', '--system', '--includes', '--get-all', 'safe.directory'],
+  [ATTR, 'config', '--system', '--includes', '--null', '--get-all', 'safe.directory'],
+  [ATTR, 'config', '--global', '--includes', '--null', '--get-all', 'safe.directory'],
 ];
 
 /** `status` is -1 when the child did not exit normally (signal, spawn error). */
@@ -190,7 +190,7 @@ const DIFF_RAW = [
   '--no-ext-diff', '--no-textconv', '--no-abbrev',
 ];
 const DIFF_PATCH = [
-  'diff', '-U0', '-M', `-l${RENAME_LIMIT}`,
+  'diff', '-U0', '--inter-hunk-context=0', '-M', `-l${RENAME_LIMIT}`,
   '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
   '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--no-abbrev',
 ];
@@ -286,14 +286,18 @@ export function createGateway(opts: GatewayOpts): Gateway {
       return outcome.stdout.toString('utf8');
     },
     safeDirectories() {
-      // A missing key (exit 1) or an unreadable config yields no entries; git then applies its own ownership check.
+      // Preserve Git's system-before-global order and empty values that reset trust.
       const readEnv = configReadEnv(opts.parentEnv);
       return SAFE_DIRECTORY_READS.flatMap(args => {
+        const noSystem = opts.parentEnv.GIT_CONFIG_NOSYSTEM;
+        if (args.includes('--system') && noSystem !== undefined && !/^(?:|0|false|no|off)$/i.test(noSystem)) return [];
         const outcome = run('git', args, opts.gitTimeoutMs, undefined, readEnv);
-        if (outcome.status !== 0 || outcome.overflow) return [];
-        // An empty value resets git's list, so empty lines are kept in order.
-        const text = outcome.stdout.toString('utf8').replace(/\n$/, '');
-        return text === '' ? [] : text.split('\n');
+        if (outcome.status === 1) return [];
+        if (outcome.status !== 0 || outcome.overflow) {
+          throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'safe.directory config read failed', 'confirm the global and system git config are readable and retry');
+        }
+        // NUL delimiters distinguish an empty reset from no values and preserve newline paths.
+        return outcome.stdout.toString('utf8').split('\0').slice(0, -1);
       });
     },
     partialCloneConfig() {
@@ -321,7 +325,10 @@ export function createGateway(opts: GatewayOpts): Gateway {
     },
     verifyCommit(ref: string) {
       const outcome = gitOk([ATTR, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
-      if (outcome.status !== 0) return null;
+      if (outcome.status === 1) return null;
+      if (outcome.status !== 0) {
+        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git rev-parse failed', 'confirm the repository is readable and retry');
+      }
       const sha = outcome.stdout.toString('utf8').trim();
       return SHA_RE.test(sha) ? sha : null;
     },
@@ -333,7 +340,10 @@ export function createGateway(opts: GatewayOpts): Gateway {
       assertSha(a);
       assertSha(b);
       const outcome = gitOk([ATTR, 'merge-base', a, b]);
-      if (outcome.status !== 0) return null;
+      if (outcome.status === 1) return null;
+      if (outcome.status !== 0) {
+        throw new GateError('git_failed', firstLine(outcome.stderr.toString('utf8')) || 'git merge-base failed', 'confirm the repository is readable and retry');
+      }
       const sha = outcome.stdout.toString('utf8').trim();
       return SHA_RE.test(sha) ? sha : null;
     },

@@ -13,7 +13,9 @@ later time window, and backtest write-ups should cite `policy_sha256`.
 ## Quick start
 
 Prerequisites: git 2.41 or newer (2.45 in a partial clone), bun, and `gh` for
-pull-request mode. The binary is not on `PATH` until a later track wires it.
+pull-request mode. Collector v1 supports Git repositories using SHA-1 objects;
+SHA-256 object-format repositories are outside its scope. The binary is not on
+`PATH` until a later track wires it.
 From a fresh state directory the git-only command below should print a verdict
 in under two minutes.
 
@@ -135,18 +137,20 @@ done
 
 Read the log tolerantly (a torn or malformed line is skipped, not fatal), then
 apply the selection rule with `mergedAt` and the merged head from `gh`. ISO
-timestamps compare lexically:
+timestamps compare lexically. Join by the full pull-request URL because the
+machine log can contain identical PR numbers from different repositories:
 
 ```sh
 LOG="$GSTACK_EXTEND_STATE_DIR/merge-gate/verdicts.jsonl"
 jq -cR 'fromjson? // empty' "$LOG" > /tmp/log.jsonl
-gh pr list --state merged --limit 200 --json number,mergedAt,headRefOid > /tmp/merged.json
+gh pr list --state merged --limit 200 --json number,url,mergedAt,headRefOid > /tmp/merged.json
 jq -s --slurpfile merged /tmp/merged.json '
-  ($merged[0] | map({key: (.number | tostring), value: .}) | from_entries) as $m
-  | map(select(.subject.pr_number != null and $m[.subject.pr_number | tostring] != null))
-  | group_by(.subject.pr_number)
+  ($merged[0] | map({key: (.url | ascii_downcase), value: .}) | from_entries) as $m
+  | map(select(.subject.pr_url != null))
+  | map(select($m[.subject.pr_url | ascii_downcase] != null))
+  | group_by(.subject.pr_url | ascii_downcase)
   | map(
-      $m[.[0].subject.pr_number | tostring] as $pr
+      $m[.[0].subject.pr_url | ascii_downcase] as $pr
       | (map(select(.subject.decision_id != null)) | first)
         // (map(select(.timing == "open" and .observed_at < $pr.mergedAt and .subject.head_sha == $pr.headRefOid))
             | sort_by(.observed_at) | last)
@@ -226,7 +230,7 @@ continues and exits 1. Machine-readable `--all` output requires `--jsonl`.
 
 | Field | Bump when |
 |---|---|
-| evidence `v` / verdict `v` | A field is removed, renamed, or changes meaning. Additive fields keep `v`. This release reads v1 evidence. |
+| evidence `v` / verdict `v` | A field is removed, renamed, or changes meaning. Additive fields keep `v`. Every release reads v1 evidence. |
 | `gate_version` | Decide-side behavior changes: metrics, exclusions, test-path table, output caps, pull-request mapping, reason classes, default policy. New reason codes bump `gate_version`. |
 | `collector_version` | Parser grammars, the public-API rule table, scan limits, or pinned git config change. Replay rejects evidence from a newer collector. |
 
@@ -248,7 +252,8 @@ lazy blob fetches. Every other git call runs with `--attr-source` set to the emp
 outranks the repository's own: `core.quotePath=false`, `core.fsmonitor=false`,
 `core.attributesFile=/dev/null`, `core.bigFileThreshold=512m`, and
 `diff.ignoreSubmodules=none`. Worktree and user attributes, replace refs, and
-diff settings therefore do not change numstat.
+diff settings therefore do not change numstat. Patch collection also pins
+`--inter-hunk-context=0` so caller configuration cannot merge separate API hunks.
 
 The one setting carried over from the user's own config is `safe.directory`.
 The gate reads it from the global and system config (honoring

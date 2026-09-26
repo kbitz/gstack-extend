@@ -2,7 +2,7 @@
 export function redact(text: string): string {
   return text
     .replace(/\b((?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]+)/g, '[REDACTED]')
-    .replace(/Authorization:\s*\S+/gi, 'Authorization: [REDACTED]')
+    .replace(/Authorization:[^\r\n]*/gi, 'Authorization: [REDACTED]')
     .replace(/(\/\/)[^/\s@]+@/g, '$1');
 }
 
