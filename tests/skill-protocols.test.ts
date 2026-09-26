@@ -19,14 +19,12 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -40,8 +38,10 @@ import {
   CMD_BIN_RE,
   FOR_POINTER_LINE,
   FOR_SKILL_LINE,
+  GUARD_COMMENT,
   GUARD_LINE,
   HANDOFF_PARAGRAPH,
+  INIT_ERROR_STOP,
   INIT_TAIL,
   MARKER_LINE,
   NO_INSTALL_MESSAGE,
@@ -60,6 +60,7 @@ import {
   hostDir,
   runShell,
   scopedEnv,
+  skillPreamble,
   strictShells,
   writePointer,
   writeUpdateCheck,
@@ -565,27 +566,13 @@ describe('pair-review per-branch session paths', () => {
   });
 });
 
-// ─── Track 5A: skill preamble two-path probe (drift-lock) ────────────
-//
-// Each skill preamble probes path 1 (~/.claude/skills/{name}/SKILL.md)
-// then path 2 (.claude/skills/{name}/SKILL.md) as a vendored-install
-// fallback. The two-line readlink is identical-shaped across all 6 preamble
-// skills (the 5 workflow skills + gstack-extend-upgrade) — assert presence
-// here so a future PR can't drop the path-2 fallthrough from one skill while
-// keeping it in the others.
-//
-// Mirrors gstack core's preamble probe pattern. See CHANGELOG v0.18.14.
-
 // Track 5A's two-path (including vendored) probe is replaced by the Track 16D
 // resolver locks. A cwd-relative `.claude/skills/` path must not come back.
 
-// ─── Track 5A: cross-skill inline-Read in test-plan.md ───────────────
+// ─── Track 16D: cross-skill inline-Read in test-plan.md ──────────────
 //
-// skills/test-plan.md Phase 8 reads pair-review.md inline. The original
-// hardcoded `~/.claude/skills/pair-review/SKILL.md` path silently breaks
-// on vendored installs. The prose was updated to instruct the agent to
-// try path 1 first, fall back to path 2. Lock the prose change so a
-// future edit can't drop the fallback.
+// skills/test-plan.md Phase 8 reads pair-review.md inline. It lists only
+// the home-anchored host paths; the cwd-relative vendored fallback is gone.
 
 describe('Track 16D test-plan Phase 8 home paths (L9)', () => {
   const file = join(ROOT, 'skills', 'test-plan.md');
@@ -1773,15 +1760,11 @@ describe('Track 16D extend-root resolver locks', () => {
 
   test('L3: workflow, upgrade, and init tails are verbatim', () => {
     for (const skill of WORKFLOW_SKILLS) {
-      expect(extractPreambleFence(resolverSkillText(skill))).toBe(
-        `_ER_SKILL=${skill}\n${CANONICAL_SPAN}\n${WORKFLOW_TAIL}`,
-      );
+      expect(extractPreambleFence(resolverSkillText(skill))).toBe(skillPreamble(skill, WORKFLOW_TAIL));
     }
-    expect(extractPreambleFence(upgrade)).toBe(
-      `_ER_SKILL=gstack-extend-upgrade\n${CANONICAL_SPAN}\n${UPGRADE_TAIL}`,
-    );
+    expect(extractPreambleFence(upgrade)).toBe(skillPreamble('gstack-extend-upgrade', UPGRADE_TAIL));
     expect(extractPreambleFence(resolverSkillText('gstack-extend-init'))).toBe(
-      `_ER_SKILL=gstack-extend-init\n${CANONICAL_SPAN}\n${INIT_TAIL}`,
+      skillPreamble('gstack-extend-init', INIT_TAIL),
     );
   });
 
@@ -1792,6 +1775,7 @@ describe('Track 16D extend-root resolver locks', () => {
       expect(content).toContain(NO_INSTALL_MESSAGE);
     }
     expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
+    expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
     expect(resolverSkillText('roadmap')).toContain(RENAMES_ER_LINE);
   });
 
@@ -1840,6 +1824,7 @@ describe('Track 16D extend-root resolver locks', () => {
           }
           if (lines[i] === GUARD_LINE) {
             guards++;
+            expect(lines[i - 1]).toBe(GUARD_COMMENT);
             let k = i + 1;
             while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
             expect(lines[k] ?? '').toMatch(sourceRe);
@@ -1864,7 +1849,7 @@ function plantSkillLink(home: string, skill: string, root: string): void {
   symlinkSync(join(root, 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
 }
 
-function plantHostileTree(cwd: string, skill: string, sentinel: string): string {
+function plantHostileTree(cwd: string, skill: string): void {
   const root = join(cwd, 'evil');
   writeUpdateCheck(root, { marker: true, record: true });
   mkdirSync(join(root, 'skills'), { recursive: true });
@@ -1873,8 +1858,6 @@ function plantHostileTree(cwd: string, skill: string, sentinel: string): string 
   mkdirSync(dir, { recursive: true });
   symlinkSync(`../../../evil/skills/${skill}.md`, join(dir, 'SKILL.md'));
   writeFileSync(join(dir, '.extend-root'), `${root}\n`);
-  writeFileSync(join(root, 'bin', 'lib-sentinel'), sentinel);
-  return root;
 }
 
 function runPreamble(skill: string, home: string, cwd: string, extra: Record<string, string> = {}) {
@@ -1986,7 +1969,7 @@ describe('Track 16D preamble representatives', () => {
       const cwd = join(extendRootTmp, `bad-cwd-${skill}`);
       const sentinel = join(extendRootTmp, `bad-sentinel-${skill}`);
       mkdirSync(home, { recursive: true });
-      plantHostileTree(cwd, skill, sentinel);
+      plantHostileTree(cwd, skill);
       for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
         expect(r.stderr).toBe('');
         expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
@@ -2105,7 +2088,7 @@ describe('Track 16D guarded source', () => {
     .find((f) => f.body.includes('session_dir pair-review "$BRANCH"'))!
     .body.replace(/\n$/, '');
 
-  function sessionStub(root: string, sentinel: string, marker: boolean): void {
+  function sessionStub(root: string, marker: boolean): void {
     writeUpdateCheck(root, { marker });
     const lib = join(root, 'bin', 'lib');
     mkdirSync(lib, { recursive: true });
@@ -2122,7 +2105,7 @@ describe('Track 16D guarded source', () => {
     const sentinel = join(extendRootTmp, 'guard-ok-sentinel');
     mkdirSync(cwd, { recursive: true });
     writeUpdateCheck(root, { record: true });
-    sessionStub(root, sentinel, true);
+    sessionStub(root, true);
     plantSkillLink(home, 'pair-review', root);
     const upd = join(extendRootTmp, 'guard-ok-upd');
     const preamble = runPreamble('pair-review', home, cwd, { SENTINEL: upd })[0]!;
@@ -2141,9 +2124,9 @@ describe('Track 16D guarded source', () => {
     const sentinel = join(extendRootTmp, 'guard-bad-sentinel');
     const hostile = join(extendRootTmp, 'guard-hostile');
     const rel = join(hostile, 'x');
-    sessionStub(rel, sentinel, true);
+    sessionStub(rel, true);
     const markerLess = join(extendRootTmp, 'guard-markerless');
-    sessionStub(markerLess, sentinel, false);
+    sessionStub(markerLess, false);
     const cases = [
       { name: 'no prefix', prefix: '', cwd: hostile },
       { name: 'relative', prefix: '_EXTEND_ROOT=x\n', cwd: hostile },

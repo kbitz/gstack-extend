@@ -95,7 +95,7 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 
 If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.
 
-If output is **empty**, do not assume "up to date" — empty output also covers disabled checks, a missing `VERSION` file, and network failure. Disambiguate first:
+If an `EXTEND_ROOT:` line was printed but no `UPGRADE_AVAILABLE` or `JUST_UPGRADED` line followed, do not assume "up to date": a silent update check also covers disabled checks, a missing `VERSION` file, and network failure. Disambiguate first:
 
 ```bash
 _UC=$("$_EXTEND_ROOT/bin/config" get update_check 2>/dev/null || true)

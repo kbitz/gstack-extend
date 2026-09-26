@@ -65,6 +65,16 @@ afterAll(() => {
   try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
 });
 
+// update-run runs `setup --host auto`. A fake `claude` keeps the Claude assertions
+// independent of which agent CLIs (for example `cursor` alone) the developer has on PATH.
+const CLAUDE_PATH = (() => {
+  const dir = join(baseTmp, 'claude-bin');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'claude'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(dir, 'claude'), 0o755);
+  return `${dir}:${process.env.PATH ?? '/usr/bin:/bin'}`;
+})();
+
 // ─── Fixture-repo factory ────────────────────────────────────────────
 //
 // Creates a "local" repo + "remote" bare repo pair, with VERSION=1.0.0,
@@ -435,6 +445,7 @@ describe('bin/update-run', () => {
         home: homeDir,
         gstackExtendDir: ROOT,
         gstackExtendStateDir: stateDir,
+        extraEnv: { PATH: CLAUDE_PATH },
       });
     });
 
@@ -475,8 +486,8 @@ describe('bin/update-run', () => {
   //   3. readlinkSync resolves to fixture/skills/{name}.md (not ROOT — the
   //      test runs under a mock $HOME so a leak to the developer's real
   //      gstack-extend install would mis-resolve here).
-  //   4. The skill-preamble readlink chain (`dirname dirname $_SKILL_SRC`)
-  //      yields _EXTEND_ROOT = fixture root, matching the CP#3 contract.
+  //   4. The extracted extend-root resolver span yields _EXTEND_ROOT =
+  //      fixture root, matching the CP#3 contract.
   describe('post-upgrade path-1 resolution (Track 6B)', () => {
     let repo: string;
     let homeDir: string;
@@ -506,6 +517,7 @@ describe('bin/update-run', () => {
         home: homeDir,
         gstackExtendDir: ROOT,
         gstackExtendStateDir: stateDir,
+        extraEnv: { PATH: CLAUDE_PATH },
       });
     });
 

@@ -19,7 +19,7 @@
 - **Context:** Deferred at /autoplan on 2026-09-25 (CEO native voice finding 5, reframed by the Eng dual voices). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/kbitz-harden-upgrade-preambles-plan.md` (CEO-A19, CEO-A23, ENG-A1).
 
 ### [plan-ceo-review:track=16D,defer=true] Stop `setup` injecting an unescaped HOME into generated skill bodies
-- **Description:** `rewrite_skill_body` (`setup:144-179`) rewrites every `~/.claude/skills/<name>` in a skill into a literal `${HOME}/.codex/skills/<name>` (or the OpenCode path) with sed, unquoted. A HOME containing spaces or shell metacharacters then changes how the generated bash parses. Track 16D moved the resolver loops to quoted `"$HOME"` paths so they are never rewritten. Other rewritten occurrences, such as the test-plan Phase 8 path and prose, still receive the literal.
+- **Description:** `rewrite_skill_body` (`setup:144-179`) rewrites every `~/.claude/skills/<name>` in a skill into a literal `${HOME}/.codex/skills/<name>` (or the OpenCode or Cursor path) with sed, unquoted. A HOME containing spaces or shell metacharacters then changes how the generated bash parses. Track 16D moved the resolver loops to quoted `"$HOME"` paths so they are never rewritten. Other rewritten occurrences, such as the test-plan Phase 8 path and prose, still receive the literal.
 - **Hypothesis (untested):** Rewriting to a quoted `"$HOME"/.codex/skills/<name>` form, or leaving `~` for the host to expand, removes the injection without changing any resolved path.
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3
@@ -27,7 +27,7 @@
 - **Context:** Deferred at /autoplan on 2026-09-25 (CEO dual voices: Codex finding 3, native finding 4). Plan: `~/.gstack/projects/kbitz-gstack-extend/kbitz-harden-upgrade-preambles-plan.md` (CEO-A18, CEO-A23).
 
 ### [plan-ceo-review:track=16D,defer=true] Prefer the invoking host's install when Claude and Codex point at different checkouts
-- **Description:** The Track 16D resolver probes Claude, then Codex, then OpenCode. On a machine where the Claude install points at checkout A and the Codex install at checkout B, a Codex session resolves A, so `/gstack-extend-upgrade` updates A while the Codex copies generated from B stay stale. Reorder the probes by host, using the harness env markers (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CLAUDECODE`), which only reorder home-anchored candidates. When two distinct verified roots exist, print one ambiguity line naming both.
+- **Description:** The Track 16D resolver probes Claude, then Codex, then OpenCode, then Cursor. On a machine where the Claude install points at checkout A and the Codex install at checkout B, a Codex session resolves A, so `/gstack-extend-upgrade` updates A while the Codex copies generated from B stay stale. The same applies to Cursor copies. Reorder the probes by host, using the harness env markers (`CODEX_THREAD_ID`, `CODEX_SANDBOX`, `CLAUDECODE`, plus Cursor's once identified), which only reorder home-anchored candidates. When two distinct verified roots exist, print one ambiguity line naming both.
 - **Hypothesis (untested):** Split checkouts are rare because `setup --host auto` installs every host from one checkout. The README split-checkout note may be enough; count real reports before building.
 - **Effort:** S (human: ~3h / CC: ~20min)
 - **Priority:** P3
