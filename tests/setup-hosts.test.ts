@@ -304,7 +304,8 @@ describe('setup --host flags', () => {
     const r = runSetup(['--host', 'claude', '--quiet'], home);
     expect(r.exitCode).toBe(0);
     for (const [skill, target] of Object.entries(links)) {
-      expect(r.stderr).toContain(`${skill}/SKILL.md links outside a gstack-extend checkout`);
+      const why = skill === 'test-plan' ? 'links to a missing file' : 'links outside a gstack-extend checkout';
+      expect(r.stderr).toContain(`${skill}/SKILL.md ${why}`);
       expect(readlinkSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(target);
       expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(false);
     }
@@ -393,11 +394,12 @@ describe('setup --host flags', () => {
     }
   });
 
-  test('a case-variant Cursor alias is still the Claude skills dir', () => {
+  // Only meaningful on a case-insensitive disk (the macOS default).
+  mkdirSync(join(baseTmp, 'case-probe'), { recursive: true });
+  const caseInsensitive = existsSync(join(baseTmp, 'CASE-PROBE'));
+  test.skipIf(!caseInsensitive)('a case-variant Cursor alias is still the Claude skills dir', () => {
     const home = join(baseTmp, 'cursor-alias-case');
     mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
-    // Only meaningful on a case-insensitive disk (the macOS default).
-    if (!existsSync(join(home, '.CLAUDE', 'skills'))) return;
     mkdirSync(join(home, '.cursor'), { recursive: true });
     symlinkSync(join(home, '.CLAUDE', 'skills'), hostDir(home, 'cursor'));
     const path = isolatedPath(['claude']);
@@ -408,6 +410,20 @@ describe('setup --host flags', () => {
     for (const skill of SKILLS) {
       expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
     }
+  });
+
+  test('--host auto fails when a skipped non-Cursor host was the only one detected', () => {
+    const home = join(baseTmp, 'codex-only-unsafe');
+    const outside = join(baseTmp, 'codex-data-outside-home');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    symlinkSync(outside, join(home, '.codex'));
+    const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['codex']), true);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('Warning: skipping codex:');
+    expect(r.stderr).toContain('no detected host has a safe skills directory');
+    expect(existsSync(join(home, '.claude'))).toBe(false);
+    expect(readdirSync(outside)).toEqual([]);
   });
 
   test('--host auto fails when every detected host is unsafe', () => {

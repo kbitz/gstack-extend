@@ -106,7 +106,7 @@ elif [ ! -f "$_EXTEND_ROOT/VERSION" ]; then
 else
   _LOCAL=$(tr -d '[:space:]' < "$_EXTEND_ROOT/VERSION")
   _REMOTE=$(curl -sf --max-time 5 https://raw.githubusercontent.com/kbitz/gstack-extend/main/VERSION 2>/dev/null | tr -d '[:space:]')
-  if [ -z "$_REMOTE" ]; then
+  if ! printf '%s\n' "$_REMOTE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
     echo "STATE: offline (local v$_LOCAL)"
   elif [ "$_LOCAL" = "$_REMOTE" ]; then
     echo "STATE: up-to-date (v$_LOCAL)"

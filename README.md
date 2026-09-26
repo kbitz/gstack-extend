@@ -91,7 +91,9 @@ remains an error even when other skill names could be installed.
 
 In `--host auto`, a detected host whose skills directory is outside HOME, not
 owned by you, or world-writable is skipped with a warning, and the other hosts
-still install. Naming that host with `--host` stops setup instead.
+still install. Naming that host with `--host` stops setup instead. If nothing
+is left to install, setup installs Claude when only Cursor was skipped (Cursor
+also reads `~/.claude/skills`) and fails otherwise.
 
 Setup also registers the checkout as `gstack-extend` in
 `$HOME/.gstack-extend/projects.json`. It ignores `GSTACK_EXTEND_STATE_DIR` for

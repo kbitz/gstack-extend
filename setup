@@ -285,7 +285,12 @@ preflight_dir() {
       continue
     fi
     if [ -L "$target/SKILL.md" ] && ! extend_owned_link "$target/SKILL.md" "$skill"; then
-      echo "Warning: $target/SKILL.md links outside a gstack-extend checkout, not overwriting" >&2
+      if [ -e "$target/SKILL.md" ]; then
+        echo "Warning: $target/SKILL.md links outside a gstack-extend checkout, not overwriting" >&2
+      else
+        echo "Warning: $target/SKILL.md links to a missing file, not overwriting." >&2
+        echo "  If it was a gstack-extend install from a moved checkout, remove the link and re-run setup." >&2
+      fi
       continue
     fi
   done
@@ -422,7 +427,7 @@ fi
 # Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
 # world-writable) instead of stopping every host; a host named with --host still stops setup.
 if [ "$HOST" = "auto" ]; then
-  _claude_unsafe=0
+  _skipped_non_cursor=0
   for _host in claude codex opencode cursor; do
     case "$_host" in
       claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
@@ -434,16 +439,17 @@ if [ "$HOST" = "auto" ]; then
       echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
       echo "  Fix that directory, then run setup --host $_host." >&2
       case "$_host" in
-        claude) INSTALL_CLAUDE=0; _claude_unsafe=1 ;;
-        codex) INSTALL_CODEX=0 ;;
-        opencode) INSTALL_OPENCODE=0 ;;
+        claude) INSTALL_CLAUDE=0; _skipped_non_cursor=1 ;;
+        codex) INSTALL_CODEX=0; _skipped_non_cursor=1 ;;
+        opencode) INSTALL_OPENCODE=0; _skipped_non_cursor=1 ;;
         cursor) INSTALL_CURSOR=0 ;;
       esac
     fi
   done
-  # Skipping every detected host falls back to Claude, as detecting none does, unless Claude was the unsafe one.
+  # Cursor also reads ~/.claude/skills, so a lone skipped Cursor falls back to Claude as detecting nothing does.
+  # Any other skipped host would not read a Claude install, so that stays a failure.
   if ! any_host_selected; then
-    if [ "$_claude_unsafe" -eq 1 ]; then
+    if [ "$_skipped_non_cursor" -eq 1 ]; then
       echo "Error: no detected host has a safe skills directory; nothing installed." >&2
       echo "$USAGE" >&2
       exit 1

@@ -285,7 +285,7 @@ If a /pair-review session exists for this project, probe via the session-paths h
 # Start with the _EXTEND_ROOT=… line the preamble printed.
 case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
-find "$(session_dir pair-review)" -maxdepth 3 -name report.md -exec ls -t {} + 2>/dev/null
+find "$(session_dir pair-review)" -maxdepth 3 -name report.md -exec ls -t {} + 2>/dev/null || true
 ```
 
 Skim the most recent session's report.md if present. Previously-tested areas are where CC-assisted verification would
