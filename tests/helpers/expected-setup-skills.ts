@@ -10,4 +10,5 @@ export const EXPECTED_SETUP_SKILLS = [
   'gstack-extend-init',
   'review-and-prep',
   'implement',
+  'ship-and-land',
 ] as const;

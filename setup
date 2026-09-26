@@ -112,6 +112,7 @@ SKILLS=(
   gstack-extend-init
   review-and-prep
   implement
+  ship-and-land
 )
 
 LEGACY_SKILLS=(

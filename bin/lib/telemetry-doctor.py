@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep, which
 
 SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-plan",
-          "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement")
+          "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement", "ship-and-land")
 RESUMABLE = {"pair-review", "review-and-prep", "test-plan"}
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30

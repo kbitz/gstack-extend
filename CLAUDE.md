@@ -28,8 +28,8 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
 Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
-`TELEMETRY_SKILLS` covers all nine setup skills; protocol/preamble cohorts stay
-narrow. The three utility/workflow skills may carry only telemetry SHARED markers.
+`TELEMETRY_SKILLS` covers all ten setup skills; protocol/preamble cohorts stay
+narrow. The four utility/workflow skills may carry only telemetry SHARED markers.
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
@@ -70,6 +70,7 @@ Key routing rules:
 - Code review, check my diff → invoke review
 - Implement the plan, build this plan → invoke implement (targeted checks, then a fresh-session review-and-prep handoff)
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
+- Ship and land, finish a prepared PR → invoke ship-and-land (reuse verified evidence; run missing/stale stages, then land)
 - Resume review and prep after manual testing, continue the paused draft PR → invoke review-and-prep with args "resume"
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
