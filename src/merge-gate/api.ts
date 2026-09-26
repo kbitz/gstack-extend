@@ -36,14 +36,16 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
   if (rules.length === 0) return pairs;
   const blocks = rules.flatMap(r => r.matchers).filter(m => m.within);
   for (const hunk of hunks) {
-    const inside = new Map<ApiMatcher, boolean>();
-    for (const m of blocks) inside.set(m, m.within ? regex(m.within.open).test(hunk.context) : false);
-    for (const line of hunk.lines) {
+    // `context`: only git's hunk header named the opener, so the block may already be closed.
+    const inside = new Map<ApiMatcher, false | 'context' | 'open'>();
+    for (const m of blocks) inside.set(m, m.within && regex(m.within.open).test(hunk.context) ? 'context' : false);
+    for (const raw of hunk.lines) {
       const hit = new Set<string>();
       for (const rule of rules) {
         if (rule.unless && hit.has(rule.unless)) continue;
         for (const m of rule.matchers) {
           if (m.within && !inside.get(m)) continue;
+          const line = textFor(m, raw);
           // A closing delimiter can follow the final member on the same line.
           const close = m.within ? regex(m.within.close).exec(line) : null;
           const candidate = close ? line.slice(0, close.index) : line;
@@ -56,18 +58,29 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
       }
       for (const m of blocks) {
         if (!m.within) continue;
-        if (inside.get(m)) {
-          if (regex(m.within.close).test(line)) inside.set(m, false);
-          // A hunk header can name an export list that already closed. An
-          // observed nonmember statement invalidates that stale context.
-          else if (m.name.from === 'export-list' && line.trim() !== '' &&
-            !regex(m.within.open).test(line) && !regex(m.pattern).test(line) &&
-            !/^\s*(?:\/\/|\/\*|\*)/.test(line)) inside.set(m, false);
-        } else if (regex(m.within.open).test(line)) inside.set(m, true);
+        const line = textFor(m, raw);
+        const state = inside.get(m);
+        if (state && regex(m.within.close).test(line)) inside.set(m, false);
+        else if (regex(m.within.open).test(line)) inside.set(m, 'open');
+        // A hunk header can name a block that already closed. An observed
+        // statement outside it invalidates that stale context, never a visible opener.
+        else if (state === 'context' && outsideBlock(m, line)) inside.set(m, false);
       }
     }
   }
   return pairs;
+}
+
+/** A nonmember export-list line, or a column-zero statement after a tab-indented Go block. */
+function outsideBlock(m: ApiMatcher, line: string): boolean {
+  if (line.trim() === '' || /^\s*(?:\/\/|\/\*|\*)/.test(line)) return false;
+  return m.name.from === 'export-list' ? !regex(m.pattern).test(line) : /^\S/.test(line);
+}
+
+/** Export-list comments cannot open, close, or name members; other rules see the raw line. */
+function textFor(m: ApiMatcher, line: string): string {
+  if (m.name.from !== 'export-list') return line;
+  return line.replace(/\/\*.*?\*\//g, ' ').replace(/\/\/.*$/, '');
 }
 
 function namesOf(spec: ApiName, m: RegExpExecArray, path: string): string[] {

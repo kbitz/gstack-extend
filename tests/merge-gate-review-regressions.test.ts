@@ -163,6 +163,27 @@ process.exit(result.status ?? 1);
     });
   }
 
+  for (const [kind, file, after] of [
+    ['pyproject', 'pyproject.toml', 'project = { name = "demo", dependencies = ["requests"] }\n'],
+    ['pyproject', 'pyproject.toml', '[tool]\npoetry = { dependencies = { requests = "^2" } }\n'],
+    ['cargo', 'Cargo.toml', "target = { 'cfg(unix)' = { dependencies = { serde = \"1\" } } }\n"],
+  ] as const) {
+    test(`an inline table hiding ${kind} dependencies is unverifiable: ${after.trim()}`, () => {
+      expect(parseManifest(kind, '', after).unverifiable).toContain('inline table that contains dependencies');
+      const { evidence } = collect(input(changeRepo(file, '', after)));
+      const verdict = decide(evidence, DEFAULT_POLICY, new Date(NOW), {
+        evidenceId: 'a'.repeat(64), replay: false, gstackVersion: 'test',
+      });
+      expect(verdict.reasons.map(r => r.code)).toContain('deps_unverifiable');
+      expect(verdict.would_merge).toBe(false);
+    });
+  }
+
+  test('an inline table without dependency keys stays verifiable', () => {
+    expect(parseManifest('pyproject', '[project]\nname = "a"\n', '[project]\nname = "a"\nurls = { Home = "https://example.com" }\n'))
+      .toEqual({ added: [], removed: [], unverifiable: null });
+  });
+
   for (const unreadable of [false, true]) {
     test(`linked-worktree info/attributes keeps a logical subject (${unreadable ? 'unreadable' : 'effective'})`, () => {
       const repo = changeRepo();

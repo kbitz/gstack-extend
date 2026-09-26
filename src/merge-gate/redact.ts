@@ -17,6 +17,9 @@ export function firstLine(text: string): string {
  * evidence never stores an absolute local path (ENG-11).
  */
 export function stripRemoteUrl(raw: string): string {
+  // Git remote-helper syntax `<transport>::<address>`: strip the address too.
+  const helper = /^([A-Za-z0-9][A-Za-z0-9+.-]*)::(.*)$/s.exec(raw);
+  if (helper) return `${helper[1]}::${stripRemoteUrl(helper[2] ?? '')}`;
   if (/^file:/i.test(raw) || /^(?:\/|\.\.?(?:\/|$)|~)/.test(raw)) {
     const last = raw.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
     return `local:${last}`;
@@ -76,8 +79,9 @@ export function parsePrUrl(rawUrl: string): (RepoIdentity & { number: number }) 
     return null;
   }
   const parts = u.pathname.split('/').filter(p => p !== '');
-  const pull = parts.indexOf('pull');
-  if (pull < 2 || parts.length < pull + 2) return null;
+  // Always `/owner/repo/pull/N`; an owner or repository may itself be named `pull`.
+  const pull = 2;
+  if (parts[pull] !== 'pull' || parts.length < pull + 2) return null;
   const num = Number(parts[pull + 1]);
   if (!Number.isInteger(num)) return null;
   const name = (parts[pull - 1] ?? '').replace(/\.git$/i, '');

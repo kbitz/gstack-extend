@@ -237,7 +237,7 @@ export const API_RULES: ApiRule[] = [
     extensions: TS_EXTENSIONS,
     matchers: [{
       pattern: {
-        source: String.raw`^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\s*\*\s*|(?:function|class|(?:const\s+)?enum|const|let|var|interface|type|namespace|module)\s+)(${JS_IDENT})`,
+        source: String.raw`^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\s*\*\s*|(?:function|class|(?:const\s+)?enum|const|let|var|interface|type|namespace|module)\s+)(?!(?:extends|implements)\b)(${JS_IDENT})`,
         flags: '',
       },
       name: { from: 'group', groups: [1] },
@@ -317,7 +317,7 @@ export const API_RULES: ApiRule[] = [
     extensions: ['.rs'],
     matchers: [{
       pattern: {
-        source: String.raw`^\s*pub\s+(?:async\s+)?(?:unsafe\s+)?(?:fn|struct|enum|trait|type|const|static|mod|union)\s+([A-Za-z_]\w*)`,
+        source: String.raw`^\s*pub\s+(?:(?:const|async|unsafe)\s+)*(?:extern\s+(?:"[^"]*"\s+)?)?(?:fn|struct|enum|trait|type|const|static(?:\s+mut)?|mod|union)\s+([A-Za-z_]\w*)`,
         flags: '',
       },
       name: { from: 'group', groups: [1] },
@@ -441,5 +441,5 @@ export const GATE_FINGERPRINTS: Record<string, string> = {
 };
 
 export const COLLECTOR_FINGERPRINTS: Record<string, string> = {
-  '1': '94a4b7452b0b3367c66faab4778a98abc2af4a51e21ab4277152bf137a3becd2',
+  '1': 'ab2bc04259983d63e481b72b54c29c6cf821fd3386defa777fd3e096a94484c6',
 };

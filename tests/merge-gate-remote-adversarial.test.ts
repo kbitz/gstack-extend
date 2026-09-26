@@ -3,9 +3,10 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { main } from '../src/merge-gate/cli.ts';
-import { assertArgvAllowed } from '../src/merge-gate/exec.ts';
+import { parseManifest } from '../src/merge-gate/deps.ts';
+import { assertArgvAllowed, buildChildEnv } from '../src/merge-gate/exec.ts';
 import { GH_FIELDS } from '../src/merge-gate/registry.ts';
-import { identityMatches, parsePrUrl, parseRemote, repoSpecFromRemote } from '../src/merge-gate/redact.ts';
+import { identityMatches, parsePrUrl, parseRemote, repoSpecFromRemote, stripRemoteUrl } from '../src/merge-gate/redact.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 
 const fixtureUser = 'user';
@@ -61,6 +62,35 @@ test('HTTP ports remain explicit and local paths do not become remote identities
   for (const remote of ['/tmp/o/r.git', '../o/r.git', './o/r.git', 'file:///tmp/o/r.git', 'o/r.git', './dir:with-colon/o/r.git']) {
     expect(parseRemote(remote)).toBeNull();
   }
+});
+
+test('transport::address remotes strip credentials and local paths from the address', () => {
+  const creds = `${fixtureUser}:${fixturePassword}@`;
+  expect(stripRemoteUrl(`hg::https://${creds}hg.example.com/o/r`)).toBe('hg::https://hg.example.com/o/r');
+  expect(stripRemoteUrl(`https::https://${creds}github.com/o/r.git`)).toBe('https::https://github.com/o/r.git');
+  expect(stripRemoteUrl('gcrypt::/home/someone/backup.git')).toBe('gcrypt::local:backup.git');
+});
+
+test('requirement names keep no URL credentials', () => {
+  const creds = `${fixtureUser}:${fixturePassword}@`;
+  const head = `https://${creds}packages.example.com/pkg-1.0.whl\n-e git+https://${creds}github.com/o/lib.git#egg=lib\n`;
+  expect(parseManifest('requirements', '', head).added).toEqual([
+    { name: '-e git+https://github.com/o/lib.git#egg=lib', classification: 'remote' },
+    { name: 'https://packages.example.com/pkg-1.0.whl', classification: 'remote' },
+  ]);
+});
+
+test('an owner or repository named pull still parses as a pull request URL', () => {
+  expect(parsePrUrl('https://github.com/o/pull/pull/5')).toEqual({ host: 'github.com', owner: 'o', name: 'pull', number: 5 });
+  expect(parsePrUrl('https://github.com/pull/r/pull/5')).toEqual({ host: 'github.com', owner: 'pull', name: 'r', number: 5 });
+  expect(parsePrUrl('https://github.com/o/pull/5')).toBeNull();
+});
+
+test('forced color and TTY settings do not reach git or gh', () => {
+  const env = buildChildEnv({ PATH: '/bin', CLICOLOR_FORCE: '1', GH_FORCE_TTY: '1' });
+  expect(env.CLICOLOR_FORCE).toBeUndefined();
+  expect(env.GH_FORCE_TTY).toBeUndefined();
+  expect(env.PATH).toBe('/bin');
 });
 
 const baseTmp = makeBaseTmp('merge-gate-port-');

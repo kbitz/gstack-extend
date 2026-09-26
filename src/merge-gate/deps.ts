@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { redact } from './redact.ts';
 import { DEP_GRAMMAR, LOCKFILES, UNSUPPORTED_MANIFESTS, regex as re } from './registry.ts';
 
 export type DepClass = 'remote' | 'local' | 'indirect';
@@ -175,7 +176,7 @@ function requirementStmt(raw: string, lines: number[]): Stmt {
       return bad(`requirements include (${flag}) is not parsed by collector v1 ${LIMIT}`);
     }
     if (g.editable_options.includes(flag)) {
-      return ok([{ name: text, classification: re(g.local).test(value) ? 'local' : 'remote' }]);
+      return ok([{ name: redact(text), classification: re(g.local).test(value) ? 'local' : 'remote' }]);
     }
     if (g.ignored_options.includes(flag)) return ok([]);
     return bad(`requirements option ${flag} is outside the collector v1 grammar ${LIMIT}`);
@@ -183,8 +184,9 @@ function requirementStmt(raw: string, lines: number[]): Stmt {
   const noOpts = text.replace(re(g.trailing_option), '');
   const semi = noOpts.indexOf(';');
   const body = (semi >= 0 ? noOpts.slice(0, semi) : noOpts).trim();
-  if (re(g.local).test(body)) return ok([{ name: body, classification: 'local' }]);
-  if (re(g.url).test(body)) return ok([{ name: body, classification: 'remote' }]);
+  // A URL requirement's text is its name; keep embedded credentials out of evidence.
+  if (re(g.local).test(body)) return ok([{ name: redact(body), classification: 'local' }]);
+  if (re(g.url).test(body)) return ok([{ name: redact(body), classification: 'remote' }]);
   const m = re(g.requirement).exec(body);
   if (!m?.[1]) return bad(`requirements line is outside the collector v1 grammar ${LIMIT}`);
   const direct = (m[2] ?? '').trim();
@@ -368,7 +370,12 @@ function readToml(text: string, locate: (full: string[]) => DepLoc): Stmt[] {
       continue;
     }
     const loc = locate([...st.table, ...st.key]);
-    if (loc.kind === 'none') continue;
+    if (loc.kind === 'none') {
+      if (hidesDeps([...st.table, ...st.key], st.value, locate)) {
+        bad(st.lines, 'TOML inline table that contains dependencies is not parsed by collector v1');
+      }
+      continue;
+    }
     if (st.inArray || loc.kind === 'unsupported') {
       bad(st.lines, 'TOML dependency key under an array of tables is not parsed by collector v1');
       continue;
@@ -426,6 +433,14 @@ function readToml(text: string, locate: (full: string[]) => DepLoc): Stmt[] {
     ok(def.lines, [{ name: def.name, classification: def.local ? 'local' : 'remote' }]);
   }
   return out;
+}
+
+/** An inline table under a non-dependency key can still place keys at a dependency location. */
+function hidesDeps(path: string[], value: string, locate: (full: string[]) => DepLoc): boolean {
+  return (inlineEntries(value) ?? []).some(e => {
+    const full = [...path, ...e.key];
+    return locate(full).kind !== 'none' || hidesDeps(full, e.value, locate);
+  });
 }
 
 function isLocalAttr(attrs: string[], value: string): boolean {

@@ -40,6 +40,30 @@ test('braces in export member comments do not terminate the list', () => {
     .toEqual([{ rule: 'ts-list', name: 'a' }, { rule: 'ts-list', name: 'b' }]);
 });
 
+for (const [label, lines, context, names] of [
+  ['a closing brace in a line comment', ['export {', '  a, // }', '  b, c,', '};'], '', ['a', 'b', 'c']],
+  ['a closing brace in a block comment', ['export { a, /* } */', '  b,', '}'], '', ['a', 'b']],
+  ['a block-commented member', ['export {', '  a, /* deprecated */', '  b,', '};'], '', ['a', 'b']],
+  ['a block-commented member in hunk context', ['  a, /* deprecated */', '  b,'], 'export {', ['a', 'b']],
+  ['an unrecognized member under a visible opener', ['export {', '  a,', '  café,', '  b,', '};'], '', ['a', 'b']],
+] as const) {
+  test(`export-list comments and members: ${label}`, () => {
+    expect(scanLines('api.ts', [...lines], context).map(p => p.name)).toEqual([...names]);
+  });
+}
+
+test('Rust qualifiers and TS anonymous default classes do not become names', () => {
+  expect(scanLines('lib.rs', ['pub const fn new() {}', 'pub static mut COUNT: u32 = 0;', 'pub const unsafe fn raw() {}', 'pub extern "C" fn cb() {}', 'pub const LIMIT: u32 = 1;']).map(p => p.name))
+    .toEqual(['new', 'COUNT', 'raw', 'cb', 'LIMIT']);
+  expect(scanLines('api.ts', ['export default class extends Base {}'])).toEqual([{ rule: 'ts-default', name: 'default@api.ts' }]);
+});
+
+test('a column-zero statement invalidates stale Go block hunk context', () => {
+  expect(scanLines('api.go', ['type config struct {', '\tField int', '}'], 'const (')).toEqual([]);
+  expect(scanLines('api.go', ['\tB = 2', '\t// note', '\tC'], 'const ('))
+    .toEqual([{ rule: 'go-exported', name: 'B' }, { rule: 'go-exported', name: 'C' }]);
+});
+
 test('Go block members still end only at their closing line', () => {
   expect(scanLines('api.go', ['const (', '\tA = iota', '\tB', ')']))
     .toEqual([{ rule: 'go-exported', name: 'A' }, { rule: 'go-exported', name: 'B' }]);

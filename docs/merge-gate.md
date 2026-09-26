@@ -336,8 +336,8 @@ an unchanged one does not. A deleted manifest never blocks.
   `--extra-index-url`, `-f`, `--find-links`, `--trusted-host`, `--no-index`,
   `--pre`, `--prefer-binary`, `--require-hashes`, `--only-binary`,
   `--no-binary`, `--use-feature`) are ignored. `-e` and URL lines count by
-  their full text. `-r` / `-c` includes and any other option are outside the
-  grammar.
+  their full text, with URL credentials removed. `-r` / `-c` includes and any
+  other option are outside the grammar.
 - `pyproject.toml`: `[project]` `dependencies` and `optional-dependencies`
   only (metadata keys are not dependencies), `[tool.poetry.dependencies]`,
   `[tool.poetry.dev-dependencies]`, and `[tool.poetry.group.<g>.dependencies]`,
@@ -348,7 +348,9 @@ an unchanged one does not. A deleted manifest never blocks.
 - TOML is read statement by statement: tables, arrays of tables, multi-line
   arrays and inline tables, and all four string forms. Keys resolve to their
   full dotted path, so dotted and quoted keys are supported. An array of
-  tables under a dependency table is outside the grammar.
+  tables under a dependency table, and an inline table that places a
+  dependency table under another key (`project = { dependencies = [...] }`),
+  are outside the grammar.
 - `go.mod`: `require` lines and blocks, with `//` comments stripped. `module`,
   `go`, `toolchain`, `godebug`, and `tool` are ignored. `replace`, `exclude`,
   `retract`, and unknown directives are outside the grammar.
@@ -382,10 +384,13 @@ are themselves context lines, so names added after them in an existing block
 are not seen. Go block members must be indented with one tab, as `gofmt`
 writes them.
 
-Git context may also name an export list that already closed. The scanner
-resets that context when changed lines reveal a new function or object body.
-If the hunk omits those boundaries and contains only member-like names, it
-can overcount them as exports. This remains a line-based heuristic.
+Git context may also name a block that already closed. The scanner drops
+header-derived context at the first changed line that cannot be inside it: a
+non-member statement for an export list, or a column-zero statement for a Go
+block. A visible opener stays open until its closing line, and comments in an
+export list never open, close, or name members. If the hunk omits those
+boundaries and contains only member-like names, it can overcount them as
+exports. This remains a line-based heuristic.
 
 Test paths (a `test`, `tests`, `__tests__`, or `spec` segment, `*.test.*`,
 `*.spec.*`, `*_test.go`, `test_*.py`, `*_test.py`, `conftest.py`) are
@@ -466,7 +471,7 @@ limitation). Budget reasons add `measured` and `limit`. Blocking reasons add
 | `ref_not_found` | 1 | `--base` or `--head` does not resolve. The fix suggests `<remote>/<ref>` when that commit exists. |
 | `no_merge_base` | 1 | The commits do not share an ancestor. A shallow clone's fix is `git fetch --unshallow`. |
 | `commit_not_local` | 1 | A pull request SHA is missing locally. One fetch line names only the missing refspecs. |
-| `no_remote` | 1 | The selected remote has no URL, or its URL is not host/owner/repo. |
+| `no_remote` | 1 | The selected remote has no URL, its URL is not host/owner/repo, or it is an HTTP(S) URL with a non-default port. |
 | `repo_mismatch` | 1 | Owner and name differ, or both hosts are dotted hostnames and differ. |
 | `gh_missing` | 1 | `gh` is not on `PATH`. |
 | `gh_failed` | 1 | `gh` exited non-zero. The first stderr line is redacted. |
@@ -505,8 +510,9 @@ without `idempotent`. Evidence `v` 1 carries `observed_at`,
 `collection_started_at`, `clock_overridden`, `test_overrides`,
 `collector_version`, `gstack_extend_version`, `git_version`, `partial_clone`,
 `attr_source`, `rename_limit`, `rename_detection_skipped`, `decision_id`,
-`repo.origin` (credentials, query, and fragment removed; a local-path or
-`file://` remote is stored as `local:<last segment>`), `git` file facts
+`repo.origin` (credentials, query, and fragment removed, including the address
+of a `<transport>::<address>` remote; a local-path or `file://` remote is
+stored as `local:<last segment>`), `git` file facts
 (including `api_skipped`), `dependencies`, `public_api`, `collection`, and
 `pr` (`number`, `url`, `repo`, `raw`, `raw_first`, `retry_wait_ms`) in
 pull-request mode. Paths that are not UTF-8 use U+FFFD plus `path_b64`.

@@ -54,7 +54,8 @@ export function buildChildEnv(parent: NodeJS.ProcessEnv, safeDirectories: string
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(parent)) {
     if (key.startsWith('GIT_')) continue;
-    if (key === 'GH_REPO' || key === 'GH_HOST') continue;
+    // Forced color or TTY output would corrupt `gh --json` and git plumbing output.
+    if (['GH_REPO', 'GH_HOST', 'GH_FORCE_TTY', 'CLICOLOR_FORCE'].includes(key)) continue;
     env[key] = value;
   }
   env.LC_ALL = 'C';
