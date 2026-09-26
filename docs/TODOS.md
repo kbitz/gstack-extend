@@ -1,14 +1,5 @@
 # TODOS
 
-## In Progress
-
-### [manual] Native Cursor host installation
-- **Description:** Add `setup --host cursor` and auto-detection through the Cursor command or home directory. Generate native skill copies with ownership-safe refresh and uninstall, verified home-root probes, and telemetry pointer discovery.
-- **Scope:** Included in Track 16D's PR #113 on 2026-09-25. This explicitly expands its original fence to `setup`, the two additional telemetry-only skills, `tests/telemetry.test.ts`, and the canonical blocks in `docs/telemetry.md`; coordinate the setup overlap with Track 16E during review and prep.
-- **Decision:** When `cursor` is on PATH but `~/.cursor` is absent, create the skill directory. When Cursor is absent, leave it absent. Strip `allowed-tools` as Codex does.
-- **Review decisions (2026-09-26):** Setup preserves a `SKILL.md` symlink that points outside a gstack-extend checkout on every host, skips Cursor when `~/.cursor/skills` is another host's skills directory, and in `--host auto` skips a detected host whose skills directory fails the install-path check. Track 16D's `_touches:` now lists the Cursor files. Track 16E shipped first (#110), so `setup` merged cleanly. The resulting Group 16 COLLISIONS and PACKING failures (shared `docs/telemetry.md` with 16A, and 16E still listed in Current Plan) are deferred by the user to the next `/roadmap` run.
-- **Status:** Implementation on the PR branch; version assignment and release bookkeeping remain with /ship.
-
 ## Unprocessed
 
 ### [review] Keep Codex and OpenCode passes out of another host's skills directory
@@ -115,6 +106,13 @@
 - **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs requested `grok-4.7`. Corrected branch matching finds workspace candidates for all 8 Cursor rows, but no complete execution/result/consumption chain was frozen. Record those bindings alongside models, keeping requested and served evidence separate.
 
 ## Completed
+
+### [manual] Native Cursor host installation
+- **Description:** Add `setup --host cursor` and auto-detection through the Cursor command or home directory. Generate native skill copies with ownership-safe refresh and uninstall, verified home-root probes, and telemetry pointer discovery.
+- **Scope:** Included in Track 16D's PR #113 on 2026-09-25. This explicitly expands its original fence to `setup`, the two additional telemetry-only skills, `tests/telemetry.test.ts`, and the canonical blocks in `docs/telemetry.md`; coordinate the setup overlap with Track 16E during review and prep.
+- **Decision:** When `cursor` is on PATH but `~/.cursor` is absent, create the skill directory. When Cursor is absent, leave it absent. Strip `allowed-tools` as Codex does.
+- **Review decisions (2026-09-26):** Setup preserves a `SKILL.md` symlink that points outside a gstack-extend checkout on every host, skips Cursor when `~/.cursor/skills` is another host's skills directory, and in `--host auto` skips a detected host whose skills directory fails the install-path check. Track 16D's `_touches:` now lists the Cursor files. Track 16E shipped first (#110), so `setup` merged cleanly. The resulting Group 16 COLLISIONS and PACKING failures (shared `docs/telemetry.md` with 16A, and 16E still listed in Current Plan) are deferred by the user to the next `/roadmap` run.
+- **Completed:** v0.29.4.0 (2026-09-26)
 
 ### [manual] Keep gstack-extend independent of the maintainer's personal tooling
 - **Description:** gstack-extend should stand on its own. Its features must be usable by any caller, and no shipped artifact (code, docs, tests, TODOS entries, CHANGELOG, commit or PR text) should require or name the maintainer's private orchestrator or personal cross-machine tooling. Reword references generically and add a consumer-agnostic rule to `CLAUDE.md`.

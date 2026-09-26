@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.4.0] - 2026-09-26
+
+### Added
+
+- **Install skills for Cursor.** `setup --host cursor`, and `setup --host auto` when the `cursor` command or `~/.cursor` is present, writes native skill copies under `~/.cursor/skills`. Auto mode still leaves `~/.cursor` absent when Cursor is not detected. A skill you already edited is left alone, and uninstall removes only copies from this checkout. If `~/.cursor/skills` is another host's skills directory, setup skips Cursor instead of replacing that host's files.
+
+### Changed
+
+- **Upgrade and init preambles run code only from a verified gstack-extend checkout.** A project-local `.claude/skills/<skill>/` install no longer resolves an extend root: its update check is skipped, and `/gstack-extend-init` stops until you run `./setup --host auto` from the gstack-extend checkout. A verified root prints `EXTEND_ROOT:` and a paste-safe `_EXTEND_ROOT=` line. Later commands that need the root start with that line. A home install that does not verify prints `EXTEND_ROOT_UNVERIFIED:` with the cause and the fix. Session-state steps refuse to source a helper until that root is verified.
+
+### Fixed
+
+- **Setup leaves skill symlinks alone unless they point at a gstack-extend checkout.** A relative link into this checkout, or into a deleted checkout that setup's own pointer still names, is still refreshed or removed. Any other link is left in place.
+
 ## [0.29.3.0] - 2026-09-25
 
 ### Added
