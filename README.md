@@ -63,6 +63,13 @@ preserves the link and its contents, reports the colliding path even with
 move the personal link if replacing it, then rerun setup. A symlink collision
 remains an error even when other skill names could be installed.
 
+Setup also registers the checkout as `gstack-extend` in
+`$HOME/.gstack-extend/projects.json`. It ignores `GSTACK_EXTEND_STATE_DIR` for
+that child registration; direct `init` still honors the override. Registration
+or audit errors leave the installation usable and print full diagnostics plus
+a HOME-scoped `Retry:` command. Correct the reported cause, then run that
+command in Bash.
+
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 ---
@@ -105,7 +112,7 @@ a VERSION bump (`/ship` writes it).
 - **Group-level deps (DAG)** — Group `_Depends on:` is packer **output**, not input. Paste the packer's `DEPENDS` lines after you name the bins; writing them does not change the schedule. Unspecified means none (ready). First regen after upgrade: `bin/roadmap-pack --materialize` and write any implicit previous-Group edges you still want. The audit parses annotations, detects cycles + forward refs, warns on drifted name anchors (`STALE_DEPS`), and always emits a topologically-ordered adjacency list.
 - **Ship gate** — `bin/roadmap-touches drift --track <id>` hard-fails undeclared committed/staged/unstaged/untracked paths. `report-cross-group` prints soft overlaps across Groups. Created files are `path (new)`.
 - **Scrutiny + closure culture** — TODOS.md entries follow a canonical rich format (`### [source:key=val] Title` + child bullets), spec'd in `docs/source-tag-contract.md` and validated by the `TODO_FORMAT` audit check. Source tags drive per-source scrutiny defaults (`full-review:edge-case → SUGGEST KILL`, observed bugs → KEEP) so the default stops being "add to backlog." Origin tags like `[pair-review:group=N]` route bugs back to the Group that surfaced them (closure bias). Drain dispositions are place / defer / kill / **discharge** (`discharged@<sha>` — already done, not a judgment). Shipped and In Progress IDs stay frozen; Current Plan IDs recycle. A current-plan origin tag resolves by title at inbox drain, not by number. Completed Groups stay in place marked `✓ Complete`. A closure debt dashboard (`IN_FLIGHT_GROUPS` + `ORIGIN_STATS`) renders at the top of every `/roadmap` run. Live `Hotfix:` Groups jump the in-flight queue.
-- **Layout Scaffolding** — When the audit reports misplaced project docs (DOC_LOCATION non-pass), design-mismatch findings outside `docs/designs/` (DOC_TYPE_MISMATCH), or a `docs/ directory absent` finding, `/roadmap` offers a single batch confirm to scaffold the canonical layout (`docs/`, `docs/designs/`, `docs/archive/`) and execute the audit's pre-quoted `git mv` suggestions. That absent-directory finding fires only when the audited repo has a local `bin/roadmap-audit` file, lacks `docs/`, and lacks root project docs (`TODOS.md`, `ROADMAP.md`, `PROGRESS.md`). `CLAUDE.md`, a globally installed audit tool, or registry membership alone do not activate it. Repos without the local file can request scaffolding explicitly with `/roadmap scaffold the layout`. Per-file preflight via `git ls-files --error-unmatch --` chooses `mv` vs `git mv`; collisions on the plain-mv branch HALT with a summary. Idempotent re-run.
+- **Layout Scaffolding** — When the audit reports misplaced project docs (DOC_LOCATION non-pass), design-mismatch findings outside `docs/designs/` (DOC_TYPE_MISMATCH), or a `docs/ directory absent` finding, `/roadmap` offers a single batch confirm to scaffold the canonical layout (`docs/`, `docs/designs/`, `docs/archive/`) and execute the audit's pre-quoted `git mv` suggestions. That absent-directory finding fires only when the audited repo has a local `bin/roadmap-audit` file, lacks `docs/`, and lacks root project docs (`TODOS.md`, `ROADMAP.md`, `PROGRESS.md`). `CLAUDE.md`, a globally installed audit tool, or registry membership alone do not activate it. Repos without the local file can request scaffolding explicitly with `/roadmap scaffold the layout`. Per-file preflight via `git ls-files --error-unmatch --` chooses `mv` vs `git mv`; collisions on the plain-mv branch HALT with a summary. Filenames containing line breaks are displayed with literal `\n` or `\r` and require a manual move; the audit prints no automated move command for them. Idempotent re-run.
 - **Launch batches, not file-ownership themes** — Groups fill to `parallelism_cap` (default 6, hard max 8). Same files → different Groups. Unrelated files → same Group.
 
 ```
@@ -471,16 +478,46 @@ The artifact contract is owned by /test-plan and documented at
 
 ## /gstack-extend-init — Bootstrap a new project
 
-`gstack-extend init <project>` scaffolds the canonical layout (CLAUDE.md, ROADMAP.md, TODOS.md, PROGRESS.md, CHANGELOG.md, VERSION, docs/), registers the project in `~/.gstack-extend/projects.json`, and runs the post-render audit. Detects per-language test command (bun/cargo/go/python) and seeds CLAUDE.md accordingly.
+`gstack-extend init <project>` writes `CLAUDE.md`, `CHANGELOG.md`, and `VERSION`
+at the project root, plus `ROADMAP.md`, `TODOS.md`, `PROGRESS.md`,
+`roadmap-future.md`, and `roadmap-shipped.md` under `docs/`. It creates
+`docs/designs/` and `docs/archive/`, registers the project in
+`~/.gstack-extend/projects.json`, and audits the target project, including when
+it sits inside another Git repository. Language detection (bun/cargo/go/python)
+seeds the test command in `CLAUDE.md`.
+
+Writing a project requires `jq` on PATH. Missing jq or an invalid existing
+registry stops init before project writes; install jq with `brew install jq`
+on macOS or your Linux package manager, or repair the registry as reported.
+Directory and template-write failures name the failed path and stop init.
 
 ```bash
 gstack-extend init ~/dev/my-new-project           # full bootstrap (interactive)
 gstack-extend init ./existing --migrate           # backfill missing canonical files (leaves user-edited alone)
-gstack-extend init ./somewhere --dry-run          # preview; no filesystem changes
+gstack-extend init ./somewhere --dry-run          # preview; no writes, registration, or audit
 gstack-extend init ./headless --no-prompt         # headless mode for scripts/CI
 ```
 
 The CLI is wired into `~/.local/bin/gstack-extend` by `setup` (PATH-permitting); invoke directly via `~/.claude/skills/gstack-extend/bin/gstack-extend init ...` if `~/.local/bin` isn't in your PATH. The `/gstack-extend-init` slash skill wraps the same CLI with conversational UX for Claude Code sessions.
+
+Dry-run warns if jq or registry validation is unavailable; its success only
+confirms that the preview completed. For a real init, success means scaffolding
+and registration completed and the audit process ran successfully. Audit
+findings may still need attention. Fresh default init hides only sections with
+a single exact `STATUS: pass`; all other sections and diagnostics stay visible.
+`--migrate` prints the full audit and preserves existing files. To inspect the
+full audit without rerunning init, use the installed checkout's audit command:
+
+```bash
+~/.claude/skills/gstack-extend/bin/roadmap-audit "/absolute/path/to/project"
+```
+
+If the audit process fails, init exits 1, keeps the rendered files and registry
+entry, and displays both diagnostic streams. Address the reported errors, then
+run the printed `Retry:` command in Bash; it preserves the display name and
+uses `--migrate --no-prompt`. Inspect files after a write failure before retrying,
+because migration does not replace existing files. See `gstack-extend init --help`
+for options and exit codes.
 
 `doctor telemetry [--days N] [--json]` reports local skill telemetry fidelity and
 always exits zero. Project drift checks remain future work. `quota` and
