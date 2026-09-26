@@ -406,14 +406,38 @@ if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
   esac
 fi
 
+# _shell_quote <text> — double-quote for a copy-paste retry command.
+_shell_quote() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//\$/\\\$}
+  s=${s//\`/\\\`}
+  s=${s//!/\"\'!\'\"}
+  printf '"%s"' "$s"
+}
+
+# Records the installed tool in HOME's registry ($HOME/.gstack-extend/projects.json).
+# Direct `gstack-extend init` still honors GSTACK_EXTEND_STATE_DIR. Clearing that
+# variable for this child only keeps an inherited project-state override from
+# redirecting the tool registration. The same unset also selects HOME's effort
+# config for this child's audit; direct init keeps the override.
 if [ -x "$cli_bin_src" ]; then
   _self_register_log=$(mktemp /tmp/gstack-extend-self-register.XXXXXX)
-  if "$cli_bin_src" init --migrate --no-prompt "$SCRIPT_DIR" >/dev/null 2>"$_self_register_log"; then
-    log "Self-registered gstack-extend in ~/.gstack-extend/projects.json"
+  _home_registry="$HOME/.gstack-extend/projects.json"
+  if env -u GSTACK_EXTEND_STATE_DIR "$cli_bin_src" init --migrate --no-prompt --name gstack-extend "$SCRIPT_DIR" >/dev/null 2>"$_self_register_log"; then
+    log "Self-registered gstack-extend in $_home_registry"
   else
-    echo "Note: gstack-extend self-registration skipped (registry write or audit failed)." >&2
-    grep -m1 . "$_self_register_log" 2>/dev/null | sed 's/^/  /' >&2 || true
-    echo "  Retry: gstack-extend init --migrate $SCRIPT_DIR" >&2
+    echo "Warning: gstack-extend registration or audit did not complete. Files or a registry entry may already exist." >&2
+    if [ -s "$_self_register_log" ]; then
+      # The child ran without the caller's state override. Its direct-init
+      # retry would inherit that override again, so label it as child context
+      # and leave one authoritative, HOME-scoped Retry command below.
+      sed 's/^  Retry: /  Child init retry (use setup retry below): /' "$_self_register_log" >&2
+    fi
+    echo "  Registry: $_home_registry" >&2
+    echo "  If that file is corrupt, repair it before retrying. See: gstack-extend init --help" >&2
+    echo "  Retry: env -u GSTACK_EXTEND_STATE_DIR $(_shell_quote "$cli_bin_src") init --migrate --no-prompt --name gstack-extend $(_shell_quote "$SCRIPT_DIR")" >&2
   fi
   rm -f "$_self_register_log"
 fi
