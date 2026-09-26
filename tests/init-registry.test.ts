@@ -10,11 +10,12 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { mkScope } from './helpers/init-scope.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const LIB = join(ROOT, 'bin', 'lib', 'projects-registry.sh');
@@ -25,9 +26,7 @@ afterAll(() => {
 });
 
 function scope(name: string) {
-  const state = join(baseTmp, name);
-  mkdirSync(state, { recursive: true });
-  return state;
+  return mkScope(baseTmp, name).state;
 }
 
 // Source the lib and run a snippet of bash. Returns exit + stdout + stderr.
@@ -203,4 +202,196 @@ describe('atomic write invariant', () => {
       expect(reg.projects.length).toBe(i + 1);
     }
   });
+});
+
+describe('concurrent registry upserts', () => {
+  test('eight async writers leave a committed row while another is pending', async () => {
+    const scoped = mkScope(baseTmp, 'concurrent');
+    const regPath = join(scoped.state, 'projects.json');
+    const sentinel = {
+      slug: 'sentinel',
+      name: 'Sentinel',
+      path: '/sentinel',
+      remote_url: null,
+      base_branch: 'main',
+      version_scheme: '4-digit',
+      created_at: '2020-01-01T00:00:00Z',
+    };
+    writeFileSync(regPath, `${JSON.stringify({ projects: [sentinel] })}\n`);
+    const readyDir = join(scoped.home, 'ready');
+    const startFile = join(scoped.home, 'start');
+    const waveFile = join(scoped.home, 'wave2');
+    const releaseFile = join(scoped.home, 'release');
+    mkdirSync(readyDir, { recursive: true });
+
+    const writers = [
+      { slug: 'shared', name: 'shared-a' },
+      { slug: 'shared', name: 'shared-b' },
+      { slug: 'w0', name: 'writer-0' },
+      { slug: 'w1', name: 'writer-1' },
+      { slug: 'w2', name: 'writer-2' },
+      { slug: 'w3', name: 'writer-3' },
+      { slug: 'w4', name: 'writer-4' },
+      { slug: 'w5', name: 'writer-5' },
+    ];
+    const known = new Map<string, Set<string>>();
+    known.set('sentinel', new Set(['Sentinel']));
+    for (const writer of writers) {
+      const names = known.get(writer.slug) ?? new Set<string>();
+      names.add(writer.name);
+      known.set(writer.slug, names);
+    }
+
+    const children: Array<{
+      child: ReturnType<typeof spawn>;
+      closed: boolean;
+      closedPromise: Promise<void>;
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      error?: Error;
+    }> = [];
+    const cleanupErrors: string[] = [];
+    const deadline = Date.now() + 10_000;
+    const poll = () => new Promise<void>((resolve) => setTimeout(resolve, 15));
+
+    const script = `
+set -euo pipefail
+source "$LIB"
+touch "$READY/$I"
+while [ ! -f "$START" ]; do sleep 0.02; done
+if [ "$I" = "7" ]; then
+  while [ ! -f "$WAVE" ]; do sleep 0.02; done
+fi
+registry_upsert "$SLUG" "$NAME" "/p/$NAME" "" main 4-digit 2026-01-01T00:00:00Z
+touch "$READY/done-$I"
+while [ ! -f "$RELEASE" ]; do sleep 0.02; done
+`;
+
+    function assertSnapshot(raw: string, duringOverlap: boolean) {
+      const doc = JSON.parse(raw) as { projects: Array<Record<string, string | null>> };
+      expect(Array.isArray(doc.projects)).toBe(true);
+      const slugs = doc.projects.map((row) => row.slug);
+      expect(new Set(slugs).size).toBe(slugs.length);
+      expect(slugs).toContain('sentinel');
+      let submitted = 0;
+      for (const row of doc.projects) {
+        const names = known.get(String(row.slug));
+        expect(names, `unexpected slug ${row.slug}`).toBeDefined();
+        expect(names?.has(String(row.name))).toBe(true);
+        expect(row.path).toBe(row.slug === 'sentinel' ? '/sentinel' : `/p/${row.name}`);
+        expect(row.base_branch).toBe('main');
+        expect(row.version_scheme).toBe('4-digit');
+        expect(row.remote_url).toBeNull();
+        expect(row.created_at).toBe(row.slug === 'sentinel' ? sentinel.created_at : '2026-01-01T00:00:00Z');
+        expect(Object.keys(row).sort()).toEqual(Object.keys(sentinel).sort());
+        if (row.slug !== 'sentinel') submitted += 1;
+      }
+      if (!duringOverlap) expect(submitted).toBeGreaterThanOrEqual(1);
+      return submitted;
+    }
+
+    function signalGroups(signal: NodeJS.Signals) {
+      for (const { child } of children) {
+        if (!child.pid) continue;
+        try { process.kill(-child.pid, signal); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+            cleanupErrors.push(`${signal} ${child.pid}: ${error}`);
+          }
+        }
+      }
+    }
+
+    try {
+      for (let i = 0; i < writers.length; i++) {
+        const child = spawn('bash', ['-c', script], {
+          detached: true,
+          env: {
+            PATH: process.env.PATH ?? '/usr/bin:/bin',
+            HOME: scoped.home,
+            GSTACK_EXTEND_STATE_DIR: scoped.state,
+            GSTACK_STATE_ROOT: scoped.groot,
+            LIB,
+            READY: readyDir,
+            START: startFile,
+            WAVE: waveFile,
+            RELEASE: releaseFile,
+            I: String(i),
+            SLUG: writers[i]!.slug,
+            NAME: writers[i]!.name,
+          },
+        });
+        const record = {
+          child, closed: false, closedPromise: Promise.resolve(),
+          exitCode: null as number | null, stdout: '', stderr: '', error: undefined as Error | undefined,
+        };
+        record.closedPromise = new Promise<void>((resolve) => {
+          child.once('close', (code) => {
+            record.closed = true;
+            record.exitCode = code;
+            resolve();
+          });
+        });
+        child.once('error', (error) => { record.error = error; });
+        child.stdout?.on('data', (chunk) => { record.stdout += String(chunk); });
+        child.stderr?.on('data', (chunk) => { record.stderr += String(chunk); });
+        children.push(record);
+      }
+
+      while (readdirSync(readyDir).filter((name) => /^\d+$/.test(name)).length < 8) {
+        const failed = children.find((record) => record.error || record.closed);
+        if (failed) throw new Error(`writer failed before readiness: ${failed.error ?? failed.stderr}`);
+        if (Date.now() > deadline) throw new Error('writers did not become ready within the workload deadline');
+        await poll();
+      }
+      writeFileSync(startFile, 'go\n');
+
+      let sawPending = false;
+      let liveSamples = 0;
+      while (children.some((record) => !record.closed)) {
+        const failed = children.find((record) => record.error || (record.closed && record.exitCode !== 0));
+        if (failed) throw new Error(`writer failed: ${failed.error ?? failed.stderr}`);
+        if (Date.now() > deadline) throw new Error('writers exceeded the 10s workload deadline');
+        // Every observed snapshot must be valid. Never retry a torn write or
+        // swallow an assertion, even if a later writer repairs the document.
+        const liveSubmitted = assertSnapshot(readFileSync(regPath, 'utf8'), true);
+        liveSamples += 1;
+        const latePending = !existsSync(join(readyDir, 'done-7'));
+        if (!sawPending && liveSubmitted >= 1 && latePending) {
+          sawPending = true;
+          writeFileSync(waveFile, 'go\n');
+          writeFileSync(releaseFile, 'go\n');
+        }
+        await poll();
+      }
+      expect(sawPending).toBe(true);
+      expect(liveSamples).toBeGreaterThan(0);
+      expect(children).toHaveLength(8);
+      for (const record of children) {
+        expect(record.error).toBeUndefined();
+        expect(record.exitCode, record.stderr).toBe(0);
+      }
+      assertSnapshot(readFileSync(regPath, 'utf8'), false);
+      const temps = readdirSync(scoped.state).filter((name) => name.includes('.tmp.'));
+      expect(temps).toEqual([]);
+      console.info(`registry concurrency: ${liveSamples} valid live snapshots, committed row with writer pending, 8 exits checked`);
+    } finally {
+      if (children.some((record) => !record.closed)) {
+        signalGroups('SIGTERM');
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        signalGroups('SIGKILL');
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const closed = await Promise.race([
+          Promise.all(children.map((record) => record.closedPromise)).then(() => true),
+          new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 5_000); }),
+        ]);
+        if (!closed) cleanupErrors.push('children did not close their stdio within the 5s cleanup deadline');
+      } finally {
+        clearTimeout(timer);
+      }
+      if (cleanupErrors.length > 0) throw new Error(cleanupErrors.join('\n'));
+    }
+  }, 30_000);
 });

@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { mkScope } from './helpers/init-scope.ts';
 import { runBin } from './helpers/run-bin.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -23,18 +24,12 @@ afterAll(() => {
 });
 
 function scope(name: string, manifest?: { file: string; content: string }) {
-  const home = join(baseTmp, name, 'home');
-  const state = join(baseTmp, name, 'state');
-  const groot = join(baseTmp, name, 'gstack');
-  const target = join(baseTmp, name, 'target');
-  mkdirSync(home, { recursive: true });
-  mkdirSync(state, { recursive: true });
-  mkdirSync(groot, { recursive: true });
+  const scoped = mkScope(baseTmp, name);
   if (manifest) {
-    mkdirSync(target, { recursive: true });
-    writeFileSync(join(target, manifest.file), manifest.content);
+    mkdirSync(scoped.target, { recursive: true });
+    writeFileSync(join(scoped.target, manifest.file), manifest.content);
   }
-  return { home, state, groot, target };
+  return scoped;
 }
 
 function init(scope_: ReturnType<typeof scope>, extra: string[] = []) {
@@ -146,5 +141,36 @@ describe('per-language detect → test_cmd_block', () => {
     init(s);
     const md = readFileSync(join(s.target, 'CLAUDE.md'), 'utf8');
     expect(md).toContain('TODO: define the project test command');
+  });
+});
+
+describe('language precedence', () => {
+  const commands = {
+    bun: 'bun run test',
+    cargo: 'cargo test',
+    go: 'go test ./...',
+    python: 'pytest',
+    unknown: 'TODO: define the project test command',
+  };
+  const rows: Array<{ name: string; files: string[]; expect: keyof typeof commands }> = [
+    { name: 'all', files: ['package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'requirements.txt'], expect: 'bun' },
+    { name: 'no-package', files: ['Cargo.toml', 'go.mod', 'pyproject.toml', 'requirements.txt'], expect: 'cargo' },
+    { name: 'no-cargo', files: ['go.mod', 'pyproject.toml', 'requirements.txt'], expect: 'go' },
+    { name: 'no-go', files: ['pyproject.toml', 'requirements.txt'], expect: 'python' },
+    { name: 'requirements-only', files: ['requirements.txt'], expect: 'python' },
+    { name: 'none', files: [], expect: 'unknown' },
+  ];
+
+  test.each(rows)('$name selects $expect and omits the other commands', (row) => {
+    const s = scope(`precedence-${row.name}`);
+    if (row.files.length > 0) mkdirSync(s.target, { recursive: true });
+    for (const file of row.files) writeFileSync(join(s.target, file), 'x\n');
+    const r = init(s);
+    expect(r.exitCode).toBe(0);
+    const md = readFileSync(join(s.target, 'CLAUDE.md'), 'utf8');
+    expect(md).toContain(commands[row.expect]);
+    for (const [lang, command] of Object.entries(commands)) {
+      if (lang !== row.expect) expect(md).not.toContain(command);
+    }
   });
 });
