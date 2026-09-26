@@ -75,6 +75,12 @@ Cursor may also discover same-named skills in other hosts' directories. If
 On every host, a `SKILL.md` symlink that points anywhere other than a
 gstack-extend checkout's `skills/` directory (a dotfiles-managed personal
 skill, say) is treated like a user-owned file: setup warns and leaves it alone.
+A link into a checkout that no longer exists is repointed only when setup's own
+`.extend-root` beside it still names that checkout.
+
+Cursor is the only host setup keeps out of another host's skills directory.
+If you share `~/.codex/skills` or `~/.config/opencode/skills` with Claude through
+a symlink, that host's copies replace the Claude links, as before.
 
 If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It

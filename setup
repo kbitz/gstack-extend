@@ -189,26 +189,32 @@ generated_copy() {
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
-# A SKILL.md symlink is setup's when it targets <checkout>/skills/<skill>.md: this checkout, another gstack-extend
-# checkout (a worktree or an older clone), or a checkout that no longer exists. Any other link (a dotfiles-managed
-# personal skill, say) is user-owned and treated like a user's regular file.
+# A SKILL.md symlink is setup's when it targets <checkout>/skills/<skill>.md in this checkout or another gstack-extend
+# checkout (a worktree or an older clone), or in a checkout that no longer exists but that setup's own .extend-root
+# beside the link still names. Any other link (a dotfiles-managed personal skill, say) is user-owned and treated like
+# a user's regular file.
 extend_owned_link() {
-  local link="$1" skill="$2" target root
+  local link="$1" skill="$2" target root pointer=""
   target="$(readlink "$link" 2>/dev/null || true)"
   case "$target" in */skills/"$skill".md) ;; *) return 1 ;; esac
   case "$target" in /*) ;; *) target="$(dirname "$link")/$target" ;; esac
   root="${target%/skills/"$skill".md}"
-  [ ! -e "$root" ] || { [ -f "$root/setup" ] && [ -f "$root/bin/update-check" ]; }
+  if [ -e "$root" ]; then
+    [ -f "$root/setup" ] && [ -f "$root/bin/update-check" ]
+  else
+    [ -f "$(dirname "$link")/.extend-root" ] || return 1
+    IFS= read -r pointer < "$(dirname "$link")/.extend-root" || true
+    [ "$pointer" = "$root" ]
+  fi
 }
 
-# Physical path of a directory that may not exist yet: resolve its deepest existing ancestor.
-physical_dir() {
-  local dir="$1" rest=""
-  while [ ! -d "$dir" ]; do
-    rest="/$(basename "$dir")$rest"
-    dir="$(dirname "$dir")"
-  done
-  printf '%s%s\n' "$(cd -P "$dir" && pwd -P)" "$rest"
+# Two skills dirs are the same when their deepest existing ancestors are the same directory (compared by inode, so
+# case variants on a case-insensitive disk match) and the missing parts below them are spelled the same.
+same_skills_dir() {
+  local a="$1" b="$2" rest_a="" rest_b=""
+  while [ ! -d "$a" ]; do rest_a="/$(basename "$a")$rest_a"; a="$(dirname "$a")"; done
+  while [ ! -d "$b" ]; do rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"; done
+  [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
 }
 
 uninstall_from_dir() {
@@ -366,10 +372,9 @@ fi
 # Cursor also reads other hosts' skill dirs. When ~/.cursor/skills is one of them (a symlink to ~/.claude/skills,
 # say), that host owns it: a Cursor pass would turn its installs into copies, or remove them on uninstall.
 if [ "$INSTALL_CURSOR" -eq 1 ]; then
-  _cursor_dir="$(physical_dir "$(host_skills_dir cursor)")"
   for _other in claude codex opencode; do
-    if [ "$_cursor_dir" = "$(physical_dir "$(host_skills_dir "$_other")")" ]; then
-      echo "Warning: $(host_skills_dir cursor) is the $_other skills directory ($_cursor_dir); skipping cursor" >&2
+    if same_skills_dir "$(host_skills_dir cursor)" "$(host_skills_dir "$_other")"; then
+      echo "Warning: $(host_skills_dir cursor) is the $_other skills directory; skipping cursor" >&2
       INSTALL_CURSOR=0
       break
     fi
@@ -417,6 +422,7 @@ fi
 # Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
 # world-writable) instead of stopping every host; a host named with --host still stops setup.
 if [ "$HOST" = "auto" ]; then
+  _claude_unsafe=0
   for _host in claude codex opencode cursor; do
     case "$_host" in
       claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
@@ -428,17 +434,21 @@ if [ "$HOST" = "auto" ]; then
       echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
       echo "  Fix that directory, then run setup --host $_host." >&2
       case "$_host" in
-        claude) INSTALL_CLAUDE=0 ;;
+        claude) INSTALL_CLAUDE=0; _claude_unsafe=1 ;;
         codex) INSTALL_CODEX=0 ;;
         opencode) INSTALL_OPENCODE=0 ;;
         cursor) INSTALL_CURSOR=0 ;;
       esac
     fi
   done
+  # Skipping every detected host falls back to Claude, as detecting none does, unless Claude was the unsafe one.
   if ! any_host_selected; then
-    echo "Error: no detected host has a safe skills directory; nothing installed." >&2
-    echo "$USAGE" >&2
-    exit 1
+    if [ "$_claude_unsafe" -eq 1 ]; then
+      echo "Error: no detected host has a safe skills directory; nothing installed." >&2
+      echo "$USAGE" >&2
+      exit 1
+    fi
+    INSTALL_CLAUDE=1
   fi
 fi
 

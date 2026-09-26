@@ -11,6 +11,18 @@
 
 ## Unprocessed
 
+### [review] Keep Codex and OpenCode passes out of another host's skills directory
+- **Description:** Setup skips Cursor when `~/.cursor/skills` is another host's skills directory. Codex and OpenCode passes still do not. With `~/.codex/skills` (or OpenCode's) symlinked to `~/.claude/skills`, `--host auto` turns the Claude symlinks into copies, overwrites a customized Claude `SKILL.md` that kept its `.extend-root`, and `--host codex --uninstall` removes the Claude install. Skipping them the Cursor way would leave existing shared-directory users with copies the Claude pass never refreshes, so this needs a migration decision.
+- **Effort:** S (human: ~3h / CC: ~25min)
+- **Priority:** P3
+- **Context:** Found by the /review-and-prep adversarial pass on PR #113 (2026-09-26). Predates the PR.
+
+### [review] Surface hosts that setup skipped during update-run
+- **Description:** `bin/update-run` prints `UPGRADE_OK` even when `setup --host auto` skipped a host (an unsafe skills directory, or Cursor sharing another host's directory). The warning goes only to stderr and the upgrade flow reports success, so that host's copies stay stale. Consider a machine-readable skipped-hosts line from setup that update-run forwards.
+- **Effort:** S (human: ~2h / CC: ~15min)
+- **Priority:** P3
+- **Context:** Found by the /review-and-prep adversarial pass on PR #113 (2026-09-26).
+
 ### [plan-ceo-review:track=16D,defer=true] Decide whether PATH is inside the trust boundary for the telemetry wrapper lookup
 - **Description:** `SHARED:telemetry-start` and `SHARED:telemetry-finish` look up `gstack-extend-telemetry` on PATH first. They accept any absolute PATH entry that holds a file with the protocol marker, so an agent environment whose PATH a repository can shape (a direnv `PATH_add`, say) could run a planted wrapper. Track 16D treats the process environment as trusted and pins only `GSTACK_EXTEND_DIR` for `bin/update-check`. Decide whether the telemetry lookup should also prefer home-anchored pointers over PATH, or whether a trusted environment is the documented contract.
 - **Hypothesis (untested):** Agent harness Bash tools run non-interactive shells that do not fire direnv hooks, so the exposure may be theoretical. Measure before changing lookup order.

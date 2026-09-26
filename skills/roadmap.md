@@ -558,7 +558,7 @@ Before commit, assert that every item the proposal placed/killed/deferred/discha
 
 Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."`
 
-**ID renames table.** After `bin/roadmap-renumber` (or a title-matched
+**ID renames table.** After `"$_EXTEND_ROOT/bin/roadmap-renumber"` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
 summary AND the commit message body so users re-anchoring on old IDs
 can find their work. Title-match fallback when you did not drive the

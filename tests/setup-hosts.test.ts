@@ -285,6 +285,31 @@ describe('setup --host flags', () => {
     });
   }
 
+  test('personal links shaped like skills/<name>.md stay user-owned', () => {
+    const home = join(baseTmp, 'personal-skills-shaped');
+    const dotSkills = join(home, 'dotfiles', 'skills');
+    mkdirSync(dotSkills, { recursive: true });
+    const links = {
+      roadmap: join(dotSkills, 'roadmap.md'),
+      implement: '../../../dotfiles/skills/implement.md',
+      'test-plan': join(home, 'unmounted-volume', 'dotfiles', 'skills', 'test-plan.md'),
+    };
+    writeFileSync(join(dotSkills, 'roadmap.md'), 'MINE\n');
+    writeFileSync(join(dotSkills, 'implement.md'), 'MINE\n');
+    for (const [skill, target] of Object.entries(links)) {
+      const dir = join(hostDir(home, 'claude'), skill);
+      mkdirSync(dir, { recursive: true });
+      symlinkSync(target, join(dir, 'SKILL.md'));
+    }
+    const r = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    for (const [skill, target] of Object.entries(links)) {
+      expect(r.stderr).toContain(`${skill}/SKILL.md links outside a gstack-extend checkout`);
+      expect(readlinkSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(target);
+      expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(false);
+    }
+  });
+
   test('links into another or a deleted gstack-extend checkout are still repointed', () => {
     const home = join(baseTmp, 'checkout-links');
     const other = join(home, 'other-checkout');
@@ -298,7 +323,9 @@ describe('setup --host flags', () => {
     mkdirSync(roadmap, { recursive: true });
     mkdirSync(pairReview, { recursive: true });
     symlinkSync(join(other, 'skills', 'roadmap.md'), join(roadmap, 'SKILL.md'));
+    // A deleted checkout is claimed only through the pointer setup wrote beside its link.
     symlinkSync(join(home, 'gone-checkout', 'skills', 'pair-review.md'), join(pairReview, 'SKILL.md'));
+    writeFileSync(join(pairReview, '.extend-root'), `${join(home, 'gone-checkout')}\n`);
     expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
     expect(readlinkSync(join(roadmap, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'roadmap.md'));
     expect(readlinkSync(join(pairReview, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'pair-review.md'));
@@ -343,6 +370,44 @@ describe('setup --host flags', () => {
     const explicit = runSetup(['--host', 'cursor', '--quiet'], home, path, true);
     expect(explicit.exitCode).toBe(1);
     expect(readdirSync(outside)).toEqual([]);
+  });
+
+  test('--host auto falls back to Claude when Cursor is the only detected host and is skipped', () => {
+    for (const layout of ['alias', 'unsafe'] as const) {
+      const home = join(baseTmp, `cursor-only-${layout}`);
+      mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+      if (layout === 'alias') {
+        mkdirSync(join(home, '.cursor'), { recursive: true });
+        symlinkSync(hostDir(home, 'claude'), hostDir(home, 'cursor'));
+      } else {
+        const outside = join(baseTmp, 'cursor-only-outside');
+        mkdirSync(outside, { recursive: true });
+        symlinkSync(outside, join(home, '.cursor'));
+      }
+      const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(), true);
+      expect([layout, r.exitCode]).toEqual([layout, 0]);
+      expect(r.stderr).toContain(layout === 'alias' ? 'skipping cursor' : 'Warning: skipping cursor:');
+      for (const skill of SKILLS) {
+        expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
+      }
+    }
+  });
+
+  test('a case-variant Cursor alias is still the Claude skills dir', () => {
+    const home = join(baseTmp, 'cursor-alias-case');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    // Only meaningful on a case-insensitive disk (the macOS default).
+    if (!existsSync(join(home, '.CLAUDE', 'skills'))) return;
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    symlinkSync(join(home, '.CLAUDE', 'skills'), hostDir(home, 'cursor'));
+    const path = isolatedPath(['claude']);
+    expect(runSetup(['--host', 'claude', '--quiet'], home, path, true).exitCode).toBe(0);
+    const r = runSetup(['--host', 'cursor', '--uninstall', '--quiet'], home, path, true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('skipping cursor');
+    for (const skill of SKILLS) {
+      expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
+    }
   });
 
   test('--host auto fails when every detected host is unsafe', () => {

@@ -120,7 +120,7 @@ fi
 - `no-version-file`: tell user "Can't determine the installed version — `$_EXTEND_ROOT/VERSION` is missing. Re-clone gstack-extend or check the install."
 - `offline`: tell user "Couldn't reach GitHub to check for updates (offline?). You're on v{local}."
 - `up-to-date`: tell user "You're on the latest version (v{local})."
-- `remote ... differs`: rare — the periodic check should have caught it. Follow the **Inline upgrade flow** below, treating the remote version as `{new}`.
+- `remote ... differs`: compare the two versions. If the remote is newer (rare; the periodic check should have caught it), follow the **Inline upgrade flow** below, treating the remote version as `{new}`. If the local version is newer, this is a development checkout ahead of the published release: tell the user "You're on v{local}, ahead of the published v{remote}." and do not upgrade.
 
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
