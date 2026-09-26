@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -1484,6 +1485,11 @@ describe('cli contract', () => {
     const viaLink = spawnSync(link, ['--version'], { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: path, HOME: dir, GSTACK_EXTEND_STATE_DIR: dir } });
     expect(viaLink.status, viaLink.stderr).toBe(0);
     expect(viaLink.stdout).toContain('gate_version: 1');
+    const relDir = realpathSync(mkdirSync(join(dir, 'rel'), { recursive: true }) ?? join(dir, 'rel'));
+    symlinkSync(relative(relDir, realpathSync(BIN)), join(relDir, 'merge-gate'));
+    const viaRel = spawnSync(join(relDir, 'merge-gate'), ['--version'], { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: path, HOME: dir, GSTACK_EXTEND_STATE_DIR: dir } });
+    expect(viaRel.status, viaRel.stderr).toBe(0);
+    expect(viaRel.stdout).toContain('gate_version: 1');
     symlinkSync(join(dir, 'loop-b'), join(dir, 'loop-a'));
     symlinkSync(join(dir, 'loop-a'), join(dir, 'loop-b'));
     const loop = spawnSync(join(dir, 'loop-a'), ['--version'], { encoding: 'utf8', env: fixtureEnv() });
