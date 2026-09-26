@@ -35,7 +35,7 @@ export const CANONICAL_SPAN = [
   "_er_ok() { case \"$1\" in /*) [ -f \"$1/bin/update-check\" ] && [ -x \"$1/bin/update-check\" ] && grep -qx '# extend-root-protocol: v1' \"$1/bin/update-check\" 2>/dev/null ;; *) false ;; esac; }",
   '_EXTEND_ROOT=""',
   '_ER_SEEN=""',
-  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md; do',
+  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do',
   '  case "$_ER_SRC" in /*) ;; *) continue ;; esac',
   '  _ER=$(readlink "$_ER_SRC" 2>/dev/null || true)',
   '  [ -n "$_ER" ] || continue',
@@ -45,7 +45,7 @@ export const CANONICAL_SPAN = [
   '  _ER_SEEN="${_ER_SEEN:-$_ER}"',
   'done',
   'if [ -z "$_EXTEND_ROOT" ]; then',
-  '  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root; do',
+  '  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root "$HOME"/.cursor/skills/"$_ER_SKILL"/.extend-root; do',
   '    case "$_ER_SRC" in /*) ;; *) continue ;; esac',
   '    [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue',
   '    _ER=""',
@@ -69,9 +69,9 @@ export const CANONICAL_SPAN = [
 ].join('\n');
 
 export const FOR_SKILL_LINE =
-  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md; do';
+  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do';
 export const FOR_POINTER_LINE =
-  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root; do';
+  'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root "$HOME"/.cursor/skills/"$_ER_SKILL"/.extend-root; do';
 
 export const WORKFLOW_TAIL = [
   'if [ -n "$_EXTEND_ROOT" ]; then',
@@ -92,7 +92,7 @@ export const UPGRADE_TAIL = WORKFLOW_TAIL.replace(
 
 export const INIT_TAIL = [
   'if [ -z "$_EXTEND_ROOT" ]; then',
-  '  echo "ERROR: cannot locate a verified gstack-extend install. ${_ER_UNVERIFIED:-No gstack-extend skill link or .extend-root pointer under ~/.claude, ~/.codex or ~/.config/opencode. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).}"',
+  '  echo "ERROR: cannot locate a verified gstack-extend install. ${_ER_UNVERIFIED:-No gstack-extend skill link or .extend-root pointer under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).}"',
   '  exit 1',
   'fi',
   'if [ ! -f "$_EXTEND_ROOT/bin/gstack-extend" ] || [ ! -x "$_EXTEND_ROOT/bin/gstack-extend" ]; then',
@@ -110,7 +110,7 @@ export const GUARD_LINE =
 export const GUARD_COMMENT = '# Start with the _EXTEND_ROOT=… line the preamble printed.';
 
 export const NO_INSTALL_MESSAGE =
-  'No gstack-extend install found under ~/.claude, ~/.codex or ~/.config/opencode. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).';
+  'No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).';
 
 export const HANDOFF_PARAGRAPH =
   'Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init\'s later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `' +
@@ -126,7 +126,7 @@ export const RENAMES_ER_LINE =
 export const CMD_BIN_RE =
   /(?:^|[;&|({`]|\$\(|\b(?:do|then|else|if|elif|while|until|exec|source|env|xargs|command|time)\b|!|:|(?:^|\s)\.(?=\s)|\b[A-Za-z_][A-Za-z0-9_]*=\S*\s+)\s*["'`]?(?:\.\/)?bin\//;
 
-export const SKILL_PATH_RE = /\.(?:claude|codex|config\/opencode)\/skills\//g;
+export const SKILL_PATH_RE = /\.(?:claude|codex|config\/opencode|cursor)\/skills\//g;
 export const SKILL_PATH_PREFIXES = ['~/', '$HOME/', '"$HOME"/', '${HOME}/', '"${HOME}"/'];
 
 export function skillPreamble(skill: string, tail: string): string {
@@ -223,7 +223,7 @@ export function writeUpdateCheck(
   chmodSync(path, opts.executable === false ? 0o644 : 0o755);
 }
 
-export function writePointer(home: string, host: 'claude' | 'codex' | 'opencode', skill: string, value: string, newline = true): string {
+export function writePointer(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor', skill: string, value: string, newline = true): string {
   const base = hostDir(home, host, skill);
   mkdirSync(base, { recursive: true });
   const pointer = join(base, '.extend-root');
@@ -231,8 +231,9 @@ export function writePointer(home: string, host: 'claude' | 'codex' | 'opencode'
   return pointer;
 }
 
-export function hostDir(home: string, host: 'claude' | 'codex' | 'opencode', skill: string): string {
+export function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor', skill: string): string {
   if (host === 'claude') return join(home, '.claude', 'skills', skill);
   if (host === 'codex') return join(home, '.codex', 'skills', skill);
+  if (host === 'cursor') return join(home, '.cursor', 'skills', skill);
   return join(home, '.config', 'opencode', 'skills', skill);
 }

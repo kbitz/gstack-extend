@@ -25,7 +25,7 @@ with `bin/config set provenance false`.
 
 ## Installation
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode / Cursor, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/) v1.0+. `setup` checks for `bun` and fails fast with install instructions if it's missing.
 
 Clone and run setup:
 
@@ -42,7 +42,7 @@ bun --cwd ~/.claude/skills/gstack-extend run setup
 ```
 
 Default install is Claude (`~/.claude/skills/<name>/SKILL.md`). For every
-detected agent (Claude, Codex, OpenCode):
+detected agent (Claude, Codex, OpenCode, Cursor):
 
 ```bash
 ~/.claude/skills/gstack-extend/setup --host auto
@@ -53,8 +53,22 @@ detected agent (Claude, Codex, OpenCode):
 | Claude | `~/.claude/skills/<name>/` |
 | Codex | `~/.codex/skills/<name>/` |
 | OpenCode | `~/.config/opencode/skills/<name>/` |
+| Cursor | `~/.cursor/skills/<name>/` |
 
 Each skill is its own directory with `SKILL.md`. The package checkout is never linked as a skill.
+
+For Cursor only, run `setup --host cursor` from the checkout. Auto mode detects
+Cursor when `cursor` is on PATH or `~/.cursor` exists, including an existing
+skill install. Detection can create `~/.cursor/skills`; without either signal,
+auto mode leaves `~/.cursor` absent. Explicit `--host cursor` installs even
+without a detected Cursor installation.
+
+Cursor receives regular-file copies with native skill paths, a multiline
+description, and no `allowed-tools` frontmatter, plus an `.extend-root` pointer
+to the checkout. Setup refreshes generated copies. A user-owned regular
+`SKILL.md` is preserved without claiming ownership, and setup still exits 0.
+Use `setup --host cursor --uninstall` to remove copies owned by this checkout.
+Cursor may also discover same-named skills in other hosts' directories.
 
 If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It
@@ -530,7 +544,7 @@ grep -x '# extend-root-protocol: v1' <root>/bin/update-check
 
 Running `setup` from a worktree repoints every host at that worktree. Re-run `setup --host auto` from the stable checkout before archiving the worktree.
 
-The resolver probes Claude, then Codex, then OpenCode, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
+The resolver probes Claude, then Codex, then OpenCode, then Cursor, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
 
 ---
 

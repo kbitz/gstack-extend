@@ -1,5 +1,13 @@
 # TODOS
 
+## In Progress
+
+### [manual] Native Cursor host installation
+- **Description:** Add `setup --host cursor` and auto-detection through the Cursor command or home directory. Generate native skill copies with ownership-safe refresh and uninstall, verified home-root probes, and telemetry pointer discovery.
+- **Scope:** Included in Track 16D's PR #113 on 2026-09-25. This explicitly expands its original fence to `setup`, the two additional telemetry-only skills, `tests/telemetry.test.ts`, and the canonical blocks in `docs/telemetry.md`; coordinate the setup overlap with Track 16E during review and prep.
+- **Decision:** When `cursor` is on PATH but `~/.cursor` is absent, create the skill directory. When Cursor is absent, leave it absent. Strip `allowed-tools` as Codex does.
+- **Status:** Implementation on the PR branch; review, version assignment, and release bookkeeping remain with the normal review and ship stages.
+
 ## Unprocessed
 
 ### [plan-ceo-review:track=16D,defer=true] Decide whether PATH is inside the trust boundary for the telemetry wrapper lookup

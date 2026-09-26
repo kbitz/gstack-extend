@@ -591,10 +591,11 @@ describe('Track 16D test-plan Phase 8 home paths (L9)', () => {
   const file = join(ROOT, 'skills', 'test-plan.md');
   const content = readFileSync(file, 'utf8');
 
-  test('Phase 8 lists the three home pair-review paths', () => {
+  test('Phase 8 lists the four home pair-review paths', () => {
     expect(content).toContain('~/.claude/skills/pair-review/SKILL.md');
     expect(content).toContain('~/.codex/skills/pair-review/SKILL.md');
     expect(content).toContain('~/.config/opencode/skills/pair-review/SKILL.md');
+    expect(content).toContain('~/.cursor/skills/pair-review/SKILL.md');
   });
 
   test('Phase 8 has no cwd-relative vendored fallback', () => {
@@ -1894,6 +1895,60 @@ function runPreamble(skill: string, home: string, cwd: string, extra: Record<str
 
 describe('Track 16D preamble representatives', () => {
   const cohorts = ['pair-review', 'gstack-extend-upgrade', 'gstack-extend-init'] as const;
+
+  for (const skill of ROOT_RESOLVER_SKILLS) {
+    for (const install of ['pointer', 'symlink', 'unverified'] as const) {
+      test(`Cursor-only ${skill} preamble resolves ${install} installs safely`, () => {
+        const label = `cursor-${skill}-${install}`;
+        const home = join(extendRootTmp, `${label} home`);
+        const root = join(extendRootTmp, `${label} checkout`);
+        const cwd = join(extendRootTmp, `${label}-cwd`);
+        const sentinel = join(extendRootTmp, `${label}-sentinel`);
+        const hostileSentinel = join(extendRootTmp, `${label}-hostile`);
+        mkdirSync(cwd, { recursive: true });
+        writeUpdateCheck(root, { marker: install !== 'unverified', record: true });
+        if (skill === 'gstack-extend-init') {
+          const bin = join(root, 'bin', 'gstack-extend');
+          writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+          chmodSync(bin, 0o755);
+        }
+        const dir = hostDir(home, 'cursor', skill);
+        mkdirSync(dir, { recursive: true });
+        if (install === 'symlink') {
+          mkdirSync(join(root, 'skills'), { recursive: true });
+          writeFileSync(join(root, 'skills', `${skill}.md`), 'skill\n');
+          symlinkSync(join(root, 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
+        } else {
+          writePointer(home, 'cursor', skill, root);
+          writeFileSync(join(dir, 'SKILL.md'), 'generated copy\n');
+        }
+        // A repository-local Cursor install must never override the HOME install.
+        const evil = join(cwd, 'evil');
+        writeUpdateCheck(evil);
+        writeFileSync(join(evil, 'bin', 'update-check'),
+          `#!/bin/sh\n${MARKER_LINE}\nprintf hostile > "$HOSTILE_SENTINEL"\n`);
+        writePointer(cwd, 'cursor', skill, evil);
+        for (const r of runPreamble(skill, home, cwd, {
+          SENTINEL: sentinel, HOSTILE_SENTINEL: hostileSentinel,
+        })) {
+          expect(r.stderr).toBe('');
+          expect(existsSync(hostileSentinel)).toBe(false);
+          if (install === 'unverified') {
+            expect(r.stdout).toContain("lacks the line '# extend-root-protocol: v1'");
+            expect(r.stdout).not.toContain('EXTEND_ROOT:');
+            expect(r.status).toBe(skill === 'gstack-extend-init' ? 1 : 0);
+            expect(existsSync(r.sentinel!)).toBe(false);
+          } else {
+            expect(r.status).toBe(0);
+            expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
+            if (skill !== 'gstack-extend-init') {
+              expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
+            }
+          }
+        }
+      });
+    }
+  }
 
   test('verified root prints EXTEND_ROOT and pins GSTACK_EXTEND_DIR', () => {
     for (const skill of cohorts) {

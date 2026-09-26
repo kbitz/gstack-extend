@@ -1,5 +1,5 @@
 /**
- * Native multi-host setup: --host claude|codex|opencode|auto.
+ * Native multi-host setup: --host claude|codex|opencode|cursor|auto.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -59,9 +59,18 @@ function plantFakeBins(dir: string, names: string[]): void {
   }
 }
 
-function hostDir(home: string, host: 'claude' | 'codex' | 'opencode'): string {
+// Keep the developer's installed agents out of detection tests.
+function isolatedPath(names: string[] = []): string {
+  const bins = join(baseTmp, `isolated-bins-${names.join('-') || 'none'}`);
+  plantFakeBins(bins, names);
+  if (!existsSync(join(bins, 'bun'))) symlinkSync(process.execPath, join(bins, 'bun'));
+  return `${bins}:/bin:/usr/bin`;
+}
+
+function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor'): string {
   if (host === 'claude') return join(home, '.claude', 'skills');
   if (host === 'codex') return join(home, '.codex', 'skills');
+  if (host === 'cursor') return join(home, '.cursor', 'skills');
   return join(home, '.config', 'opencode', 'skills');
 }
 
@@ -155,28 +164,119 @@ describe('setup --host flags', () => {
 
   test('--host auto with no binaries defaults to claude', () => {
     const home = join(baseTmp, 'auto-none');
-    const bins = join(baseTmp, 'empty-bins');
     mkdirSync(home, { recursive: true });
-    mkdirSync(bins, { recursive: true });
-    const bunDir = process.execPath.includes('/')
-      ? process.execPath.replace(/\/[^/]+$/, '')
-      : '/usr/bin';
-    const r = runSetup(['--host', 'auto'], home, `${bins}:${bunDir}:/bin:/usr/bin`, true);
+    const r = runSetup(['--host', 'auto'], home, isolatedPath(), true);
     expect(r.exitCode).toBe(0);
     expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(hostDir(home, 'codex'), 'pair-review'))).toBe(false);
+    expect(existsSync(join(home, '.cursor'))).toBe(false);
   });
 
-  test('--host auto detects all three binaries', () => {
+  for (const detection of ['directory', 'binary', 'existing-skill'] as const) {
+    test(`--host auto --quiet detects Cursor via ${detection}`, () => {
+      const home = join(baseTmp, `auto-cursor-${detection}`);
+      mkdirSync(home, { recursive: true });
+      if (detection === 'directory') mkdirSync(join(home, '.cursor'));
+      if (detection === 'existing-skill') {
+        const dir = join(hostDir(home, 'cursor'), 'pair-review');
+        mkdirSync(dir, { recursive: true });
+        symlinkSync(join(ROOT, 'skills/pair-review.md'), join(dir, 'SKILL.md'));
+      }
+      const path = isolatedPath(detection === 'binary' ? ['cursor'] : []);
+      const r = runSetup(['--host', 'auto', '--quiet'], home, path, true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe('');
+      for (const skill of SKILLS) {
+        const dir = join(hostDir(home, 'cursor'), skill);
+        expect(lstatSync(join(dir, 'SKILL.md')).isFile()).toBe(true);
+        expect(readFileSync(join(dir, '.extend-root'), 'utf8').trim()).toBe(realpathSync(ROOT));
+      }
+      expect(existsSync(join(home, '.claude'))).toBe(false);
+      expect(existsSync(join(home, '.codex'))).toBe(false);
+      expect(existsSync(join(home, '.config', 'opencode'))).toBe(false);
+    });
+  }
+
+  test('--host cursor writes native paths and strips allowed-tools from all skills', () => {
+    const home = join(baseTmp, 'cursor-explicit');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    for (const skill of SKILLS) {
+      const dir = join(hostDir(home, 'cursor'), skill);
+      const skillMd = join(dir, 'SKILL.md');
+      const source = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      const body = readFileSync(skillMd, 'utf8');
+      expect(lstatSync(skillMd).isFile()).toBe(true);
+      expect(readFileSync(join(dir, '.extend-root'), 'utf8').trim()).toBe(realpathSync(ROOT));
+      expect(body).toMatch(new RegExp(`^---\nname: ${skill}\ndescription: \\|\n`));
+      const frontmatter = body.slice(0, body.indexOf('\n---', 4));
+      expect(frontmatter).not.toContain('allowed-tools:');
+      expect(frontmatter).not.toMatch(/^  - /m);
+      for (const name of [...SKILLS, 'gstack-extend']) {
+        expect(body).not.toContain(`~/.claude/skills/${name}`);
+        if (source.includes(`~/.claude/skills/${name}`)) {
+          expect(body).toContain(`${hostDir(home, 'cursor')}/${name}`);
+        }
+      }
+    }
+    expect(existsSync(join(home, '.claude'))).toBe(false);
+    expect(existsSync(join(hostDir(home, 'cursor'), 'gstack-extend', 'SKILL.md'))).toBe(false);
+  });
+
+  test('auto setup and uninstall preserve a user-owned Cursor skill without claiming it', () => {
+    const home = join(baseTmp, 'cursor-user-owned');
+    const dir = join(hostDir(home, 'cursor'), 'pair-review');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), 'PERSONAL SKILL\n');
+    const path = isolatedPath();
+    const installed = runSetup(['--host', 'auto', '--quiet'], home, path, true);
+    expect(installed.exitCode).toBe(0);
+    expect(installed.stderr).toContain('is a regular file, not overwriting');
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PERSONAL SKILL\n');
+    expect(existsSync(join(dir, '.extend-root'))).toBe(false);
+    expect(existsSync(join(hostDir(home, 'cursor'), 'roadmap', '.extend-root'))).toBe(true);
+    expect(runSetup(['--host', 'auto', '--uninstall', '--quiet'], home, path, true).exitCode).toBe(0);
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PERSONAL SKILL\n');
+    expect(existsSync(join(dir, '.extend-root'))).toBe(false);
+    for (const skill of SKILLS.filter((name) => name !== 'pair-review')) {
+      expect(existsSync(join(hostDir(home, 'cursor'), skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(hostDir(home, 'cursor'), skill, '.extend-root'))).toBe(false);
+    }
+  });
+
+  test('Cursor uninstall leaves other hosts, foreign pointers and unrelated files intact', () => {
+    const home = join(baseTmp, 'cursor-uninstall');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude'], home).exitCode).toBe(0);
+    expect(runSetup(['--host=cursor'], home).exitCode).toBe(0);
+    const root = hostDir(home, 'cursor');
+    writeFileSync(join(root, 'pair-review', 'notes.md'), 'KEEP\n');
+    const foreign = join(root, 'roadmap');
+    writeFileSync(join(foreign, '.extend-root'), '/another/checkout\n');
+    const before = readFileSync(join(foreign, 'SKILL.md'), 'utf8');
+    expect(runSetup(['--host', 'cursor', '--uninstall'], home).exitCode).toBe(0);
+    expect(readFileSync(join(root, 'pair-review', 'notes.md'), 'utf8')).toBe('KEEP\n');
+    expect(readFileSync(join(foreign, '.extend-root'), 'utf8')).toBe('/another/checkout\n');
+    expect(readFileSync(join(foreign, 'SKILL.md'), 'utf8')).toBe(before);
+    for (const skill of SKILLS) {
+      expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(true);
+      if (skill === 'roadmap') continue;
+      expect(existsSync(join(root, skill, 'SKILL.md'))).toBe(false);
+      expect(existsSync(join(root, skill, '.extend-root'))).toBe(false);
+    }
+  });
+
+  test('--host auto detects all four binaries', () => {
     const home = join(baseTmp, 'auto-all');
     const bins = join(baseTmp, 'all-bins');
     mkdirSync(home, { recursive: true });
-    plantFakeBins(bins, ['claude', 'codex', 'opencode']);
+    plantFakeBins(bins, ['claude', 'codex', 'opencode', 'cursor']);
     const r = runSetup(['--host', 'auto'], home, bins);
     expect(r.exitCode).toBe(0);
     expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'))).toBe(true);
     expect(existsSync(join(hostDir(home, 'opencode'), 'pair-review', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(hostDir(home, 'cursor'), 'pair-review', 'SKILL.md'))).toBe(true);
   });
 
   test('--uninstall --host codex does not touch Claude', () => {
@@ -192,8 +292,8 @@ describe('setup --host flags', () => {
     }
   });
 
-  test('codex and opencode copies carry the extend-root resolver', () => {
-    for (const host of ['codex', 'opencode'] as const) {
+  test('generated host copies carry the extend-root resolver', () => {
+    for (const host of ['codex', 'opencode', 'cursor'] as const) {
       const home = join(baseTmp, `resolver-copy-${host}`);
       mkdirSync(home, { recursive: true });
       const r = runSetup(['--host', host], home);
@@ -249,7 +349,7 @@ describe('setup --host flags', () => {
     expect(readFileSync(skillMd, 'utf8')).toBe('CUSTOMIZED BY USER\n');
   });
 
-  for (const host of ['codex', 'opencode'] as const) {
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
     test(`a stale ${host} generated copy is refreshed on reinstall and removed on uninstall`, () => {
       const home = join(baseTmp, `generated-copy-${host}`);
       mkdirSync(home, { recursive: true });
@@ -299,13 +399,13 @@ describe('setup --host flags', () => {
     expect(realpathSync(join(hostDir(home, 'codex'), 'pair-review', '.extend-root'))).toBeTruthy();
   });
 
-  for (const host of ['claude', 'codex', 'opencode', 'auto'] as const) {
+  for (const host of ['claude', 'codex', 'opencode', 'cursor', 'auto'] as const) {
     test(`--host ${host} preserves a personal skill symlink and installs nothing`, () => {
       const home = join(baseTmp, `personal-collision-${host}`);
       const bins = join(baseTmp, `personal-collision-${host}-bins`);
-      plantFakeBins(bins, ['claude', 'codex', 'opencode']);
+      plantFakeBins(bins, ['claude', 'codex', 'opencode', 'cursor']);
       // Last host and last registered skill: catches writes before all preflights finish.
-      const collisionHost = host === 'auto' ? 'opencode' : host;
+      const collisionHost = host === 'auto' ? 'cursor' : host;
       const collisionSkill = SKILLS[SKILLS.length - 1]!;
       const personal = join(home, 'dotfiles', 'skills', collisionSkill);
       const root = hostDir(home, collisionHost);
@@ -321,7 +421,7 @@ describe('setup --host flags', () => {
       expect(readlinkSync(target)).toBe(personal);
       expect(readFileSync(join(personal, 'SKILL.md'), 'utf8')).toBe('personal skill, keep me\n');
       expect(readdirSync(personal)).toEqual(['SKILL.md']);
-      for (const checkedHost of ['claude', 'codex', 'opencode'] as const) {
+      for (const checkedHost of ['claude', 'codex', 'opencode', 'cursor'] as const) {
         const checkedRoot = hostDir(home, checkedHost);
         const entries = existsSync(checkedRoot) ? readdirSync(checkedRoot) : [];
         expect(entries).toEqual(checkedHost === collisionHost ? [collisionSkill] : []);

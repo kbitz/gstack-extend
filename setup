@@ -3,8 +3,8 @@
 #
 # Usage:
 #   ./setup                                          # Claude (~/.claude/skills/)
-#   ./setup --host auto                              # detect claude/codex/opencode
-#   ./setup --host claude|codex|opencode
+#   ./setup --host auto                              # detect claude/codex/opencode/cursor
+#   ./setup --host claude|codex|opencode|cursor
 #   ./setup --host <host> --uninstall
 #   ./setup --skills-dir <path> --uninstall          # legacy v0.16.0 cleanup
 #   ./setup --quiet
@@ -27,7 +27,7 @@ SKILLS_DIR_GIVEN=0
 UNINSTALL=0
 QUIET=0
 HOST="claude"
-USAGE="Usage: ./setup [--host claude|codex|opencode|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
+USAGE="Usage: ./setup [--host claude|codex|opencode|cursor|auto] [--uninstall] [--quiet] [--skills-dir <path> --uninstall]"
 
 # shellcheck source=bin/lib/install-safety.sh
 . "$SCRIPT_DIR/bin/lib/install-safety.sh"
@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
       ;;
     --host)
       if [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
-        echo "Error: --host requires claude, codex, opencode, or auto (got: '${2:-<missing>}')" >&2
+        echo "Error: --host requires claude, codex, opencode, cursor, or auto (got: '${2:-<missing>}')" >&2
         echo "$USAGE" >&2
         exit 1
       fi
@@ -82,9 +82,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$HOST" in
-  claude|codex|opencode|auto) ;;
+  claude|codex|opencode|cursor|auto) ;;
   *)
-    echo "Unknown --host value: $HOST (expected claude, codex, opencode, or auto)" >&2
+    echo "Unknown --host value: $HOST (expected claude, codex, opencode, cursor, or auto)" >&2
     echo "$USAGE" >&2
     exit 1
     ;;
@@ -92,7 +92,7 @@ esac
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
   echo "Error: --skills-dir is no longer accepted for install." >&2
-  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode)." >&2
+  echo "  Skill preambles probe host skill dirs (~/.claude, ~/.codex, ~/.config/opencode, ~/.cursor)." >&2
   echo "  Symlinks at any other path will not be discovered." >&2
   echo "" >&2
   echo "  To clean up a v0.16.0-era custom install, use:" >&2
@@ -124,6 +124,7 @@ host_skills_dir() {
     claude) echo "${HOME}/.claude/skills" ;;
     codex) echo "${HOME}/.codex/skills" ;;
     opencode) echo "${HOME}/.config/opencode/skills" ;;
+    cursor) echo "${HOME}/.cursor/skills" ;;
     *) echo "" ;;
   esac
 }
@@ -160,7 +161,7 @@ rewrite_skill_body() {
   done
   sed "${sed_args[@]}" "$src" > "$tmp"
 
-  if [ "$host" = "codex" ]; then
+  if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
     awk '
       BEGIN { fm=0; skip=0 }
       /^---[[:space:]]*$/ {
@@ -178,13 +179,13 @@ rewrite_skill_body() {
   fi
 }
 
-# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode. Claude
+# A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode/Cursor. Claude
 # installs are symlinks, so there the pointer must never make a user's detached, customized SKILL.md look generated.
-# Only those two hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
+# Only those three hosts qualify; a host-agnostic caller (the legacy --skills-dir cleanup, which targets v0.16.0
 # symlink installs) never removes or overwrites a regular file.
 generated_copy() {
   local target="$1" host="${2:-}"
-  case "$host" in codex|opencode) ;; *) return 1 ;; esac
+  case "$host" in codex|opencode|cursor) ;; *) return 1 ;; esac
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
@@ -309,6 +310,7 @@ install_into_dir() {
 INSTALL_CLAUDE=0
 INSTALL_CODEX=0
 INSTALL_OPENCODE=0
+INSTALL_CURSOR=0
 
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
   :
@@ -316,10 +318,13 @@ elif [ "$HOST" = "auto" ]; then
   command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
   command -v codex >/dev/null 2>&1 && INSTALL_CODEX=1
   command -v opencode >/dev/null 2>&1 && INSTALL_OPENCODE=1
+  command -v cursor >/dev/null 2>&1 && INSTALL_CURSOR=1
+  [ -d "${HOME}/.cursor" ] && INSTALL_CURSOR=1
   [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ] && INSTALL_CLAUDE=1
   [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ] && INSTALL_CODEX=1
   [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ] && INSTALL_OPENCODE=1
-  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ]; then
+  [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ] && INSTALL_CURSOR=1
+  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ]; then
     INSTALL_CLAUDE=1
   fi
 elif [ "$HOST" = "claude" ]; then
@@ -328,6 +333,8 @@ elif [ "$HOST" = "codex" ]; then
   INSTALL_CODEX=1
 elif [ "$HOST" = "opencode" ]; then
   INSTALL_OPENCODE=1
+elif [ "$HOST" = "cursor" ]; then
+  INSTALL_CURSOR=1
 fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
@@ -338,6 +345,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ "$INSTALL_CLAUDE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir claude)" claude
     [ "$INSTALL_CODEX" -eq 1 ] && uninstall_from_dir "$(host_skills_dir codex)" codex
     [ "$INSTALL_OPENCODE" -eq 1 ] && uninstall_from_dir "$(host_skills_dir opencode)" opencode
+    [ "$INSTALL_CURSOR" -eq 1 ] && uninstall_from_dir "$(host_skills_dir cursor)" cursor
   fi
 
   if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "claude" ] || [ "$HOST" = "auto" ]; }; then
@@ -368,10 +376,14 @@ fi
 if [ "$INSTALL_OPENCODE" -eq 1 ]; then
   preflight_dir "$(host_skills_dir opencode)" opencode
 fi
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  preflight_dir "$(host_skills_dir cursor)" cursor
+fi
 
 [ "$INSTALL_CLAUDE" -eq 1 ] && install_into_dir "$(host_skills_dir claude)" claude
 [ "$INSTALL_CODEX" -eq 1 ] && install_into_dir "$(host_skills_dir codex)" codex
 [ "$INSTALL_OPENCODE" -eq 1 ] && install_into_dir "$(host_skills_dir opencode)" opencode
+[ "$INSTALL_CURSOR" -eq 1 ] && install_into_dir "$(host_skills_dir cursor)" cursor
 
 cli_bin_dir="$HOME/.local/bin"
 

@@ -25,7 +25,7 @@ _ER_SKILL=gstack-extend-init
 _er_ok() { case "$1" in /*) [ -f "$1/bin/update-check" ] && [ -x "$1/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$1/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
 _EXTEND_ROOT=""
 _ER_SEEN=""
-for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md; do
+for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do
   case "$_ER_SRC" in /*) ;; *) continue ;; esac
   _ER=$(readlink "$_ER_SRC" 2>/dev/null || true)
   [ -n "$_ER" ] || continue
@@ -35,7 +35,7 @@ for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skill
   _ER_SEEN="${_ER_SEEN:-$_ER}"
 done
 if [ -z "$_EXTEND_ROOT" ]; then
-  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root; do
+  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root "$HOME"/.cursor/skills/"$_ER_SKILL"/.extend-root; do
     case "$_ER_SRC" in /*) ;; *) continue ;; esac
     [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue
     _ER=""
@@ -57,7 +57,7 @@ if [ -z "$_EXTEND_ROOT" ] && [ -n "$_ER_SEEN" ]; then
 fi
 unset _ER _ER_SRC _ER_SEEN
 if [ -z "$_EXTEND_ROOT" ]; then
-  echo "ERROR: cannot locate a verified gstack-extend install. ${_ER_UNVERIFIED:-No gstack-extend skill link or .extend-root pointer under ~/.claude, ~/.codex or ~/.config/opencode. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).}"
+  echo "ERROR: cannot locate a verified gstack-extend install. ${_ER_UNVERIFIED:-No gstack-extend skill link or .extend-root pointer under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).}"
   exit 1
 fi
 if [ ! -f "$_EXTEND_ROOT/bin/gstack-extend" ] || [ ! -x "$_EXTEND_ROOT/bin/gstack-extend" ]; then
@@ -69,7 +69,7 @@ printf '_EXTEND_ROOT=%q\n' "$_EXTEND_ROOT"
 unset _ER_UNVERIFIED _ER_SKILL
 ```
 
-Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex or ~/.config/opencode. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review, full-review and test-plan then stop, because their tool and session-state steps need the root. review-apparatus continues, skipping the update check and its optional pair-review report skim.
+Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review, full-review and test-plan then stop, because their tool and session-state steps need the root. review-apparatus continues, skipping the update check and its optional pair-review report skim.
 
 ---
 
@@ -87,7 +87,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -190,7 +190,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
