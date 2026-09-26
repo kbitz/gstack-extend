@@ -535,8 +535,22 @@ function readTomlKey(s: string, pos: number): { parts: string[]; end: number } |
       let part = '';
       while (j < s.length && s[j] !== '"') {
         if (s[j] === '\\') {
-          part += s[j + 1] ?? '';
-          j += 2;
+          const escape = s[j + 1] ?? '';
+          if (escape === 'u' || escape === 'U') {
+            const width = escape === 'u' ? 4 : 8;
+            const hex = s.slice(j + 2, j + 2 + width);
+            if (hex.length !== width || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+            const point = Number.parseInt(hex, 16);
+            if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff)) return null;
+            part += String.fromCodePoint(point);
+            j += width + 2;
+          } else {
+            const escapes: Record<string, string> = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+            const decoded = escapes[escape];
+            if (decoded === undefined) return null;
+            part += decoded;
+            j += 2;
+          }
           continue;
         }
         part += s[j];

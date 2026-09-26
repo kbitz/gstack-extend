@@ -43,8 +43,11 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
       for (const rule of rules) {
         if (rule.unless && hit.has(rule.unless)) continue;
         for (const m of rule.matchers) {
-          if (m.within && (!inside.get(m) || regex(m.within.close).test(line))) continue;
-          const match = regex(m.pattern).exec(line);
+          if (m.within && !inside.get(m)) continue;
+          // A closing delimiter can follow the final member on the same line.
+          const close = m.within ? regex(m.within.close).exec(line) : null;
+          const candidate = close ? line.slice(0, close.index) : line;
+          const match = regex(m.pattern).exec(candidate);
           if (!match) continue;
           hit.add(rule.id);
           for (const name of namesOf(m.name, match, path)) pairs.push({ rule: rule.id, name });
@@ -55,6 +58,11 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
         if (!m.within) continue;
         if (inside.get(m)) {
           if (regex(m.within.close).test(line)) inside.set(m, false);
+          // A hunk header can name an export list that already closed. An
+          // observed function/object opener cannot be an export-list member.
+          else if (m.name.from === 'export-list' && line.includes('{') &&
+            !regex(m.within.open).test(line) && !regex(m.pattern).test(line) &&
+            !/^\s*(?:\/\/|\/\*|\*)/.test(line)) inside.set(m, false);
         } else if (regex(m.within.open).test(line)) inside.set(m, true);
       }
     }

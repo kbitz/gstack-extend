@@ -186,12 +186,12 @@ function matchGit(args: string[]): boolean {
 
 const DIFF_RAW = [
   'diff', '--raw', '--numstat', '-z', '-M', `-l${RENAME_LIMIT}`,
-  '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
+  '--diff-algorithm=myers', '--indent-heuristic', '-O/dev/null', '--submodule=short', '--no-relative', '--no-color',
   '--no-ext-diff', '--no-textconv', '--no-abbrev',
 ];
 const DIFF_PATCH = [
   'diff', '-U0', '--inter-hunk-context=0', '-M', `-l${RENAME_LIMIT}`,
-  '--diff-algorithm=myers', '--submodule=short', '--no-relative', '--no-color',
+  '--diff-algorithm=myers', '--indent-heuristic', '-O/dev/null', '--submodule=short', '--no-relative', '--no-color',
   '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '--no-abbrev',
 ];
 

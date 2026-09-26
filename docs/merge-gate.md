@@ -13,7 +13,8 @@ later time window, and backtest write-ups should cite `policy_sha256`.
 ## Quick start
 
 Prerequisites: git 2.41 or newer (2.45 in a partial clone), bun, and `gh` for
-pull-request mode. Collector v1 supports Git repositories using SHA-1 objects;
+pull-request mode, plus `/usr/bin/readlink` for symlinked installs. Collector v1
+supports Git repositories using SHA-1 objects;
 SHA-256 object-format repositories are outside its scope. The binary is not on
 `PATH` until a later track wires it.
 From a fresh state directory the git-only command below should print a verdict
@@ -136,8 +137,9 @@ done
 ```
 
 Read the log tolerantly (a torn or malformed line is skipped, not fatal), then
-apply the selection rule with `mergedAt` and the merged head from `gh`. ISO
-timestamps compare lexically. Join by the full pull-request URL because the
+apply the selection rule with `mergedAt` and the merged head from `gh`. Compare
+timestamps numerically because GitHub may omit fractional seconds. Join by the
+full pull-request URL because the
 machine log can contain identical PR numbers from different repositories:
 
 ```sh
@@ -145,6 +147,9 @@ LOG="$GSTACK_EXTEND_STATE_DIR/merge-gate/verdicts.jsonl"
 jq -cR 'fromjson? // empty' "$LOG" > /tmp/log.jsonl
 gh pr list --state merged --limit 200 --json number,url,mergedAt,headRefOid > /tmp/merged.json
 jq -s --slurpfile merged /tmp/merged.json '
+  def utc_seconds:
+    capture("^(?<seconds>[^.]+)(?<fraction>\\.[0-9]+)?Z$")
+    | ((.seconds + "Z" | fromdateiso8601) + (.fraction // "0" | tonumber));
   ($merged[0] | map({key: (.url | ascii_downcase), value: .}) | from_entries) as $m
   | map(select(.subject.pr_url != null))
   | map(select($m[.subject.pr_url | ascii_downcase] != null))
@@ -152,7 +157,7 @@ jq -s --slurpfile merged /tmp/merged.json '
   | map(
       $m[.[0].subject.pr_url | ascii_downcase] as $pr
       | (map(select(.subject.decision_id != null)) | first)
-        // (map(select(.timing == "open" and .observed_at < $pr.mergedAt and .subject.head_sha == $pr.headRefOid))
+        // (map(select(.timing == "open" and (.observed_at | utc_seconds) < ($pr.mergedAt | utc_seconds) and .subject.head_sha == $pr.headRefOid))
             | sort_by(.observed_at) | last)
     )
   | map(select(. != null))
@@ -206,9 +211,10 @@ mode 0600, all owned by the current user):
   and pull-request-URL spellings of one repository share a key.
 - `decisions/<key>.logged` — created with exclusive create by whichever caller
   appends that decision's line. If the append fails, the marker is removed, so
-  a retry appends the line instead of returning an unlogged decision. The
-  file is claimed before the append, so a crash between the two can still
-  lose that one line.
+  a later retry can append the missing line. Concurrent callers may return
+  the authoritative decision while the winner is still appending; if that
+  append then fails, another retry is needed. The file is claimed before the
+  append, so a crash between the two can still lose that one line.
 
 The store must be a local filesystem. Network filesystems are unsupported
 because append atomicity is not guaranteed. An evidence file whose verdict
@@ -252,8 +258,10 @@ lazy blob fetches. Every other git call runs with `--attr-source` set to the emp
 outranks the repository's own: `core.quotePath=false`, `core.fsmonitor=false`,
 `core.attributesFile=/dev/null`, `core.bigFileThreshold=512m`, and
 `diff.ignoreSubmodules=none`. Worktree and user attributes, replace refs, and
-diff settings therefore do not change numstat. Patch collection also pins
-`--inter-hunk-context=0` so caller configuration cannot merge separate API hunks.
+diff settings therefore do not change numstat. Both diff templates pin
+`--indent-heuristic` and `-O/dev/null` to fix hunk alignment and path ordering.
+Patch collection also pins `--inter-hunk-context=0` so caller configuration
+cannot merge separate API hunks.
 
 The one setting carried over from the user's own config is `safe.directory`.
 The gate reads it from the global and system config (honoring
@@ -371,6 +379,11 @@ are themselves context lines, so names added after them in an existing block
 are not seen. Go block members must be indented with one tab, as `gofmt`
 writes them.
 
+Git context may also name an export list that already closed. The scanner
+resets that context when changed lines reveal a new function or object body.
+If the hunk omits those boundaries and contains only member-like names, it
+can overcount them as exports. This remains a line-based heuristic.
+
 Test paths (a `test`, `tests`, `__tests__`, or `spec` segment, `*.test.*`,
 `*.spec.*`, `*_test.go`, `test_*.py`, `*_test.py`, `conftest.py`) are
 excluded. Coverage is `partial` when a changed non-test file is listed in
@@ -454,7 +467,7 @@ limitation). Budget reasons add `measured` and `limit`. Blocking reasons add
 | `repo_mismatch` | 1 | Owner and name differ, or both hosts are dotted hostnames and differ. |
 | `gh_missing` | 1 | `gh` is not on `PATH`. |
 | `gh_failed` | 1 | `gh` exited non-zero. The first stderr line is redacted. |
-| `gh_bad_json` | 1 | The `gh` response is not an object or is missing or mistypes `state`, `url`, `headRefOid`, `baseRefOid`, or `number`. |
+| `gh_bad_json` | 1 | The `gh` response is not an object or is missing or mistypes `state`, `url`, `headRefOid`, `baseRefOid`, or `number`, or either commit ID is not a full hexadecimal SHA. |
 | `gh_auth` | 1 | `gh` exited 4. Fix: `gh auth status -h <host>` then `gh auth login -h <host>`. |
 | `spawn_timeout` | 1 | Git (60s) or gh (30s) exceeded its timeout. `--timeout` overrides both. |
 | `forbidden_command` | 1 | A spawn argv was outside the allowlist. Nothing was spawned. |

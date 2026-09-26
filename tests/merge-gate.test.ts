@@ -1643,6 +1643,19 @@ test('the documented backtest isolates same-number PRs by repository URL', () =>
   const result = spawnSync('jq', ['-s', '--slurpfile', 'merged', merged, query!, log], { encoding: 'utf8', env: fixtureEnv() });
   expect(result.status).toBe(0);
   expect(JSON.parse(result.stdout).map((row: J) => row.subject.decision_id)).toEqual(['wanted']);
+  for (const [mergedAt, times, expected] of [
+    ['2020-01-02T12:00:00Z', ['2020-01-02T11:59:59.999Z', '2020-01-02T12:00:00.000Z', '2020-01-02T12:00:00.500Z'], '2020-01-02T11:59:59.999Z'],
+    ['2020-01-02T12:00:00.500Z', ['2020-01-02T12:00:00.499Z', '2020-01-02T12:00:00.500Z', '2020-01-02T12:00:00.501Z'], '2020-01-02T12:00:00.499Z'],
+  ] as const) {
+    writeFileSync(merged, JSON.stringify([{ number: 7, url, mergedAt, headRefOid: 'a'.repeat(40) }]));
+    writeFileSync(log, times.map(observed_at => JSON.stringify({
+      timing: 'open', observed_at,
+      subject: { pr_number: 7, pr_url: url, decision_id: null, head_sha: 'a'.repeat(40) },
+    })).join('\n'));
+    const selected = spawnSync('jq', ['-s', '--slurpfile', 'merged', merged, query!, log], { encoding: 'utf8', env: fixtureEnv() });
+    expect(selected.status, selected.stderr).toBe(0);
+    expect(JSON.parse(selected.stdout).map((row: J) => row.observed_at)).toEqual([expected]);
+  }
 });
 
 describe('accepted plan gaps', () => {
@@ -1752,4 +1765,43 @@ describe('accepted plan gaps', () => {
     expect(code(r)).toBe('usage');
     expect(out(r).error.message).toBe('--decision-id cannot be combined with --no-record');
   });
+});
+
+
+describe('TOML escaped key identity', () => {
+  for (const escape of ['\\u0065', '\\U00000065']) {
+    test(`Cargo and Poetry decode ${escape} in dependency table names`, () => {
+      const cargo = parseManifest('cargo', null, `["dependenci${escape}s"]\nserde = "1"\n`);
+      expect(cargo.unverifiable).toBeNull();
+      expect(cargo.added).toEqual([{ name: 'serde', classification: 'remote' }]);
+      const poetry = parseManifest('pyproject', null, `[tool.poetry."dependenci${escape}s"]\nrequests = "2"\n`);
+      expect(poetry.unverifiable).toBeNull();
+      expect(poetry.added).toEqual([{ name: 'requests', classification: 'remote' }]);
+    });
+  }
+  test('escaped and plain dependency names share identity across base and head', () => {
+    const parsed = parseManifest('cargo', '[dependencies]\n"s\\u0065rde" = "1"\n', '[dependencies]\nserde = "2"\n');
+    expect(parsed.unverifiable).toBeNull();
+    expect(parsed.added).toEqual([]);
+  });
+  for (const escape of ['\\q', '\\u00xx', '\\uD800', '\\U00110000']) {
+    test(`invalid quoted-key escape ${escape} fails closed`, () => {
+      const parsed = parseManifest('cargo', null, `["dependenci${escape}s"]\nserde = "1"\n`);
+      expect(parsed.unverifiable).not.toBeNull();
+    });
+  }
+});
+
+
+test('caller diff.orderFile and indentHeuristic cannot change canonical facts', () => {
+  const before = 'export function before() {\n  return {\n    a: 1,\n  };\n}\n';
+  const after = before + '\nexport function added() {\n  return 2;\n}\n';
+  const repo = changeRepo({ 'a.ts': before, 'z.ts': before }, { 'a.ts': after, 'z.ts': after });
+  const original = checkRecorded(repo).evidence;
+  const order = join(tmp('order-'), 'paths');
+  writeFileSync(order, 'z.ts\na.ts\n');
+  git(repo, ['config', 'diff.orderFile', order]);
+  git(repo, ['config', 'diff.indentHeuristic', 'false']);
+  const configured = checkRecorded(repo).evidence;
+  expect(configured).toEqual(original);
 });

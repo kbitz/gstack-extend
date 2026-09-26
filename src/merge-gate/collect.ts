@@ -140,10 +140,14 @@ export function collect(input: CollectInput): { evidence: Evidence; canonical: s
     failures.push({ stage: 'diff', code: 'bad_status', subjects: parsedDiff.badStatus });
   }
   const files = parsedDiff.files;
-  markLarge(rooted, files, failures);
+  const blobSizes = markLarge(rooted, files, failures);
   const manifests = loadManifests(rooted, files, failures);
-  const api = loadApi(rooted, mergeBase, target.head, files, failures);
-  return build(files, manifests, api, diff.stderr.includes('inexact rename detection was skipped'));
+  const api = loadApi(rooted, mergeBase, target.head, files, blobSizes, failures);
+  return build(files, manifests, api.facts, renameDetectionSkipped(diff.stderr) || api.renameSkipped);
+}
+
+function renameDetectionSkipped(stderr: string): boolean {
+  return /(?:inexact|exhaustive) rename detection was skipped/.test(stderr);
 }
 
 function requireGit(versionText: string, partial: boolean): void {
@@ -304,9 +308,10 @@ function ghView(gateway: Gateway, number: string, spec: string): Record<string, 
   }
   const raw = parsed as Record<string, unknown>;
   const typed = typeof raw.state === 'string' && typeof raw.url === 'string' && typeof raw.number === 'number' &&
-    typeof raw.headRefOid === 'string' && typeof raw.baseRefOid === 'string';
+    typeof raw.headRefOid === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(raw.headRefOid) &&
+    typeof raw.baseRefOid === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(raw.baseRefOid);
   if (!typed) {
-    throw new GateError('gh_bad_json', 'gh response is missing or mistypes state, url, number, headRefOid, or baseRefOid', 'upgrade gh and retry');
+    throw new GateError('gh_bad_json', 'gh response is missing or has invalid state, url, number, headRefOid, or baseRefOid', 'upgrade gh and retry');
   }
   return raw;
 }
@@ -316,7 +321,7 @@ function hasRule(file: FileFact): boolean {
 }
 
 /** Mark API-scannable files whose line count or either blob exceeds the scan limits. */
-function markLarge(gateway: Gateway, files: FileFact[], failures: Failures): void {
+function markLarge(gateway: Gateway, files: FileFact[], failures: Failures): Map<string, number | null> {
   const candidates = files.filter(f => !f.binary && !f.submodule && hasRule(f));
   const oids = new Set<string>();
   for (const file of candidates) {
@@ -326,19 +331,20 @@ function markLarge(gateway: Gateway, files: FileFact[], failures: Failures): voi
     }
     for (const oid of [file.old_oid, file.new_oid]) if (isBlobOid(oid)) oids.add(oid);
   }
-  if (oids.size === 0) return;
+  if (oids.size === 0) return new Map();
   let sizes: Map<string, number | null>;
   try {
     sizes = parseBatchCheck(gateway.catFileBatchCheck([...oids]));
   } catch (err) {
     if (!isDegradable(err)) throw err;
     failures.push({ stage: 'api_size', code: err.code, subjects: candidates.map(f => f.path) });
-    return;
+    return new Map();
   }
   for (const file of candidates) {
     if (file.api_skipped) continue;
     if ([file.old_oid, file.new_oid].some(oid => (sizes.get(oid) ?? 0) > API_BLOB_LIMIT)) file.api_skipped = 'too_large';
   }
+  return sizes;
 }
 
 function isDegradable(err: unknown): err is GateError {
@@ -411,7 +417,7 @@ function isBlobOid(oid: string): boolean {
  * cancel. A rename's old path goes in the same chunk as its new path so git
  * pairs them the way the raw diff did.
  */
-function loadApi(gateway: Gateway, mergeBase: string, head: string, files: FileFact[], failures: Failures): ApiFact[] {
+function loadApi(gateway: Gateway, mergeBase: string, head: string, files: FileFact[], blobSizes: Map<string, number | null>, failures: Failures): { facts: ApiFact[]; renameSkipped: boolean } {
   const ready: FileFact[] = [];
   for (const file of files) {
     if (file.binary || file.submodule || !hasRule(file) || file.api_skipped) continue;
@@ -420,11 +426,13 @@ function loadApi(gateway: Gateway, mergeBase: string, head: string, files: FileF
     else ready.push(file);
   }
   const patches = new Map<string, PatchFile>();
-  for (const chunk of chunkFiles(ready)) {
+  let renameSkipped = false;
+  for (const chunk of chunkFiles(ready, blobSizes)) {
     let code: string | null = null;
     let stdout: Buffer = Buffer.alloc(0);
     try {
       const result = gateway.diffPatch(mergeBase, head, chunk.flatMap(pathspecs));
+      renameSkipped ||= renameDetectionSkipped(result.stderr);
       if (result.overflow) code = 'buffer_overflow';
       else if (result.status !== 0) code = 'git_failed';
       else stdout = result.stdout;
@@ -454,14 +462,14 @@ function loadApi(gateway: Gateway, mergeBase: string, head: string, files: FileF
     if (file.path_b64) fact.path_b64 = file.path_b64;
     facts.push(fact);
   }
-  return facts;
+  return { facts, renameSkipped };
 }
 
 function pathspecs(file: FileFact): string[] {
   return file.old_path !== null && file.old_path !== file.path ? [file.old_path, file.path] : [file.path];
 }
 
-function chunkFiles(files: FileFact[]): FileFact[][] {
+function chunkFiles(files: FileFact[], blobSizes: Map<string, number | null>): FileFact[][] {
   const chunks: FileFact[][] = [];
   let current: FileFact[] = [];
   let output = 0;
@@ -469,8 +477,13 @@ function chunkFiles(files: FileFact[]): FileFact[][] {
   let bytes = 0;
   for (const file of files) {
     const specs = pathspecs(file);
-    const cost = (file.additions + file.deletions) * 80 + 100;
     const size = specs.reduce((n, p) => n + Buffer.byteLength(p) + 1, 0);
+    // Changed lines can be almost 1 MiB each. Bound payload by both blobs,
+    // then allow for line prefixes, hunk context and repeated C-quoted paths.
+    // An unavailable size uses the per-blob scan limit conservatively.
+    const blobBytes = [file.old_oid, file.new_oid].filter(isBlobOid)
+      .reduce((n, oid) => n + (blobSizes.get(oid) ?? API_BLOB_LIMIT), 0);
+    const cost = blobBytes + (file.additions + file.deletions) * 256 + size * 24 + 512;
     const full = output + cost > CHUNK.output || count + specs.length > CHUNK.paths || bytes + size > CHUNK.argvBytes;
     if (current.length > 0 && full) {
       chunks.push(current);

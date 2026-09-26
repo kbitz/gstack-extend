@@ -39,26 +39,29 @@ export function stripRemoteUrl(raw: string): string {
 export type RepoIdentity = { host: string; owner: string; name: string };
 
 export function parseRemote(raw: string): RepoIdentity | null {
-  const cleaned = stripRemoteUrl(raw).replace(/\.git$/i, '').replace(/\/$/, '');
+  const cleaned = stripRemoteUrl(raw);
   let host = '';
   let path = '';
-  const ssh = /^ssh:\/\/([^/]+)\/(.+)$/.exec(cleaned);
-  const url = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)\/(.+)$/i.exec(cleaned);
-  const scp = /^[^@\s]+@([^:]+):(.+)$/.exec(cleaned);
-  if (ssh) {
-    host = ssh[1] ?? '';
-    path = ssh[2] ?? '';
-  } else if (url) {
-    host = url[1] ?? '';
-    path = url[2] ?? '';
-  } else if (scp) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned)) {
+    try {
+      const url = new URL(cleaned);
+      // An SSH port selects the Git transport, not the GitHub API host.
+      // Preserve HTTP(S) ports rather than silently redirecting API traffic.
+      host = url.protocol === 'ssh:' ? url.hostname : url.host;
+      path = url.pathname;
+    } catch {
+      return null;
+    }
+  } else {
+    // Git's scp-like syntax makes the user optional, including SSH aliases.
+    const scp = /^(?:[^@\s/:]+@)?([^:\s/]+):(.+)$/.exec(cleaned);
+    if (!scp) return null;
     host = scp[1] ?? '';
     path = scp[2] ?? '';
-  } else {
-    return null;
   }
+  path = path.replace(/\/+$/, '').replace(/\.git$/i, '');
   const parts = path.split('/').filter(p => p !== '');
-  if (parts.length < 2) return null;
+  if (host === '' || parts.length < 2) return null;
   const name = parts[parts.length - 1] ?? '';
   const owner = parts[parts.length - 2] ?? '';
   if (owner === '' || name === '') return null;
