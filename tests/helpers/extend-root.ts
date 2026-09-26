@@ -126,8 +126,9 @@ export const INIT_ERROR_STOP =
 export const RENAMES_ER_LINE =
   'ER="$_EXTEND_ROOT" bun -e "const { computeRenames, formatRenamesTable } = await import(process.env.ER + \'/src/audit/lib/renames-diff.ts\');';
 
+// ENG-A21's command-position regex, widened to interpreter launches (`bash bin/x`, `bun run bin/x`).
 export const CMD_BIN_RE =
-  /(?:^|[;&|({`]|\$\(|\b(?:do|then|else|if|elif|while|until|exec|source|env|xargs|command|time)\b|!|:|(?:^|\s)\.(?=\s)|\b[A-Za-z_][A-Za-z0-9_]*=\S*\s+)\s*["'`]?(?:\.\/)?bin\//;
+  /(?:^|[;&|({`]|\$\(|\b(?:do|then|else|if|elif|while|until|exec|source|env|xargs|command|time|bash|sh|zsh|bun|run|node|python3?)\b|!|:|(?:^|\s)\.(?=\s)|\b[A-Za-z_][A-Za-z0-9_]*=\S*\s+)\s*["'`]?(?:\.\/)?bin\//;
 
 export const SKILL_PATH_RE = /\.(?:claude|codex|config\/opencode|cursor)\/skills\//g;
 export const SKILL_PATH_PREFIXES = ['~/', '$HOME/', '"$HOME"/', '${HOME}/', '"${HOME}"/'];

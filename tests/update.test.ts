@@ -1525,6 +1525,38 @@ describe('Track 16D extend-root resolver matrix', () => {
     }
   });
 
+  test('a link to a deleted checkout prints the moved-or-deleted cause', () => {
+    const home = join(baseTmp, 'mx-deleted-home');
+    const root = join(baseTmp, 'mx-deleted-root');
+    writeUpdateCheck(root);
+    claudeSymlink(home, root);
+    rmSync(root, { recursive: true, force: true });
+    const results = probeExtendRoot(home, home);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain('has no bin/update-check (checkout moved or deleted)');
+    }
+  });
+
+  test('a lone non-executable update-check prints the restore cause', () => {
+    const home = join(baseTmp, 'mx-nonexec-home');
+    const root = join(baseTmp, 'mx-nonexec-root');
+    writeUpdateCheck(root, { executable: false });
+    claudeSymlink(home, root);
+    const results = probeExtendRoot(home, home);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain('is not a readable executable file');
+      expect(r.unverified).toContain('checkout -- bin/update-check');
+    }
+  });
+
   test('an empty pointer prints its own cause', () => {
     const home = join(baseTmp, 'mx-empty-home');
     const cwd = join(baseTmp, 'mx-empty-cwd');

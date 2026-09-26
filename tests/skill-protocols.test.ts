@@ -1794,6 +1794,22 @@ describe('Track 16D extend-root resolver locks', () => {
     }
   });
 
+  test('L6 regex flags cwd-relative bin/ calls and passes verified-root ones', () => {
+    const flagged = [
+      'bin/x', './bin/x', 'foo && bin/x', 'X=$(bin/x)', 'if ! bin/x', 'ER=1 bin/x', 'source bin/lib/x.sh',
+      '. bin/lib/x.sh', '  bin/x', 'bash bin/x', 'sh ./bin/x', 'bun bin/x.ts', 'bun run bin/x', 'python3 bin/x.py',
+    ];
+    for (const line of flagged) expect([line, CMD_BIN_RE.test(line)]).toEqual([line, true]);
+    const passed = [
+      '"$_EXTEND_ROOT/bin/x"',
+      'cat docs/bin/x',
+      'GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check"',
+      'bash "$_EXTEND_ROOT/bin/lib/run-migrations.sh"',
+      'source "$_EXTEND_ROOT/bin/lib/session-paths.sh"',
+    ];
+    for (const line of passed) expect([line, CMD_BIN_RE.test(line)]).toEqual([line, false]);
+  });
+
   test('L6: bash fences have no command-position bin/ call', () => {
     for (const skill of ROOT_RESOLVER_SKILLS) {
       for (const fence of extractFences(resolverSkillText(skill))) {
@@ -1960,6 +1976,24 @@ describe('Track 16D preamble representatives', () => {
           expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
         }
       }
+    }
+  });
+
+  test('init with a verified root but no bin/gstack-extend exits 1 before printing the root', () => {
+    const home = join(extendRootTmp, 'init-nobin-home');
+    const root = join(extendRootTmp, 'init-nobin-root');
+    const cwd = join(extendRootTmp, 'init-nobin-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    plantSkillLink(home, 'gstack-extend-init', root);
+    const results = runPreamble('gstack-extend-init', home, cwd);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain(`ERROR: ${root}/bin/gstack-extend is missing or not executable`);
+      expect(r.stdout).not.toContain('EXTEND_ROOT:');
+      expect(r.stdout).not.toContain('_EXTEND_ROOT=');
     }
   });
 

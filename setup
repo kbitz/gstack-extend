@@ -189,6 +189,28 @@ generated_copy() {
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
+# A SKILL.md symlink is setup's when it targets <checkout>/skills/<skill>.md: this checkout, another gstack-extend
+# checkout (a worktree or an older clone), or a checkout that no longer exists. Any other link (a dotfiles-managed
+# personal skill, say) is user-owned and treated like a user's regular file.
+extend_owned_link() {
+  local link="$1" skill="$2" target root
+  target="$(readlink "$link" 2>/dev/null || true)"
+  case "$target" in */skills/"$skill".md) ;; *) return 1 ;; esac
+  case "$target" in /*) ;; *) target="$(dirname "$link")/$target" ;; esac
+  root="${target%/skills/"$skill".md}"
+  [ ! -e "$root" ] || { [ -f "$root/setup" ] && [ -f "$root/bin/update-check" ]; }
+}
+
+# Physical path of a directory that may not exist yet: resolve its deepest existing ancestor.
+physical_dir() {
+  local dir="$1" rest=""
+  while [ ! -d "$dir" ]; do
+    rest="/$(basename "$dir")$rest"
+    dir="$(dirname "$dir")"
+  done
+  printf '%s%s\n' "$(cd -P "$dir" && pwd -P)" "$rest"
+}
+
 uninstall_from_dir() {
   local skills_dir="$1"
   local host="${2:-}"
@@ -256,6 +278,10 @@ preflight_dir() {
       echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
       continue
     fi
+    if [ -L "$target/SKILL.md" ] && ! extend_owned_link "$target/SKILL.md" "$skill"; then
+      echo "Warning: $target/SKILL.md links outside a gstack-extend checkout, not overwriting" >&2
+      continue
+    fi
   done
 }
 
@@ -291,6 +317,9 @@ install_into_dir() {
     if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       continue
     fi
+    if [ -L "$target/SKILL.md" ] && ! extend_owned_link "$target/SKILL.md" "$skill"; then
+      continue
+    fi
     mkdir -p "$target"
     if [ "$host" = "claude" ]; then
       ln -snf "$src" "$target/SKILL.md"
@@ -324,9 +353,6 @@ elif [ "$HOST" = "auto" ]; then
   [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ] && INSTALL_CODEX=1
   [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ] && INSTALL_OPENCODE=1
   [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ] && INSTALL_CURSOR=1
-  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ]; then
-    INSTALL_CLAUDE=1
-  fi
 elif [ "$HOST" = "claude" ]; then
   INSTALL_CLAUDE=1
 elif [ "$HOST" = "codex" ]; then
@@ -335,6 +361,27 @@ elif [ "$HOST" = "opencode" ]; then
   INSTALL_OPENCODE=1
 elif [ "$HOST" = "cursor" ]; then
   INSTALL_CURSOR=1
+fi
+
+# Cursor also reads other hosts' skill dirs. When ~/.cursor/skills is one of them (a symlink to ~/.claude/skills,
+# say), that host owns it: a Cursor pass would turn its installs into copies, or remove them on uninstall.
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  _cursor_dir="$(physical_dir "$(host_skills_dir cursor)")"
+  for _other in claude codex opencode; do
+    if [ "$_cursor_dir" = "$(physical_dir "$(host_skills_dir "$_other")")" ]; then
+      echo "Warning: $(host_skills_dir cursor) is the $_other skills directory ($_cursor_dir); skipping cursor" >&2
+      INSTALL_CURSOR=0
+      break
+    fi
+  done
+fi
+
+any_host_selected() {
+  [ "$INSTALL_CLAUDE" -eq 1 ] || [ "$INSTALL_CODEX" -eq 1 ] || [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]
+}
+
+if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && ! any_host_selected; then
+  INSTALL_CLAUDE=1
 fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
@@ -367,6 +414,34 @@ if [ "$UNINSTALL" -eq 1 ]; then
 fi
 
 # ─── Install ───────────────────────────────────────────────────────
+# Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
+# world-writable) instead of stopping every host; a host named with --host still stops setup.
+if [ "$HOST" = "auto" ]; then
+  for _host in claude codex opencode cursor; do
+    case "$_host" in
+      claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
+      codex) [ "$INSTALL_CODEX" -eq 1 ] || continue ;;
+      opencode) [ "$INSTALL_OPENCODE" -eq 1 ] || continue ;;
+      cursor) [ "$INSTALL_CURSOR" -eq 1 ] || continue ;;
+    esac
+    if ! _unsafe=$(is_safe_install_path "$(host_skills_dir "$_host")" 2>&1); then
+      echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
+      echo "  Fix that directory, then run setup --host $_host." >&2
+      case "$_host" in
+        claude) INSTALL_CLAUDE=0 ;;
+        codex) INSTALL_CODEX=0 ;;
+        opencode) INSTALL_OPENCODE=0 ;;
+        cursor) INSTALL_CURSOR=0 ;;
+      esac
+    fi
+  done
+  if ! any_host_selected; then
+    echo "Error: no detected host has a safe skills directory; nothing installed." >&2
+    echo "$USAGE" >&2
+    exit 1
+  fi
+fi
+
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   preflight_dir "$(host_skills_dir claude)" claude
 fi

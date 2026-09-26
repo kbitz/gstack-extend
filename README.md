@@ -68,7 +68,13 @@ description, and no `allowed-tools` frontmatter, plus an `.extend-root` pointer
 to the checkout. Setup refreshes generated copies. A user-owned regular
 `SKILL.md` is preserved without claiming ownership, and setup still exits 0.
 Use `setup --host cursor --uninstall` to remove copies owned by this checkout.
-Cursor may also discover same-named skills in other hosts' directories.
+Cursor may also discover same-named skills in other hosts' directories. If
+`~/.cursor/skills` is another host's skills directory (for example a symlink to
+`~/.claude/skills`), setup warns and leaves it to that host.
+
+On every host, a `SKILL.md` symlink that points anywhere other than a
+gstack-extend checkout's `skills/` directory (a dotfiles-managed personal
+skill, say) is treated like a user-owned file: setup warns and leaves it alone.
 
 If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It
@@ -76,6 +82,10 @@ preserves the link and its contents, reports the colliding path even with
 `--quiet`, and exits unsuccessfully. Choose which skill should own that name,
 move the personal link if replacing it, then rerun setup. A symlink collision
 remains an error even when other skill names could be installed.
+
+In `--host auto`, a detected host whose skills directory is outside HOME, not
+owned by you, or world-writable is skipped with a warning, and the other hosts
+still install. Naming that host with `--host` stops setup instead.
 
 Setup also registers the checkout as `gstack-extend` in
 `$HOME/.gstack-extend/projects.json`. It ignores `GSTACK_EXTEND_STATE_DIR` for

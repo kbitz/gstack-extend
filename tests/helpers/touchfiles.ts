@@ -109,6 +109,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     // The telemetry drift lock also compares docs/telemetry.md's copied blocks to the canonical text.
     'docs/telemetry.md',
+    // The Track 16D guard, routing, and session-state tests source or run these.
+    'bin/lib/session-paths.sh',
+    'bin/lib/source-tag.sh',
+    'bin/roadmap-route',
   ],
   'tests/audit-compliance.test.ts': [
     'skills/**',
