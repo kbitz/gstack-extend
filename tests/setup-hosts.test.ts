@@ -17,7 +17,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
@@ -330,6 +330,102 @@ describe('setup --host flags', () => {
     expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
     expect(readlinkSync(join(roadmap, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'roadmap.md'));
     expect(readlinkSync(join(pairReview, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'pair-review.md'));
+  });
+
+  test('a skills-shaped link stays user-owned unless the checkout has both setup and bin/update-check', () => {
+    const home = join(baseTmp, 'half-checkout');
+    const cases = [
+      { skill: 'roadmap', rootName: 'setup-only', setup: true, updateCheck: false },
+      { skill: 'implement', rootName: 'update-check-only', setup: false, updateCheck: true },
+    ] as const;
+    for (const c of cases) {
+      const root = join(home, c.rootName);
+      mkdirSync(join(root, 'skills'), { recursive: true });
+      writeFileSync(join(root, 'skills', `${c.skill}.md`), 'NOT OURS\n');
+      if (c.setup) writeFileSync(join(root, 'setup'), '');
+      if (c.updateCheck) {
+        mkdirSync(join(root, 'bin'), { recursive: true });
+        writeFileSync(join(root, 'bin', 'update-check'), '');
+      }
+      const dir = join(hostDir(home, 'claude'), c.skill);
+      mkdirSync(dir, { recursive: true });
+      symlinkSync(join(root, 'skills', `${c.skill}.md`), join(dir, 'SKILL.md'));
+    }
+    const r = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    for (const c of cases) {
+      const link = join(hostDir(home, 'claude'), c.skill, 'SKILL.md');
+      expect(r.stderr).toContain(`${c.skill}/SKILL.md links outside a gstack-extend checkout`);
+      expect(readlinkSync(link)).toBe(join(home, c.rootName, 'skills', `${c.skill}.md`));
+      expect(readFileSync(join(home, c.rootName, 'skills', `${c.skill}.md`), 'utf8')).toBe('NOT OURS\n');
+      expect(existsSync(join(hostDir(home, 'claude'), c.skill, '.extend-root'))).toBe(false);
+    }
+    expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
+  });
+
+  test('a deleted checkout is not repointed when its pointer names a different path', () => {
+    const home = join(baseTmp, 'deleted-mismatch');
+    const gone = join(home, 'gone-checkout');
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(dir, { recursive: true });
+    const link = join(dir, 'SKILL.md');
+    symlinkSync(join(gone, 'skills', 'roadmap.md'), link);
+    const pointer = `${join(home, 'somewhere-else')}\n`;
+    writeFileSync(join(dir, '.extend-root'), pointer);
+    const r = runSetup(['--host', 'claude', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('roadmap/SKILL.md links to a missing file');
+    expect(readlinkSync(link)).toBe(join(gone, 'skills', 'roadmap.md'));
+    expect(readFileSync(join(dir, '.extend-root'), 'utf8')).toBe(pointer);
+    expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
+  });
+
+  test('a relative link into another gstack-extend checkout is repointed', () => {
+    const home = join(baseTmp, 'relative-checkout');
+    const other = join(home, 'other-checkout');
+    mkdirSync(join(other, 'skills'), { recursive: true });
+    mkdirSync(join(other, 'bin'), { recursive: true });
+    writeFileSync(join(other, 'setup'), '');
+    writeFileSync(join(other, 'bin', 'update-check'), '');
+    writeFileSync(join(other, 'skills', 'roadmap.md'), 'old\n');
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(dir, { recursive: true });
+    symlinkSync('../../../other-checkout/skills/roadmap.md', join(dir, 'SKILL.md'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'roadmap.md'));
+    expect(readFileSync(join(other, 'skills', 'roadmap.md'), 'utf8')).toBe('old\n');
+  });
+
+  test('a relative link into a deleted checkout is repointed when the pointer names that checkout', () => {
+    mkdirSync(join(baseTmp, 'relative-deleted'), { recursive: true });
+    const home = realpathSync(join(baseTmp, 'relative-deleted'));
+    const other = join(home, 'other-checkout');
+    mkdirSync(join(other, 'skills'), { recursive: true });
+    mkdirSync(join(other, 'bin'), { recursive: true });
+    writeFileSync(join(other, 'setup'), '');
+    writeFileSync(join(other, 'bin', 'update-check'), '');
+    writeFileSync(join(other, 'skills', 'roadmap.md'), 'old\n');
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(dir, { recursive: true });
+    symlinkSync('../../../other-checkout/skills/roadmap.md', join(dir, 'SKILL.md'));
+    writeFileSync(join(dir, '.extend-root'), `${other}\n`);
+    rmSync(other, { recursive: true, force: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'roadmap.md'));
+  });
+
+  test('uninstall removes a relative link that points at this checkout', () => {
+    mkdirSync(join(baseTmp, 'relative-uninstall'), { recursive: true });
+    const home = realpathSync(join(baseTmp, 'relative-uninstall'));
+    const dir = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(dir, { recursive: true });
+    const rel = relative(realpathSync(dir), join(realpathSync(ROOT), 'skills', 'roadmap.md'));
+    symlinkSync(rel, join(dir, 'SKILL.md'));
+    writeFileSync(join(dir, '.extend-root'), `${realpathSync(ROOT)}\n`);
+    const r = runSetup(['--host', 'claude', '--uninstall', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    expect(existsSync(join(dir, 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(dir, '.extend-root'))).toBe(false);
   });
 
   test('Cursor skips a skills dir shared with Claude, on install and uninstall', () => {

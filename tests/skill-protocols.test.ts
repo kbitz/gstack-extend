@@ -1997,6 +1997,27 @@ describe('Track 16D preamble representatives', () => {
     }
   });
 
+  test('init with a verified root but a non-executable bin/gstack-extend exits 1 before printing the root', () => {
+    const home = join(extendRootTmp, 'init-nox-home');
+    const root = join(extendRootTmp, 'init-nox-root');
+    const cwd = join(extendRootTmp, 'init-nox-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    const bin = join(root, 'bin', 'gstack-extend');
+    writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+    chmodSync(bin, 0o644);
+    plantSkillLink(home, 'gstack-extend-init', root);
+    const results = runPreamble('gstack-extend-init', home, cwd);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain(`ERROR: ${root}/bin/gstack-extend is missing or not executable`);
+      expect(r.stdout).not.toContain('EXTEND_ROOT:');
+      expect(r.stdout).not.toContain('_EXTEND_ROOT=');
+    }
+  });
+
   test('hostile cwd alone never runs, and init exits 1', () => {
     for (const skill of cohorts) {
       const home = join(extendRootTmp, `bad-home-${skill}`);

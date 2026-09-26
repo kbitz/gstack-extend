@@ -189,6 +189,38 @@ generated_copy() {
   [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && [ -f "$target/.extend-root" ]
 }
 
+# Collapse "." and ".." in an absolute path. The path does not need to exist, so a
+# deleted checkout still compares equal to the absolute pointer setup wrote.
+lex_abs() {
+  local input="$1" part out="" item
+  local -a stack=()
+  case "$input" in
+    /*) ;;
+    *) printf '%s\n' "$input"; return ;;
+  esac
+  input="${input#/}"
+  while [ -n "$input" ]; do
+    part="${input%%/*}"
+    case "$input" in
+      */*) input="${input#*/}" ;;
+      *) input="" ;;
+    esac
+    case "$part" in
+      ''|.) ;;
+      ..)
+        if [ "${#stack[@]}" -gt 0 ]; then
+          unset "stack[$((${#stack[@]} - 1))]"
+        fi
+        ;;
+      *) stack[${#stack[@]}]="$part" ;;
+    esac
+  done
+  for item in "${stack[@]}"; do
+    out="$out/$item"
+  done
+  printf '%s\n' "${out:-/}"
+}
+
 # A SKILL.md symlink is setup's when it targets <checkout>/skills/<skill>.md in this checkout or another gstack-extend
 # checkout (a worktree or an older clone), or in a checkout that no longer exists but that setup's own .extend-root
 # beside the link still names. Any other link (a dotfiles-managed personal skill, say) is user-owned and treated like
@@ -198,13 +230,13 @@ extend_owned_link() {
   target="$(readlink "$link" 2>/dev/null || true)"
   case "$target" in */skills/"$skill".md) ;; *) return 1 ;; esac
   case "$target" in /*) ;; *) target="$(dirname "$link")/$target" ;; esac
-  root="${target%/skills/"$skill".md}"
+  root="$(lex_abs "${target%/skills/"$skill".md}")"
   if [ -e "$root" ]; then
     [ -f "$root/setup" ] && [ -f "$root/bin/update-check" ]
   else
     [ -f "$(dirname "$link")/.extend-root" ] || return 1
     IFS= read -r pointer < "$(dirname "$link")/.extend-root" || true
-    [ "$pointer" = "$root" ]
+    [ "$(lex_abs "$pointer")" = "$root" ]
   fi
 }
 
@@ -237,8 +269,12 @@ uninstall_from_dir() {
     fi
     if [ -L "$target/SKILL.md" ]; then
       link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
+      case "$link_target" in
+        /*) ;;
+        *) link_target="$(dirname "$target/SKILL.md")/$link_target" ;;
+      esac
       expected="$SCRIPT_DIR/skills/${skill}.md"
-      if [ "$link_target" = "$expected" ]; then
+      if [ "$(lex_abs "$link_target")" = "$(lex_abs "$expected")" ]; then
         rm -f "$target/SKILL.md"
         rm -f "$target/.extend-root"
         rmdir "$target" 2>/dev/null || true
