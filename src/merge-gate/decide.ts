@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { isTestPath } from './api.ts';
+import { extensionOf, isTestPath } from './api.ts';
 import { sha256Canonical } from './canon.ts';
 import { globMatcher } from './glob.ts';
 import {
@@ -348,8 +348,7 @@ function unmeasuredApi(evidence: Evidence, userExcluded: Excluded): { path: stri
 }
 
 function apiCapableUnmeasured(path: string): boolean {
-  const base = basename(path);
-  const ext = base.endsWith('.d.ts') ? '.d.ts' : (base.includes('.') ? base.slice(base.lastIndexOf('.')) : '');
+  const ext = extensionOf(path);
   if (ext === '' && path.split('/').includes('bin')) return true;
   return API_CAPABLE_EXTENSIONS.includes(ext);
 }

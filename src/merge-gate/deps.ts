@@ -162,6 +162,11 @@ function readRequirements(text: string): Stmt[] {
   return out;
 }
 
+/** Drop URL query secrets. Keep fragments (`#egg=`) because they name the package. */
+function requirementName(text: string): string {
+  return redact(text).replace(/\?[^#\s]*/g, '');
+}
+
 function requirementStmt(raw: string, lines: number[]): Stmt {
   const g = DEP_GRAMMAR.requirements;
   const ok = (entries: DepEntry[]): Stmt => ({ lines, entries, violation: null });
@@ -176,7 +181,7 @@ function requirementStmt(raw: string, lines: number[]): Stmt {
       return bad(`requirements include (${flag}) is not parsed by collector v1 ${LIMIT}`);
     }
     if (g.editable_options.includes(flag)) {
-      return ok([{ name: redact(text), classification: re(g.local).test(value) ? 'local' : 'remote' }]);
+      return ok([{ name: requirementName(text), classification: re(g.local).test(value) ? 'local' : 'remote' }]);
     }
     if (g.ignored_options.includes(flag)) return ok([]);
     return bad(`requirements option ${flag} is outside the collector v1 grammar ${LIMIT}`);
@@ -185,8 +190,8 @@ function requirementStmt(raw: string, lines: number[]): Stmt {
   const semi = noOpts.indexOf(';');
   const body = (semi >= 0 ? noOpts.slice(0, semi) : noOpts).trim();
   // A URL requirement's text is its name; keep embedded credentials out of evidence.
-  if (re(g.local).test(body)) return ok([{ name: redact(body), classification: 'local' }]);
-  if (re(g.url).test(body)) return ok([{ name: redact(body), classification: 'remote' }]);
+  if (re(g.local).test(body)) return ok([{ name: requirementName(body), classification: 'local' }]);
+  if (re(g.url).test(body)) return ok([{ name: requirementName(body), classification: 'remote' }]);
   const m = re(g.requirement).exec(body);
   if (!m?.[1]) return bad(`requirements line is outside the collector v1 grammar ${LIMIT}`);
   const direct = (m[2] ?? '').trim();

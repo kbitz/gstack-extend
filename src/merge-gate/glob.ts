@@ -2,7 +2,7 @@ import { GateError } from './errors.ts';
 
 /**
  * `*` matches within one path segment. `**` matches zero or more segments,
- * so `**​/*.ts` matches a root-level `a.ts`; a trailing `**` (`vendor/**`, or a
+ * so a double-star slash star.ts pattern matches a root-level `a.ts`; a trailing `**` (`vendor/**`, or a
  * bare `**`) matches every file below it. `?` and `+` are literals.
  * Brackets and braces are rejected.
  */

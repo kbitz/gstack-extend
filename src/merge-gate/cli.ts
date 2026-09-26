@@ -389,7 +389,7 @@ function runCheck(argv: string[], io: CliIo): number {
 }
 
 /** owner/name of the selected remote, for a number-form decision lookup; null when it cannot be read. */
-function remoteRepo(io: CliIo, parsed: Parsed, cwd: string, limits: { git: number; gh: number }): { owner: string; name: string } | null {
+function remoteRepo(io: CliIo, parsed: Parsed, cwd: string, limits: { git: number; gh: number }): { host: string; owner: string; name: string } | null {
   const base = { parentEnv: io.env, gitTimeoutMs: limits.git, ghTimeoutMs: limits.gh, debug: false };
   let top: string;
   let opts: typeof base & { safeDirectories: string[] };

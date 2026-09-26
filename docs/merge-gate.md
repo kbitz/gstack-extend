@@ -473,7 +473,7 @@ limitation). Budget reasons add `measured` and `limit`. Blocking reasons add
 | `no_merge_base` | 1 | The commits do not share an ancestor. A shallow clone's fix is `git fetch --unshallow`. |
 | `commit_not_local` | 1 | A pull request SHA is missing locally. One fetch line names only the missing refspecs. |
 | `no_remote` | 1 | The selected remote has no URL, its URL is not host/owner/repo, or it is an HTTP(S) URL with a non-default port. |
-| `repo_mismatch` | 1 | Owner and name differ, or both hosts are dotted hostnames and differ. |
+| `repo_mismatch` | 1 | Owner and name differ, or the API hosts differ. A dotless SSH alias is github.com. |
 | `gh_missing` | 1 | `gh` is not on `PATH`. |
 | `gh_failed` | 1 | `gh` exited non-zero. The first stderr line is redacted. |
 | `gh_bad_json` | 1 | The `gh` response is not an object or is missing or mistypes `state`, `url`, `headRefOid`, `baseRefOid`, or `number`, or either commit ID is not a full hexadecimal SHA. |

@@ -223,6 +223,13 @@ function prTarget(
       'use an SSH remote or an HTTP(S) API host without a non-default port',
     );
   }
+  if (input.prUrl && !identityMatches(remoteId, input.prUrl)) {
+    throw new GateError(
+      'repo_mismatch',
+      `remote ${input.remote} does not match ${input.prUrl.owner}/${input.prUrl.name}`,
+      `run from a clone whose ${input.remote} is ${input.prUrl.owner}/${input.prUrl.name}`,
+    );
+  }
   const spec = input.prUrl ? repoSpecFromUrl(input.prUrl) : repoSpecFromRemote(remoteId);
   const number = input.prUrl?.number ?? input.prNumber ?? '';
   const first = ghView(gateway, number, spec);

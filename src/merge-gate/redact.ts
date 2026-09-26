@@ -19,7 +19,15 @@ export function firstLine(text: string): string {
 export function stripRemoteUrl(raw: string): string {
   // Git remote-helper syntax `<transport>::<address>`: strip the address too.
   const helper = /^([A-Za-z0-9][A-Za-z0-9+.-]*)::(.*)$/s.exec(raw);
-  if (helper) return `${helper[1]}::${stripRemoteUrl(helper[2] ?? '')}`;
+  if (helper) {
+    // Paths later in the address (`ext::ssh -i /home/me/.ssh/id_rsa`) are not
+    // the whole address, so the local-path rule below would keep them.
+    const address = (helper[2] ?? '').replace(/(^|[\s=])(\/(?:[^\s])+)/g, (_match, pre: string, path: string) => {
+      const last = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+      return `${pre}local:${last}`;
+    });
+    return `${helper[1]}::${stripRemoteUrl(address)}`;
+  }
   if (/^file:/i.test(raw) || /^(?:\/|\.\.?(?:\/|$)|~)/.test(raw)) {
     const last = raw.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
     return `local:${last}`;
@@ -90,14 +98,16 @@ export function parsePrUrl(rawUrl: string): (RepoIdentity & { number: number }) 
   return { host: u.hostname, owner, name, number: num };
 }
 
-/** Compare owner/name always. Compare hosts only when both are dotted hostnames. */
+/** Dotless SSH aliases are GitHub.com. Dotted hosts must match exactly. */
+export function apiHost(host: string): string {
+  return host.includes('.') ? host.toLowerCase() : 'github.com';
+}
+
+/** Compare owner/name, then the API host. A dotless remote only matches github.com. */
 export function identityMatches(remote: RepoIdentity, pr: RepoIdentity): boolean {
   if (remote.owner.toLowerCase() !== pr.owner.toLowerCase()) return false;
   if (remote.name.toLowerCase() !== pr.name.toLowerCase()) return false;
-  const remoteDotted = remote.host.includes('.');
-  const prDotted = pr.host.includes('.');
-  if (remoteDotted && prDotted && remote.host.toLowerCase() !== pr.host.toLowerCase()) return false;
-  return true;
+  return apiHost(remote.host) === apiHost(pr.host);
 }
 
 /** `-R` spec: owner/repo for github.com and dotless SSH aliases; otherwise host/owner/repo. */

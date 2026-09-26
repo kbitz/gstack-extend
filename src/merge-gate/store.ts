@@ -17,6 +17,7 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalJson, sha256Hex } from './canon.ts';
+import { apiHost } from './redact.ts';
 import { GateError } from './errors.ts';
 import { VERDICT_V } from './registry.ts';
 import type { Verdict } from './decide.ts';
@@ -46,11 +47,12 @@ export function evidencePath(env: NodeJS.ProcessEnv, id: string): string {
 }
 
 /**
- * The key hashes the lowercased `owner/name`, not a remote URL, so the https,
- * ssh, and PR-URL spellings of one repository share decisions.
+ * The key hashes the API host plus lowercased `owner/name`, not a remote URL,
+ * so the https, ssh, and PR-URL spellings of one repository share decisions.
+ * A dotless SSH alias is github.com. A different forge does not share the key.
  */
-export function decisionKey(repo: { owner: string; name: string }, prNumber: number, decisionId: string): string {
-  const id = `${repo.owner}/${repo.name}`.toLowerCase();
+export function decisionKey(repo: { host: string; owner: string; name: string }, prNumber: number, decisionId: string): string {
+  const id = `${apiHost(repo.host)}/${repo.owner}/${repo.name}`.toLowerCase();
   return sha256Hex(`${DECISION_KEY_VERSION}\0${id}\0${String(prNumber)}\0${decisionId}`);
 }
 

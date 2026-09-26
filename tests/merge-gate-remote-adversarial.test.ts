@@ -48,6 +48,8 @@ test('a userless SSH alias still requires matching owner/name', () => {
   const remote = parseRemote('github-work:o/r.git')!;
   expect(identityMatches(remote, parsePrUrl('https://github.com/other/r/pull/7')!)).toBe(false);
   expect(identityMatches(remote, parsePrUrl('https://github.com/o/other/pull/7')!)).toBe(false);
+  expect(identityMatches(remote, parsePrUrl('https://evil.example/o/r/pull/7')!)).toBe(false);
+  expect(identityMatches(remote, parsePrUrl('https://github.com/o/r/pull/7')!)).toBe(true);
 });
 
 test('dotted transport aliases are not silently mapped to a different API hostname', () => {
@@ -76,6 +78,11 @@ test('requirement names keep no URL credentials', () => {
   const head = `https://${creds}packages.example.com/pkg-1.0.whl\n-e git+https://${creds}github.com/o/lib.git#egg=lib\n`;
   expect(parseManifest('requirements', '', head).added).toEqual([
     { name: '-e git+https://github.com/o/lib.git#egg=lib', classification: 'remote' },
+    { name: 'https://packages.example.com/pkg-1.0.whl', classification: 'remote' },
+  ]);
+  const secret = 'access_token=synthetic';
+  const queried = `https://packages.example.com/pkg-1.0.whl?${secret}\n`;
+  expect(parseManifest('requirements', '', queried).added).toEqual([
     { name: 'https://packages.example.com/pkg-1.0.whl', classification: 'remote' },
   ]);
 });

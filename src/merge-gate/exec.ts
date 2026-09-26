@@ -170,11 +170,12 @@ function matchGit(args: string[]): boolean {
     return true;
   }
   if (
-    head === 'remote' &&
-    rest.length === 3 &&
-    rest[1] === 'get-url' &&
-    typeof rest[2] === 'string' &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(rest[2])
+    head === 'config' &&
+    rest.length === 4 &&
+    rest[1] === '--get' &&
+    rest[2] === '--local' &&
+    typeof rest[3] === 'string' &&
+    /^remote\.[A-Za-z0-9][A-Za-z0-9._/-]*\.url$/.test(rest[3])
   ) {
     return true;
   }
@@ -349,7 +350,8 @@ export function createGateway(opts: GatewayOpts): Gateway {
       return SHA_RE.test(sha) ? sha : null;
     },
     remoteUrl(name: string) {
-      const outcome = gitOk([ATTR, 'remote', 'get-url', name]);
+      // `remote get-url` applies url.*.insteadOf. The stored key does not.
+      const outcome = gitOk([ATTR, 'config', '--get', '--local', `remote.${name}.url`]);
       if (outcome.status !== 0) return null;
       const url = outcome.stdout.toString('utf8').trim();
       return url === '' ? null : url;
