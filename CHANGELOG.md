@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.2.0] - 2026-09-25
+
+### Fixed
+
+- **Init reports failures without losing recoverable state.** Missing jq and invalid registries stop before project writes. Directory and template-write failures stop initialization with the failed path. Failed audits retain files and registration, show both diagnostic streams, and print a Bash-safe retry that preserves the project name and handles shell-special paths.
+- **Fresh init keeps actionable audit output visible.** Only sections with a single exact passing status are hidden; warnings, unknown or conflicting statuses, diagnostics, and migration output remain. Large audit sections no longer slow down filtering. Embedded filename line breaks cannot forge sections, and multiline move suggestions require manual review instead of naming the wrong file.
+- **Setup registers the tool in HOME’s registry.** An inherited direct-init state override no longer redirects self-registration or its printed retry. Failures show the full diagnostic output while installation remains usable.
+
+### Changed
+
+- **Template selection follows the canonical project layout.** Init uses one file list to select and order templates, preserving existing files and roadmap content during migration.
+
 ## [0.29.1.0] - 2026-09-25
 
 ### Fixed
