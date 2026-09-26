@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.3.0] - 2026-09-25
+
+### Added
+
+- **Check what evidence makes a review independent of its authors and primary reviewer.** The design guide defines the policy, maps current host routing, and includes runnable reference calculations and exact replay examples. Static results, synthetic examples and reconstructed metadata are clearly separated from measured review evidence; the original empirical study remains unfinished.
+
 ## [0.29.1.0] - 2026-09-25
 
 ### Fixed
