@@ -324,7 +324,16 @@ function runCheck(argv: string[], io: CliIo): number {
     else {
       const m = PR_URL_RE.exec(parsed.pr);
       if (!m) throw usage(`--pr: '${parsed.pr}' is not a positive number or an https pull URL`, 'pass 123 or https://host/owner/repo/pull/123');
-      prUrl = { host: m[1] ?? '', owner: m[2] ?? '', name: m[3] ?? '', number: m[4] ?? '' };
+      let url: URL;
+      try {
+        url = new URL(parsed.pr);
+      } catch {
+        throw usage('--pr is not a valid HTTPS pull URL', 'pass https://host/owner/repo/pull/123');
+      }
+      if (url.port !== '') {
+        throw usage('--pr: non-default HTTP(S) ports are unsupported', 'use a PR URL without a port, or --pr <number> with an SSH remote');
+      }
+      prUrl = { host: url.host, owner: m[2] ?? '', name: m[3] ?? '', number: m[4] ?? '' };
     }
   }
   const limits = timeouts(io, parsed, honored);

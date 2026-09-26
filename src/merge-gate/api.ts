@@ -59,8 +59,8 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
         if (inside.get(m)) {
           if (regex(m.within.close).test(line)) inside.set(m, false);
           // A hunk header can name an export list that already closed. An
-          // observed function/object opener cannot be an export-list member.
-          else if (m.name.from === 'export-list' && line.includes('{') &&
+          // observed nonmember statement invalidates that stale context.
+          else if (m.name.from === 'export-list' && line.trim() !== '' &&
             !regex(m.within.open).test(line) && !regex(m.pattern).test(line) &&
             !/^\s*(?:\/\/|\/\*|\*)/.test(line)) inside.set(m, false);
         } else if (regex(m.within.open).test(line)) inside.set(m, true);

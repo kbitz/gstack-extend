@@ -215,6 +215,14 @@ function prTarget(
       `add a remote named ${input.remote}, or pass --remote with the base repository`,
     );
   }
+  const httpRemote = originUrl && /^https?:\/\//i.test(originUrl) ? new URL(stripRemoteUrl(originUrl)) : null;
+  if (httpRemote?.port) {
+    throw new GateError(
+      'no_remote',
+      `remote '${input.remote}': non-default HTTP(S) ports are unsupported`,
+      'use an SSH remote or an HTTP(S) API host without a non-default port',
+    );
+  }
   const spec = input.prUrl ? repoSpecFromUrl(input.prUrl) : repoSpecFromRemote(remoteId);
   const number = input.prUrl?.number ?? input.prNumber ?? '';
   const first = ghView(gateway, number, spec);

@@ -15,6 +15,26 @@ test('a new function body invalidates stale export-list hunk context', () => {
     .toEqual([{ rule: 'ts-decl', name: 'f' }]);
 });
 
+test('an array declaration invalidates stale export-list hunk context', () => {
+  expect(scanLines('api.ts', ['const all = [', '  alpha,', '  beta,', '];'], 'export {'))
+    .toEqual([]);
+});
+
+test('a nonmember call invalidates stale export-list hunk context without a brace', () => {
+  expect(scanLines('api.ts', ['doWork(', '  alpha,', '  beta', ');'], 'export {'))
+    .toEqual([]);
+});
+
+test('blank and comment lines preserve valid export members and a closing-line member', () => {
+  expect(scanLines('api.ts', ['', '  // public members', '  alpha,', '   ', '  /* another member */', '  beta }'], 'export {'))
+    .toEqual([{ rule: 'ts-list', name: 'alpha' }, { rule: 'ts-list', name: 'beta' }]);
+});
+
+test('a visible export opener restores scanning after a nonmember statement', () => {
+  expect(scanLines('api.ts', ['const local = 1;', 'export {', '  alpha,', '  beta }'], 'export {'))
+    .toEqual([{ rule: 'ts-list', name: 'alpha' }, { rule: 'ts-list', name: 'beta' }]);
+});
+
 test('braces in export member comments do not terminate the list', () => {
   expect(scanLines('api.ts', ['export {', '  a, // { comment', '  b,', '}']))
     .toEqual([{ rule: 'ts-list', name: 'a' }, { rule: 'ts-list', name: 'b' }]);

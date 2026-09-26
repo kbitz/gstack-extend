@@ -59,8 +59,11 @@ Missing commits exit `commit_not_local` with a single `git fetch <remote> ...`
 line naming only the missing refspecs, shell-quoted.
 
 `--remote` defaults to `origin`. A fork clone whose base repository is
-`upstream` passes `--remote upstream`. `--repo-root` is a checkout path. A
-value that looks like `owner/name` is usage: pass the pull request URL instead.
+`upstream` passes `--remote upstream`. A non-default HTTP(S) port in a remote
+or PR URL is unsupported; use an SSH
+remote or the API host without a port.
+`--repo-root` is a checkout path. A value that looks like `owner/name` is usage:
+pass the pull request URL instead.
 Flags from the other subcommand are usage, as is a flag value that starts
 with `-` (except `--policy -` and negative budget values, which get their own
 message).
