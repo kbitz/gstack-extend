@@ -136,10 +136,18 @@ test('git version edges: unparseable text, a newer major, and partial-clone fals
   expect(newer.body.would_merge).toBe(true);
 
   git(repo, ['remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
-  for (const value of ['false', 'no', 'off', '0']) {
+  for (const value of ['false', 'no', 'off', '0', 'FALSE', 'No', 'OFF']) {
     git(repo, ['config', 'remote.origin.promisor', value]);
     const ignored = await check(versionShim('2.44.0'));
     expect(ignored.status, `${value}: ${ignored.stderr}${ignored.stdout}`).toBe(0);
+  }
+  git(repo, ['config', '--unset-all', 'remote.origin.promisor']);
+  for (const [key, value] of [['extensions.partialClone', 'true'], ['remote.origin.partialclonefilter', 'blob:none']] as const) {
+    git(repo, ['config', key, value]);
+    const blocked = await check(versionShim('2.44.0'));
+    expect(blocked.status, `${key}: ${blocked.stderr}${blocked.stdout}`).toBe(1);
+    expect(blocked.body.error.message).toContain('partial clone');
+    git(repo, ['config', '--unset-all', key]);
   }
 
   const bare = await check(versionShim('2.44.0', 'remote.origin.promisor'));
