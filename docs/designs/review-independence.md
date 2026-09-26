@@ -250,7 +250,7 @@ In use means a complete configuration observed in the preceding 30 days or expli
 - Provenance **go**: an in-use measured FAIL has an unproven voice/primary/author with a structural cause belonging to that failure. Missing credential, unsettled data, and demonstrated probe-induced failures do not qualify. Priority for the per-voice upstream entry is P1 on go, P3 on no-go, P2 on insufficient-evidence. **No-go** requires measured served-evidence PASS for every in-use configuration and complete inventory coverage.
 - Availability **go**: an in-use measured `outside-missing` has a demonstrated route cause, or the same failure reproduces outside the probe. **No-go** requires positive measured PASS coverage for every in-use configuration; otherwise insufficient-evidence.
 
-The inline `calls()` computes those rules from explicit configuration inventory, coverage state, and measured results. The snapshot supplies no proven measured chains or complete configuration inventory, so all three calls are insufficient-evidence. Next deciding evidence: a complete real Cursor review with a recorded writer, concrete primary/outside evidence, and an artifact/result/gate chain; for availability, an equivalent execution control. No new live attempt was made during this correction.
+The inline `calls()` computes those rules from explicit configuration inventory, coverage state, and measured results. No-go is a configuration-level feasibility call: one qualifying measured PASS covers that configuration; it does not claim every historical invocation passed. A qualifying failure still takes precedence through the go rules. The snapshot supplies no proven measured chains or complete configuration inventory, so all three calls are insufficient-evidence. Next deciding evidence: a complete real Cursor review with a recorded writer, concrete primary/outside evidence, and an artifact/result/gate chain; for availability, an equivalent execution control. No new live attempt was made during this correction.
 
 No routing, model-map, or availability entry is filed on those calls. All observed concrete model IDs map. The roadmap audit on the original draft passed TODO_FORMAT, DOC_LOCATION and ARCHIVE_CANDIDATES, with only the four pre-existing scattered items. The first version in this file is gstack `1.89.0.0`; any future archive flag due only to that foreign version is a false positive, to record rather than conceal by reordering text.
 
@@ -273,7 +273,7 @@ The two meta files record unchanged HEAD/tree and empty porcelain. Telemetry bra
 Both attempts used `env -i` with HOME, PATH, USER, SHELL, TMPDIR, TERM, LANG and `GSTACK_SESSION_KIND=spawned`. No parent harness markers or billing key were passed. Flags: `cursor-agent -p --force --trust --sandbox disabled --model grok-4.7`; author launches used `codex exec --sandbox danger-full-access --skip-git-repo-check` and `claude -p --dangerously-skip-permissions`. Full original launch scripts were not retained. The following is the **future attempt-capture recipe**, not a claim to recover the original script bytes. It allows one attempt per existing author branch in a fresh local clone, a 1,200-second timeout, and no retries. Run it only as a newly authorized live snapshot, never as a deterministic replay:
 
 ```python
-import hashlib, json, os, re, sqlite3, subprocess, time, uuid
+import hashlib, json, os, re, signal, sqlite3, subprocess, time, uuid
 from pathlib import Path
 
 
@@ -283,17 +283,45 @@ def attempt(bare_origin, branch, pin, clone, destination, extend_bin, gstack_bin
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     subprocess.run(["git", "clone", "--branch", branch, str(bare_origin), str(clone)], check=True)
     env = {k: os.environ[k] for k in ("HOME", "PATH", "USER", "SHELL", "TMPDIR", "TERM", "LANG") if k in os.environ}
+    live_env = dict(env)
     env.update(GSTACK_SESSION_KIND="spawned", GSTACK_EXTEND_STATE_DIR=str(destination/"extend"),
-               GSTACK_STATE_DIR=str(destination/"gstack"))
+               GSTACK_HOME=str(destination/"gstack"), GSTACK_STATE_DIR=str(destination/"gstack"))
     quota_env = dict(env)
     if "CURSOR_API_KEY" in os.environ:
         quota_env["CURSOR_API_KEY"] = os.environ["CURSOR_API_KEY"]
     def git(*args):
         return subprocess.check_output(["git", "-C", str(clone), *args], text=True).strip()
-    def capture(name, argv, run_env=env):
-        with (destination/(name + ".log")).open("w") as stream:
-            return subprocess.run([str(a) for a in argv], cwd=clone, env=run_env,
-                                  stdout=stream, stderr=subprocess.STDOUT, timeout=120).returncode
+    phase_status = {}
+    def capture(name, argv, run_env=env, timeout=120):
+        # Every subprocess has a separate process group, including nested review voices.
+        try:
+            with (destination/(name + ".log")).open("w") as stream:
+                process = subprocess.Popen([str(a) for a in argv], cwd=clone, env=run_env,
+                                           stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    status = "exit-%s" % process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    status = "timeout"
+                finally:
+                    # Kill remaining group members even if the direct child already exited.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+                    deadline = time.monotonic() + 5
+                    while True:
+                        try:
+                            os.killpg(process.pid, 0)
+                        except ProcessLookupError:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("process group cleanup unverified")
+                        time.sleep(0.05)
+        except Exception as error:
+            status = "error:" + type(error).__name__
+        phase_status[name] = status
+        return status
     def sinks():
         result = {}
         for name, path in [("stages", Path.home()/".gstack-extend/analytics/stage-runs.jsonl"),
@@ -315,53 +343,73 @@ def attempt(bare_origin, branch, pin, clone, destination, extend_bin, gstack_bin
     before = [git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")]
     if before[0] != pin or git("status", "--porcelain"):
         raise RuntimeError("author pin/cleanliness check failed")
-    tier_exit = capture("tier", [Path(gstack_bin)/"gstack-config", "get", "telemetry"])
-    tier = (destination/"tier.log").read_text().strip()
-    if tier_exit != 0 or tier != "off":
-        raise RuntimeError("this off-tier recipe requires a verified telemetry=off setting")
+    tier_command = [Path(gstack_bin)/"gstack-config", "get", "telemetry"]
+    def tier(name, run_env):
+        if capture(name, tier_command, run_env) != "exit-0":
+            return None
+        return (destination/(name + ".log")).read_text().strip()
+    live_tier, isolated_tier = tier("tier-live-before", live_env), tier("tier-before", env)
+    if live_tier != "off" or isolated_tier != "off":
+        raise RuntimeError("this off-tier recipe requires both verified telemetry=off settings")
     before_sinks, existing = sinks(), set(transcripts())
-    capture("telemetry-start", [Path(extend_bin)/"gstack-extend-telemetry", "start", "--skill", "extend:independence-probe"])
     session = "independence-" + str(uuid.uuid4())
     quota = [Path(extend_bin)/"gstack-extend", "quota"]
-    capture("quota-start", quota + ["sample", "--session-id", session, "--phase", "start", "--stage", "review",
-                                     "--agent", "cursor", "--route", "cli", "--auth", "subscription",
-                                     "--cwd", str(clone), "--repo-root", str(clone), "--json"], quota_env)
     prompt = ("Run skill review (gstack-review directory) against main, report only, every phase "
               "including the outside Codex and in-host adversarial passes. Do not edit, commit, "
-              "or apply fixes. If asked a choice, continue read-only. This is a 200+ line diff.")
-    begin, clock = time.time(), time.monotonic()
-    try:
-        with (destination/"review.log").open("w") as log:
-            run = subprocess.run(["cursor-agent", "-p", "--force", "--trust", "--sandbox", "disabled",
-                                  "--model", "grok-4.7", prompt], cwd=clone, env=env,
-                                 stdout=log, stderr=subprocess.STDOUT, timeout=1200)
-        status = "exit-%s" % run.returncode
-    except subprocess.TimeoutExpired:
-        status = "timeout"
-    end, elapsed = time.time(), time.monotonic() - clock
-    candidates = [p for p in transcripts() if p not in existing and
-                  getattr(p.stat(), "st_birthtime", 0) >= begin and p.stat().st_mtime <= end]
-    relative = [p.relative_to(transcript_root) for p in candidates]
-    sessions = {p.parts[0] if len(p.parts) > 1 else p.stem for p in relative}
-    if len(sessions) == 1:
-        capture("quota-attach", quota + ["sample", "--session-id", session, "--phase", "attach",
-                                         "--agent", "cursor", "--harness-session", sessions.pop(), "--json"], quota_env)
-    capture("quota-finish", quota + ["sample", "--session-id", session, "--phase", "finish", "--json"], quota_env)
-    capture("quota-runs", quota + ["runs", "--session-id", session, "--json"], quota_env)
-    capture("telemetry-finish", [Path(extend_bin)/"gstack-extend-telemetry", "finish", "--skill",
-                                 "extend:independence-probe", "--outcome", "success" if status == "exit-0" else "error"])
-    after_sinks = sinks()
-    result = dict(status=status, start=begin, end=end, elapsed_s=elapsed,
-                  model_assignment="grok-4.7", env_names=sorted(env), telemetry_tier=tier,
-                  unchanged=before == [git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")],
-                  clean=not bool(git("status", "--porcelain")), live_sinks_before=before_sinks,
-                  live_sinks_after=after_sinks, isolation_unchanged=before_sinks == after_sinks,
+              "or apply fixes. Do not change configuration or detach child processes. "
+              "If asked a choice, continue read-only. This is a 200+ line diff.")
+    result = dict(status="not-started", phase_status=phase_status, model_assignment="grok-4.7",
+                  env_names=sorted(env), telemetry_tier_before=isolated_tier,
+                  live_tier_before=live_tier, live_sinks_before=before_sinks,
                   phase_receipts="pending-source-chain-verification", consumption="see-private-quota-runs")
-    (destination/"attempt.json").write_text(json.dumps(result, indent=2))
+    begin = end = clock = None
+    try:
+        capture("telemetry-start", [Path(extend_bin)/"gstack-extend-telemetry", "start", "--skill", "extend:independence-probe"])
+        capture("quota-start", quota + ["sample", "--session-id", session, "--phase", "start", "--stage", "review",
+                                         "--agent", "cursor", "--route", "cli", "--auth", "subscription",
+                                         "--cwd", str(clone), "--repo-root", str(clone), "--json"], quota_env)
+        begin, clock = time.time(), time.monotonic()
+        result["status"] = capture("review", ["cursor-agent", "-p", "--force", "--trust", "--sandbox", "disabled",
+                                             "--model", "grok-4.7", prompt], timeout=1200)
+        end = time.time()
+        result.update(start=begin, end=end, elapsed_s=time.monotonic() - clock)
+        candidates = [p for p in transcripts() if p not in existing and
+                      getattr(p.stat(), "st_birthtime", 0) >= begin and p.stat().st_mtime <= end]
+        relative = [p.relative_to(transcript_root) for p in candidates]
+        sessions = {p.parts[0] if len(p.parts) > 1 else p.stem for p in relative}
+        if len(sessions) == 1:
+            capture("quota-attach", quota + ["sample", "--session-id", session, "--phase", "attach",
+                                             "--agent", "cursor", "--harness-session", sessions.pop(), "--json"], quota_env)
+    except Exception as error:
+        result["capture_error"] = type(error).__name__
+        result["status"] = "capture-error"
+    finally:
+        # Each capture retains its own failure; one failed finish must not skip the others.
+        capture("quota-finish", quota + ["sample", "--session-id", session, "--phase", "finish", "--json"], quota_env)
+        capture("quota-runs", quota + ["runs", "--session-id", session, "--json"], quota_env)
+        capture("telemetry-finish", [Path(extend_bin)/"gstack-extend-telemetry", "finish", "--skill",
+                                     "extend:independence-probe", "--outcome", "success" if result["status"] == "exit-0" else "error"])
+        result["isolation_unchanged"] = False
+        try:
+            live_after, isolated_after = tier("tier-live-after", live_env), tier("tier-after", env)
+            after_sinks = sinks()
+            result.update(telemetry_tier_after=isolated_after, live_tier_after=live_after,
+                          live_sinks_after=after_sinks,
+                          isolation_unchanged=(before_sinks == after_sinks and live_after == isolated_after == "off"),
+                          unchanged=before == [git("rev-parse", "HEAD"), git("rev-parse", "HEAD^{tree}")],
+                          clean=not bool(git("status", "--porcelain")))
+        except Exception as error:
+            result["verification_error"] = type(error).__name__
+        result["capture_complete"] = (result["status"] == "exit-0" and result["isolation_unchanged"] and
+                                      result.get("unchanged") is True and result.get("clean") is True and
+                                      all(status == "exit-0" for status in phase_status.values()))
+        (destination/"attempt.json").write_text(json.dumps(result, indent=2))
     return result
 ```
 
-The recipe takes an existing reviewed author branch and its full pin, fresh clone and artifact paths, and the installed `bin` directories. It never reconstructs missing original authoring scripts. Its telemetry and quota state is isolated; HOME remains unchanged. The only credential passed goes to the quota subprocess. This recipe requires the original verified `off` tier and stops before execution otherwise, without changing the setting. Expected changes to all three live sinks are zero. Higher-tier capture requires a separately reviewed sink/upload policy; off disables analytics upload by configuration, which is not a packet-capture observation. Any change invalidates isolation; unrelated concurrent activity must be investigated rather than attributed automatically to this probe. Local logging may be disabled by tier; missing local rows remain missing evidence. `quota-runs.log` must be inspected for complete consumption; a missing credential is not zero spend. After end + five minutes, run the inline billing projection twice to assess model proof; a quota lifecycle receipt alone never proves the model. Capture each dispatched phase's artifact/session/result/gate records with the receipt schema below before treating the run as valid. This future recipe has been syntax-checked, not live-executed in this correction.
+The recipe takes an existing reviewed author branch and its full pin, fresh clone and artifact paths, and the installed `bin` directories. It never reconstructs missing original authoring scripts. State isolation depends on both `GSTACK_HOME`/`GSTACK_STATE_DIR` for gstack and `GSTACK_EXTEND_STATE_DIR` for extend; HOME remains unchanged. Extend provenance is separately gated by its own `provenance` setting (default on in the fresh isolated state), not gstack's telemetry tier. The only credential passed goes to quota subprocesses. This recipe checks the original and isolated `off` tiers before and after execution without changing either setting. Endpoint checks cannot prove that no temporary setting change occurred mid-run; inspect configuration changes before accepting isolation. Expected changes to all three live sinks are zero. Higher-tier capture requires a separately reviewed sink/upload policy; off disables analytics upload by configuration, which is not a packet-capture observation. Any sink change invalidates isolation; unrelated concurrent activity must be investigated rather than attributed automatically to this probe.
+
+The timeout terminates and waits for the subprocess group before final sampling. Detached descendants escape this mechanism: detachment or unverified cleanup invalidates the attempt. Each phase records errors, and finish steps still run after ordinary launch/capture failures; an unwritable artifact directory or forcibly terminated Python supervisor can still prevent receipt persistence. `capture_complete` describes capture mechanics only, never a proven review. Missing local rows remain missing evidence. Inspect `quota-runs.log` for complete consumption; a missing credential is not zero spend. After end + five minutes, run the inline billing projection twice to assess model proof. Capture each dispatched phase's artifact/session/result/gate records with the receipt schema below before treating the run as valid. The recipe alone cannot diagnose availability: a separately authorized equivalent execution control must reproduce the same failure outside the probe environment. It does not automatically retry or spend a control-run budget. This future recipe has been checked offline, not live-executed in this correction.
 
 Native Conductor is optional and user-run. The prepared prompt is: “Open the scratch repository on author-anthropic. Run review against main, report only, every phase including Codex and in-host adversarial. Do not edit, commit, or apply fixes.” Recover the agent ID by a unique store cwd/window afterward. It was not run here.
 
@@ -612,19 +660,23 @@ def calls(configurations, measured, coverage_complete=False):
     active_ids = {c["id"] for c in active}
     rows = [r for r in measured if r["config"] in active_ids]
     covered = {r["config"] for r in rows if r["result"]["verdict"] == "PASS"}
-    served = {r["config"] for r in rows if r["result"].get("evidence") == "served"}
+    served = {r["config"] for r in rows if r["result"]["verdict"] == "PASS" and r["result"].get("evidence") == "served"}
     all_pass = bool(active_ids) and coverage_complete and active_ids <= covered
     all_served = bool(active_ids) and coverage_complete and active_ids <= served
     reasons = [r["result"]["reasons"] for r in rows]
     routing_go = any(c["unsatisfiable"] for c in active) or any("outside-same-vendor" in r for r in reasons)
     structural = {"voice-vendor-unproven", "primary-vendor-unproven", "author-vendor-unproven"}
-    operator = {"no-credential", "unsettled", "probe-induced"}
+    structural_causes = {"window-ambiguous", "partial-coverage", "multi-model",
+                         "requested-only-contradicted", "alias", "no-turn-bounds",
+                         "unrecorded-writer", "not-recorded", "timeout", "auth-rejected",
+                         "rate-limited", "sandbox-refused", "unsupported-version", "schema-changed"}
     provenance_go = any(r["result"]["verdict"] == "FAIL" and
                         structural.intersection(r["result"]["reasons"]) and
-                        set(r["result"].get("provenance_causes", [])) - operator for r in rows)
-    availability_go = any("outside-missing" in r["result"]["reasons"] and
-                          r.get("availability_route_cause") not in {None, "probe-induced"} for r in rows)
-    availability_go |= any(r.get("reproduced_outside_probe") is True for r in rows)
+                        structural_causes.intersection(r["result"].get("provenance_causes", [])) for r in rows)
+    availability_go = any(r["result"]["verdict"] == "FAIL" and
+                          "outside-missing" in r["result"]["reasons"] and
+                          (r.get("availability_route_cause") not in {None, "probe-induced"} or
+                           r.get("reproduced_outside_probe") is True) for r in rows)
     result = dict(routing="go" if routing_go else "no-go" if all_pass else "insufficient-evidence",
                   provenance="go" if provenance_go else "no-go" if all_served else "insufficient-evidence",
                   availability="go" if availability_go else "no-go" if all_pass else "insufficient-evidence")
@@ -659,6 +711,7 @@ This script opens the Conductor database read-only, reads existing local logs, a
 # review-independence-project
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import subprocess
@@ -669,11 +722,16 @@ from urllib.parse import unquote
 
 
 def stamp(value):
-    if isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(value):
         return value / 1000 if abs(value) > 100000000000 else value
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-    except (ValueError, TypeError):
+        # Harness timestamps may have nanoseconds; normalize for Python 3.9+.
+        text = re.sub(r"(\.\d{6})\d+", r"\1", str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
+        return parsed.timestamp() if parsed.tzinfo is not None else None
+    except (ValueError, TypeError, OverflowError, OSError):
         return None
 
 
@@ -711,6 +769,8 @@ def records(path, errors):
 
 def project(home, cutoff):
     errors, workspaces, writers, reviews, native, grok, cursor_cli = [], [], [], [], [], [], []
+    def malformed(source):
+        errors.append(dict(source=digest(source), cause="schema-changed"))
     roots = {}
     db = home / "Library/Application Support/com.conductor.app/conductor.db"
     with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as conn:
@@ -718,7 +778,11 @@ def project(home, cutoff):
                    w.state, w.created_at FROM workspaces w
                    JOIN repos r ON r.id=w.repository_id"""
         for remote, root, branch, cwd, state, created in conn.execute(query):
-            if not branch or not cwd or (stamp(created) or 0) > cutoff:
+            created_at = stamp(created)
+            if created_at is None or not isinstance(branch, str) or not isinstance(cwd, str):
+                malformed(db)
+                continue
+            if not branch or not cwd or created_at > cutoff:
                 continue
             project_slug = slug(remote)
             if not project_slug:
@@ -745,28 +809,46 @@ def project(home, cutoff):
                     workspaces.append(item)
     for row in records(home / ".gstack-extend/analytics/stage-runs.jsonl", errors):
         begin = stamp(row.get("started_at"))
-        if begin is None or begin + (row.get("duration_s") or 0) > cutoff:
+        duration = row.get("duration_s")
+        duration = 0 if duration is None else duration
+        if (begin is None or isinstance(duration, bool) or not isinstance(duration, (int, float)) or
+            not math.isfinite(duration) or duration < 0 or not isinstance(row.get("branch", ""), str)):
+            malformed("stage-runs")
+            continue
+        if begin + duration > cutoff:
             continue
         if row.get("stage") != "implement":
             continue  # Fix-only stages need explicit content-change evidence, not a name guess.
         raw = row.get("branch") or ""
         writers.append(dict(repo=digest(str(row.get("repo", "")).replace("/", "-")),
                             branch=digest(raw), token=digest(branch_token(raw)), start=begin,
-                            end=begin + (row.get("duration_s") or 0), agent=row.get("agent"),
+                            end=begin + duration, agent=row.get("agent"),
                             model_assignment=row.get("model"), session=digest(row.get("session_id"))))
     for path in (home / ".grok/sessions").glob("*/*/events.jsonl"):
         times = [stamp(r.get("ts")) for r in records(path, errors)]
+        for invalid in (t for t in times if t is None):
+            malformed(path)
         times = [t for t in times if t is not None and t < cutoff]
         if times:
             grok.append(dict(cwd=digest(unquote(path.parent.parent.name)),
                              start=min(times), end=max(times), session=digest(path.parent.name)))
     for agents in (home / "Library/Application Support/com.conductor.app/cursor-sdk-store").glob("*/agents.ndjson"):
-        cwds = {r.get("agentId"): r.get("cwd") for r in records(agents, errors)}
+        cwds = {}
+        for row in records(agents, errors):
+            if not all(isinstance(row.get(k), str) and row[k] for k in ("agentId", "cwd")):
+                malformed(agents)
+                continue
+            cwds[row["agentId"]] = row["cwd"]
         for row in records(agents.with_name("runs.ndjson"), errors):
             begin, end = stamp(row.get("startedAt")), stamp(row.get("endedAt"))
-            if begin is None or begin >= cutoff:
+            model = row.get("model")
+            if (begin is None or (row.get("endedAt") is not None and (end is None or end < begin)) or
+                not isinstance(model, dict) or not isinstance(model.get("id"), str) or
+                not isinstance(row.get("agentId"), str)):
+                malformed(agents.with_name("runs.ndjson"))
                 continue
-            model = row.get("model") or {}
+            if begin >= cutoff:
+                continue
             cwd = cwds.get(row.get("agentId"))
             if cwd:
                 native.append(dict(cwd=digest(cwd), start=begin, end=end,
@@ -793,10 +875,17 @@ def project(home, cutoff):
         token = path.name.removesuffix("-reviews.jsonl")
         for index, row in enumerate(records(path, errors)):
             end = stamp(row.get("timestamp"))
-            if end is None or not cutoff - 30 * 86400 <= end < cutoff:
+            binding = row.get("review_binding")
+            binding = {} if binding is None else binding
+            if end is None or not isinstance(binding, dict):
+                malformed(path)
                 continue
-            binding = row.get("review_binding") or {}
+            if not cutoff - 30 * 86400 <= end < cutoff:
+                continue
             begin = stamp(binding.get("started_at"))
+            if binding.get("started_at") is not None and begin is None:
+                malformed(path)
+                continue
             commit = row.get("commit_full")
             commit_time = None
             if repo in roots and roots[repo] and re.fullmatch(r"[0-9a-f]{40,64}", str(commit)):
@@ -851,7 +940,7 @@ def join(snapshot):
                 # A path token may itself collide across distinct workspace cwds.
                 path_unique = len({w["cwd"] for w in snapshot["workspaces"] if
                                   w.get("cursor_path") == workspace.get("cursor_path")}) == 1
-                route = ("conductor-native" if len(runs) == 1 else "cursor-cli" if
+                route = ("conductor-native" if runs and len({r["session"] for r in runs}) == 1 else "cursor-cli" if
                          not runs and path_unique and len({r["session"] for r in cli}) == 1 else "unknown")
         if row["host"] == "grok" or historical_grok:
             route = "historical-grok"
@@ -1007,19 +1096,22 @@ Measure skew with a uniquely identified billing event corresponding to a local m
 ```python
 # review-independence-billing
 # Import after the evaluator block; no network call occurs merely by defining these functions.
-def billing_projection(store, deadline, start, end, session_id, skew, read_at):
+def billing_projection(store, deadline, start, end, session_id, skew):
     from quota.readers.cursor import events
     from quota.common import QuotaError, timestamp
     from hashlib import sha256
+    from time import time
     left, right = start - skew, end + 600 + skew
     try:
         rows, complete, _ = events(store, deadline, left, right)
     except QuotaError as error:
         mapping = {"no_credentials": "no-credential", "auth_expired": "auth-rejected",
                    "http_401": "auth-rejected", "http_403": "auth-rejected",
-                   "http_429": "rate-limited", "sandboxed": "sandbox-refused",
+                   "http_429": "rate-limited", "exchange_throttled": "rate-limited",
+                   "timeout": "timeout", "sandboxed": "sandbox-refused",
                    "unsupported_version": "unsupported-version", "schema_changed": "schema-changed"}
-        return dict(error=mapping.get(error.code, "schema-changed"), source_error=error.code)
+        return dict(error=mapping.get(error.code, "not-recorded"), source_error=error.code)
+    read_at = time()  # Observe completion here, never accept a caller-assigned settlement time.
     selected = []
     for row in rows:
         if row.get("conversationId") != session_id:
@@ -1089,7 +1181,16 @@ agents = next(fixture_home.glob("Library/Application Support/com.conductor.app/c
 agent = json.loads(agents.read_text().splitlines()[0])
 env = {k: os.environ[k] for k in ("PATH", "LANG", "TMPDIR") if k in os.environ}
 env.update(HOME=str(fixture_home), CURSOR_AGENT="1", CURSOR_CONVERSATION_ID=agent["agentId"], PYTHONDONTWRITEBYTECODE="1")
-code = "import sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nfrom telemetry import cursor_turns, parse_ts\nprint('integer timestamp', parse_ts(1790337600000))\nprint('turn count', len(cursor_turns(Path.cwd(), 0)))"
+code = """import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from telemetry import cursor_sdk_runs, cursor_turns, parse_ts
+matched = [r for r in cursor_sdk_runs(os.getcwd()) if r.get('agentId') == os.environ['CURSOR_CONVERSATION_ID']]
+assert matched, 'fixture did not match cwd/session'
+assert all(isinstance(r.get('updatedAt'), (int, float)) and isinstance(r.get('model', {}).get('params'), list) for r in matched)
+print('integer timestamp', parse_ts(1790337600000))
+print('turn count', len(cursor_turns(Path.cwd(), 0)))
+"""
 subprocess.run([sys.executable, "-c", code, str(repo/"bin/lib")], cwd=agent["cwd"], env=env, check=True)
 ```
 
