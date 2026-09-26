@@ -58,10 +58,13 @@ test('Rust qualifiers and TS anonymous default classes do not become names', () 
   expect(scanLines('api.ts', ['export default class extends Base {}'])).toEqual([{ rule: 'ts-default', name: 'default@api.ts' }]);
 });
 
-test('a column-zero statement invalidates stale Go block hunk context', () => {
+test('a top-level Go declaration invalidates stale Go block hunk context', () => {
   expect(scanLines('api.go', ['type config struct {', '\tField int', '}'], 'const (')).toEqual([]);
   expect(scanLines('api.go', ['\tB = 2', '\t// note', '\tC'], 'const ('))
     .toEqual([{ rule: 'go-exported', name: 'B' }, { rule: 'go-exported', name: 'C' }]);
+  // Raw-string content can sit at column zero inside the block.
+  expect(scanLines('api.go', ['\tusage = `', 'Usage: tool [flags]', '`', '\tVersion = "1"'], 'var ('))
+    .toEqual([{ rule: 'go-exported', name: 'Version' }]);
 });
 
 test('Go block members still end only at their closing line', () => {

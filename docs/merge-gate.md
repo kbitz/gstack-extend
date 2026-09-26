@@ -386,11 +386,12 @@ writes them.
 
 Git context may also name a block that already closed. The scanner drops
 header-derived context at the first changed line that cannot be inside it: a
-non-member statement for an export list, or a column-zero statement for a Go
-block. A visible opener stays open until its closing line, and comments in an
-export list never open, close, or name members. If the hunk omits those
-boundaries and contains only member-like names, it can overcount them as
-exports. This remains a line-based heuristic.
+non-member statement for an export list, or a column-zero `func`, `type`,
+`var`, `const`, or `import` declaration for a Go block. A visible opener stays
+open until its closing line, and comments in an export list never open, close,
+or name members. If the hunk omits those boundaries and contains only
+member-like names, it can overcount them as exports. This remains a line-based
+heuristic.
 
 Test paths (a `test`, `tests`, `__tests__`, or `spec` segment, `*.test.*`,
 `*.spec.*`, `*_test.go`, `test_*.py`, `*_test.py`, `conftest.py`) are

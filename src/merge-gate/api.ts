@@ -71,10 +71,13 @@ export function scanHunks(path: string, hunks: ScanHunk[], rulePath = path): Api
   return pairs;
 }
 
-/** A nonmember export-list line, or a column-zero statement after a tab-indented Go block. */
+/**
+ * A nonmember export-list line, or a top-level Go declaration. Raw-string
+ * content inside a Go block can also sit at column zero, so only a keyword counts.
+ */
 function outsideBlock(m: ApiMatcher, line: string): boolean {
   if (line.trim() === '' || /^\s*(?:\/\/|\/\*|\*)/.test(line)) return false;
-  return m.name.from === 'export-list' ? !regex(m.pattern).test(line) : /^\S/.test(line);
+  return m.name.from === 'export-list' ? !regex(m.pattern).test(line) : /^(?:func|type|var|const|import)\b/.test(line);
 }
 
 /** Export-list comments cannot open, close, or name members; other rules see the raw line. */
