@@ -281,16 +281,16 @@ def attempt(bare_origin, branch, pin, clone, destination, extend_bin, gstack_bin
     """Future live recipe: call once per author branch, never during replay."""
     destination = Path(destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
-    subprocess.run(["git", "clone", "--branch", branch, str(bare_origin), str(clone)], check=True)
     env = {k: os.environ[k] for k in ("HOME", "PATH", "USER", "SHELL", "TMPDIR", "TERM", "LANG") if k in os.environ}
     live_env = dict(env)
     env.update(GSTACK_SESSION_KIND="spawned", GSTACK_EXTEND_STATE_DIR=str(destination/"extend"),
                GSTACK_HOME=str(destination/"gstack"), GSTACK_STATE_DIR=str(destination/"gstack"))
+    subprocess.run(["git", "clone", "--branch", branch, str(bare_origin), str(clone)], env=env, check=True)
     quota_env = dict(env)
     if "CURSOR_API_KEY" in os.environ:
         quota_env["CURSOR_API_KEY"] = os.environ["CURSOR_API_KEY"]
     def git(*args):
-        return subprocess.check_output(["git", "-C", str(clone), *args], text=True).strip()
+        return subprocess.check_output(["git", "-C", str(clone), *args], env=env, text=True).strip()
     phase_status = {}
     def capture(name, argv, run_env=env, timeout=120):
         # Every subprocess has a separate process group, including nested review voices.
@@ -377,9 +377,12 @@ def attempt(bare_origin, branch, pin, clone, destination, extend_bin, gstack_bin
                       getattr(p.stat(), "st_birthtime", 0) >= begin and p.stat().st_mtime <= end]
         relative = [p.relative_to(transcript_root) for p in candidates]
         sessions = {p.parts[0] if len(p.parts) > 1 else p.stem for p in relative}
+        result["transcript_sessions"] = len(sessions)
         if len(sessions) == 1:
             capture("quota-attach", quota + ["sample", "--session-id", session, "--phase", "attach",
                                              "--agent", "cursor", "--harness-session", sessions.pop(), "--json"], quota_env)
+        else:
+            phase_status["quota-attach"] = "skipped-%d-candidates" % len(sessions)
     except Exception as error:
         result["capture_error"] = type(error).__name__
         result["status"] = "capture-error"
@@ -728,7 +731,7 @@ def stamp(value):
         return value / 1000 if abs(value) > 100000000000 else value
     try:
         # Harness timestamps may have nanoseconds; normalize for Python 3.9+.
-        text = re.sub(r"(\.\d{6})\d+", r"\1", str(value).replace("Z", "+00:00"))
+        text = re.sub(r"\.(\d+)", lambda m: "." + (m[1] + "000000")[:6], str(value).replace("Z", "+00:00"))
         parsed = datetime.fromisoformat(text)
         return parsed.timestamp() if parsed.tzinfo is not None else None
     except (ValueError, TypeError, OverflowError, OSError):
@@ -976,6 +979,8 @@ if __name__ == "__main__":
 The historical projection has no execution-chain receipts. This separate input schema makes the remaining join executable without fabricating them. `artifacts` identify repo/raw-branch, exact commit/tree, commit time, and reviewed paths. `executions` link a source session and its fully covered contributing models to the reviewed artifact and review invocation; this invocation link is created by checking source references, not by relabeling a writer's original invocation. `writers` link a checked content diff to that artifact, including fix passes. `phase_rows`, `results`, and `gates` bind each execution to the consumed result. Every `source_ref` and `content_diff_ref` is a private citation to an inspected source record, never text supplied by the model under review. The projection boundary must verify those citations and coverage. This is an offline join contract, not an authentication layer for arbitrary JSON.
 
 Different phase start tokens require explicit parent-invocation links. Matching timestamps, model names, or commits cannot create them. Group once by the verified invocation ID and exact artifact, then pass the normalized record to `evaluate()`. Absent/duplicate/mismatched links cannot produce PASS. The synthetic example proves the algorithm only; it is not a measured review.
+
+Writer rows for another artifact are outside this cell: touching the same path on the same branch does not prove that their content survives in the reviewed artifact. The projection must set `known_unrecorded_writer` when an actual contributing writer lacks the required artifact binding. Do not infer that binding from path/time overlap or silently omit a known contributor.
 
 <!-- expected:receipts -->
 ```text
