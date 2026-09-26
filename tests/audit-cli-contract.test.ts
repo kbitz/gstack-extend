@@ -22,7 +22,7 @@
  * NEW in Track 3A — no equivalent in scripts/test-*.sh.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -39,7 +39,7 @@ const homeDir = join(baseTmp, 'home');
 mkdirSync(stateDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 
-process.on('exit', () => {
+afterAll(() => {
   try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
 });
 

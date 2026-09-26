@@ -24,7 +24,7 @@
  * Migrated from scripts/test-roadmap-audit.sh (deleted in Track 3A).
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -43,7 +43,7 @@ describe('audit snapshot suite', () => {
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(homeDir, { recursive: true });
 
-  process.on('exit', () => {
+  afterAll(() => {
     try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
   });
 

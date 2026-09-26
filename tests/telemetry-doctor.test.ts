@@ -271,7 +271,7 @@ describe('doctor environment and arguments', () => {
     expect(relative.diagnostic).toContain('unresolvable');
     expect(point(bare, '.config/opencode/skills', '/nonexistent/root\n').telemetry_binary).toBeNull();
     // ...while an absolute pointer resolves from every host directory.
-    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills']) {
+    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills', '.cursor/skills']) {
       const resolved = point(makeTelemetryFixture('community', 'absent'), host, ROOT + '\n');
       expect(resolved).toMatchObject({ telemetry_binary: join(ROOT, 'bin/gstack-extend-telemetry'), diagnostic: null });
     }

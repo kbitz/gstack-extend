@@ -28,6 +28,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  statSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -38,6 +39,17 @@ import { dirname, join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
+import {
+  MARKER_LINE,
+  extractPreambleFence,
+  hostDir,
+  resolverProbeScript,
+  runShell,
+  scopedEnv,
+  strictShells,
+  writePointer,
+  writeUpdateCheck,
+} from './helpers/extend-root.ts';
 import { EXPECTED_SETUP_SKILLS as REAL_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -52,6 +64,16 @@ const baseTmp = makeBaseTmp('update-test-');
 afterAll(() => {
   try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
 });
+
+// update-run runs `setup --host auto`. A fake `claude` keeps the Claude assertions
+// independent of which agent CLIs (for example `cursor` alone) the developer has on PATH.
+const CLAUDE_PATH = (() => {
+  const dir = join(baseTmp, 'claude-bin');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'claude'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(dir, 'claude'), 0o755);
+  return `${dir}:${process.env.PATH ?? '/usr/bin:/bin'}`;
+})();
 
 // ─── Fixture-repo factory ────────────────────────────────────────────
 //
@@ -94,7 +116,7 @@ function createFixtureRepo(name: string): string {
 // availability for their setup invocation.
 function createFixtureRepoWithRealSetup(
   name: string,
-  opts: { skills?: readonly string[]; setupText?: string } = {},
+  opts: { skills?: readonly string[]; setupText?: string; beforeCommit?: (dir: string) => void } = {},
 ): string {
   const dir = join(baseTmp, name);
   const remoteDir = join(baseTmp, `${name}-remote`);
@@ -127,6 +149,8 @@ function createFixtureRepoWithRealSetup(
     writeFileSync(join(dir, 'skills', `${skill}.md`), '');
   }
 
+  opts.beforeCommit?.(dir);
+
   spawnSync('git', ['-C', dir, 'add', '-A']);
   spawnSync('git', ['-C', dir, 'commit', '-m', 'initial', '--quiet']);
   spawnSync('git', ['-C', dir, 'push', 'origin', 'main', '--quiet']);
@@ -144,8 +168,12 @@ function pushNewVersion(
   spawnSync('git', ['-C', work, 'add', 'VERSION']);
   if (extraFiles) {
     for (const [rel, content] of Object.entries(extraFiles)) {
-      mkdirSync(join(work, dirname(rel)), { recursive: true });
-      writeFileSync(join(work, rel), content);
+      const dest = join(work, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      let mode: number | undefined;
+      try { mode = statSync(dest).mode; } catch { mode = undefined; }
+      writeFileSync(dest, content);
+      if (mode !== undefined) chmodSync(dest, mode & 0o777);
       spawnSync('git', ['-C', work, 'add', rel]);
     }
   }
@@ -417,6 +445,7 @@ describe('bin/update-run', () => {
         home: homeDir,
         gstackExtendDir: ROOT,
         gstackExtendStateDir: stateDir,
+        extraEnv: { PATH: CLAUDE_PATH },
       });
     });
 
@@ -457,16 +486,29 @@ describe('bin/update-run', () => {
   //   3. readlinkSync resolves to fixture/skills/{name}.md (not ROOT — the
   //      test runs under a mock $HOME so a leak to the developer's real
   //      gstack-extend install would mis-resolve here).
-  //   4. The skill-preamble readlink chain (`dirname dirname $_SKILL_SRC`)
-  //      yields _EXTEND_ROOT = fixture root, matching the CP#3 contract.
+  //   4. The extracted extend-root resolver span yields _EXTEND_ROOT =
+  //      fixture root, matching the CP#3 contract.
   describe('post-upgrade path-1 resolution (Track 6B)', () => {
     let repo: string;
     let homeDir: string;
     let result: ReturnType<typeof runBin>;
+    let beforeMarker: ReturnType<typeof probeExtendRoot>;
 
     beforeAll(() => {
-      repo = createFixtureRepoWithRealSetup('post-upgrade-path1');
-      pushNewVersion(`${baseTmp}/post-upgrade-path1-remote`, '1.4.0');
+      repo = createFixtureRepoWithRealSetup('post-upgrade-path1', {
+        beforeCommit(dir) {
+          const bin = join(dir, 'bin', 'update-check');
+          writeFileSync(bin, '#!/usr/bin/env bash\necho old-update-check\n');
+          chmodSync(bin, 0o755);
+        },
+      });
+      const preHome = join(baseTmp, 'post-upgrade-path1-pre-home');
+      writePointer(preHome, 'claude', 'gstack-extend-upgrade', repo);
+      writeFileSync(join(hostDir(preHome, 'claude', 'gstack-extend-upgrade'), 'SKILL.md'), 'copy\n');
+      beforeMarker = probeExtendRoot(preHome, preHome);
+      pushNewVersion(`${baseTmp}/post-upgrade-path1-remote`, '1.4.0', {
+        'bin/update-check': readFileSync(UPDATE_CHECK, 'utf8'),
+      });
       const stateDir = join(baseTmp, 'post-upgrade-path1-state');
       homeDir = join(baseTmp, 'post-upgrade-path1-home');
       mkdirSync(stateDir, { recursive: true });
@@ -475,6 +517,7 @@ describe('bin/update-run', () => {
         home: homeDir,
         gstackExtendDir: ROOT,
         gstackExtendStateDir: stateDir,
+        extraEnv: { PATH: CLAUDE_PATH },
       });
     });
 
@@ -501,45 +544,29 @@ describe('bin/update-run', () => {
       );
     });
 
+    test('start state is unverified because the marker is missing', () => {
+      expect(beforeMarker.length).toBeGreaterThan(0);
+      for (const r of beforeMarker) {
+        expect(r.stderr).toBe('');
+        expect(r.status).toBe(0);
+        expect(r.root).toBe('');
+        expect(r.unverified).toContain("lacks the line '# extend-root-protocol: v1'");
+      }
+    });
+
     test('CP#3 preamble probe resolves $_EXTEND_ROOT to fixture root', () => {
-      // Mirrors the existing 'Track 5A skill preamble probe' shape: run
-      // the same bash readlink-chain a skill preamble would, but AFTER
-      // an update-run cycle instead of after a fresh setup.
-      //
-      // Env scoping is critical: spreading process.env would inherit the
-      // developer's GSTACK_EXTEND_DIR/BASH_ENV/PWD into the probe and
-      // defeat the test-isolation the assertions claim to enforce.
-      // Both adversarial reviewers caught a prior version that did this.
-      // cwd is pinned to homeDir for the same reason: the script's second
-      // readlink falls back to `.claude/skills/pair-review/SKILL.md`
-      // (path 2), and an unscoped cwd could find a stale workspace-local
-      // .claude/ directory and silently satisfy the probe with the wrong
-      // target. PATH is needed so `bash` can find `readlink` and `dirname`.
-      const script = `
-        set -u
-        _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \\
-                  || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
-        _EXTEND_ROOT=""
-        [ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
-        printf '%s\\n' "$_EXTEND_ROOT"
-      `;
-      const r = spawnSync('bash', ['-c', script], {
-        encoding: 'utf8',
-        env: { HOME: homeDir, PATH: process.env.PATH ?? '/usr/bin:/bin' },
-        cwd: homeDir,
-      });
-      // Guard against the failure mode where the probe exits 0 with empty
-      // stdout (both readlinks failed but `_SKILL_SRC` is still defined
-      // under `set -u` because command substitution succeeds even when
-      // the command inside fails). Without this, `realpathSync('')` would
-      // resolve to cwd and the test would pass for the wrong reason.
-      expect(r.status).toBe(0);
-      const probeOut = (r.stdout ?? '').trim();
-      expect(probeOut).not.toBe('');
-      expect(probeOut).not.toBe('.');
-      // Canonicalize both sides: setup's pwd -P resolves /var → /private/var
-      // on macOS, so the bash probe yields the realpath form.
-      expect(realpathSync(probeOut)).toBe(realpathSync(repo));
+      // After update-run, setup has rebuilt the Claude symlink. The
+      // extracted resolver (not a hand-copied readlink chain) must
+      // resolve the fixture root. Env is HOME and PATH only, and cwd is
+      // the mock home, so a workspace-local .claude/ cannot satisfy it.
+      const after = probeExtendRoot(homeDir, homeDir);
+      for (const r of after) {
+        expect(r.stderr).toBe('');
+        expect(r.status).toBe(0);
+        expect(r.root).not.toBe('');
+        expect(r.root).not.toBe('.');
+        expect(realpathSync(r.root)).toBe(realpathSync(repo));
+      }
     });
   });
 
@@ -1342,75 +1369,270 @@ describe('setup install-time safety: per-$target layer', () => {
   });
 });
 
-// ─── Track 5A: skill preamble two-path probe (CP#3 integration) ──────
+// ─── Track 16D: extend-root resolver behavior ────────────────────────
 //
-// Default install creates symlinks at ~/.claude/skills/{name}/SKILL.md
-// (path 1). Vendored install drops symlinks at .claude/skills/{name}/
-// SKILL.md inside the project root (path 2). Both forms must let a skill
-// preamble resolve $_EXTEND_ROOT correctly via the readlink chain
-// `_SKILL_SRC=$(readlink path1 || readlink path2)` then
-// `_EXTEND_ROOT=$(dirname dirname $_SKILL_SRC)`.
+// The extracted span from skills/gstack-extend-upgrade.md is the only
+// probe. It never runs a tail and never the real bin/update-check,
+// except the env-pin test below.
 
-describe('Track 5A skill preamble probe (CP#3 integration)', () => {
-  // Run the real preamble probe block from skills/pair-review.md against
-  // a controlled fixture and verify $_EXTEND_ROOT resolves correctly.
-  function runPreambleProbe(home: string, vendoredDir: string | null): {
-    extendRoot: string;
-    exitCode: number | null;
-  } {
-    const script = `
-      set -u
-      cd "$1"
-      _SKILL_SRC=$(readlink ~/.claude/skills/pair-review/SKILL.md 2>/dev/null \\
-                || readlink .claude/skills/pair-review/SKILL.md 2>/dev/null)
-      _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
-      printf '%s\\n' "$_EXTEND_ROOT"
-    `;
-    const cwd = vendoredDir ?? home;
-    const r = spawnSync('bash', ['-c', script, 'preamble-probe', cwd], {
-      encoding: 'utf8',
-      env: { ...process.env, HOME: home },
-    });
+const RESOLVER_SKILL = 'gstack-extend-upgrade';
+
+function probeExtendRoot(home: string, cwd: string, skillText?: string) {
+  const text = skillText ?? readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
+  const script = resolverProbeScript(text);
+  return strictShells().map((sh) => {
+    const r = runShell(sh.shell, sh.args, script, scopedEnv(home), cwd);
+    const lines = (r.stdout ?? '').split('\n');
     return {
-      extendRoot: (r.stdout ?? '').trim(),
-      exitCode: r.status,
+      shell: sh.shell,
+      status: r.status,
+      stderr: r.stderr ?? '',
+      root: lines[0] ?? '',
+      unverified: lines[1] ?? '',
     };
+  });
+}
+
+function expectResolved(home: string, cwd: string, root: string, skillText?: string): void {
+  const results = probeExtendRoot(home, cwd, skillText);
+  expect(results.length).toBeGreaterThan(0);
+  for (const r of results) {
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    if (root === '') expect(r.root).toBe('');
+    else expect(realpathSync(r.root)).toBe(realpathSync(root));
   }
+}
 
-  test('default install: path 1 resolves $_EXTEND_ROOT to repo source', () => {
-    const home = join(baseTmp, 'cp3-default-home');
-    mkdirSync(home, { recursive: true });
-    const setupResult = runSetup([], home);
-    expect(setupResult.stdout + setupResult.stderr).toContain(`Installed ${REAL_SETUP_SKILLS.length} skills`);
-    const probe = runPreambleProbe(home, null);
-    expect(probe.extendRoot).toBe(ROOT);
+function claudeSymlink(home: string, root: string): void {
+  mkdirSync(join(root, 'skills'), { recursive: true });
+  writeFileSync(join(root, 'skills', `${RESOLVER_SKILL}.md`), 'skill\n');
+  const dir = hostDir(home, 'claude', RESOLVER_SKILL);
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(join(root, 'skills', `${RESOLVER_SKILL}.md`), join(dir, 'SKILL.md'));
+}
+
+function codexPointer(home: string, root: string, value = root, newline = true): void {
+  writePointer(home, 'codex', RESOLVER_SKILL, value, newline);
+  writeFileSync(join(hostDir(home, 'codex', RESOLVER_SKILL), 'SKILL.md'), 'copy\n');
+}
+
+function plantHostile(cwd: string, root: string): void {
+  writeUpdateCheck(root);
+  mkdirSync(join(root, 'skills'), { recursive: true });
+  writeFileSync(join(root, 'skills', `${RESOLVER_SKILL}.md`), 'hostile\n');
+  const dir = join(cwd, '.claude', 'skills', RESOLVER_SKILL);
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(`../../../evil/skills/${RESOLVER_SKILL}.md`, join(dir, 'SKILL.md'));
+  writeFileSync(join(dir, '.extend-root'), `${root}\n`);
+}
+
+describe('Track 16D extend-root resolver matrix', () => {
+  test('Claude symlink install resolves', () => {
+    const home = join(baseTmp, 'mx-claude-home');
+    const root = join(baseTmp, 'mx-claude-root');
+    writeUpdateCheck(root);
+    claudeSymlink(home, root);
+    expectResolved(home, home, root);
   });
 
-  test('vendored install: path 2 fallthrough resolves $_EXTEND_ROOT', () => {
-    // Default install absent (fresh $HOME); vendored install at
-    // <projectRoot>/.claude/skills/{name}/SKILL.md.
-    const home = join(baseTmp, 'cp3-vendored-home');
-    mkdirSync(home, { recursive: true });
-    const projectRoot = join(baseTmp, 'cp3-vendored-project');
-    mkdirSync(join(projectRoot, '.claude', 'skills', 'pair-review'), { recursive: true });
-    symlinkSync(
-      join(ROOT, 'skills', 'pair-review.md'),
-      join(projectRoot, '.claude', 'skills', 'pair-review', 'SKILL.md'),
-    );
-    const probe = runPreambleProbe(home, projectRoot);
-    expect(probe.extendRoot).toBe(ROOT);
+  test('Codex regular-file copy plus pointer resolves', () => {
+    const home = join(baseTmp, 'mx-codex-home');
+    const root = join(baseTmp, 'mx-codex-root');
+    writeUpdateCheck(root);
+    codexPointer(home, root);
+    expectResolved(home, home, root);
   });
 
-  test('truly-broken install: both probes empty, $_EXTEND_ROOT empty (silent no-op per D10)', () => {
-    const home = join(baseTmp, 'cp3-broken-home');
+  test('hostile cwd is ignored when HOME has a Codex pointer', () => {
+    const home = join(baseTmp, 'mx-hostile-home');
+    const legit = join(baseTmp, 'mx-hostile-legit');
+    const cwd = join(baseTmp, 'mx-hostile-cwd');
+    writeUpdateCheck(legit);
+    codexPointer(home, legit);
+    plantHostile(cwd, join(cwd, 'evil'));
+    expectResolved(home, cwd, legit);
+  });
+
+  test('cwd-relative install is never trusted', () => {
+    const home = join(baseTmp, 'mx-vendored-home');
+    const cwd = join(baseTmp, 'mx-vendored-cwd');
     mkdirSync(home, { recursive: true });
-    const projectRoot = join(baseTmp, 'cp3-broken-project');
-    mkdirSync(projectRoot, { recursive: true });
-    const probe = runPreambleProbe(home, projectRoot);
-    // dirname dirname "" yields "." — _EXTEND_ROOT is "." and the
-    // subsequent [ -x "$_EXTEND_ROOT/bin/update-check" ] check fails
-    // silently, matching D10 semantics.
-    expect(probe.extendRoot).toBe('.');
+    plantHostile(cwd, join(cwd, 'evil'));
+    expectResolved(home, cwd, '');
+  });
+
+  test('relative pointer contents are rejected', () => {
+    for (const value of ['.', 'x']) {
+      const home = join(baseTmp, `mx-rel-${value === '.' ? 'dot' : 'x'}`);
+      const cwd = join(baseTmp, `mx-rel-cwd-${value === '.' ? 'dot' : 'x'}`);
+      mkdirSync(cwd, { recursive: true });
+      codexPointer(home, join(baseTmp, 'unused'), value);
+      const results = probeExtendRoot(home, cwd);
+      for (const r of results) {
+        expect(r.stderr).toBe('');
+        expect(r.root).toBe('');
+        expect(r.unverified).toContain('non-absolute path');
+      }
+    }
+  });
+
+  test('a bad first candidate falls through to the next', () => {
+    const variants = [
+      { name: 'markerless', prep: (root: string) => writeUpdateCheck(root, { marker: false }) },
+      { name: 'nonexec', prep: (root: string) => writeUpdateCheck(root, { executable: false }) },
+      { name: 'directory', prep: (root: string) => writeUpdateCheck(root, { asDirectory: true }) },
+    ];
+    for (const v of variants) {
+      const home = join(baseTmp, `mx-fall-${v.name}-home`);
+      const bad = join(baseTmp, `mx-fall-${v.name}-bad`);
+      const good = join(baseTmp, `mx-fall-${v.name}-good`);
+      v.prep(bad);
+      writeUpdateCheck(good);
+      claudeSymlink(home, bad);
+      codexPointer(home, good);
+      expectResolved(home, home, good);
+    }
+  });
+
+  test('a stow-style relative symlink resolves against the link directory', () => {
+    const home = join(baseTmp, 'mx-stow-home');
+    const root = join(home, 'stub');
+    writeUpdateCheck(root);
+    mkdirSync(join(root, 'skills'), { recursive: true });
+    const skillFile = join(root, 'skills', `${RESOLVER_SKILL}.md`);
+    writeFileSync(skillFile, 'skill\n');
+    const dir = hostDir(home, 'claude', RESOLVER_SKILL);
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(`../../../stub/skills/${RESOLVER_SKILL}.md`, join(dir, 'SKILL.md'));
+    expectResolved(home, home, root);
+  });
+
+  test('a relative link to a marker-less root prints UNVERIFIED', () => {
+    const home = join(baseTmp, 'mx-stow-bad-home');
+    const root = join(home, 'stub');
+    writeUpdateCheck(root, { marker: false });
+    mkdirSync(join(root, 'skills'), { recursive: true });
+    writeFileSync(join(root, 'skills', `${RESOLVER_SKILL}.md`), 'skill\n');
+    const dir = hostDir(home, 'claude', RESOLVER_SKILL);
+    mkdirSync(dir, { recursive: true });
+    symlinkSync(`../../../stub/skills/${RESOLVER_SKILL}.md`, join(dir, 'SKILL.md'));
+    const results = probeExtendRoot(home, home);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain("lacks the line '# extend-root-protocol: v1'");
+    }
+  });
+
+  test('a link to a deleted checkout prints the moved-or-deleted cause', () => {
+    const home = join(baseTmp, 'mx-deleted-home');
+    const root = join(baseTmp, 'mx-deleted-root');
+    writeUpdateCheck(root);
+    claudeSymlink(home, root);
+    rmSync(root, { recursive: true, force: true });
+    const results = probeExtendRoot(home, home);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain('has no bin/update-check (checkout moved or deleted)');
+    }
+  });
+
+  test('a lone non-executable update-check prints the restore cause', () => {
+    const home = join(baseTmp, 'mx-nonexec-home');
+    const root = join(baseTmp, 'mx-nonexec-root');
+    writeUpdateCheck(root, { executable: false });
+    claudeSymlink(home, root);
+    const results = probeExtendRoot(home, home);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain('is not a readable executable file');
+      expect(r.unverified).toContain('checkout -- bin/update-check');
+    }
+  });
+
+  test('an empty pointer prints its own cause', () => {
+    const home = join(baseTmp, 'mx-empty-home');
+    const cwd = join(baseTmp, 'mx-empty-cwd');
+    mkdirSync(cwd, { recursive: true });
+    const pointer = writePointer(home, 'codex', RESOLVER_SKILL, '', false);
+    writeFileSync(pointer, '');
+    writeFileSync(join(hostDir(home, 'codex', RESOLVER_SKILL), 'SKILL.md'), 'copy\n');
+    const results = probeExtendRoot(home, cwd);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.root).toBe('');
+      expect(r.unverified).toContain('is empty');
+      expect(r.unverified).toContain(pointer);
+    }
+  });
+
+  test('a pointer with no trailing newline is accepted', () => {
+    const home = join(baseTmp, 'mx-nonewline-home');
+    const root = join(baseTmp, 'mx-nonewline-root');
+    writeUpdateCheck(root);
+    codexPointer(home, root, root, false);
+    expectResolved(home, home, root);
+  });
+
+  test('a HOME and root containing spaces work', () => {
+    const home = join(baseTmp, 'mx home');
+    const root = join(baseTmp, 'mx root');
+    writeUpdateCheck(root);
+    claudeSymlink(home, root);
+    expectResolved(home, home, root);
+  });
+
+  test('a setup-generated Codex copy resolves the real checkout from a spaced HOME', () => {
+    const home = join(baseTmp, 'mx gen home');
+    mkdirSync(home, { recursive: true });
+    const setupResult = runSetup(['--host', 'codex'], home);
+    expect(setupResult.exitCode).toBe(0);
+    const copy = readFileSync(join(hostDir(home, 'codex', RESOLVER_SKILL), 'SKILL.md'), 'utf8');
+    const cwd = join(baseTmp, 'mx-gen-hostile');
+    plantHostile(cwd, join(cwd, 'evil'));
+    expectResolved(home, cwd, ROOT, copy);
+  });
+});
+
+describe('Track 16D update-check env pin', () => {
+  test('upgrade tail pins GSTACK_EXTEND_DIR to the verified root', () => {
+    const home = join(baseTmp, 'pin-home');
+    const state = join(baseTmp, 'pin-state');
+    const hostile = join(baseTmp, 'pin-hostile');
+    const sentinel = join(baseTmp, 'pin-sentinel');
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, 'config'), 'update_check=false\n');
+    mkdirSync(join(hostile, 'bin'), { recursive: true });
+    writeFileSync(join(hostile, 'bin', 'config'), `#!/bin/sh\necho ran > ${JSON.stringify(sentinel)}\necho false\n`);
+    chmodSync(join(hostile, 'bin', 'config'), 0o755);
+    writePointer(home, 'claude', RESOLVER_SKILL, ROOT);
+    writeFileSync(join(hostDir(home, 'claude', RESOLVER_SKILL), 'SKILL.md'), 'copy\n');
+    const script = extractPreambleFence(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8'));
+    const r = runShell('bash', ['-euc'], script, scopedEnv(home, {
+      GSTACK_EXTEND_DIR: hostile,
+      GSTACK_EXTEND_STATE_DIR: state,
+      GSTACK_EXTEND_REMOTE_URL: 'http://127.0.0.1:9/VERSION',
+    }), home);
+    expect(r.status).toBe(0);
+    expect(r.stdout ?? '').toContain('EXTEND_ROOT:');
+    expect(existsSync(sentinel)).toBe(false);
+  });
+});
+
+describe('extend-root protocol marker', () => {
+  test('bin/update-check carries the v1 identity line', () => {
+    const text = readFileSync(UPDATE_CHECK, 'utf8');
+    expect(text.split('\n')).toContain(MARKER_LINE);
+    expect(text).toContain('Protocol identity:');
+    expect(text).toContain('Compatible bin changes never touch it');
+    expect(text).toContain('v2 replaces v1');
   });
 });
 

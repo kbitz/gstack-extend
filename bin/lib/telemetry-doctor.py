@@ -88,7 +88,7 @@ def wrapper_candidates():
     yield which("gstack-extend-telemetry")
     yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
     for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
-                      Path.home() / ".config/opencode/skills"):
+                      Path.home() / ".config/opencode/skills", Path.home() / ".cursor/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
                 # Regular files only (a FIFO or device would block). Like the skill block's `IFS= read -r`, take

@@ -18,11 +18,54 @@
  * Migrated from scripts/test-skill-protocols.sh (deleted in Track 3A).
  */
 
-import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { afterAll, describe, expect, test } from 'bun:test';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
+import { computeRenames, formatRenamesTable } from '../src/audit/lib/renames-diff.ts';
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
+import {
+  CANONICAL_SPAN,
+  CMD_BIN_RE,
+  FOR_POINTER_LINE,
+  FOR_SKILL_LINE,
+  GUARD_COMMENT,
+  GUARD_LINE,
+  HANDOFF_PARAGRAPH,
+  INIT_ERROR_STOP,
+  INIT_TAIL,
+  MARKER_LINE,
+  NO_INSTALL_MESSAGE,
+  RENAMES_ER_LINE,
+  ROOT_RESOLVER_SKILLS,
+  SKILL_PATH_PREFIXES,
+  SKILL_PATH_RE,
+  UPGRADE_NO_ROOT,
+  UPGRADE_TAIL,
+  WORKFLOW_SKILLS,
+  WORKFLOW_TAIL,
+  agentShells,
+  extractCanonicalSpan,
+  extractFences,
+  extractPreambleFence,
+  hostDir,
+  runShell,
+  scopedEnv,
+  skillPreamble,
+  strictShells,
+  writePointer,
+  writeUpdateCheck,
+} from './helpers/extend-root.ts';
+import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
 
@@ -427,13 +470,13 @@ describe('Track 10A old inline-flow content removed', () => {
   // Negative assertions: prove the consolidation REPLACED the old per-skill
   // inline flows rather than appending alongside them. These tokens were
   // load-bearing in the pre-Track-10A divergent copies — the truncated
-  // cross-reference and the broken `git pull` recovery command. (The old
-  // bootstrap pattern is NOT a usable negative token: each skill has a
-  // second, out-of-scope `_EXTEND_ROOT` computation for session-paths that
-  // legitimately still uses it.)
+  // cross-reference and the broken `git pull` recovery command. Part 4
+  // removed the session-paths re-resolution chain, so its `.` guard is a
+  // negative token too.
   const REMOVED_TOKENS = [
     'Handle responses the same way as /pair-review',
     'git -C $_EXTEND_ROOT pull',
+    '[ "$_EXTEND_ROOT" = "." ]',
   ];
   for (const skill of SKILLS) {
     const file = join(ROOT, 'skills', `${skill}.md`);
@@ -451,26 +494,9 @@ describe('Track 10A old inline-flow content removed', () => {
   }
 });
 
-describe('Track 10A D7 bootstrap empty-guard', () => {
-  // Positive assertion: the update-check preamble bootstrap guards on a
-  // non-empty _SKILL_SRC before deriving _EXTEND_ROOT. Without the guard,
-  // a failed readlink left _EXTEND_ROOT="." and `[ -x ./bin/update-check ]`
-  // could execute a script from the caller's cwd. All 6 preamble skills
-  // carry the guarded form.
-  const D7_GUARD = '[ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")';
-  for (const skill of PREAMBLE_SKILLS) {
-    const file = join(ROOT, 'skills', `${skill}.md`);
-    let content: string;
-    try {
-      content = readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    test(`${skill} preamble bootstrap has the _SKILL_SRC empty-guard`, () => {
-      expect(content).toContain(D7_GUARD);
-    });
-  }
-});
+// Track 10A D7 empty-guard and Track 5A's vendored readlink fallthrough
+// locked the old preamble. Track 16D replaces both with the resolver locks
+// below (the vendored path is now absent).
 
 describe('roadmap-only verbatim blocks', () => {
   const file = join(ROOT, 'skills', 'roadmap.md');
@@ -540,65 +566,28 @@ describe('pair-review per-branch session paths', () => {
   });
 });
 
-// ─── Track 5A: skill preamble two-path probe (drift-lock) ────────────
-//
-// Each skill preamble probes path 1 (~/.claude/skills/{name}/SKILL.md)
-// then path 2 (.claude/skills/{name}/SKILL.md) as a vendored-install
-// fallback. The two-line readlink is identical-shaped across all 6 preamble
-// skills (the 5 workflow skills + gstack-extend-upgrade) — assert presence
-// here so a future PR can't drop the path-2 fallthrough from one skill while
-// keeping it in the others.
-//
-// Mirrors gstack core's preamble probe pattern. See CHANGELOG v0.18.14.
+// Track 5A's two-path (including vendored) probe is replaced by the Track 16D
+// resolver locks. A cwd-relative `.claude/skills/` path must not come back.
 
-describe('Track 5A two-path preamble probe (path-2 fallthrough)', () => {
-  for (const skill of PREAMBLE_SKILLS) {
-    const file = join(ROOT, 'skills', `${skill}.md`);
-    let content: string;
-    try {
-      content = readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
-    test(`${skill} preamble probes ~/.claude/skills/${skill}/SKILL.md (path 1)`, () => {
-      expect(content).toContain(`readlink ~/.claude/skills/${skill}/SKILL.md 2>/dev/null`);
-    });
-    test(`${skill} preamble probes ~/.codex/skills/${skill}/SKILL.md`, () => {
-      expect(content).toContain(`readlink ~/.codex/skills/${skill}/SKILL.md 2>/dev/null`);
-    });
-    test(`${skill} preamble probes ~/.config/opencode/skills/${skill}/SKILL.md`, () => {
-      expect(content).toContain(`readlink ~/.config/opencode/skills/${skill}/SKILL.md 2>/dev/null`);
-    });
-    test(`${skill} preamble falls back to .claude/skills/${skill}/SKILL.md (vendored)`, () => {
-      expect(content).toContain(`readlink .claude/skills/${skill}/SKILL.md 2>/dev/null`);
-    });
-  }
-});
-
-// ─── Track 5A: cross-skill inline-Read in test-plan.md ───────────────
+// ─── Track 16D: cross-skill inline-Read in test-plan.md ──────────────
 //
-// skills/test-plan.md Phase 8 reads pair-review.md inline. The original
-// hardcoded `~/.claude/skills/pair-review/SKILL.md` path silently breaks
-// on vendored installs. The prose was updated to instruct the agent to
-// try path 1 first, fall back to path 2. Lock the prose change so a
-// future edit can't drop the fallback.
+// skills/test-plan.md Phase 8 reads pair-review.md inline. It lists only
+// the home-anchored host paths; the cwd-relative vendored fallback is gone.
 
-describe('Track 5A test-plan.md cross-skill probe (Phase 8 inline-Read)', () => {
+describe('Track 16D test-plan Phase 8 home paths (L9)', () => {
   const file = join(ROOT, 'skills', 'test-plan.md');
   const content = readFileSync(file, 'utf8');
 
-  test('Phase 8 inline pair-review read mentions both probe paths', () => {
-    // Path 1: the standard global install location.
+  test('Phase 8 lists the four home pair-review paths', () => {
     expect(content).toContain('~/.claude/skills/pair-review/SKILL.md');
     expect(content).toContain('~/.codex/skills/pair-review/SKILL.md');
     expect(content).toContain('~/.config/opencode/skills/pair-review/SKILL.md');
-    expect(content).toContain('.claude/skills/pair-review/SKILL.md');
+    expect(content).toContain('~/.cursor/skills/pair-review/SKILL.md');
   });
 
-  test('Phase 8 prose explicitly instructs the agent to fall back', () => {
-    // Lock the actionable verb so future edits don't reduce this to a
-    // single-path read by accident.
-    expect(content).toMatch(/fall back to[\s\S]+\.claude\/skills\/pair-review\/SKILL\.md/);
+  test('Phase 8 has no cwd-relative vendored fallback', () => {
+    expect(content).not.toContain('(vendored install)');
+    expect(content).not.toMatch(/fall back to[\s\S]+\.claude\/skills\/pair-review\/SKILL\.md/);
   });
 });
 
@@ -1731,5 +1720,544 @@ describe('Track 15A roadmap advisory-list drift vs CANONICAL_SECTIONS', () => {
   test('list parser throws on leftover ALL_CAPS after a parenthetical', () => {
     const sample = `${FAIL_LIST_PREFIX} SIZE, GROUP_DEPS (stale-anchor) PHASES.\n${ADVISORY_LIST_PREFIX} VOCAB_LINT.\n`;
     expect(() => extractAuditSectionLists(sample)).toThrow("leftover section token 'PHASES'");
+  });
+});
+
+// ─── Track 16D: verified extend-root resolver ────────────────────────
+
+function resolverSkillText(skill: string): string {
+  return readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+}
+
+describe('Track 16D extend-root resolver locks', () => {
+  const upgrade = resolverSkillText('gstack-extend-upgrade');
+  const span = extractCanonicalSpan(upgrade);
+
+  test('canonical span matches the locked text', () => {
+    expect(span).toBe(CANONICAL_SPAN);
+  });
+
+  test('L1: span is byte-identical exactly once, and each _ER_SKILL line is pinned', () => {
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      const content = resolverSkillText(skill);
+      if (content.split(span).length - 1 !== 1) {
+        throw new Error(
+          `drift in extend-root resolver — propagate canonical span from skills/gstack-extend-upgrade.md (${skill})`,
+        );
+      }
+      expect(content.match(/^_ER_SKILL=\S+$/gm)).toEqual([`_ER_SKILL=${skill}`]);
+    }
+  });
+
+  test('L2: canonical span keeps the absolute-path, file, executable, and marker checks', () => {
+    expect(span).toContain('case "$1" in /*)');
+    expect(span).toContain('[ -f');
+    expect(span).toContain('[ -x');
+    expect(span).toContain(`grep -qx '${MARKER_LINE}'`);
+    expect(span).toContain(FOR_SKILL_LINE);
+    expect(span).toContain(FOR_POINTER_LINE);
+  });
+
+  test('L3: workflow, upgrade, and init tails are verbatim', () => {
+    for (const skill of WORKFLOW_SKILLS) {
+      expect(extractPreambleFence(resolverSkillText(skill))).toBe(skillPreamble(skill, WORKFLOW_TAIL));
+    }
+    expect(extractPreambleFence(upgrade)).toBe(skillPreamble('gstack-extend-upgrade', UPGRADE_TAIL));
+    expect(extractPreambleFence(resolverSkillText('gstack-extend-init'))).toBe(
+      skillPreamble('gstack-extend-init', INIT_TAIL),
+    );
+  });
+
+  test('L4: hand-off paragraph, upgrade no-root branch, and renames ER= line', () => {
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      const content = resolverSkillText(skill);
+      expect(content).toContain(HANDOFF_PARAGRAPH);
+      expect(content).toContain(NO_INSTALL_MESSAGE);
+    }
+    expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
+    expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
+    expect(resolverSkillText('roadmap')).toContain(RENAMES_ER_LINE);
+  });
+
+  test('L5: every skill path is home-anchored', () => {
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      const content = resolverSkillText(skill);
+      const re = new RegExp(SKILL_PATH_RE.source, 'g');
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content))) {
+        const before = content.slice(Math.max(0, m.index - 24), m.index);
+        const ok = SKILL_PATH_PREFIXES.some((p) => before.endsWith(p));
+        if (!ok) {
+          throw new Error(`${skill}: skill path is not home-anchored: ${JSON.stringify(before + m[0])}`);
+        }
+      }
+    }
+  });
+
+  test('L6 regex flags cwd-relative bin/ calls and passes verified-root ones', () => {
+    const flagged = [
+      'bin/x', './bin/x', 'foo && bin/x', 'X=$(bin/x)', 'if ! bin/x', 'ER=1 bin/x', 'source bin/lib/x.sh',
+      '. bin/lib/x.sh', '  bin/x', 'bash bin/x', 'sh ./bin/x', 'bun bin/x.ts', 'bun run bin/x', 'python3 bin/x.py',
+    ];
+    for (const line of flagged) expect([line, CMD_BIN_RE.test(line)]).toEqual([line, true]);
+    const passed = [
+      '"$_EXTEND_ROOT/bin/x"',
+      'cat docs/bin/x',
+      'GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check"',
+      'bash "$_EXTEND_ROOT/bin/lib/run-migrations.sh"',
+      'source "$_EXTEND_ROOT/bin/lib/session-paths.sh"',
+    ];
+    for (const line of passed) expect([line, CMD_BIN_RE.test(line)]).toEqual([line, false]);
+  });
+
+  test('L6: bash fences have no command-position bin/ call', () => {
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      for (const fence of extractFences(resolverSkillText(skill))) {
+        for (const line of fence.body.split('\n')) {
+          if (CMD_BIN_RE.test(line)) {
+            throw new Error(`${skill}: command-position bin/ call: ${line}`);
+          }
+        }
+      }
+    }
+  });
+
+  test('L7: every extend-root source is guarded, and every guard sources next', () => {
+    const sourceRe = /^(?:source|\.) "\$_EXTEND_ROOT\//;
+    let guards = 0;
+    for (const skill of ROOT_RESOLVER_SKILLS) {
+      const content = resolverSkillText(skill);
+      const prose = content.replace(/^([ \t]*)```[\s\S]*?^\1```/gm, '');
+      expect(prose).not.toContain('source "$_EXTEND_ROOT');
+      for (const fence of extractFences(content)) {
+        if (fence.lang !== 'bash') continue;
+        const lines = fence.body.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (sourceRe.test(lines[i] ?? '')) {
+            let j = i - 1;
+            while (j >= 0 && (lines[j] ?? '').trim() === '') j--;
+            expect(lines[j]).toBe(GUARD_LINE);
+          }
+          if (lines[i] === GUARD_LINE) {
+            guards++;
+            expect(lines[i - 1]).toBe(GUARD_COMMENT);
+            let k = i + 1;
+            while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
+            expect(lines[k] ?? '').toMatch(sourceRe);
+          }
+        }
+      }
+    }
+    expect(guards).toBe(6);
+  });
+});
+
+const extendRootTmp = makeBaseTmp('skill-protocols-extend-root-');
+afterAll(() => {
+  try { rmSync(extendRootTmp, { recursive: true, force: true }); } catch { /* */ }
+});
+
+function plantSkillLink(home: string, skill: string, root: string): void {
+  mkdirSync(join(root, 'skills'), { recursive: true });
+  writeFileSync(join(root, 'skills', `${skill}.md`), 'skill\n');
+  const dir = hostDir(home, 'claude', skill);
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(join(root, 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
+}
+
+function plantHostileTree(cwd: string, skill: string): void {
+  const root = join(cwd, 'evil');
+  writeUpdateCheck(root, { marker: true, record: true });
+  mkdirSync(join(root, 'skills'), { recursive: true });
+  writeFileSync(join(root, 'skills', `${skill}.md`), 'hostile\n');
+  const dir = join(cwd, '.claude', 'skills', skill);
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(`../../../evil/skills/${skill}.md`, join(dir, 'SKILL.md'));
+  writeFileSync(join(dir, '.extend-root'), `${root}\n`);
+}
+
+function runPreamble(skill: string, home: string, cwd: string, extra: Record<string, string> = {}) {
+  const script = extractPreambleFence(resolverSkillText(skill));
+  return strictShells().map((sh) => {
+    const extraForShell = { ...extra };
+    if (extra.SENTINEL) extraForShell.SENTINEL = `${extra.SENTINEL}-${sh.shell}`;
+    const r = runShell(sh.shell, sh.args, script, scopedEnv(home, extraForShell), cwd);
+    return {
+      shell: sh.shell,
+      status: r.status,
+      stdout: r.stdout ?? '',
+      stderr: r.stderr ?? '',
+      sentinel: extraForShell.SENTINEL,
+    };
+  });
+}
+
+describe('Track 16D preamble representatives', () => {
+  const cohorts = ['pair-review', 'gstack-extend-upgrade', 'gstack-extend-init'] as const;
+
+  for (const skill of ROOT_RESOLVER_SKILLS) {
+    for (const install of ['pointer', 'symlink', 'unverified'] as const) {
+      test(`Cursor-only ${skill} preamble resolves ${install} installs safely`, () => {
+        const label = `cursor-${skill}-${install}`;
+        const home = join(extendRootTmp, `${label} home`);
+        const root = join(extendRootTmp, `${label} checkout`);
+        const cwd = join(extendRootTmp, `${label}-cwd`);
+        const sentinel = join(extendRootTmp, `${label}-sentinel`);
+        const hostileSentinel = join(extendRootTmp, `${label}-hostile`);
+        mkdirSync(cwd, { recursive: true });
+        writeUpdateCheck(root, { marker: install !== 'unverified', record: true });
+        if (skill === 'gstack-extend-init') {
+          const bin = join(root, 'bin', 'gstack-extend');
+          writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+          chmodSync(bin, 0o755);
+        }
+        const dir = hostDir(home, 'cursor', skill);
+        mkdirSync(dir, { recursive: true });
+        if (install === 'symlink') {
+          mkdirSync(join(root, 'skills'), { recursive: true });
+          writeFileSync(join(root, 'skills', `${skill}.md`), 'skill\n');
+          symlinkSync(join(root, 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
+        } else {
+          writePointer(home, 'cursor', skill, root);
+          writeFileSync(join(dir, 'SKILL.md'), 'generated copy\n');
+        }
+        // A repository-local Cursor install must never override the HOME install.
+        const evil = join(cwd, 'evil');
+        writeUpdateCheck(evil);
+        writeFileSync(join(evil, 'bin', 'update-check'),
+          `#!/bin/sh\n${MARKER_LINE}\nprintf hostile > "$HOSTILE_SENTINEL"\n`);
+        writePointer(cwd, 'cursor', skill, evil);
+        for (const r of runPreamble(skill, home, cwd, {
+          SENTINEL: sentinel, HOSTILE_SENTINEL: hostileSentinel,
+        })) {
+          expect(r.stderr).toBe('');
+          expect(existsSync(hostileSentinel)).toBe(false);
+          if (install === 'unverified') {
+            expect(r.stdout).toContain("lacks the line '# extend-root-protocol: v1'");
+            expect(r.stdout).not.toContain('EXTEND_ROOT:');
+            expect(r.status).toBe(skill === 'gstack-extend-init' ? 1 : 0);
+            expect(existsSync(r.sentinel!)).toBe(false);
+          } else {
+            expect(r.status).toBe(0);
+            expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
+            if (skill !== 'gstack-extend-init') {
+              expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
+            }
+          }
+        }
+      });
+    }
+  }
+
+  test('verified root prints EXTEND_ROOT and pins GSTACK_EXTEND_DIR', () => {
+    for (const skill of cohorts) {
+      const home = join(extendRootTmp, `ok-home-${skill}`);
+      const root = join(extendRootTmp, `ok-root-${skill}`);
+      const cwd = join(extendRootTmp, `ok-cwd-${skill}`);
+      const sentinel = join(extendRootTmp, `ok-sentinel-${skill}`);
+      mkdirSync(home, { recursive: true });
+      mkdirSync(cwd, { recursive: true });
+      writeUpdateCheck(root, { record: true });
+      if (skill === 'gstack-extend-init') {
+        const bin = join(root, 'bin', 'gstack-extend');
+        writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+        chmodSync(bin, 0o755);
+      }
+      plantSkillLink(home, skill, root);
+      const hostileEnv = join(extendRootTmp, `ok-hostile-env-${skill}`);
+      mkdirSync(hostileEnv, { recursive: true });
+      for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel, GSTACK_EXTEND_DIR: hostileEnv })) {
+        expect(r.stderr).toBe('');
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
+        if (skill === 'gstack-extend-init') {
+          expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
+        } else {
+          expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
+        }
+      }
+    }
+  });
+
+  test('init with a verified root but no bin/gstack-extend exits 1 before printing the root', () => {
+    const home = join(extendRootTmp, 'init-nobin-home');
+    const root = join(extendRootTmp, 'init-nobin-root');
+    const cwd = join(extendRootTmp, 'init-nobin-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    plantSkillLink(home, 'gstack-extend-init', root);
+    const results = runPreamble('gstack-extend-init', home, cwd);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain(`ERROR: ${root}/bin/gstack-extend is missing or not executable`);
+      expect(r.stdout).not.toContain('EXTEND_ROOT:');
+      expect(r.stdout).not.toContain('_EXTEND_ROOT=');
+    }
+  });
+
+  test('init with a verified root but a non-executable bin/gstack-extend exits 1 before printing the root', () => {
+    const home = join(extendRootTmp, 'init-nox-home');
+    const root = join(extendRootTmp, 'init-nox-root');
+    const cwd = join(extendRootTmp, 'init-nox-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    const bin = join(root, 'bin', 'gstack-extend');
+    writeFileSync(bin, '#!/bin/sh\nexit 0\n');
+    chmodSync(bin, 0o644);
+    plantSkillLink(home, 'gstack-extend-init', root);
+    const results = runPreamble('gstack-extend-init', home, cwd);
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain(`ERROR: ${root}/bin/gstack-extend is missing or not executable`);
+      expect(r.stdout).not.toContain('EXTEND_ROOT:');
+      expect(r.stdout).not.toContain('_EXTEND_ROOT=');
+    }
+  });
+
+  test('hostile cwd alone never runs, and init exits 1', () => {
+    for (const skill of cohorts) {
+      const home = join(extendRootTmp, `bad-home-${skill}`);
+      const cwd = join(extendRootTmp, `bad-cwd-${skill}`);
+      const sentinel = join(extendRootTmp, `bad-sentinel-${skill}`);
+      mkdirSync(home, { recursive: true });
+      plantHostileTree(cwd, skill);
+      for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
+        expect(r.stderr).toBe('');
+        expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
+        if (skill === 'gstack-extend-init') {
+          expect(r.status).toBe(1);
+          expect(r.stdout).toContain('ERROR:');
+        } else {
+          expect(r.status).toBe(0);
+          expect(r.stdout).not.toContain('EXTEND_ROOT:');
+        }
+      }
+    }
+  });
+
+  test('marker-less home pointer prints the missing-marker cause and runs nothing', () => {
+    for (const skill of cohorts) {
+      const home = join(extendRootTmp, `stale-home-${skill}`);
+      const root = join(extendRootTmp, `stale-root-${skill}`);
+      const cwd = join(extendRootTmp, `stale-cwd-${skill}`);
+      const sentinel = join(extendRootTmp, `stale-sentinel-${skill}`);
+      mkdirSync(cwd, { recursive: true });
+      writeUpdateCheck(root, { marker: false, record: true });
+      writePointer(home, 'claude', skill, root);
+      writeFileSync(join(hostDir(home, 'claude', skill), 'SKILL.md'), 'copy\n');
+      for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
+        expect(r.stderr).toBe('');
+        expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
+        expect(r.stdout).toContain("lacks the line '# extend-root-protocol: v1'");
+        if (skill === 'gstack-extend-init') {
+          expect(r.status).toBe(1);
+          expect(r.stdout).toContain('ERROR:');
+        } else {
+          expect(r.status).toBe(0);
+          expect(r.stdout).toContain('EXTEND_ROOT_UNVERIFIED:');
+        }
+      }
+    }
+  });
+
+  test('re-verification after the fix prints EXTEND_ROOT and runs the stub', () => {
+    const skill = 'pair-review';
+    const home = join(extendRootTmp, 'recover-home');
+    const root = join(extendRootTmp, 'recover-root');
+    const cwd = join(extendRootTmp, 'recover-cwd');
+    const sentinel = join(extendRootTmp, 'recover-sentinel');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root, { marker: false, record: true });
+    writePointer(home, 'claude', skill, root);
+    writeFileSync(join(hostDir(home, 'claude', skill), 'SKILL.md'), 'copy\n');
+    for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
+      expect(r.stdout).toContain('EXTEND_ROOT_UNVERIFIED:');
+      expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
+    }
+    writeFileSync(join(root, 'bin', 'update-check'), `#!/bin/sh\nprintf '%s\\n' "\${GSTACK_EXTEND_DIR:-}" > "\${SENTINEL:?}"\n${MARKER_LINE}\n`);
+    chmodSync(join(root, 'bin', 'update-check'), 0o755);
+    for (const r of runPreamble(skill, home, cwd, { SENTINEL: sentinel })) {
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
+      expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
+    }
+  });
+});
+
+describe('Track 16D root hand-off', () => {
+  test('%q line round-trips a root with a space and an apostrophe', () => {
+    const skill = 'pair-review';
+    const home = join(extendRootTmp, 'q-home');
+    const root = join(extendRootTmp, 'q root', "o'brien");
+    const cwd = join(extendRootTmp, 'q-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root, { record: true });
+    plantSkillLink(home, skill, root);
+    const sentinel = join(extendRootTmp, 'q-sentinel');
+    const ran = runPreamble(skill, home, cwd, { SENTINEL: sentinel });
+    for (const r of ran) {
+      const line = r.stdout.split('\n').find((l) => l.startsWith('_EXTEND_ROOT='));
+      expect(line).toBeTruthy();
+      for (const sh of agentShells()) {
+        const ev = runShell(sh.shell, sh.args, `${line}\nprintf '%s\\n' "$_EXTEND_ROOT"\n`, scopedEnv(home), cwd);
+        expect(ev.stderr).toBe('');
+        expect((ev.stdout ?? '').trim()).toBe(root);
+      }
+    }
+  });
+
+  test('upgrade-flow block prints AUTO_UPGRADE=true only with the emitted line', () => {
+    const home = join(extendRootTmp, 'flow-home');
+    const root = join(extendRootTmp, 'flow-root');
+    const cwd = join(extendRootTmp, 'flow-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    const config = join(root, 'bin', 'config');
+    writeFileSync(config, '#!/bin/sh\necho true\n');
+    chmodSync(config, 0o755);
+    plantSkillLink(home, 'gstack-extend-upgrade', root);
+    const preamble = runPreamble('gstack-extend-upgrade', home, cwd)[0]!;
+    const line = preamble.stdout.split('\n').find((l) => l.startsWith('_EXTEND_ROOT='));
+    expect(line).toBeTruthy();
+    const flow = resolverSkillText('gstack-extend-upgrade').match(
+      /<!-- SHARED:upgrade-flow -->[\s\S]*?<!-- \/SHARED:upgrade-flow -->/,
+    )?.[0] ?? '';
+    const block = flow.match(/```bash\n([\s\S]*?)```/)?.[1]?.replace(/\n$/, '') ?? '';
+    expect(block).toContain('auto_upgrade');
+    for (const sh of agentShells()) {
+      const withLine = runShell(sh.shell, sh.args, `${line}\n${block}\n`, scopedEnv(home), cwd);
+      expect(withLine.stdout ?? '').toContain('AUTO_UPGRADE=true');
+      const without = runShell(sh.shell, sh.args, `${block}\n`, scopedEnv(home), cwd);
+      expect(without.stdout ?? '').toContain('AUTO_UPGRADE=false');
+    }
+  });
+});
+
+describe('Track 16D guarded source', () => {
+  const block = extractFences(resolverSkillText('pair-review'))
+    .find((f) => f.body.includes('session_dir pair-review "$BRANCH"'))!
+    .body.replace(/\n$/, '');
+
+  function sessionStub(root: string, marker: boolean): void {
+    writeUpdateCheck(root, { marker });
+    const lib = join(root, 'bin', 'lib');
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(
+      join(lib, 'session-paths.sh'),
+      `printf 'sourced\\n' > "\${SENTINEL:?}"\nsession_dir() { printf 'stub\\n'; }\n`,
+    );
+  }
+
+  test('verified %q line sources the stub', () => {
+    const home = join(extendRootTmp, 'guard-ok-home');
+    const root = join(extendRootTmp, 'guard root', "o'brien");
+    const cwd = join(extendRootTmp, 'guard-ok-cwd');
+    const sentinel = join(extendRootTmp, 'guard-ok-sentinel');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root, { record: true });
+    sessionStub(root, true);
+    plantSkillLink(home, 'pair-review', root);
+    const upd = join(extendRootTmp, 'guard-ok-upd');
+    const preamble = runPreamble('pair-review', home, cwd, { SENTINEL: upd })[0]!;
+    const line = preamble.stdout.split('\n').find((l) => l.startsWith('_EXTEND_ROOT='));
+    expect(line).toBeTruthy();
+    for (const sh of strictShells()) {
+      rmSync(sentinel, { force: true });
+      const r = runShell(sh.shell, sh.args, `${line}\n${block}\n`, scopedEnv(home, { SENTINEL: sentinel }), cwd);
+      expect(r.stderr ?? '').toBe('');
+      expect(r.status).toBe(0);
+      expect(readFileSync(sentinel, 'utf8')).toContain('sourced');
+    }
+  });
+
+  test('missing, relative, and marker-less roots exit 1 without sourcing', () => {
+    const sentinel = join(extendRootTmp, 'guard-bad-sentinel');
+    const hostile = join(extendRootTmp, 'guard-hostile');
+    const rel = join(hostile, 'x');
+    sessionStub(rel, true);
+    const markerLess = join(extendRootTmp, 'guard-markerless');
+    sessionStub(markerLess, false);
+    const cases = [
+      { name: 'no prefix', prefix: '', cwd: hostile },
+      { name: 'relative', prefix: '_EXTEND_ROOT=x\n', cwd: hostile },
+      { name: 'marker-less', prefix: `_EXTEND_ROOT=${JSON.stringify(markerLess)}\n`, cwd: hostile },
+    ];
+    for (const c of cases) {
+      for (const sh of strictShells()) {
+        rmSync(sentinel, { force: true });
+        const r = runShell(
+          sh.shell,
+          sh.args,
+          `${c.prefix}${block}\n`,
+          scopedEnv(join(extendRootTmp, 'guard-bad-home'), { SENTINEL: sentinel }),
+          c.cwd,
+        );
+        expect(r.status).toBe(1);
+        expect(r.stderr ?? '').toContain('ERROR: no verified gstack-extend root');
+        expect(existsSync(sentinel)).toBe(false);
+      }
+    }
+  });
+
+  test('real session-paths helper prints PROJECT_DIR and SESSION_DIR', () => {
+    const root = join(extendRootTmp, 'guard-real');
+    const cwd = join(extendRootTmp, 'guard-real-cwd');
+    mkdirSync(cwd, { recursive: true });
+    writeUpdateCheck(root);
+    const lib = join(root, 'bin', 'lib');
+    mkdirSync(lib, { recursive: true });
+    copyFileSync(join(ROOT, 'bin', 'lib', 'session-paths.sh'), join(lib, 'session-paths.sh'));
+    const script = `_EXTEND_ROOT="$CHECKOUT"\n${block}\n`;
+    for (const sh of agentShells()) {
+      const r = runShell(
+        sh.shell,
+        sh.args,
+        script,
+        scopedEnv(join(extendRootTmp, 'guard-real-home'), { CHECKOUT: root, GSTACK_STATE_ROOT: join(extendRootTmp, 'gstack-state') }),
+        cwd,
+      );
+      expect(r.status).toBe(0);
+      expect(r.stdout ?? '').toContain('PROJECT_DIR=');
+      expect(r.stdout ?? '').toContain('SESSION_DIR=');
+    }
+  });
+});
+
+describe('Track 16D roadmap routing and renames', () => {
+  test('roadmap-route keeps a multi-field defer tag', () => {
+    const script = '_EXTEND_ROOT="$CHECKOUT"\n"$_EXTEND_ROOT/bin/roadmap-route" \'[plan-ceo-review:track=16D,defer=true]\'\n';
+    for (const sh of agentShells()) {
+      const r = runShell(sh.shell, sh.args, script, scopedEnv(join(extendRootTmp, 'route-home'), { CHECKOUT: ROOT }));
+      expect(r.status).toBe(0);
+      expect(r.stdout ?? '').toContain('action=KEEP');
+    }
+  });
+
+  test('renames block matches the static import for an apostrophe-named root', () => {
+    const work = join(extendRootTmp, 'renames-work');
+    mkdirSync(join(work, 'docs'), { recursive: true });
+    const oldRoadmap = '##### Track 1A: Alpha widget\n';
+    const newRoadmap = '##### Track 2A: Alpha widget\n';
+    writeFileSync(join(work, 'docs', 'ROADMAP.md'), newRoadmap);
+    const link = join(extendRootTmp, "o'brien");
+    symlinkSync(ROOT, link);
+    const fence = extractFences(resolverSkillText('roadmap')).find((f) => f.body.includes('process.env.ER'));
+    expect(fence).toBeTruthy();
+    const r = runShell(
+      'bash',
+      ['-c'],
+      fence!.body,
+      scopedEnv(join(extendRootTmp, 'renames-home'), { _EXTEND_ROOT: link, ROADMAP_BEFORE: oldRoadmap }),
+      work,
+    );
+    const expected = formatRenamesTable(computeRenames(oldRoadmap, newRoadmap));
+    expect(r.status).toBe(0);
+    expect((r.stdout ?? '').trim()).toBe(expected.trim());
+    expect(expected).toContain('Track 1A');
   });
 });

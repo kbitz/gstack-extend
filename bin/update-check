@@ -10,6 +10,8 @@
 #   GSTACK_EXTEND_DIR        — override auto-detected root
 #   GSTACK_EXTEND_REMOTE_URL — override remote VERSION URL
 #   GSTACK_EXTEND_STATE_DIR  — override ~/.gstack-extend state directory
+# extend-root-protocol: v1
+# Protocol identity: skill preambles grep this line before executing anything under the root. Compatible bin changes never touch it. It changes only for an incompatible preamble↔bin contract change (update-check output, config/update-run CLI): v2 replaces v1 in the same release, and copies that were not regenerated print EXTEND_ROOT_UNVERIFIED with the setup --host auto fix.
 set -euo pipefail
 
 EXTEND_DIR="${GSTACK_EXTEND_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"

@@ -31,7 +31,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -261,7 +261,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi

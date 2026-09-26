@@ -25,26 +25,53 @@ allowed-tools:
 ## Preamble (run first)
 
 ```bash
-_SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink ~/.codex/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink ~/.config/opencode/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink .claude/skills/roadmap/SKILL.md 2>/dev/null)
+_ER_SKILL=roadmap
+_er_ok() { case "$1" in /*) [ -f "$1/bin/update-check" ] && [ -x "$1/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$1/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
 _EXTEND_ROOT=""
-[ -n "$_SKILL_SRC" ] && _EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")")
+_ER_SEEN=""
+for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do
+  case "$_ER_SRC" in /*) ;; *) continue ;; esac
+  _ER=$(readlink "$_ER_SRC" 2>/dev/null || true)
+  [ -n "$_ER" ] || continue
+  case "$_ER" in /*) ;; *) _ER="$(dirname "$_ER_SRC")/$_ER" ;; esac
+  _ER=$(dirname "$(dirname "$_ER")")
+  if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+  _ER_SEEN="${_ER_SEEN:-$_ER}"
+done
 if [ -z "$_EXTEND_ROOT" ]; then
-  for _er in ~/.claude/skills/roadmap/.extend-root ~/.codex/skills/roadmap/.extend-root ~/.config/opencode/skills/roadmap/.extend-root .claude/skills/roadmap/.extend-root; do
-    [ -f "$_er" ] || continue
-    _EXTEND_ROOT=$(cat "$_er")
-    _SKILL_SRC="$_EXTEND_ROOT/skills/roadmap.md"
-    break
+  for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/.extend-root "$HOME"/.codex/skills/"$_ER_SKILL"/.extend-root "$HOME"/.config/opencode/skills/"$_ER_SKILL"/.extend-root "$HOME"/.cursor/skills/"$_ER_SKILL"/.extend-root; do
+    case "$_ER_SRC" in /*) ;; *) continue ;; esac
+    [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue
+    _ER=""
+    IFS= read -r _ER < "$_ER_SRC" || true
+    if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+    _ER_SEEN="${_ER_SEEN:-${_ER:-empty:$_ER_SRC}}"
   done
-  unset _er
 fi
-if [ -n "$_EXTEND_ROOT" ] && [ -x "$_EXTEND_ROOT/bin/update-check" ]; then
-  _UPD=$("$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
+_ER_UNVERIFIED=""
+if [ -z "$_EXTEND_ROOT" ] && [ -n "$_ER_SEEN" ]; then
+  _ER="$_ER_SEEN/bin/update-check"
+  case "$_ER_SEEN" in
+    empty:*) _ER_UNVERIFIED="${_ER_SEEN#empty:} is empty. Fix: run setup --host auto from your gstack-extend checkout" ;;
+    /*) if [ ! -e "$_ER" ]; then _ER_UNVERIFIED="$_ER_SEEN has no bin/update-check (checkout moved or deleted). Fix: re-clone gstack-extend (README: Installation), then run its setup --host auto"
+        elif [ ! -f "$_ER" ] || [ ! -x "$_ER" ] || [ ! -r "$_ER" ]; then _ER_UNVERIFIED="$_ER is not a readable executable file. Fix: git -C \"$_ER_SEEN\" checkout -- bin/update-check, then run \"$_ER_SEEN/setup\" --host auto"
+        else _ER_UNVERIFIED="$_ER lacks the line '# extend-root-protocol: v1' (checkout older than this skill, or not gstack-extend). Fix: git -C \"$_ER_SEEN\" pull --ff-only, then run \"$_ER_SEEN/setup\" --host auto"; fi ;;
+    *) _ER_UNVERIFIED="an install pointer names a non-absolute path ($_ER_SEEN). Fix: run setup --host auto from your gstack-extend checkout" ;;
+  esac
+fi
+unset _ER _ER_SRC _ER_SEEN
+if [ -n "$_EXTEND_ROOT" ]; then
+  echo "EXTEND_ROOT: $_EXTEND_ROOT"
+  printf '_EXTEND_ROOT=%q\n' "$_EXTEND_ROOT"
+  _UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
   [ -n "$_UPD" ] && echo "$_UPD" || true
+elif [ -n "$_ER_UNVERIFIED" ]; then
+  echo "EXTEND_ROOT_UNVERIFIED: $_ER_UNVERIFIED"
 fi
+unset _ER_UNVERIFIED _ER_SKILL
 ```
+
+Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review, full-review and test-plan then stop, because their tool and session-state steps need the root. review-apparatus continues, skipping the update check and its optional pair-review report skim.
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
@@ -118,7 +145,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -254,8 +281,10 @@ extract_referenced_files_from_roadmap | tr '\n' '\0' | xargs -0 -I {} \
 **Pre-classify inbox items.** Each Unprocessed item carries a `[source:key=val]` tag. Run the routing helper for each:
 
 ```bash
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
 source "$_EXTEND_ROOT/bin/lib/source-tag.sh"
-for tag in <each unprocessed item's tag>: bin/roadmap-route "$tag"
+for tag in <each unprocessed item's tag>: "$_EXTEND_ROOT/bin/roadmap-route" "$tag"
 # also: compute_dedup_hash "<title>" for dedup
 ```
 
@@ -339,7 +368,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 - **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
 - **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
-- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan (re-derived against HEAD, not copied) + inbox items (verified at drain time, not observation time) + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `bin/roadmap-pack` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
+- **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan (re-derived against HEAD, not copied) + inbox items (verified at drain time, not observation time) + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `"$_EXTEND_ROOT/bin/roadmap-pack"` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `docs/roadmap-future.md`. Keep the filed review context (symptom, source, why deferred, load-bearing file/symbol). Do not collapse a review finding to a title. Do not paste a whole design doc — if it needs headings, write `docs/designs/` and point at it. Items that stay deferred keep their existing text; do not rewrite them shorter. Declined / do-not-re-propose records leave Future (proposal killed list only — never `roadmap-shipped.md`). Promotion to Current Plan is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
 
@@ -395,7 +424,7 @@ Do not hand-sequence Groups "to cap concurrent WIP." The packer already fills to
 
 Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`, `roadmap-shipped.md`, `roadmap-future.md`) are not collisions. `CLAUDE.md` is — only one Track per Group may declare it.
 
-`_touches:` is load-bearing. After a Track ships, `bin/roadmap-touches drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack. Directory entries end in `/`. Created files are `path (new)`.
+`_touches:` is load-bearing. After a Track ships, `"$_EXTEND_ROOT/bin/roadmap-touches" drift --track <id>` must pass (union of committed/staged/unstaged/untracked vs the declaration). Undeclared path → revert, file a new inbox Track, or widen `_touches:` and re-pack. Directory entries end in `/`. Created files are `path (new)`.
 
 ### Renumbering
 
@@ -403,7 +432,7 @@ Only **SHIPPED** numbers are frozen. Current Plan Group/Track numbers are epheme
 
 Start at the first free integer after shipped history. Skip every number in `_tombstone: 84, 86, 90_` (document- or Current-Plan-level italics; the audit fails an unshipped Group that reuses one). Shipped Groups may keep a tombstoned number. Do **not** keep minting fresh numbers above the last Current Plan range; that is noise.
 
-**IDs are paint.** The packer never ties on them. After bins settle, letter tracks to match the Group (`91A` in Group 91) via `bin/roadmap-renumber`. `PACKING` must still pass — write-then-renumber is a fixpoint because FFD keys on packIdent, not the labels you just applied.
+**IDs are paint.** The packer never ties on them. After bins settle, letter tracks to match the Group (`91A` in Group 91) via `"$_EXTEND_ROOT/bin/roadmap-renumber"` (below). `PACKING` must still pass — write-then-renumber is a fixpoint because FFD keys on packIdent, not the labels you just applied.
 
 Track numbers must match their Group: Track 91A lives in Group 91. Letters cycle A, B, C… per Group. Splits get the next letter in that Group; the renames table carries lineage. Dotted split IDs (`102A.1`) are legacy — still parsed, never assigned.
 
@@ -434,19 +463,8 @@ When the regenerated plan includes 2+ sequential Groups that together deliver on
 Before the AskUserQuestion, write the entire proposed `## In Progress` + `## Current Plan` + `## Future` block to **`<PROPOSAL_DIR>/proposal-{ts}.md`** so the user has a "what will be applied" preview and tests have a parseable target. Resolve `PROPOSAL_DIR` via the session-paths helper:
 
 ```bash
-_SKILL_SRC=$(readlink ~/.claude/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink ~/.codex/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink ~/.config/opencode/skills/roadmap/SKILL.md 2>/dev/null \
-           || readlink .claude/skills/roadmap/SKILL.md 2>/dev/null)
-_EXTEND_ROOT=$(dirname "$(dirname "$_SKILL_SRC")" 2>/dev/null)
-if [ -z "$_EXTEND_ROOT" ] || [ "$_EXTEND_ROOT" = "." ]; then
-  for _er in ~/.claude/skills/roadmap/.extend-root ~/.codex/skills/roadmap/.extend-root ~/.config/opencode/skills/roadmap/.extend-root .claude/skills/roadmap/.extend-root; do
-    [ -f "$_er" ] || continue
-    _EXTEND_ROOT=$(cat "$_er")
-    break
-  done
-  unset _er
-fi
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
 source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
 PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"
@@ -540,14 +558,14 @@ Before commit, assert that every item the proposal placed/killed/deferred/discha
 
 Print a one-line summary of what shipped: `"Regenerated roadmap: <S> shipped (preserved), <I> in-progress, <C> current plan, <F> future, <H> hotfix. <N> drained (<K> killed, <X> discharged)."`
 
-**ID renames table.** After `bin/roadmap-renumber` (or a title-matched
+**ID renames table.** After `"$_EXTEND_ROOT/bin/roadmap-renumber"` (or a title-matched
 diff against the pre-edit ROADMAP.md), include the map in the apply
 summary AND the commit message body so users re-anchoring on old IDs
 can find their work. Title-match fallback when you did not drive the
 rewrite from an explicit `--map`:
 
 ```bash
-bun -e "import { computeRenames, formatRenamesTable } from '$_EXTEND_ROOT/src/audit/lib/renames-diff.ts';
+ER="$_EXTEND_ROOT" bun -e "const { computeRenames, formatRenamesTable } = await import(process.env.ER + '/src/audit/lib/renames-diff.ts');
 import { readFileSync } from 'node:fs';
 const oldRoadmap = process.env.ROADMAP_BEFORE ?? '';
 const newRoadmap = readFileSync('docs/ROADMAP.md', 'utf8');
@@ -855,7 +873,7 @@ Layout Scaffolding summary:
   Failed (0): —
 ```
 
-On clean success, re-run the audit (Step 1's `bin/roadmap-audit`, no flag) and read the `## DOC_LOCATION` and `## DOC_TYPE_MISMATCH` section statuses to confirm both now pass. If they don't, surface the remaining findings — something didn't land. On halt, the summary captures what did and didn't happen; the user resolves manually.
+On clean success, re-run the audit (Step 1's `"$_EXTEND_ROOT/bin/roadmap-audit"`, no flag) and read the `## DOC_LOCATION` and `## DOC_TYPE_MISMATCH` section statuses to confirm both now pass. If they don't, surface the remaining findings — something didn't land. On halt, the summary captures what did and didn't happen; the user resolves manually.
 
 ### Idempotent re-run
 
@@ -954,7 +972,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
