@@ -308,6 +308,10 @@ When the draft needs your testing, the middle of that workflow becomes:
 write release changelog entries, merge the PR, or deploy. `/ship` keeps its own checks
 and version/documentation work; its later pushes can trigger another CI run.
 
+For the evidence needed to establish reviewer independence, see
+[review independence on Cursor](docs/designs/review-independence.md). The guide
+is a limited documentation snapshot; the original empirical study remains unfinished.
+
 ### First run
 
 1. Start on your feature branch with the implementation and its agreed task
