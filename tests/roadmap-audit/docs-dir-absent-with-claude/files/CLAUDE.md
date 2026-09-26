@@ -1,6 +1,6 @@
 # Test fixture
 
-CLAUDE.md presence is the load-bearing gate signal for the docs/-absent
-finding from doc-location.ts (Track 8A). This fixture exercises that gate:
-a project with CLAUDE.md at root but no docs/ directory and no project
-doc at root yet — the true greenfield-onboarding case the finding targets.
+Negative control for the docs/-absent finding. CLAUDE.md at root is not
+a gate signal. This repo has no docs/ directory and no project doc at
+root, and it must stay silent. The positive case is a repo-local
+bin/roadmap-audit file, covered by docs-dir-absent-with-audit.

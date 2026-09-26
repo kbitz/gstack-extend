@@ -17,11 +17,11 @@ _(no Tracks currently mid-flight)_
 
 ## Current Plan
 
-### Group 16: Contract Revalidation ∥ Review Independence ∥ Merge Gate ∥ Preamble Hardening ∥ Init Polish ∥ Audit Gate
+### Group 16: Contract Revalidation ∥ Review Independence ∥ Merge Gate ∥ Preamble Hardening ∥ Init Polish
 
 _Depends on: none_
 
-Packer layer 0. Six file-disjoint Tracks (cap 6). The three P0 external-consumer dependencies lead.
+Packer layer 0. Five file-disjoint Tracks (cap 6). The three P0 external-consumer dependencies lead. The docs-gate track shares `skills/roadmap.md` with 16D and later 18A/19A/20A, so it is Group 21, not a sixth member of this Group.
 
 ##### Track 16A: Revalidate the telemetry and execution-provenance contracts
 _1 task . ~120 LOC . low risk . [telemetry doc + contract test]_
@@ -59,12 +59,6 @@ _out: 17B, 19A_
 _produces: init test coverage, DRY CANONICAL_FILES, and a fail-soft setup self-register guard_
 - **Init test coverage + mkScope helper** -- (a) audit-failure path (PATH-shim non-zero `roadmap-audit` → exit 1 + "audit FAILED" + "--migrate" + files on disk); (b) 5–10 parallel `registry_upsert` stay valid JSON; (c) `validate_name` edges (`..`, `.`, leading-dash, empty, Unicode); (d) `lang_detect` precedence; (e) setup self-register fail-soft on corrupt `projects.json`; (g) extract `mkScope` (defined only in `tests/init-bin.test.ts` today) to `tests/helpers/init-scope.ts` so the registry and wire tests share it. _tests/init-*.test.ts, tests/helpers/init-scope.ts (new), ~120 lines._ (M)
 - **Init code polish** -- (f) `render_all` carries its own file→template map beside `CANONICAL_FILES`; derive one from the other; (h) `env -u GSTACK_EXTEND_STATE_DIR` guard on setup self-register; (j) trim fresh-init audit output to non-pass sections. _bin/gstack-extend, setup, ~80 lines._ (M)
-
-##### Track 16F: Narrow the `docs/`-absent gate + fix archive-path string
-_1 task . ~35 LOC . low risk . [doc-location + state-sections]_
-_touches: src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts, src/audit/checks/state-sections.ts_
-_produces: DOC_LOCATION docs/-absent only fires on a gstack-extend signal; MIGRATION_NEEDED points at the archived spec_
-- **Tighten docs/-absent gate + fix archive path** -- replace the `hasClaude` gate in `doc-location.ts` with a gstack-extend signal (roadmap-audit shim, projects registry entry, or `docs/ROADMAP.md`). Fixture: CLAUDE.md-only repo must NOT fire. Same PR: point the `state-sections.ts` MIGRATION_NEEDED hint at `docs/archive/roadmap-v2-state-model.md` (it still names `docs/designs/`; no snapshot fixture exercises it). _src/audit/checks/doc-location.ts, tests/checks-doc-location.test.ts, src/audit/checks/state-sections.ts, ~35 lines._ (S)
 
 ### Group 17: Review-and-Prep Hardening ∥ Telemetry Follow-ups ∥ Skill-File Trims
 
@@ -178,15 +172,30 @@ _produces: one declarative table (row per skill, column per SHARED block) drivin
 
 _Depends on: Group 19_
 
-Packer layer 3. Waits for the last `skills/roadmap.md` editor (19A).
+Packer layer 3. Waits for 19A before editing `skills/roadmap.md`. Group 21 edits that file after this Track.
 
 ##### Track 20A: Reconcile In Progress co-location with PACKING
 _1 task . ~40 LOC . low risk . [roadmap skill prose + archived spec, or the packing check]_
 _touches: skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts_
 _blocked-by: Track 19A_
+_out: 21A_
 _read-first: 19A_
 _produces: the lifecycle prose and the PACKING check agree on what happens to a partially shipped Group at regen_
 - **Pick one rule and make both sides say it** -- the model says a Group with shipped Tracks stays in `## In Progress` with `✓` markers until it lands, and that idle Tracks "recycle with the Current Plan"; PACKING packs every unshipped Track and requires each written Group to equal a bin, so marking 15A/15B shipped moved the trims to layer 0 and left {15C, 15D, 15E} matching no bin. Default: drop the co-location prose (skill + archived spec) and state that a partially shipped Group ships its done Tracks and recycles the rest. Alternative: exempt In Progress Groups from PACKING and pin their idle Tracks (stale partition until the Group lands). Either way, the skill's "Hold — trivial closures" option must describe something reachable. _Source: TODOS `[manual]`, found 2026-09-24 closing Group 15._ _skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts, ~40 lines._ (S)
+
+### Group 21: Audit Gate
+
+_Depends on: Group 20_
+
+Packer layer 4. Serialized behind every earlier `skills/roadmap.md` editor (16D, 18A, 19A, 20A) and behind 17A, which also touches `README.md`.
+
+##### Track 21A: Narrow the `docs/`-absent gate + fix archive-path string
+_1 task . ~50 LOC . low risk . [doc-location + state-sections + fixtures + docs]_
+_touches: src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/docs-dir-absent-with-claude/expected.txt, tests/roadmap-audit/docs-dir-absent-with-claude/files/CLAUDE.md, tests/roadmap-audit/docs-dir-absent-with-audit/files/bin/roadmap-audit (new), tests/roadmap-audit/docs-dir-absent-with-audit/expected.txt (new), tests/roadmap-audit/v1-migration-hint/files/docs/ROADMAP.md (new), tests/roadmap-audit/v1-migration-hint/expected.txt (new), README.md, skills/roadmap.md, docs/ROADMAP.md_
+_blocked-by: Track 20A_
+_read-first: 20A_
+_produces: DOC_LOCATION docs/-absent only fires on a repo-local bin/roadmap-audit file; MIGRATION_NEEDED points at the archived spec in the gstack-extend checkout_
+- **Tighten docs/-absent gate + fix archive path** -- replace the `hasClaude` gate in `doc-location.ts` with a repo-local `bin/roadmap-audit` file signal. Registry-only projects stay silent. Fixture: CLAUDE.md-only repo must NOT fire. Same PR: point the `state-sections.ts` MIGRATION_NEEDED hint at `docs/archive/roadmap-v2-state-model.md` in the gstack-extend source checkout. _src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/, README.md, skills/roadmap.md, docs/ROADMAP.md, ~50 lines._ (S)
 
 ### Execution Map
 
@@ -200,17 +209,17 @@ Adjacency list (from `bin/roadmap-pack`):
 - Group 18 ← {16}
 - Group 19 ← {16, 17, 18}
 - Group 20 ← {19}
+- Group 21 ← {20}
 ```
 
 Track detail per group:
 ```
-Group 16: Contract Revalidation ∥ Review Independence ∥ Merge Gate ∥ Preamble Hardening ∥ Init Polish ∥ Audit Gate
+Group 16: Contract Revalidation ∥ Review Independence ∥ Merge Gate ∥ Preamble Hardening ∥ Init Polish
   +-- Track 16A .......... ~M . 1 task (revalidate telemetry + provenance contracts)
   +-- Track 16B .......... ~M . 1 task (review independence probe)
   +-- Track 16C .......... ~L . 1 task (shadow merge gate)
   +-- Track 16D .......... ~L . 2 tasks (preamble hardening + afterAll)
   +-- Track 16E .......... ~M . 2 tasks (init tests + init code polish)
-  +-- Track 16F .......... ~S . 1 task (docs/-absent gate + archive path)
 
 Group 17: Review-and-Prep Hardening ∥ Telemetry Follow-ups ∥ Skill-File Trims
   +-- Track 17A .......... ~M . 1 task (review-and-prep seven gaps)
@@ -230,9 +239,12 @@ Group 19: Layout Scaffold Extract ∥ Skill Template ∥ Capability Table
 
 Group 20: Roadmap Lifecycle Consistency
   +-- Track 20A .......... ~S . 1 task (co-location prose vs PACKING)
+
+Group 21: Audit Gate
+  +-- Track 21A .......... ~S . 1 task (docs/-absent gate + archive path)
 ```
 
-**Total: 0 phases . 5 groups . 17 tracks remaining.**
+**Total: 0 phases . 6 groups . 17 tracks remaining.**
 
 ---
 

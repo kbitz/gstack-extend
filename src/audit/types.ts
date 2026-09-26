@@ -129,6 +129,9 @@ export type AuditFileExists = {
   docsLicense: boolean;
   rootLicenseMd: boolean;
   docsLicenseMd: boolean;
+  // True when repoRoot/bin/roadmap-audit is a file (symlink-to-file counts).
+  // A local fact for DOC_LOCATION, not a registry or install-root detector.
+  rootRoadmapAudit: boolean;
 };
 
 // One design doc (basename + content) for ARCHIVE_CANDIDATES. cli.ts reads
