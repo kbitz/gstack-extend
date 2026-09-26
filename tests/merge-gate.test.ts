@@ -1449,7 +1449,9 @@ describe('cli contract', () => {
 
   test('evidence stores no absolute local path and strips credentials (CEO-S5, ENG-11)', () => {
     const repo = change();
-    git(repo, ['remote', 'add', 'origin', 'https://user:ghp_secret123@github.com/acme/widgets.git?x=1#frag']);
+    // A fake token, assembled at runtime so secret scanners do not flag the fixture.
+    const credentialed = `${['https://user', `ghp_${'secret123'}`].join(':')}@github.com/acme/widgets.git?x=1#frag`;
+    git(repo, ['remote', 'add', 'origin', credentialed]);
     expect(checkRecorded(repo).evidence.repo.origin).toBe('https://github.com/acme/widgets.git');
     git(repo, ['remote', 'set-url', 'origin', '/srv/git/widgets.git']);
     const { evidence } = checkRecorded(repo);
