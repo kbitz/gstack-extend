@@ -9,12 +9,13 @@ Extension skills for [gstack](https://github.com/garrytan/gstack).
 | `/full-review` | Weekly codebase review pipeline | Any project | Stable |
 | `/implement` | Build an approved plan → light completeness check → review-and-prep handoff | Any project with a plan | New |
 | `/review-and-prep` | Local review/tests → draft PR → optional Greptile → mark ready, without versioning | GitHub projects with gstack `/review` | New |
+| `/ship-and-land` | Reuse verified preparation → run missing checks → ship → land and verify deployment | GitHub projects with gstack `/ship` and `/land-and-deploy` | New |
 | `/review-apparatus` | Project testing/debugging apparatus audit | Any project | Beta |
 | `/test-plan` | Group-scoped batched test plan (composes with /pair-review) | Any project | Beta |
 | `/gstack-extend-upgrade` | Upgrade gstack-extend to the latest version | gstack-extend itself | Stable |
 | `/gstack-extend-init`    | Bootstrap a new project (canonical scaffold + registry) | Any greenfield or partially-onboarded project | Beta |
 
-All nine skills support optional local telemetry. See [telemetry setup, author
+All ten skills support optional local telemetry. See [telemetry setup, author
 quickstart, and fidelity checks](docs/telemetry.md); inspect it with
 `gstack-extend doctor telemetry`. These rows are separate from transcript-derived
 skill counts produced by other tools. Independently of gstack's telemetry tier, each
@@ -206,7 +207,7 @@ The workflow becomes:
 1. `/autoplan`, then hand its approved plan to a fresh implementation session.
 2. `/implement`, then paste its `/review-and-prep` prompt into a fresh session
    in the same workspace, where the uncommitted implementation remains available.
-3. `/review-and-prep`, then follow its `/ship` and `/land-and-deploy` handoff
+3. `/review-and-prep`, then follow its `/ship-and-land` handoff
    (or complete required `/pair-review` testing and resume first).
 
 `/implement` leaves committing, pushing, PR creation, and release work to the later
@@ -221,7 +222,7 @@ to `~/.gstack/projects/<slug>/` when that directory exists, otherwise to
 
 ---
 
-## /review-and-prep — Prepare a Reviewed PR for /ship
+## /review-and-prep — Prepare a Reviewed PR for /ship-and-land
 
 Runs `/review` and the project's required local checks, then commits and pushes
 to a draft PR. If required user testing is still pending — app interactions,
@@ -238,7 +239,7 @@ Once required user testing is satisfied, when a root `greptile.json` file, `.gre
 `.greptile/` directory exists at the reviewed base tip or in the intended head
 and the full PR is not docs-only, it triggers Greptile through MCP or `@greptileai review this
 draft`, waits for completion, and fixes sensible findings. **Greptile runs at
-most once per PR**, across commits, sessions, and the `/ship` handoff. Existing
+most once per PR**, across commits, sessions, and the `/ship-and-land` handoff. Existing
 automatic/manual runs count; failed runs are not retried. Before the first run,
 the agent fetches and merges the latest `main` (or the PR's target base) into
 the feature branch when it is behind or diverged, then reviews, tests, and
@@ -280,11 +281,12 @@ The PR stays draft throughout preparation and is marked ready **once**, at the
 end. The skill never toggles a ready PR back to draft. Reinvoking it resumes the
 same draft and uses a PR-body receipt to track verification across workspaces.
 On completion, it outputs a short copyable prompt for a new session to run
-`/ship` and then `/land-and-deploy` on the same PR. The prompt names the PR,
+`/ship-and-land` on the same PR. The prompt names the PR,
 the prepared HEAD, the plan, and Greptile's status, and points to the receipt
-comment, which the next session trusts only when its author and SHA match live
-state. It does not restate those skills' procedures or override their rules, so
-`/ship` still runs its own checklist and reuses only what its own rules allow. Review evidence in
+comment, which the next session trusts only after checking its author, edit
+history, and SHA against live state. The wrapper validates that evidence and
+runs missing or stale stages
+before completing release and landing work. Review evidence in
 the receipt identifies each specialist and adversarial pass separately, so a
 generic "review clean" does not stand in for a missing specialist review.
 It checks the repository's existing CI triggers before pushing; draft gating is
@@ -292,8 +294,7 @@ a workflow configuration, not a GitHub-wide guarantee.
 
 ```
 /review-and-prep      # Review, test, draft PR, Greptile when applicable, mark ready
-/ship                # Reuse the PR; assign version and finish release work
-/land-and-deploy     # Land the shipped PR and verify deployment when applicable
+/ship-and-land       # Reuse evidence, finish release work, land and verify deployment
 ```
 
 When the draft needs your testing, the middle of that workflow becomes:
@@ -305,8 +306,8 @@ When the draft needs your testing, the middle of that workflow becomes:
 ```
 
 `/review-and-prep` does not assign a version, prefix the PR title with a version,
-write release changelog entries, merge the PR, or deploy. `/ship` keeps its own checks
-and version/documentation work; its later pushes can trigger another CI run.
+write release changelog entries, merge the PR, or deploy. `/ship-and-land` runs ship's
+remaining checks and version/documentation work; its later pushes can trigger another CI run.
 
 For the evidence needed to establish reviewer independence, see
 [review independence on Cursor](docs/designs/review-independence.md). The guide
@@ -339,9 +340,9 @@ is a limited documentation snapshot; the original empirical study remains unfini
 4. Inspect the PR's `## Review and prep` receipt for the scope matrix, review
    stages, test results, and Greptile outcome. When all gates pass, the agent
    marks the PR ready once and returns the PR link plus a continuation prompt.
-5. Paste that prompt into a new session to run `/ship`, followed by
-   `/land-and-deploy`. `/ship` assigns the version and completes release work;
-   deployment verification belongs to `/land-and-deploy`.
+5. Paste that prompt into a new session to run `/ship-and-land`. It reuses
+   verified preparation, runs missing or stale stages, and delegates versioning
+   and release work to `/ship`, then landing to `/land-and-deploy`.
 
 An already-ready PR is checked without changing its draft state. A rejected
 push caused by rewritten/divergent history stops for user or Conductor
@@ -407,6 +408,47 @@ the workflow; ignore markers from anyone else. The request marker prevents
 duplicate triggers across the entire PR, even after its head changes. It proves
 a request, not a completed review; completion must match the run's recorded
 SHA/base. Read the posted comment back to confirm the actual bot call was sent.
+
+---
+
+## /ship-and-land — Finish a Prepared PR
+
+Wraps the installed `/ship` and `/land-and-deploy` procedures with explicit
+evidence-reuse rules. Preparation receipts survive a session or model change;
+the wrapper checks their provenance, reviewed content/base, scope and individual
+stage outcomes before reusing them. Missing or stale reviews run in the same
+session. Without a receipt, applicable ship stages run normally.
+
+```text
+/ship-and-land
+/ship-and-land #123
+/ship-and-land #123 https://example.com
+```
+
+Standalone `/ship` deliberately repeats verification on every invocation,
+including coverage, plan completion, pre-landing and adversarial reviews.
+The wrapper replaces that blanket repetition with a per-stage decision. A
+testing specialist's pass alone does not satisfy ship's coverage audit; that
+audit still runs unless equivalent evidence exists. Changed code/base or new
+review requirements invalidate affected results. Exact test commands, inputs,
+and age limits still matter: a test gate accepts only native ledger evidence, a
+CI check-run on the final head, or a live run, never receipt excerpts.
+
+Release versioning, build verification, documentation sync and PR updates stay
+with ship. Mechanical release edits receive their own check without relabeling
+the earlier implementation review. Behavioral changes, including skill/prompt
+Markdown and package scripts, return through affected reviews and tests.
+
+The landing phase accepts that verified review history plus the checked release
+changes, even when native logs are absent or stale solely from bookkeeping.
+It preserves those native grades and the original review SHA. CI, merge approval,
+deployment and canary checks remain intact. Merge approval comes only from you,
+in the landing session, for the exact head and base; a handoff prompt or receipt
+never grants it. Draft PRs return to `/review-and-prep` first.
+Greptile remains limited to one run per PR, with settled findings reused and
+later feedback checked. Required manual testing cannot be bypassed. The wrapper
+updates the same PR and preserves its preparation receipt; it never installs
+new upstream skills or changes their source files.
 
 ---
 

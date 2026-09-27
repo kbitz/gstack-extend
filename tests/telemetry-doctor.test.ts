@@ -55,15 +55,19 @@ describe('doctor telemetry', () => {
     expect(report.issues).toMatchObject({ malformed_lines: 2, nameless_rows: 1 });
     for (const stat of report.skills) expect(stat.paired).toBeLessThanOrEqual(stat.denominator);
   });
-  test('resumable deferred finishes do not count as fidelity defects', () => {
+  test('only resumable skills defer unmatched starts', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    seed(fix.home, ['pair-review', 'review-and-prep', 'test-plan'].map(name => row(name, name)));
+    seed(fix.home, ['pair-review', 'review-and-prep', 'test-plan', 'ship-and-land'].map(name => row(name, name)));
     const report = JSON.parse(run(fix.env).stdout);
     for (const name of ['pair-review', 'review-and-prep', 'test-plan']) {
       expect(report.skills.find((s: any) => s.skill === name)).toMatchObject({
         deferred_finish: 1, unpaired_start: 0, denominator: 0, pairing_percent: null, status: 'insufficient evidence',
       });
     }
+    // ship-and-land has no deliberate pause: every exit finishes, so a lone start is a defect.
+    expect(report.skills.find((s: any) => s.skill === 'ship-and-land')).toMatchObject({
+      deferred_finish: 0, unpaired_start: 1, denominator: 1,
+    });
   });
   test('nested Claude transcripts are advisory, de-duplicated, with host/retention caveats', () => {
     const fix = makeTelemetryFixture('community', 'stub');

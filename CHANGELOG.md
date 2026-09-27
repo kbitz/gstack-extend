@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0.0] - 2026-09-26
+
+### Added
+
+- **Finish a prepared pull request with `/ship-and-land`.** It reuses a verified review-and-prep receipt, runs the checks that are missing or stale, then ships and lands on GitHub. Greptile still runs at most once per PR. Merging still needs your approval in that session.
+
+### Changed
+
+- **`/review-and-prep` now hands the next session to `/ship-and-land`.** `/implement` points at the same handoff. Setup installs the skill with the others.
+
+### Fixed
+
+- **A check that never ran cannot count as a passing test, and auto-merge is read again while CI waits.** Skipped, neutral, and `pull_request_target` results do not satisfy the test gate. If auto-merge or the merge queue turns on before you approve that exact head, the run stops.
+
 ## [0.30.0.0] - 2026-09-26
 
 ### Added

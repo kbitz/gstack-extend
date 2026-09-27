@@ -1,6 +1,6 @@
 # Skill telemetry
 
-All nine installed skills carry optional start and finish calls. They record local
+All ten installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or
