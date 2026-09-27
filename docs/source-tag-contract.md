@@ -1,8 +1,7 @@
 # Source-Tag Contract
 
 Canonical schema for items written to `TODOS.md` by skills. All producer skills
-(`/pair-review`, `/full-review`, `/review-apparatus`, `/test-plan`,
-`/investigate`, manual) emit entries that match this contract. `/roadmap`'s
+(`/pair-review`, `/full-review`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
 scrutiny gate, closure-bias placement, and dedup pipeline parse entries against
 this contract. `bin/roadmap-audit` validates entries and emits `STATUS: fail`
 on malformed ones.
@@ -130,12 +129,15 @@ on triage; not parsed.
 - Values MUST NOT contain `[]`, `,`, or `;`. Values containing these should be
   omitted or pipe-separated (for file lists: `files=a.ts|b.ts`).
 
+`review-apparatus` and `test-plan` are retired skills. Their source tags remain
+accepted so existing project backlogs still validate and retain their routing.
+
 ### Defined keys
 
 | Key | Source scope | Format | Meaning |
 |---|---|---|---|
-| `group` | pair-review, test-plan | integer, or `pre-test` | Roadmap Group that surfaced this item |
-| `item` | pair-review, test-plan | integer | Test-plan item index within the group |
+| `group` | pair-review (legacy: test-plan) | integer, or `pre-test` | Roadmap Group that surfaced this item |
+| `item` | pair-review (legacy: test-plan) | integer | Test-plan item index within the group |
 | `severity` | full-review, review | `critical` \| `necessary` \| `nice-to-have` \| `edge-case` | Reviewer's severity classification |
 | `files` | full-review (when single-cluster) | pipe-separated paths | File paths the finding references |
 | `track` | plan-ceo-review, plan-eng-review | track id (e.g. `4A`, `11A.2`) | The Track being reviewed; anchors the deferral to its origin |
@@ -149,8 +151,8 @@ on triage; not parsed.
 | `ship` | KEEP | Deferred-from-ship context, user decision |
 | `pair-review` (any form) | KEEP | Observed bug from manual testing |
 | `investigate` | KEEP | Observed bug from debugging |
-| `test-plan` (any form) | KEEP | Observed bug from batched testing |
-| `review-apparatus` | KEEP | Tooling proposal, usually real need |
+| `test-plan` (any form) | KEEP | Legacy observed bug from batched testing |
+| `review-apparatus` | KEEP | Legacy tooling proposal |
 | `full-review:critical` | KEEP | Ship-blocker |
 | `full-review:necessary` | KEEP | Real defect |
 | `full-review:nice-to-have` | PROMPT | Non-essential improvement |

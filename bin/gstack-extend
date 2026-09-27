@@ -764,8 +764,7 @@ gstack-extend init: SUCCESS.
   Next 30 minutes:
     1. cd $quoted_target
     2. /roadmap            (orient yourself + verify canonical layout)
-    3. /review-apparatus   (discover testing/debugging gaps)
-    4. /full-review        (weekly cadence baseline)
+    3. /full-review        (weekly cadence baseline)
 EOF
   return 0
 }

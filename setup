@@ -106,8 +106,6 @@ SKILLS=(
   pair-review
   roadmap
   full-review
-  review-apparatus
-  test-plan
   gstack-extend-upgrade
   gstack-extend-init
   review-and-prep
@@ -116,6 +114,8 @@ SKILLS=(
 )
 
 LEGACY_SKILLS=(
+  review-apparatus
+  test-plan
   browse-native
   roadmap-new
 )
@@ -253,8 +253,12 @@ same_skills_dir() {
 uninstall_from_dir() {
   local skills_dir="$1"
   local host="${2:-}"
+  local names=("${SKILLS[@]}" "${LEGACY_SKILLS[@]}")
+  if [ "${3:-}" = "legacy" ]; then
+    names=("${LEGACY_SKILLS[@]}")
+  fi
   local skill target link_target expected
-  for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
+  for skill in "${names[@]}"; do
     target="$skills_dir/$skill"
     if [ -e "$target" ] || [ -L "$target" ]; then
       if [ -L "$target" ]; then
@@ -333,22 +337,6 @@ preflight_dir() {
   done
 }
 
-clean_legacy() {
-  local skills_dir="$1"
-  local skill target link_target expected_old
-  for skill in "${LEGACY_SKILLS[@]}"; do
-    target="$skills_dir/$skill"
-    [ -L "$target/SKILL.md" ] || continue
-    link_target="$(readlink "$target/SKILL.md" 2>/dev/null || true)"
-    expected_old="$SCRIPT_DIR/skills/${skill}.md"
-    if [ "$link_target" = "$expected_old" ]; then
-      rm -f "$target/SKILL.md"
-      rmdir "$target" 2>/dev/null || true
-      log "Removed retired skill: $skill"
-    fi
-  done
-}
-
 install_into_dir() {
   local skills_dir="$1"
   local host="$2"
@@ -356,7 +344,7 @@ install_into_dir() {
   installed=0
   mkdir -p "$skills_dir"
   refuse_package_root_link "$skills_dir/gstack-extend"
-  clean_legacy "$skills_dir"
+  uninstall_from_dir "$skills_dir" "$host" legacy
 
   for skill in "${SKILLS[@]}"; do
     src="$SCRIPT_DIR/skills/${skill}.md"

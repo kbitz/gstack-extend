@@ -28,7 +28,7 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
 Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
-`TELEMETRY_SKILLS` covers all ten setup skills; protocol/preamble cohorts stay
+`TELEMETRY_SKILLS` covers all eight setup skills; protocol/preamble cohorts stay
 narrow. The four utility/workflow skills may carry only telemetry SHARED markers.
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
@@ -53,8 +53,6 @@ To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` 
 ./scripts/regen-source-tag-corpus.sh
 git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
 ```
-
-`scripts/score-extractor.ts` is a manual harness for scoring `/test-plan` extractor JSON output against vendored fixtures (`tests/fixtures/extractor-corpus/`). Run via `bun scripts/score-extractor.ts --help`.
 
 ## Skill routing
 
@@ -83,8 +81,6 @@ Key routing rules:
 - Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap
 - Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
-- Audit testing/debugging apparatus, "what helpers should we add", "review the test infra", "bolt-on dev tools" → invoke review-apparatus _(beta)_
-- Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;" _(beta)_
 - Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade
 - Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init _(beta)_
 

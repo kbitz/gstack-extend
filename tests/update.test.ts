@@ -1223,6 +1223,7 @@ describe('setup --skills-dir for install path is rejected (Track 5A retirement)'
 // the gstack-extend repo. Mirrors what setup --skills-dir <path> would
 // have produced before Track 5A.
 function seedCustomInstall(customDir: string): void {
+  // Keep retired names: this fixture models the historical five-skill install.
   for (const skill of ['pair-review', 'roadmap', 'full-review', 'review-apparatus', 'test-plan']) {
     const target = join(customDir, skill);
     mkdirSync(target, { recursive: true });

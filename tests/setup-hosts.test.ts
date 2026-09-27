@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -84,6 +85,88 @@ function descriptionLen(src: string): number {
 }
 
 describe('setup --host flags', () => {
+  for (const host of ['claude', 'codex', 'opencode', 'cursor'] as const) {
+    test(`${host} retirement preserves a plain file at the skill path`, () => {
+      const home = join(baseTmp, `retired-plain-file-${host}`);
+      const root = hostDir(home, host);
+      mkdirSync(root, { recursive: true });
+      for (const skill of ['review-apparatus', 'test-plan']) {
+        writeFileSync(join(root, skill), 'PERSONAL FILE\n');
+      }
+      for (const uninstall of [false, true]) {
+        const result = runSetup(['--host', host, ...(uninstall ? ['--uninstall'] : [])], home);
+        expect(result.exitCode).toBe(0);
+        for (const skill of ['review-apparatus', 'test-plan']) {
+          expect(result.stdout).toContain(`Skipped ${skill} (target exists but is not a directory)`);
+          expect(readFileSync(join(root, skill), 'utf8')).toBe('PERSONAL FILE\n');
+        }
+      }
+    });
+
+    for (const uninstall of [false, true]) {
+      test(`${host} ${uninstall ? 'uninstall' : 'upgrade'} removes owned retired skills and preserves notes`, () => {
+        const home = join(baseTmp, `retired-${host}-${uninstall}`);
+        const root = hostDir(home, host);
+        for (const skill of ['review-apparatus', 'test-plan']) {
+          const dir = join(root, skill);
+          mkdirSync(dir, { recursive: true });
+          if (host === 'claude') {
+            // Source files have already disappeared in the upgraded checkout.
+            symlinkSync(join(realpathSync(ROOT), 'skills', `${skill}.md`), join(dir, 'SKILL.md'));
+          } else {
+            writeFileSync(join(dir, 'SKILL.md'), `old ${skill}\n`);
+          }
+          writeFileSync(join(dir, '.extend-root'), `${realpathSync(ROOT)}\n`);
+        }
+        writeFileSync(join(root, 'review-apparatus', 'notes.md'), 'KEEP\n');
+        const args = ['--host', host, '--quiet', ...(uninstall ? ['--uninstall'] : [])];
+        expect(runSetup(args, home).exitCode).toBe(0);
+        expect(readdirSync(join(root, 'review-apparatus'))).toEqual(['notes.md']);
+        expect(readFileSync(join(root, 'review-apparatus', 'notes.md'), 'utf8')).toBe('KEEP\n');
+        expect(existsSync(join(root, 'test-plan'))).toBe(false);
+        // Repeat to catch cleanup that requires the deleted source or pointer.
+        expect(runSetup(args, home).exitCode).toBe(0);
+        expect(existsSync(join(root, 'test-plan'))).toBe(false);
+      });
+    }
+
+    for (const kind of ['regular', 'file-link', 'directory-link', 'foreign-pointer'] as const) {
+      test(`${host} retirement preserves personal skills (${kind})`, () => {
+        const home = join(baseTmp, `retired-personal-${host}-${kind}`);
+        const root = hostDir(home, host);
+        for (const skill of ['review-apparatus', 'test-plan']) {
+          const dir = join(root, skill);
+          const personal = join(home, 'dotfiles', skill);
+          mkdirSync(personal, { recursive: true });
+          writeFileSync(join(personal, 'SKILL.md'), 'PERSONAL\n');
+          mkdirSync(root, { recursive: true });
+          if (kind === 'directory-link') {
+            symlinkSync(personal, dir);
+          } else {
+            mkdirSync(dir);
+            if (kind === 'file-link') symlinkSync(join(personal, 'SKILL.md'), join(dir, 'SKILL.md'));
+            else writeFileSync(join(dir, 'SKILL.md'), 'PERSONAL\n');
+            if (kind === 'foreign-pointer') writeFileSync(join(dir, '.extend-root'), '/another/checkout\n');
+          }
+        }
+        expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+        expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+        for (const skill of ['review-apparatus', 'test-plan']) {
+          const dir = join(root, skill);
+          expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');
+          expect(readFileSync(join(home, 'dotfiles', skill, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');
+          if (kind === 'directory-link') expect(lstatSync(dir).isSymbolicLink()).toBe(true);
+          if (kind === 'file-link') expect(lstatSync(join(dir, 'SKILL.md')).isSymbolicLink()).toBe(true);
+          if (kind === 'foreign-pointer') {
+            expect(readFileSync(join(dir, '.extend-root'), 'utf8')).toBe('/another/checkout\n');
+          } else {
+            expect(existsSync(join(dir, '.extend-root'))).toBe(false);
+          }
+        }
+      });
+    }
+  }
+
   test('rejects unknown --host', () => {
     const home = join(baseTmp, 'bad-host');
     mkdirSync(home, { recursive: true });
@@ -150,17 +233,37 @@ describe('setup --host flags', () => {
     expect(existsSync(join(root, 'gstack-extend', 'SKILL.md'))).toBe(false);
   });
 
-  test('codex copies rewrite sibling skill paths and strip allowed-tools', () => {
+  test('codex copies strip allowed-tools and keep descriptions within the host cap', () => {
     const home = join(baseTmp, 'codex-rewrite');
     mkdirSync(home, { recursive: true });
     runSetup(['--host', 'codex'], home);
     const body = readFileSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'), 'utf8');
-    const testPlan = readFileSync(join(hostDir(home, 'codex'), 'test-plan', 'SKILL.md'), 'utf8');
-    expect(testPlan).toContain(`${home}/.codex/skills/pair-review/SKILL.md`);
-    expect(testPlan).not.toMatch(/~\/\.claude\/skills\/pair-review/);
     expect(body).not.toMatch(/^allowed-tools:/m);
     expect(descriptionLen(body)).toBeLessThanOrEqual(1024);
   });
+
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
+    test(`${host} copies rewrite sibling paths in a fixture skill`, () => {
+      const fixture = join(baseTmp, `rewrite-fixture-${host}`);
+      const home = join(baseTmp, `rewrite-home-${host}`);
+      mkdirSync(join(fixture, 'skills'), { recursive: true });
+      mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
+      mkdirSync(home, { recursive: true });
+      copyFileSync(SETUP, join(fixture, 'setup'));
+      copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      for (const skill of SKILLS) {
+        writeFileSync(join(fixture, 'skills', `${skill}.md`),
+          `---\nname: ${skill}\ndescription: Fixture\n---\nRead ~/.claude/skills/pair-review/SKILL.md\n`);
+      }
+      const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+      });
+      expect(result.status).toBe(0);
+      const body = readFileSync(join(hostDir(home, host), 'pair-review', 'SKILL.md'), 'utf8');
+      expect(body).toContain(`Read ${hostDir(home, host)}/pair-review/SKILL.md`);
+      expect(body).not.toContain('~/.claude/skills/');
+    });
+  }
 
   test('--host auto with no binaries defaults to claude', () => {
     const home = join(baseTmp, 'auto-none');
@@ -292,7 +395,7 @@ describe('setup --host flags', () => {
     const links = {
       roadmap: join(dotSkills, 'roadmap.md'),
       implement: '../../../dotfiles/skills/implement.md',
-      'test-plan': join(home, 'unmounted-volume', 'dotfiles', 'skills', 'test-plan.md'),
+      'review-and-prep': join(home, 'unmounted-volume', 'dotfiles', 'skills', 'review-and-prep.md'),
     };
     writeFileSync(join(dotSkills, 'roadmap.md'), 'MINE\n');
     writeFileSync(join(dotSkills, 'implement.md'), 'MINE\n');
@@ -304,7 +407,7 @@ describe('setup --host flags', () => {
     const r = runSetup(['--host', 'claude', '--quiet'], home);
     expect(r.exitCode).toBe(0);
     for (const [skill, target] of Object.entries(links)) {
-      const why = skill === 'test-plan' ? 'links to a missing file' : 'links outside a gstack-extend checkout';
+      const why = skill === 'review-and-prep' ? 'links to a missing file' : 'links outside a gstack-extend checkout';
       expect(r.stderr).toContain(`${skill}/SKILL.md ${why}`);
       expect(readlinkSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(target);
       expect(existsSync(join(hostDir(home, 'claude'), skill, '.extend-root'))).toBe(false);

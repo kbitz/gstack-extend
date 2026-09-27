@@ -1,6 +1,6 @@
 # Skill telemetry
 
-All ten installed skills carry optional start and finish calls. They record local
+All eight installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or
@@ -20,15 +20,9 @@ skill-usage rows.
   not change those counts. Fleet totals cannot be the denominator of a local
   telemetry ratio.
 
-The review-apparatus claim of two invocations but zero rows was a
-**fleet-denominator versus local-numerator comparison error, not a skipped
-block**. On the examined machine, zero local invocations and zero rows were
-consistent. That diagnosis discharged the coverage hard stop.
-
 Parse JSONL as JSON, never with grep: compact and spaced serialization are equally
-valid. Corrected full-history planning counts were roadmap 31 activation / 32
-completion, full-review 3/3, test-plan 1/1, pair-review 7/3, review-apparatus 0/0,
-plus one nameless completion. Those totals alone do not establish pairing.
+valid. Compare starts and finishes on the same machine and time window; fleet
+invocation totals alone do not establish local pairing.
 
 ## Configuration and storage
 
@@ -303,7 +297,7 @@ counts, window-crossing completions, and parse diagnostics.
 | Start outside window | An in-window finish is crossing-window, not unpaired |
 | Legacy / session alias / missing v or ID | Visible separately; no invented IDs or pairing |
 | Finish without matching start | Unpaired-finish, never a crash or negative numerator |
-| pair-review, review-and-prep, test-plan | Resumable: unmatched starts are deferred finishes, excluded from ratio |
+| pair-review, review-and-prep | Resumable: unmatched starts are deferred finishes, excluded from ratio |
 | Pause/resume | One invocation: skip another start for the same paused run; finish when complete |
 | Other unfinished runs | Unpaired starts until finish arrives; can temporarily lower the ratio, without proving failure |
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
@@ -337,7 +331,8 @@ new blocks. Window: 2026-08-21T23:33:55.854332+00:00 through 2026-09-20T23:33:55
 
 All nine ratios are **insufficient evidence**: historical starts lack the new
 joinable schema. The scan also found one malformed line and one nameless row.
-This is a pre-rollout baseline, not a zero-percent failure score.
+This is a pre-rollout baseline, not a zero-percent failure score. It includes
+the since-retired review-apparatus and test-plan skills for historical accuracy.
 
 
 After rollout, collect a fresh 30-day report and publish per-skill pairing.
