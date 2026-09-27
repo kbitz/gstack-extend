@@ -244,11 +244,11 @@ a redirection suffix and causing a gratuitous mismatch. A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
 lane on the final head, or a live run in this session. That check-run must come
 from the repository's CI app for a workflow job whose definition at the final
-head runs the repository-derived command. Accept that check-run only when
-it completed with conclusion success and the job actually executed that
-command. Skipped, neutral, and `pull_request_target` runs do not qualify. If
-the PR changes that workflow, CI configuration, or the lane's command
-definition, run the lane live. Receipt excerpts
+head runs the repository-derived command; if the PR changes that workflow, CI
+configuration, or the lane's command definition, run the lane live. Accept
+that check-run only when it completed with conclusion success and the job
+actually executed that command. Skipped, neutral, and `pull_request_target`
+runs do not qualify. Receipt excerpts
 document history; they never satisfy a test gate. Unknown provenance, changed
 inputs/commands, redacted command spelling, insufficient test selection, or
 expired evidence requires a live run. Do not forge a ledger entry to import old

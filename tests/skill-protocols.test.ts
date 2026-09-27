@@ -1624,6 +1624,7 @@ describe('ship-and-land drift-locks', () => {
       'Accept that check-run only when it completed with conclusion success and the job actually executed that command.',
       'Skipped, neutral, and `pull_request_target` runs do not qualify.',
       'Re-read `autoMergeRequest` and `mergeQueueEntry` after every push and on each CI or approval wait.',
+      'If either is active before the user approves that exact head in this session, stop and ask the user to disable or dequeue it before continuing.',
       "A merge from that armed request before this session's approval is an approval bypass, not a successful landing.",
       'without claiming native FRESH for a CI check-run',
       'A retargeted base branch, or a base advance that makes the PR conflict, goes through integration and invalidation above before any landing approval.',
