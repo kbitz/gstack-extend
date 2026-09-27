@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **Find each skill at a glance.** The README now gives one short summary per skill and links to its full instructions. Installation details have their own guide, and quota tools appear before acknowledgments.
-- **`/implement` and `/review-and-prep` are established workflows.** Both are now marked Stable. Credits recognize Claude Code, Codex, and Grok through Cursor.
+- **`/implement` and `/review-and-prep` are established workflows.** Both are now marked Stable. Credits recognize Claude Code, Codex, and Grok (via Cursor).
 
 ### Removed
 
