@@ -34,7 +34,6 @@ _produces: upgrade preambles that resolve only an absolute, verified extend root
 ##### Track 16B: Re-scope review independence for the Cursor harness
 _1 task . ~100 lines . low risk . [design doc]_
 _touches: docs/designs/review-independence.md (new)_
-_read-first: 17C_
 _produces: a measured voice composition for the current Cursor review route and a go/no-go on a fix, with acceptance defined on recorded execution provenance_
 - **Probe and document** -- the measured Grok Build composition (Grok structured, Grok adversarial, Astra author, no Claude) is historical; Grok now runs through Cursor. Probe the Cursor route in use and document the actual voice composition. Acceptance for any fix: every review carries at least one voice from a vendor that neither wrote the code nor ran the primary review, provable from recorded execution provenance rather than assignment. If a fix is needed, file it to TODOS with the measured shape. _Source: TODOS `[manual]` P0 re-scope._ _docs/designs/review-independence.md (new), ~100 lines._ (M)
 
@@ -62,7 +61,7 @@ _produces: `bin/merge-gate` answers "would merge: yes/no, and why" for any PR in
 ##### Track 17C: Revalidate the telemetry and execution-provenance contracts
 _1 task . ~120 LOC . low risk . [telemetry doc + contract test]_
 _touches: docs/telemetry.md, tests/telemetry-contract.test.ts_
-_out: 16B, 18B_
+_out: 18B_
 _produces: an observed-coverage record for `skill-usage.jsonl` and `stage-runs.jsonl` that an external consumer can join against, with the live schema reconciled to the doc_
 - **Revalidate against emitted rows** -- v0.27.2.0 and v0.28.0.0 shipped skill telemetry and local execution provenance. Verify against actual emitted data: rows for every run, producer identifiable per row, live schema matching `docs/telemetry.md`, and which join keys are stable. Record observed coverage, gaps, and join evidence in the doc; lock any schema correction in the contract test. Release claims are not acceptance evidence. _Source: TODOS `[manual]` P0 revalidation._ _docs/telemetry.md, tests/telemetry-contract.test.ts, ~120 lines._ (M)
 
