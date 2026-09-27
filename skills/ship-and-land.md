@@ -244,8 +244,11 @@ a redirection suffix and causing a gratuitous mismatch. A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
 lane on the final head, or a live run in this session. That check-run must come
 from the repository's CI app for a workflow job whose definition at the final
-head runs the repository-derived command; if the PR changes that workflow, CI
-configuration, or the lane's command definition, run the lane live. Receipt excerpts
+head runs the repository-derived command. Accept that check-run only when
+it completed with conclusion success and the job actually executed that
+command. Skipped, neutral, and `pull_request_target` runs do not qualify. If
+the PR changes that workflow, CI configuration, or the lane's command
+definition, run the lane live. Receipt excerpts
 document history; they never satisfy a test gate. Unknown provenance, changed
 inputs/commands, redacted command spelling, insufficient test selection, or
 expired evidence requires a live run. Do not forge a ledger entry to import old
@@ -380,7 +383,12 @@ in this file; execute every other landing step as installed:
 Neither adapter accepts a generic `prepared`/`ship succeeded` claim, missing
 specialist coverage, or implementation changes labeled as release bookkeeping.
 Refresh evidence after CI waits and immediately before merge approval, then
-recheck for new blocking feedback just before the merge command. A changed
+recheck for new blocking feedback just before the merge command. Re-read
+`autoMergeRequest` and `mergeQueueEntry` after every push and on each CI or
+approval wait. If either is active before the user approves that exact head
+in this session, stop and ask the user to disable or dequeue it before
+continuing. A merge from that armed request before this session's approval
+is an approval bypass, not a successful landing. A changed
 head, retargeted base, scope, test input, or newly actionable review invalidates
 affected rows and voids any approval; it returns through ship before landing.
 Whenever an approval is voided, or the user declines, while an auto-merge
