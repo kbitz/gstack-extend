@@ -12,8 +12,6 @@ import { join } from 'node:path';
 export const ROOT_RESOLVER_SKILLS = [
   'pair-review',
   'full-review',
-  'review-apparatus',
-  'test-plan',
   'roadmap',
   'gstack-extend-upgrade',
   'gstack-extend-init',
@@ -22,8 +20,6 @@ export const ROOT_RESOLVER_SKILLS = [
 export const WORKFLOW_SKILLS = [
   'pair-review',
   'full-review',
-  'review-apparatus',
-  'test-plan',
   'roadmap',
 ] as const;
 
@@ -115,7 +111,7 @@ export const NO_INSTALL_MESSAGE =
 export const HANDOFF_PARAGRAPH =
   'Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init\'s later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `' +
   NO_INSTALL_MESSAGE +
-  '` roadmap, pair-review, full-review and test-plan then stop, because their tool and session-state steps need the root. review-apparatus continues, skipping the update check and its optional pair-review report skim.';
+  '` roadmap, pair-review and full-review then stop, because their tool and session-state steps need the root.';
 
 export const UPGRADE_NO_ROOT =
   'If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.';

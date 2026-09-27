@@ -121,20 +121,6 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     'docs/source-tag-contract.md',
   ],
-  'tests/test-plan.test.ts': [
-    'skills/test-plan.md',
-  ],
-  'tests/test-plan-extractor.test.ts': [
-    'skills/test-plan.md',
-    'tests/fixtures/extractor-corpus/**',
-  ],
-  'tests/test-plan-e2e.test.ts': [
-    'skills/test-plan.md',
-    'skills/pair-review.md',
-  ],
-  'tests/score-extractor.test.ts': [
-    'tests/fixtures/extractor-corpus/**',
-  ],
   'tests/update.test.ts': [
     'bin/update-check',
     'bin/update-run',

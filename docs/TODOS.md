@@ -23,11 +23,11 @@
 - **Context:** Deferred at /autoplan on 2026-09-25 (CEO native voice finding 5, reframed by the Eng dual voices). Plan and review record: `~/.gstack/projects/kbitz-gstack-extend/kbitz-harden-upgrade-preambles-plan.md` (CEO-A19, CEO-A23, ENG-A1).
 
 ### [plan-ceo-review:track=16D,defer=true] Stop `setup` injecting an unescaped HOME into generated skill bodies
-- **Description:** `rewrite_skill_body` (`setup:144-179`) rewrites every `~/.claude/skills/<name>` in a skill into a literal `${HOME}/.codex/skills/<name>` (or the OpenCode or Cursor path) with sed, unquoted. A HOME containing spaces or shell metacharacters then changes how the generated bash parses. Track 16D moved the resolver loops to quoted `"$HOME"` paths so they are never rewritten. Other rewritten occurrences, such as the test-plan Phase 8 path and prose, still receive the literal.
+- **Description:** `rewrite_skill_body` (`setup:144-179`) rewrites every `~/.claude/skills/<name>` in a skill into a literal `${HOME}/.codex/skills/<name>` (or the OpenCode or Cursor path) with sed, unquoted. A HOME containing spaces or shell metacharacters then changes how the generated bash parses. Track 16D moved the resolver loops to quoted `"$HOME"` paths so they are never rewritten. No current skill needs that rewrite after the unused skills were retired; the adapter still accepts those literals, so future skills could reintroduce the exposure.
 - **Hypothesis (untested):** Rewriting to a quoted `"$HOME"/.codex/skills/<name>` form, or leaving `~` for the host to expand, removes the injection without changing any resolved path.
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3
-- **Depends on:** None. `setup` belongs to Tracks 16E and 17B, so schedule after them or fold into 17B.
+- **Depends on:** None. `setup` belongs to Tracks 17A and 18B in the current plan, so schedule after them or fold into 18B.
 - **Context:** Deferred at /autoplan on 2026-09-25 (CEO dual voices: Codex finding 3, native finding 4). Plan: `~/.gstack/projects/kbitz-gstack-extend/kbitz-harden-upgrade-preambles-plan.md` (CEO-A18, CEO-A23).
 
 ### [plan-ceo-review:track=16D,defer=true] Prefer the invoking host's install when Claude and Codex point at different checkouts

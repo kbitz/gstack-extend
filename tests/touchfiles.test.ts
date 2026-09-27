@@ -59,7 +59,7 @@ describe('matchGlob', () => {
   test('** matches any number of segments', () => {
     expect(matchGlob('src/audit/lib/git.ts', 'src/audit/**')).toBe(true);
     expect(matchGlob('src/audit/checks/version.ts', 'src/audit/**')).toBe(true);
-    expect(matchGlob('src/test-plan/parsers.ts', 'src/audit/**')).toBe(false);
+    expect(matchGlob('src/other/parsers.ts', 'src/audit/**')).toBe(false);
   });
 
   test('** matches zero segments', () => {

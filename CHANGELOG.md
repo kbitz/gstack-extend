@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.0.0] - 2026-09-26
+
+### Changed
+
+- **Find each skill at a glance.** The README now gives one short summary per skill and links to its full instructions. Installation details have their own guide, and quota tools appear before acknowledgments.
+- **`/implement` and `/review-and-prep` are established workflows.** Both are now marked Stable. Credits recognize Claude Code, Codex, and Grok (via Cursor).
+
+### Removed
+
+- **`/review-apparatus` and `/test-plan` are retired.** Their instructions and dedicated tooling are removed. Setup cleans up copies and links owned by this checkout while preserving personal files and foreign installs. In projects initialized with older templates, delete the two retired commands' routing rules from `CLAUDE.md` or `AGENTS.md`; upgrades leave those project files untouched.
+
 ## [0.31.0.0] - 2026-09-26
 
 ### Added

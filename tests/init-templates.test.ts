@@ -90,7 +90,7 @@ describe('template substitution', () => {
     expect(md).toContain('## Unprocessed');
     expect(md).toContain('### [manual] First-session checklist');
     expect(md).toContain('/roadmap');
-    expect(md).toContain('/review-apparatus');
+    expect(md).not.toContain('/review-apparatus');
     expect(md).toContain('/full-review');
   });
 

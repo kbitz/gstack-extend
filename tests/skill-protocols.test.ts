@@ -83,8 +83,6 @@ const PROTOCOL_SKILLS = [
   'pair-review',
   'roadmap',
   'full-review',
-  'review-apparatus',
-  'test-plan',
 ] as const;
 const PREAMBLE_SKILLS = [...PROTOCOL_SKILLS, 'gstack-extend-upgrade'] as const;
 const NON_PREAMBLE_SETUP_SKILLS = [
@@ -96,8 +94,6 @@ const NON_PREAMBLE_SETUP_SKILLS = [
 const CONDUCTOR_SKILLS = [
   'pair-review',
   'full-review',
-  'review-apparatus',
-  'test-plan',
 ] as const;
 
 const TELEMETRY_SKILLS = [...EXPECTED_SETUP_SKILLS];
@@ -570,44 +566,19 @@ describe('pair-review per-branch session paths', () => {
 // Track 5A's two-path (including vendored) probe is replaced by the Track 16D
 // resolver locks. A cwd-relative `.claude/skills/` path must not come back.
 
-// ─── Track 16D: cross-skill inline-Read in test-plan.md ──────────────
-//
-// skills/test-plan.md Phase 8 reads pair-review.md inline. It lists only
-// the home-anchored host paths; the cwd-relative vendored fallback is gone.
-
-describe('Track 16D test-plan Phase 8 home paths (L9)', () => {
-  const file = join(ROOT, 'skills', 'test-plan.md');
-  const content = readFileSync(file, 'utf8');
-
-  test('Phase 8 lists the four home pair-review paths', () => {
-    expect(content).toContain('~/.claude/skills/pair-review/SKILL.md');
-    expect(content).toContain('~/.codex/skills/pair-review/SKILL.md');
-    expect(content).toContain('~/.config/opencode/skills/pair-review/SKILL.md');
-    expect(content).toContain('~/.cursor/skills/pair-review/SKILL.md');
-  });
-
-  test('Phase 8 has no cwd-relative vendored fallback', () => {
-    expect(content).not.toContain('(vendored install)');
-    expect(content).not.toMatch(/fall back to[\s\S]+\.claude\/skills\/pair-review\/SKILL\.md/);
-  });
-});
-
 // ─── Session-paths helper drift-lock ─────────────────────────────────
 //
 // State for /pair-review, /full-review, /roadmap moved off `.context/<skill>/`
 // (workspace-local) onto `~/.gstack/projects/<slug>/<skill>/` (durable, mirrors
 // gstack /context-save's checkpoints/ shape). Each affected skill must source
-// bin/lib/session-paths.sh and call session_dir with its own skill name (or
-// pair-review's, in test-plan's case). Lock the call site so a future edit
+// bin/lib/session-paths.sh and call session_dir with its own skill name.
+// Lock the call site so a future edit
 // can't accidentally regress to `.context/`.
 
 const SESSION_DIR_CALLERS: Array<{ skill: string; call: string }> = [
   { skill: 'pair-review', call: 'session_dir pair-review' },
   { skill: 'full-review', call: 'session_dir full-review' },
   { skill: 'roadmap', call: 'session_dir roadmap-proposals' },
-  // test-plan writes into pair-review's session dir, so it calls session_dir
-  // pair-review (not session_dir test-plan).
-  { skill: 'test-plan', call: 'session_dir pair-review' },
 ];
 
 describe('session-paths helper drift-lock', () => {
@@ -625,8 +596,8 @@ describe('session-paths helper drift-lock', () => {
     test(`${skill}.md calls ${call}`, () => {
       expect(content).toContain(call);
     });
-    test(`${skill}.md no longer references .context/${skill === 'test-plan' ? 'pair-review' : skill}/`, () => {
-      const oldPath = `.context/${skill === 'test-plan' ? 'pair-review' : skill}/`;
+    test(`${skill}.md no longer references .context/${skill}/`, () => {
+      const oldPath = `.context/${skill}/`;
       expect(content).not.toContain(oldPath);
     });
   }
@@ -1052,26 +1023,6 @@ describe('pair-review ordering (Step 3.4)', () => {
   });
 });
 
-describe('test-plan inherits the item shape and merge gate', () => {
-  // /test-plan skips pair-review Phase 1 entirely (Phase 8 says so), so it
-  // must apply Steps 3 / 3.2 / 3.4 itself. Extraction from review docs is
-  // the worst offender for redundant prose-heavy items.
-  const content = readFileSync(join(ROOT, 'skills', 'test-plan.md'), 'utf8');
-  const normalized = content.replace(/\s+/g, ' ');
-
-  test('Step 4 requires Pass/Fail/Context fields', () => {
-    expect(content).toContain('`Pass:` and `Fail:` fields (required)');
-    expect(normalized).toContain('never rendered in a prompt');
-  });
-
-  test('Step 4 defers to pair-review Steps 3 / 3.2 / 3.4 by name', () => {
-    expect(normalized).toContain('**Step 3**');
-    expect(normalized).toContain('**Step 3.2**');
-    expect(normalized).toContain('**Step 3.4**');
-    expect(normalized).toContain('/test-plan skips pair-review\'s Phase 1, so it owns those authoring rules here');
-  });
-});
-
 // ─── Track 15A: cohorts, Conductor lock, advisory-list drift ──────────
 
 const KNOWN_FOSSILS = ['SIZE_LABEL_MISMATCH'] as const;
@@ -1219,8 +1170,6 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
     expect([...CONDUCTOR_SKILLS]).toEqual([
       'pair-review',
       'full-review',
-      'review-apparatus',
-      'test-plan',
     ]);
     expect(CONDUCTOR_SKILLS).not.toContain('roadmap');
   });
@@ -2022,7 +1971,7 @@ describe('Track 16D extend-root resolver locks', () => {
         }
       }
     }
-    expect(guards).toBe(6);
+    expect(guards).toBe(4);
   });
 });
 

@@ -16,7 +16,7 @@
  *
  * Why lock these: a future refactor may legitimately change exit code
  * semantics (e.g., exit 1 on missing ROADMAP). That's a contract change
- * skill consumers (`/roadmap`, `/test-plan`) need to know about. This
+ * skill consumers (`/roadmap`) need to know about. This
  * file makes those changes deliberate, not silent.
  *
  * NEW in Track 3A — no equivalent in scripts/test-*.sh.

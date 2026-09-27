@@ -57,9 +57,9 @@ describe('doctor telemetry', () => {
   });
   test('only resumable skills defer unmatched starts', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    seed(fix.home, ['pair-review', 'review-and-prep', 'test-plan', 'ship-and-land'].map(name => row(name, name)));
+    seed(fix.home, ['pair-review', 'review-and-prep', 'ship-and-land'].map(name => row(name, name)));
     const report = JSON.parse(run(fix.env).stdout);
-    for (const name of ['pair-review', 'review-and-prep', 'test-plan']) {
+    for (const name of ['pair-review', 'review-and-prep']) {
       expect(report.skills.find((s: any) => s.skill === name)).toMatchObject({
         deferred_finish: 1, unpaired_start: 0, denominator: 0, pairing_percent: null, status: 'insufficient evidence',
       });
