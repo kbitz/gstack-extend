@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0.0] - 2026-09-26
+
+### Added
+
+- **Ask whether a change would merge, without merging it.** `bin/merge-gate check` scores a git range or a pull request against a complexity budget: net lines, new files, new dependencies, new public API, and churn. Pull-request mode also reads draft, review, and check status. A "no" still exits 0. The command records the evidence it used, and `replay` rescores that evidence under another budget. It cannot push, merge, or update refs.
+
+### Fixed
+
+- **A checkout cannot aim the gate at a different forge.** A nameless SSH alias only matches github.com, and that check happens before `gh` runs. Remote URLs come from stored config, so a local `insteadOf` rewrite cannot retarget them. The saved decision is keyed by forge plus repository, and dependency URLs do not keep query-string secrets.
+
 ## [0.29.4.0] - 2026-09-26
 
 ### Added

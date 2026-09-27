@@ -71,6 +71,8 @@ export function matchGlob(file: string, pattern: string): boolean {
  * list small — every entry is hand-maintained drift surface.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
+  'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md', 'VERSION'],
+  'tests/merge-gate-review-regressions.test.ts': ['VERSION'],
   'tests/quota.test.ts': [
     'bin/gstack-extend', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
     'bin/lib/telemetry*.py', 'tests/quota_cases.py', 'tests/fixtures/quota/**',
