@@ -16,13 +16,13 @@
  *
  * Why lock these: a future refactor may legitimately change exit code
  * semantics (e.g., exit 1 on missing ROADMAP). That's a contract change
- * skill consumers (`/roadmap`, `/test-plan`) need to know about. This
+ * skill consumers (`/roadmap`) need to know about. This
  * file makes those changes deliberate, not silent.
  *
  * NEW in Track 3A — no equivalent in scripts/test-*.sh.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -39,7 +39,7 @@ const homeDir = join(baseTmp, 'home');
 mkdirSync(stateDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 
-process.on('exit', () => {
+afterAll(() => {
   try { rmSync(baseTmp, { recursive: true, force: true }); } catch {}
 });
 

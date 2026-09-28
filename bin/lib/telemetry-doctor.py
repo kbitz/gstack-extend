@@ -7,9 +7,9 @@ from datetime import datetime, timezone, timedelta
 
 from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep, which
 
-SKILLS = ("pair-review", "roadmap", "full-review", "review-apparatus", "test-plan",
-          "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement")
-RESUMABLE = {"pair-review", "review-and-prep", "test-plan"}
+SKILLS = ("pair-review", "roadmap", "full-review",
+          "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement", "ship-and-land")
+RESUMABLE = {"pair-review", "review-and-prep"}
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30
 MAX_DAYS = 365000
@@ -88,7 +88,7 @@ def wrapper_candidates():
     yield which("gstack-extend-telemetry")
     yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
     for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
-                      Path.home() / ".config/opencode/skills"):
+                      Path.home() / ".config/opencode/skills", Path.home() / ".cursor/skills"):
         for pointer in sorted(directory.glob("*/.extend-root")):
             try:
                 # Regular files only (a FIFO or device would block). Like the skill block's `IFS= read -r`, take

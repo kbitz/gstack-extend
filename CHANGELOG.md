@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.0.0] - 2026-09-26
+
+### Changed
+
+- **Find each skill at a glance.** The README now gives one short summary per skill and links to its full instructions. Installation details have their own guide, and quota tools appear before acknowledgments.
+- **`/implement` and `/review-and-prep` are established workflows.** Both are now marked Stable. Credits recognize Claude Code, Codex, and Grok (via Cursor).
+
+### Removed
+
+- **`/review-apparatus` and `/test-plan` are retired.** Their instructions and dedicated tooling are removed. Setup cleans up copies and links owned by this checkout while preserving personal files and foreign installs. In projects initialized with older templates, delete the two retired commands' routing rules from `CLAUDE.md` or `AGENTS.md`; upgrades leave those project files untouched.
+
+## [0.31.0.0] - 2026-09-26
+
+### Added
+
+- **Finish a prepared pull request with `/ship-and-land`.** It reuses a verified review-and-prep receipt, runs the checks that are missing or stale, then ships and lands on GitHub. Greptile still runs at most once per PR. Merging still needs your approval in that session.
+
+### Changed
+
+- **`/review-and-prep` now hands the next session to `/ship-and-land`.** `/implement` points at the same handoff. Setup installs the skill with the others.
+
+### Fixed
+
+- **A check that never ran cannot count as a passing test, and auto-merge is read again while CI waits.** Skipped, neutral, and `pull_request_target` results do not satisfy the test gate. If auto-merge or the merge queue turns on before you approve that exact head, the run stops.
+
+## [0.30.0.0] - 2026-09-26
+
+### Added
+
+- **Ask whether a change would merge, without merging it.** `bin/merge-gate check` scores a git range or a pull request against a complexity budget: net lines, new files, new dependencies, new public API, and churn. Pull-request mode also reads draft, review, and check status. A "no" still exits 0. The command records the evidence it used, and `replay` rescores that evidence under another budget. It cannot push, merge, or update refs.
+
+### Fixed
+
+- **A checkout cannot aim the gate at a different forge.** A nameless SSH alias only matches github.com, and that check happens before `gh` runs. Remote URLs come from stored config, so a local `insteadOf` rewrite cannot retarget them. The saved decision is keyed by forge plus repository, and dependency URLs do not keep query-string secrets.
+
+## [0.29.4.0] - 2026-09-26
+
+### Added
+
+- **Install skills for Cursor.** `setup --host cursor`, and `setup --host auto` when the `cursor` command or `~/.cursor` is present, writes native skill copies under `~/.cursor/skills`. Auto mode still leaves `~/.cursor` absent when Cursor is not detected. A skill you already edited is left alone, and uninstall removes only copies from this checkout. If `~/.cursor/skills` is another host's skills directory, setup skips Cursor instead of replacing that host's files.
+
+### Changed
+
+- **Upgrade and init preambles run code only from a verified gstack-extend checkout.** A project-local `.claude/skills/<skill>/` install no longer resolves an extend root: its update check is skipped, and `/gstack-extend-init` stops until you run `./setup --host auto` from the gstack-extend checkout. A verified root prints `EXTEND_ROOT:` and a paste-safe `_EXTEND_ROOT=` line. Later commands that need the root start with that line. A home install that does not verify prints `EXTEND_ROOT_UNVERIFIED:` with the cause and the fix. Session-state steps refuse to source a helper until that root is verified.
+
+### Fixed
+
+- **Setup leaves skill symlinks alone unless they point at a gstack-extend checkout.** A relative link into this checkout, or into a deleted checkout that setup's own pointer still names, is still refreshed or removed. Any other link is left in place.
+
+## [0.29.3.0] - 2026-09-25
+
+### Added
+
+- **Check what evidence makes a review independent of its authors and primary reviewer.** The design guide defines the policy, maps current host routing, and includes runnable reference calculations and exact replay examples. Static results, synthetic examples and reconstructed metadata are clearly separated from measured review evidence; the original empirical study remains unfinished.
+
+## [0.29.2.0] - 2026-09-25
+
+### Fixed
+
+- **Init reports failures without losing recoverable state.** Missing jq and invalid registries stop before project writes. Directory and template-write failures stop initialization with the failed path. Failed audits retain files and registration, show both diagnostic streams, and print a Bash-safe retry that preserves the project name and handles shell-special paths.
+- **Fresh init keeps actionable audit output visible.** Only sections with a single exact passing status are hidden; warnings, unknown or conflicting statuses, diagnostics, and migration output remain. Large audit sections no longer slow down filtering. Embedded filename line breaks cannot forge sections, and multiline move suggestions require manual review instead of naming the wrong file.
+- **Setup registers the tool in HOME’s registry.** An inherited direct-init state override no longer redirects self-registration or its printed retry. Failures show the full diagnostic output while installation remains usable.
+
+### Changed
+
+- **Template selection follows the canonical project layout.** Init uses one file list to select and order templates, preserving existing files and roadmap content during migration.
+
 ## [0.29.1.0] - 2026-09-25
 
 ### Fixed

@@ -380,9 +380,19 @@ export function buildAuditCtx(args: {
 
 export function renderCheckResult(r: CheckResult): string {
   const lines: string[] = [`## ${r.section}`];
-  if (r.preamble && r.preamble.length > 0) lines.push(...r.preamble);
+  // Each entry is one protocol line. Repository-controlled text (for example,
+  // a filename containing LF) must not forge section headings or STATUS lines.
+  const literalLine = (line: string) => {
+    // Suggested commands are executed verbatim by /roadmap. Escaping a line
+    // break inside a quoted argument would instead name a different file.
+    if (/^[ \t]*Suggested:/.test(line) && /[\r\n]/.test(line)) {
+      return '  Suggested: review and move (no automated suggestion — filename contains line breaks)';
+    }
+    return line.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+  };
+  if (r.preamble && r.preamble.length > 0) lines.push(...r.preamble.map(literalLine));
   lines.push(`STATUS: ${r.status}`);
-  lines.push(...r.body);
+  lines.push(...r.body.map(literalLine));
   // Trailing blank line between sections (matches bash `echo ""`).
   lines.push('');
   return lines.join('\n');

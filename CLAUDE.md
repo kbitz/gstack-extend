@@ -28,8 +28,8 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
 Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
-`TELEMETRY_SKILLS` covers all nine setup skills; protocol/preamble cohorts stay
-narrow. The three utility/workflow skills may carry only telemetry SHARED markers.
+`TELEMETRY_SKILLS` covers all eight setup skills; protocol/preamble cohorts stay
+narrow. The four utility/workflow skills may carry only telemetry SHARED markers.
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
@@ -54,8 +54,6 @@ To regenerate the source-tag hash corpus (needed when bash `compute_dedup_hash` 
 git diff tests/fixtures/source-tag-hash-corpus.json   # review hash drift
 ```
 
-`scripts/score-extractor.ts` is a manual harness for scoring `/test-plan` extractor JSON output against vendored fixtures (`tests/fixtures/extractor-corpus/`). Run via `bun scripts/score-extractor.ts --help`.
-
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill
@@ -70,6 +68,7 @@ Key routing rules:
 - Code review, check my diff → invoke review
 - Implement the plan, build this plan → invoke implement (targeted checks, then a fresh-session review-and-prep handoff)
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
+- Ship and land, finish a prepared PR → invoke ship-and-land (reuse verified evidence; run missing/stale stages, then land)
 - Resume review and prep after manual testing, continue the paused draft PR → invoke review-and-prep with args "resume"
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
@@ -82,8 +81,6 @@ Key routing rules:
 - Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap
 - Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
-- Audit testing/debugging apparatus, "what helpers should we add", "review the test infra", "bolt-on dev tools" → invoke review-apparatus _(beta)_
-- Batch test a Group, "bug bash", "test this release", "plan the bug bash" → invoke test-plan with args "run &lt;group&gt;" _(beta)_
 - Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade
 - Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init _(beta)_
 

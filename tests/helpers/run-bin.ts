@@ -3,7 +3,7 @@
  * tests, with consistent env scoping and a per-call HOME requirement.
  *
  * Why a helper: 5+ test sites (audit-snapshots, audit-cli-contract, update,
- * audit-shadow, possibly test-plan-e2e) shell out to bash binaries. Each
+ * audit-shadow) shell out to bash binaries. Each
  * needs the same env shape (GSTACK_EXTEND_DIR, GSTACK_EXTEND_STATE_DIR,
  * isolated HOME) and stderr capture. Inlining 5x is the duplication
  * codex flagged.

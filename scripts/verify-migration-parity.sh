@@ -39,22 +39,11 @@ cd "$SCRIPT_DIR"
 declare -a MAPPINGS=(
   "scripts/test-roadmap-audit.sh|tests/audit-snapshots.test.ts|23|audit snapshot suite"
   "scripts/test-skill-protocols.sh|tests/skill-protocols.test.ts|125|skill protocol assertions|verbatim graft blocks (shared across all 5 skills)|roadmap-only verbatim blocks|pair-review multi-table templates"
-  "scripts/test-test-plan.sh|tests/test-plan.test.ts|59|slugify pipeline|stable item IDs|path construction|archive behavior|state-write failure guard documentation|classification heuristic coverage|subcommand contract|provenance tag taxonomy|consume categories (Phase 4)|TS collision avoidance|extractor trust boundary|single-deploy-target guard"
-  "scripts/test-test-plan-extractor.sh|tests/test-plan-extractor.test.ts|18|extractor prompt contract|vendored extractor corpus (post-D6 / Issue 2A)"
-  "scripts/test-test-plan-e2e.sh|tests/test-plan-e2e.test.ts|41|ROADMAP parsing|fixture review docs|review doc discovery|manifest write|prior pair-review consumption|Phase 7 archive + write groups file|Phase 6 batch-plan write|TODOS.md append|idempotence: multiple archive generations coexist|session.yaml handoff marker"
   "scripts/test-update.sh|tests/update.test.ts|52|bin/update-run|setup default install|setup --with-native rejected|setup --uninstall|setup --uninstall preserves foreign browse-native symlink|setup unknown flag rejection|setup --skills-dir|semver (4-digit) via bin/lib/semver.sh|update-check version regex|update-check with 4-digit versions"
   "scripts/test-source-tag.sh|tests/source-tag.test.ts|46|parseSourceTag"
 )
 
 # Note on bash pass-count adjustments vs raw bash output:
-#   - test-test-plan.sh: bash baseline 61, TS port 59 (D14 dropped 2 chmod-555
-#     OS-perms assertions).
-#   - test-test-plan-extractor.sh: bash baseline 21, TS port 18 (D6/D11/Issue 1B
-#     moved --score CLI mode into scripts/score-extractor.ts which has its
-#     own 15-test suite under tests/score-extractor.test.ts; net coverage
-#     goes UP, not down).
-#   - test-test-plan-e2e.sh: bash baseline 43, TS port 41 (consolidated 2
-#     redundant fixture-doc-existence assertions into one).
 #   - test-update.sh: bash baseline 59, TS port 52 (semver section trimmed
 #     from 5 tests covering 4-digit + 3-digit edge cases to 5 tests covering
 #     the same — bash had a few duplicate redundant assertions).
@@ -64,9 +53,6 @@ declare -a MAPPINGS=(
 # uses these floors instead of the bash baseline.
 get_ts_floor() {
   case "$1" in
-    "tests/test-plan.test.ts") echo 59 ;;
-    "tests/test-plan-extractor.test.ts") echo 18 ;;
-    "tests/test-plan-e2e.test.ts") echo 41 ;;
     "tests/update.test.ts") echo 52 ;;
     *) echo "" ;;  # No override — use bash baseline.
   esac

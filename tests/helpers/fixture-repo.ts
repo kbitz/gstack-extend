@@ -2,8 +2,7 @@
  * fixture-repo.ts — shared helpers for tests that build tmp git repos
  * from `tests/roadmap-audit/<fixture>/files/` (or arbitrary file trees).
  *
- * Used by audit-shadow.test.ts, audit-snapshots.test.ts, audit-cli-contract.test.ts,
- * test-plan-e2e.test.ts. Centralizes:
+ * Used by audit-shadow.test.ts, audit-snapshots.test.ts, audit-cli-contract.test.ts. Centralizes:
  *   - per-test mkdtemp isolation (no shared $HOME or cache paths leak)
  *   - deterministic git init (anonymous user, single empty commit baseline)
  *   - recursive file-tree copy (matches bash `cp -R src/. dst/`)

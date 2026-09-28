@@ -55,15 +55,19 @@ describe('doctor telemetry', () => {
     expect(report.issues).toMatchObject({ malformed_lines: 2, nameless_rows: 1 });
     for (const stat of report.skills) expect(stat.paired).toBeLessThanOrEqual(stat.denominator);
   });
-  test('resumable deferred finishes do not count as fidelity defects', () => {
+  test('only resumable skills defer unmatched starts', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    seed(fix.home, ['pair-review', 'review-and-prep', 'test-plan'].map(name => row(name, name)));
+    seed(fix.home, ['pair-review', 'review-and-prep', 'ship-and-land'].map(name => row(name, name)));
     const report = JSON.parse(run(fix.env).stdout);
-    for (const name of ['pair-review', 'review-and-prep', 'test-plan']) {
+    for (const name of ['pair-review', 'review-and-prep']) {
       expect(report.skills.find((s: any) => s.skill === name)).toMatchObject({
         deferred_finish: 1, unpaired_start: 0, denominator: 0, pairing_percent: null, status: 'insufficient evidence',
       });
     }
+    // ship-and-land has no deliberate pause: every exit finishes, so a lone start is a defect.
+    expect(report.skills.find((s: any) => s.skill === 'ship-and-land')).toMatchObject({
+      deferred_finish: 0, unpaired_start: 1, denominator: 1,
+    });
   });
   test('nested Claude transcripts are advisory, de-duplicated, with host/retention caveats', () => {
     const fix = makeTelemetryFixture('community', 'stub');
@@ -271,7 +275,7 @@ describe('doctor environment and arguments', () => {
     expect(relative.diagnostic).toContain('unresolvable');
     expect(point(bare, '.config/opencode/skills', '/nonexistent/root\n').telemetry_binary).toBeNull();
     // ...while an absolute pointer resolves from every host directory.
-    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills']) {
+    for (const host of ['.claude/skills', '.codex/skills', '.config/opencode/skills', '.cursor/skills']) {
       const resolved = point(makeTelemetryFixture('community', 'absent'), host, ROOT + '\n');
       expect(resolved).toMatchObject({ telemetry_binary: join(ROOT, 'bin/gstack-extend-telemetry'), diagnostic: null });
     }

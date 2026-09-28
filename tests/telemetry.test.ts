@@ -46,7 +46,7 @@ describe('shipped blocks and installation lookup', () => {
     expect(r.stdout).toBe('path-resolved\n');
     expect(fix.readJsonl()).toHaveLength(0);
   });
-  for (const host of ['claude', 'codex', 'opencode']) {
+  for (const host of ['claude', 'codex', 'opencode', 'cursor']) {
     test('setup-generated ' + host + ' install resolves .extend-root without PATH wiring or GSTACK_EXTEND_DIR', () => {
       const fix = makeTelemetryFixture('community');
       rmSync(join(fix.home, '.claude/skills/gstack-extend'), { recursive: true });
@@ -55,7 +55,7 @@ describe('shipped blocks and installation lookup', () => {
       symlinkSync(process.execPath, join(setupTools, 'bun'));
       const result = spawnSync(join(ROOT, 'setup'), ['--host', host, '--quiet'], { env: { ...fix.env, PATH: setupTools + ':' + fix.env.PATH }, encoding: 'utf8', timeout: 20_000 });
       expect(result.status).toBe(0);
-      const hostDir = host === 'claude' ? '.claude/skills' : host === 'codex' ? '.codex/skills' : '.config/opencode/skills';
+      const hostDir = host === 'claude' ? '.claude/skills' : host === 'codex' ? '.codex/skills' : host === 'cursor' ? '.cursor/skills' : '.config/opencode/skills';
       const path = join(fix.home, hostDir, 'full-review/SKILL.md');
       expect(existsSync(join(fix.home, hostDir, 'full-review/.extend-root'))).toBe(true);
       expect(existsSync(join(fix.home, '.local/bin/gstack-extend-telemetry'))).toBe(false);

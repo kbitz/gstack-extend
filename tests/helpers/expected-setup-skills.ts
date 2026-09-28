@@ -4,10 +4,9 @@ export const EXPECTED_SETUP_SKILLS = [
   'pair-review',
   'roadmap',
   'full-review',
-  'review-apparatus',
-  'test-plan',
   'gstack-extend-upgrade',
   'gstack-extend-init',
   'review-and-prep',
   'implement',
+  'ship-and-land',
 ] as const;

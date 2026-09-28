@@ -5,7 +5,7 @@ Operators: [Diagnose and interpret](#diagnose-and-interpret).
 Consumers joining the files: [Join contract](#join-contract).
 Anyone checking claims: [Evidence](#evidence).
 
-All nine installed skills carry optional start and finish calls. They record local
+All eight installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or
@@ -33,6 +33,8 @@ valid. Pairing gstack-extend's own stage-runs rows with skill-usage uses
 `(skill, session_id)`. Rows other callers write, and the quota ledger, join
 stage-runs by `session_id` alone. Historical planning counts are in
 [Evidence](#evidence).
+Compare starts and finishes on the same machine and time window; fleet
+invocation totals alone do not establish local pairing.
 
 ## Configuration and storage
 
@@ -295,7 +297,7 @@ Copy both complete SHARED blocks below into a skill and replace the quoted
 substitutes that exact string. Each block has one telemetry invocation; its guard
 only resolves the install and contains a missing binary. Lookup is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
-$HOME host skill directories (setup writes one for Claude, Codex, and OpenCode).
+$HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
 start-finish-v1` line, so a relative PATH entry such as node_modules/.bin, or an
 older wrapper another checkout re-linked onto PATH, is skipped instead of run.
@@ -320,7 +322,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -348,7 +350,7 @@ _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
 if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
 if ! _ge_ok "$_GE_BIN"; then
   _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root; do
+  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
       if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
@@ -403,7 +405,7 @@ counts, window-crossing completions, and parse diagnostics.
 | Start outside window | An in-window finish is crossing-window, not unpaired |
 | Legacy / session alias / missing v or ID | Visible separately; no invented IDs or pairing |
 | Finish without matching start | Unpaired-finish, never a crash or negative numerator |
-| pair-review, review-and-prep, test-plan | Resumable: unmatched starts are deferred finishes, excluded from ratio |
+| pair-review, review-and-prep | Resumable: unmatched starts are deferred finishes, excluded from ratio |
 | Pause/resume | One invocation: skip another start for the same paused run; finish when complete |
 | Other unfinished runs | Unpaired starts until finish arrives; can temporarily lower the ratio, without proving failure |
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
@@ -579,7 +581,8 @@ new blocks. Window: 2026-08-21T23:33:55.854332+00:00 through 2026-09-20T23:33:55
 
 All nine ratios are **insufficient evidence**: historical starts lack the new
 joinable schema. The scan also found one malformed line and one nameless row.
-This is a pre-rollout baseline, not a zero-percent failure score.
+This is a pre-rollout baseline, not a zero-percent failure score. It includes
+the since-retired review-apparatus and test-plan skills for historical accuracy.
 
 ### Review-apparatus diagnosis
 
