@@ -454,7 +454,7 @@ marker/crash detection subsystem.
 ## Cursor and quota
 
 Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. The Conductor SDK store shape examined on 2026-09-25 uses
+the selected model. The Conductor SDK store shape described in the linked evidence uses
 numeric timestamps and list-valued model parameters that the current reader
 cannot parse, so model and effort remain null even when the store names a model.
 See [review-independence evidence](designs/review-independence.md#8-provenance-feasibility).
