@@ -83,8 +83,10 @@ it; each valid explicit --start or --session-id takes precedence. A flag followe
 directly by another flag (a missing value) skips the call; a value that merely
 starts with -- is accepted. Without valid state, finish writes nothing. A finish that
 wrote every enabled output consumes only its matching handoff. After a partial
-failure the handoff records which output was written, so a retry never duplicates
-either row; explicit retries can still supply their IDs. A start whose
+failure the handoff records the outputs whose writes were acknowledged, so a
+retry skips those outputs. A logger timeout can leave an unacknowledged write;
+an explicit retry after the handoff was consumed can also duplicate rows (see
+[Join contract](#join-contract)). A start whose
 skill-usage append fails still saves that handoff when provenance is on, and
 finish records the provenance row without sending a skill-usage completion for
 the start that never landed.
