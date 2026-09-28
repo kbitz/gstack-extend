@@ -177,7 +177,7 @@ Explicit finish flags override detection: `--agent claude|codex|cursor|grok`, `-
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
 gstack's logger. The row does not record whether `model` or `effort` was supplied
-by a flag or read from a log.
+by a flag or read from a log; `agent` overrides are likewise unmarked.
 
 **Switch.** Provenance is on by default and independent of gstack's tier, because
 its rows stay local while enabling the tier also enables the upload. Turn it off
@@ -227,7 +227,7 @@ the current wrapper's handling of a logger whose source lacks that flag.
 | Same-root collision (current behavior) | The equalities can hold while the outcome belongs to a different run. When the earlier-started run finishes first, its outcome lands on the later start's identity. When the later run finishes first, the row is correct and the earlier run has no row | Undetectable from rows: never attribute that row's outcome to the start without other evidence | `same-root collision misattributes the earlier finish (current behavior)` in tests/telemetry-contract.test.ts |
 | Finish whose own start never ran (current behavior) | Adopts any handoff still in the same repository+skill slot, with no age bound, so the joins succeed while outcome and duration belong to a different run | Do not treat a successful join as proof this finish's start wrote the handoff | untested |
 | Upstream logger exits 0 without writing | Its own tier read or a failed append: the wrapper records the completion as delivered and the `skill_start` stays unpaired | A delivered completion is not a `skill_run` row | untested |
-| Logger without `--no-sweep` | `skill_start` is written, no `skill_run` ever is, and the handoff stays with `done: ["provenance"]` until the next start | Upgrade gstack; do not expect a completion row | `a logger without --no-sweep support is not delegated to; the handoff is kept and debug explains the upgrade` in tests/telemetry.test.ts |
+| Logger without `--no-sweep` | `skill_start` is written, but this finish writes no `skill_run`. The handoff remains; with provenance on, a successful provenance append adds `done: ["provenance"]`. With provenance off it remains untouched. After upgrading the logger, another finish can use the retained handoff and write the completion | Upgrade gstack and retry finish; do not infer a permanent missing completion | `a logger without --no-sweep support is not delegated to; the handoff is kept and debug explains the upgrade` in tests/telemetry.test.ts |
 | Run spans a gstack-extend upgrade | Notably `/gstack-extend-upgrade`: start and finish follow different wrapper versions and may leave no row | Do not infer a missing row is a skipped skill | untested |
 | Explicit retry after success (current behavior) | A second finish with the original IDs appends a second stage-runs row and a second `skill_run` | Keep both rows; do not collapse the key | `explicit retry appends a second stage-runs row and a second skill_run (current behavior)` in tests/telemetry-contract.test.ts |
 | Logger timeout after writing | Can leave an uncertain completion: the row may exist while the wrapper does not know the write finished | Treat a timeout as unknown, not as absence | untested |
@@ -257,12 +257,13 @@ never caps. `skill_run.gstack_version` is upstream's version, seen on captured
 rows; no row carries a gstack-extend version.
 
 **What provenance can and cannot prove.** One stage-runs row per extend-skill
-finish whose append succeeded. The agent is the harness that ran the finish
-command, chosen as the nearest marked ancestor process when several harness
-markers are present. Model and effort are the pair behind the most turns in the
+finish whose append succeeded. Unless a valid `--agent` overrides detection,
+the agent is the harness detected for the finish command: the nearest marked
+ancestor when several harness markers are present, otherwise the latest
+comparable harness log when ancestry is unavailable. Model and effort are the pair behind the most turns in the
 window. Subagent (sidechain) turns are skipped. Nested reviewer voices
 (outside-voice CLIs, subagents, external review services) write no row. Explicit
-`--model` and `--effort` overrides are not marked as supplied. These rows alone
+`--agent`, `--model`, and `--effort` overrides are not marked as supplied. These rows alone
 cannot certify that a review had an independent voice.
 
 ## Author quickstart
@@ -453,8 +454,12 @@ marker/crash detection subsystem.
 ## Cursor and quota
 
 Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. Local native SDK runs supply model and effort when readable;
-otherwise these are null. Cursor transcript activity supports nested-harness
+the selected model. The Conductor SDK store shape examined on 2026-09-25 uses
+numeric timestamps and list-valued model parameters that the current reader
+cannot parse, so model and effort remain null even when the store names a model.
+See [review-independence evidence](designs/review-independence.md#8-provenance-feasibility).
+The dated capture below did not cross-tabulate nulls by agent, so it does not
+establish which captured rows encountered this limitation. Cursor transcript activity supports nested-harness
 detection. Billed model and consumption belong to the separate
 [quota ledger](quota-ledger.md). Telemetry start and finish never start a quota
 sampler or write quota records. Only explicit quota commands read vendor usage.

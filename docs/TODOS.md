@@ -3,7 +3,7 @@
 ## Unprocessed
 
 ### [plan-ceo-review:track=16A,defer=true] Version stage-runs rows and publish their schema
-**What:** Add a schema version and a gstack-extend producer version to every stage-runs row, publish a machine-readable schema, and record whether `model`/`effort` came from flags or from logs.
+**What:** Add a schema version and a gstack-extend producer version to every stage-runs row, publish a machine-readable schema, and record whether `agent`/`model`/`effort` came from flags or from detection.
 **Why:** 8 of 14 rows in the September 25 capture lack `route` and `entrypoint_raw`; readers cannot establish the writer release from key presence alone, and `agent: cursor` arrived without a marker.
 **Context:** Found by Track 16A. `route` values are written inline in `route_for` (bin/lib/telemetry.py) with no constant. docs/telemetry.md holds the field and value version notes this would replace.
 **Effort:** S
