@@ -1,5 +1,10 @@
 # Skill telemetry
 
+Skill authors: [Author quickstart](#author-quickstart).
+Operators: [Diagnose and interpret](#diagnose-and-interpret).
+Consumers joining the files: [Join contract](#join-contract).
+Anyone checking claims: [Evidence](#evidence).
+
 All eight installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
@@ -10,18 +15,25 @@ skill-usage rows.
 
 ## Three datasets
 
-- **skill-usage.jsonl** contains local, model-invoked skill telemetry. It answers
-  which observed runs started, finished, and reported an outcome, and how long
-  their sessions lasted.
-- **stage-runs.jsonl** contains one local-only provenance row per finished run. It
-  answers which harness, model, and effort level ran each stage, in the documented schema any caller can join.
+- **skill-usage.jsonl** contains local, model-invoked skill telemetry. A
+  `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
+  records a completion append; it does not prove the wrapper saw a successful return. A
+  missing row is not evidence that a run did not happen.
+- **stage-runs.jsonl** contains a local provenance row when a finish ran with
+  provenance on and the append succeeded. It answers which harness, model, and
+  effort level that finish recorded, in the documented schema any caller can join.
+  One row is one successful append, not proof of one independent run.
 - **Transcript-derived counts from other tools** count transcript tool-use records
   whose name is Skill, potentially gathered across machines. Instrumenting these skills does
   not change those counts. Fleet totals cannot be the denominator of a local
   telemetry ratio.
 
 Parse JSONL as JSON, never with grep: compact and spaced serialization are equally
-valid. Compare starts and finishes on the same machine and time window; fleet
+valid. Pairing gstack-extend's own stage-runs rows with skill-usage uses
+`(skill, session_id)`. Rows other callers write, and the quota ledger, join
+stage-runs by `session_id` alone. Historical planning counts are in
+[Evidence](#evidence).
+Compare starts and finishes on the same machine and time window; fleet
 invocation totals alone do not establish local pairing.
 
 ## Configuration and storage
@@ -41,7 +53,8 @@ The sink exactly follows **gstack-telemetry-log**: GSTACK_STATE_DIR, defaulting 
 $HOME/.gstack, then analytics/skill-usage.jsonl. **gstack-config** instead reads
 config.yaml from GSTACK_STATE_ROOT → GSTACK_HOME → GSTACK_STATE_DIR →
 $HOME/.gstack. Setting only GSTACK_HOME changes config lookup, not the sink.
-Tests isolate HOME as well as overrides and never write to the real user sink.
+The effective tier is whichever file that ladder selects for the process that
+ran. Tests isolate HOME as well as overrides and never write to the real user sink.
 
 Activation directly appends a JSON-escaped v1 skill_start row. Completion delegates
 to gstack-telemetry-log with --source gstack-extend and **--no-sweep**. Upstream
@@ -70,25 +83,34 @@ it; each valid explicit --start or --session-id takes precedence. A flag followe
 directly by another flag (a missing value) skips the call; a value that merely
 starts with -- is accepted. Without valid state, finish writes nothing. A finish that
 wrote every enabled output consumes only its matching handoff. After a partial
-failure the handoff records which output was written, so a retry never duplicates
-either row; explicit retries can still supply their IDs. A start whose
+failure the handoff records the outputs whose writes were acknowledged, so a
+retry skips those outputs. A logger timeout can leave an unacknowledged write;
+an explicit retry after the handoff was consumed can also duplicate rows (see
+[Join contract](#join-contract)). A start whose
 skill-usage append fails still saves that handoff when provenance is on, and
 finish records the provenance row without sending a skill-usage completion for
 the start that never landed.
 State is separate from gstack analytics. There is no sweep, age bound, crash
 detection, historical backfill, or inferred failure.
 
-**Collision limit:** simultaneous runs of the same skill in the same repository
-share a slot; the later start replaces it. Explicit start/session flags are the
-escape hatch. Different Conductor workspaces have different roots and separate
-slots. Handoffs are local: cross-machine resumes must carry explicit values to
-emit an identifiable completion; that row may remain unpaired locally.
+**Collision limit:** this is current behavior, a known defect, not a guarantee.
+The test must change when the defect is repaired. Two starts of one skill in one
+checkout share a slot; the later start replaces it. If the earlier-started run
+finishes first, stage-runs holds one row with the later start's `session_id` and
+`started_at` and the earlier finish's outcome. With the tier on, skill-usage
+pairs the later `skill_start` with that finish's `skill_run` and leaves the
+earlier `skill_start` unpaired. The later finish writes nothing. If the later
+run finishes first, the row is correctly its own and the earlier run has no row.
+Explicit start/session flags are the escape hatch. Different checkouts have
+different roots and separate slots. Handoffs are local: cross-machine resumes must
+carry explicit values to emit an identifiable completion; that row may remain
+unpaired locally.
 
 ## Execution provenance
 
 skill-usage.jsonl has no model or agent field, and gstack-skill-start drops its
 `--model` argument (upstream), so no gstack row says which vendor ran a stage.
-Finish therefore also appends one row per run to
+When provenance is on and the append succeeds, finish appends one row to
 $GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl (default
 `$HOME/.gstack-extend/analytics/stage-runs.jsonl`). **The file is local-only**:
 gstack-telemetry-sync never reads it, so branch and work item never leave the
@@ -97,20 +119,27 @@ by session_id and use their own source labels:
 
 | Field | Hand-run value |
 |---|---|
-| stage | Skill name without `extend:`, e.g. `roadmap` |
-| agent | `claude`, `codex`, `cursor`, or `grok`: the harness, not the model |
-| model | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
-| effort | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
-| rung | Always 0: a hand-run skill has no fallback chain |
-| outcome | `success`, `error`, `abort`, or `unknown`; any other value becomes `unknown` |
-| started_at, duration_s | UTC start; session wall-clock seconds including human waits, never capped |
-| session_id | The `extend-<uuid>` shared with the skill-usage start and finish rows |
-| repo | origin's owner/name (never its host or credentials); the root's name without origin; null outside git |
-| branch | Branch at finish; null outside git or when detached |
-| work_item | Null unless finish passes `--work-item` |
-| source | `gstack-extend` |
-| route | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
-| entrypoint_raw | The selected harness entrypoint marker, when present |
+| `stage` | Skill name without `extend:`, e.g. `roadmap` |
+| `agent` | `claude`, `codex`, `grok`, or `cursor`; null when unverifiable |
+| `model` | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
+| `effort` | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
+| `rung` | Always 0: a hand-run skill has no fallback chain |
+| `outcome` | `success`, `error`, `abort`, or `unknown`; any other value becomes `unknown` |
+| `started_at` | UTC start; null when an explicit `--start` or a legacy `--duration` cannot be represented as a UTC time |
+| `duration_s` | Session wall-clock seconds including human waits, never capped |
+| `session_id` | Wrapper-issued IDs are `extend-<uuid>`; an explicit `--session-id` can be any valid ID |
+| `repo` | origin's owner/name (never its host or credentials); the root's name without a parseable origin; null outside git or when git cannot be read |
+| `branch` | Branch at finish; null outside git or when detached |
+| `work_item` | Null unless finish passes `--work-item` |
+| `source` | `gstack-extend` |
+| `route` | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
+| `entrypoint_raw` | The selected harness entrypoint marker, when present |
+
+Every stage-runs field except `route` and `entrypoint_raw` is present from
+v0.28.0.0; those two are present from v0.29.0.0 and absent on earlier rows. The
+`agent` value `cursor` appears from v0.29.0.0 (v0.28.0.0 accepted `claude`,
+`codex`, and `grok`). Rows carry no schema or producer version, so an absent key
+is unknown, not a known older release.
 
 **Nothing is guessed.** Agent, model, and effort come from the harness's own
 session log for the stage's window. Any value the wrapper cannot verify is null,
@@ -147,7 +176,8 @@ detection costs only the detected values, never the row.
 Explicit finish flags override detection: `--agent claude|codex|cursor|grok`, `--model`,
 `--effort`, and `--work-item`. When `--agent` names a different harness than the
 detected one, the detected model and effort are dropped. These flags never reach
-gstack's logger.
+gstack's logger. The row does not record whether `model` or `effort` was supplied
+by a flag or read from a log; `agent` overrides are likewise unmarked.
 
 **Switch.** Provenance is on by default and independent of gstack's tier, because
 its rows stay local while enabling the tier also enables the upload. Turn it off
@@ -156,10 +186,93 @@ also works). A missing config stays on. An unreadable config stays off: a file
 that cannot be read is not evidence the switch is still on. With provenance on, start writes the handoff even when the tier is
 off, and a missing or broken gstack costs only the skill-usage rows.
 
+## Join contract
+
+For a wrapper-issued start plus a finish that recovers both values from the
+handoff, where one finish attempt both built the stage-runs row and delegated
+the completion, and `duration_s` is at most 86400: the rows share
+`(skill, session_id)`, `skill_start.ts` minus `started_at` is normally 0 or 1
+second, and the durations are equal. A successful join establishes structural
+correspondence, not correct run attribution. No bound on the start-time gap is
+guaranteed: a process pause or a clock step can exceed one second.
+
+The worked example is the three-line block under [Author quickstart](#author-quickstart).
+Stage-runs `stage` `roadmap` joins skill-usage `skill` `extend:roadmap` with the
+same `session_id`.
+
+1. Keep rows with `source` equal to `gstack-extend`. `source` is a label the writer chooses: any caller that writes that label is indistinguishable from the wrapper.
+2. Treat a skill-usage row as legacy unless `v` is the integer 1, `session_id` is a non-empty string, and `event_type` is `skill_start` or `skill_run` (the doctor's rule). Drop legacy rows. A modern v1 `skill_run` with no matching start is an unpaired completion of unknown issuance. `ts` and ID shape are hints only, and none is attributed to the pre-rollout wrapper without independent evidence.
+3. To pair gstack-extend's own stage-runs rows with skill-usage, key on `(skill, session_id)`, mapping stage-runs `stage` to `extend:<stage>`. Rows other callers write to stage-runs, and the quota ledger, join by `session_id` alone. `(skill, session_id)` is a correlation key, not a unique key: expect duplicate or conflicting rows for one key and keep them visible rather than silently picking one.
+4. A session ID without the `extend-<uuid>` shape came from explicit flags or an older writer and may stay unpaired locally. An explicit retry that reuses the original IDs pairs normally. The `extend-` prefix alone does not prove the wrapper issued the ID.
+5. Sort per dataset. Stage-runs file order is finish order: sort by `started_at`, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
+6. Treat an absent key as unknown.
+
+Session IDs match `[A-Za-z0-9][A-Za-z0-9._:-]{0,199}` (the wrapper's `valid_session`).
+gstack-extend's `ts` and `started_at` use UTC `YYYY-MM-DDTHH:MM:SSZ` at second
+precision, so string order equals time order. Upstream `skill_run.ts` uses the
+same format, read in gstack 1.89.1.0 source and seen on captured `skill_run` rows
+whose `gstack_version` is 1.87.4.0 and 1.87.5.0.
+
+The upstream duration cap and successful exits without a write in the table
+below were read in gstack 1.89.1.0's logger source. The `--no-sweep` guard is
+the current wrapper's handling of a logger whose source lacks that flag.
+
+| Case | Effect | Consumer handling | Source |
+|---|---|---|---|
+| Explicit `--session-id` finish | Carries the caller's ID, which need not have the `extend-<uuid>` shape | Do not require the `extend-` prefix | `an explicit --session-id never borrows the start time of a different session's handoff` in tests/telemetry.test.ts |
+| Explicit `--start` or legacy `--duration` finish | `started_at` comes from that value, not from any `skill_start` row; a value that cannot be represented as a UTC time makes `started_at` null | Do not expect `started_at` to match a start row | `legacy finishes date the row from their duration; an unrepresentable start is null, never a crash` in tests/telemetry.test.ts |
+| Different attempts | Stage-runs `duration_s` is fixed by the first attempt that built the row (a failed append saves the row for reuse). `skill_run.duration_s` comes from the attempt that delegated: null above 86400, which upstream nulls, or, on a later attempt with the handoff-recovered start and a nondecreasing clock, greater than or equal to stage-runs `duration_s`. A changed explicit `--start` gives no ordering. Stage-runs never caps | Do not equate the two durations across attempts | `a finish retried after a partial failure never duplicates either row` and `provenance duration stays wall-clock past a day while skill-usage nulls it` in tests/telemetry.test.ts |
+| Start without `skill_start` | Tier off, gstack unavailable at start, a transient gstack-config failure, or a failed append: the handoff records `usage: false` when provenance is on, so finish sends no `skill_run` even if the tier is on by then. With provenance off, a start that wrote no `skill_start` saves no handoff | Expected when the tier is off, not a failure | `a failed skill-usage start does not invent a completion; provenance off writes no handoff` in tests/telemetry.test.ts |
+| Tier turned off before finish | Consumes the handoff and leaves that `skill_start` unpaired permanently. With provenance off, turning the tier off before finish leaves the handoff (`usage: true`) for a later start-less finish to adopt | Do not treat the unpaired start as a crash | untested |
+| Same-root collision (current behavior) | The equalities can hold while the outcome belongs to a different run. When the earlier-started run finishes first, its outcome lands on the later start's identity. When the later run finishes first, the row is correct and the earlier run has no row | Undetectable from rows: never attribute that row's outcome to the start without other evidence | `same-root collision misattributes the earlier finish (current behavior)` in tests/telemetry-contract.test.ts |
+| Finish whose own start never ran (current behavior) | Adopts any handoff still in the same repository+skill slot, with no age bound, so the joins succeed while outcome and duration belong to a different run | Do not treat a successful join as proof this finish's start wrote the handoff | untested |
+| Upstream logger exits 0 without writing | Its own tier read or a failed append: the wrapper records the completion as delivered and the `skill_start` stays unpaired | A delivered completion is not a `skill_run` row | untested |
+| Logger without `--no-sweep` | `skill_start` is written, but this finish writes no `skill_run`. The handoff remains; with provenance on, a successful provenance append adds `done: ["provenance"]`. With provenance off it remains untouched. After upgrading the logger, another finish can use the retained handoff and write the completion | Upgrade gstack and retry finish; do not infer a permanent missing completion | `a logger without --no-sweep support is not delegated to; the handoff is kept and debug explains the upgrade` in tests/telemetry.test.ts |
+| Run spans a gstack-extend upgrade | Notably `/gstack-extend-upgrade`: start and finish follow different wrapper versions and may leave no row | Do not infer a missing row is a skipped skill | untested |
+| Explicit retry after success (current behavior) | A second finish with the original IDs appends a second stage-runs row and a second `skill_run` | Keep both rows; do not collapse the key | `explicit retry appends a second stage-runs row and a second skill_run (current behavior)` in tests/telemetry-contract.test.ts |
+| Logger timeout after writing | Can leave an uncertain completion: the row may exist while the wrapper does not know the write finished | Treat a timeout as unknown, not as absence | untested |
+
+`repo` does not join across datasets. `skill_start.repo` is the checkout directory
+name (`Path(root).name`; under a workspace manager that is the workspace name, not
+a repository). Stage-runs `repo` is the last two path segments of the origin URL
+(nested groups collapse to those two); without a parseable origin it is the
+checkout directory name; outside git or when git cannot be read it is null.
+Upstream `skill_run` has no `repo`. Its
+`_repo_slug` is upstream-owned: read in gstack 1.89.1.0 source, the logger sets it
+from the trailing owner/name of `git remote get-url origin`, stripping `.git`
+and replacing `/` with `-` (for example, `acme-widget`), and it is an empty
+string outside git. It is not a join key. The same source sets `_branch` from
+`git rev-parse --abbrev-ref HEAD`, which is `HEAD` on a detached checkout, while
+stage-runs `branch` is null there. Both keys appear on captured `skill_run` rows
+at gstack 1.87.4.0 and 1.87.5.0. Outside git, `skill_start.repo` is the string
+`unknown` while stage-runs `repo` and `branch` are null. These divergences are
+current behavior.
+
+A `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
+records a completion append, even if the logger later timed out or failed. A stage-runs row means
+a finish ran with provenance on and its append succeeded. A missing row is not
+evidence that a run did not happen. Upstream nulls `skill_run.duration_s` above
+86400 seconds (read in gstack 1.89.1.0 source, `gstack-telemetry-log`); stage-runs
+never caps. `skill_run.gstack_version` is upstream's version, seen on captured
+rows; no row carries a gstack-extend version.
+
+**What provenance can and cannot prove.** One stage-runs row per extend-skill
+finish whose append succeeded. Unless a valid `--agent` overrides detection,
+the agent is the harness detected for the finish command: the nearest marked
+ancestor when several harness markers are present, otherwise the latest
+comparable harness log when ancestry is unavailable. Model and effort are the pair behind the most turns in the
+window. Subagent (sidechain) turns are skipped. Nested reviewer voices
+(outside-voice CLIs, subagents, external review services) write no row. Explicit
+`--agent`, `--model`, and `--effort` overrides are not marked as supplied. These rows alone
+cannot certify that a review had an independent voice.
+
 ## Author quickstart
 
-After setup wires the binaries and telemetry is enabled, run these independently
-from the same repository:
+After setup wires the binaries, run these independently from the same repository.
+"Telemetry is enabled" means gstack's tier, which is distinct from the provenance
+switch. With the tier on, one start and finish write two skill-usage rows plus
+one stage-runs row. With the tier off and provenance on (the default), they write
+no skill-usage rows and one stage-runs row.
 
 ~~~sh
 gstack-extend-telemetry start --skill "extend:roadmap"
@@ -168,21 +281,25 @@ gstack-extend doctor telemetry --days 30
 ~~~
 
 Start prints GE_TELEMETRY: session=extend-<uuid> start=<epoch>. Finish needs neither
-value copied. Expect two rows sharing a session_id:
+value copied. The newest stage-runs row is:
+
+~~~sh
+tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/analytics/stage-runs.jsonl"
+~~~
+
+`skill_start.repo` is the checkout directory name (a workspace name under
+Conductor), not a repository identifier. The `skill_run` line below is abridged:
+upstream adds metadata fields. No event key is introduced: historical rows already
+use that key for prepared-not-started. **duration_s is session wall-clock**,
+including human waiting and pauses, not model/token spend. Upstream silently nulls
+values above 86400 seconds (gstack 1.89.1.0 source); resumable workflows will
+routinely lose their duration.
 
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
-{"v":1,"event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:03Z","duration_s":3,"outcome":"success","source":"gstack-extend"}
+{"v":1,"ts":"2026-09-20T12:00:03Z","event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","duration_s":3,"outcome":"success","source":"gstack-extend"}
+{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli"}
 ~~~
-
-Finish also appends one provenance row to stage-runs.jsonl (see
-[Execution provenance](#execution-provenance)).
-
-The completion example omits upstream metadata. No event key is introduced:
-historical rows already use that key for prepared-not-started. **duration_s is
-session wall-clock**, including human waiting and pauses, not model/token spend.
-Upstream silently nulls values above 86400 seconds; resumable workflows will
-routinely lose their duration.
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
 "extend:full-review" argument with its name. Keep the quotes: the drift lock
@@ -303,16 +420,166 @@ counts, window-crossing completions, and parse diagnostics.
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
 | Missing transcripts | Advisory count unavailable, not zero; pairing remains measurable |
 | No eligible starts | Insufficient evidence, never a fabricated 0% or 100% |
+| Every skill shows insufficient evidence and the tier is off | No skill-usage rows are written while the tier is off; stage-runs still records. To collect pairing evidence run `gstack-config set telemetry anonymous` or `gstack-config set telemetry community`. Both write local pairing rows; the logger adds a persistent `installation_id` only for `community`, while `anonymous` writes null and also drops the field from uploads (gstack 1.89.1.0 logger/sync source). Sync strips `repo`, `_repo_slug`, and `_branch` before upload (read in gstack 1.89.1.0 `gstack-telemetry-sync`: jq deletes the fields; the sed fallback mis-strips a value containing an escaped quote). Either tier also enables gstack's upload |
 
 Transcripts are read recursively, including subagents/, with tool-use IDs
 deduplicated. They are **Claude-only, local-only, retention-deleted** and do not
-cover Codex or other hosts. In a sample taken on 2026-09-20 during planning, 71%
-of recent transcript files were nested under subagents. These counts are advisory,
-never ratio inputs.
+cover Codex, Grok, or Cursor. The counter reads `~/.claude/projects` only and
+ignores `CLAUDE_CONFIG_DIR`. These counts are advisory, never ratio inputs.
 A skipped start has no row and cannot be detected by in-skill telemetry; perfect
 pairing does not establish complete invocation coverage.
 
-## Baseline and decision rule
+## Decision rule
+
+The doctor evaluates the 95% rule from historical rows whatever the current tier.
+Turning the tier off stops new evidence and does not erase old evidence. Where a
+window has no eligible v1 starts, the rule has insufficient evidence: the deferred
+marker and crash-detection work has no trigger there. A tier-independent trigger
+for periods without eligible observations is the "Doctor coverage report over
+stage-runs and leftover handoffs" follow-up in [TODOS](TODOS.md).
+
+After rollout, collect a fresh 30-day report and publish per-skill pairing.
+If any skill is below 95% with an eligible start denominator and nonzero local
+transcript invocations, **schedule the deferred in-flight marker and crash-detection work** rather than
+re-arguing that trigger. Doctor exposes schedule_marker_work in JSON and a
+decision message in text. Deferred resumable runs are excluded. Missing
+transcripts or zero eligible starts provide insufficient evidence for the trigger.
+Diagnose skipped starts separately: markers cannot repair a command never run.
+
+The capture in [Observed coverage](#observed-coverage) found no eligible v1 starts
+in its window, so the post-rollout 30-day report has insufficient evidence on the
+files that were read. This change ships no hook, gstack sweep patch, or
+marker/crash detection subsystem.
+
+## Cursor and quota
+
+Cursor is an execution harness (`agent: cursor`), independently of the vendor of
+the selected model. The Conductor SDK store shape described in the linked evidence uses
+numeric timestamps and list-valued model parameters that the current reader
+cannot parse, so model and effort remain null even when the store names a model.
+See [review-independence evidence](designs/review-independence.md#8-provenance-feasibility).
+The dated capture below did not cross-tabulate nulls by agent, so it does not
+establish which captured rows encountered this limitation. Cursor transcript activity supports nested-harness
+detection. Billed model and consumption belong to the separate
+[quota ledger](quota-ledger.md). Telemetry start and finish never start a quota
+sampler or write quota records. Only explicit quota commands read vendor usage.
+
+## Evidence
+
+Records state their capture date up front, or identify the documentation date
+when no capture timestamp was retained. Contract sections above stay undated.
+
+### Observed coverage
+
+Captured 2026-09-25T12:28:18Z: stage-runs rows were read and their key sets checked
+on one machine's files; skill-usage has no v1 `skill_start` in the window, so
+pairing is unvalidated. This is a one-machine field smoke check. The files carry
+no machine identifier. Tier read at capture: off. The effective tier during the
+window is not established, because each process resolves config through
+`GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `GSTACK_STATE_DIR`, then `HOME`.
+Provenance config file was absent, which the writer treats as on.
+
+| Question | Status | Evidence |
+|---|---|---|
+| Schema conformity | demonstrated | 14 stage-runs rows. 8 lack `route` and `entrypoint_raw`; 6 include both. Every row's other keys match the field table. Rows carry no schema version |
+| Pairing among recorded starts | unmeasured | 0 v1 `skill_start` and 0 v1 `skill_run` with `source` `gstack-extend` in the window |
+| Invocation capture completeness | unmeasured | Claude transcript counts disagree with Claude stage-runs counts for two skills; Codex, Grok, and Cursor have no transcript counter |
+| Attribution correctness | unmeasured | No paired start exists in the window to check. The same-root collision is characterized in code, not observed as a field row here |
+| Producer identity | unmeasured | All 14 stage-runs rows declare `source` `gstack-extend`. Label presence is demonstrated, but the label is self-declared: any caller writing it is indistinguishable from the wrapper |
+
+Window: 2026-09-22T14:50:06Z through 2026-09-25T12:28:18Z, from the earliest
+stage-runs `started_at` to capture time. Sources: skill-usage.jsonl (1975 rows,
+1 malformed line, 84 with `source` `gstack-extend`), stage-runs.jsonl (14 rows,
+0 malformed), leftover handoff files, lock files, and `transcripts(since, now)`
+over that window. gstack-extend doctor telemetry --json reported tier off, zero
+warnings, `logger_supports_no_sweep` true, and insufficient evidence for all nine
+skills (0 skills with an eligible v1 denominator).
+The nine-skill set is historical (gstack-extend 0.29.0.1): it includes the
+since-retired review-apparatus and test-plan skills and predates ship-and-land.
+
+| Skill | stage-runs (by harness) | Leftover handoffs | Claude transcripts | v1 skill_start | v1 skill_run |
+|---|---|---:|---:|---:|---:|
+| pair-review | 1 (codex 1) | 1 | 0 | 0 | 0 |
+| roadmap | 3 (claude 1, codex 2) | 0 | 1 | 0 | 0 |
+| full-review | 0 | 0 | 0 | 0 | 0 |
+| review-apparatus | 0 | 0 | 0 | 0 | 0 |
+| test-plan | 0 | 0 | 0 | 0 | 0 |
+| gstack-extend-upgrade | 3 (claude 3) | 0 | 1 | 0 | 0 |
+| gstack-extend-init | 0 | 0 | 0 | 0 | 0 |
+| review-and-prep | 1 (grok 1) | 2 | 1 | 0 | 0 |
+| implement | 6 (claude 1, codex 3, cursor 2) | 1 | 1 | 0 | 0 |
+| unattributed | 0 | 2 |  | 0 | 0 |
+
+All 14 stage-runs rows have `source` `gstack-extend` and `outcome` `success`.
+Agents: claude 5, codex 6, grok 1, cursor 2. Routes: 8 rows have no `route` key,
+4 `conductor`, 1 `cli`, 1 `unknown`. Model is non-null on 12 rows and null on 2;
+effort is non-null on 12 and null on 2. The capture does not cross-tabulate those
+nulls with agent.
+
+Of 84 gstack-extend skill-usage rows, 44 are legacy under the doctor's modern-row
+rule, 40 are v1 `skill_run`, and 0 are v1 `skill_start`. None of them fall inside
+the window. The last gstack-extend row is a `skill_run` at 2026-09-21T03:25:14Z
+with `gstack_version` 1.87.4.0. Another source, `live`, has a tier-gated
+`skill_run` at 2026-09-22T15:06:51Z with `gstack_version` 1.87.5.0, inside the
+window. A stage-runs window that overlaps landed tier-gated upstream rows and
+contains no `skill_start` is unexplained. It is not attributed to the tier read
+at capture.
+
+Six leftover handoffs, all start-only (no `done` key and no saved `row`).
+Lifecycle of a start-only handoff is unknown: the file stores no lifecycle state.
+Three are resumable skills (pair-review 1, review-and-prep 2), one is
+non-resumable (implement), and two matched no enumerated checkout and are
+unattributed. No handoff held a saved stage-runs row. The capturing run identified
+no handoff of its own. An orphan handoff omits the skill, so it is attributable
+only by rehashing `sha256(json([root, skill]))` unless it holds a saved
+stage-runs row. 22 lock files: 6 share a hash with a current handoff, 5 rehash to
+a skill that has a stage-runs row, and 11 are slot-used with no handoff and no
+attributed stage-runs row. Locks identify persistent repository/skill slots,
+not invocations; stage-runs rows carry no root to link them conclusively. The
+lock counts do not establish a run count or place those runs in this window.
+
+Gaps from this capture: zero v1 skill-usage rows in the window; four skills have
+no stage-runs row (full-review, review-apparatus, test-plan, gstack-extend-init);
+six start-only handoffs whose lifecycle is unknown; two handoffs unattributed;
+eleven slot locks with no current handoff or attributable row, not eleven
+missing runs; rows were read from one machine's files and carry no
+machine identifier; no Codex, Grok, or Cursor transcript denominator. Claude
+transcripts versus Claude stage-runs in the window match for seven skills.
+gstack-extend-upgrade is unexplained (1 transcript, 3 Claude rows).
+review-and-prep is unexplained (1 transcript, 0 Claude rows). Candidate causes,
+not a finding: the doctor's whole-day window differs from this exact window; the
+counter counts only Skill tool_use blocks, so a typed slash command may not
+count; a paused run has a handoff but no row; the counter reads only
+`~/.claude/projects` and ignores `CLAUDE_CONFIG_DIR`; a run spanning an upgrade
+may leave no row.
+
+### How this record was captured
+
+Documented method, not a re-runnable script. The script stays private. A
+re-runnable capture is the doctor-coverage TODO. Re-capture after any change to
+the writer, the doctor, or the upstream fields this contract names
+(`_repo_slug`, `_branch`, `gstack_version`, the 86400-second nulling).
+
+Sources: `$GSTACK_STATE_DIR/analytics/skill-usage.jsonl` (default `~/.gstack`),
+`$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl`, `telemetry/*.json`, and
+`telemetry-locks/*.lock` (default `~/.gstack-extend`). An absent file is zero
+rows with the absence recorded. Malformed JSONL lines are counted. A failure to
+load the transcript counter is recorded as unavailable, never 0. Classification:
+a skill-usage row is modern only when `v` is the integer 1, `session_id` is a
+non-empty string, and `event_type` is `skill_start` or `skill_run`; everything
+else with `source` `gstack-extend` is legacy. Handoffs split into start-only,
+finish-attempted (a `done` key), and append-failed (a `row` key). A saved `row`
+is attributed by `row.stage`; otherwise the hash is matched against git toplevels
+enumerated under the home directory's clone and workspace parents, count only.
+Claude counts call `transcripts(since, now)` on the exact window. gstack-extend
+VERSION at capture: 0.29.0.1, commit af56fceba44df88139be2d51a9ab865245b03cc0.
+gstack VERSION file at capture: 1.89.1.0. Upstream field behavior above was read
+in that version's `gstack-telemetry-log` and `gstack-telemetry-sync` source;
+`_branch`, `_repo_slug`, and `gstack_version` were also present on captured
+`skill_run` rows. Unresolved: the two per-skill transcript mismatches, and the
+absence of `skill_start` rows beside in-window tier-gated upstream rows.
+
+### Pre-rollout baseline
 
 Local implementation baseline captured 2026-09-20, before installing the
 new blocks. Window: 2026-08-21T23:33:55.854332+00:00 through 2026-09-20T23:33:55.854332+00:00.
@@ -334,24 +601,20 @@ joinable schema. The scan also found one malformed line and one nameless row.
 This is a pre-rollout baseline, not a zero-percent failure score. It includes
 the since-retired review-apparatus and test-plan skills for historical accuracy.
 
+### Review-apparatus diagnosis
 
-After rollout, collect a fresh 30-day report and publish per-skill pairing.
-If any skill is below 95% with an eligible start denominator and nonzero local
-transcript invocations, **schedule the deferred in-flight marker and crash-detection work** rather than
-re-arguing that trigger. Doctor exposes schedule_marker_work in JSON and a
-decision message in text. Deferred resumable runs are excluded. Missing
-transcripts or zero eligible starts provide insufficient evidence for the trigger.
-Diagnose skipped starts separately: markers cannot repair a command never run.
+In the 2026-09-20 planning sample, the review-apparatus claim of two invocations
+but zero rows was a
+**fleet-denominator versus local-numerator comparison error, not a skipped
+block**. On the examined machine, zero local invocations and zero rows were
+consistent. That diagnosis discharged the coverage hard stop. In that sample,
+71% of recent transcript files were nested under
+subagents.
 
-This is a baseline plus a future decision rule, not a claim that this rollout
-already demonstrates 95% capture. This change ships no hook, gstack sweep patch,
-or marker/crash detection subsystem.
+### Full-history planning counts
 
-## Cursor and quota
-
-Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. Local native SDK runs supply model and effort when readable;
-otherwise these are null. Cursor transcript activity supports nested-harness
-detection. Billed model and consumption belong to the separate
-[quota ledger](quota-ledger.md). Telemetry start and finish never start a quota
-sampler or write quota records. Only explicit quota commands read vendor usage.
+Recorded in v0.27.2.0 on 2026-09-21; the original capture timestamp was not
+retained. Corrected full-history planning counts, separate from the 2026-09-25
+capture: roadmap 31 activation / 32 completion, full-review 3/3,
+test-plan 1/1, pair-review 7/3, review-apparatus 0/0, plus one nameless
+completion. Those totals alone do not establish pairing.
