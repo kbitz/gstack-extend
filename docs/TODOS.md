@@ -121,15 +121,6 @@
 - **Depends on:** Roadmap Track 17B owns `bin/lib/telemetry.py`. Cross-check Track 16A before editing `docs/telemetry.md`.
 - **Context:** Measured during Track 16B (`docs/designs/review-independence.md`, evidence E4). 16A had not published a reader entry on 2026-09-25.
 
-### [investigate] The Cursor and quota sentence overstates what the store reader can read
-
-- **Symptom:** `docs/telemetry.md` section "Cursor and quota" says local native SDK runs supply model and effort when readable, otherwise null. The live Conductor store shape is never readable by `cursor_turns()`, so the null is structural, not an occasional miss. A reader can think a null model means the run did not name one.
-- **Repro:** Read the "Cursor and quota" paragraph, then run the repro on `cursor_turns() cannot read the Conductor store shape`. The store record's `model.id` is `grok-4.7` while the reader returns no turn. Update the sentence, and link `docs/designs/review-independence.md` from that section. Track 16B does not edit `docs/telemetry.md`.
-- **Effort:** S (human: ~1h / CC: ~15min)
-- **Priority:** P2
-- **Depends on:** The reader fix above, or a doc change that describes the current failure without waiting for it. Owner of `docs/telemetry.md`. Track 16A had not corrected this sentence as of 2026-09-25.
-- **Context:** `docs/designs/review-independence.md` section 8.
-
 ### [manual] File upstream: gstack review rows need per-voice observed model and vendor
 
 - **Why:** gstack review rows record host, source, `outside_provider`, and `outside_status`, and do not record the model that ran each voice. `outside_provider` is the selected harness, not observed execution. On Cursor the primary vendor requires evidence from the session's contributing models, the outside voice is Codex, and the log cannot show whether any consumed voice is outside the author set and the primary vendor. gstack-extend `stage-runs.jsonl` does not cover these voices, because `/review` is a gstack skill.
@@ -138,6 +129,16 @@
 - **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs requested `grok-4.7`. Corrected branch matching finds workspace candidates for all 8 Cursor rows, but no complete execution/result/consumption chain was frozen. Record those bindings alongside models, keeping requested and served evidence separate.
 
 ## Completed
+
+### [investigate] The Cursor and quota sentence overstates what the store reader can read
+
+- **Symptom:** `docs/telemetry.md` section "Cursor and quota" says local native SDK runs supply model and effort when readable, otherwise null. The live Conductor store shape is never readable by `cursor_turns()`, so the null is structural, not an occasional miss. A reader can think a null model means the run did not name one.
+- **Repro:** Read the "Cursor and quota" paragraph, then run the repro on `cursor_turns() cannot read the Conductor store shape`. The store record's `model.id` is `grok-4.7` while the reader returns no turn. Update the sentence, and link `docs/designs/review-independence.md` from that section. Track 16B does not edit `docs/telemetry.md`.
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Priority:** P2
+- **Depends on:** The reader fix above, or a doc change that describes the current failure without waiting for it. Owner of `docs/telemetry.md`. Track 16A had not corrected this sentence as of 2026-09-25.
+- **Context:** `docs/designs/review-independence.md` section 8.
+- **Completed:** v0.32.1.0 (2026-09-28). The Cursor section now says the current reader cannot parse numeric timestamps and list-valued model parameters, so model and effort stay null even when the store names a model, and it links the review-independence evidence. The separate `cursor_turns()` reader TODO stays open.
 
 ### [manual] Native Cursor host installation
 - **Description:** Add `setup --host cursor` and auto-detection through the Cursor command or home directory. Generate native skill copies with ownership-safe refresh and uninstall, verified home-root probes, and telemetry pointer discovery.

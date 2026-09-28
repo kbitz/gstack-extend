@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.1.0] - 2026-09-28
+
+### Added
+
+- **Join local telemetry rows with a written contract.** Pair gstack-extend's own stage-runs with skill-usage on `(skill, session_id)`. The contract says when that match is structural correspondence rather than proof the outcome belongs to that start, including same-root collisions and an explicit retry. Tests lock the field table, allowed values, worked example, and those cases against rows the tools emit.
+
+### Changed
+
+- **Stage-runs version notes name fields v0.29.0.0 did not announce.** `route` and `entrypoint_raw` are present from v0.29.0.0, and `agent` accepts `cursor` from that version. Earlier rows omit those keys. Treat an absent key as unknown.
+
+### Fixed
+
+- **A null Cursor model no longer reads as "the run named no model."** The Cursor section states that the current reader cannot parse the Conductor store's numeric timestamps and list-valued model parameters, so model and effort stay null even when the store names a model.
+
 ## [0.32.0.0] - 2026-09-26
 
 ### Changed
