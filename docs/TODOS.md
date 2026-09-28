@@ -11,7 +11,7 @@
 **Depends on:** None
 
 ### [plan-ceo-review:track=16A,defer=true] Doctor coverage report over stage-runs and leftover handoffs
-**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs, warn when gstack's tier is off, record the skill in each handoff, and give the deferred marker work a tier-independent trigger for periods without eligible observations.
+**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs and warn when gstack's tier is off; have the wrapper record the skill in each handoff; give the deferred marker work a tier-independent trigger for periods without eligible observations.
 **Why:** Without eligible v1 starts the doctor reports insufficient evidence and the 95% decision rule cannot fire. Turning the tier off stops new evidence but does not prevent evaluation of historical rows; orphaned handoffs name neither skill nor repository.
 **Context:** Track 16A's observed-coverage record was captured by a private script; this report would make it re-runnable anywhere. Define the independent invocation evidence a capture-completeness claim needs.
 **Effort:** M

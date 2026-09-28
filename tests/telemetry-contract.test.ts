@@ -202,9 +202,15 @@ function quickstartLines(doc: string) {
   const close = fenced.indexOf('~~~');
   if (close < 0) throw new Error('docs/telemetry.md "Author quickstart" ~~~json block is unclosed');
   const lines = fenced.slice(0, close).split('\n').map(line => line.trim()).filter(Boolean);
-  const starts = lines.filter(line => /"event_type"\s*:\s*"skill_start"/.test(line));
-  if (starts.length !== 1) {
-    throw new Error('docs/telemetry.md "Author quickstart" ~~~json block must contain exactly one skill_start line');
+  const kinds = [
+    ['skill_start', /"event_type"\s*:\s*"skill_start"/],
+    ['skill_run', /"event_type"\s*:\s*"skill_run"/],
+    ['stage-runs', /"stage"\s*:/],
+  ] as const;
+  for (const [name, pattern] of kinds) {
+    if (lines.filter(line => pattern.test(line)).length !== 1) {
+      throw new Error(`docs/telemetry.md "Author quickstart" ~~~json block must contain exactly one ${name} line`);
+    }
   }
   return lines;
 }
@@ -319,6 +325,9 @@ describe('docs/telemetry.md join contract', () => {
     const stage = fix.readLedger()[0];
     const skillStart = usage.find(row => row.event_type === 'skill_start')!;
     const skillRun = usage.find(row => row.event_type === 'skill_run')!;
+    expect([skillStart.skill, skillRun.skill, `extend:${stage.stage}`]).toEqual([
+      'extend:roadmap', 'extend:roadmap', 'extend:roadmap',
+    ]);
     expect([skillStart.session_id, skillRun.session_id, stage.session_id]).toEqual([sid, sid, sid]);
     expect(stage.started_at).toBe(isoEpoch(epoch));
     expect(skillStart.ts).toMatch(TS_RE);
@@ -347,6 +356,7 @@ describe('docs/telemetry.md join contract', () => {
   });
 
   test('same-root collision misattributes the earlier finish (current behavior)', () => {
+    // Known defect, characterized as current behavior; update this test when repaired.
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const first = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);
@@ -376,6 +386,7 @@ describe('docs/telemetry.md join contract', () => {
   });
 
   test('explicit retry appends a second stage-runs row and a second skill_run (current behavior)', () => {
+    // Known defect, characterized as current behavior; update this test when repaired.
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const start = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);

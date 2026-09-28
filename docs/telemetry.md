@@ -128,7 +128,7 @@ by session_id and use their own source labels:
 | `started_at` | UTC start; null when an explicit `--start` or a legacy `--duration` cannot be represented as a UTC time |
 | `duration_s` | Session wall-clock seconds including human waits, never capped |
 | `session_id` | Wrapper-issued IDs are `extend-<uuid>`; an explicit `--session-id` can be any valid ID |
-| `repo` | origin's owner/name (never its host or credentials); the root's name without origin; null outside git |
+| `repo` | origin's owner/name (never its host or credentials); the root's name without a parseable origin; null outside git or when git cannot be read |
 | `branch` | Branch at finish; null outside git or when detached |
 | `work_item` | Null unless finish passes `--work-item` |
 | `source` | `gstack-extend` |
@@ -213,6 +213,10 @@ precision, so string order equals time order. Upstream `skill_run.ts` uses the
 same format, read in gstack 1.89.1.0 source and seen on captured `skill_run` rows
 whose `gstack_version` is 1.87.4.0 and 1.87.5.0.
 
+The upstream duration cap and successful exits without a write in the table
+below were read in gstack 1.89.1.0's logger source. The `--no-sweep` guard is
+the current wrapper's handling of a logger whose source lacks that flag.
+
 | Case | Effect | Consumer handling | Source |
 |---|---|---|---|
 | Explicit `--session-id` finish | Carries the caller's ID, which need not have the `extend-<uuid>` shape | Do not require the `extend-` prefix | `an explicit --session-id never borrows the start time of a different session's handoff` in tests/telemetry.test.ts |
@@ -231,10 +235,12 @@ whose `gstack_version` is 1.87.4.0 and 1.87.5.0.
 `repo` does not join across datasets. `skill_start.repo` is the checkout directory
 name (`Path(root).name`; under a workspace manager that is the workspace name, not
 a repository). Stage-runs `repo` is the last two path segments of the origin URL
-(nested groups collapse to those two); without an origin it is the checkout
-directory name; outside git it is null. Upstream `skill_run` has no `repo`. Its
+(nested groups collapse to those two); without a parseable origin it is the
+checkout directory name; outside git or when git cannot be read it is null.
+Upstream `skill_run` has no `repo`. Its
 `_repo_slug` is upstream-owned: read in gstack 1.89.1.0 source, the logger sets it
-from `git remote get-url origin` with `/` replaced by `-`, and it is an empty
+from the trailing owner/name of `git remote get-url origin`, stripping `.git`
+and replacing `/` with `-` (for example, `acme-widget`), and it is an empty
 string outside git. It is not a join key. The same source sets `_branch` from
 `git rev-parse --abbrev-ref HEAD`, which is `HEAD` on a detached checkout, while
 stage-runs `branch` is null there. Both keys appear on captured `skill_run` rows
@@ -291,7 +297,7 @@ routinely lose their duration.
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
 {"v":1,"ts":"2026-09-20T12:00:03Z","event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","duration_s":3,"outcome":"success","source":"gstack-extend"}
-{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":null}
+{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli"}
 ~~~
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
@@ -413,7 +419,7 @@ counts, window-crossing completions, and parse diagnostics.
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
 | Missing transcripts | Advisory count unavailable, not zero; pairing remains measurable |
 | No eligible starts | Insufficient evidence, never a fabricated 0% or 100% |
-| Every skill shows insufficient evidence and the tier is off | No skill-usage rows are written while the tier is off; stage-runs still records. To collect pairing evidence run `gstack-config set telemetry anonymous` or `gstack-config set telemetry community`. Both write the same local rows. `anonymous` also drops `installation_id` from uploads. Sync strips `repo`, `_repo_slug`, and `_branch` before upload (read in gstack 1.89.1.0 `gstack-telemetry-sync`: jq deletes the fields; the sed fallback mis-strips a value containing an escaped quote). Either tier also enables gstack's upload |
+| Every skill shows insufficient evidence and the tier is off | No skill-usage rows are written while the tier is off; stage-runs still records. To collect pairing evidence run `gstack-config set telemetry anonymous` or `gstack-config set telemetry community`. Both write local pairing rows; the logger adds a persistent `installation_id` only for `community`, while `anonymous` writes null and also drops the field from uploads (gstack 1.89.1.0 logger/sync source). Sync strips `repo`, `_repo_slug`, and `_branch` before upload (read in gstack 1.89.1.0 `gstack-telemetry-sync`: jq deletes the fields; the sed fallback mis-strips a value containing an escaped quote). Either tier also enables gstack's upload |
 
 Transcripts are read recursively, including subagents/, with tool-use IDs
 deduplicated. They are **Claude-only, local-only, retention-deleted** and do not
@@ -428,9 +434,8 @@ The doctor evaluates the 95% rule from historical rows whatever the current tier
 Turning the tier off stops new evidence and does not erase old evidence. Where a
 window has no eligible v1 starts, the rule has insufficient evidence: the deferred
 marker and crash-detection work has no trigger there. A tier-independent trigger
-for periods without eligible observations is the doctor-coverage TODO under
-[Evidence](#observed-coverage).
-
+for periods without eligible observations is the "Doctor coverage report over
+stage-runs and leftover handoffs" follow-up in [TODOS](TODOS.md).
 
 After rollout, collect a fresh 30-day report and publish per-skill pairing.
 If any skill is below 95% with an eligible start denominator and nonzero local
@@ -456,8 +461,8 @@ sampler or write quota records. Only explicit quota commands read vendor usage.
 
 ## Evidence
 
-Dated records state their capture date in the first sentence of each subsection.
-Contract sections above stay undated.
+Records state their capture date up front, or identify the documentation date
+when no capture timestamp was retained. Contract sections above stay undated.
 
 ### Observed coverage
 
@@ -475,7 +480,7 @@ Provenance config file was absent, which the writer treats as on.
 | Pairing among recorded starts | unmeasured | 0 v1 `skill_start` and 0 v1 `skill_run` with `source` `gstack-extend` in the window |
 | Invocation capture completeness | unmeasured | Claude transcript counts disagree with Claude stage-runs counts for two skills; Codex, Grok, and Cursor have no transcript counter |
 | Attribution correctness | unmeasured | No paired start exists in the window to check. The same-root collision is characterized in code, not observed as a field row here |
-| Producer identity | demonstrated | All 14 stage-runs rows declare `source` `gstack-extend`. That label is self-declared: any caller writing it is indistinguishable from the wrapper |
+| Producer identity | unmeasured | All 14 stage-runs rows declare `source` `gstack-extend`. Label presence is demonstrated, but the label is self-declared: any caller writing it is indistinguishable from the wrapper |
 
 Window: 2026-09-22T14:50:06Z through 2026-09-25T12:28:18Z, from the earliest
 stage-runs `started_at` to capture time. Sources: skill-usage.jsonl (1975 rows,
@@ -484,6 +489,8 @@ stage-runs `started_at` to capture time. Sources: skill-usage.jsonl (1975 rows,
 over that window. gstack-extend doctor telemetry --json reported tier off, zero
 warnings, `logger_supports_no_sweep` true, and insufficient evidence for all nine
 skills (0 skills with an eligible v1 denominator).
+The nine-skill set is historical (gstack-extend 0.29.0.1): it includes the
+since-retired review-apparatus and test-plan skills and predates ship-and-land.
 
 | Skill | stage-runs (by harness) | Leftover handoffs | Claude transcripts | v1 skill_start | v1 skill_run |
 |---|---|---:|---:|---:|---:|
@@ -522,12 +529,15 @@ no handoff of its own. An orphan handoff omits the skill, so it is attributable
 only by rehashing `sha256(json([root, skill]))` unless it holds a saved
 stage-runs row. 22 lock files: 6 share a hash with a current handoff, 5 rehash to
 a skill that has a stage-runs row, and 11 are slot-used with no handoff and no
-attributed stage-runs row.
+attributed stage-runs row. Locks identify persistent repository/skill slots,
+not invocations; stage-runs rows carry no root to link them conclusively. The
+lock counts do not establish a run count or place those runs in this window.
 
 Gaps from this capture: zero v1 skill-usage rows in the window; four skills have
 no stage-runs row (full-review, review-apparatus, test-plan, gstack-extend-init);
 six start-only handoffs whose lifecycle is unknown; two handoffs unattributed;
-eleven locks with no record; rows were read from one machine's files and carry no
+eleven slot locks with no current handoff or attributable row, not eleven
+missing runs; rows were read from one machine's files and carry no
 machine identifier; no Codex, Grok, or Cursor transcript denominator. Claude
 transcripts versus Claude stage-runs in the window match for seven skills.
 gstack-extend-upgrade is unexplained (1 transcript, 3 Claude rows).
@@ -588,16 +598,18 @@ the since-retired review-apparatus and test-plan skills for historical accuracy.
 
 ### Review-apparatus diagnosis
 
-The review-apparatus claim of two invocations but zero rows was a
+In the 2026-09-20 planning sample, the review-apparatus claim of two invocations
+but zero rows was a
 **fleet-denominator versus local-numerator comparison error, not a skipped
 block**. On the examined machine, zero local invocations and zero rows were
-consistent. That diagnosis discharged the coverage hard stop. In a sample taken
-on 2026-09-20 during planning, 71% of recent transcript files were nested under
+consistent. That diagnosis discharged the coverage hard stop. In that sample,
+71% of recent transcript files were nested under
 subagents.
 
 ### Full-history planning counts
 
-Corrected full-history planning counts, gathered while planning rather than in
-the 2026-09-25 capture: roadmap 31 activation / 32 completion, full-review 3/3,
+Recorded in v0.27.2.0 on 2026-09-21; the original capture timestamp was not
+retained. Corrected full-history planning counts, separate from the 2026-09-25
+capture: roadmap 31 activation / 32 completion, full-review 3/3,
 test-plan 1/1, pair-review 7/3, review-apparatus 0/0, plus one nameless
 completion. Those totals alone do not establish pairing.
