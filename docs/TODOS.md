@@ -4,15 +4,15 @@
 
 ### [plan-ceo-review:track=16A,defer=true] Version stage-runs rows and publish their schema
 **What:** Add a schema version and a gstack-extend producer version to every stage-runs row, publish a machine-readable schema, and record whether `model`/`effort` came from flags or from logs.
-**Why:** 8 of 10 captured rows lack `route` and `entrypoint_raw`; readers can only infer the writer release from key presence, and `agent: cursor` arrived without a marker.
+**Why:** 8 of 14 rows in the September 25 capture lack `route` and `entrypoint_raw`; readers cannot establish the writer release from key presence alone, and `agent: cursor` arrived without a marker.
 **Context:** Found by Track 16A. `route` values are written inline in `route_for` (bin/lib/telemetry.py) with no constant. docs/telemetry.md holds the field and value version notes this would replace.
 **Effort:** S
 **Priority:** P1
 **Depends on:** None
 
 ### [plan-ceo-review:track=16A,defer=true] Doctor coverage report over stage-runs and leftover handoffs
-**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs, warn when gstack's tier is off, record the skill in each handoff, and give the deferred marker work a tier-independent trigger.
-**Why:** On a tier-off machine the doctor reports insufficient evidence for every skill and the 95% decision rule never fires; orphaned handoffs name neither skill nor repository.
+**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs, warn when gstack's tier is off, record the skill in each handoff, and give the deferred marker work a tier-independent trigger for periods without eligible observations.
+**Why:** Without eligible v1 starts the doctor reports insufficient evidence and the 95% decision rule cannot fire. Turning the tier off stops new evidence but does not prevent evaluation of historical rows; orphaned handoffs name neither skill nor repository.
 **Context:** Track 16A's observed-coverage record was captured by a private script; this report would make it re-runnable anywhere. Define the independent invocation evidence a capture-completeness claim needs.
 **Effort:** M
 **Priority:** P2

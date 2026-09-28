@@ -17,7 +17,7 @@ skill-usage rows.
 
 - **skill-usage.jsonl** contains local, model-invoked skill telemetry. A
   `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
-  means a finish delegated to gstack's logger and that delegation succeeded. A
+  records a completion append; it does not prove the wrapper saw a successful return. A
   missing row is not evidence that a run did not happen.
 - **stage-runs.jsonl** contains a local provenance row when a finish ran with
   provenance on and the append succeeded. It answers which harness, model, and
@@ -241,7 +241,7 @@ at gstack 1.87.4.0 and 1.87.5.0. Outside git, `skill_start.repo` is the string
 current behavior.
 
 A `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
-means a finish delegated to gstack's logger successfully. A stage-runs row means
+records a completion append, even if the logger later timed out or failed. A stage-runs row means
 a finish ran with provenance on and its append succeeded. A missing row is not
 evidence that a run did not happen. Upstream nulls `skill_run.duration_s` above
 86400 seconds (read in gstack 1.89.1.0 source, `gstack-telemetry-log`); stage-runs

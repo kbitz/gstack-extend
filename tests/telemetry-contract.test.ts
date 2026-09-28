@@ -149,22 +149,23 @@ function docText() {
 }
 
 function section(doc: string, heading: string) {
-  const at = doc.indexOf(heading);
+  const lines = doc.split('\n');
+  const at = lines.findIndex(line => line.trimEnd() === heading);
   if (at < 0) {
     throw new Error(`docs/telemetry.md is missing the ${JSON.stringify(heading)} section`);
   }
-  return doc.slice(at);
+  const end = lines.findIndex((line, index) => index > at && line.startsWith('## '));
+  return lines.slice(at, end < 0 ? undefined : end).join('\n');
 }
 
 function fieldNames(doc: string) {
   const body = section(doc, '## Execution provenance');
-  const tableAt = body.search(/^\| `?\w+`? \|/m);
-  const header = body.search(/^\| Field \|/m);
-  if (header < 0 || tableAt < 0) {
+  const tableAt = body.search(/^\|/m);
+  if (tableAt < 0 || !body.slice(tableAt).startsWith('| Field |')) {
     throw new Error('docs/telemetry.md "## Execution provenance" field table is missing or empty');
   }
   const names: string[] = [];
-  for (const line of body.slice(header).split('\n')) {
+  for (const line of body.slice(tableAt).split('\n')) {
     if (!line.startsWith('|')) break;
     if (/^\| Field \|/.test(line) || /^\|[\s:-]+\|/.test(line)) continue;
     const cell = (line.split('|')[1] ?? '').trim();
@@ -181,7 +182,7 @@ function fieldNames(doc: string) {
 }
 
 function valueCell(doc: string, field: string) {
-  const row = fieldNames.length && section(doc, '## Execution provenance')
+  const row = section(doc, '## Execution provenance')
     .split('\n')
     .find(line => line.startsWith(`| \`${field}\` |`));
   if (!row) throw new Error(`docs/telemetry.md "## Execution provenance" has no ${field} row`);
