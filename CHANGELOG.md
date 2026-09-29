@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.2.0] - 2026-09-29
+
+### Added
+
+- **Layout Scaffolding stops before it writes outside the project.** Before any `mkdir` or move, `/roadmap` resolves each docs directory and move destination against the audited project root. A path that lands outside that root is refused unless you authorize that exact resolved target for this one apply. A tracked move through a linked directory or a submodule stops the whole batch with nothing written. Ordinary Apply does not grant an external write.
+
 ## [0.32.1.1] - 2026-09-29
 
 ### Changed
