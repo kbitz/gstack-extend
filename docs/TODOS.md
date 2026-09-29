@@ -2,6 +2,48 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=18A,defer=true] Route `/pair-review` completion to `/review-and-prep resume` when a PAUSED receipt exists
+**What:** `/pair-review` Step 3 "Offer next steps" (`skills/pair-review.md`) recommends `/ship` using review-log state alone. Make it detect a `review-and-prep:paused:` comment, or a PAUSED `## Review and prep` body receipt, on the branch's PR and recommend `/review-and-prep resume` instead.
+**Why:** Track 18A makes the PAUSED receipt durable, but a user who follows `/pair-review`'s own suggestion still skips the rest of preparation. This closes the routing half of the PR #102 gap "PAUSED receipt not durable".
+**Context:** The pause handoff text in `skills/review-and-prep.md` Step 3 already tells `/pair-review` not to go directly to `/ship`; this makes that routing automatic. Deferred because Track 18D owns `skills/pair-review.md` in Group 18. Plan: `~/.gstack/projects/kbitz-gstack-extend/track-18a-greptile-edges-plan.md` (CEO-X2).
+**Effort:** S
+**Priority:** P2
+**Depends on:** Track 18D landing
+
+### [plan-ceo-review:track=18A,defer=true] Remaining PR #102 adversarial findings for `/review-and-prep`
+**What:** The five open findings from the PR #102 adversarial pass that Track 18A does not cover:
+- the unattended 10-minute no-response fallback fires even when the Greptile app is not installed
+- "affected" checks are undefined after a post-Greptile base merge, so self-resolved conflicts can skip a forced test rerun
+- deleting a marker, or a marker from a different account, lets a resumed session re-trigger
+- whether manual testing is required is decided without confirming with the user
+- an automatic run on draft creation or draft pushes (`triggerOnDrafts`/`push`) during the pause, where Step 3 says "resolve that concrete configuration conflict" and offers no way out
+**Why:** The original TODO carried seven of the fourteen findings into Track 18A. These five were recorded nowhere else.
+**Context:** The full finding list is in the PR #102 body under "Adversarial Review". Track 18A's shared exit procedure (Step 4 "Greptile exits that need a user decision") is the natural home for fixes to the draft-push conflict and the account-mismatch finding.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Track 18A
+
+### [plan-ceo-review:track=18A,defer=true] Offer the ready transition as the single Greptile run once `/ship-and-land` can finish pending runs
+**What:** Add back two exits that Track 18A removed:
+- On repos whose Greptile config auto-reviews on ready, let marking the PR ready be the PR's single run.
+- When a run is still pending, let preparation hand it off.
+Both need `/ship-and-land` changes: exits for a failed, stalled, or absent pending run (today it stops on failure, asks with no options when no run appears, and waits on a queued run with no time limit), and discovery of `review-and-prep:paused:` comments.
+**Why:** The only alternative is a repo-wide `autoReview: []` change, which the user may be unable or unwilling to make.
+**Context:** Deferred at /autoplan on 2026-09-29 as the fallback if the user declines UC-1 (widen Track 18A to `skills/ship-and-land.md`). It also needs to reconcile the existing rule "do not mark the PR ready to make the bot review it" (`skills/review-and-prep.md:692`).
+**Effort:** M
+**Priority:** P3
+**Depends on:** Track 18A
+
+### [plan-ceo-review:track=18A,defer=true] Behavioral verification for `/review-and-prep`'s Greptile lifecycle
+**What:** Drift-locks prove that the wording exists, not that an agent follows the exits. Evaluate two approaches:
+- scenario evals with mocked PR and run histories, asserting trigger count, preserved restrictions, the next question, and landing eligibility. Scenarios: ambiguous or accepted-but-invisible MCP submission, a crash between reservation and trigger, concurrent sessions on both trigger transports, a late run after the fallback, rewritten history on a shallow clone, and an older receipt.
+- extracting the lifecycle into a small helper that both `/review-and-prep` and `/ship-and-land` call.
+**Why:** This is the third hardening pass on the same prose. All four review voices flagged that string locks cannot catch a reworded exit that behaves wrongly.
+**Context:** No LLM scenario-eval harness exists in this repo today. Track 18A records a manual tabletop walkthrough in its PR receipt as interim evidence.
+**Effort:** M
+**Priority:** P2
+**Depends on:** Track 18A
+
 ### [plan-ceo-review:track=16A,defer=true] Version stage-runs rows and publish their schema
 **What:** Add a schema version and a gstack-extend producer version to every stage-runs row, publish a machine-readable schema, and record whether `agent`/`model`/`effort` came from flags or from detection.
 **Why:** 8 of 14 rows in the September 25 capture lack `route` and `entrypoint_raw`; readers cannot establish the writer release from key presence alone, and `agent: cursor` arrived without a marker.
