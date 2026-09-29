@@ -59,7 +59,8 @@ ran. Tests isolate HOME as well as overrides and never write to the real user si
 ### gstack helper lookup
 
 `gstack-telemetry-log` and `gstack-config` share one candidate list. The doctor
-prints that list when a helper is missing. First match wins:
+prints that list when a helper is missing. First match wins, and two candidates
+that name the same directory are listed once:
 
 1. Absolute PATH entries, displayed as the token `PATH (absolute entries)` and never expanded.
 2. `$GSTACK_DIR/bin`, only when `GSTACK_DIR` is absolute. PATH outranks it. `GSTACK_DIR` is a fallback location for a non-standard layout, not an override.
@@ -170,8 +171,8 @@ unpaired locally.
 A finish reads only its own root+skill slot. The rule applies when the finish has
 no valid explicit `--session-id`, including a legacy `--duration` finish and a
 handoff a previous finish already attempted (`done` or `row`). Evaluating it never
-raises: a non-string `harness` counts as an unknown fingerprint, and a non-integer
-`start` counts as invalid. `start` is checked first. Bools, negatives, floats, and
+raises: a missing, empty, or non-string `harness` counts as an unknown fingerprint, and a
+non-integer `start` counts as invalid. `start` is checked first. Bools, negatives, floats, and
 non-numeric strings are invalid. A numeric string and a JSON integer are valid.
 An invalid or missing `start` keeps the older debug line, `missing or malformed
 start/session state`, with no reason and no `root=`.
