@@ -297,9 +297,11 @@ unresolved. Step 6 re-checks before `gh pr ready`.
 
 The ready transition starts an automatic run unless the effective trigger list
 excludes `open`. Normalize implied events first: `push` includes `open`, and
-`rebase` includes both `push` and `open`. A list containing either event
-therefore cannot exclude the ready trigger. Unknown values or invalid types
-are unverified configuration.
+`rebase` includes both `push` and `open`. Normalize the legacy key before the
+exclusion check: `triggerOnUpdates: true` is `["open","push","rebase"]`. A
+list containing `push` or `rebase` therefore cannot exclude the ready trigger,
+and it does not exclude those events for the waiver. Unknown values or invalid
+types are unverified configuration.
 
 - Use verified settings (dashboard or run metadata, cited) when a tool actually
   exposes them. That is rarely possible today, so file-based detection is the
@@ -307,7 +309,7 @@ are unverified configuration.
 - Otherwise take the list from Greptile's documented configuration files at
   both the base tip and the intended head (`.greptile/config.json` takes
   precedence over `greptile.json`). Read `autoReview` (default `["open"]`) or
-  its legacy forms: `triggerOnUpdates: true` includes `open`, and
+  its legacy forms: `triggerOnUpdates: true` is `["open","push","rebase"]`, and
   `skipReview: "AUTOMATIC"` means an empty list. The rule follows Greptile's
   documented keys as of 2026-09-29. Cite the configuration reference or the
   .greptile/ reference already linked above, matching the detected file. If an

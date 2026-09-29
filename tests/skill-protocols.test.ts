@@ -1463,6 +1463,7 @@ describe('review-and-prep drift-locks', () => {
 
   test('ready-transition waivers rule out later automatic runs', () => {
     expect(normalized).toContain("offer (b) only when verified settings or both tips' valid effective trigger lists exclude `push` and `rebase`.");
+    expect(normalized).toContain('Normalize the legacy key before the exclusion check: `triggerOnUpdates: true` is `["open","push","rebase"]`.');
     expect(normalized).toContain('Unknown settings do not establish this exclusion.');
   });
 
@@ -1510,7 +1511,8 @@ describe('review-and-prep drift-locks', () => {
 
   test('uncertain ready-transition sources include dotted-file-only and legacy keys', () => {
     expect(normalized).toContain("a repository whose only marker is `.greptile.json`");
-    expect(normalized).toContain('`triggerOnUpdates: true` includes `open`');
+    expect(normalized).toContain('`triggerOnUpdates: true` is `["open","push","rebase"]`');
+    expect(normalized).toContain('it does not exclude those events for the waiver');
     expect(normalized).toContain('`skipReview: "AUTOMATIC"` means an empty list');
     expect(normalized).toContain('Other filters do not count unless verified settings show they exclude this PR.');
     expect(normalized).toContain("Greptile's settings will start a review when this PR is marked ready");
