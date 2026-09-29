@@ -128,6 +128,38 @@
 - **Priority:** P2
 - **Context:** Owner is upstream gstack. Ready-to-file text is in `docs/designs/review-independence.md` section 12. The installed CHANGELOG at gstack 1.89.0.0 had no vendor-aware routing and no per-voice model field. Provenance call on 2026-09-25 was insufficient-evidence, which sets this priority to P2. Measured shape: 8 host cursor rows and 10 host grok rows, none with a model field; Conductor store runs requested `grok-4.7`. Corrected branch matching finds workspace candidates for all 8 Cursor rows, but no complete execution/result/consumption chain was frozen. Record those bindings alongside models, keeping requested and served evidence separate.
 
+### [plan-ceo-review:track=18C,defer=true] Give skip-path /full-review runs a finished state, a report and a status
+**What:** When `/full-review` skips Phase 5 (zero findings at Phase 2 Step 4, or zero approved clusters after triage), set `phase: complete`, write `report.md` with its GSTACK REVIEW REPORT, and give every run a Completion Status row, including all-rejected runs and runs where one agent failed while two completed.
+**Why:** Today a clean or all-rejected run ends in chat as done but leaves `session.yaml` at `clusters_complete` or `triage_complete`, so the next `/full-review` offers to resume a finished session and Resume Flow re-enters Phase 3 or 5. Line 612 promises deferred clusters "remain in the report", which is never written; line 870 prepends to a missing `report.md`; the rollup at 827-830 has no row for all-rejected or partial-success runs.
+**Context:** Found by Track 18C (/autoplan, both CEO voices). Related gaps to settle in the same change: the verdict mapping at 890-895 marks any agent failure BLOCKED while the rollup at 829 requires that no fallback succeeded (18C left that mapping in place for this item); the `edge_case_dropped` count lives only in orchestrator context and is lost on resume (persist it in `session.yaml`); the zero-findings branch keys on every agent returning `NO_FINDINGS`, so an all-edge-case run or a one-failed-two-clean run falls through to Phases 3-4 with zero clusters. Line numbers refer to `skills/full-review.md` at 139024e.
+**Effort:** S
+**Priority:** P2
+**Depends on:** Track 18C landing (same file). Schedule ahead of further cosmetic trims of this skill.
+
+### [plan-ceo-review:track=18C,defer=true] Drift-lock /full-review's severity and finding-field vocabulary
+**What:** Add a test that fails when `skills/full-review.md` uses a severity name or finding field that `docs/source-tag-contract.md` does not define, and, while the three agent prompts stay self-contained, that their shared Shell Rules/Hot areas head and 16-line output-contract tail stay byte-identical across the Reviewer, Hygiene and Consistency prompts.
+**Why:** Two renames left stale words in this skill (FIX -> HYPOTHESIS left "description, fix"; important/minor -> necessary/nice-to-have left "then important, then minor") because no test checks its unlocked prose; three hand-maintained prompt copies can drift the same way.
+**Context:** Found by Track 18C (/autoplan). 18C fixes the current stale words without adding tests because `tests/skill-protocols.test.ts` (Track 18A) and `tests/audit-compliance.test.ts` (Track 18F) belong to other Tracks in the same Group. The contract's severity taxonomy and field list are the source of truth.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Tracks 18A and 18F landing.
+
+### [plan-ceo-review:track=18C,defer=true] Resolve SESSION_DIR in /full-review's archive and checkpoint blocks
+**What:** Give the Active Session Guard archive block and Phase 1 Step 4's `mkdir -p "$SESSION_DIR"` the same guarded Path Resolution setup the rest of the skill uses, so `session_archive_dir` is defined and `$SESSION_DIR` is set when those blocks run on their own.
+**Why:** Line 220 says every state-touching block resolves `SESSION_DIR` first, but those two blocks do not; run alone, `session_archive_dir` is undefined and `$SESSION_DIR` is empty.
+**Context:** Found by Track 18C (spec review). Both blocks need the resolver, so `tests/skill-protocols.test.ts` L7's count of 4 guards across the resolver skills becomes 6 unless the two blocks share one guarded setup; the fix and the count change land together. Until then, if the archive block runs on its own, `mv` fails and "Start a fresh review" writes over the old session's triage state.
+**Effort:** S
+**Priority:** P3
+**Depends on:** Track 18A landing (owns `tests/skill-protocols.test.ts`).
+
+### [plan-eng-review:track=18C,defer=true] Inline the tag-value rule in /full-review's and /pair-review's TODO templates
+**What:** Add one line to `/full-review` Phase 5's entry template: omit the `files=` attribute when a path contains `[`, `]`, `,` or `;` (join several paths with `|`). Apply the same rule wherever `/pair-review` writes tagged entries.
+**Why:** Tag values must not contain those characters (`docs/source-tag-contract.md`, "Values MUST NOT contain"), and a bracketed route path such as `app/[id]/page.tsx` becomes a malformed or injection-flagged tag that `TODO_FORMAT` rejects. The only pointer to that rule was a relative link to the contract, which does not exist in consumer repos; 18C removes the dead link.
+**Context:** Found by Track 18C (Eng review, native voice). `skills/pair-review.md` still cites `docs/source-tag-contract.md` at lines 1244 and 1303 (Track 18D's file).
+**Effort:** S
+**Priority:** P2
+**Depends on:** Tracks 18C and 18D landing (they own the two skill files).
+
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
