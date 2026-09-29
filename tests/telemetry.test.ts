@@ -1816,6 +1816,61 @@ describe('gstack helper roots', () => {
     expect(runHelper(env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(readFileSync(join(explicit.home, 'gstack-dir-explicit'), 'utf8')).toBe(checkout);
   }, 30_000);
+
+  test('duplicate GSTACK_DIR and Claude helper roots are searched once', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const gstack = join(fix.home, '.claude/skills/gstack');
+    const bin = join(gstack, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const r = runHelper({ ...fix.env, ...DEBUG, GSTACK_DIR: gstack }, ['start', '--skill', 'extend:roadmap']);
+    expect(r.status).toBe(0);
+    const line = r.stderr.split('\n').find(item => item.includes('gstack helper unresolvable:'));
+    expect(line).toBeDefined();
+    expect(line!.split(JSON.stringify(bin)).length - 1).toBe(1);
+  });
+
+  test('GSTACK_DIR outranks CLAUDE_CONFIG_DIR, Claude outranks CODEX_HOME, and CODEX_HOME outranks .codex', () => {
+    const gstack = makeTelemetryFixture('community', 'stub');
+    const gstackSource = join(gstack.home, '.claude/skills/gstack/bin');
+    const viaGstack = plantHelpers(join(gstack.home, 'gstack-checkout/bin'), gstackSource);
+    plantHelpers(join(gstack.home, 'claude-config/skills/gstack/bin'), gstackSource);
+    expect(loggedHelpers({
+      ...gstack.env,
+      GSTACK_DIR: join(gstack.home, 'gstack-checkout'),
+      CLAUDE_CONFIG_DIR: join(gstack.home, 'claude-config'),
+    })).toEqual([join(viaGstack, 'gstack-telemetry-log'), join(viaGstack, 'gstack-config')]);
+
+    const claude = makeTelemetryFixture('community', 'stub');
+    const claudeBin = join(claude.home, '.claude/skills/gstack/bin');
+    plantHelpers(join(claude.home, 'codex-home/skills/gstack/bin'), claudeBin);
+    expect(loggedHelpers({ ...claude.env, CODEX_HOME: join(claude.home, 'codex-home') }))
+      .toEqual([join(claudeBin, 'gstack-telemetry-log'), join(claudeBin, 'gstack-config')]);
+
+    const codex = makeTelemetryFixture('community', 'stub');
+    const codexSource = join(codex.home, '.claude/skills/gstack/bin');
+    plantHelpers(join(codex.home, '.codex/skills/gstack/bin'), codexSource);
+    const viaCodexHome = plantHelpers(join(codex.home, 'custom-codex/skills/gstack/bin'), codexSource);
+    rmSync(codexSource, { recursive: true });
+    expect(loggedHelpers({ ...codex.env, CODEX_HOME: join(codex.home, 'custom-codex') }))
+      .toEqual([join(viaCodexHome, 'gstack-telemetry-log'), join(viaCodexHome, 'gstack-config')]);
+  }, 30_000);
+
+  test('absolute GSTACK_EXTEND_STATE_DIR stores provenance config on that directory', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const abs = join(fix.home, 'absolute-state');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: abs };
+    const set = spawnSync(join(ROOT, 'bin/config'), ['set', 'provenance', 'false'], {
+      env, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(set.status).toBe(0);
+    expect(readFileSync(join(abs, 'config'), 'utf8')).toContain('provenance=false');
+    expect(existsSync(join(fix.home, '.gstack-extend/config'))).toBe(false);
+    const get = spawnSync(join(ROOT, 'bin/config'), ['get', 'provenance'], {
+      env, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(get.status).toBe(0);
+    expect(get.stdout.trim()).toBe('false');
+  });
 });
 
 describe('handoff adoption', () => {
@@ -2173,5 +2228,135 @@ describe('handoff adoption', () => {
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(skillRuns(fix)[0].session_id).toBe('pre-change');
     expect(fix.readLedger()[0].session_id).toBe('pre-change');
+  });
+
+  test('exact 86400 second non-resumable handoff is adopted and 86401 seconds is refused', () => {
+    // The inclusive bound is judged with a fixed clock. A live finish cannot hit age 86400
+    // exactly, because time.time() runs after the process starts.
+    const now = 1_700_000_000;
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\nnow = ${now}\nadopt = telemetry.consider_adoption({"start": now - 86400, "harness": None}, "extend:roadmap", now, None)\nrefuse = telemetry.consider_adoption({"start": str(now - 86401), "harness": ""}, "extend:roadmap", now, None)\nprint(adopt[0], adopt[1], refuse[0])\n`;
+    const judged = spawnSync('python3', ['-I', '-c', script], { encoding: 'utf8', timeout: 10_000 });
+    expect(judged.status).toBe(0);
+    expect(judged.stderr).not.toContain('Traceback');
+    expect(judged.stdout.trim()).toBe(`adopt ${now - BOUND_S} refuse`);
+
+    const refused = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(refused.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(refused, { start: String(epochNow() - BOUND_S - 1), harness: null });
+    const tooOld = runHelper({ ...refused.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(tooOld.status).toBe(0);
+    expectRefusal(tooOld.stderr, 'handoff too old');
+    expect(skillRuns(refused)).toHaveLength(0);
+  }, 30_000);
+
+  test('an empty harness string adopts when recent and refuses when older than 86400 seconds', () => {
+    const recent = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(recent.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(recent, { harness: '' });
+    expect(runHelper(recent.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(recent)).toHaveLength(1);
+
+    const aged = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(aged.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(aged, { harness: '', start: String(outsideBound()) });
+    const tooOld = runHelper({ ...aged.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(tooOld.status).toBe(0);
+    expectRefusal(tooOld.stderr, 'handoff too old');
+    expect(skillRuns(aged)).toHaveLength(0);
+  }, 30_000);
+
+  test('a resumable skill rejects a malformed start before the adoption branch', () => {
+    for (const start of [true, 'abc']) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      expect(runHelper(fix.env, ['start', '--skill', 'extend:pair-review']).status).toBe(0);
+      rewriteHandoff(fix, { start });
+      const r = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:pair-review', '--outcome', 'success']);
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain('missing or malformed start/session state');
+      expect(r.stderr).not.toContain('handoff too old');
+      expect(fix.readLedger()).toHaveLength(0);
+      expect(skillRuns(fix)).toHaveLength(0);
+    }
+  }, 30_000);
+
+  test('explicit --start without --session-id dates an adoptable handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const original = epochNow() - 400;
+    const explicit = epochNow() - 12;
+    rewriteHandoff(fix, { start: String(original), harness: null });
+    const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', String(explicit), '--outcome', 'success']);
+    expect(r.status).toBe(0);
+    const duration = skillRuns(fix)[0].duration_s as number;
+    expect(duration).toBeGreaterThanOrEqual(12);
+    expect(duration).toBeLessThanOrEqual(40);
+    expect(Math.abs(duration - (epochNow() - original))).toBeGreaterThan(200);
+  });
+
+  test('a too-old refusal stores the reason handoff too old without age or bound', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { start: String(epochNow() - BOUND_S - 1), harness: null });
+    const refused = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(refused.status).toBe(0);
+    expect(refused.stderr).toContain('age=');
+    expect(refused.stderr).toContain('bound=');
+    const reason = (readHandoff(fix).refusals as Array<{ reason: string }>)[0].reason;
+    expect(reason).toBe('handoff too old');
+    expect(reason.includes('age=')).toBe(false);
+    expect(reason.includes('bound=')).toBe(false);
+  });
+
+  test('a non-list refusals value is reset to the new refusal dict', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { refusals: 'nope' });
+    const refused = runHelper({ ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    const entries = readHandoff(fix).refusals as Array<{ reason: string }>;
+    expect(entries).toEqual([expect.objectContaining({ reason: 'handoff from another session' })]);
+    expect(entries.every(item => item !== null && typeof item === 'object')).toBe(true);
+    expect(JSON.stringify(entries).includes('nope')).toBe(false);
+  });
+
+  test('non-dict refusal entries are dropped while dict entries stay', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { refusals: [{ reason: 'keep' }, 'drop', 3] });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const entries = readHandoff(fix).refusals as Array<{ reason: string }>;
+    expect(entries.map(item => item.reason)).toEqual(['keep', 'handoff from another session']);
+    expect(entries.every(item => item !== null && typeof item === 'object' && typeof item.reason === 'string')).toBe(true);
+  });
+
+  test('the refusal cap drops the oldest planted reason and keeps the newest', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, {
+      refusals: Array.from({ length: 10 }, (_, index) => ({ reason: `reason-${index}`, at: index })),
+    });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const reasons = (readHandoff(fix).refusals as Array<{ reason: string }>).map(item => item.reason);
+    expect(reasons).toHaveLength(10);
+    expect(reasons.includes('reason-0')).toBe(false);
+    expect(reasons[0]).toBe('reason-1');
+    expect(reasons[8]).toBe('reason-9');
+    expect(reasons[9]).toBe('handoff from another session');
+  });
+
+  test('invalid session markers are omitted and a valid sibling is fingerprinted', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const traced = runHelper({
+      ...fix.env,
+      ...DEBUG,
+      CODEX_THREAD_ID: '-bad',
+      CURSOR_CONVERSATION_ID: 'thread-ok',
+    }, ['start', '--skill', 'extend:roadmap']);
+    expect(traced.status).toBe(0);
+    const line = traced.stderr.split('\n').find(item => item.includes('harness markers:'));
+    expect(line).toBe('telemetry: harness markers: CURSOR_CONVERSATION_ID');
+    expect(traced.stderr.includes('-bad')).toBe(false);
+    expect(traced.stderr.includes('thread-ok')).toBe(false);
+    expect(readHandoff(fix).harness).toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'thread-ok']]));
   });
 });
