@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.4.0] - 2026-09-29
+
+### Changed
+
+- **`/review-and-prep` asks when a Greptile run cannot finish cleanly.** A failed or cancelled run, a run that never shows up, a run still going after ten minutes, or a reviewed commit that is no longer on the branch now has a recorded choice: change the configuration, waive, keep waiting, or stay in draft. The pull request still gets at most one Greptile review. Staying in draft does not waive that review.
+
+### Fixed
+
+- **A legacy `triggerOnUpdates: true` setting no longer looks like review-on-ready only.** It counts as automatic review on open, push, and rebase, so waiving Greptile cannot leave a later push to start a second review that nobody triages.
+
 ## [0.32.3.0] - 2026-09-29
 
 ### Changed
