@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
 
 - **A legacy `triggerOnUpdates: true` setting no longer looks like review-on-ready only.** It counts as automatic review on open, push, and rebase, so waiving Greptile cannot leave a later push to start a second review that nobody triages.
 
+## [0.32.3.0] - 2026-09-29
+
+### Changed
+
+- **`/full-review` uses the current severity names and one closing question.** Triage order is critical, then necessary, then nice-to-have. When every agent finds nothing, the run goes to the final question instead of asking twice. Stale plan-section cites are gone. Each agent prompt still states what the severities mean.
+
 ## [0.32.2.0] - 2026-09-29
 
 ### Added
