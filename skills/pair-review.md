@@ -1017,8 +1017,7 @@ If it passes now, mark as PASSED. If it fails again, repeat the fix cycle.
      etc.). The new item's `Covers:` field is the set of selected indices.
      Validate against the four validation rules at add time; on failure,
      reject the offending target index(es) with the named rule that fired
-     (per the user-edit policy in Phase 1 Step 3.5) and re-present the
-     multi-select. Remaining valid targets stay selected.
+     and re-present the multi-select. Remaining valid targets stay selected.
 
    Indices are resolved **at add time** and immutable thereafter. If the
    user adds item 8 covering item 7, then later adds item 9, item 9's index
@@ -1412,8 +1411,8 @@ When all groups are complete (or the user invokes `/pair-review done`).
 **Early termination check:** If `/pair-review done` is invoked and there are parked
 bugs with Status: PARKED, prompt: "You have N parked bugs that haven't been triaged.
 Triage them before wrapping up?" If yes, run group-completion triage on all remaining
-parked bugs (run triage on all remaining PARKED bugs regardless of which group
-they were noticed during). If no, mark remaining bugs as Status: SKIPPED and proceed.
+PARKED bugs regardless of which group they were noticed during. If no, mark remaining
+bugs as Status: SKIPPED and proceed.
 
 ### Step 1: Generate report
 
@@ -1509,8 +1508,8 @@ If an active session exists, read it and present via AskUserQuestion:
 - Question: "You have an active test session on this branch (started [date], [N]/[M] items tested). What would you like to do?"
 - Options: ["Resume the existing session", "Start a new session (archives the old one)"]
 
-If B, move this branch's session to a per-branch archive (re-source the helper
-if this is a fresh bash block):
+If the user chooses "Start a new session (archives the old one)", move this branch's
+session to a per-branch archive (re-source the helper if this is a fresh bash block):
 ```bash
 TS=$(date -u +%Y%m%d-%H%M%S)
 ARCHIVE_DIR=$(session_archive_dir pair-review "$TS" "$BRANCH")
@@ -1584,7 +1583,7 @@ language to the appropriate action. In practice, users will say things like:
 - "what's left" → STATUS
 - "done" / "that's everything" → DONE
 
-Map natural language to the appropriate action. When ambiguous, ask.
+When ambiguous, ask.
 
 ---
 
