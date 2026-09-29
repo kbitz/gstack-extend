@@ -322,7 +322,7 @@ Prompt:
 > Output EVERY finding in this exact format, one per line:
 > FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
-> SEVERITY semantics (see docs/source-tag-contract.md):
+> SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
 >   necessary    — real defect, should fix in current or next Group
 >   nice-to-have — legitimate improvement, OK to defer
@@ -376,7 +376,7 @@ Prompt:
 > Output EVERY finding in this exact format, one per line:
 > FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
-> SEVERITY semantics (see docs/source-tag-contract.md):
+> SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
 >   necessary    — real defect, should fix in current or next Group
 >   nice-to-have — legitimate improvement, OK to defer
@@ -441,7 +441,7 @@ Prompt:
 > Output EVERY finding in this exact format, one per line:
 > FILE: <path> | LINE: <number or range> | SEVERITY: <critical|necessary|nice-to-have|edge-case> | DESCRIPTION: <what's wrong> | HYPOTHESIS: <one-sentence direction to investigate (verify before implementing)>
 >
-> SEVERITY semantics (see docs/source-tag-contract.md):
+> SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
 >   necessary    — real defect, should fix in current or next Group
 >   nice-to-have — legitimate improvement, OK to defer
@@ -461,11 +461,10 @@ After all agents return, validate each output:
 - Check that it contains at least one `FILE:` line or `NO_FINDINGS`
 - If an agent returned prose instead of structured findings, extract what you can
   and annotate those findings with `(unstructured)` in the description
-- If an agent timed out or errored, note it and proceed with remaining agents
 
 **Error handling:**
-- 1 agent failed: proceed with 2 agents' findings. Note the gap.
-- 2 agents failed: present via AskUserQuestion: "Only 1 of 3 review agents
+- 1 agent failed or timed out: proceed with 2 agents' findings. Note the gap.
+- 2 agents failed or timed out: present via AskUserQuestion: "Only 1 of 3 review agents
   completed. Proceed with partial results or retry?"
 - All 3 failed: "All review agents failed. This usually means the codebase is
   too large for single-pass review. Try scoping to a specific directory."
@@ -504,11 +503,11 @@ Combine all findings into a single list. For deduplication:
 - If two agents describe the same conceptual issue (e.g., both say "error handling
   is inconsistent in bin/"), merge into one finding with the combined context
 
-**Drop edge-case findings (A.11).** Before clustering, filter out every finding with
+**Drop edge-case findings.** Before clustering, filter out every finding with
 `SEVERITY: edge-case`. These represent hypothetical or extreme-edge scenarios that
 downstream /roadmap triage would default-kill anyway. Filtering at source keeps
-TODOS.md focused on real defects. Count them as `edge_case_dropped: N` in the final
-report for visibility — `dropped`, not hidden.
+TODOS.md focused on real defects. Count them on the report template's
+"Edge-case findings dropped at source" line for visibility — `dropped`, not hidden.
 
 ### Step 2: Cluster by root cause
 
@@ -524,9 +523,9 @@ that's fine.
 Each cluster gets:
 - **Theme:** descriptive name (e.g., "Error handling gaps in bin/")
 - **Severity:** highest severity among its members
-  (critical > necessary > nice-to-have; edge-case findings were already dropped in Step 1)
+  (critical > necessary > nice-to-have)
 - **Count:** number of member findings
-- **Findings:** the individual findings with file, line, description, fix
+- **Findings:** the individual findings with file, line, description, HYPOTHESIS
 - **Action:** one-line summary of what fixing this cluster would involve
 
 ### Step 3: Write state checkpoint
@@ -536,11 +535,7 @@ set `phase: clusters_complete`, add `clusters_total: <count>`.
 
 ### Step 4: Handle empty results
 
-If all agents returned `NO_FINDINGS` (0 total findings), present via AskUserQuestion:
-- Question: "Clean bill of health. No findings from any of the 3 review agents."
-- Options: ["Done"]
-
-Skip Phases 3-5 and proceed to Phase 6.
+If all agents returned `NO_FINDINGS`, skip Phases 3-5 and go to Phase 6.
 
 ---
 
@@ -577,7 +572,7 @@ Update `<SESSION_DIR>/clusters.md` with dedup annotations. Update
 ## Phase 4: Triage
 
 Present clusters one at a time via AskUserQuestion. Order: critical clusters first,
-then important, then minor.
+then necessary, then nice-to-have.
 
 ### For each cluster:
 
@@ -648,7 +643,7 @@ create it at the end of the file.
 ### Step 3: Write approved findings
 
 For each approved cluster, write each finding as a rich-format entry under
-`## Unprocessed`, following `docs/source-tag-contract.md`:
+`## Unprocessed`:
 
 ```markdown
 ### [full-review:<severity>] <finding title>
@@ -678,7 +673,6 @@ it as a tag attribute for /roadmap's placement heuristic:
 ```
 
 Order within the section: critical first, then necessary, then nice-to-have.
-(edge-case findings were dropped in Phase 2.)
 
 **IMPORTANT:** Append to the existing `## Unprocessed` section. Do NOT remove or
 modify existing items. Do NOT create new sections.
@@ -717,7 +711,7 @@ Commit: <short hash>
 
 ## Summary
 - Total findings (post-edge-case-drop): <N>
-- Edge-case findings dropped at source (A.11): <N>
+- Edge-case findings dropped at source: <N>
 - Clusters: <N>
 - Approved: <N> clusters (<M> findings)
 - Rejected: <N> clusters (<M> findings)
@@ -820,9 +814,9 @@ When completing a skill workflow, report status using one of:
 - **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
 <!-- /SHARED:completion-status-enum -->
 
-For /full-review specifically: map the six session phases (`dispatch_complete`,
+For /full-review specifically: map the five session phases (`dispatch_complete`,
 `clusters_complete`, `dedup_complete`, `triage_complete`, `complete`) and per-agent
-outcomes to the session-level enum at `/full-review done` time. Rollup rule:
+outcomes to the session-level enum at session-done. Rollup rule:
 
 - All 3 agents completed, clustering + dedup + triage done, approved items written to TODOS.md → **DONE**
 - Complete but some clusters deferred, or agents returned warnings that weren't actioned → **DONE_WITH_CONCERNS** (list deferred clusters + warnings)
@@ -893,8 +887,6 @@ Verdict-to-status mapping (same as the Completion Status Protocol rollup):
 - Complete with deferred clusters or warnings → verdict "DONE_WITH_CONCERNS — <specifics>".
 - Agent timeout/crash/no-output → verdict "BLOCKED — <which agent>, <what was tried>".
 - State files missing on resume → verdict "NEEDS_CONTEXT — <which state is missing>".
-
-The table always leads. The narrative clusters, decision trail, and triage log stay below it.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
