@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.1.1] - 2026-09-29
+
+### Changed
+
+- **`/pair-review` says the same rules in fewer words.** Four repeated sentences are gone: the add-item reject-and-re-present rule, parked-bug triage on early done, the archive option for a new session, and "when ambiguous, ask." Protected blocks, prompts, and option text are unchanged. The file is 1 line and 82 bytes shorter. No runtime or accuracy change.
+
 ## [0.32.1.0] - 2026-09-28
 
 ### Added

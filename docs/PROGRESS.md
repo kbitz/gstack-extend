@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.32.1.1 | 2026-09-29 | `/pair-review` repeats four rules in fewer words: add-item reject-and-re-present, parked-bug triage on early done, the new-session archive choice, and "when ambiguous, ask." Behavior, prompts, option strings, and protected blocks are unchanged. The skill file is 1 line and 82 bytes shorter. |
 | 0.32.1.0 | 2026-09-28 | You can pair local stage-runs with skill-usage on `(skill, session_id)` using the written join contract in `docs/telemetry.md`. A match shows the rows correspond. It does not prove the recorded outcome belongs to that start when two starts in one checkout collide, or when a finish is retried with the original IDs. `route` and `entrypoint_raw` are present from v0.29.0.0, and `agent` may be `cursor` from that version. Earlier rows omit those keys, so a missing key means unknown. A null Cursor model means the current reader cannot parse the Conductor store, even when that store names a model. |
 | 0.32.0.0 | 2026-09-26 | Retired `/review-apparatus` and `/test-plan`, including dedicated tooling and owned installed copies. README now summarizes each skill with links to its source; `/implement` and `/review-and-prep` are Stable. Credits include Claude Code, Codex, and Grok via Cursor. |
 | 0.31.0.0 | 2026-09-26 | Added `/ship-and-land` to finish prepared PRs using verified evidence and hand off to gstack for shipping and landing. |
