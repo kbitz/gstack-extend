@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.32.4.0] - 2026-09-29
+## [0.32.5.0] - 2026-09-29
 
 ### Added
 
@@ -17,6 +17,16 @@ All notable changes to this project will be documented in this file.
 
 - **Doctor helper warnings stay consistent while helpers appear or disappear.** The warning text and the resolved paths come from one lookup, and a path that contains a newline stays quoted on one line.
 - **Uninstall hints name only links this checkout owns.** Codex, OpenCode, and Cursor uninstall keep the shared commands and tell you how to remove your own. A link that points somewhere else is left in place.
+
+## [0.32.4.0] - 2026-09-29
+
+### Changed
+
+- **`/review-and-prep` asks when a Greptile run cannot finish cleanly.** A failed or cancelled run, a run that never shows up, a run still going after ten minutes, or a reviewed commit that is no longer on the branch now has a recorded choice: change the configuration, waive, keep waiting, or stay in draft. The pull request still gets at most one Greptile review. Staying in draft does not waive that review.
+
+### Fixed
+
+- **A legacy `triggerOnUpdates: true` setting no longer looks like review-on-ready only.** It counts as automatic review on open, push, and rebase, so waiving Greptile cannot leave a later push to start a second review that nobody triages.
 
 ## [0.32.3.0] - 2026-09-29
 

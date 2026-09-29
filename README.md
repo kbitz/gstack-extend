@@ -56,8 +56,11 @@ Start with an approved plan, then use a fresh session for each handoff:
 
 If preparation pauses for manual testing, run `/pair-review`, then
 `/review-and-prep resume`. Versioning and release notes happen during shipping.
-The PR workflows require GitHub access through `gh`; `/review-and-prep` uses
-Greptile when applicable. See the linked skill instructions for setup and gates.
+The PR workflows require GitHub access through `gh`. `/review-and-prep` runs
+Greptile at most once per PR when applicable, and asks you how to proceed
+instead of blocking silently when that run fails, stalls, goes stale, or would
+repeat when the PR is marked ready. The PR's receipt records the outcome. See
+the linked skill instructions for setup and gates.
 
 Use `/roadmap` to organize upcoming work and `/full-review` for periodic
 codebase reviews.
