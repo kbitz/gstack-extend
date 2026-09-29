@@ -172,17 +172,18 @@ Record `Greptile: skipped — no root configuration`,
 
 Besides a root-marker change, a recorded user decision under **Marking ready
 would start a second run.** (E1(b)), **A failed or cancelled run consumed the
-allowance.** (E2), **A known run is still incomplete.** (E6(b)), or **The
-reviewed commit is no longer in this branch.** (E7) waives Greptile for the
+allowance.** (E2(a)), **A known run is still incomplete.** (E6(b)), or **The
+reviewed commit is no longer in this branch.** (E7(a)) waives Greptile for the
 rest of this PR. That covers two situations: marking ready would start an
 automatic run, or the PR's single run failed, was cancelled, stalled, or
 reviewed a SHA no longer in HEAD's history. Record it as
 `Greptile: skipped — user policy decision <reference>` with the run ID, status,
 and reason. Step 6's applicability recheck keeps it, and so does
 `/ship-and-land`'s re-evaluation, which reads these rules. The consumed run is
-not reset. The exit triages any findings the run already posted before it
-records the waiver. From then on, Step 1's skip rules apply, with no further
-fetch, poll, or reply.
+not reset. Only an affirmative waiver grants this skip; a stay-draft decision
+remains a restriction and never grants a waiver. The exit triages any findings
+the run already posted before it records the waiver. From then on, Step 1's
+skip rules apply, with no further fetch, poll, or reply.
 
 Find the open PR for this exact head repository/branch and base. Query errors
 are not "no PR". Disambiguate multiple matches before mutating anything. Reuse
@@ -284,14 +285,21 @@ means `manual testing pending`, not an automatic deferral or a passing result.
 
 ### Detect whether marking ready would start a second run
 
-Run this detection at the end of Step 1, after PR discovery, and only when
-Greptile applies under the rules above. Ask before `/review` and the local
-tests, so a configuration change can land while that work runs. Step 4
+Run this detection at the end of Step 1, after PR discovery, when Greptile
+applies under the rules above or a recorded request/run has already consumed
+the allowance. A user-policy waiver skips review and triage, but never this
+second-run safeguard. After a waiver, use the recorded request/run evidence
+and inspect trigger configuration without fetching or polling Greptile.
+Ask before `/review` and the local tests, so a configuration change can land
+while that work runs. Step 4
 re-checks before any request and pauses only if the conflict is still
 unresolved. Step 6 re-checks before `gh pr ready`.
 
 The ready transition starts an automatic run unless the effective trigger list
-excludes `open`.
+excludes `open`. Normalize implied events first: `push` includes `open`, and
+`rebase` includes both `push` and `open`. A list containing either event
+therefore cannot exclude the ready trigger. Unknown values or invalid types
+are unverified configuration.
 
 - Use verified settings (dashboard or run metadata, cited) when a tool actually
   exposes them. That is rarely possible today, so file-based detection is the
@@ -964,9 +972,14 @@ the relevant base/head refs. Require all of the following:
   continuing, including a Step 1 waiver recorded as
   `Greptile: skipped — user policy decision <reference>`. When applicable, Greptile completed the PR's single review for
   its recorded SHA, the Step 4 no-response fallback is
-  documented, or a recorded Step 4 exit decision is in the receipt. Run Step 4's
+  documented, or a recorded Step 4 exit decision is in the receipt. For a known
+  run with a corroborated reviewed SHA, run Step 4's
   `git merge-base --is-ancestor <reviewed-sha> HEAD` check again; exit 1 takes
-  **The reviewed commit is no longer in this branch.** (E7). All later changes have local review/test evidence,
+  **The reviewed commit is no longer in this branch.** (E7). A qualifying
+  no-response fallback with no observable run has no reviewed SHA and skips
+  this ancestry check; retain its requested head separately and never label it
+  reviewed. A known run with missing review metadata remains unresolved.
+  All later changes have local review/test evidence,
   sensible findings are fixed and verified, other findings have evidence-based
   dispositions, and no known Greptile run is pending. A qualifying no-response
   fallback satisfies this gate without claiming review completion, and it

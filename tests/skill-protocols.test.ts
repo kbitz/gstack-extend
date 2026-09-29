@@ -1379,7 +1379,7 @@ describe('review-and-prep drift-locks', () => {
     const step3 = content.slice(content.indexOf('## 3. Push')).split(/\n## /)[0];
     const step4 = content.slice(content.indexOf('## 4. Trigger')).split(/\n## /)[0];
     const exits = step4.slice(step4.indexOf('### Greptile exits that need a user decision'));
-    const reservation = step4.split('```text\n').find((block) => block.includes('review-and-prep:greptile-reservation:')) ?? '';
+    const reservation = Array.from(step4.matchAll(/```text\n([\s\S]*?)```/g), (match) => match[1] ?? '').find((block) => block.includes('review-and-prep:greptile-reservation:')) ?? '';
     const unknownAt = normalized.indexOf(
       "Unknown settings alone do not justify skipping review; Step 4's completion or no-response fallback still applies.",
     );
@@ -1425,8 +1425,35 @@ describe('review-and-prep drift-locks', () => {
       'An exit decision the user recorded is their choice, not a skip justified by unknown settings.',
     );
     expect(exits).not.toContain('@greptileai');
+    expect(reservation).toContain('Reservation recorded at <UTC> for head <full-sha>.');
     expect(reservation).not.toContain('@greptileai');
     expect(step3).toContain('Resume with /review-and-prep resume; do not run /ship on this draft.');
+  });
+
+  test('ready-transition detection expands implied events', () => {
+    expect(normalized).toContain(
+      'Normalize implied events first: `push` includes `open`, and `rebase` includes both `push` and `open`.',
+    );
+  });
+
+  test('only explicit waiver options authorize skipping Greptile', () => {
+    expect(content).toContain('(E2(a))');
+    expect(content).toContain('(E7(a))');
+    expect(normalized).toContain(
+      'Only an affirmative waiver grants this skip; a stay-draft decision remains a restriction and never grants a waiver.',
+    );
+  });
+
+  test('waivers preserve the second-run safeguard', () => {
+    expect(normalized).toContain(
+      'A user-policy waiver skips review and triage, but never this second-run safeguard.',
+    );
+  });
+
+  test('the no-run fallback does not invent a reviewed SHA', () => {
+    expect(normalized).toContain(
+      'A qualifying no-response fallback with no observable run has no reviewed SHA and skips this ancestry check',
+    );
   });
 });
 

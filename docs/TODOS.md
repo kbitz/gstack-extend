@@ -21,7 +21,7 @@
 **Context:** The full finding list is in the PR #102 body under "Adversarial Review". Track 18A's shared exit procedure (Step 4 "Greptile exits that need a user decision") is the natural home for fixes to the draft-push conflict and the account-mismatch finding.
 **Effort:** M
 **Priority:** P3
-**Depends on:** Track 18A
+**Depends on:** none
 
 ### [plan-ceo-review:track=18A,defer=true] Offer the ready transition as the single Greptile run once `/ship-and-land` can finish pending runs
 **What:** Add back two exits that Track 18A removed:
@@ -29,7 +29,7 @@
 - When a run is still pending, let preparation hand it off.
 Both need `/ship-and-land` changes: exits for a failed, stalled, or absent pending run (today it stops on failure, asks with no options when no run appears, and waits on a queued run with no time limit), and discovery of `review-and-prep:paused:` comments.
 **Why:** The only alternative is a repo-wide `autoReview: []` change, which the user may be unable or unwilling to make.
-**Context:** Deferred at /autoplan on 2026-09-29 as the fallback if the user declines UC-1 (widen Track 18A to `skills/ship-and-land.md`). It also needs to reconcile the existing rule "do not mark the PR ready to make the bot review it" (`skills/review-and-prep.md:692`).
+**Context:** Deferred at /autoplan on 2026-09-29 as the fallback if the user declines UC-1 (widen Track 18A to `skills/ship-and-land.md`). It also needs to reconcile the existing rule "do not mark the PR ready to make the bot review it" (`skills/review-and-prep.md:700`).
 **Effort:** M
 **Priority:** P3
 **Depends on:** Track 18A
