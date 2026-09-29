@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.4.0] - 2026-09-29
+
+### Added
+
+- **A finish stays with the session that started it.** A start-less finish of a non-resumable skill no longer adopts another session's handoff, or an unknown handoff older than 24 hours. A finish run from a different repository writes nothing unless you pass an explicit session id and start. Resumable skills still pick up their own open start.
+- **Telemetry finds gstack on Codex, OpenCode, and Cursor.** The wrapper looks for gstack's logger and config under those hosts, not only on PATH and under Claude. When a helper is missing, the doctor names it and says whether provenance rows still record.
+
+### Changed
+
+- **Provenance follows telemetry's state directory.** Setting `provenance` with a relative state override writes under `~/.gstack-extend`, the same place telemetry reads. Other settings still honor a relative directory.
+
+### Fixed
+
+- **Doctor helper warnings stay consistent while helpers appear or disappear.** The warning text and the resolved paths come from one lookup, and a path that contains a newline stays quoted on one line.
+- **Uninstall hints name only links this checkout owns.** Codex, OpenCode, and Cursor uninstall keep the shared commands and tell you how to remove your own. A link that points somewhere else is left in place.
+
 ## [0.32.2.0] - 2026-09-29
 
 ### Added
