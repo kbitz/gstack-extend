@@ -1474,6 +1474,131 @@ describe('review-and-prep drift-locks', () => {
   test('configuration repair names a documented destination', () => {
     expect(normalized).toContain('propose creating `.greptile/config.json` when `.greptile/` exists, otherwise `greptile.json`');
     expect(normalized).toContain('never propose `.greptile.json`, which Greptile may not read');
+    expect(normalized).toContain('Never make the edit.');
+  });
+
+  test('E1(b) and E6(b) waive Greptile only after posted findings are triaged', () => {
+    expect(content).toContain('(E1(b))');
+    expect(content).toContain('(E6(b))');
+    expect(normalized).toContain(
+      'The exit triages any findings the run already posted before it records the waiver.',
+    );
+    expect(normalized).toContain('that the run\'s later results will not be triaged');
+    expect(normalized).toContain('neither this workflow nor `/ship-and-land` triages it');
+    expect(normalized).toContain(
+      'This stops preparation because a manual request plus that automatic run would be two reviews, and this PR gets one.',
+    );
+  });
+
+  test('an existing request cannot waive the ready-transition run', () => {
+    expect(normalized).toContain('When a request or run already exists, offer (a) or (c) only.');
+    expect(normalized).toContain('readiness requires option (a) whatever other exit the user takes');
+    expect(normalized).toContain(
+      'When it is positive and unresolved, do not mark ready; take **Marking ready would start a second run.** (E1).',
+    );
+  });
+
+  test('draft-push conflicts stay separate from the ready-transition exit', () => {
+    expect(normalized).toContain(
+      'If the ready transition would trigger a second, take **Marking ready would start a second run.** (E1) instead of inventing a fix here.',
+    );
+    expect(normalized).toContain('Draft-push conflicts stay on this rule.');
+    expect(normalized).toContain('Ask before `/review` and the local tests');
+    expect(normalized).toContain('pauses only if the conflict is still unresolved');
+    expect(normalized).toContain('it passes once both the base tip and the head show the change.');
+  });
+
+  test('uncertain ready-transition sources include dotted-file-only and legacy keys', () => {
+    expect(normalized).toContain("a repository whose only marker is `.greptile.json`");
+    expect(normalized).toContain('`triggerOnUpdates: true` includes `open`');
+    expect(normalized).toContain('`skipReview: "AUTOMATIC"` means an empty list');
+    expect(normalized).toContain('Other filters do not count unless verified settings show they exclude this PR.');
+    expect(normalized).toContain("Greptile's settings will start a review when this PR is marked ready");
+    expect(normalized).toContain('cannot rule out an automatic review');
+  });
+
+  test('failure takes E2 and an unestablished status stays a draft report', () => {
+    expect(normalized).toContain(
+      'If its status cannot be established and the no-response fallback does not apply, preserve the draft and report the actual evidence',
+    );
+  });
+
+  test('the MCP no-response fallback is a user decision', () => {
+    expect(normalized).toContain(
+      'There the fallback applies only after the user chooses (a) under **No observable run after an MCP request.** (E4).',
+    );
+  });
+
+  test('ancestry distrusts a shallow miss and a missing object', () => {
+    expect(normalized).toContain('git fetch --unshallow');
+    expect(normalized).toContain('Trust exit 1 only once full history is present.');
+    expect(normalized).toContain(
+      'Exit 1, or a missing object after fetching, means the run reviewed history this PR no longer contains.',
+    );
+    expect(normalized).toContain('Other errors: diagnose.');
+    expect(normalized).toContain('run `/review` on the full base-to-head diff (not a delta)');
+    expect(normalized).toContain('A known run with missing review metadata remains unresolved.');
+    expect(normalized).toContain('or a recorded Step 4 exit decision is in the receipt.');
+  });
+
+  test('exit questions are chosen by the user and skip E3 and E5', () => {
+    expect(normalized).toContain('Never auto-choose.');
+    expect(normalized).toContain('An answer that is not one of the listed options is asked again.');
+    expect(normalized).toContain(
+      'Until the user answers, preparation is BLOCKED with the pending question recorded in the receipt.',
+    );
+    expect(normalized).toContain(
+      'There is no E3 or E5, because the paused comment and the reservation comment are durability fixes, not user decisions.',
+    );
+    expect(normalized).toContain('mutually exclusive by run state');
+    expect(normalized).toContain(
+      'is a deliberate pause. Defer `SHARED:telemetry-finish` as the manual-testing pause does.',
+    );
+  });
+
+  test('a later reservation loses and only history can release one', () => {
+    const step4 = content.slice(content.indexOf('## 4. Trigger')).split(/\n## /)[0];
+    const reservationPost = step4.slice(step4.indexOf('Post a reservation comment'));
+    expect(normalized).toContain(
+      'A later reservation records that it lost, links the winner, and does not trigger.',
+    );
+    expect(normalized).toContain('Losing reservations stay as history and are not cleaned up.');
+    expect(normalized).toContain('the session continues as a monitor of the earliest');
+    expect(normalized).toContain('If this reservation is no longer the earliest, do not trigger');
+    expect(normalized).toContain('Only the earliest may trigger, and only when it has not already produced a request or run.');
+    expect(reservationPost).toContain('gstack-redact --from-file');
+    expect(normalized).toContain("A user's word does not release it.");
+    expect(normalized).toContain("The user's confirmation does not release a reservation.");
+    expect(normalized).toContain(
+      'A reservation comment counts as that submitted request until request or run history shows it was never submitted.',
+    );
+    expect(normalized).toContain('After the trigger returns, record the returned run ID in the receipt.');
+  });
+
+  test('a failed paused comment keeps the pause and restrictions survive recency', () => {
+    const step3 = content.slice(content.indexOf('## 3. Push')).split(/\n## /)[0];
+    const pause = step3.slice(step3.indexOf('Post the PAUSED receipt'));
+    expect(normalized).toContain('Post the PAUSED receipt once per pause');
+    expect(pause).toContain('gstack-redact --from-file');
+    expect(normalized).toContain(
+      'If posting the paused comment fails, keep the pause, report that the paused receipt lives only in the body, and retry the post on the next resume.',
+    );
+    expect(normalized).toContain('including the pending question, and retry a failed post on the next resume.');
+    expect(normalized).toContain('Recency alone never clears them.');
+    expect(normalized).toContain('by its pause SHA being an ancestor of HEAD');
+    expect(normalized).toContain('Fix commits from `/pair-review` are expected on top.');
+    expect(normalized).toContain('hold even when unconfirmed');
+    expect(normalized).toContain(
+      'Also name workflows that the paused comment (`review-and-prep:paused:`) or the reservation comment (`review-and-prep:greptile-reservation:`) would trigger.',
+    );
+  });
+
+  test('a pending exit resumes like manual testing until the answer is in the draft', () => {
+    expect(normalized).toContain('resumes like a manual-testing pause.');
+    expect(normalized).toContain('Ask again only if it still applies.');
+    expect(normalized).toContain(
+      'If the session ended after that answer and before Step 3 created the draft, ask again',
+    );
   });
 });
 
