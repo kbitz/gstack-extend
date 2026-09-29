@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.3.0] - 2026-09-29
+
+### Changed
+
+- **`/full-review` uses the current severity names and one closing question.** Triage order is critical, then necessary, then nice-to-have. When every agent finds nothing, the run goes to the final question instead of asking twice. Stale plan-section cites are gone. Each agent prompt still states what the severities mean.
+
 ## [0.32.2.0] - 2026-09-29
 
 ### Added
