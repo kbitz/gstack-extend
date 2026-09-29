@@ -166,6 +166,49 @@ describe('uninstall', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('Uninstall complete');
   });
+
+  test('removes the telemetry symlink we created along with the CLI link', () => {
+    const s = scope('uninstall-both');
+    runSetup(s);
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Removed gstack-extend CLI symlink');
+    expect(r.stdout).toContain('Removed gstack-extend-telemetry symlink');
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+    expect(existsSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(false);
+  });
+
+  test('refuses to remove a telemetry symlink that points elsewhere', () => {
+    const s = scope('uninstall-tel-foreign');
+    runSetup(s);
+    const foreign = join(s.localBin, 'gstack-extend-telemetry');
+    rmSync(foreign);
+    symlinkSync('/usr/bin/true', foreign);
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Skipped gstack-extend-telemetry symlink (points elsewhere');
+    expect(readlinkSync(foreign)).toBe('/usr/bin/true');
+  });
+
+  test('a missing telemetry symlink is a silent no-op', () => {
+    const s = scope('uninstall-tel-missing');
+    runSetup(s);
+    rmSync(join(s.localBin, 'gstack-extend-telemetry'));
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('gstack-extend-telemetry symlink');
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+  });
+
+  test('--host codex --uninstall keeps both links and says how to remove them', () => {
+    const s = scope('uninstall-codex-keeps');
+    runSetup(s);
+    const r = runSetup(s, ['--host', 'codex', '--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
+    expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
+    expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend and gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+  });
 });
 
 function copyInstall(dest: string) {

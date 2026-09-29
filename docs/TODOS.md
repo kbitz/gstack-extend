@@ -11,9 +11,9 @@
 **Depends on:** None
 
 ### [plan-ceo-review:track=16A,defer=true] Doctor coverage report over stage-runs and leftover handoffs
-**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs and warn when gstack's tier is off; have the wrapper record the skill in each handoff; give the deferred marker work a tier-independent trigger for periods without eligible observations.
-**Why:** Without eligible v1 starts the doctor reports insufficient evidence and the 95% decision rule cannot fire. Turning the tier off stops new evidence but does not prevent evaluation of historical rows; orphaned handoffs name neither skill nor repository.
-**Context:** Track 16A's observed-coverage record was captured by a private script; this report would make it re-runnable anywhere. Define the independent invocation evidence a capture-completeness claim needs.
+**What:** Teach `gstack-extend doctor telemetry` to read stage-runs and leftover handoffs and warn when gstack's tier is off; report handoff count, oldest age and the `refusals` entries by reason, with a read-only per-slot "would adopt / would refuse + reason" preview; then add bounded handoff cleanup (a handoff whose `root` no longer exists or whose `start` is older than 28 days, at most a few per call, under a non-blocking slot lock, never deleting lock files); give the deferred marker work a tier-independent trigger for periods without eligible observations.
+**Why:** Without eligible v1 starts the doctor reports insufficient evidence and the 95% decision rule cannot fire. Turning the tier off stops new evidence but does not prevent evaluation of historical rows. Refused and orphaned handoffs accumulate (archived workspaces leave roots that no longer exist) and are invisible outside debug mode.
+**Context:** Track 16A's observed-coverage record was captured by a private script; this report would make it re-runnable anywhere. Define the independent invocation evidence a capture-completeness claim needs. Track 18B records `skill`, `root` and a harness-session fingerprint (`harness`) in each handoff, plus a capped `refusals` list on a refused one (this entry's former "record the skill" sub-item). Report before cleanup, so cleanup does not delete the evidence first.
 **Effort:** M
 **Priority:** P2
 **Depends on:** None
@@ -21,7 +21,7 @@
 ### [plan-ceo-review:track=16A,defer=true] Collision-safe and idempotent run identity
 **What:** Two starts of one skill in one checkout must produce two correctly attributed rows, and repeating a finish (an explicit retry with the original IDs, or a retry after a logger timeout that already wrote) must not duplicate rows.
 **Why:** Today the later start replaces the handoff slot, so the earlier run's finish is recorded under the later run's identity and the later run has no row; a repeated explicit finish appends a second stage-runs row and a second skill_run.
-**Context:** Characterized as current behavior by the collision and explicit-retry tests in tests/telemetry-contract.test.ts; acceptance is those sequences producing exactly one correctly attributed row per run.
+**Context:** Characterized as current behavior by the collision and explicit-retry tests in tests/telemetry-contract.test.ts; acceptance is those sequences producing exactly one correctly attributed row per run. Track 18B's handoff `harness` fingerprint already refuses a known different session's handoff for non-resumable skills, so the misattribution remains only within one harness session or with an unknown fingerprint; per-invocation identity can build on that field.
 **Effort:** M
 **Priority:** P2
 **Depends on:** None
@@ -33,6 +33,22 @@
 **Effort:** S
 **Priority:** P3
 **Depends on:** None
+
+### [plan-ceo-review:track=18B,defer=true] Remove the shared ~/.local/bin links on a host-specific uninstall
+**What:** When `setup --host codex|opencode|cursor --uninstall` removes the last gstack-extend install from this checkout, also remove `~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry`.
+**Why:** Install wires both links for every host (`setup` `wire_bin`), but only `--host claude|auto --uninstall` removes them, so a single-host Codex, OpenCode or Cursor user keeps links into a checkout they uninstalled. Track 18B prints a "Kept … rm" hint instead of changing the host rule.
+**Context:** Needs a "no host install from this checkout remains" check across the four host skills directories' `.extend-root` pointers before removing the links. Found in the Track 18B review (2026-09-29).
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### [plan-ceo-review:track=18B,defer=true] Recover a telemetry finish run from a different repository root
+**What:** Let a start-less finish adopt its own harness session's open start of the same skill from another repository root, through a per-session pointer file keyed by `sha256([harness, skill])` rather than a directory scan.
+**Why:** Track 18B makes a cross-root finish write nothing, with a named debug reason. No cross-root finish has been observed, so recovery waits for evidence that it happens.
+**Context:** Gate on the doctor coverage report above showing cross-root orphans. The Track 18B review rejected a scan-based design (file cap, a second slot lock, ambiguity handling) as the riskiest part of that plan for no observed benefit. Handoffs already carry `skill`, `root` and `harness` from 18B.
+**Effort:** M
+**Priority:** P3
+**Depends on:** Doctor coverage report over stage-runs and leftover handoffs
 
 ### [review] Keep Codex and OpenCode passes out of another host's skills directory
 - **Description:** Setup skips Cursor when `~/.cursor/skills` is another host's skills directory. Codex and OpenCode passes still do not. With `~/.codex/skills` (or OpenCode's) symlinked to `~/.claude/skills`, `--host auto` turns the Claude symlinks into copies, overwrites a customized Claude `SKILL.md` that kept its `.extend-root`, and `--host codex --uninstall` removes the Claude install. Skipping them the Cursor way would leave existing shared-directory users with copies the Claude pass never refreshes, so this needs a migration decision.
@@ -47,7 +63,7 @@
 - **Context:** Found by the /review-and-prep adversarial pass on PR #113 (2026-09-26).
 
 ### [plan-ceo-review:track=16D,defer=true] Decide whether PATH is inside the trust boundary for the telemetry wrapper lookup
-- **Description:** `SHARED:telemetry-start` and `SHARED:telemetry-finish` look up `gstack-extend-telemetry` on PATH first. They accept any absolute PATH entry that holds a file with the protocol marker, so an agent environment whose PATH a repository can shape (a direnv `PATH_add`, say) could run a planted wrapper. Track 16D treats the process environment as trusted and pins only `GSTACK_EXTEND_DIR` for `bin/update-check`. Decide whether the telemetry lookup should also prefer home-anchored pointers over PATH, or whether a trusted environment is the documented contract.
+- **Description:** `SHARED:telemetry-start` and `SHARED:telemetry-finish` look up `gstack-extend-telemetry` on PATH first. They accept any absolute PATH entry that holds a file with the protocol marker, so an agent environment whose PATH a repository can shape (a direnv `PATH_add`, say) could run a planted wrapper. Track 16D treats the process environment as trusted and pins only `GSTACK_EXTEND_DIR` for `bin/update-check`. Decide whether the telemetry lookup should also prefer home-anchored pointers over PATH, or whether a trusted environment is the documented contract. Track 18B adds `CLAUDE_CONFIG_DIR` and `CODEX_HOME` (absolute only) as env-derived roots for gstack's helpers beside `GSTACK_DIR`; the same decision covers them.
 - **Hypothesis (untested):** Agent harness Bash tools run non-interactive shells that do not fire direnv hooks, so the exposure may be theoretical. Measure before changing lookup order.
 - **Effort:** S (human: ~2h / CC: ~15min)
 - **Priority:** P3

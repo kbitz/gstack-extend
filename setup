@@ -442,6 +442,31 @@ if [ "$UNINSTALL" -eq 1 ]; then
         log "Skipped gstack-extend CLI symlink (points elsewhere: $link_target)"
       fi
     fi
+    tel_link="$HOME/.local/bin/gstack-extend-telemetry"
+    tel_expected="$SCRIPT_DIR/bin/gstack-extend-telemetry"
+    if [ -L "$tel_link" ]; then
+      link_target="$(readlink "$tel_link" 2>/dev/null || true)"
+      if [ "$link_target" = "$tel_expected" ]; then
+        rm -f "$tel_link"
+        log "Removed gstack-extend-telemetry symlink ($tel_link)"
+      else
+        log "Skipped gstack-extend-telemetry symlink (points elsewhere: $link_target)"
+      fi
+    fi
+  elif [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "codex" ] || [ "$HOST" = "opencode" ] || [ "$HOST" = "cursor" ]; }; then
+    # Shared links stay until a Claude or auto uninstall. Say how to remove them by hand.
+    kept_ours=0
+    for _pair in "gstack-extend|$SCRIPT_DIR/bin/gstack-extend" "gstack-extend-telemetry|$SCRIPT_DIR/bin/gstack-extend-telemetry"; do
+      _name="${_pair%%|*}"
+      _expected="${_pair#*|}"
+      _link="$HOME/.local/bin/$_name"
+      if [ -L "$_link" ] && [ "$(readlink "$_link" 2>/dev/null || true)" = "$_expected" ]; then
+        kept_ours=1
+      fi
+    done
+    if [ "$kept_ours" -eq 1 ]; then
+      log "Kept ~/.local/bin/gstack-extend and gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)"
+    fi
   fi
 
   log "Uninstall complete."
