@@ -219,13 +219,14 @@ def report(days):
     if no_sweep is False:
         warnings.append(f"gstack-telemetry-log lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP}), so "
                         "completions are skipped; run gstack-upgrade.")
-    helper_warning = gstack_helper_warning(provenance_enabled(state_root()))
+    helper_warning = gstack_helper_warning(provenance_enabled(state_root()),
+                                          {"gstack-telemetry-log": logger, "gstack-config": config})
     if helper_warning:
         warnings.append(helper_warning)
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
                 stale_wrapper=stale, logger_supports_no_sweep=no_sweep,
-                gstack_logger=resolve("gstack-telemetry-log"), gstack_config=resolve("gstack-config"),
+                gstack_logger=logger, gstack_config=config,
                 warnings=warnings,
                 diagnostic=None if binary else "gstack-extend-telemetry unresolvable; re-run ./setup. See docs/telemetry.md.",
                 transcript_caveat=CAVEAT, transcript_issues=transcript_issues, issues=issues,

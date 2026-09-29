@@ -219,6 +219,8 @@ stayed constant across real CLI user turns and a `claude --resume`. Two start/fi
 runs paired, including a finish after resume; debug named only that marker. The
 check used isolated telemetry storage and real logger/config copies with network
 sync omitted. Compaction and a Conductor chat continuation were not exercised.
+Within-run marker stability in Codex, Cursor, and Grok has not been verified by
+this real-harness check; their automated tests use simulated markers.
 The marker stays in the fingerprint.
 
 **Upgrading existing handoffs.** Handoffs written before this change have no
@@ -228,6 +230,11 @@ older non-resumable run, pass the original wrapper-issued session id and start
 epoch from that run's `GE_TELEMETRY: session=… start=…` line. Those values are
 not harness markers such as `CODEX_THREAD_ID`. Do not run a new start for the run
 being recovered: a new start replaces the slot.
+
+If you previously disabled provenance with a relative `GSTACK_EXTEND_STATE_DIR`,
+that old config is no longer read by telemetry. After upgrading, rerun
+`"$HOME/.claude/skills/gstack-extend/bin/config" set provenance false` with the same
+environment, or use an absolute state-directory override for both commands.
 
 ~~~sh
 gstack-extend-telemetry finish --skill "extend:roadmap" \

@@ -467,6 +467,22 @@ describe('doctor degraded environments', () => {
 });
 
 describe('gstack helper warning', () => {
+  for (const initiallyMissing of [true, false]) {
+    test(`helper paths and warnings agree when config ${initiallyMissing ? 'appears' : 'disappears'} during a report`, () => {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const script = `import sys, json, importlib.util\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\nspec = importlib.util.spec_from_file_location("doctor", ${JSON.stringify(join(ROOT, 'bin/lib/telemetry-doctor.py'))})\ndoctor = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(doctor)\noriginal = telemetry.resolve\nlookups = 0\ndef changing(name):\n    global lookups\n    if name == "gstack-config":\n        lookups += 1\n        if (lookups == 1) == ${initiallyMissing ? 'True' : 'False'}:\n            return None\n    return original(name)\ntelemetry.resolve = changing\ndoctor.resolve = changing\nprint(json.dumps(doctor.report(30)))\n`;
+      const result = spawnSync('python3', ['-I', '-c', script], {
+        env: fix.env, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+      });
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.tier).toBe(initiallyMissing ? 'unavailable' : 'community');
+      expect(report.gstack_config).toBe(initiallyMissing ? null : join(fix.home, '.claude/skills/gstack/bin/gstack-config'));
+      expect(report.warnings.some((warning: string) => warning.includes('gstack helper unresolvable: gstack-config'))).toBe(initiallyMissing);
+      expect(report.gstack_logger).toBe(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'));
+    });
+  }
+
   test('no helpers warns in both provenance states, with null paths and an unexpanded PATH', () => {
     const absent = makeTelemetryFixture('community', 'absent');
     const pathA = join(absent.home, 'path-a');

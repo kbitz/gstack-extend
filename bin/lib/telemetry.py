@@ -161,8 +161,8 @@ def gstack_helper_problem(resolved=None):
     return "gstack helper unresolvable: " + ", ".join(missing) + "; searched " + searched
 
 
-def gstack_helper_warning(provenance_on):
-    problem = gstack_helper_problem()
+def gstack_helper_warning(provenance_on, resolved=None):
+    problem = gstack_helper_problem(resolved)
     if problem is None:
         return None
     provenance = "provenance rows still record" if provenance_on else "provenance is off, so nothing records"
