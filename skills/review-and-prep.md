@@ -319,7 +319,7 @@ are unverified configuration.
   - a repository whose only marker is `.greptile.json` (this step's local
     policy signal, which Greptile may not read)
   - a missing or unreadable file, including one that fails to parse as JSON
-  - conflicting sources
+  - unknown trigger values, invalid types, or conflicting sources
 - Other filters do not count unless verified settings show they exclude this PR.
 
 When the detection is positive, ask **Marking ready would start a second run.**
@@ -334,8 +334,9 @@ Name the result in the question:
   verified settings, or both tips' effective files, include `open`. Name each
   source, ref, and value.
 - "cannot rule out an automatic review" when a file is missing, unreadable
-  (including one that fails to parse as JSON), `.greptile.json`-only, or the
-  sources conflict. Name each source, ref, and value, or the read failure.
+  (including one that fails to parse as JSON), has unknown trigger values or
+  invalid types, is `.greptile.json`-only, or the sources conflict. Name each
+  source, ref, and value, or the read failure.
 
 ## 2. Review and verify locally
 
@@ -638,9 +639,11 @@ up. The losing session says that another session holds the reservation and
 links the winning comment. That message names the repository, PR URL, and head
 SHA, then the session continues as a monitor of the earliest.
 
-- A reservation with no corroborated run is an ambiguous request, so **No
-  observable run after an MCP request.** (E4) applies from its time, including
-  on resume after the session that posted it has ended.
+- A reservation with no corroborated run and no confirmed comment trigger
+  is an ambiguous request, so **No observable run after an MCP request.**
+  (E4) applies from its time, including on resume after the session that
+  posted it has ended. A confirmed comment trigger keeps the automatic
+  no-response fallback measured from that comment's submission time.
 - A reservation is released only by request or run history showing that the
   MCP request was never submitted. A user's word does not release it.
 - An existing `review-and-prep:greptile:` trigger comment with no reservation
@@ -805,7 +808,12 @@ run.** whatever other exit the user takes, and each exit's question says so.
 **Marking ready would start a second run.** (E1). Step 1 detects this; Step 4
 re-checks before any request, and Step 6 re-checks before `gh pr ready`.
 
-When no request or run exists yet:
+When no request or run exists yet, offer (b) only when verified settings or
+both tips' valid effective trigger lists exclude `push` and `rebase`. Otherwise
+offer (a) or (c) only: after a ready-transition run, release pushes could start
+a second run while the waiver skips review. Unknown settings do not establish
+this exclusion. This guard preserves the once-per-PR rule without changing
+`/ship-and-land`.
 
 - (a) **recommended:** pause for a one-time configuration change. Show the
   detected file path and this copy-paste snippet, and cite the configuration
@@ -815,8 +823,11 @@ When no request or run exists yet:
   "autoReview": []
   ```
 
-  Propose that edit in the documented file on the base branch. Say that this
-  turns off automatic reviews for every PR in the repository, and that
+  Propose that edit in the documented effective file on the base branch. If
+  none exists, propose creating `.greptile/config.json` when `.greptile/`
+  exists, otherwise `greptile.json`; never propose `.greptile.json`, which
+  Greptile may not read. Use that destination in the snippet and question.
+  Say that this turns off automatic reviews for every PR in the repository, and that
   `"autoReview": []` stops only automatic reviews: explicit requests, including
   this workflow's, still work (manual requests still work). That is what this
   workflow's explicit request needs, but the user may prefer a narrower change.
@@ -874,7 +885,8 @@ exited 1, or the reviewed object is missing after fetching.
   Greptile under the Step 1 extension, citing the stale SHA.
 - (b) Stay draft.
 
-One rendered **Marking ready would start a second run.** question:
+One rendered **Marking ready would start a second run.** question, with no
+existing request/run and verified `autoReview: ["open"]` at both tips:
 
 ```text
 **Marking ready would start a second run.** (E1)

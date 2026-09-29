@@ -1455,6 +1455,26 @@ describe('review-and-prep drift-locks', () => {
       'A qualifying no-response fallback with no observable run has no reviewed SHA and skips this ancestry check',
     );
   });
+
+  test('confirmed comment triggers keep their automatic fallback', () => {
+    expect(normalized).toContain('A reservation with no corroborated run and no confirmed comment trigger is an ambiguous request');
+    expect(normalized).toContain("A confirmed comment trigger keeps the automatic no-response fallback measured from that comment's submission time.");
+  });
+
+  test('ready-transition waivers rule out later automatic runs', () => {
+    expect(normalized).toContain("offer (b) only when verified settings or both tips' valid effective trigger lists exclude `push` and `rebase`.");
+    expect(normalized).toContain('Unknown settings do not establish this exclusion.');
+  });
+
+  test('invalid trigger configuration is described as uncertain', () => {
+    expect(normalized).toContain('unknown trigger values, invalid types, or conflicting sources');
+    expect(normalized).toContain('has unknown trigger values or invalid types');
+  });
+
+  test('configuration repair names a documented destination', () => {
+    expect(normalized).toContain('propose creating `.greptile/config.json` when `.greptile/` exists, otherwise `greptile.json`');
+    expect(normalized).toContain('never propose `.greptile.json`, which Greptile may not read');
+  });
 });
 
 describe('implement drift-locks', () => {

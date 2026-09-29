@@ -29,7 +29,7 @@
 - When a run is still pending, let preparation hand it off.
 Both need `/ship-and-land` changes: exits for a failed, stalled, or absent pending run (today it stops on failure, asks with no options when no run appears, and waits on a queued run with no time limit), and discovery of `review-and-prep:paused:` comments.
 **Why:** The only alternative is a repo-wide `autoReview: []` change, which the user may be unable or unwilling to make.
-**Context:** Deferred at /autoplan on 2026-09-29 as the fallback if the user declines UC-1 (widen Track 18A to `skills/ship-and-land.md`). It also needs to reconcile the existing rule "do not mark the PR ready to make the bot review it" (`skills/review-and-prep.md:700`).
+**Context:** Deferred at /autoplan on 2026-09-29 as the fallback if the user declines UC-1 (widen Track 18A to `skills/ship-and-land.md`). It also needs to reconcile the existing rule "do not mark the PR ready to make the bot review it" (`skills/review-and-prep.md:703`).
 **Effort:** M
 **Priority:** P3
 **Depends on:** Track 18A
