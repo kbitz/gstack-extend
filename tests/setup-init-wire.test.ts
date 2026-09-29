@@ -207,8 +207,29 @@ describe('uninstall', () => {
     expect(r.exitCode).toBe(0);
     expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
     expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
-    expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend and gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+    expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
   });
+
+  for (const owned of ['gstack-extend', 'gstack-extend-telemetry']) {
+    for (const foreignKind of ['file', 'symlink']) {
+      test(`host uninstall hint names only its own ${owned} beside a foreign ${foreignKind}`, () => {
+        const s = scope(`uninstall-hint-${owned}-${foreignKind}`);
+        runSetup(s);
+        const foreignName = owned === 'gstack-extend' ? 'gstack-extend-telemetry' : 'gstack-extend';
+        const foreign = join(s.localBin, foreignName);
+        rmSync(foreign);
+        if (foreignKind === 'file') writeFileSync(foreign, 'user-managed executable\n');
+        else symlinkSync('/usr/bin/true', foreign);
+        const r = runSetup(s, ['--host', 'codex', '--uninstall']);
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
+          .toBe(`Kept ~/.local/bin/${owned} (shared by all hosts; rm ~/.local/bin/${owned})`);
+        if (foreignKind === 'file') expect(readFileSync(foreign, 'utf8')).toBe('user-managed executable\n');
+        else expect(readlinkSync(foreign)).toBe('/usr/bin/true');
+        expect(readlinkSync(join(s.localBin, owned))).toBe(join(ROOT, 'bin', owned));
+      });
+    }
+  }
 });
 
 function copyInstall(dest: string) {

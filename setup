@@ -455,17 +455,17 @@ if [ "$UNINSTALL" -eq 1 ]; then
     fi
   elif [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "codex" ] || [ "$HOST" = "opencode" ] || [ "$HOST" = "cursor" ]; }; then
     # Shared links stay until a Claude or auto uninstall. Say how to remove them by hand.
-    kept_ours=0
+    kept_ours=""
     for _pair in "gstack-extend|$SCRIPT_DIR/bin/gstack-extend" "gstack-extend-telemetry|$SCRIPT_DIR/bin/gstack-extend-telemetry"; do
       _name="${_pair%%|*}"
       _expected="${_pair#*|}"
       _link="$HOME/.local/bin/$_name"
       if [ -L "$_link" ] && [ "$(readlink "$_link" 2>/dev/null || true)" = "$_expected" ]; then
-        kept_ours=1
+        kept_ours="$kept_ours ~/.local/bin/$_name"
       fi
     done
-    if [ "$kept_ours" -eq 1 ]; then
-      log "Kept ~/.local/bin/gstack-extend and gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)"
+    if [ -n "$kept_ours" ]; then
+      log "Kept$kept_ours (shared by all hosts; rm$kept_ours)"
     fi
   fi
 

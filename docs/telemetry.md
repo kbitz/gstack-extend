@@ -79,7 +79,8 @@ path that points into a repository is still accepted. A relative value is ignore
 
 When either helper does not resolve, debug output and `gstack-extend doctor telemetry`
 share the substring `gstack helper unresolvable:`, name only the missing helper(s),
-and list the searched locations. The doctor warning then says either `provenance
+and list the searched locations as JSON-quoted paths (PATH remains the display token).
+The doctor warning then says either `provenance
 rows still record` or `provenance is off, so nothing records`, and ends with the
 install fix (`./setup --host <host>` in the gstack checkout, or set `GSTACK_DIR`),
 then `rerun gstack-extend doctor telemetry`, then `See docs/telemetry.md`. JSON
@@ -143,19 +144,20 @@ State is separate from gstack analytics. There is no sweep or crash
 detection, no historical backfill, and no inferred failure. The age rule is
 [Handoff adoption](#handoff-adoption).
 
-**Collision limit:** misattribution remains only within one harness session, or
-when either fingerprint is unknown. A distinct known session's earlier finish is
-refused and the handoff stays. Two starts of one skill in one checkout still share
-a slot; the later start replaces it. If the fingerprints are equal or unknown and
-the adoption rule accepts the handoff, and the earlier-started run finishes first,
+**Collision limit:** for non-resumable skills, misattribution remains within one
+harness session or when either fingerprint is unknown. A distinct known session's
+earlier finish is refused and the handoff stays. Resumable skills can still
+misattribute a finish across different known sessions because they adopt at any age.
+Two starts of one skill in one checkout share a slot; the later start replaces it.
+If the adoption rule accepts the handoff and the earlier-started run finishes first,
 stage-runs holds one row with the later start's `session_id` and `started_at` and
 the earlier finish's outcome. With the tier on, skill-usage pairs the later
 `skill_start` with that finish's `skill_run` and leaves the earlier `skill_start`
 unpaired. The later finish then finds no handoff and writes nothing. If the later
 run finishes first, the row is correctly its own and the earlier run has no row.
 The unknown-fingerprint form of that defect is still current behavior. When the
-two runs carry different known fingerprints, the earlier finish is refused and the
-later finish pairs with its own start. Explicit `--session-id` and `--start`
+two non-resumable runs carry different known fingerprints, the earlier finish is
+refused and the later finish pairs with its own start. Explicit `--session-id` and `--start`
 together are the escape hatch. Different checkouts have different roots and
 separate slots. A finish never reads another root's slot. A same-skill handoff
 already sitting in the destination root is judged by the adoption rule; it is not
@@ -212,9 +214,12 @@ the doctor coverage report shows resumable pause durations. An unknown-fingerpri
 adoption within 24 hours can still belong to another run, so a successful join is
 not proof of attribution. A non-resumable skill resumed in a new harness session
 is refused. The resume instruction holds across sessions only for the resumable
-skills. Whether `CLAUDE_CODE_SESSION_ID` stays constant from start through a later
-user turn and a `claude --resume` is unverified: Claude Code in this environment
-was not logged in, so no session was observed. The marker stays in the fingerprint.
+skills. Observed on 2026-09-29 with Claude Code 2.1.284: `CLAUDE_CODE_SESSION_ID`
+stayed constant across real CLI user turns and a `claude --resume`. Two start/finish
+runs paired, including a finish after resume; debug named only that marker. The
+check used isolated telemetry storage and real logger/config copies with network
+sync omitted. Compaction and a Conductor chat continuation were not exercised.
+The marker stays in the fingerprint.
 
 **Upgrading existing handoffs.** Handoffs written before this change have no
 `skill`, `root`, or `harness`. A start-less finish of a non-resumable skill now
@@ -305,7 +310,12 @@ by a flag or read from a log; `agent` overrides are likewise unmarked.
 **Switch.** Provenance is on by default and independent of gstack's tier, because
 its rows stay local while enabling the tier also enables the upload. Turn it off
 with `"$HOME/.claude/skills/gstack-extend/bin/config" set provenance false` (`off`
-also works). A missing config stays on. An unreadable config stays off: a file
+also works). For `provenance`, the config command follows telemetry: both ignore a
+relative `GSTACK_EXTEND_STATE_DIR` and use `$HOME/.gstack-extend`. Other config keys
+retain their existing state-directory behavior. Use an absolute override when quota
+should read these provenance rows: quota still resolves a relative state root against
+its working directory, so it would look for stage-runs in a different directory.
+A missing config stays on. An unreadable config stays off: a file
 that cannot be read is not evidence the switch is still on. With provenance on, start writes the handoff even when the tier is
 off, and a missing or broken gstack costs only the skill-usage rows.
 
@@ -347,7 +357,7 @@ the current wrapper's handling of a logger whose source lacks that flag.
 | Different attempts | Stage-runs `duration_s` is fixed by the first attempt that built the row (a failed append saves the row for reuse). `skill_run.duration_s` comes from the attempt that delegated: null above 86400, which upstream nulls, or, on a later attempt with the handoff-recovered start and a nondecreasing clock, greater than or equal to stage-runs `duration_s`. A changed explicit `--start` gives no ordering. Stage-runs never caps | Do not equate the two durations across attempts | `a finish retried after a partial failure never duplicates either row` and `provenance duration stays wall-clock past a day while skill-usage nulls it` in tests/telemetry.test.ts |
 | Start without `skill_start` | Tier off, gstack unavailable at start, a transient gstack-config failure, or a failed append: the handoff records `usage: false` when provenance is on, so finish sends no `skill_run` even if the tier is on by then. With provenance off, a start that wrote no `skill_start` saves no handoff | Expected when the tier is off, not a failure | `a failed skill-usage start does not invent a completion; provenance off writes no handoff` in tests/telemetry.test.ts |
 | Tier turned off before finish | Consumes the handoff and leaves that `skill_start` unpaired permanently. With provenance off, turning the tier off before finish leaves the handoff (`usage: true`) for a later start-less finish to adopt under the rule | Do not treat the unpaired start as a crash | `tier turned off before finish consumes the handoff and leaves that skill_start unpaired` in tests/telemetry.test.ts |
-| Same-root collision | Misattribution remains only within one harness session or with an unknown fingerprint. A distinct known session's earlier finish is refused. The unknown-fingerprint case is still current behavior: when the earlier-started run finishes first, its outcome lands on the later start's identity; when the later run finishes first, the row is correct and the earlier run has no row | Do not attribute that row's outcome to the start without other evidence when the fingerprint was unknown or shared | `same-root collision misattributes the earlier finish (current behavior)` in tests/telemetry-contract.test.ts; `a fingerprinted same-root collision refuses the earlier session and pairs the later one` in tests/telemetry.test.ts |
+| Same-root collision | Non-resumable misattribution remains within one harness session or with an unknown fingerprint; a distinct known session's earlier finish is refused. Resumable skills can also misattribute across different known sessions. When adoption is allowed and the earlier-started run finishes first, its outcome lands on the later start's identity; when the later run finishes first, the row is correct and the earlier run has no row | A join is not proof of attribution; resumable adoption deliberately crosses sessions | `same-root collision misattributes the earlier finish (current behavior)` in tests/telemetry-contract.test.ts; `a fingerprinted same-root collision refuses the earlier session and pairs the later one` and `a resumable skill adopts another session 30 days later` in tests/telemetry.test.ts |
 | Finish whose own start never ran | Adopts the same-root handoff only under [Handoff adoption](#handoff-adoption). An unknown fingerprint within 24 hours still joins while outcome and duration can belong to a different run | A join is not proof this finish's start wrote the handoff | `an unknown-fingerprint handoff within 24 hours is adopted and a join is not proof` in tests/telemetry.test.ts |
 | Finish from a different repository root | Writes nothing. Debug says `no handoff for this repository root`. The other root's handoff is untouched. A same-skill handoff already in the destination root is judged by the adoption rule | Do not search other roots to repair it | `a finish from a different repository root writes nothing` and `a cross-root finish into an occupied destination slot is judged by the rule` in tests/telemetry.test.ts |
 | Upstream logger exits 0 without writing | Its own tier read or a failed append: the wrapper records the completion as delivered and the `skill_start` stays unpaired | A delivered completion is not a `skill_run` row | untested |

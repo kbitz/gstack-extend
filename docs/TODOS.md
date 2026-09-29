@@ -21,7 +21,7 @@
 ### [plan-ceo-review:track=16A,defer=true] Collision-safe and idempotent run identity
 **What:** Two starts of one skill in one checkout must produce two correctly attributed rows, and repeating a finish (an explicit retry with the original IDs, or a retry after a logger timeout that already wrote) must not duplicate rows.
 **Why:** Today the later start replaces the handoff slot, so the earlier run's finish is recorded under the later run's identity and the later run has no row; a repeated explicit finish appends a second stage-runs row and a second skill_run.
-**Context:** Characterized as current behavior by the collision and explicit-retry tests in tests/telemetry-contract.test.ts; acceptance is those sequences producing exactly one correctly attributed row per run. Track 18B's handoff `harness` fingerprint already refuses a known different session's handoff for non-resumable skills, so the misattribution remains only within one harness session or with an unknown fingerprint; per-invocation identity can build on that field.
+**Context:** Characterized as current behavior by the collision and explicit-retry tests in tests/telemetry-contract.test.ts; acceptance is those sequences producing exactly one correctly attributed row per run. Track 18B's handoff `harness` fingerprint already refuses a known different session's handoff for non-resumable skills, so their misattribution remains within one harness session or with an unknown fingerprint. Resumable skills still accept different known sessions; per-invocation identity can build on that field.
 **Effort:** M
 **Priority:** P2
 **Depends on:** None

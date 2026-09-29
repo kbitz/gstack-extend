@@ -1663,7 +1663,12 @@ describe('gstack helper roots', () => {
       writeFileSync(join(hostile, name), `#!/bin/sh\n: > "${ran}"\necho community\n`);
       chmodSync(join(hostile, name), 0o755);
     }
-    expect(loggedHelpers({ ...claude.env, CLAUDE_CONFIG_DIR: 'rel-claude' }))
+    const relativeClaude = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...claude.env, ...DEBUG, CLAUDE_CONFIG_DIR: 'rel-claude' }, cwd: claude.home,
+      encoding: 'utf8', timeout: 10_000,
+    });
+    expect(relativeClaude.status).toBe(0);
+    expect(relativeClaude.stderr.match(/logger=(\S+) config=(\S+)/)?.slice(1))
       .toEqual([join(source, 'gstack-telemetry-log'), join(source, 'gstack-config')]);
     expect(existsSync(ran)).toBe(false);
 
@@ -1710,6 +1715,81 @@ describe('gstack helper roots', () => {
     expect(r.status).toBe(0);
     expect(existsSync(join(fix.home, 'relative-state'))).toBe(false);
     expect(handoffs(fix)).toHaveLength(1);
+  });
+
+  test('provenance opt-out uses the same state root as telemetry for relative overrides', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' };
+    const config = spawnSync(join(ROOT, 'bin/config'), ['set', 'provenance', 'false'], {
+      env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(config.status).toBe(0);
+    for (const command of ['start', 'finish']) {
+      expect(spawnSync(HELPER_BIN, [command, '--skill', 'extend:roadmap'], {
+        env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+      }).status).toBe(0);
+    }
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(existsSync(join(fix.home, 'relative-state'))).toBe(false);
+    expect(readFileSync(join(fix.home, '.gstack-extend/config'), 'utf8')).toContain('provenance=false');
+  });
+
+  test('other config keys preserve relative state roots used by quota', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' };
+    const config = spawnSync(join(ROOT, 'bin/config'), ['set', 'quota', 'off'], {
+      env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(config.status).toBe(0);
+    const consumer = spawnSync('python3', ['-I', '-c',
+      `import sys; sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))}); from quota.common import state_root, config_enabled; print(config_enabled(state_root(), 'quota'))`,
+    ], { env, cwd: fix.home, encoding: 'utf8', timeout: 10_000 });
+    expect(consumer.status).toBe(0);
+    expect(consumer.stdout.trim()).toBe('False');
+    expect(readFileSync(join(fix.home, 'relative-state/config'), 'utf8')).toContain('quota=off');
+    expect(existsSync(join(fix.home, '.gstack-extend/config'))).toBe(false);
+  });
+
+  test('missing-helper diagnostics quote searched paths containing newlines', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const root = join(fix.home, 'config\nroot');
+    const r = runHelper({ ...fix.env, ...DEBUG, CODEX_HOME: root }, ['start', '--skill', 'extend:roadmap']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toContain(root);
+    expect(r.stderr).toContain(JSON.stringify(join(root, 'skills/gstack/bin')));
+    expect(r.stderr.split('\n').filter(line => line.includes('gstack helper unresolvable:'))).toHaveLength(1);
+  });
+
+  test('a helper appearing during lookup never discards local provenance', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\noriginal = telemetry.resolve\nlookups = 0\ndef changing(name):\n    global lookups\n    if name == "gstack-config":\n        lookups += 1\n        if lookups == 1:\n            return None\n    return original(name)\ntelemetry.resolve = changing\ntelemetry.main([sys.argv[1], "--skill", "extend:roadmap"])\n`;
+    for (const command of ['start', 'finish']) {
+      const result = spawnSync('python3', ['-I', '-c', script, command], {
+        env: { ...fix.env, ...DEBUG }, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('gstack helper unresolvable: gstack-config');
+      expect(result.stderr).not.toContain('Traceback');
+    }
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('a logger resolved directly under slash finishes without losing handoff progress', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\noriginal = telemetry.os.path.realpath\nlogger = telemetry.resolve("gstack-telemetry-log")\ntelemetry.os.path.realpath = lambda path: "/gstack-telemetry-log" if path == logger else original(path)\ntelemetry.main(["finish", "--skill", "extend:roadmap"])\n`;
+    const result = spawnSync('python3', ['-I', '-c', script], {
+      env: fix.env, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('Traceback');
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readJsonl().filter(row => row.event_type === 'skill_run')).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
   });
 
   test('an unset GSTACK_DIR makes the logger see its real checkout; an explicit value is passed through', () => {
@@ -1973,6 +2053,45 @@ describe('handoff adoption', () => {
       expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
     }
     expect((readHandoff(fix).refusals as unknown[])).toHaveLength(10);
+  });
+
+  test('a failed refusal write preserves the handoff and still explains the refusal', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const file = handoffPath(fix);
+    const before = readFileSync(file, 'utf8');
+    // Inject the write error at save_state; chmod is ineffective for root test runners.
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\ndef fail(*args):\n    raise OSError("fixture refusal write denied")\ntelemetry.save_state = fail\ntelemetry.main(["finish", "--skill", "extend:roadmap"])\n`;
+    const refused = spawnSync('python3', ['-I', '-c', script], {
+      env: { ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(refused.status).toBe(0);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    expectNoExceptionSkip(refused.stderr);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(skillRuns(fix)).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('an existing malformed handoff keeps the generic diagnostic', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const file = handoffPath(fix);
+    for (const content of ['garbage{{', '[]', '"string"', '', '{}']) {
+      writeFileSync(file, content);
+      const r = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap']);
+      expect(r.status).toBe(0);
+      expect(refusalLines(r.stderr)).toHaveLength(1);
+      expect(r.stderr).not.toContain('no handoff for this repository root');
+      expect(r.stderr).not.toContain('root=');
+      expectNoExceptionSkip(r.stderr);
+      expect(fix.readLedger()).toHaveLength(0);
+      expect(skillRuns(fix)).toHaveLength(0);
+    }
   });
 
   test('a fingerprinted same-root collision refuses the earlier session and pairs the later one', () => {

@@ -181,6 +181,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // for the canonical-block drift assertions. The wide entries below over-select on
   // purpose: a missed dependency is worse than an extra ~40s run.
   'tests/telemetry.test.ts': [
+    'bin/config',
+    'bin/lib/quota/common.py',
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
     // bin/gstack-extend sources these at startup; the round-trip test runs its doctor subcommand.

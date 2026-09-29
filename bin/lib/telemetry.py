@@ -146,16 +146,19 @@ def resolve(name):
     return next((path for _label, path in helper_candidates(name) if executable(path)), None)
 
 
-def gstack_helper_problem():
+def gstack_helper_problem(resolved=None):
     """The stable 'gstack helper unresolvable:' text when a helper is missing, else None."""
-    missing = [helper for helper in ("gstack-telemetry-log", "gstack-config") if not resolve(helper)]
+    if resolved is None:
+        resolved = {helper: resolve(helper) for helper in ("gstack-telemetry-log", "gstack-config")}
+    missing = [helper for helper, path in resolved.items() if not path]
     if not missing:
         return None
     labels = []
     for label, _path in helper_candidates("gstack-telemetry-log"):
         if label not in labels:
             labels.append(label)
-    return "gstack helper unresolvable: " + ", ".join(missing) + "; searched " + ", ".join(labels)
+    searched = ", ".join(label if label == "PATH (absolute entries)" else quoted_path(label) for label in labels)
+    return "gstack helper unresolvable: " + ", ".join(missing) + "; searched " + searched
 
 
 def gstack_helper_warning(provenance_on):
@@ -354,7 +357,7 @@ def provenance_enabled(state_root):
 def usage_logger():
     """The completion logger when gstack's tier enables skill-usage rows, else None (explained in debug mode)."""
     logger, config = resolve("gstack-telemetry-log"), resolve("gstack-config")
-    problem = gstack_helper_problem()
+    problem = gstack_helper_problem({"gstack-telemetry-log": logger, "gstack-config": config})
     if problem:
         debug(problem, HELPER_FIX)
         return None
@@ -408,7 +411,7 @@ def delegate(logger, skill, sid, duration, values):
         env = None
         if not os.environ.get("GSTACK_DIR"):
             env = os.environ.copy()
-            env["GSTACK_DIR"] = str(Path(os.path.realpath(logger)).parents[1])
+            env["GSTACK_DIR"] = str(Path(os.path.realpath(logger)).parent.parent)
         result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 timeout=LOGGER_TIMEOUT_S, env=env)
     except (OSError, subprocess.SubprocessError) as error:
@@ -893,7 +896,11 @@ def main(args):
             return
     else:
         current, _names = harness_fingerprint()
-        kind, detail = consider_adoption(state, skill, int(time.time()), current)
+        if not state and os.path.lexists(state_file):
+            # read_json also returns {} for unreadable or malformed slots; only an absent slot gets the root hint.
+            kind, detail = "malformed", None
+        else:
+            kind, detail = consider_adoption(state, skill, int(time.time()), current)
         if kind != "adopt":
             if kind == "refuse" and state and detail != "no handoff for this repository root":
                 remember_refusal(state_file, state, detail)
