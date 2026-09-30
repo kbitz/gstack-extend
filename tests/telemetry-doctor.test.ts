@@ -1,6 +1,6 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PROTOCOL_LINE, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
@@ -57,9 +57,9 @@ describe('doctor telemetry', () => {
   });
   test('only resumable skills defer unmatched starts', () => {
     const fix = makeTelemetryFixture('community', 'stub');
-    seed(fix.home, ['pair-review', 'review-and-prep', 'ship-and-land'].map(name => row(name, name)));
+    seed(fix.home, ['pair-review', 'review-and-prep', 'full-review', 'ship-and-land'].map(name => row(name, name)));
     const report = JSON.parse(run(fix.env).stdout);
-    for (const name of ['pair-review', 'review-and-prep']) {
+    for (const name of ['pair-review', 'review-and-prep', 'full-review']) {
       expect(report.skills.find((s: any) => s.skill === name)).toMatchObject({
         deferred_finish: 1, unpaired_start: 0, denominator: 0, pairing_percent: null, status: 'insufficient evidence',
       });
@@ -464,4 +464,80 @@ describe('doctor degraded environments', () => {
     expect(r.stdout + r.stderr).not.toContain('PLANTED');
     expect(JSON.parse(r.stdout).skills).toHaveLength(EXPECTED_SETUP_SKILLS.length);
   }, 30_000);
+});
+
+describe('gstack helper warning', () => {
+  for (const initiallyMissing of [true, false]) {
+    test(`helper paths and warnings agree when config ${initiallyMissing ? 'appears' : 'disappears'} during a report`, () => {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const script = `import sys, json, importlib.util\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\nspec = importlib.util.spec_from_file_location("doctor", ${JSON.stringify(join(ROOT, 'bin/lib/telemetry-doctor.py'))})\ndoctor = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(doctor)\noriginal = telemetry.resolve\nlookups = 0\ndef changing(name):\n    global lookups\n    if name == "gstack-config":\n        lookups += 1\n        if (lookups == 1) == ${initiallyMissing ? 'True' : 'False'}:\n            return None\n    return original(name)\ntelemetry.resolve = changing\ndoctor.resolve = changing\nprint(json.dumps(doctor.report(30)))\n`;
+      const result = spawnSync('python3', ['-I', '-c', script], {
+        env: fix.env, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+      });
+      expect(result.status).toBe(0);
+      const report = JSON.parse(result.stdout);
+      expect(report.tier).toBe(initiallyMissing ? 'unavailable' : 'community');
+      expect(report.gstack_config).toBe(initiallyMissing ? null : join(fix.home, '.claude/skills/gstack/bin/gstack-config'));
+      expect(report.warnings.some((warning: string) => warning.includes('gstack helper unresolvable: gstack-config'))).toBe(initiallyMissing);
+      expect(report.gstack_logger).toBe(join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log'));
+    });
+  }
+
+  test('no helpers warns in both provenance states, with null paths and an unexpanded PATH', () => {
+    const absent = makeTelemetryFixture('community', 'absent');
+    const pathA = join(absent.home, 'path-a');
+    const pathB = join(absent.home, 'path-b');
+    mkdirSync(pathA);
+    mkdirSync(pathB);
+    const env = { ...absent.env, PATH: pathA + ':' + pathB + ':' + absent.env.PATH };
+    const report = JSON.parse(run(env).stdout);
+    const warning = report.warnings.join('\n');
+    expect(warning).toContain('gstack helper unresolvable:');
+    expect(warning).toContain('gstack-telemetry-log');
+    expect(warning).toContain('gstack-config');
+    expect(warning).toContain('provenance rows still record');
+    expect(warning).toContain('PATH (absolute entries)');
+    expect(warning).not.toContain(pathA);
+    expect(warning).not.toContain(pathB);
+    expect(warning).toContain('install gstack for this host');
+    expect(warning).toContain('rerun gstack-extend doctor telemetry');
+    expect(warning).toContain('See docs/telemetry.md');
+    expect(report.gstack_logger).toBeNull();
+    expect(report.gstack_config).toBeNull();
+    const text = run(env, []).stdout;
+    expect(text).toContain('gstack helper unresolvable:');
+    expect(text).toContain('rerun gstack-extend doctor telemetry');
+    expect(text).not.toContain(pathA);
+
+    const off = makeTelemetryFixture('community', 'absent');
+    mkdirSync(join(off.home, '.gstack-extend'));
+    writeFileSync(join(off.home, '.gstack-extend/config'), 'provenance=false\n');
+    expect(JSON.parse(run(off.env).stdout).warnings.join('\n')).toContain('provenance is off, so nothing records');
+  });
+
+  test('names only the missing helper, and a Codex-only install reads the real tier without a helper warning', () => {
+    const missing = makeTelemetryFixture('community', 'stub');
+    rmSync(join(missing.home, '.claude/skills/gstack/bin/gstack-config'));
+    const report = JSON.parse(run(missing.env).stdout);
+    const warning = report.warnings.join('\n');
+    expect(warning).toContain('gstack helper unresolvable: gstack-config;');
+    expect(warning).not.toContain('gstack-telemetry-log');
+    expect(report.gstack_config).toBeNull();
+    expect(report.gstack_logger).toBe(join(missing.home, '.claude/skills/gstack/bin/gstack-telemetry-log'));
+
+    const codex = makeTelemetryFixture('community', 'stub');
+    const source = join(codex.home, '.claude/skills/gstack/bin');
+    const codexBin = join(codex.home, '.codex/skills/gstack/bin');
+    mkdirSync(codexBin, { recursive: true });
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      copyFileSync(join(source, name), join(codexBin, name));
+      chmodSync(join(codexBin, name), 0o755);
+    }
+    rmSync(source, { recursive: true });
+    const codexReport = JSON.parse(run(codex.env).stdout);
+    expect(codexReport.tier).toBe('community');
+    expect(codexReport.warnings.join('\n')).not.toContain('gstack helper unresolvable:');
+    expect(codexReport.gstack_logger).toBe(join(codexBin, 'gstack-telemetry-log'));
+    expect(codexReport.gstack_config).toBe(join(codexBin, 'gstack-config'));
+  });
 });

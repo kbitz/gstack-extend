@@ -166,6 +166,118 @@ describe('uninstall', () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('Uninstall complete');
   });
+
+  test('removes the telemetry symlink we created along with the CLI link', () => {
+    const s = scope('uninstall-both');
+    runSetup(s);
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Removed gstack-extend CLI symlink');
+    expect(r.stdout).toContain('Removed gstack-extend-telemetry symlink');
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+    expect(existsSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(false);
+  });
+
+  test('refuses to remove a telemetry symlink that points elsewhere', () => {
+    const s = scope('uninstall-tel-foreign');
+    runSetup(s);
+    const foreign = join(s.localBin, 'gstack-extend-telemetry');
+    rmSync(foreign);
+    symlinkSync('/usr/bin/true', foreign);
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Skipped gstack-extend-telemetry symlink (points elsewhere');
+    expect(readlinkSync(foreign)).toBe('/usr/bin/true');
+  });
+
+  test('a missing telemetry symlink is a silent no-op', () => {
+    const s = scope('uninstall-tel-missing');
+    runSetup(s);
+    rmSync(join(s.localBin, 'gstack-extend-telemetry'));
+    const r = runSetup(s, ['--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('gstack-extend-telemetry symlink');
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+  });
+
+  test('--host codex --uninstall keeps both links and says how to remove them', () => {
+    const s = scope('uninstall-codex-keeps');
+    runSetup(s);
+    const r = runSetup(s, ['--host', 'codex', '--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
+    expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
+    expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+  });
+
+  for (const owned of ['gstack-extend', 'gstack-extend-telemetry']) {
+    for (const foreignKind of ['file', 'symlink']) {
+      test(`host uninstall hint names only its own ${owned} beside a foreign ${foreignKind}`, () => {
+        const s = scope(`uninstall-hint-${owned}-${foreignKind}`);
+        runSetup(s);
+        const foreignName = owned === 'gstack-extend' ? 'gstack-extend-telemetry' : 'gstack-extend';
+        const foreign = join(s.localBin, foreignName);
+        rmSync(foreign);
+        if (foreignKind === 'file') writeFileSync(foreign, 'user-managed executable\n');
+        else symlinkSync('/usr/bin/true', foreign);
+        const r = runSetup(s, ['--host', 'codex', '--uninstall']);
+        expect(r.exitCode).toBe(0);
+        expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
+          .toBe(`Kept ~/.local/bin/${owned} (shared by all hosts; rm ~/.local/bin/${owned})`);
+        if (foreignKind === 'file') expect(readFileSync(foreign, 'utf8')).toBe('user-managed executable\n');
+        else expect(readlinkSync(foreign)).toBe('/usr/bin/true');
+        expect(readlinkSync(join(s.localBin, owned))).toBe(join(ROOT, 'bin', owned));
+      });
+    }
+  }
+
+  for (const host of ['opencode', 'cursor'] as const) {
+    test(`--host ${host} --uninstall keeps both links and says how to remove them`, () => {
+      const s = scope(`uninstall-${host}-keeps`);
+      runSetup(s);
+      const r = runSetup(s, ['--host', host, '--uninstall']);
+      expect(r.exitCode).toBe(0);
+      expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
+      expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
+      expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+    });
+
+    test(`--host ${host} --uninstall keeps an owned telemetry link and names only that link`, () => {
+      const s = scope(`uninstall-${host}-telemetry-only`);
+      runSetup(s);
+      const cli = join(s.localBin, 'gstack-extend');
+      rmSync(cli);
+      symlinkSync('/usr/bin/true', cli);
+      const tel = join(s.localBin, 'gstack-extend-telemetry');
+      const r = runSetup(s, ['--host', host, '--uninstall']);
+      expect(r.exitCode).toBe(0);
+      expect(readlinkSync(tel)).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
+      expect(readlinkSync(cli)).toBe('/usr/bin/true');
+      expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
+        .toBe('Kept ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend-telemetry)');
+    });
+  }
+
+  test('--host codex --uninstall prints no Kept line when neither shared link is ours', () => {
+    const s = scope('uninstall-codex-foreign-links');
+    symlinkSync('/usr/bin/true', join(s.localBin, 'gstack-extend'));
+    symlinkSync('/usr/bin/true', join(s.localBin, 'gstack-extend-telemetry'));
+    const r = runSetup(s, ['--host', 'codex', '--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.includes('Kept')).toBe(false);
+    expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe('/usr/bin/true');
+    expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe('/usr/bin/true');
+  });
+
+  test('--host auto --uninstall removes the owned telemetry symlink', () => {
+    const s = scope('uninstall-auto-telemetry');
+    runSetup(s);
+    const r = runSetup(s, ['--host', 'auto', '--uninstall']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Removed gstack-extend-telemetry symlink');
+    expect(existsSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(false);
+    expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
+  });
 });
 
 function copyInstall(dest: string) {

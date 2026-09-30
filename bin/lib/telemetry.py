@@ -33,6 +33,14 @@ MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-teleme
 HARNESSES = ("claude", "codex", "grok", "cursor")
 OUTCOMES = ("success", "error", "abort", "unknown")
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
+# Bare skill names. Finish strips the extend: prefix before consulting this set.
+RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
+ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
+REFUSAL_CAP = 10
+# GROK_SESSION_ID counts only when GROK_AGENT=1, matching detect().
+SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
+HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
+              "or set GSTACK_DIR to a gstack checkout")
 
 
 def debug(problem, fix):
@@ -81,12 +89,152 @@ def which(name):
     return shutil.which(name, path=os.pathsep.join(entries)) if entries else None
 
 
+def state_root():
+    # A relative override is not a state directory: it would land in whatever cwd the skill ran from.
+    override = os.environ.get("GSTACK_EXTEND_STATE_DIR")
+    if override and os.path.isabs(override):
+        return Path(override)
+    return Path.home() / ".gstack-extend"
+
+
+def helper_candidates(name):
+    """Deduplicated (label, path) pairs for one gstack helper.
+
+    PATH outranks every home-anchored root. GSTACK_DIR is a fallback location, not an override.
+    CLAUDE_CONFIG_DIR and CODEX_HOME count only when absolute. A relative or empty CODEX_HOME drops
+    its own candidate; ~/.codex is still searched. Labels are display text: PATH is never expanded.
+    """
+    pairs, seen = [], set()
+
+    def add(label, path):
+        if label == "PATH (absolute entries)":
+            key = label
+        elif path:
+            key = os.path.normpath(str(Path(path).parent))
+        else:
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        pairs.append((label, path))
+
+    add("PATH (absolute entries)", which(name))
+    gstack_dir = os.environ.get("GSTACK_DIR")
+    if gstack_dir and os.path.isabs(gstack_dir):
+        directory = Path(gstack_dir) / "bin"
+        add(str(directory), str(directory / name))
+    claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
+    if claude_config and os.path.isabs(claude_config):
+        directory = Path(claude_config) / "skills/gstack/bin"
+        add(str(directory), str(directory / name))
+    directory = Path.home() / ".claude/skills/gstack/bin"
+    add(str(directory), str(directory / name))
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home and os.path.isabs(codex_home):
+        directory = Path(codex_home) / "skills/gstack/bin"
+        add(str(directory), str(directory / name))
+    directory = Path.home() / ".codex/skills/gstack/bin"
+    add(str(directory), str(directory / name))
+    directory = Path.home() / ".config/opencode/skills/gstack/bin"
+    add(str(directory), str(directory / name))
+    directory = Path.home() / ".cursor/skills/gstack/bin"
+    add(str(directory), str(directory / name))
+    return pairs
+
+
 def resolve(name):
-    candidates = [which(name)]
-    if os.environ.get("GSTACK_DIR"):
-        candidates.append(str(Path(os.environ["GSTACK_DIR"]) / "bin" / name))
-    candidates.append(str(Path.home() / ".claude/skills/gstack/bin" / name))
-    return next((p for p in candidates if executable(p)), None)
+    return next((path for _label, path in helper_candidates(name) if executable(path)), None)
+
+
+def gstack_helper_problem(resolved=None):
+    """The stable 'gstack helper unresolvable:' text when a helper is missing, else None."""
+    if resolved is None:
+        resolved = {helper: resolve(helper) for helper in ("gstack-telemetry-log", "gstack-config")}
+    missing = [helper for helper, path in resolved.items() if not path]
+    if not missing:
+        return None
+    labels = []
+    for label, _path in helper_candidates("gstack-telemetry-log"):
+        if label not in labels:
+            labels.append(label)
+    searched = ", ".join(label if label == "PATH (absolute entries)" else quoted_path(label) for label in labels)
+    return "gstack helper unresolvable: " + ", ".join(missing) + "; searched " + searched
+
+
+def gstack_helper_warning(provenance_on, resolved=None):
+    problem = gstack_helper_problem(resolved)
+    if problem is None:
+        return None
+    provenance = "provenance rows still record" if provenance_on else "provenance is off, so nothing records"
+    return (problem + "; " + provenance + ". Fix: " + HELPER_FIX
+            + ". rerun gstack-extend doctor telemetry. See docs/telemetry.md.")
+
+
+def harness_fingerprint():
+    """(hex digest or None, marker names that contributed). Values are hashed and never traced."""
+    pairs = []
+    for name in SESSION_MARKERS:
+        if name == "GROK_SESSION_ID" and os.environ.get("GROK_AGENT") != "1":
+            continue
+        value = os.environ.get(name)
+        if valid_session(value):
+            pairs.append([name, value])
+    pairs.sort(key=lambda item: item[0])
+    if not pairs:
+        return None, []
+    digest = hashlib.sha256(json.dumps(pairs, separators=(",", ":")).encode()).hexdigest()
+    return digest, [item[0] for item in pairs]
+
+
+def quoted_path(value):
+    return json.dumps(value, ensure_ascii=True)
+
+
+def adoption_problem(reason, slot_root, state_file):
+    return ("missing or malformed start/session state (" + reason
+            + "; root=" + quoted_path(slot_root)
+            + "; handoff=" + quoted_path(str(state_file)) + ")")
+
+
+def consider_adoption(state, skill, now, current):
+    """('adopt', start) or ('malformed', None) or ('refuse', reason).
+
+    Start is validated first. A non-string harness counts as an unknown fingerprint.
+    A future start counts as age 0. Resumable skills are not age-bounded.
+    """
+    if not state:
+        return "refuse", "no handoff for this repository root"
+    start = integer(state.get("start"))
+    if start is None:
+        return "malformed", None
+    if skill.removeprefix("extend:") in RESUMABLE:
+        return "adopt", start
+    stored = state.get("harness")
+    if not isinstance(stored, str) or not stored:
+        stored = None
+    if stored is not None and current is not None:
+        if stored == current:
+            return "adopt", start
+        return "refuse", "handoff from another session"
+    age = 0 if start > now else now - start
+    if age <= ADOPTION_BOUND_S:
+        return "adopt", start
+    return "refuse", f"handoff too old; age={age}; bound={ADOPTION_BOUND_S}"
+
+
+def remember_refusal(state_file, state, reason):
+    # A refused handoff stays, with a capped record, so a later finish can still adopt or be diagnosed.
+    prior = state.get("refusals")
+    entries = [item for item in prior if isinstance(item, dict)] if isinstance(prior, list) else []
+    stored = "handoff too old" if isinstance(reason, str) and reason.startswith("handoff too old") else reason
+    entries.append({"reason": stored, "at": int(time.time())})
+    del entries[:-REFUSAL_CAP]
+    payload = dict(state)
+    payload["refusals"] = entries
+    try:
+        save_state(state_file, payload)
+    except OSError:
+        pass
 
 
 def compatible_wrapper(path):
@@ -209,8 +357,9 @@ def provenance_enabled(state_root):
 def usage_logger():
     """The completion logger when gstack's tier enables skill-usage rows, else None (explained in debug mode)."""
     logger, config = resolve("gstack-telemetry-log"), resolve("gstack-config")
-    if not logger or not config:
-        debug("gstack absent or gstack-config unavailable", "run setup in your gstack checkout")
+    problem = gstack_helper_problem({"gstack-telemetry-log": logger, "gstack-config": config})
+    if problem:
+        debug(problem, HELPER_FIX)
         return None
     try:
         result = subprocess.run([config, "get", "telemetry"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -257,7 +406,14 @@ def delegate(logger, skill, sid, duration, values):
     try:
         # DEVNULL is load-bearing: upstream backgrounds its network sync with inherited stdio, so capturing
         # the output here would make finish wait on that sync until the timeout.
-        result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=LOGGER_TIMEOUT_S)
+        # An unset GSTACK_DIR would make a runtime-root logger report its own directory as the checkout.
+        # Point it at the real gstack root (the logger's grandparent) unless the caller already set one.
+        env = None
+        if not os.environ.get("GSTACK_DIR"):
+            env = os.environ.copy()
+            env["GSTACK_DIR"] = str(Path(os.path.realpath(logger)).parent.parent)
+        result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=LOGGER_TIMEOUT_S, env=env)
     except (OSError, subprocess.SubprocessError) as error:
         debug(f"gstack-telemetry-log failed ({type(error).__name__}: {error})", "run gstack-extend doctor telemetry")
         return False
@@ -634,7 +790,11 @@ def main(args):
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
-        print("  Missing/malformed start and session values fall back to the repository + skill handoff.")
+        print("  Missing/malformed start and session values fall back to this repository root's skill handoff.")
+        print("  Adoption: resumable skills (pair-review, review-and-prep, full-review) adopt at any age;")
+        print("  a non-resumable skill adopts the same harness session at any age, refuses a different known session,")
+        print("  and adopts an unknown fingerprint only within 24 hours. A finish never reads another root's handoff.")
+        print("  Explicit --session-id is never age-bounded; --start alone does not bypass adoption.")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
         return
@@ -660,8 +820,8 @@ def main(args):
     if not re.fullmatch(r"extend:[a-z0-9-]+", skill):
         debug("invalid --skill (expected extend:<kebab-name>)", 'pass --skill "extend:roadmap"')
         return
-    state_root = Path(os.environ.get("GSTACK_EXTEND_STATE_DIR") or Path.home() / ".gstack-extend")
-    provenance = provenance_enabled(state_root)
+    extend_state = state_root()
+    provenance = provenance_enabled(extend_state)
     # Two independent outputs: gstack's tier gates skill-usage rows (which gstack may upload); the provenance switch
     # gates the local-only stage-runs row. Either one needs the start/finish handoff.
     logger = usage_logger()
@@ -670,15 +830,16 @@ def main(args):
         logger = None
     if not logger and not provenance and not retry_usage:
         return
-    ledger = state_root / "analytics/stage-runs.jsonl"
+    ledger = extend_state / "analytics/stage-runs.jsonl"
     trace(f"provenance={'on sink=' + str(ledger) if provenance else 'off'}")
     root = capture(["git", "rev-parse", "--show-toplevel"])
     # Outside git use cwd for isolation, while the row honestly says repo:unknown.
-    key = hashlib.sha256(json.dumps([root or str(Path.cwd()), skill]).encode()).hexdigest()
-    state_file = state_root / "telemetry" / (key + ".json")
+    slot_root = root or str(Path.cwd())
+    key = hashlib.sha256(json.dumps([slot_root, skill]).encode()).hexdigest()
+    state_file = extend_state / "telemetry" / (key + ".json")
     # One lock per repository+skill so a finish cannot append twice or replace a newer start.
     try:
-        lock_dir = state_root / "telemetry-locks"
+        lock_dir = extend_state / "telemetry-locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         held_lock = os.open(lock_dir / (key + ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         fcntl.flock(held_lock, fcntl.LOCK_EX)
@@ -707,26 +868,73 @@ def main(args):
         wrote_usage = bool(logger and append_row(sink_path(), row, "sink"))
         if not wrote_usage and not provenance:
             return
+        fingerprint, marker_names = harness_fingerprint()
+        trace("harness markers: " + (", ".join(marker_names) if marker_names else "none"))
         try:
-            save_state(state_file, dict(session_id=sid, start=str(now), usage=wrote_usage))
+            # harness is a session-fingerprint hash, not a harness name.
+            save_state(state_file, dict(session_id=sid, start=str(now), usage=wrote_usage,
+                                        skill=skill, root=slot_root, harness=fingerprint))
         except OSError as error:
             debug(f"state handoff unwritable at {state_file}: {error.strerror}",
                   "repair GSTACK_EXTEND_STATE_DIR permissions or supply explicit --start and --session-id")
         print(f"GE_TELEMETRY: session={sid} start={now}")
         return
-    sid = values.get("--session-id")
-    if not valid_session(sid):
-        sid = state.get("session_id")
-    start = integer(values.get("--start"))
+    explicit_sid = values.get("--session-id")
+    explicit_start = integer(values.get("--start"))
     duration = integer(values.get("--duration")) if legacy else None
-    # A valid legacy duration already supplies the time half of the handoff.
-    if start is None and duration is None and state.get("session_id") == sid:
-        # Only the handoff of the SAME session may supply the start; another session's would misdate this one.
-        start = integer(state.get("start"))
-    if not valid_session(sid) or (start is None and duration is None):
-        debug("missing or malformed start/session state",
-              "run telemetry start first, or supply valid --start and --session-id")
-        return
+    # A valid explicit session id keeps today's behavior and is never age-bounded.
+    # --start alone does not bypass adoption: a refusable handoff is still refused.
+    if valid_session(explicit_sid):
+        sid = explicit_sid
+        start = explicit_start
+        if start is None and duration is None and state.get("session_id") == sid:
+            # Only the handoff of the SAME session may supply the start; another session's would misdate this one.
+            start = integer(state.get("start"))
+        if start is None and duration is None:
+            debug("missing or malformed start/session state",
+                  "run telemetry start first, or supply valid --start and --session-id")
+            return
+    else:
+        current, _names = harness_fingerprint()
+        if not state and os.path.lexists(state_file):
+            # read_json also returns {} for unreadable or malformed slots; only an absent slot gets the root hint.
+            kind, detail = "malformed", None
+        else:
+            kind, detail = consider_adoption(state, skill, int(time.time()), current)
+        if kind != "adopt":
+            if kind == "refuse" and state and detail != "no handoff for this repository root":
+                remember_refusal(state_file, state, detail)
+            if kind == "refuse":
+                fix = {
+                    "no handoff for this repository root":
+                        "start never ran in this root, the handoff was already consumed, this is the second finish "
+                        "of a same-root collision, or start ran in another root; finish from the repository root "
+                        "where start ran, or pass --session-id and --start from the GE_TELEMETRY: session=… start=… line",
+                    "handoff from another session":
+                        "finish in the harness session that ran start, or pass --session-id and --start from the "
+                        "GE_TELEMETRY: session=… start=… line",
+                }.get(detail)
+                if fix is None and isinstance(detail, str) and detail.startswith("handoff too old"):
+                    fix = ("run start again for a new run, or pass --session-id and --start from the "
+                           "GE_TELEMETRY: session=… start=… line")
+                if fix is None:
+                    debug("missing or malformed start/session state",
+                          "run telemetry start first, or supply valid --start and --session-id")
+                else:
+                    debug(adoption_problem(detail, slot_root, state_file), fix)
+            else:
+                debug("missing or malformed start/session state",
+                      "run telemetry start first, or supply valid --start and --session-id")
+            return
+        sid = state.get("session_id")
+        start = explicit_start
+        # A legacy duration already supplies the time half; otherwise the adopted handoff's start does.
+        if start is None and duration is None:
+            start = detail
+        if not valid_session(sid) or (start is None and duration is None):
+            debug("missing or malformed start/session state",
+                  "run telemetry start first, or supply valid --start and --session-id")
+            return
     if start is not None:
         # Session wall-clock including human wait time, NOT model/token spend.
         # Upstream nulls durations above 86400 seconds.
