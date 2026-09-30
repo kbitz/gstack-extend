@@ -79,6 +79,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 - **Telemetry:** `gstack-extend doctor telemetry` checks local skill-run records.
   Optional usage telemetry follows gstack's settings; local execution provenance
   is on by default and never uploaded. [Configuration and data contracts](docs/telemetry.md).
+- **Merge gate (shadow-only):** `~/.claude/skills/gstack-extend/bin/merge-gate check --base <ref>`
+  reports whether a change would merge, and why. It never merges, pushes, or updates
+  refs, and it is not on PATH. [Usage and verdict contract](docs/merge-gate.md).
 
 ## Development
 
