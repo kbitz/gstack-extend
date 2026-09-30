@@ -62,3 +62,6 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - Track 15A — _shipped (v0.24.3.0): SHARED:conductor-visibility-head lock in four skills, exact-set advisory/fail section-list drift test, shared `parseSetupSkills` helper with explicit SETUP/PROTOCOL/PREAMBLE/CONDUCTOR cohorts (#94)_
 - Track 15B — _shipped (v0.24.5.0 → v0.24.6.0): `bin/lib/run-migrations.sh` version-windowed runner + applied/failed ledger + MIGRATION_WARN in /gstack-extend-upgrade (#96); hop-from persistence and non-semver failed-ledger retry (#98)_
 - _Tracks 15C, 15D, 15E never shipped under this number; re-packed 2026-09-24 as 16F, 18A, 16E. The same regen moved earlier Current Plan IDs: 16A→17C (trim pair-review), 16B→17D (trim full-review), 16C→17E (trim review-apparatus), 16D→17F (trim test-plan), 16E→19A (layout-scaffold extract), 17A→19B (skill template)._
+
+### Track 18F: Lock the frontmatter description cap ✓ Shipped (v0.32.5.0)
+- Track 18F — _shipped (v0.32.5.0): a shared test helper parses skill frontmatter; compliance tests cover the 1024 UTF-16-unit description limit, including parsing and boundary cases._

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.5.0] - 2026-09-29
+
+### Changed
+
+- The compliance suite now catches skill descriptions that exceed the host's 1024 UTF-16-unit limit, including boundary cases parsed from frontmatter.
+
 ## [0.32.4.0] - 2026-09-29
 
 ### Changed
