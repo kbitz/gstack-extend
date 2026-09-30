@@ -17,165 +17,153 @@ _(no Tracks currently mid-flight)_
 
 ## Current Plan
 
-### Group 16: Preamble Hardening ∥ Review Independence
+_tombstone: 17, 19, 20_
+
+### Group 22: Row Versioning ∥ Roadmap Closure ∥ Scaffold Helper ∥ Full-Review Fixes ∥ Greptile Lifecycle Core ∥ Setup Safety
 
 _Depends on: none_
 
 Packer layer 0.
 
-##### Track 16A: Harden the upgrade preambles + move test cleanup to `afterAll`
-_2 tasks . ~900 LOC incl. tests . medium risk . [5 preamble skills + bin/update-check + 7 test files + README]_
-_touches: skills/pair-review.md, skills/full-review.md, skills/roadmap.md, skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, tests/skill-protocols.test.ts, tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, bin/update-check, tests/update.test.ts, tests/setup-hosts.test.ts, tests/helpers/extend-root.ts (new), README.md, setup, docs/telemetry.md, skills/implement.md, skills/review-and-prep.md, tests/telemetry.test.ts, bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, tests/helpers/touchfiles.ts_
-_out: 18A, 18D, 18C, 18E_
-_produces: upgrade preambles that resolve only an absolute, verified extend root; test temp dirs actually cleaned under bun test_
-- **Harden the upgrade preambles** -- four preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. `gstack-extend-init` is the fifth preamble: it uses the same relative `.extend-root` probe, then execs `bin/gstack-extend` rather than `update-check`. Resolve all five the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~300 lines._ (L)
-- **`afterAll` cleanup** -- `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did). _Source: TODOS `[ship]` telemetry coverage follow-ups (5)._ _tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, ~30 lines._ (S)
+##### Track 22A: Version stage-runs rows and publish their schema
+_2 tasks . ~150 LOC incl. tests . low risk . [telemetry.py + schema file + contract tests + doc]_
+_touches: bin/lib/telemetry.py, docs/telemetry.md, docs/stage-runs.schema.json (new), tests/telemetry-contract.test.ts, tests/telemetry.test.ts_
+_out: 24A_
+_produces: every stage-runs row names its schema version, the gstack-extend release that wrote it, and whether agent, model and effort came from flags or detection; a published schema readers can validate against_
+- **Version and source-mark every row** -- add a schema version and a producer version to each `stage-runs.jsonl` row, and record whether `agent`/`model`/`effort` came from flags or from detection. Give the `route` values written inline in `route_for` a named constant. `docs/telemetry.md` states "Rows carry no schema or producer version", and its observed-coverage record counts 8 of 14 rows without `route` and `entrypoint_raw`, so a reader cannot tell the writer release from key presence. _Source: TODOS `[plan-ceo-review:track=16A,defer=true]`, P1._ _bin/lib/telemetry.py, tests/telemetry.test.ts, ~70 lines._ (S)
+- **Publish the schema** -- one machine-readable schema for the row, replacing the per-field and per-value version notes in `docs/telemetry.md`; the contract test asserts an emitted row validates against it. Rows written before this Track stay valid as "version absent". _docs/stage-runs.schema.json (new), docs/telemetry.md, tests/telemetry-contract.test.ts, ~80 lines._ (S)
 
-##### Track 16B: Re-scope review independence for the Cursor harness
-_1 task . ~100 lines . low risk . [design doc]_
-_touches: docs/designs/review-independence.md (new)_
-_produces: a measured voice composition for the current Cursor review route and a go/no-go on a fix, with acceptance defined on recorded execution provenance_
-- **Probe and document** -- the measured Grok Build composition (Grok structured, Grok adversarial, Astra author, no Claude) is historical; Grok now runs through Cursor. Probe the Cursor route in use and document the actual voice composition. Acceptance for any fix: every review carries at least one voice from a vendor that neither wrote the code nor ran the primary review, provable from recorded execution provenance rather than assignment. If a fix is needed, file it to TODOS with the measured shape. _Source: TODOS `[manual]` P0 re-scope._ _docs/designs/review-independence.md (new), ~100 lines._ (M)
+##### Track 22B: Reconcile shipped-Track closure with PACKING
+_1 task . ~80 LOC . low risk . [roadmap skill prose + archived spec + packing check]_
+_touches: skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts_
+_out: 24B_
+_produces: one written rule for what happens to a shipped Track before its Group lands, and who records it, that the lifecycle prose and the PACKING check both follow_
+- **Pick one rule and make both sides say it** -- the skill says a Group with shipped Tracks stays in `## In Progress` with `✓` markers until it lands ("stay co-located"); PACKING packs every unshipped Track and requires each written Group to equal a bin, so marking one Track shipped moves the bins under its siblings. Nothing says who records a shipped Track at land time. Measured at the 2026-09-30 regen: eleven Tracks merged in PRs #109–#121 were still listed as unshipped; the 2026-09-26 re-pack (#115) relabeled four of them, three after they had shipped; PR #122 wrote its Track into `docs/roadmap-shipped.md` as a lone `### Track` heading outside any Group. Default: drop the co-location prose (skill + archived spec), state that a shipped Track leaves the plan alone and the rest of its Group recycles, and name the recorder (shipping session or next regen) and the archive line for a Track whose Group has not landed. Alternative: exempt In Progress Groups from PACKING and pin their idle Tracks (stale partition until the Group lands). Either way, the skill's "Hold — trivial closures" option must describe something reachable. _Source: TODOS `[manual]`, found 2026-09-24 closing Group 15; evidence re-measured at 2b86716._ _skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts, ~80 lines._ (M)
 
-### Group 17: Init Polish ∥ Merge Gate ∥ Contract Revalidation
+##### Track 22C: Layout Scaffolding executable helper
+_1 task . ~500 LOC incl. tests . medium risk . [new bin + TS module + tests]_
+_touches: bin/layout-scaffold (new), src/layout-scaffold/ (new), tests/layout-scaffold.test.ts (new), tests/helpers/touchfiles.ts_
+_out: 24B, 24C_
+_produces: a command that plans, preflights and applies Layout Scaffolding under one audited root, with every refusal reproduced by a test_
+- **Helper with the preflight as code** -- implement the procedure `skills/roadmap.md` states in prose under "Execution (apply path)": audited-root binding, preflight steps 1–5, the refusal format, named external-target authorization, scaffold, and per-item moves. Shape: a bin shim over a TS module, like `bin/merge-gate`. The resolver the prose already requires is Bun `node:fs`, so the `bin/lib/layout-scaffold.sh` named on the 2026-09-24 card no longer fits. Tests reproduce each refusal plus the five cases the prose leaves "to the shared helper": a dangling-link move source, control characters in operands, case-insensitive volumes, authorization text relayed by another agent, and a repository `bunfig.toml`. Register the bin in `MANUAL_TOUCHFILES`. Out of scope: editing the skill or `bin/gstack-extend` (Track 24B). _Source: prior Track 19A; `skills/roadmap.md` "Left to the shared helper"._ _bin/layout-scaffold (new), src/layout-scaffold/ (new), tests/layout-scaffold.test.ts (new), tests/helpers/touchfiles.ts, ~500 lines._ (L)
 
-_Depends on: Group 16_
+##### Track 22D: `/full-review` run-state and template fixes
+_4 tasks . ~120 LOC . low risk . [full-review skill + two drift-lock suites]_
+_touches: skills/full-review.md, tests/skill-protocols.test.ts, tests/audit-compliance.test.ts_
+_out: 24C_
+_produces: every /full-review run ends with a finished session, a report and a status; its archive and checkpoint blocks resolve their own paths; its tag template cannot emit a malformed tag_
+- **Finish skip-path runs** -- when the TODOS-writing step is skipped (every agent returned `NO_FINDINGS`, or nothing was approved in triage), mark the session complete in `session.yaml`, write `report.md` with its GSTACK REVIEW REPORT, and give all-rejected and one-agent-failed runs a Completion Status row. Today those runs leave `session.yaml` at `clusters_complete` or `triage_complete`, so the next run offers to resume a finished session, and "They remain in the report" refers to a report that was never written. Settle in the same change: the verdict mapping that marks any agent failure BLOCKED, persisting `edge_case_dropped` in `session.yaml`, and the zero-findings branch keying only on `NO_FINDINGS`. _Source: TODOS `[plan-ceo-review:track=18C,defer=true]`, P2._ _skills/full-review.md, ~50 lines._ (S)
+- **Resolve `SESSION_DIR` in the archive and checkpoint blocks** -- the Active Session Guard archive block calls `session_archive_dir`, and the scoping step's `mkdir -p "$SESSION_DIR"` runs, without the guarded Path Resolution setup the other state-touching blocks use. Give both one guarded setup and update the `L7` guard count (`expect(guards).toBe(4)`) in the same change. _Source: TODOS `[plan-ceo-review:track=18C,defer=true]`, P3._ _skills/full-review.md, tests/skill-protocols.test.ts, ~25 lines._ (S)
+- **Inline the tag-value rule** -- add to the TODOS entry template: omit `files=` when a path contains `[`, `]`, `,` or `;`, and join several paths with `|`. `app/[id]/page.tsx` otherwise becomes a tag `TODO_FORMAT` rejects. The `/pair-review` half is Track 23A. _Source: TODOS `[plan-eng-review:track=18C,defer=true]`, P2._ _skills/full-review.md, ~5 lines._ (S)
+- **Drift-lock severity and field vocabulary** -- a test fails when `skills/full-review.md` uses a severity name or finding field that `docs/source-tag-contract.md` does not define, and when the three agent prompts' shared head and output-contract tail stop being byte-identical. _Source: TODOS `[plan-ceo-review:track=18C,defer=true]`, P3._ _tests/audit-compliance.test.ts, ~40 lines._ (S)
+
+##### Track 22E: Greptile lifecycle decision core with scenario tests
+_1 task . ~500 LOC incl. tests . medium risk . [new TS module + tests]_
+_touches: src/greptile-lifecycle/ (new), tests/greptile-lifecycle.test.ts (new)_
+_out: 24C_
+_produces: a pure function from recorded PR, run and receipt state to the next allowed action, with each exit `/review-and-prep` documents pinned by a scenario test_
+- **Decision core** -- `/review-and-prep`'s Greptile-once and pause/resume rules have had three prose hardening passes (PRs #101, #102, #120), and drift-locks prove the wording exists, not that an agent follows it. Encode the lifecycle as a function. Input: the recorded state (PR draft or ready, run history, trigger and receipt markers, reviewed SHA against HEAD, the repository's Greptile configuration). Output: one action (trigger, wait, ask with named options, continue, ready-eligible) and its reason. No network, no triggering, no GitHub writes. Scenario tests use recorded histories: an ambiguous or accepted-but-invisible submission, a crash between reservation and trigger, concurrent sessions on both trigger transports, a late run after the fallback, rewritten history on a shallow clone, and an older receipt. Out of scope: editing either skill (Track 24C); an LLM eval harness. _Source: TODOS `[plan-ceo-review:track=18A,defer=true]` "Behavioral verification", P2._ _src/greptile-lifecycle/ (new), tests/greptile-lifecycle.test.ts (new), ~500 lines._ (L)
+
+##### Track 22F: Setup host-safety follow-ups
+_4 tasks . ~220 LOC incl. tests . medium risk . [setup + update-run + installer tests + install doc]_
+_touches: setup, bin/update-run, tests/setup-hosts.test.ts, tests/update.test.ts, docs/installation.md_
+_produces: a Codex or OpenCode pass never rewrites another host's skills directory, an upgrade reports hosts it skipped, generated skill bodies never embed an unquoted HOME, and the last single-host uninstall removes links nothing else uses_
+- **Keep Codex and OpenCode passes out of another host's skills directory** -- setup skips Cursor when `~/.cursor/skills` is another host's directory (`same_skills_dir`) and has no such check for Codex or OpenCode. With `~/.codex/skills` symlinked to `~/.claude/skills`, `--host auto` turns the Claude symlinks into copies and overwrites a customized `SKILL.md`, and `--host codex --uninstall` removes the Claude install. Skipping them the Cursor way would strand existing shared-directory users with copies the Claude pass never refreshes; the migration is a decision for /autoplan. _Source: TODOS `[review]`, PR #113 adversarial pass, P3._ _setup, tests/setup-hosts.test.ts, ~80 lines._ (S)
+- **Report skipped hosts through update-run** -- `bin/update-run` prints `UPGRADE_OK` when `setup --host auto` skipped a host; the warning goes only to stderr, so that host's copies stay stale behind a reported success. Emit a machine-readable skipped-hosts line from setup and forward it. _Source: TODOS `[review]`, PR #113 adversarial pass, P3._ _setup, bin/update-run, tests/update.test.ts, ~50 lines._ (S)
+- **Stop injecting an unquoted HOME into generated skill bodies** -- `rewrite_skill_body` seds every `~/.claude/skills/<name>` into a literal host path, so a HOME with spaces or shell metacharacters changes how the generated bash parses. No skill contains that literal today (0 matches across `skills/*.md`), so removing the rewrite may be enough. _Source: TODOS `[plan-ceo-review:track=16D,defer=true]`, P3._ _setup, tests/setup-hosts.test.ts, ~40 lines._ (S)
+- **Remove shared links on the last host-specific uninstall** -- `--host codex|opencode|cursor --uninstall` keeps `~/.local/bin/gstack-extend` and `gstack-extend-telemetry` and prints a `Kept … rm` hint. Remove them when no host install from this checkout remains, judged from the four hosts' `.extend-root` pointers. _Source: TODOS `[plan-ceo-review:track=18B,defer=true]`, P3._ _setup, tests/setup-hosts.test.ts, docs/installation.md, ~50 lines._ (S)
+
+### Group 23: Pair-Review Routing
+
+_Depends on: none_
+
+Packer layer 0. A seventh disjoint Track; Group 22 is at the fill cap.
+
+##### Track 23A: `/pair-review` resume routing + tag-value rule
+_2 tasks . ~40 LOC . low risk . [pair-review skill file]_
+_touches: skills/pair-review.md_
+_produces: /pair-review sends a paused preparation back to `/review-and-prep resume`, and its tagged TODO entries cannot carry a malformed `files=` value_
+- **Route to `/review-and-prep resume` when a PAUSED receipt exists** -- "Step 3: Offer next steps" recommends `/ship` from review-log state alone. Detect a `review-and-prep:paused:` comment, or a PAUSED `## Review and prep` body receipt, on the branch's PR and recommend `/review-and-prep resume` instead. Out of scope: a new drift-lock (`tests/skill-protocols.test.ts` belongs to Track 22D). _Source: TODOS `[plan-ceo-review:track=18A,defer=true]`, P2._ _skills/pair-review.md, ~30 lines._ (S)
+- **Inline the tag-value rule** -- where the skill writes tagged entries "per `docs/source-tag-contract.md`", state the rule itself: omit `files=` when a path contains `[`, `]`, `,` or `;`, and join several paths with `|`. The contract file does not exist in consumer repos. _Source: TODOS `[plan-eng-review:track=18C,defer=true]`, P2._ _skills/pair-review.md, ~10 lines._ (S)
+
+### Group 24: Cursor Reader ∥ Scaffold Wiring ∥ Lifecycle Wiring
+
+_Depends on: Group 22_
 
 Packer layer 1.
 
-##### Track 17A: 12A init-surface polish + test coverage
-_2 tasks . ~200 LOC . low risk . [init bin + setup + init tests]_
-_touches: tests/init-bin.test.ts, tests/init-registry.test.ts, tests/init-templates.test.ts, tests/setup-init-wire.test.ts, tests/helpers/init-scope.ts (new), bin/gstack-extend, setup_
-_out: 18B, 19A_
-_produces: init test coverage, DRY CANONICAL_FILES, and a fail-soft setup self-register guard_
-- **Init test coverage + mkScope helper** -- (a) audit-failure path (PATH-shim non-zero `roadmap-audit` → exit 1 + "audit FAILED" + "--migrate" + files on disk); (b) 5–10 parallel `registry_upsert` stay valid JSON; (c) `validate_name` edges (`..`, `.`, leading-dash, empty, Unicode); (d) `lang_detect` precedence; (e) setup self-register fail-soft on corrupt `projects.json`; (g) extract `mkScope` (defined only in `tests/init-bin.test.ts` today) to `tests/helpers/init-scope.ts` so the registry and wire tests share it. _tests/init-*.test.ts, tests/helpers/init-scope.ts (new), ~120 lines._ (M)
-- **Init code polish** -- (f) `render_all` carries its own file→template map beside `CANONICAL_FILES`; derive one from the other; (h) `env -u GSTACK_EXTEND_STATE_DIR` guard on setup self-register; (j) trim fresh-init audit output to non-pass sections. _bin/gstack-extend, setup, ~80 lines._ (M)
+##### Track 24A: Read the Conductor store shape in `cursor_turns()`
+_1 task . ~120 LOC incl. tests . low risk . [telemetry.py + test + doc]_
+_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, docs/telemetry.md_
+_blocked-by: Track 22A_
+_out: 25A_
+_read-first: 22A, docs/designs/review-independence.md_
+_produces: a Conductor-native Cursor run records its model and effort in stage-runs instead of null_
+- **Fix the store reader** -- `cursor_turns()` returns no turn for a Conductor-native Cursor run. `parse_ts` accepts only ISO strings, so integer `updatedAt`, `startedAt` and `endedAt` parse to None; `model.params` must be a dict, and the store writes a list of `{id,value}`. With every time None, each run for a cwd passes the window test, so a native route is detected only when exactly one run exists for that cwd. Accept epoch-millisecond times (`timestamp()` in `bin/lib/quota/common.py` already does) and read `model.id` without requiring dict params. Add a test in the SDK store shape. Then correct the "Cursor and quota" section of `docs/telemetry.md`, which documents the null as the reader's current limit. _Source: TODOS `[investigate]`, measured 2026-09-25 (design doc evidence E4), P2; premise re-checked at 2b86716._ _bin/lib/telemetry.py, tests/telemetry.test.ts, docs/telemetry.md, ~120 lines._ (M)
 
-##### Track 17B: Shadow merge gate + complexity budget
-_1 task . ~600 LOC . medium risk . [new CLI + lib + tests + doc]_
-_touches: bin/merge-gate (new), src/merge-gate/ (new), tests/merge-gate.test.ts (new), tests/helpers/touchfiles.ts, docs/merge-gate.md (new)_
-_out: 19B_
-_produces: `bin/merge-gate` answers "would merge: yes/no, and why" for any PR in shadow mode only, with versioned verdicts and preserved decision-time evidence_
-- **Shadow-mode merge gate** -- standalone `bin/merge-gate` that reports would-merge yes/no with raw reasons, including whether the PR exceeds a complexity budget (net lines, new files, new dependencies, new public API). Acceptance: versioned verdicts, decision-time evidence preserved so later backtests cannot use hindsight, and a demonstrable inability to perform a merge. A consumer's backtest against its own defect set is downstream, not in scope. Register the bin in `MANUAL_TOUCHFILES`. _Source: TODOS `[manual]` P0 shadow merge gate._ _bin/merge-gate (new), src/merge-gate/ (new), tests/merge-gate.test.ts (new), tests/helpers/touchfiles.ts, docs/merge-gate.md (new), ~600 lines._ (L)
+##### Track 24B: Route Layout Scaffolding and init through the helper
+_2 tasks . ~120 LOC . medium risk . [roadmap skill + init bin + init test]_
+_touches: skills/roadmap.md, bin/gstack-extend, tests/init-bin.test.ts_
+_blocked-by: Track 22C, Track 22B_
+_read-first: 22C, 22B_
+_produces: /roadmap and `gstack-extend init` scaffold through one helper; the skill no longer carries the preflight as prose_
+- **Replace the prose preflight with the helper call** -- the Layout Scaffolding section keeps trigger detection, plan presentation and the single confirmation, and calls the helper for preflight, apply and the summary. Delete the "Execution (apply path)" procedure the helper replaces. _skills/roadmap.md, ~60 lines (del)._ (S)
+- **Init uses the same helper** -- replace the inline mkdir and refusal in `scaffold_layout` with a call to the helper. _bin/gstack-extend, tests/init-bin.test.ts, ~60 lines._ (S)
 
-##### Track 17C: Revalidate the telemetry and execution-provenance contracts
-_1 task . ~120 LOC . low risk . [telemetry doc + contract test]_
-_touches: docs/telemetry.md, tests/telemetry-contract.test.ts_
-_out: 18B_
-_produces: an observed-coverage record for `skill-usage.jsonl` and `stage-runs.jsonl` that an external consumer can join against, with the live schema reconciled to the doc_
-- **Revalidate against emitted rows** -- v0.27.2.0 and v0.28.0.0 shipped skill telemetry and local execution provenance. Verify against actual emitted data: rows for every run, producer identifiable per row, live schema matching `docs/telemetry.md`, and which join keys are stable. Record observed coverage, gaps, and join evidence in the doc; lock any schema correction in the contract test. Release claims are not acceptance evidence. _Source: TODOS `[manual]` P0 revalidation._ _docs/telemetry.md, tests/telemetry-contract.test.ts, ~120 lines._ (M)
+##### Track 24C: Route `/review-and-prep` and `/ship-and-land` through the lifecycle helper
+_2 tasks . ~300 LOC . medium risk . [two skills + bin shim + decision core + drift-locks + README]_
+_touches: skills/review-and-prep.md, skills/ship-and-land.md, bin/greptile-lifecycle (new), src/greptile-lifecycle/, tests/greptile-lifecycle.test.ts, tests/skill-protocols.test.ts, tests/helpers/touchfiles.ts, README.md_
+_blocked-by: Track 22E, Track 22D, Track 22C_
+_out: 25B, 25C_
+_read-first: 22E_
+_produces: both skills ask one command what to do next about Greptile instead of re-deriving it from prose; the five open PR #102 findings are decided and pinned as scenarios_
+- **Call the helper from both skills** -- add a bin shim over the decision core, have `/review-and-prep` and `/ship-and-land` collect the recorded state and follow the returned action, and delete the prose the helper now owns. Update the drift-locks and the README rules. Register the bin in `MANUAL_TOUCHFILES`. _skills/review-and-prep.md, skills/ship-and-land.md, bin/greptile-lifecycle (new), tests/skill-protocols.test.ts, tests/helpers/touchfiles.ts, README.md, ~180 lines._ (M)
+- **Decide the five open PR #102 findings as scenarios** -- (1) the unattended 10-minute fallback fires when the Greptile app is not installed; (2) "affected" checks are undefined after a post-Greptile base merge, so self-resolved conflicts can skip a forced test rerun; (3) a deleted marker, or a marker from a different account, lets a resumed session re-trigger; (4) whether manual testing is required is decided without confirming with the user; (5) an automatic run on draft creation or draft pushes during the pause has no way out. Each is a user decision at /autoplan, then a scenario in the helper's tests, not new prose. _Source: TODOS `[plan-ceo-review:track=18A,defer=true]`, P3; full list in the PR #102 body under "Adversarial Review"._ _src/greptile-lifecycle/, tests/greptile-lifecycle.test.ts, ~120 lines._ (M)
 
-### Group 18: Review-and-Prep Hardening ∥ Telemetry Follow-ups ∥ Skill-File Trims ∥ Layout Preflight
+### Group 25: Run Identity ∥ Capability Table ∥ Skill Template
 
-_Depends on: Group 16, Group 17_
+_Depends on: Group 24_
 
 Packer layer 2.
 
-##### Track 18A: Harden `/review-and-prep` Greptile-once and pause/resume edge cases
-_1 task . ~120 LOC . medium risk . [review-and-prep skill + drift-locks + README]_
-_touches: skills/review-and-prep.md, tests/skill-protocols.test.ts, README.md_
-_blocked-by: Track 16A_
-_out: 19C_
-_read-first: 16A_
-_produces: bounded exits for every Greptile-once and pause/resume edge the PR #102 adversarial pass found; each is a user decision, not a silent block_
-- **Close the seven gaps** -- (1) default auto-trigger can start a forbidden second run on ready; (2) a failed/cancelled run consumes the allowance with no path to ready; (3) the PAUSED receipt lives only in the regenerated PR body and /pair-review's completion path recommends /ship directly; (4) an ambiguous MCP trigger with no visible run has no bounded exit; (5) a session dying between MCP trigger and first receipt write loses the reservation; (6) post-fallback rules disagree when a run turns queued/running before ready; (7) a reviewed SHA no longer an ancestor of HEAD still satisfies the gate. Each changes behavior the user specified for PR #102, so /autoplan gets a decision per gap before writing prose. Update drift-locks and the README rules. _Source: TODOS `[review:severity=necessary]`; finding list in the PR #102 body under Adversarial Review._ _skills/review-and-prep.md, tests/skill-protocols.test.ts, README.md, ~120 lines._ (M)
+##### Track 25A: Collision-safe and idempotent telemetry run identity
+_1 task . ~200 LOC incl. tests . medium risk . [telemetry.py + contract tests + doc]_
+_touches: bin/lib/telemetry.py, tests/telemetry-contract.test.ts, tests/telemetry.test.ts, docs/telemetry.md_
+_blocked-by: Track 24A_
+_out: 26A_
+_read-first: 24A, 22A_
+_produces: one correctly attributed stage-runs row and one skill_run per run, under same-checkout collisions and repeated finishes_
+- **One row per run** -- two starts of one skill in one checkout must yield two correctly attributed rows, and a repeated finish (an explicit retry with the original IDs, or a retry after a logger timeout that already wrote) must not duplicate rows. Today the later start replaces the handoff slot, so the earlier run's finish is recorded under the later identity, and a repeated explicit finish appends a second stage-runs row and a second `skill_run`. Acceptance: the two `tests/telemetry-contract.test.ts` cases titled "(current behavior)" — the same-root collision and the explicit retry — flip to exactly one correctly attributed row per run. The handoff's `harness` fingerprint already refuses a known different session for non-resumable skills; per-invocation identity can build on it. Bump Track 22A's schema version if the row shape changes. _Source: TODOS `[plan-ceo-review:track=16A,defer=true]`, P2._ _bin/lib/telemetry.py, tests/telemetry-contract.test.ts, tests/telemetry.test.ts, docs/telemetry.md, ~200 lines._ (M)
 
-##### Track 18B: Telemetry wrapper follow-ups
-_3 tasks . ~180 LOC . medium risk . [telemetry.py + setup + doctor tests]_
-_touches: bin/lib/telemetry.py, setup, tests/telemetry.test.ts, tests/telemetry-doctor.test.ts, tests/setup-hosts.test.ts, docs/telemetry.md_
-_blocked-by: Track 17C, Track 17A_
-_read-first: 17C_
-_produces: the wrapper records on Codex-only and OpenCode-only machines, uninstall is symmetric, and cross-repo finish has a defined rule_
-- **Probe host runtime roots** -- `telemetry.py` finds gstack's helpers only under `~/.claude/skills/gstack/bin`; a Codex-only or OpenCode-only machine records nothing. Probe the host roots too and have the doctor warn when neither helper resolves. _Source: TODOS `[ship]` telemetry coverage follow-ups (1)._ _bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-doctor.test.ts, ~60 lines._ (S)
-- **Symmetric uninstall** -- `setup --uninstall` removes `~/.local/bin/gstack-extend` but not the `gstack-extend-telemetry` link it also wired. _Source: TODOS `[ship]` telemetry coverage follow-ups (2)._ _setup, tests/setup-hosts.test.ts, ~20 lines._ (S)
-- **Cross-repo finish + orphan adoption** -- `finish` run from a different repository root than `start` silently drops the completion, and a `finish` whose start was skipped adopts an abandoned earlier handoff with no age bound. Resumable skills legitimately span days, so the bound is a product call; document the chosen rule in `docs/telemetry.md`. _Source: TODOS `[ship]` telemetry coverage follow-ups (3)._ _bin/lib/telemetry.py, tests/telemetry.test.ts, docs/telemetry.md, ~100 lines._ (M)
+##### Track 25B: Replace the SHARED-block cohorts with a per-skill capability table
+_1 task . ~150 LOC . medium risk . [skill-protocols test refactor + CLAUDE.md]_
+_touches: tests/skill-protocols.test.ts, tests/helpers/expected-setup-skills.ts, tests/helpers/skill-capabilities.ts (new), CLAUDE.md_
+_blocked-by: Track 24C_
+_read-first: 24C_
+_produces: one declarative table (row per skill, column per SHARED block) driving every cohort assertion_
+- **Capability table** -- `tests/skill-protocols.test.ts` keeps `PROTOCOL_SKILLS`, `PREAMBLE_SKILLS`, `NON_PREAMBLE_SETUP_SKILLS`, `CONDUCTOR_SKILLS` and `TELEMETRY_SKILLS` beside the independently hardcoded expected list. Replace them with one table; adding a SHARED block becomes a column, not a cohort plus three invariants. Keep the exact comparison against `setup`. `CLAUDE.md` names `TELEMETRY_SKILLS` and says "Keep protocol cohorts explicit": rewrite that paragraph to describe the table, with membership still explicit per skill. _Source: TODOS `[plan-eng-review:defer=true]` FINDING 10.1._ _tests/skill-protocols.test.ts, tests/helpers/expected-setup-skills.ts, tests/helpers/skill-capabilities.ts (new), CLAUDE.md, ~150 lines._ (M)
 
-##### Track 18C: Trim `full-review.md`
-_1 task . ~80 lines (del) . low risk . [full-review skill file]_
-_touches: skills/full-review.md_
-_blocked-by: Track 16A_
-_out: 19B_
-_read-first: 16A_
-_produces: full-review.md with only unique prose; locked fragments untouched_
-- **Duplication-only trim per scope discipline** -- same rules as 18D. _skills/full-review.md, ~80 lines (del)._ (S)
+##### Track 25C: Promote canonical fragments into a shared skill template
+_1 task . ~150 LOC . low risk . [template + drift-lock]_
+_touches: skills/SKILL.md.tmpl (new), tests/skill-template.test.ts (new), tests/helpers/touchfiles.ts_
+_blocked-by: Track 24C_
+_produces: a SKILL.md.tmpl carrying every canonical fragment, drift-locked to the live copies so new skills start correct_
+- **Template + drift-lock** -- write `skills/SKILL.md.tmpl` from the locked fragments (extend-root preamble, `SHARED:upgrade-flow`, telemetry start and finish, completion-status, escalation, confusion head). Add a test that every SHARED block in the template is byte-identical to its canonical copy, modulo the skill name. No install wiring: `setup` installs from the explicit `SKILLS=( … )` array, so the template is an authoring source, not an install input. Register the `.tmpl` in `MANUAL_TOUCHFILES`. _skills/SKILL.md.tmpl (new), tests/skill-template.test.ts (new), tests/helpers/touchfiles.ts, ~150 lines._ (M)
 
-##### Track 18D: Trim `pair-review.md`
-_1 task . ~100 lines (del) . low risk . [pair-review skill file]_
-_touches: skills/pair-review.md_
-_blocked-by: Track 16A_
-_out: 19B_
-_read-first: 16A_
-_produces: pair-review.md with only unique prose; locked fragments untouched_
-- **Duplication-only trim per scope discipline** -- remove literal duplication, word-level redundancy, stale refs, and dead cross-references. Do not touch `SHARED:` blocks, the preamble, or the telemetry blocks. Gate on `tests/skill-protocols.test.ts` still passing. _skills/pair-review.md, ~100 lines (del)._ (S)
+### Group 26: Doctor Coverage
 
-##### Track 18E: Add realpath preflight to Layout Scaffolding skill prose
-_1 task . ~30 LOC . low risk . [skills/roadmap.md]_
-_touches: skills/roadmap.md_
-_blocked-by: Track 16A_
-_out: 19A_
-_read-first: 16A_
-_produces: Layout Scaffolding refuses scaffold dirs whose realpath is outside the repo_
-- **Realpath preflight for Layout Scaffolding skill prose** -- after the exists-or-is-directory check, resolve each scaffold dir and halt if the target is outside the repo root. Name the resolved path. Document the chezmoi/stow exception. _skills/roadmap.md, ~30 lines._ (S)
-
-### Group 19: Layout Scaffold Extract ∥ Skill Template ∥ Capability Table
-
-_Depends on: Group 17, Group 18_
+_Depends on: Group 25_
 
 Packer layer 3.
 
-##### Track 19A: Extract Layout Scaffolding into shared helper
-_1 task . ~120 LOC . low risk . [shared lib extraction]_
-_touches: skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend_
-_blocked-by: Track 18E, Track 17A_
-_out: 20A_
-_read-first: 18E, 17A_
-_produces: one layout-scaffold helper consumed by /roadmap and `gstack-extend init`_
-- **Layout Scaffolding shared helper** -- pull the inline Layout Scaffolding logic out of `skills/roadmap.md` into `bin/lib/layout-scaffold.sh`. Replace init's inline mkdir+refusal in `bin/gstack-extend` with a call to the same helper. _skills/roadmap.md, bin/lib/layout-scaffold.sh (new), bin/gstack-extend, ~120 lines._ (S)
-
-##### Track 19B: Promote canonical fragments into a shared skill template
-_1 task . ~150 LOC . low risk . [template + drift-lock]_
-_touches: skills/SKILL.md.tmpl (new), tests/skill-template.test.ts (new), tests/helpers/touchfiles.ts_
-_blocked-by: Track 18D, Track 18C, Track 17B_
-_read-first: 16A, 18D, 18C_
-_produces: a SKILL.md.tmpl carrying every canonical fragment, drift-locked to the live copies so new skills start correct_
-- **Template + drift-lock** -- write `skills/SKILL.md.tmpl` from the fragments 15A locked and the trims left intact (upgrade preamble, SHARED blocks, telemetry start/finish, completion-status, escalation). Add a test that every SHARED block in the template is byte-identical to its canonical copy. No install wiring: `setup` installs from an explicit `SKILLS=( … )` array, so the template is an authoring source, not an install input. Register the `.tmpl` in `MANUAL_TOUCHFILES`. _skills/SKILL.md.tmpl (new), tests/skill-template.test.ts (new), tests/helpers/touchfiles.ts, ~150 lines._ (M)
-
-##### Track 19C: Replace the SHARED-block cohorts with a per-skill capability table
-_1 task . ~150 LOC . medium risk . [skill-protocols test refactor]_
-_touches: tests/skill-protocols.test.ts, tests/helpers/expected-setup-skills.ts, tests/helpers/skill-capabilities.ts (new)_
-_blocked-by: Track 18A_
-_read-first: 18A_
-_produces: one declarative table (row per skill, column per SHARED block) driving every cohort assertion_
-- **Capability table** -- `tests/skill-protocols.test.ts` keeps PROTOCOL, PREAMBLE, NON_PREAMBLE_SETUP, CONDUCTOR, and TELEMETRY cohorts plus the independently hardcoded expected list. Replace them with one table; adding a SHARED block becomes a column, not a cohort plus three invariants. Keep the exact comparison against `setup`. _Source: TODOS `[plan-eng-review:defer=true]` FINDING 10.1._ _tests/skill-protocols.test.ts, tests/helpers/expected-setup-skills.ts, tests/helpers/skill-capabilities.ts (new), ~150 lines._ (M)
-
-### Group 20: Roadmap Lifecycle Consistency
-
-_Depends on: Group 19_
-
-Packer layer 4.
-
-##### Track 20A: Reconcile In Progress co-location with PACKING
-_1 task . ~40 LOC . low risk . [roadmap skill prose + archived spec, or the packing check]_
-_touches: skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts_
-_blocked-by: Track 19A_
-_out: 21A_
-_read-first: 19A_
-_produces: the lifecycle prose and the PACKING check agree on what happens to a partially shipped Group at regen_
-- **Pick one rule and make both sides say it** -- the model says a Group with shipped Tracks stays in `## In Progress` with `✓` markers until it lands, and that idle Tracks "recycle with the Current Plan"; PACKING packs every unshipped Track and requires each written Group to equal a bin, so marking 15A/15B shipped moved the trims to layer 0 and left {15C, 15D, 15E} matching no bin. Default: drop the co-location prose (skill + archived spec) and state that a partially shipped Group ships its done Tracks and recycles the rest. Alternative: exempt In Progress Groups from PACKING and pin their idle Tracks (stale partition until the Group lands). Either way, the skill's "Hold — trivial closures" option must describe something reachable. _Source: TODOS `[manual]`, found 2026-09-24 closing Group 15._ _skills/roadmap.md, docs/archive/roadmap-v2-state-model.md, src/audit/checks/packing.ts, tests/check-packing.test.ts, ~40 lines._ (S)
-
-### Group 21: Audit Gate
-
-_Depends on: Group 20_
-
-Packer layer 5.
-
-##### Track 21A: Narrow the `docs/`-absent gate + fix archive-path string
-_1 task . ~50 LOC . low risk . [doc-location + state-sections + fixtures + docs]_
-_touches: src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/docs-dir-absent-with-claude/expected.txt, tests/roadmap-audit/docs-dir-absent-with-claude/files/CLAUDE.md, tests/roadmap-audit/docs-dir-absent-with-audit/files/bin/roadmap-audit (new), tests/roadmap-audit/docs-dir-absent-with-audit/expected.txt (new), tests/roadmap-audit/v1-migration-hint/files/docs/ROADMAP.md (new), tests/roadmap-audit/v1-migration-hint/expected.txt (new), README.md, skills/roadmap.md, docs/ROADMAP.md_
-_blocked-by: Track 20A_
-_read-first: 20A_
-_produces: DOC_LOCATION docs/-absent only fires on a repo-local bin/roadmap-audit file; MIGRATION_NEEDED points at the archived spec in the gstack-extend checkout_
-- **Tighten docs/-absent gate + fix archive path** -- replace the `hasClaude` gate in `doc-location.ts` with a repo-local `bin/roadmap-audit` file signal. Registry-only projects stay silent. Fixture: CLAUDE.md-only repo must NOT fire. Same PR: point the `state-sections.ts` MIGRATION_NEEDED hint at `docs/archive/roadmap-v2-state-model.md` in the gstack-extend source checkout. _src/audit/checks/doc-location.ts, src/audit/checks/state-sections.ts, src/audit/cli.ts, src/audit/types.ts, tests/checks-doc-location.test.ts, tests/helpers/audit-ctx.ts, tests/check-group-deps.test.ts, tests/roadmap-audit/, README.md, skills/roadmap.md, docs/ROADMAP.md, ~50 lines._ (S)
+##### Track 26A: Doctor coverage report over stage-runs and leftover handoffs
+_2 tasks . ~250 LOC incl. tests . low risk . [telemetry-doctor.py + tests + doc]_
+_touches: bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, docs/telemetry.md_
+_blocked-by: Track 25A_
+_read-first: 25A, 22A_
+_produces: `gstack-extend doctor telemetry` reports stage-runs coverage and leftover handoffs on any machine, replacing the private capture script_
+- **Coverage report** -- teach the doctor to read `stage-runs.jsonl` and leftover handoffs, and to warn when gstack's tier is off: handoff count, oldest age, and the `refusals` entries by reason. Today it reads the tier and the pairing stats only. Without eligible v1 starts it reports insufficient evidence and the 95% decision rule cannot fire, and refused or orphaned handoffs are invisible outside debug mode. Define the independent invocation evidence a capture-completeness claim needs. _Source: TODOS `[plan-ceo-review:track=16A,defer=true]`, P2._ _bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, docs/telemetry.md, ~180 lines._ (M)
+- **Adopt-or-refuse preview** -- a read-only per-slot "would adopt / would refuse + reason" line, using the adoption rules as they stand after Track 25A. Out of scope: deleting handoffs (deferred until this report shows accumulation). _bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, ~70 lines._ (S)
 
 ### Execution Map
 
@@ -184,21 +172,20 @@ of document order; document order is priority, not gating.
 
 Adjacency list (from `bin/roadmap-pack`):
 ```
-- Group 16 ← {}
-- Group 17 ← {16}
-- Group 18 ← {16, 17}
-- Group 19 ← {17, 18}
-- Group 20 ← {19}
-- Group 21 ← {20}
+- Group 22 ← {}
+- Group 23 ← {}
+- Group 24 ← {22}
+- Group 25 ← {24}
+- Group 26 ← {25}
 ```
 
-**6 Groups / 15 Tracks.**
+**5 Groups / 14 Tracks.**
 
 ---
 
 ## Future
 
-Deferred: docs/roadmap-future.md (14 items)
+Deferred: docs/roadmap-future.md (26 items)
 
 ## Shipped
 
