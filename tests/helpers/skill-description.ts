@@ -3,10 +3,9 @@
  *
  * This is not a YAML parser. It accepts the two forms used in this
  * repository and rejects everything else with a file-specific error.
- * It guards against accidental mistakes, not deliberately crafted YAML
- * meant to evade it (for example a decoy field hidden inside another
- * field's multi-line quoted value); a determined author could as easily
- * edit this test.
+ * Its scope is accidental mistakes. The bounded grammar below may also
+ * reject deliberately crafted YAML, but it is not a security boundary;
+ * a determined author could as easily edit this test.
  */
 
 const HELPER_DOC = 'tests/helpers/skill-description.ts';
@@ -180,7 +179,7 @@ export function readSkillDescription(fullText: string, sourceLabel: string): str
     const hint =
       indented < 0
         ? ''
-        : `; line ${indented + 2} has an indented \`description:\`, and a top-level field must start at column 0`;
+        : `; line ${indented + 2} has an indented \`description:\`; if that was intended as the field rather than literal content, move it to column 0`;
     fail(
       sourceLabel,
       'description is missing',
@@ -430,9 +429,8 @@ function failTopLevel(sourceLabel: string, line: string): never {
   );
 }
 
-// Echo helpers keep error text short and show Unicode spaces and format
-// characters (NBSP, zero-width, bidi marks, soft hyphen) as \uXXXX, so a
-// message never quotes a line that looks valid.
+// Echo helpers keep errors short and make Unicode spaces and format
+// characters (NBSP, zero-width, bidi marks, soft hyphen) visible.
 function excerpt(text: string): string {
   return showInvisible(truncate(text));
 }
@@ -442,7 +440,11 @@ function quoted(text: string): string {
 }
 
 function truncate(text: string): string {
-  return text.length > ECHO_LIMIT ? `${text.slice(0, ECHO_LIMIT)}...` : text;
+  if (text.length <= ECHO_LIMIT) return text;
+  const before = text.charCodeAt(ECHO_LIMIT - 1);
+  const after = text.charCodeAt(ECHO_LIMIT);
+  const splitPair = before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
+  return `${text.slice(0, splitPair ? ECHO_LIMIT - 1 : ECHO_LIMIT)}...`;
 }
 
 function showInvisible(text: string): string {

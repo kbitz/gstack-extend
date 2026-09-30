@@ -801,7 +801,7 @@ describe('source skill descriptions fit Codex limit', () => {
     test(`${skill} description ≤ 1024`, () => {
       const path = join(ROOT, 'skills', `${skill}.md`);
       const src = readFileSync(path, 'utf8');
-      const description = assertSkillDescriptionWithinLimit(src, path);
+      const description = assertSkillDescriptionWithinLimit(src, relative(ROOT, path));
       expect(description.length).toBeLessThanOrEqual(1024);
     });
   }
