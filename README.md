@@ -62,6 +62,18 @@ instead of blocking silently when that run fails, stalls, goes stale, or would
 repeat when the PR is marked ready. The PR's receipt records the outcome. See
 the linked skill instructions for setup and gates.
 
+`/review-and-prep` includes a `review-and-prep/v1` marker and reviewed snapshot
+in its final prompt. Paste that prompt to run `/ship-and-land`; it trusts those
+completed reviews across sessions/models after one receipt lookup and checks
+subsequent changes.
+Prose-only docs use one repo fact-check, the documentation audit and plan/scope
+checks, with or without preparation.
+Both code and docs use severity filtering and delta rechecks; code specialists
+and Red Team run in parallel when needed. Use `/ship-and-land --reviewed` to
+explicitly accept prior code review and coverage audit outside a marked
+preparation handoff. Test runs, QA probes, CI, required manual testing and merge
+approval retain their own gates.
+
 Use `/roadmap` to organize upcoming work and `/full-review` for periodic
 codebase reviews.
 
