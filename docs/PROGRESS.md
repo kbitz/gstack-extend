@@ -6,6 +6,7 @@ Graft gstack's consistency patterns into extend's three daily-use skills (pair-r
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 0.33.0.1 | 2026-09-30 | Roadmap regeneration. Groups 16, 18 and 21 are shipped. The Current Plan is Groups 22–26 (14 Tracks), led by stage-runs row versioning; the other follow-ups are deferred with their context. README lists the shadow merge gate, and PROGRESS gains the missing 0.29.1.0 row. |
 | 0.33.0.0 | 2026-09-30 | Track 18F: compliance and setup tests share a bounded frontmatter description reader for inline text and literal blocks, enforcing the repository's normalized 1024 UTF-16-code-unit cap with contextual repair guidance and boundary, whitespace, and Unicode fixtures. |
 | 0.32.5.0 | 2026-09-29 | A start-less finish of a non-resumable skill no longer adopts another session's handoff or an unknown handoff older than 24 hours. A finish from a different repository writes nothing unless you pass an explicit session id and start. Telemetry finds gstack's logger and config on Codex, OpenCode, and Cursor. Setting `provenance` follows telemetry's state directory. |
 | 0.32.4.0 | 2026-09-29 | `/review-and-prep` asks when a Greptile run fails, never appears, is still going after ten minutes, or reviewed a commit no longer on the branch. The pull request still gets one review. Staying in draft does not waive it. Legacy `triggerOnUpdates: true` counts as open, push, and rebase, so a waiver cannot hide a second review from a later push. |
