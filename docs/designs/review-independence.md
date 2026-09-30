@@ -2,7 +2,7 @@
 
 Original snapshot: 2026-09-25, cutoff 12:21:00Z. Documentation correction and read-only reconstruction: 2026-09-25. This track changes no runtime code.
 
-Accepted scope, 2026-09-25: this PR delivers the independence policy, checked static routing map, runnable reference calculations, corrected metadata reconstruction, and evidenced follow-ups as a limited documentation snapshot. The original empirical study remains unfinished; its missing measurements and historical source verification are deferred to [Complete the deferred review-independence empirical study](../TODOS.md#manual-complete-the-deferred-review-independence-empirical-study). This scope decision does not convert missing evidence into measured results or mark Track 16B complete.
+Accepted scope, 2026-09-25: this PR delivers the independence policy, checked static routing map, runnable reference calculations, corrected metadata reconstruction, and evidenced follow-ups as a limited documentation snapshot. The original empirical study remains unfinished; its missing measurements and historical source verification are deferred to "Complete the deferred review-independence empirical study" in [roadmap-future.md](../roadmap-future.md). This scope decision does not convert missing evidence into measured results or mark Track 16B complete. The 2026-09-30 roadmap regeneration archived Track 16B at this limited scope; the study remains that Future item.
 
 ## 0. Answer first
 
@@ -36,7 +36,7 @@ The final calls remain insufficient-evidence. The original historical join compa
 
 Question: does at least one consumed review voice come from a proven vendor outside both the code authors and the primary reviewer?
 
-Vendor separation is a proxy for independent judgment. This track does not measure whether that proxy catches additional defects; that work is [Measure whether vendor separation catches more real defects](../TODOS.md).
+Vendor separation is a proxy for independent judgment. This track does not measure whether that proxy catches additional defects; that work is "Measure whether vendor separation catches more real defects" in [roadmap-future.md](../roadmap-future.md).
 
 Defaults: `exclude_vendors: [author, primary]`, `min_independent: 1`, `undisclosed_vendors: [cursor]`, `counted_voice_kinds: [outside, in-host adversarial, specialist, external bot]`, `proof_sources: [served, uncontradicted requested-only]`. The primary pass itself is not a counted witness. Under the alternative `exclude_vendors: [author]`, a **proven xAI in-host adversarial pass** could count when the author is OpenAI, even though xAI also ran the primary. That alternative changes the exclusion policy, not the counted kinds; this document does not recommend it.
 
@@ -113,7 +113,7 @@ VOICE kind=outside vendor=unproven proof=served same=None consumed=True reasons=
 SAMPLE empty-branch not-a-cell cause=no-slug-mapping
 ```
 
-The counterexamples cover supplied and absent proof, a mixture of known and unknown models, an invalid author, requested-only assurance, and preservation of an unproven Cursor voice's cause. The independent-specialist example is deliberately PASS while retaining the outside voice's same-vendor observation. Automated extraction testing remains [Automated test for the review-independence doc's reference evaluator](../TODOS.md); the appendix provides exact manual comparisons and mutation checks in the PR evidence.
+The counterexamples cover supplied and absent proof, a mixture of known and unknown models, an invalid author, requested-only assurance, and preservation of an unproven Cursor voice's cause. The independent-specialist example is deliberately PASS while retaining the outside voice's same-vendor observation. Automated extraction testing remains "Automated test for the review-independence doc's reference evaluator" in [roadmap-future.md](../roadmap-future.md); the appendix provides exact manual comparisons and mutation checks in the PR evidence.
 
 For historical evidence, the three commands under “Extract and replay” extract the committed code, reconstruct projected inputs, and replay the metadata join. A writer candidate is then checked against its actual transcript (`message.model` for Claude, `turn_context.model` for Codex), full source window, reviewed commit/tree, review result, and consuming gate. No historical PASS is claimed here: the original snapshot did not preserve that complete chain. A count-only command cannot prove one, and the metadata join explicitly reports that limitation.
 
@@ -223,7 +223,7 @@ Original CLI attempts: two of two budgeted attempts exited with authentication r
 | Claude primary/outside | Exact transcript/window `message.model`, served | Must verify execution/result chain and all contributing models |
 | Authors | Proven content-writing stages and their own harness evidence | Stage models may be overrides; direct/fix writers may be unrecorded |
 
-Filed gaps: [cursor_turns() cannot read the Conductor store shape](../TODOS.md), [The Cursor and quota sentence overstates what the store reader can read](../TODOS.md), and [File upstream: gstack review rows need per-voice observed model and vendor](../TODOS.md).
+Filed gaps: `cursor_turns()` cannot read the Conductor store shape (Track 24A in [ROADMAP.md](../ROADMAP.md)), [The Cursor and quota sentence overstates what the store reader can read](../TODOS.md) (completed), and "File upstream: gstack review rows need per-voice observed model and vendor" in [roadmap-future.md](../roadmap-future.md).
 
 ## 9. Observed join keys (gstack 1.89.0.0, no stability guarantee)
 

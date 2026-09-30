@@ -600,8 +600,9 @@ The doctor evaluates the 95% rule from historical rows whatever the current tier
 Turning the tier off stops new evidence and does not erase old evidence. Where a
 window has no eligible v1 starts, the rule has insufficient evidence: the deferred
 marker and crash-detection work has no trigger there. A tier-independent trigger
-for periods without eligible observations is the "Doctor coverage report over
-stage-runs and leftover handoffs" follow-up in [TODOS](TODOS.md).
+for periods without eligible observations is the deferred "Bounded handoff
+cleanup and a tier-independent marker trigger" item in
+[roadmap-future.md](roadmap-future.md).
 
 After rollout, collect a fresh 30-day report and publish per-skill pairing.
 If any skill is below 95% with an eligible start denominator and nonzero local
