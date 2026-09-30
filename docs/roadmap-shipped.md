@@ -69,7 +69,7 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - Track 16C — _shipped (v0.30.0.0): shadow-only `bin/merge-gate` with a complexity budget, versioned verdicts and preserved decision-time evidence (#112)_
 - Track 16D — _shipped (v0.29.4.0): upgrade and init preambles resolve only an absolute, verified extend root; test cleanup moved to `afterAll`; the native Cursor host landed in the same PR (#113)_
 - Track 16E — _shipped (v0.29.2.0): init test coverage, shared `mkScope` helper, template selection from the canonical file list, fail-soft setup self-registration (#110)_
-- _The 2026-09-26 re-pack (#115) relabeled these 16D→16A, 16E→17A, 16C→17B and 16A→17C, three of them after they had shipped. No PR shipped under the new labels; tests, PROGRESS and TODOS tags use the IDs above. No Group 17 shipped._
+- _The 2026-09-26 re-pack (#115) relabeled these 16D→16A, 16E→17A, 16C→17B and 16A→17C, three of them after they had shipped. No PR shipped under the new labels; the Track 16D test names, the PROGRESS rows and the TODOS tags use the IDs above. Older test comments from #94 (2026-08-15) use an earlier numbering in which 16A–16D were skill-file trims and 17A was the skill template. No Group 17 shipped._
 
 #### Group 18: Review-and-Prep Hardening ∥ Telemetry Follow-ups ∥ Skill-File Trims ∥ Layout Preflight ∥ Description Cap ✓ Shipped (v0.32.1.1 → v0.33.0.0)
 - Track 18A — _shipped (v0.32.4.0): `/review-and-prep` asks when a Greptile run fails, never appears, stalls, or reviewed a commit no longer on the branch; each Greptile-once and pause/resume gap it took from the PR #102 adversarial pass ends in a user decision, with drift-locks (#120)_
@@ -78,8 +78,8 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - Track 18D — _shipped (v0.32.1.1): duplicated `/pair-review` prose trimmed; behavior and protected blocks unchanged (#117)_
 - Track 18E — _shipped (v0.32.2.0): realpath containment preflight in the Layout Scaffolding skill prose (#119)_
 - Track 18F — _shipped (v0.33.0.0): compliance and setup tests share a bounded frontmatter reader and enforce the repository's normalized 1024 UTF-16-code-unit description cap, with parsing and boundary fixtures (#122)_
-- _Planned on 2026-09-24 as 17A, 17B, 17D, 17C and 18A; the 2026-09-26 re-pack gave 18A–18E these IDs before any shipped, and added 18F._
+- _Planned on 2026-09-24 as 17A, 17B, 17D, 17C and 18A; the 2026-09-26 re-pack gave 18A–18E these IDs before any shipped, and carried 18F over from the retired 17F's description-cap task._
 
 #### Group 21: Audit Gate ✓ Shipped (v0.29.1.0)
 - Track 21A — _shipped (v0.29.1.0): DOC_LOCATION's `docs/`-absent finding fires only on a repo-local `bin/roadmap-audit` file; MIGRATION_NEEDED names the archived spec (#109). Planned as 16F._
-- _Groups 19 and 20 never shipped under those numbers; re-packed 2026-09-30 as 22C + 24B (layout-scaffold helper), 25C (skill template), 25B (capability table) and 22B (roadmap closure)._
+- _Groups 19 and 20 never shipped under those numbers; re-packed 2026-09-30 as 22C + 25A (layout-scaffold helper, then its callers), 26B (skill template), 26A (capability table) and 22B (roadmap closure)._
