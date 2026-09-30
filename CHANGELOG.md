@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0.1] - 2026-09-30
+
+### Changed
+
+- **The roadmap matches what has shipped.** Eleven merged Tracks move to shipped history as Groups 16, 18 and 21. The Current Plan is Groups 22–26: 14 Tracks built from 25 queued follow-ups, led by stage-runs row versioning. The remaining follow-ups sit in the deferred list with their review context.
+- **The README lists the shadow merge gate,** with the command to run it and a link to its usage and verdict contract.
+- **Release history and cross-links are complete.** PROGRESS gains its missing 0.29.1.0 row, and design and telemetry doc links now point at the deferred list or the roadmap Track that holds each follow-up.
+
 ## [0.33.0.0] - 2026-09-30
 
 ### Changed
