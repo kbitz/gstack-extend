@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.0.0] - 2026-09-30
+
+### Changed
+
+- **Skill description checks count the complete frontmatter value.** Compliance and setup tests share a reader for plain inline text and literal blocks, enforce the repository's normalized 1024 UTF-16-code-unit cap, and give repair guidance for invalid or oversized descriptions. Boundary, whitespace, and Unicode cases are covered.
+
 ## [0.32.5.0] - 2026-09-29
 
 ### Added

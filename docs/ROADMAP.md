@@ -26,7 +26,7 @@ Packer layer 0.
 ##### Track 16A: Harden the upgrade preambles + move test cleanup to `afterAll`
 _2 tasks . ~900 LOC incl. tests . medium risk . [5 preamble skills + bin/update-check + 7 test files + README]_
 _touches: skills/pair-review.md, skills/full-review.md, skills/roadmap.md, skills/gstack-extend-upgrade.md, skills/gstack-extend-init.md, tests/skill-protocols.test.ts, tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, bin/update-check, tests/update.test.ts, tests/setup-hosts.test.ts, tests/helpers/extend-root.ts (new), README.md, setup, docs/telemetry.md, skills/implement.md, skills/review-and-prep.md, tests/telemetry.test.ts, bin/lib/telemetry-doctor.py, tests/telemetry-doctor.test.ts, tests/helpers/touchfiles.ts_
-_out: 18A, 18D, 18C, 18F, 18E_
+_out: 18A, 18D, 18C, 18E_
 _produces: upgrade preambles that resolve only an absolute, verified extend root; test temp dirs actually cleaned under bun test_
 - **Harden the upgrade preambles** -- four preamble skills still probe the cwd-relative `.claude/skills/<skill>/.extend-root` and exec `$_EXTEND_ROOT/bin/update-check` unverified. `gstack-extend-init` is the fifth preamble: it uses the same relative `.extend-root` probe, then execs `bin/gstack-extend` rather than `update-check`. Resolve all five the way the telemetry blocks do (absolute paths only, real executable, protocol marker) and update the preamble drift-lock. _Source: TODOS `[ship]` telemetry coverage follow-ups (4)._ _skills/{pair-review,full-review,roadmap,gstack-extend-upgrade,gstack-extend-init}.md, tests/skill-protocols.test.ts, ~300 lines._ (L)
 - **`afterAll` cleanup** -- `audit-snapshots`, `audit-cli-contract`, and `parsers-roadmap` register `process.on('exit')` cleanup, which never fires under `bun test`; move them to `afterAll` (the telemetry helper already did). _Source: TODOS `[ship]` telemetry coverage follow-ups (5)._ _tests/audit-snapshots.test.ts, tests/audit-cli-contract.test.ts, tests/parsers-roadmap.test.ts, ~30 lines._ (S)
@@ -117,14 +117,6 @@ _read-first: 16A_
 _produces: Layout Scaffolding refuses scaffold dirs whose realpath is outside the repo_
 - **Realpath preflight for Layout Scaffolding skill prose** -- after the exists-or-is-directory check, resolve each scaffold dir and halt if the target is outside the repo root. Name the resolved path. Document the chezmoi/stow exception. _skills/roadmap.md, ~30 lines._ (S)
 
-##### Track 18F: Lock the frontmatter description cap
-_1 task . ~20 LOC . low risk . [compliance test]_
-_touches: tests/audit-compliance.test.ts_
-_blocked-by: Track 16A_
-_read-first: 16A_
-_produces: every installed skill's frontmatter description stays within the 1024-character host limit_
-- **Frontmatter description ≤ 1024** -- setup-hosts already enforces this limit. Add the same cap to audit-compliance describe (A) so new skills cannot regress. _Source: docs/roadmap-future.md "Frontmatter description ≤ 1024 for Codex" (promoted 2026-09-24)._ _tests/audit-compliance.test.ts, ~20 lines._ (S)
-
 ### Group 19: Layout Scaffold Extract ∥ Skill Template ∥ Capability Table
 
 _Depends on: Group 17, Group 18_
@@ -200,7 +192,7 @@ Adjacency list (from `bin/roadmap-pack`):
 - Group 21 ← {20}
 ```
 
-**6 Groups / 16 Tracks.**
+**6 Groups / 15 Tracks.**
 
 ---
 

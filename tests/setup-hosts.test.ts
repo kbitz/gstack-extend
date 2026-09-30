@@ -23,6 +23,7 @@ import { join, relative } from 'node:path';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
 import { extractCanonicalSpan, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
+import { assertSkillDescriptionWithinLimit } from './helpers/skill-description.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
@@ -73,15 +74,6 @@ function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor')
   if (host === 'codex') return join(home, '.codex', 'skills');
   if (host === 'cursor') return join(home, '.cursor', 'skills');
   return join(home, '.config', 'opencode', 'skills');
-}
-
-function descriptionLen(src: string): number {
-  const closeIdx = src.indexOf('\n---', 4);
-  const fm = src.slice(4, closeIdx);
-  const inline = /^description:\s*(\S.*)$/m.exec(fm);
-  const block = /^description:\s*\|\s*\n((?:[ \t]+\S.*\n?)+)/m.exec(fm);
-  const value = inline ? inline[1]?.trim() : block ? block[1]?.trim() : '';
-  return (value ?? '').length;
 }
 
 describe('setup --host flags', () => {
@@ -237,9 +229,11 @@ describe('setup --host flags', () => {
     const home = join(baseTmp, 'codex-rewrite');
     mkdirSync(home, { recursive: true });
     runSetup(['--host', 'codex'], home);
-    const body = readFileSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'), 'utf8');
+    const skillMd = join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md');
+    const body = readFileSync(skillMd, 'utf8');
     expect(body).not.toMatch(/^allowed-tools:/m);
-    expect(descriptionLen(body)).toBeLessThanOrEqual(1024);
+    const description = assertSkillDescriptionWithinLimit(body, skillMd);
+    expect(description.length).toBeLessThanOrEqual(1024);
   });
 
   for (const host of ['codex', 'opencode', 'cursor'] as const) {
@@ -805,8 +799,10 @@ describe('setup --host flags', () => {
 describe('source skill descriptions fit Codex limit', () => {
   for (const skill of SKILLS) {
     test(`${skill} description ≤ 1024`, () => {
-      const src = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      expect(descriptionLen(src)).toBeLessThanOrEqual(1024);
+      const path = join(ROOT, 'skills', `${skill}.md`);
+      const src = readFileSync(path, 'utf8');
+      const description = assertSkillDescriptionWithinLimit(src, relative(ROOT, path));
+      expect(description.length).toBeLessThanOrEqual(1024);
     });
   }
 });
