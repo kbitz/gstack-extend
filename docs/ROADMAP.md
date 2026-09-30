@@ -192,7 +192,7 @@ Adjacency list (from `bin/roadmap-pack`):
 - Group 21 ← {20}
 ```
 
-**6 Groups / 16 Tracks.**
+**6 Groups / 15 Tracks.**
 
 ---
 
