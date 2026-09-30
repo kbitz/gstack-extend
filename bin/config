@@ -8,12 +8,19 @@
 # Config file: ~/.gstack-extend/config
 set -euo pipefail
 
-STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
-CONFIG_FILE="$STATE_DIR/config"
-
 cmd="${1:-}"
 key="${2:-}"
 value="${3:-}"
+
+STATE_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
+if [ "$key" = "provenance" ]; then
+  # Match telemetry.state_root(); other consumers still support relative roots.
+  case "$STATE_DIR" in
+    /*) ;;
+    *) STATE_DIR="$HOME/.gstack-extend" ;;
+  esac
+fi
+CONFIG_FILE="$STATE_DIR/config"
 
 case "$cmd" in
   get)

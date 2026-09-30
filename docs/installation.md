@@ -83,6 +83,12 @@ command in Bash.
 
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
+`--host claude` and `--host auto` also remove `~/.local/bin/gstack-extend` and
+`~/.local/bin/gstack-extend-telemetry` when those symlinks point at this checkout.
+`--host codex`, `--host opencode`, and `--host cursor` leave both shared links in
+place and print an `rm` command for each link this checkout owns. A link that
+points somewhere else is left alone.
+
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,
 foreign install pointers, and unrelated files are preserved.
 

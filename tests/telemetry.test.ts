@@ -2,6 +2,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
@@ -280,7 +281,7 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
       expect(runHelper(fix.env, args).stderr).toBe('');
       const r = runHelper({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, args);
       expect(r.status).toBe(0);
-      expect(r.stderr).toContain('gstack absent or gstack-config unavailable');
+      expect(r.stderr).toContain('gstack helper unresolvable:');
       expect(r.stderr).toContain('setup');
     }
   });
@@ -892,7 +893,7 @@ describe('binary resolution and invocation forms', () => {
     chmodSync(join(canonical, 'gstack-telemetry-log'), 0o644);
     const absent = runHelper({ ...fix.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
     expect(absent.status).toBe(0);
-    expect(absent.stderr).toContain('gstack absent or gstack-config unavailable');
+    expect(absent.stderr).toContain('gstack helper unresolvable:');
     chmodSync(join(canonical, 'gstack-telemetry-log'), 0o755);
 
     // Empty-string overrides fall back to the defaults under HOME instead of the cwd.
@@ -916,7 +917,7 @@ describe('binary resolution and invocation forms', () => {
     const hostile = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'],
       { env: { ...untrusted.env, ...DEBUG, GSTACK_DIR: '' }, cwd: planted, encoding: 'utf8' });
     expect(hostile.status).toBe(0);
-    expect(hostile.stderr).toContain('gstack absent or gstack-config unavailable');
+    expect(hostile.stderr).toContain('gstack helper unresolvable:');
     expect(existsSync(ran)).toBe(false);
     expect(untrusted.readJsonl()).toHaveLength(0);
   }, 30_000);
@@ -1539,5 +1540,823 @@ describe('execution provenance', () => {
     mkdirSync(join(fix.home, '.gstack-extend/config'), { recursive: true });
     expect(runHelper(fix.env, ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-closed']).status).toBe(0);
     expect(fix.readLedger()).toHaveLength(0);
+  });
+});
+
+const BOUND_S = 86400;
+const epochNow = () => Math.floor(Date.now() / 1000);
+const insideBound = () => epochNow() - BOUND_S + 60;
+const outsideBound = () => epochNow() - BOUND_S - 60;
+
+function plantHelpers(dir: string, source: string) {
+  mkdirSync(dir, { recursive: true });
+  for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+    copyFileSync(join(source, name), join(dir, name));
+    chmodSync(join(dir, name), 0o755);
+  }
+  return dir;
+}
+
+function relocateHelpers(fix: TelemetryFixture, relativeBin: string) {
+  const source = join(fix.home, '.claude/skills/gstack/bin');
+  const dir = plantHelpers(join(fix.home, relativeBin), source);
+  rmSync(source, { recursive: true });
+  return dir;
+}
+
+function loggedHelpers(env: Record<string, string>) {
+  const r = runHelper({ ...env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+  expect(r.status).toBe(0);
+  return r.stderr.match(/logger=(\S+) config=(\S+)/)!.slice(1);
+}
+
+function handoffPath(fix: TelemetryFixture) {
+  const names = handoffs(fix);
+  expect(names).toHaveLength(1);
+  return join(fix.home, '.gstack-extend/telemetry', names[0]);
+}
+
+function readHandoff(fix: TelemetryFixture) {
+  return JSON.parse(readFileSync(handoffPath(fix), 'utf8')) as Record<string, unknown>;
+}
+
+function rewriteHandoff(fix: TelemetryFixture, patch: Record<string, unknown>) {
+  const file = handoffPath(fix);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch }));
+  return file;
+}
+
+function skillRuns(fix: TelemetryFixture) {
+  return fix.readJsonl().filter(row => row.event_type === 'skill_run');
+}
+
+function expectNoExceptionSkip(stderr: string) {
+  expect(stderr).not.toContain('Traceback');
+  expect(stderr).not.toMatch(/telemetry skipped: [A-Za-z]+(?:Error|Exception):/);
+}
+
+function refusalLines(stderr: string) {
+  return stderr.split('\n').filter(line => line.includes('missing or malformed start/session state'));
+}
+
+function expectRefusal(stderr: string, reason: string) {
+  const lines = refusalLines(stderr);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain(reason);
+  expect(lines[0]).toContain('root=');
+  expect(lines[0]).toContain('handoff=');
+  expect(stderr).toContain('GE_TELEMETRY');
+}
+
+function sessionFingerprint(pairs: Array<[string, string]>) {
+  const sorted = [...pairs].sort((left, right) => left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0);
+  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+}
+
+function gitRepo(fix: TelemetryFixture, name: string) {
+  const cwd = join(fix.home, name);
+  mkdirSync(cwd, { recursive: true });
+  expect(spawnSync('git', ['init', '-q', cwd], { env: fix.env }).status).toBe(0);
+  return cwd;
+}
+
+describe('gstack helper roots', () => {
+  test('helpers under each host root pair, and closer roots win', () => {
+    for (const relativeBin of ['.codex/skills/gstack/bin', '.config/opencode/skills/gstack/bin', '.cursor/skills/gstack/bin']) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      relocateHelpers(fix, relativeBin);
+      expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+      expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+      const rows = fix.readJsonl();
+      expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+      expect(rows[1].session_id).toBe(rows[0].session_id);
+    }
+
+    const ranked = makeTelemetryFixture('community', 'stub');
+    const source = join(ranked.home, '.claude/skills/gstack/bin');
+    const codex = plantHelpers(join(ranked.home, '.codex/skills/gstack/bin'), source);
+    const opencode = plantHelpers(join(ranked.home, '.config/opencode/skills/gstack/bin'), source);
+    const cursor = plantHelpers(join(ranked.home, '.cursor/skills/gstack/bin'), source);
+    rmSync(source, { recursive: true });
+    expect(loggedHelpers(ranked.env)).toEqual([join(codex, 'gstack-telemetry-log'), join(codex, 'gstack-config')]);
+    rmSync(codex, { recursive: true });
+    expect(loggedHelpers(ranked.env)).toEqual([join(opencode, 'gstack-telemetry-log'), join(opencode, 'gstack-config')]);
+    rmSync(opencode, { recursive: true });
+    expect(loggedHelpers(ranked.env)).toEqual([join(cursor, 'gstack-telemetry-log'), join(cursor, 'gstack-config')]);
+
+    const claude = makeTelemetryFixture('community', 'stub');
+    const claudeBin = join(claude.home, '.claude/skills/gstack/bin');
+    plantHelpers(join(claude.home, '.codex/skills/gstack/bin'), claudeBin);
+    expect(loggedHelpers(claude.env)).toEqual([join(claudeBin, 'gstack-telemetry-log'), join(claudeBin, 'gstack-config')]);
+  }, 30_000);
+
+  test('absolute CLAUDE_CONFIG_DIR and CODEX_HOME resolve; relative values are ignored', () => {
+    const claude = makeTelemetryFixture('community', 'stub');
+    const source = join(claude.home, '.claude/skills/gstack/bin');
+    const custom = plantHelpers(join(claude.home, 'custom-claude/skills/gstack/bin'), source);
+    expect(loggedHelpers({ ...claude.env, CLAUDE_CONFIG_DIR: join(claude.home, 'custom-claude') }))
+      .toEqual([join(custom, 'gstack-telemetry-log'), join(custom, 'gstack-config')]);
+    const ran = join(claude.home, 'relative-config-ran');
+    const hostile = join(claude.home, 'rel-claude/skills/gstack/bin');
+    mkdirSync(hostile, { recursive: true });
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      writeFileSync(join(hostile, name), `#!/bin/sh\n: > "${ran}"\necho community\n`);
+      chmodSync(join(hostile, name), 0o755);
+    }
+    const relativeClaude = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...claude.env, ...DEBUG, CLAUDE_CONFIG_DIR: 'rel-claude' }, cwd: claude.home,
+      encoding: 'utf8', timeout: 10_000,
+    });
+    expect(relativeClaude.status).toBe(0);
+    expect(relativeClaude.stderr.match(/logger=(\S+) config=(\S+)/)?.slice(1))
+      .toEqual([join(source, 'gstack-telemetry-log'), join(source, 'gstack-config')]);
+    expect(existsSync(ran)).toBe(false);
+
+    const codex = makeTelemetryFixture('community', 'stub');
+    const codexSource = join(codex.home, '.claude/skills/gstack/bin');
+    const customCodex = plantHelpers(join(codex.home, 'custom-codex/skills/gstack/bin'), codexSource);
+    rmSync(codexSource, { recursive: true });
+    expect(loggedHelpers({ ...codex.env, CODEX_HOME: join(codex.home, 'custom-codex') }))
+      .toEqual([join(customCodex, 'gstack-telemetry-log'), join(customCodex, 'gstack-config')]);
+
+    const fallback = makeTelemetryFixture('community', 'stub');
+    const homeCodex = relocateHelpers(fallback, '.codex/skills/gstack/bin');
+    const planted = join(fallback.home, 'work');
+    mkdirSync(join(planted, 'rel-codex/skills/gstack/bin'), { recursive: true });
+    for (const name of ['gstack-config', 'gstack-telemetry-log']) {
+      writeFileSync(join(planted, 'rel-codex/skills/gstack/bin', name), `#!/bin/sh\n: > "${join(fallback.home, 'codex-ran')}"\necho community\n`);
+      chmodSync(join(planted, 'rel-codex/skills/gstack/bin', name), 0o755);
+    }
+    const relative = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fallback.env, ...DEBUG, CODEX_HOME: 'rel-codex' }, cwd: planted, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(relative.status).toBe(0);
+    expect(relative.stderr.match(/logger=(\S+)/)?.[1]).toBe(join(homeCodex, 'gstack-telemetry-log'));
+    expect(existsSync(join(fallback.home, 'codex-ran'))).toBe(false);
+  }, 30_000);
+
+  test('a debug start with no helpers names the missing helpers and the Codex root', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const r = runHelper({ ...fix.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain('gstack helper unresolvable:');
+    expect(r.stderr).toContain('gstack-telemetry-log');
+    expect(r.stderr).toContain('gstack-config');
+    expect(r.stderr).toContain(join(fix.home, '.codex/skills/gstack/bin'));
+    expect(r.stderr).toContain('PATH (absolute entries)');
+    expect(r.stderr).toContain('./setup --host <host>');
+  });
+
+  test('a relative GSTACK_EXTEND_STATE_DIR is ignored', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const r = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' }, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(r.status).toBe(0);
+    expect(existsSync(join(fix.home, 'relative-state'))).toBe(false);
+    expect(handoffs(fix)).toHaveLength(1);
+  });
+
+  test('provenance opt-out uses the same state root as telemetry for relative overrides', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' };
+    const config = spawnSync(join(ROOT, 'bin/config'), ['set', 'provenance', 'false'], {
+      env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(config.status).toBe(0);
+    for (const command of ['start', 'finish']) {
+      expect(spawnSync(HELPER_BIN, [command, '--skill', 'extend:roadmap'], {
+        env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+      }).status).toBe(0);
+    }
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(existsSync(join(fix.home, 'relative-state'))).toBe(false);
+    expect(readFileSync(join(fix.home, '.gstack-extend/config'), 'utf8')).toContain('provenance=false');
+  });
+
+  test('other config keys preserve relative state roots used by quota', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' };
+    const config = spawnSync(join(ROOT, 'bin/config'), ['set', 'quota', 'off'], {
+      env, cwd: fix.home, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(config.status).toBe(0);
+    const consumer = spawnSync('python3', ['-I', '-c',
+      `import sys; sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))}); from quota.common import state_root, config_enabled; print(config_enabled(state_root(), 'quota'))`,
+    ], { env, cwd: fix.home, encoding: 'utf8', timeout: 10_000 });
+    expect(consumer.status).toBe(0);
+    expect(consumer.stdout.trim()).toBe('False');
+    expect(readFileSync(join(fix.home, 'relative-state/config'), 'utf8')).toContain('quota=off');
+    expect(existsSync(join(fix.home, '.gstack-extend/config'))).toBe(false);
+  });
+
+  test('missing-helper diagnostics quote searched paths containing newlines', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const root = join(fix.home, 'config\nroot');
+    const r = runHelper({ ...fix.env, ...DEBUG, CODEX_HOME: root }, ['start', '--skill', 'extend:roadmap']);
+    expect(r.status).toBe(0);
+    expect(r.stderr).not.toContain(root);
+    expect(r.stderr).toContain(JSON.stringify(join(root, 'skills/gstack/bin')));
+    expect(r.stderr.split('\n').filter(line => line.includes('gstack helper unresolvable:'))).toHaveLength(1);
+  });
+
+  test('a helper appearing during lookup never discards local provenance', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\noriginal = telemetry.resolve\nlookups = 0\ndef changing(name):\n    global lookups\n    if name == "gstack-config":\n        lookups += 1\n        if lookups == 1:\n            return None\n    return original(name)\ntelemetry.resolve = changing\ntelemetry.main([sys.argv[1], "--skill", "extend:roadmap"])\n`;
+    for (const command of ['start', 'finish']) {
+      const result = spawnSync('python3', ['-I', '-c', script, command], {
+        env: { ...fix.env, ...DEBUG }, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain('gstack helper unresolvable: gstack-config');
+      expect(result.stderr).not.toContain('Traceback');
+    }
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readJsonl()).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('a logger resolved directly under slash finishes without losing handoff progress', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\noriginal = telemetry.os.path.realpath\nlogger = telemetry.resolve("gstack-telemetry-log")\ntelemetry.os.path.realpath = lambda path: "/gstack-telemetry-log" if path == logger else original(path)\ntelemetry.main(["finish", "--skill", "extend:roadmap"])\n`;
+    const result = spawnSync('python3', ['-I', '-c', script], {
+      env: fix.env, cwd: ROOT, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('Traceback');
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readJsonl().filter(row => row.event_type === 'skill_run')).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('an unset GSTACK_DIR makes the logger see its real checkout; an explicit value is passed through', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    const record = (file: string) => `#!/usr/bin/env python3\n# --no-sweep\nimport os\nfrom pathlib import Path\nPath.home().joinpath(${JSON.stringify(file)}).write_text(os.environ.get("GSTACK_DIR", ""))\n`;
+    writeFileSync(logger, record('gstack-dir-seen'));
+    chmodSync(logger, 0o755);
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(readFileSync(join(fix.home, 'gstack-dir-seen'), 'utf8')).toBe(dirname(dirname(realpathSync(logger))));
+
+    const explicit = makeTelemetryFixture('community', 'stub');
+    const pathBin = join(explicit.home, 'path-bin');
+    mkdirSync(pathBin);
+    copyFileSync(join(explicit.home, '.claude/skills/gstack/bin/gstack-config'), join(pathBin, 'gstack-config'));
+    chmodSync(join(pathBin, 'gstack-config'), 0o755);
+    writeFileSync(join(pathBin, 'gstack-telemetry-log'), record('gstack-dir-explicit'));
+    chmodSync(join(pathBin, 'gstack-telemetry-log'), 0o755);
+    const checkout = join(explicit.home, 'explicit-gstack');
+    mkdirSync(checkout);
+    const env = { ...explicit.env, PATH: pathBin + ':' + explicit.env.PATH, GSTACK_DIR: checkout };
+    expect(runHelper(env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(readFileSync(join(explicit.home, 'gstack-dir-explicit'), 'utf8')).toBe(checkout);
+  }, 30_000);
+
+  test('duplicate GSTACK_DIR and Claude helper roots are searched once', () => {
+    const fix = makeTelemetryFixture('community', 'absent');
+    const gstack = join(fix.home, '.claude/skills/gstack');
+    const bin = join(gstack, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const r = runHelper({ ...fix.env, ...DEBUG, GSTACK_DIR: gstack }, ['start', '--skill', 'extend:roadmap']);
+    expect(r.status).toBe(0);
+    const line = r.stderr.split('\n').find(item => item.includes('gstack helper unresolvable:'));
+    expect(line).toBeDefined();
+    expect(line!.split(JSON.stringify(bin)).length - 1).toBe(1);
+  });
+
+  test('GSTACK_DIR outranks CLAUDE_CONFIG_DIR, Claude outranks CODEX_HOME, and CODEX_HOME outranks .codex', () => {
+    const gstack = makeTelemetryFixture('community', 'stub');
+    const gstackSource = join(gstack.home, '.claude/skills/gstack/bin');
+    const viaGstack = plantHelpers(join(gstack.home, 'gstack-checkout/bin'), gstackSource);
+    plantHelpers(join(gstack.home, 'claude-config/skills/gstack/bin'), gstackSource);
+    expect(loggedHelpers({
+      ...gstack.env,
+      GSTACK_DIR: join(gstack.home, 'gstack-checkout'),
+      CLAUDE_CONFIG_DIR: join(gstack.home, 'claude-config'),
+    })).toEqual([join(viaGstack, 'gstack-telemetry-log'), join(viaGstack, 'gstack-config')]);
+
+    const claude = makeTelemetryFixture('community', 'stub');
+    const claudeBin = join(claude.home, '.claude/skills/gstack/bin');
+    plantHelpers(join(claude.home, 'codex-home/skills/gstack/bin'), claudeBin);
+    expect(loggedHelpers({ ...claude.env, CODEX_HOME: join(claude.home, 'codex-home') }))
+      .toEqual([join(claudeBin, 'gstack-telemetry-log'), join(claudeBin, 'gstack-config')]);
+
+    const codex = makeTelemetryFixture('community', 'stub');
+    const codexSource = join(codex.home, '.claude/skills/gstack/bin');
+    plantHelpers(join(codex.home, '.codex/skills/gstack/bin'), codexSource);
+    const viaCodexHome = plantHelpers(join(codex.home, 'custom-codex/skills/gstack/bin'), codexSource);
+    rmSync(codexSource, { recursive: true });
+    expect(loggedHelpers({ ...codex.env, CODEX_HOME: join(codex.home, 'custom-codex') }))
+      .toEqual([join(viaCodexHome, 'gstack-telemetry-log'), join(viaCodexHome, 'gstack-config')]);
+  }, 30_000);
+
+  test('absolute GSTACK_EXTEND_STATE_DIR stores provenance config on that directory', () => {
+    const fix = makeTelemetryFixture('off', 'absent');
+    const abs = join(fix.home, 'absolute-state');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: abs };
+    const set = spawnSync(join(ROOT, 'bin/config'), ['set', 'provenance', 'false'], {
+      env, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(set.status).toBe(0);
+    expect(readFileSync(join(abs, 'config'), 'utf8')).toContain('provenance=false');
+    expect(existsSync(join(fix.home, '.gstack-extend/config'))).toBe(false);
+    const get = spawnSync(join(ROOT, 'bin/config'), ['get', 'provenance'], {
+      env, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(get.status).toBe(0);
+    expect(get.stdout.trim()).toBe('false');
+  });
+});
+
+describe('handoff adoption', () => {
+  test('RESUMABLE is exactly the skills that document their own resume command', () => {
+    const source = readFileSync(join(ROOT, 'bin/lib/telemetry.py'), 'utf8');
+    const body = source.match(/RESUMABLE = \{([^}]+)\}/)?.[1] ?? '';
+    const names = [...body.matchAll(/"([a-z0-9-]+)"/g)].map(match => match[1]);
+    expect([...names].sort()).toEqual(['full-review', 'pair-review', 'review-and-prep']);
+    for (const name of names) expect([...EXPECTED_SETUP_SKILLS]).toContain(name);
+    for (const file of readdirSync(join(ROOT, 'skills'))) {
+      if (!file.endsWith('.md')) continue;
+      const name = file.slice(0, -'.md'.length);
+      const documentsResume = readFileSync(join(ROOT, 'skills', file), 'utf8').includes('`/' + name + ' resume`');
+      expect(names.includes(name)).toBe(documentsResume);
+    }
+  });
+
+  test('start records skill, root and a harness fingerprint, and traces marker names only', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const secret = 'secret-thread-value';
+    const traced = runHelper({ ...fix.env, ...DEBUG, CODEX_THREAD_ID: secret }, ['start', '--skill', 'extend:roadmap']);
+    expect(traced.stderr).toContain('harness markers: CODEX_THREAD_ID');
+    expect(traced.stderr).not.toContain(secret);
+    const handoff = readHandoff(fix);
+    expect(handoff.skill).toBe('extend:roadmap');
+    expect(handoff.root).toBe(process.cwd());
+    expect(handoff.harness).toBe(sessionFingerprint([['CODEX_THREAD_ID', secret]]));
+    expect(sessionFingerprint([['CODEX_THREAD_ID', 'same-id']])).not.toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'same-id']]));
+
+    const quiet = makeTelemetryFixture('community', 'stub');
+    const none = runHelper({ ...quiet.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(quiet).harness).toBeNull();
+    expect(none.stderr).toContain('harness markers: none');
+
+    const grok = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...grok.env, GROK_SESSION_ID: 'grok-session-1' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(grok).harness).toBeNull();
+    const counted = makeTelemetryFixture('community', 'stub');
+    runHelper({ ...counted.env, GROK_AGENT: '1', GROK_SESSION_ID: 'grok-session-1' }, ['start', '--skill', 'extend:roadmap']);
+    expect(readHandoff(counted).harness).toBe(sessionFingerprint([['GROK_SESSION_ID', 'grok-session-1']]));
+  });
+
+  test('--help names the adoption rule', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const help = runHelper(fix.env, ['--help']);
+    expect(help.stdout).toContain('24 hours');
+    expect(help.stdout).toContain('never reads another root');
+    expect(help.stdout).toContain('full-review');
+    expect(help.stdout).toContain('--start alone does not bypass adoption');
+  });
+
+  test('a finish from a different repository root writes nothing', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const origin = gitRepo(fix, 'root-a');
+    const other = gitRepo(fix, 'root-b');
+    expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: fix.env, cwd: origin, encoding: 'utf8' }).status).toBe(0);
+    const before = readFileSync(handoffPath(fix));
+    const finish = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
+      env: { ...fix.env, ...DEBUG }, cwd: other, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(finish.status).toBe(0);
+    expectRefusal(finish.stderr, 'no handoff for this repository root');
+    expect(finish.stderr).toContain('start never ran in this root');
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(readFileSync(handoffPath(fix))).toEqual(before);
+  });
+
+  test('a cross-root finish into an occupied destination slot is judged by the rule', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const origin = gitRepo(fix, 'origin-root');
+    const destination = gitRepo(fix, 'destination-root');
+    expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-origin' }, cwd: origin, encoding: 'utf8',
+    }).status).toBe(0);
+    const originBytes = readFileSync(handoffPath(fix));
+    expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-destination' }, cwd: destination, encoding: 'utf8',
+    }).status).toBe(0);
+    const refused = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
+      env: { ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-origin' }, cwd: destination, encoding: 'utf8', timeout: 10_000,
+    });
+    expectRefusal(refused.stderr, 'handoff from another session');
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(2);
+
+    const destinationFile = handoffs(fix).map(name => join(fix.home, '.gstack-extend/telemetry', name))
+      .find(file => !readFileSync(file).equals(originBytes))!;
+    const destinationState = JSON.parse(readFileSync(destinationFile, 'utf8'));
+    writeFileSync(destinationFile, JSON.stringify({ ...destinationState, harness: null, start: String(insideBound()), session_id: 'dest-unknown' }));
+    const adopted = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-origin' }, cwd: destination, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(adopted.status).toBe(0);
+    expect(skillRuns(fix).map(row => row.session_id)).toEqual(['dest-unknown']);
+    expect(readFileSync(handoffs(fix).map(name => join(fix.home, '.gstack-extend/telemetry', name))[0])).toEqual(originBytes);
+  }, 30_000);
+
+  test('non-resumable adoption follows the session and the 24-hour bound', () => {
+    const same = makeTelemetryFixture('community', 'stub');
+    const sameEnv = { ...same.env, CODEX_THREAD_ID: 'thread-same' };
+    expect(runHelper(sameEnv, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(same, { start: String(outsideBound()) });
+    expect(runHelper(sameEnv, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(same)).toHaveLength(1);
+
+    const other = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...other.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(other, { start: String(epochNow() - 60) });
+    const refused = runHelper({ ...other.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(refused.status).toBe(0);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    expect(skillRuns(other)).toHaveLength(0);
+    expect(handoffs(other)).toHaveLength(1);
+
+    const attempted = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...attempted.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(attempted, { done: ['provenance'] });
+    const attemptedFinish = runHelper({ ...attempted.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(attemptedFinish.stderr, 'handoff from another session');
+    expect(readHandoff(attempted).done).toEqual(['provenance']);
+    expect(attempted.readLedger()).toHaveLength(0);
+    expect(skillRuns(attempted)).toHaveLength(0);
+
+    const recent = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(recent.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    writeFileSync(handoffPath(recent), JSON.stringify({ session_id: 'pre-change', start: String(insideBound()) }));
+    expect(runHelper({ ...recent.env, CODEX_THREAD_ID: 'thread-now' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(recent)[0].session_id).toBe('pre-change');
+
+    const unmarked = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...unmarked.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(unmarked.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(unmarked)).toHaveLength(1);
+
+    const stale = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(stale.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(stale, { start: String(outsideBound()), harness: null });
+    const tooOld = runHelper({ ...stale.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(tooOld.stderr, 'handoff too old');
+    expect(tooOld.stderr).toContain('age=');
+    expect(tooOld.stderr).toContain('bound=86400');
+    expect(skillRuns(stale)).toHaveLength(0);
+    expect(handoffs(stale)).toHaveLength(1);
+
+    const future = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(future.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(future, { start: String(epochNow() + 50_000), harness: null });
+    expect(runHelper(future.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(future)[0].duration_s).toBe(0);
+
+    const extra = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...extra.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const extraFinish = runHelper({ ...extra.env, ...DEBUG, CODEX_THREAD_ID: 'thread-a', CURSOR_CONVERSATION_ID: 'conv-b' },
+      ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(extraFinish.stderr, 'handoff from another session');
+    expect(skillRuns(extra)).toHaveLength(0);
+  }, 30_000);
+
+  test('malformed harness and start stay quiet and follow start-validity order', () => {
+    const fresh = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fresh.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fresh, { harness: 12, start: String(epochNow() - 10) });
+    const adopted = runHelper({ ...fresh.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(adopted.status).toBe(0);
+    expectNoExceptionSkip(adopted.stderr);
+    expect(skillRuns(fresh)).toHaveLength(1);
+
+    const aged = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(aged.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(aged, { harness: true, start: String(outsideBound()) });
+    const refused = runHelper({ ...aged.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(refused.status).toBe(0);
+    expectNoExceptionSkip(refused.stderr);
+    expectRefusal(refused.stderr, 'handoff too old');
+    expect(skillRuns(aged)).toHaveLength(0);
+
+    const badStart = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(badStart.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(badStart, { start: true });
+    const malformed = runHelper({ ...badStart.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(malformed.status).toBe(0);
+    expectNoExceptionSkip(malformed.stderr);
+    expect(malformed.stderr).toContain('missing or malformed start/session state');
+    expect(malformed.stderr).not.toContain('handoff too old');
+    expect(malformed.stderr).not.toContain('root=');
+    expect(skillRuns(badStart)).toHaveLength(0);
+    expect(badStart.readLedger()).toHaveLength(0);
+
+    const numeric = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(numeric.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(numeric, { start: String(epochNow() - 25), harness: null });
+    expect(runHelper(numeric.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(numeric)[0].duration_s).toBeGreaterThanOrEqual(25);
+  }, 30_000);
+
+  test('explicit --start without --session-id does not bypass a refusable handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const r = runHelper({ ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' },
+      ['finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 5), '--outcome', 'success']);
+    expectRefusal(r.stderr, 'handoff from another session');
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(1);
+  });
+
+  test('a legacy duration finish with an implicit session follows the rule', () => {
+    const refused = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...refused.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const blocked = runHelper({ ...refused.env, CODEX_THREAD_ID: 'thread-b' },
+      ['--skill', 'extend:roadmap', '--duration', '42', '--outcome', 'success']);
+    expect(blocked.status).toBe(0);
+    expect(skillRuns(refused)).toHaveLength(0);
+    expect(handoffs(refused)).toHaveLength(1);
+
+    const adopted = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...adopted.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper({ ...adopted.env, CODEX_THREAD_ID: 'thread-a' },
+      ['--skill', 'extend:roadmap', '--duration', '42', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(adopted)[0].duration_s).toBe(42);
+  });
+
+  test('a refused handoff keeps its keys and gains one capped refusals entry', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const before = readHandoff(fix);
+    const refused = runHelper({ ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    const after = readHandoff(fix);
+    for (const key of Object.keys(before)) expect(after[key]).toEqual(before[key]);
+    expect(after.refusals).toEqual([expect.objectContaining({ reason: 'handoff from another session' })]);
+    expect(typeof (after.refusals as Array<{ at: number }>)[0].at).toBe('number');
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    }
+    expect((readHandoff(fix).refusals as unknown[])).toHaveLength(10);
+  });
+
+  test('a failed refusal write preserves the handoff and still explains the refusal', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const file = handoffPath(fix);
+    const before = readFileSync(file, 'utf8');
+    // Inject the write error at save_state; chmod is ineffective for root test runners.
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\ndef fail(*args):\n    raise OSError("fixture refusal write denied")\ntelemetry.save_state = fail\ntelemetry.main(["finish", "--skill", "extend:roadmap"])\n`;
+    const refused = spawnSync('python3', ['-I', '-c', script], {
+      env: { ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(refused.status).toBe(0);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    expectNoExceptionSkip(refused.stderr);
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(skillRuns(fix)).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(0);
+  });
+
+  test('an existing malformed handoff keeps the generic diagnostic', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const file = handoffPath(fix);
+    for (const content of ['garbage{{', '[]', '"string"', '', '{}']) {
+      writeFileSync(file, content);
+      const r = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap']);
+      expect(r.status).toBe(0);
+      expect(refusalLines(r.stderr)).toHaveLength(1);
+      expect(r.stderr).not.toContain('no handoff for this repository root');
+      expect(r.stderr).not.toContain('root=');
+      expectNoExceptionSkip(r.stderr);
+      expect(fix.readLedger()).toHaveLength(0);
+      expect(skillRuns(fix)).toHaveLength(0);
+    }
+  });
+
+  test('a fingerprinted same-root collision refuses the earlier session and pairs the later one', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const repo = gitRepo(fix, 'one-checkout');
+    const first = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-a' }, cwd: repo, encoding: 'utf8',
+    });
+    const second = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-b' }, cwd: repo, encoding: 'utf8',
+    });
+    const secondSid = second.stdout.match(/session=(\S+)/)?.[1];
+    const early = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'error'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-a' }, cwd: repo, encoding: 'utf8',
+    });
+    expect(early.status).toBe(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
+      env: { ...fix.env, CODEX_THREAD_ID: 'thread-b' }, cwd: repo, encoding: 'utf8',
+    }).status).toBe(0);
+    expect(skillRuns(fix).map(row => row.session_id)).toEqual([secondSid]);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual([secondSid]);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(first.status).toBe(0);
+  });
+
+  test('a root containing a newline keeps the refusal on one quoted line', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const cwd = join(fix.home, 'repo\nname');
+    mkdirSync(cwd);
+    expect(spawnSync('git', ['init', '-q', cwd], { env: fix.env }).status).toBe(0);
+    const r = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap'], {
+      env: { ...fix.env, ...DEBUG }, cwd, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(r.status).toBe(0);
+    const lines = refusalLines(r.stderr);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('no handoff for this repository root');
+    expect(lines[0]).toContain('\\n');
+    expect(lines[0]).toMatch(/root=".*\\n.*"/);
+    expect(lines[0]).toMatch(/handoff=".*"/);
+  });
+
+  test('a resumable skill adopts another session 30 days later', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:pair-review']).status).toBe(0);
+    rewriteHandoff(fix, { start: String(epochNow() - 30 * BOUND_S) });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:pair-review', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(fix)).toHaveLength(1);
+  });
+
+  test('an explicit session id still supplies start from another session older than 24 hours', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const started = runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']);
+    const sid = started.stdout.match(/session=(\S+)/)?.[1];
+    rewriteHandoff(fix, { start: String(outsideBound()) });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' },
+      ['finish', '--skill', 'extend:roadmap', '--session-id', sid!, '--outcome', 'success']).status).toBe(0);
+    expect(fix.readLedger()[0]).toMatchObject({ session_id: sid });
+    expect(fix.readLedger()[0].duration_s).toBeGreaterThan(BOUND_S);
+    expect(skillRuns(fix)).toHaveLength(1);
+  });
+
+  test('tier turned off before finish consumes the handoff and leaves that skill_start unpaired', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    writeFileSync(join(fix.home, '.gstack/config.yaml'), 'telemetry: off\n');
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(fix.readJsonl().map(row => row.event_type)).toEqual(['skill_start']);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(fix.readLedger()).toHaveLength(1);
+  });
+
+  test('an unknown-fingerprint handoff within 24 hours is adopted and a join is not proof', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    writeFileSync(handoffPath(fix), JSON.stringify({ session_id: 'pre-change', start: String(insideBound()) }));
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(fix)[0].session_id).toBe('pre-change');
+    expect(fix.readLedger()[0].session_id).toBe('pre-change');
+  });
+
+  test('exact 86400 second non-resumable handoff is adopted and 86401 seconds is refused', () => {
+    // The inclusive bound is judged with a fixed clock. A live finish cannot hit age 86400
+    // exactly, because time.time() runs after the process starts.
+    const now = 1_700_000_000;
+    const script = `import sys\nsys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})\nimport telemetry\nnow = ${now}\nadopt = telemetry.consider_adoption({"start": now - 86400, "harness": None}, "extend:roadmap", now, None)\nrefuse = telemetry.consider_adoption({"start": str(now - 86401), "harness": ""}, "extend:roadmap", now, None)\nprint(adopt[0], adopt[1], refuse[0])\n`;
+    const judged = spawnSync('python3', ['-I', '-c', script], { encoding: 'utf8', timeout: 10_000 });
+    expect(judged.status).toBe(0);
+    expect(judged.stderr).not.toContain('Traceback');
+    expect(judged.stdout.trim()).toBe(`adopt ${now - BOUND_S} refuse`);
+
+    const refused = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(refused.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(refused, { start: String(epochNow() - BOUND_S - 1), harness: null });
+    const tooOld = runHelper({ ...refused.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(tooOld.status).toBe(0);
+    expectRefusal(tooOld.stderr, 'handoff too old');
+    expect(skillRuns(refused)).toHaveLength(0);
+  }, 30_000);
+
+  test('an empty harness string adopts when recent and refuses when older than 86400 seconds', () => {
+    const recent = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(recent.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(recent, { harness: '' });
+    expect(runHelper(recent.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(skillRuns(recent)).toHaveLength(1);
+
+    const aged = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(aged.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(aged, { harness: '', start: String(outsideBound()) });
+    const tooOld = runHelper({ ...aged.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(tooOld.status).toBe(0);
+    expectRefusal(tooOld.stderr, 'handoff too old');
+    expect(skillRuns(aged)).toHaveLength(0);
+  }, 30_000);
+
+  test('a resumable skill rejects a malformed start before the adoption branch', () => {
+    for (const start of [true, 'abc']) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      expect(runHelper(fix.env, ['start', '--skill', 'extend:pair-review']).status).toBe(0);
+      rewriteHandoff(fix, { start });
+      const r = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:pair-review', '--outcome', 'success']);
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain('missing or malformed start/session state');
+      expect(r.stderr).not.toContain('handoff too old');
+      expect(fix.readLedger()).toHaveLength(0);
+      expect(skillRuns(fix)).toHaveLength(0);
+    }
+  }, 30_000);
+
+  test('explicit --start without --session-id dates an adoptable handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const original = epochNow() - 400;
+    const explicit = epochNow() - 12;
+    rewriteHandoff(fix, { start: String(original), harness: null });
+    const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', String(explicit), '--outcome', 'success']);
+    expect(r.status).toBe(0);
+    const duration = skillRuns(fix)[0].duration_s as number;
+    expect(duration).toBeGreaterThanOrEqual(12);
+    expect(duration).toBeLessThanOrEqual(40);
+    expect(Math.abs(duration - (epochNow() - original))).toBeGreaterThan(200);
+  });
+
+  test('a too-old refusal stores the reason handoff too old without age or bound', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { start: String(epochNow() - BOUND_S - 1), harness: null });
+    const refused = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expect(refused.status).toBe(0);
+    expect(refused.stderr).toContain('age=');
+    expect(refused.stderr).toContain('bound=');
+    const reason = (readHandoff(fix).refusals as Array<{ reason: string }>)[0].reason;
+    expect(reason).toBe('handoff too old');
+    expect(reason.includes('age=')).toBe(false);
+    expect(reason.includes('bound=')).toBe(false);
+  });
+
+  test('a non-list refusals value is reset to the new refusal dict', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { refusals: 'nope' });
+    const refused = runHelper({ ...fix.env, ...DEBUG, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+    expectRefusal(refused.stderr, 'handoff from another session');
+    const entries = readHandoff(fix).refusals as Array<{ reason: string }>;
+    expect(entries).toEqual([expect.objectContaining({ reason: 'handoff from another session' })]);
+    expect(entries.every(item => item !== null && typeof item === 'object')).toBe(true);
+    expect(JSON.stringify(entries).includes('nope')).toBe(false);
+  });
+
+  test('non-dict refusal entries are dropped while dict entries stay', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, { refusals: [{ reason: 'keep' }, 'drop', 3] });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const entries = readHandoff(fix).refusals as Array<{ reason: string }>;
+    expect(entries.map(item => item.reason)).toEqual(['keep', 'handoff from another session']);
+    expect(entries.every(item => item !== null && typeof item === 'object' && typeof item.reason === 'string')).toBe(true);
+  });
+
+  test('the refusal cap drops the oldest planted reason and keeps the newest', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-a' }, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    rewriteHandoff(fix, {
+      refusals: Array.from({ length: 10 }, (_, index) => ({ reason: `reason-${index}`, at: index })),
+    });
+    expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const reasons = (readHandoff(fix).refusals as Array<{ reason: string }>).map(item => item.reason);
+    expect(reasons).toHaveLength(10);
+    expect(reasons.includes('reason-0')).toBe(false);
+    expect(reasons[0]).toBe('reason-1');
+    expect(reasons[8]).toBe('reason-9');
+    expect(reasons[9]).toBe('handoff from another session');
+  });
+
+  test('invalid session markers are omitted and a valid sibling is fingerprinted', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const traced = runHelper({
+      ...fix.env,
+      ...DEBUG,
+      CODEX_THREAD_ID: '-bad',
+      CURSOR_CONVERSATION_ID: 'thread-ok',
+    }, ['start', '--skill', 'extend:roadmap']);
+    expect(traced.status).toBe(0);
+    const line = traced.stderr.split('\n').find(item => item.includes('harness markers:'));
+    expect(line).toBe('telemetry: harness markers: CURSOR_CONVERSATION_ID');
+    expect(traced.stderr.includes('-bad')).toBe(false);
+    expect(traced.stderr.includes('thread-ok')).toBe(false);
+    expect(readHandoff(fix).harness).toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'thread-ok']]));
   });
 });

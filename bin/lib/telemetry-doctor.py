@@ -5,11 +5,12 @@ import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 
-from telemetry import MIN_GSTACK_FOR_NO_SWEEP, capture, compatible_wrapper, executable, resolve, sink_path, supports_no_sweep, which
+from telemetry import (MIN_GSTACK_FOR_NO_SWEEP, RESUMABLE, capture, compatible_wrapper, executable,
+                       gstack_helper_warning, provenance_enabled, resolve, sink_path, state_root,
+                       supports_no_sweep, which)
 
 SKILLS = ("pair-review", "roadmap", "full-review",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement", "ship-and-land")
-RESUMABLE = {"pair-review", "review-and-prep"}
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30
 MAX_DAYS = 365000
@@ -218,9 +219,15 @@ def report(days):
     if no_sweep is False:
         warnings.append(f"gstack-telemetry-log lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP}), so "
                         "completions are skipped; run gstack-upgrade.")
+    helper_warning = gstack_helper_warning(provenance_enabled(state_root()),
+                                          {"gstack-telemetry-log": logger, "gstack-config": config})
+    if helper_warning:
+        warnings.append(helper_warning)
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
-                stale_wrapper=stale, logger_supports_no_sweep=no_sweep, warnings=warnings,
+                stale_wrapper=stale, logger_supports_no_sweep=no_sweep,
+                gstack_logger=logger, gstack_config=config,
+                warnings=warnings,
                 diagnostic=None if binary else "gstack-extend-telemetry unresolvable; re-run ./setup. See docs/telemetry.md.",
                 transcript_caveat=CAVEAT, transcript_issues=transcript_issues, issues=issues,
                 duration_note="duration_s is session wall-clock, not model/token spend; values above 86400s are null.",
