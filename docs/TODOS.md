@@ -2,6 +2,20 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=22D,defer=true] Resolve SESSION_DIR in /pair-review's archive block
+- **Why:** `skills/pair-review.md` "Active Session Guard" runs `session_archive_dir pair-review "$TS" "$BRANCH"` and `mv "$SESSION_DIR" "$ARCHIVE_DIR"` in a block with no guarded `session-paths.sh` setup; only the prose says "re-source the helper if this is a fresh bash block". Run alone, `session_archive_dir` is undefined and `$SESSION_DIR` and `$BRANCH` are empty, so the archive fails and a new session can be written over the old one. Track 22D fixes the same defect in `/full-review`.
+- **Context:** Found by Track 22D's /autoplan (CEO, E8). Give the block the guarded setup Track 22D uses (guard line, `source`, `BRANCH`, `SESSION_DIR`, archive only a non-empty directory, stop on `mv` failure or an existing archive path) and raise `tests/skill-protocols.test.ts` L7's guard count by one in the same change.
+- **Effort:** S (human: ~1h / CC: ~10min)
+- **Priority:** P3
+- **Depends on:** Track 22D landing (L7 count and the execution-test pattern); `skills/pair-review.md` is Track 23A's file.
+
+### [plan-ceo-review:track=22D,defer=true] Executable /full-review session-state helper with scenario tests
+- **Why:** After Track 22D, /full-review's phases, resume rules, status rollup and TODOS dedupe are still prose an agent follows; tests prove the wording, and only the Init state block is executed. An interrupted run that resumes, a partial-agent failure and a resumed finalization are verified by no test. Track 22E takes this route for `/review-and-prep`'s Greptile rules.
+- **Context:** Raised by Track 22D's /autoplan outside voices (CEO and Eng). Deferred because the skill runs about monthly and the defects 22D fixes are prose-level. A helper would take `session.yaml` plus the state files and return the next phase, the status and the entries still to append, with stable finding IDs instead of 22D's `Found in`-plus-theme dedupe. It should also own the shared per-project slot: today two workspaces can start at once (the Init state block creates an empty directory and `session.yaml` appears only after the agents return), and "Start fresh" in one workspace can archive a session another workspace is still writing. Record `branch` and `started` at Init and have every state write check that `started` still matches. Revisit if usage grows or a resume defect is reported.
+- **Effort:** M (human: ~2d / CC: ~1h)
+- **Priority:** P3
+- **Depends on:** Track 22D landing.
+
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
