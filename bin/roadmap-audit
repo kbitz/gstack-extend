@@ -4,4 +4,4 @@
 # Source of truth: src/audit/cli.ts. The legacy bash binary is preserved
 # in git history (see CHANGELOG / Track 2B); this shim is the single
 # entry point going forward.
-exec bun "$(dirname "$0")/../src/audit/cli.ts" "$@"
+exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/audit/cli.ts" "$@"
