@@ -16,7 +16,7 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildAuditCtx, parseArgs } from '../src/audit/cli.ts';
-import { runCheckDocLocation } from '../src/audit/checks/doc-location.ts';
+import { docLocationMoves, runCheckDocLocation } from '../src/audit/checks/doc-location.ts';
 import type { AuditCtx, AuditFileExists } from '../src/audit/types.ts';
 import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
@@ -171,5 +171,28 @@ describe('buildAuditCtx: bin/roadmap-audit file type', () => {
     const ctx = ctxFor(repo);
     expect(ctx.exists.rootRoadmapAudit).toBe(false);
     expect(runCheckDocLocation(ctx).status).toBe('pass');
+  });
+});
+
+
+describe('docLocationMoves: record/render agreement', () => {
+  for (const hasDocs of [false, true]) {
+    test(`project move with docsDir=${hasDocs}`, () => {
+      const ctx = makeCtx({ rootTodos: true, docsDir: hasDocs });
+      expect(docLocationMoves(ctx)).toEqual([{ check: 'DOC_LOCATION', source: 'TODOS.md',
+        destination: 'docs/TODOS.md', missingParent: hasDocs ? null : 'docs', heuristic: false, blocked: null }]);
+      expect(runCheckDocLocation(ctx).body).toEqual(['FINDINGS:',
+        hasDocs ? '- TODOS.md is in root — should be in docs/' : '- TODOS.md is in root — consider creating docs/ and moving it there',
+        hasDocs ? "  Suggested: git mv -- 'TODOS.md' 'docs/TODOS.md'" : "  Suggested: mkdir -p 'docs' && git mv -- 'TODOS.md' 'docs/TODOS.md'", '']);
+    });
+  }
+  test('root move and docs-absent diagnostic are distinct', () => {
+    const ctx = makeCtx({ docsReadme: true, docsDir: true });
+    expect(docLocationMoves(ctx)).toEqual([{ check: 'DOC_LOCATION', source: 'docs/README.md',
+      destination: 'README.md', missingParent: null, heuristic: false, blocked: null }]);
+    expect(runCheckDocLocation(ctx).body).toEqual(['FINDINGS:',
+      '- README.md is in docs/ — should be in root (tools/platforms expect it there)',
+      "  Suggested: git mv -- 'docs/README.md' 'README.md'", '']);
+    expect(docLocationMoves(makeCtx({ rootRoadmapAudit: true }))).toEqual([]);
   });
 });

@@ -43,49 +43,47 @@ const PROJECT_DOC_PAIRS: DocPair[] = [
   { name: 'PROGRESS.md', rootKey: 'rootProgress', docsKey: 'docsProgress' },
 ];
 
-export function runCheckDocLocation(ctx: AuditCtx): CheckResult {
-  const findings: string[] = [];
-  const hasDocs = ctx.exists.docsDir;
+/** Move-only records shared by the audit renderer and layout callers. */
+export type DocMoveRecord = {
+  check: 'DOC_LOCATION' | 'DOC_TYPE_MISMATCH';
+  source: string;
+  destination: string | null;
+  missingParent: string | null;
+  heuristic: boolean;
+  blocked: null | 'inbox' | 'collision';
+};
 
-  // Each finding emits a `Suggested:` line so the Layout Scaffolding flow
-  // in skills/roadmap.md can execute the moves directly. When the
-  // destination's parent dir doesn't exist (no docs/ yet, root → docs/
-  // move), prefix with `mkdir -p` so the suggestion is one copy-paste.
-  // shellQuote keeps the suggestion safe against malicious filenames —
-  // doc-location's filenames are constrained to ROOT_DOCS/PROJECT_DOC_PAIRS
-  // literals (TODOS.md, ROADMAP.md, etc.) so injection is structurally
-  // impossible, but quoting is defense-in-depth and matches doc-type.ts.
+export function docLocationMoves(ctx: AuditCtx): DocMoveRecord[] {
+  const moves: DocMoveRecord[] = [];
   for (const pair of PROJECT_DOC_PAIRS) {
-    const inRoot = ctx.exists[pair.rootKey];
-    const inDocs = ctx.exists[pair.docsKey];
-    if (inRoot && !inDocs) {
-      const dst = `docs/${pair.name}`;
-      const qSrc = shellQuote(pair.name);
-      const qDst = shellQuote(dst);
-      if (hasDocs) {
-        findings.push(`- ${pair.name} is in root — should be in docs/`);
-        findings.push(`  Suggested: git mv -- ${qSrc} ${qDst}`);
-      } else {
-        findings.push(
-          `- ${pair.name} is in root — consider creating docs/ and moving it there`,
-        );
-        findings.push(`  Suggested: mkdir -p 'docs' && git mv -- ${qSrc} ${qDst}`);
-      }
+    if (ctx.exists[pair.rootKey] && !ctx.exists[pair.docsKey]) {
+      moves.push({ check: 'DOC_LOCATION', source: pair.name, destination: `docs/${pair.name}`,
+        missingParent: ctx.exists.docsDir ? null : 'docs', heuristic: false, blocked: null });
     }
   }
-
   for (const pair of ROOT_DOC_PAIRS) {
-    const inRoot = ctx.exists[pair.rootKey];
-    const inDocs = ctx.exists[pair.docsKey];
-    if (inDocs && !inRoot) {
-      const src = `docs/${pair.name}`;
-      const qSrc = shellQuote(src);
-      const qDst = shellQuote(pair.name);
-      findings.push(
-        `- ${pair.name} is in docs/ — should be in root (tools/platforms expect it there)`,
-      );
-      findings.push(`  Suggested: git mv -- ${qSrc} ${qDst}`);
+    if (ctx.exists[pair.docsKey] && !ctx.exists[pair.rootKey]) {
+      moves.push({ check: 'DOC_LOCATION', source: `docs/${pair.name}`, destination: pair.name,
+        missingParent: null, heuristic: false, blocked: null });
     }
+  }
+  return moves;
+}
+
+export function runCheckDocLocation(ctx: AuditCtx): CheckResult {
+  const findings: string[] = [];
+  for (const move of docLocationMoves(ctx)) {
+    const qSrc = shellQuote(move.source);
+    const qDst = shellQuote(move.destination!);
+    if (move.source.startsWith('docs/')) {
+      findings.push(`- ${move.destination} is in docs/ — should be in root (tools/platforms expect it there)`);
+    } else if (move.missingParent) {
+      findings.push(`- ${move.source} is in root — consider creating docs/ and moving it there`);
+    } else {
+      findings.push(`- ${move.source} is in root — should be in docs/`);
+    }
+    const mkdir = move.missingParent ? `mkdir -p ${shellQuote(move.missingParent)} && ` : '';
+    findings.push(`  Suggested: ${mkdir}git mv -- ${qSrc} ${qDst}`);
   }
 
   // Repo-local opt-in only: bin/roadmap-audit under the audited repoRoot.

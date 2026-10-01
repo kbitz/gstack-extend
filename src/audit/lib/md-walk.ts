@@ -29,7 +29,11 @@ function isExcludedPath(rel: string): boolean {
   return false;
 }
 
-export function walkMdFiles(repoRoot: string, maxDepth = 2): MdFile[] {
+export function walkMdFiles(
+  repoRoot: string,
+  maxDepth = 2,
+  onUnreadable?: (dir: string, error: unknown) => void,
+): MdFile[] {
   const out: MdFile[] = [];
   if (!existsSync(repoRoot)) return out;
 
@@ -37,7 +41,8 @@ export function walkMdFiles(repoRoot: string, maxDepth = 2): MdFile[] {
     let entries: string[];
     try {
       entries = readdirSync(dir);
-    } catch {
+    } catch (error) {
+      onUnreadable?.(dir, error);
       return;
     }
     for (const name of entries) {

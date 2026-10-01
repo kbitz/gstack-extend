@@ -60,6 +60,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { shellQuote } from '../lib/shell-quote.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
+import type { DocMoveRecord } from './doc-location.ts';
 
 const ROOT_DOCS = new Set([
   'README.md',
@@ -129,32 +130,29 @@ function hasMermaidOrPlantumlFence(content: string): boolean {
   return MERMAID_FENCE_RE.test(content);
 }
 
-function suggestionFor(ctx: AuditCtx, finding: Finding): string {
-  // Inbox-mismatch is always-block: checkbox-heavy files outside TODOS.md
-  // typically want merge/import, not rename, so we never emit an
-  // automated git-mv suggestion for them. Short-circuit before destination
-  // resolution / collision detection.
+function recordFor(ctx: AuditCtx, finding: Finding): DocMoveRecord {
   if (finding.kind === 'inbox') {
-    return 'Suggested: review and move (no automated suggestion — inbox content typically wants merge, not rename)';
+    return { check: 'DOC_TYPE_MISMATCH', source: finding.rel, destination: null,
+      missingParent: null, heuristic: false, blocked: 'inbox' };
   }
-  const basename = basenameOf(finding.rel);
-  const dest = `docs/designs/${basename}`;
-  const destAbs = join(ctx.repoRoot, dest);
-  // Collision: refuse to suggest a destructive move.
-  if (existsSync(destAbs)) {
-    return 'Suggested: review and move (no automated suggestion — destination ambiguous)';
-  }
-  // Need to mkdir parent? Only relevant for nested destinations.
-  const parent = dest.includes('/') ? dest.slice(0, dest.lastIndexOf('/')) : '';
-  const qSrc = shellQuote(finding.rel);
-  const qDest = shellQuote(dest);
-  if (parent && !existsSync(join(ctx.repoRoot, parent))) {
-    return `Suggested: mkdir -p ${shellQuote(parent)} && git mv -- ${qSrc} ${qDest}`;
-  }
-  return `Suggested: git mv -- ${qSrc} ${qDest}`;
+  const destination = `docs/designs/${basenameOf(finding.rel)}`;
+  return { check: 'DOC_TYPE_MISMATCH', source: finding.rel, destination,
+    missingParent: existsSync(join(ctx.repoRoot, 'docs/designs')) ? null : 'docs/designs',
+    heuristic: true, blocked: existsSync(join(ctx.repoRoot, destination)) ? 'collision' : null };
 }
 
-export function runCheckDocType(ctx: AuditCtx): CheckResult {
+function suggestionFor(move: DocMoveRecord): string {
+  if (move.blocked === 'inbox') {
+    return 'Suggested: review and move (no automated suggestion — inbox content typically wants merge, not rename)';
+  }
+  if (move.blocked === 'collision') {
+    return 'Suggested: review and move (no automated suggestion — destination ambiguous)';
+  }
+  const mkdir = move.missingParent ? `mkdir -p ${shellQuote(move.missingParent)} && ` : '';
+  return `Suggested: ${mkdir}git mv -- ${shellQuote(move.source)} ${shellQuote(move.destination!)}`;
+}
+
+export function docTypeMoves(ctx: AuditCtx): DocMoveRecord[] {
   const findings: Finding[] = [];
 
   for (const f of ctx.mdFiles) {
@@ -181,7 +179,12 @@ export function runCheckDocType(ctx: AuditCtx): CheckResult {
     }
   }
 
-  if (findings.length === 0) {
+  return findings.map(finding => recordFor(ctx, finding));
+}
+
+export function runCheckDocType(ctx: AuditCtx): CheckResult {
+  const moves = docTypeMoves(ctx);
+  if (moves.length === 0) {
     return {
       section: 'DOC_TYPE_MISMATCH',
       status: 'pass',
@@ -190,13 +193,13 @@ export function runCheckDocType(ctx: AuditCtx): CheckResult {
   }
 
   const body: string[] = ['FINDINGS:'];
-  for (const f of findings) {
+  for (const move of moves) {
     const kindLabel =
-      f.kind === 'design'
-        ? `looks like a design doc (mermaid/plantuml fence) but is outside ${f.expectedDir}`
-        : `looks like a TODO inbox (checkbox density >= ${CHECKBOX_DENSITY_THRESHOLD}) but is outside ${f.expectedDir}`;
-    body.push(`- ${f.rel}: ${kindLabel}`);
-    body.push(`  ${suggestionFor(ctx, f)}`);
+      move.heuristic
+        ? `looks like a design doc (mermaid/plantuml fence) but is outside docs/designs/`
+        : `looks like a TODO inbox (checkbox density >= ${CHECKBOX_DENSITY_THRESHOLD}) but is outside TODOS.md`;
+    body.push(`- ${move.source}: ${kindLabel}`);
+    body.push(`  ${suggestionFor(move)}`);
   }
   body.push('');
 
