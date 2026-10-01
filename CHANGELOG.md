@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.1.0] - 2026-10-01
+
+### Added
+
+- **Paste a `/review-and-prep` handoff into `/ship-and-land` and keep its completed reviews.** The final prompt now carries a `review-and-prep/v1` marker with the reviewed tree and base. `/ship-and-land` trusts those review outcomes in a new session or on another model after one receipt lookup, then reviews only what changed since. The same marker text in a PR, comment or receipt does nothing.
+- **Prose-only PRs get a smaller review.** Docs-only diffs run one read-only fact-check against the repo, ship's documentation audit and the plan and scope checks. Skills, prompts, configuration, tests and active HTML, SVG or MDX content still get the full review. Unknown or mixed scope falls back to full.
+- **Docs-only PRs can land on the project's full-suite CI check.** The docs lane runs locally, and an authenticated full-suite check-run on the final head stands in for the full local run. When it is missing or does not run the suite, the required test command runs once locally.
+
+### Changed
+
+- **Reviews run in parallel and stop sooner.** The Red Team runs alongside the first specialist batch, informational suggestions are deferred instead of triggering another pass, and fixes get an independent check of the changed lines instead of a full re-review. The three-cycle cap stays. A malformed or failed optional structured review is recorded as unavailable after one attempt.
+- **`/ship-and-land --reviewed` is explicit about what it waives.** It accepts a prior code review and coverage audit only from your own invocation, records them as user-attested, and still runs tests, QA probes, CI, documentation checks, plan completion and manual testing. Merge approval stays yours.
+- **Drift-lock tests protect the new rules.** `tests/skill-protocols.test.ts` checks the handoff marker on both the producing and consuming side, the trust boundaries, the docs fallbacks and the docs test policy.
+
 ## [0.33.0.1] - 2026-09-30
 
 ### Changed
