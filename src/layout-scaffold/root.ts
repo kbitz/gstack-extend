@@ -35,7 +35,7 @@ export const REFUSAL_ACTIONS = {
   dest_in_index: 'reconcile the indexed destination or exclude the source',
   index_locked: 'finish the Git operation holding the index lock',
   sparse_checkout: 'move the tracked item by hand in the sparse checkout',
-  git_dir_target: 'choose a destination outside the Git and common directories',
+  git_dir_target: 'use paths outside the Git and common directories, or exclude the source',
   exclude_unmatched: 'pass the exact source from the current plan',
   audit_failed: 'repair access to the reported audit path and run plan again',
   index_too_large: 'reduce the index inventory or move the items by hand',
@@ -93,7 +93,12 @@ export function escapeValue(value: string): string {
 export function contains(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
-export function fold(path: string): string { return path.normalize('NFC').toLowerCase(); }
+export function fold(path: string): string {
+  // Per-code-point casing avoids contextual sigma; default folding keeps dotless i distinct.
+  return Array.from(path.normalize('NFC'), char =>
+    char === '\u0131' ? char : char.toLowerCase().toUpperCase().toLowerCase(),
+  ).join('').normalize('NFC');
+}
 export function sameSpelling(a: string, b: string, precompose: boolean): boolean {
   return precompose ? a.normalize('NFC') === b.normalize('NFC') : a === b;
 }
@@ -103,7 +108,7 @@ export function checkOperand(path: string): void {
   }
 }
 
-export type Root = { path: string; mode: 'git' | 'plain'; gitDirs: string[]; precompose: boolean };
+export type Root = { path: string; mode: 'git' | 'plain'; gitDirs: string[]; gitTop?: string; precompose: boolean };
 export function bindRoot(requested: string | undefined, cwd: string, env: NodeJS.ProcessEnv, fs: FileSystem, git: GitGateway): Root {
   let candidate = requested;
   if (candidate === undefined) {
@@ -124,6 +129,13 @@ export function bindRoot(requested: string | undefined, cwd: string, env: NodeJS
   } catch (error) { throw new Refusal('root_invalid', candidate ?? cwd, errno(error)); }
   const probe = git.run(['rev-parse', '--is-inside-work-tree'], root);
   if (probe.status === 0 && probe.stdout.trim() === 'true') {
+    const top = git.run(['rev-parse', '--show-toplevel'], root);
+    if (top.status !== 0) throw new Refusal('git_unusable', root, top.stderr);
+    let gitTop: string;
+    try {
+      gitTop = fs.realpathSync(resolve(root, top.stdout.replace(/\n$/, '')));
+      if (!fs.statSync(gitTop).isDirectory() || !contains(gitTop, root)) throw new Error('root is outside its Git worktree');
+    } catch (error) { throw new Refusal('git_unusable', root, errno(error)); }
     const gitDirs = ['--absolute-git-dir', '--git-common-dir'].map(flag => {
       const result = git.run(['rev-parse', flag], root);
       if (result.status !== 0) throw new Refusal('git_unusable', root, result.stderr);
@@ -132,7 +144,7 @@ export function bindRoot(requested: string | undefined, cwd: string, env: NodeJS
     });
     const config = git.run(['config', '--bool', '--get', 'core.precomposeUnicode'], root);
     if (config.status !== 0 && config.status !== 1) throw new Refusal('git_unusable', root, config.stderr);
-    return { path: root, mode: 'git', gitDirs, precompose: config.stdout.trim() === 'true' };
+    return { path: root, mode: 'git', gitDirs, gitTop, precompose: config.stdout.trim() === 'true' };
   }
   const notRepo = /not a git repository \(or any of the parent directories\)|not a git repository \(or any parent up to mount point /.test(probe.stderr);
   if (probe.status === 128 && notRepo) {

@@ -53,7 +53,7 @@ export type DocMoveRecord = {
   blocked: null | 'inbox' | 'collision';
 };
 
-export function docLocationMoves(ctx: AuditCtx): DocMoveRecord[] {
+export function docLocationMoves(ctx: { exists: Partial<AuditCtx['exists']> }): DocMoveRecord[] {
   const moves: DocMoveRecord[] = [];
   for (const pair of PROJECT_DOC_PAIRS) {
     if (ctx.exists[pair.rootKey] && !ctx.exists[pair.docsKey]) {

@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { basename, join } from 'node:path';
 import { inventory, type GitGateway } from './git.ts';
-import { bothExist, identity, type Audit, type Plan } from './plan.ts';
+import { bothExist, identity, layoutMoves, type Audit, type Plan } from './plan.ts';
 import { CANONICAL_DIRS } from './preflight.ts';
 import { entry, errno, escapeValue, sameSpelling, type FileSystem } from './root.ts';
 
@@ -103,7 +103,7 @@ export function apply(plan: Plan, fs: FileSystem, git: GitGateway, audit: Audit,
     } else {
       const snapshot = audit(plan.root.path);
       const allowed = new Set([...plan.blocked, ...plan.excluded].map(identity));
-      for (const finding of [...snapshot.moves, ...bothExist(snapshot, plan.root.path, fs)]) {
+      for (const finding of [...layoutMoves(plan.root.path, snapshot.moves, fs), ...bothExist(snapshot, plan.root.path, fs)]) {
         if (!allowed.has(identity(finding))) unexpected.push(`${finding.check}: ${finding.source}${finding.destination ? ` → ${finding.destination}` : ''}`);
       }
       for (const dir of snapshot.unreadableDirs) if (!plan.unreadableDirs.includes(dir)) unexpected.push(`Not scanned: ${dir}`);

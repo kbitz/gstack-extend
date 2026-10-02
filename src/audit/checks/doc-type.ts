@@ -130,7 +130,7 @@ function hasMermaidOrPlantumlFence(content: string): boolean {
   return MERMAID_FENCE_RE.test(content);
 }
 
-function recordFor(ctx: AuditCtx, finding: Finding): DocMoveRecord {
+function recordFor(ctx: Pick<AuditCtx, 'repoRoot'>, finding: Finding): DocMoveRecord {
   if (finding.kind === 'inbox') {
     return { check: 'DOC_TYPE_MISMATCH', source: finding.rel, destination: null,
       missingParent: null, heuristic: false, blocked: 'inbox' };
@@ -152,7 +152,7 @@ function suggestionFor(move: DocMoveRecord): string {
   return `Suggested: ${mkdir}git mv -- ${shellQuote(move.source)} ${shellQuote(move.destination!)}`;
 }
 
-export function docTypeMoves(ctx: AuditCtx): DocMoveRecord[] {
+export function docTypeMoves(ctx: Pick<AuditCtx, 'repoRoot' | 'mdFiles'>): DocMoveRecord[] {
   const findings: Finding[] = [];
 
   for (const f of ctx.mdFiles) {

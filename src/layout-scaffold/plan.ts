@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildAuditCtx, parseArgs } from '../audit/cli.ts';
 import { docLocationMoves, type DocMoveRecord } from '../audit/checks/doc-location.ts';
 import { docTypeMoves } from '../audit/checks/doc-type.ts';
 import { walkMdFiles } from '../audit/lib/md-walk.ts';
@@ -14,9 +14,18 @@ export type Audit = (root: string) => AuditSnapshot;
 export const defaultAudit: Audit = root => {
   try {
     const unreadableDirs: string[] = [];
-    walkMdFiles(root, 2, dir => unreadableDirs.push(dir));
-    const ctx = buildAuditCtx({ repoRoot: root, extendDir: join(import.meta.dir, '../..'), argv: parseArgs([]) });
-    return { moves: [...docLocationMoves(ctx), ...docTypeMoves(ctx)], exists: ctx.exists, unreadableDirs };
+    // Layout needs no roadmap parser, version discovery or shared-infra loader.
+    const exists: Partial<AuditFileExists> = {};
+    const fileExists = (path: string) => existsSync(path) && statSync(path).isFile();
+    for (const [name, rootKey, docsKey] of BOTH_PAIRS) {
+      exists[rootKey] = fileExists(join(root, name));
+      exists[docsKey] = fileExists(join(root, 'docs', name));
+    }
+    exists.docsDir = existsSync(join(root, 'docs')) && statSync(join(root, 'docs')).isDirectory();
+    const mdFiles = walkMdFiles(root, 2, dir => unreadableDirs.push(dir))
+      .map(file => ({ ...file, content: readFileSync(file.abs, 'utf8') }));
+    const ctx = { repoRoot: root, exists, mdFiles };
+    return { moves: [...docLocationMoves(ctx), ...docTypeMoves(ctx)], exists, unreadableDirs };
   } catch (error) {
     const e = error as NodeJS.ErrnoException;
     if (e.code) throw new Refusal('audit_failed', e.path ?? root, errno(error));
@@ -40,7 +49,8 @@ export function bothExist(snapshot: AuditSnapshot, root: string, fs: FileSystem)
     if (!snapshot.exists[rootKey] || !snapshot.exists[docsKey]) continue;
     const source = project ? name : `docs/${name}`;
     if (!project) {
-      const a = fs.statSync(join(root, name)); const b = fs.statSync(join(root, 'docs', name));
+      const a = fs.lstatSync(join(root, name)); const b = fs.lstatSync(join(root, 'docs', name));
+      if (a.isSymbolicLink() || b.isSymbolicLink()) continue;
       const sameInode = a.dev === b.dev && a.ino === b.ino;
       const copy = !sameInode && a.size === b.size && Math.floor(a.mtimeMs / 1000) === Math.floor(b.mtimeMs / 1000)
         && fs.readFileSync(join(root, name)).equals(fs.readFileSync(join(root, 'docs', name)));
@@ -53,15 +63,29 @@ export function bothExist(snapshot: AuditSnapshot, root: string, fs: FileSystem)
 }
 export function identity(item: { check: string; source: string }): string { return JSON.stringify([item.check, item.source]); }
 
+/** A directory alias can expose a canonical design file under another walk path. */
+export function layoutMoves(root: string, moves: DocMoveRecord[], fs: FileSystem): DocMoveRecord[] {
+  return moves.filter(move => {
+    if (move.check !== 'DOC_TYPE_MISMATCH' || move.blocked !== 'collision' || !move.destination?.startsWith('docs/designs/')) return true;
+    if ([move.source, move.destination].some(path => HIDDEN.test(path))) return true;
+    try {
+      checkOperand(move.source); checkOperand(move.destination);
+      if (fs.lstatSync(join(root, move.source)).isSymbolicLink()) return true;
+      return fs.realpathSync(join(root, move.source)) !== fs.realpathSync(join(root, move.destination));
+    } catch { return true; }
+  });
+}
+
 export function buildPlan(root: Root, options: Options, audit: Audit, fs: FileSystem, git: GitGateway): Plan {
   const snapshot = options.scaffoldOnly ? { moves: [], exists: {}, unreadableDirs: [] } : audit(root.path);
+  const moves = layoutMoves(root.path, snapshot.moves, fs);
   const excludes = [...new Set(options.excludes)].sort();
-  const excluded = snapshot.moves.filter(move => excludes.includes(move.source));
-  const refusals = excludes.filter(source => !snapshot.moves.some(move => move.source === source))
+  const excluded = moves.filter(move => excludes.includes(move.source));
+  const refusals = excludes.filter(source => !moves.some(move => move.source === source))
     .map(source => new Refusal('exclude_unmatched', source, 'exclude value does not match a planned source'));
   const blocked = bothExist(snapshot, root.path, fs);
   const records: DocMoveRecord[] = [];
-  for (const move of snapshot.moves) {
+  for (const move of moves) {
     if (excludes.includes(move.source)) continue;
     try {
       for (const path of [move.source, move.destination, move.missingParent]) if (path !== null) checkOperand(path);

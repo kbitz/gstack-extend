@@ -615,23 +615,25 @@ describe('both-exist precision and unreadable discovery', () => {
   });
   test.skipIf(process.getuid?.() === 0)('unreadable depth-2 directory callback and Not scanned (requires non-root permissions)', () => {
     canonical(); file('private/arch.md', DESIGN); const before = tree(); const path = join(root, 'private');
+    const originalMode = statSync(path).mode & 0o7777;
     chmodSync(path, 0);
     try {
       const unreadable: string[] = []; walkMdFiles(root, 2, dir => unreadable.push(dir)); expect(unreadable).toEqual([path]);
       expect(walkMdFiles(root).some(item => item.rel === 'private/arch.md')).toBe(false);
       const result = plan(); expect(result.stdout).toContain(`Not scanned:\n- ${path}`); expect(result.stdout).not.toContain('already canonical');
-    } finally { chmodSync(path, 0o755); }
+    } finally { chmodSync(path, originalMode); }
     expect(tree()).toBe(before);
   });
   test.skipIf(process.getuid?.() === 0)('chmod 000 markdown yields audit_failed before planning and incomplete in re-audit', () => {
-    canonical(); file('private.md', 'private'); const path = join(root, 'private.md'); const before = tree(); chmodSync(path, 0);
+    canonical(); file('private.md', 'private'); const path = join(root, 'private.md'); const before = tree();
+    const originalMode = statSync(path).mode & 0o7777; chmodSync(path, 0);
     try { const result = plan(); status(result, 'refused', 1, false); expect(result.stdout).toContain('REFUSAL audit_failed:'); expect(result.stdout).toContain(path); expect(result.stdout).toContain('EACCES'); expect(result.stderr).toBe(''); }
-    finally { chmodSync(path, 0o644); } expect(tree()).toBe(before);
+    finally { chmodSync(path, originalMode); } expect(tree()).toBe(before);
     file('TODOS.md'); const p = plan(); let calls = 0;
     try {
       const audit = () => { if (++calls === 2) chmodSync(path, 0); return defaultAudit(root); };
       const result = applyId(id(p), [], { audit }); status(result, 'incomplete', 4); expect(result.stdout).toContain('EACCES');
-    } finally { chmodSync(path, 0o644); }
+    } finally { chmodSync(path, originalMode); }
   });
   test('case-insensitive-volume spelling: runtime skip reason is explicit', () => {
     const probe = join(temp, 'CaseProbe'); writeFileSync(probe, 'probe'); const insensitive = existsSync(join(temp, 'caseprobe')); unlinkSync(probe);
@@ -732,4 +734,326 @@ test('shared inode qualifies alone without reading either root-doc copy', () => 
   const audit = () => ({ ...snapshot(), exists: { rootLicense: true, docsLicense: true } });
   const fs = withFs({ readFileSync: () => { throw new Error('same inode should not need byte reads'); } });
   const result = plan([], { fs, audit }); status(result, 'ok', 0, true, true); expect(result.stdout).toContain('BLOCKED: 1');
+});
+
+// Value: approved review regressions protect actual write paths and complete layout discovery.
+describe('review regressions', () => {
+  test('move source in a separate Git directory refuses without writes', () => {
+    git(['init', '--quiet', '--separate-git-dir', join(root, 'metadata')]);
+    file('metadata/arch.md', DESIGN);
+    file('good.md', DESIGN);
+    const p = refused('git_dir_target');
+    const before = tree();
+    const result = applyId(id(p));
+    status(result, 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('source under an indexed gitlink refuses the whole batch without writes', () => {
+    gitRepo();
+    file('lib/arch.md', DESIGN);
+    file('good.md', DESIGN);
+    const head = git(['rev-parse', 'HEAD']).trim();
+    git(['update-index', '--add', '--cacheinfo', `160000,${head},lib`]);
+    expect(existsSync(join(root, 'lib/.git'))).toBe(false);
+    const p = refused('gitlink');
+    const before = tree();
+    status(applyId(id(p)), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('internal destination alias into an indexed gitlink refuses without writes', () => {
+    gitRepo();
+    canonical();
+    mkdirSync(join(root, 'lib'));
+    const head = git(['rev-parse', 'HEAD']).trim();
+    git(['update-index', '--add', '--cacheinfo', `160000,${head},lib`]);
+    rmdirSync(join(root, 'docs/designs'));
+    symlinkSync('../lib', join(root, 'docs/designs'));
+    file('arch.md', DESIGN);
+    const p = refused('gitlink');
+    const before = tree();
+    status(applyId(id(p)), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test.skipIf(process.getuid?.() === 0)('layout snapshot does not read unrelated shared-infra contents (requires non-root permissions)', () => {
+    canonical();
+    file('docs/shared-infra.txt', 'unused input\n');
+    const path = join(root, 'docs/shared-infra.txt');
+    const originalMode = statSync(path).mode & 0o7777;
+    const before = tree();
+    chmodSync(path, 0);
+    try {
+      const p = plan();
+      status(p, 'ok', 0, true, true);
+      expect(p.stderr).toBe('');
+      expect(p.stdout).toContain('already canonical');
+    } finally {
+      chmodSync(path, originalMode);
+    }
+    expect(tree()).toBe(before);
+  });
+
+  test('unused shared-infra FIFO cannot hang plan or apply', () => {
+    canonical();
+    const path = join(root, 'docs/shared-infra.txt');
+    const makeFifo = spawnSync('/usr/bin/mkfifo', [path], {
+      env: testEnv, encoding: 'utf8', timeout: 2000,
+    });
+    expect(makeFifo.status).toBe(0);
+    const before = tree();
+    const planned = spawnSync(join(EXTEND_ROOT, 'bin/layout-scaffold'),
+      ['plan', '--root', root],
+      { cwd: root, env: testEnv, encoding: 'utf8', timeout: 2000 });
+    expect(planned.error).toBeUndefined();
+    const p = { code: planned.status!, stdout: planned.stdout, stderr: planned.stderr };
+    status(p, 'ok', 0, true, true);
+    const applied = spawnSync(join(EXTEND_ROOT, 'bin/layout-scaffold'),
+      ['apply', '--root', root, '--plan-id', id(p)],
+      { cwd: root, env: testEnv, encoding: 'utf8', timeout: 2000 });
+    expect(applied.error).toBeUndefined();
+    status({ code: applied.status!, stdout: applied.stdout, stderr: applied.stderr },
+      'applied', 0);
+    expect(tree()).toBe(before);
+  });
+
+  test('unrelated rejected shared-infra input cannot print outside helper streams', () => {
+    canonical();
+    file('docs/shared-infra.txt', 'simple invalid pattern\n');
+    const result = spawnSync(join(EXTEND_ROOT, 'bin/layout-scaffold'),
+      ['plan', '--root', root],
+      { cwd: root, env: testEnv, encoding: 'utf8', timeout: 2000 });
+    expect(result.error).toBeUndefined();
+    status({ code: result.status!, stdout: result.stdout, stderr: result.stderr },
+      'ok', 0, true, true);
+    expect(result.stderr).toBe('');
+  });
+
+  for (const chained of [false, true]) {
+    for (const mode of ['plain', 'untracked'] as const) {
+      test(`design move through ${chained ? 'chained' : 'direct'} internal docs link (${mode})`, () => {
+        if (mode === 'untracked') gitRepo();
+        mkdirSync(join(root, 'real'));
+        if (chained) symlinkSync('real', join(root, 'middle'));
+        symlinkSync(chained ? 'middle' : 'real', join(root, 'docs'));
+        file('arch.md', DESIGN);
+        const p = plan();
+        status(p, 'ok', 0, true, true);
+        status(applyId(id(p)), 'applied', 0);
+        expect(readFileSync(join(root, 'real/designs/arch.md'), 'utf8')).toBe(DESIGN);
+        expect(existsSync(join(root, 'arch.md'))).toBe(false);
+        const next = plan();
+        status(next, 'ok', 0, true, true);
+        expect(next.stdout).toContain('BLOCKED: 0');
+        expect(next.stdout).toContain('already canonical');
+        const before = tree();
+        status(applyId(id(next)), 'applied', 0);
+        expect(tree()).toBe(before);
+      });
+    }
+  }
+
+  test('excludes a source beginning with --', () => {
+    canonical();
+    file('--arch.md', DESIGN);
+    file('good.md', DESIGN);
+    const p = plan(['--exclude', '--arch.md']);
+    status(p, 'ok', 0, true, true);
+    const result = applyId(id(p), ['--exclude', '--arch.md']);
+    status(result, 'applied', 0);
+    expect(readFileSync(join(root, '--arch.md'), 'utf8')).toBe(DESIGN);
+    expect(existsSync(join(root, 'docs/designs/good.md'))).toBe(true);
+  });
+
+  test('destination case variant uses the indexed-destination recovery action', () => {
+    gitRepo();
+    canonical();
+    file('TODOS.md', 'source\n');
+    const inventory: GitSpawn = (args, opts) => {
+      if (args.includes('ls-files')) return {
+        status: 0,
+        stdout: `H 100644 ${'a'.repeat(40)} 0\tdocs/todos.md\0`,
+        stderr: '',
+      };
+      return defaultGitSpawn(args, opts);
+    };
+    const p = refused('dest_in_index', [], { git: inventory });
+    expect(p.stdout).toContain(REFUSAL_ACTIONS.dest_in_index);
+    expect(p.stdout).not.toContain('REFUSAL source_spelling:');
+    const before = tree();
+    status(applyId(id(p), [], { git: inventory }), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test.skipIf(process.getuid?.() === 0)('readable but non-searchable directory cannot report canonical discovery (requires non-root permissions)', () => {
+    canonical();
+    file('private/arch.md', DESIGN);
+    const path = join(root, 'private');
+    const originalMode = statSync(path).mode & 0o7777;
+    const before = tree();
+    chmodSync(path, 0o400);
+    try {
+      const result = plan();
+      status(result, 'ok', 0, true, true);
+      expect(result.stdout).toContain(`Not scanned:\n- ${path}`);
+      expect(result.stdout).not.toContain('already canonical');
+    } finally {
+      chmodSync(path, originalMode);
+    }
+    expect(tree()).toBe(before);
+  });
+
+  test('gitlink source refusal uses inventory spelling from an explicit subdirectory', () => {
+    gitRepo();
+    file('sub/lib/arch.md', DESIGN);
+    file('sub/good.md', DESIGN);
+    const head = git(['rev-parse', 'HEAD']).trim();
+    git(['update-index', '--add', '--cacheinfo', `160000,${head},sub/lib`]);
+    root = join(root, 'sub');
+    expect(git(['ls-files', '-t', '-z', '--stage'])).toContain('\tlib\0');
+    const p = refused('gitlink');
+    const before = tree();
+    status(applyId(id(p)), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('relative root beginning with -- is a literal operand', () => {
+    mkdirSync(join(root, '--project'));
+    const p = invoke(['plan', '--root', '--project']);
+    status(p, 'ok', 0, true, true);
+    status(invoke(['apply', '--root', '--project', '--plan-id', id(p)]), 'applied', 0);
+    for (const path of CANONICAL_DIRS) expect(statSync(join(root, '--project', path)).isDirectory()).toBe(true);
+  });
+});
+
+// Value: all write paths use worktree coordinates even for an explicitly audited subdirectory.
+describe('explicit-root gitlink regressions', () => {
+  test('audited root beneath an indexed gitlink refuses without writes', () => {
+    gitRepo(); file('lib/child/arch.md', DESIGN);
+    const head = git(['rev-parse', 'HEAD']).trim();
+    git(['update-index', '--add', '--cacheinfo', `160000,${head},lib`]);
+    root = join(root, 'lib/child');
+    const before = tree(); const p = refused('gitlink');
+    status(applyId(id(p)), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('destination alias to a sibling gitlink refuses even when authorized', () => {
+    gitRepo(); file('sub/arch.md', DESIGN);
+    mkdirSync(join(root, 'lib'));
+    const head = git(['rev-parse', 'HEAD']).trim();
+    git(['update-index', '--add', '--cacheinfo', `160000,${head},lib`]);
+    symlinkSync('../lib', join(root, 'sub/docs'));
+    root = join(root, 'sub');
+    const before = tree(); const p = refused('gitlink');
+    status(applyId(id(p), ['--authorize-external']), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+});
+
+describe('additional review regressions', () => {
+  test('a symlinked root-doc mirror is canonical, not a failed half-move', () => {
+    canonical(); file('README.md', 'root document');
+    symlinkSync('../README.md', join(root, 'docs/README.md'));
+    const before = tree(); const p = plan();
+    status(p, 'ok', 0, true, true);
+    expect(p.stdout).toContain('BLOCKED: 0');
+    expect(p.stdout).toContain('already canonical');
+    status(applyId(id(p)), 'applied', 0);
+    expect(tree()).toBe(before);
+  });
+  test('launcher reached as ./layout-scaffold from bin finds its source', () => {
+    const before = tree();
+    const result = spawnSync('./layout-scaffold', ['plan', '--root', root], {
+      cwd: join(EXTEND_ROOT, 'bin'), env: testEnv, input: '', encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toContain('STATUS: ok');
+    expect(tree()).toBe(before);
+  });
+  test('a single symlink loop does not mark its readable parent Not scanned', () => {
+    canonical(); symlinkSync('loop.md', join(root, 'loop.md'));
+    const before = tree(); const p = plan();
+    status(p, 'ok', 0, true, true);
+    expect(p.stdout).not.toContain('Not scanned:');
+    expect(p.stdout).toContain('already canonical');
+    status(applyId(id(p)), 'applied', 0);
+    expect(tree()).toBe(before);
+  });
+});
+
+
+describe('pass3 preflight guard regressions', () => {
+  test('resolved untracked destination in the index refuses without writes', () => {
+    gitRepo(); canonical();
+    file('lib/arch.md', 'indexed original\n'); track('lib/arch.md');
+    unlinkSync(join(root, 'lib/arch.md'));
+    rmdirSync(join(root, 'docs/designs'));
+    symlinkSync('../lib', join(root, 'docs/designs'));
+    file('arch.md', DESIGN);
+    const before = tree(); const p = refused('dest_in_index');
+    status(applyId(id(p)), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('an explicit-root alias to a sibling indexed destination refuses when authorized', () => {
+    gitRepo();
+    file('lib/designs/arch.md', 'indexed original\n'); track('lib/designs/arch.md');
+    unlinkSync(join(root, 'lib/designs/arch.md'));
+    mkdirSync(join(root, 'lib/archive'));
+    file('sub/arch.md', DESIGN);
+    symlinkSync('../lib', join(root, 'sub/docs'));
+    root = join(root, 'sub');
+    const before = tree(); const p = refused('dest_in_index');
+    status(applyId(id(p), ['--authorize-external']), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test('external destination with a Git entry refuses even when authorized', () => {
+    const outside = join(temp, 'external-repo');
+    mkdirSync(join(outside, 'designs'), { recursive: true });
+    mkdirSync(join(outside, 'archive'));
+    writeFileSync(join(outside, '.git'), 'nested repository entry\n');
+    symlinkSync(outside, join(root, 'docs')); file('TODOS.md');
+    const before = tree(); const p = refused('nested_repo');
+    status(applyId(id(p), ['--authorize-external']), 'refused', 1);
+    expect(tree()).toBe(before);
+  });
+
+  test.each([['σ', 'ς'], ['ß', 'ss'], ['ẞ', 'ss']])(
+    'Unicode case-fold-equivalent destinations %s and %s refuse on every volume', (a, b) => {
+      canonical(); file(`a/${a}.md`, DESIGN); file(`b/${b}.md`, DESIGN);
+      const before = tree(); const p = refused('dest_duplicate');
+      status(applyId(id(p)), 'refused', 1);
+      expect(tree()).toBe(before);
+    },
+  );
+
+  test('default Unicode folding keeps dotless I distinct from Latin i', () => {
+    canonical(); file('a/i.md', DESIGN); file('b/ı.md', DESIGN);
+    const p = plan(); status(p, 'ok', 0, true, true);
+    status(applyId(id(p)), 'applied', 0);
+    expect(readFileSync(join(root, 'docs/designs/i.md'), 'utf8')).toBe(DESIGN);
+    expect(readFileSync(join(root, 'docs/designs/ı.md'), 'utf8')).toBe(DESIGN);
+  });
+
+  // Healthy existing contract: no product repair or invented failing bug.
+  test.each(['regular file', 'directory link'])(
+    'mkdir EEXIST rejects a %s and reports remaining operations', kind => {
+      const outside = join(temp, 'race-target'); mkdirSync(outside);
+      const p = plan();
+      const fs = withFs({ mkdirSync: path => {
+        if (kind === 'regular file') writeFileSync(path, 'raced entry\n');
+        else symlinkSync(outside, path);
+        throw Object.assign(new Error('raced entry'), { code: 'EEXIST' });
+      } });
+      const result = applyId(id(p), [], { fs }); status(result, 'partial', 4);
+      expect(result.stdout).toContain('Failed:\n- mkdir docs:');
+      expect(result.stdout).toContain('Not attempted:\n- mkdir docs/archive\n- mkdir docs/designs');
+      expect(existsSync(join(outside, 'archive'))).toBe(false);
+      expect(existsSync(join(outside, 'designs'))).toBe(false);
+    },
+  );
 });

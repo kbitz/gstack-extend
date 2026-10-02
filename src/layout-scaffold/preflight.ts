@@ -1,6 +1,6 @@
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import type { DocMoveRecord } from '../audit/checks/doc-location.ts';
-import { inventory, type GitGateway } from './git.ts';
+import { inventory, type GitGateway, type IndexEntry } from './git.ts';
 import { contains, entry, errno, fold, Refusal, sameSpelling, type FileSystem, type Root, type RefusalCode } from './root.ts';
 
 export const CANONICAL_DIRS = ['docs', 'docs/designs', 'docs/archive'] as const;
@@ -9,6 +9,45 @@ export type Move = DocMoveRecord & { destination: string; tracking: 'tracked' | 
 export type External = { requested: string; resolved: string; write: boolean };
 export type Preflight = { directories: Directory[]; moves: Move[]; external: External[]; refusals: Refusal[] };
 type ResolverFs = Pick<FileSystem, 'lstatSync' | 'statSync' | 'realpathSync'>;
+
+/** Index once, retaining the first inventory entry for each refusal candidate. */
+function indexLookups(index: IndexEntry[], precompose: boolean) {
+  type Indexed = { item: IndexEntry; order: number; spelling: string };
+  const spelling = (path: string) => precompose ? path.normalize('NFC') : path;
+  const exact = new Map<string, IndexEntry[]>();
+  const folded = new Map<string, { first: Indexed; alternate?: Indexed }>();
+  const descendants = new Map<string, Indexed>();
+  const gitlinks = new Map<string, Indexed>();
+  const ancestors = (path: string) => {
+    const parts = path.split('/');
+    return parts.map((_, n) => parts.slice(0, n + 1).join('/'));
+  };
+  index.forEach((item, order) => {
+    const key = spelling(item.path); const lower = fold(item.path);
+    const row = { item, order, spelling: key };
+    const items = exact.get(key);
+    if (items) items.push(item); else exact.set(key, [item]);
+    const group = folded.get(lower);
+    if (!group) folded.set(lower, { first: row });
+    else if (group.first.spelling !== key) group.alternate ??= row;
+    for (const parent of ancestors(lower)) if (!descendants.has(parent)) descendants.set(parent, row);
+    if (item.mode === '160000' && !gitlinks.has(lower)) gitlinks.set(lower, row);
+  });
+  const first = (rows: (Indexed | undefined)[]) => rows.reduce<Indexed | undefined>((best, row) =>
+    row && (!best || row.order < best.order) ? row : best, undefined);
+  return {
+    entries: (path: string) => exact.get(spelling(path)) ?? [],
+    variant: (path: string) => {
+      const group = folded.get(fold(path));
+      return group && (group.first.spelling !== spelling(path) ? group.first : group.alternate)?.item;
+    },
+    conflict: (path: string) => {
+      const key = fold(path);
+      return first([descendants.get(key), ...ancestors(key).map(parent => folded.get(parent)?.first)])?.item;
+    },
+    gitlink: (path: string) => first(ancestors(fold(path)).map(parent => gitlinks.get(parent))),
+  };
+}
 
 /** Climb only on lstat ENOENT; a dangling link is an entry, never absence. */
 export function resolveTarget(root: string, path: string, fs: ResolverFs): { resolved: string; ancestor: string; dev: number } {
@@ -64,10 +103,19 @@ export function checkSource(root: Root, source: string, fs: FileSystem): void {
     if (entry(join(component, '.git'), fs)) throw new Refusal('source_component', source, `source component ${component} contains a .git entry`);
   }
   probeSpelling(root.path, source, root.precompose, fs);
+  if (root.gitDirs.length) {
+    const actual = fs.realpathSync(join(root.path, source));
+    if (root.gitDirs.some(dir => contains(dir, actual))) throw new Refusal('git_dir_target', source, 'source is inside a Git or common directory', actual);
+  }
 }
 
 function checkResolved(root: Root, path: string, actual: string, fs: FileSystem): void {
   if (root.gitDirs.some(dir => contains(dir, actual))) throw new Refusal('git_dir_target', path, 'target is inside a Git or common directory', actual);
+  let requested = root.path;
+  for (const component of path.split('/').filter(Boolean)) {
+    requested = join(requested, component);
+    if (entry(join(requested, '.git'), fs)) throw new Refusal('nested_repo', path, `requested component ${requested} contains a .git entry`, actual);
+  }
   if (!contains(root.path, actual)) return;
   let current = root.path;
   for (const component of relative(root.path, actual).split('/').filter(Boolean)) {
@@ -137,30 +185,53 @@ export function preflight(root: Root, records: DocMoveRecord[], fs: FileSystem, 
   // Step 5: one NUL-delimited inventory controls all tracking decisions.
   if (root.mode === 'git') {
     try {
-      const index = inventory(git, root.path);
-      const writes = [...CANONICAL_DIRS, ...moves.map(move => move.destination)];
-      for (const item of index.filter(item => item.mode === '160000')) {
-        for (const path of writes) if (path === item.path || path.startsWith(`${item.path}/`)) {
-          check(path, 'gitlink', () => { throw new Refusal('gitlink', path, `gitlink at ${item.path}`); });
-        }
+      const gitTop = root.gitTop ?? root.path;
+      const index = inventory(git, gitTop);
+      const lookup = indexLookups(index, root.precompose);
+      // One full worktree inventory also exposes ancestors and sibling alias targets.
+      const indexedPath = (path: string) => relative(gitTop, join(root.path, path));
+      const writes = orderedPaths.map(path => ({ requested: path, path: indexedPath(path) }));
+      for (const dir of directories) if (contains(gitTop, dir.resolved)) {
+        writes.push({ requested: dir.requested, path: relative(gitTop, dir.resolved) });
       }
       for (const move of moves) {
-        const items = index.filter(item => sameSpelling(item.path, move.source, root.precompose));
+        writes.push({ requested: move.source, path: indexedPath(move.source) }, { requested: move.destination, path: indexedPath(move.destination) });
+        if (move.resolvedParent && contains(gitTop, move.resolvedParent)) {
+          writes.push({ requested: move.destination, path: relative(gitTop, join(move.resolvedParent, basename(move.destination))) });
+        }
+      }
+      // Preserve inventory-first refusal order without scanning all gitlinks per write.
+      const protectedWrites = writes.flatMap(write => {
+        const found = lookup.gitlink(write.path);
+        return found ? [{ write, found }] : [];
+      }).sort((a, b) => a.found.order - b.found.order);
+      for (const { write, found } of protectedWrites) {
+        check(write.requested, 'gitlink', () => { throw new Refusal('gitlink', write.requested, `gitlink at ${found.item.path}`); });
+      }
+      for (const move of moves) {
+        const sourcePath = indexedPath(move.source);
+        const destinationPath = indexedPath(move.destination);
+        const items = lookup.entries(sourcePath);
         move.tracking = items.length ? 'tracked' : 'untracked';
         if (failedAt(move.source) || failedAt(move.destination)) continue;
         check(move.source, 'tracking_probe', () => {
-          const variant = index.find(item => fold(item.path) === fold(move.source) && !sameSpelling(item.path, move.source, root.precompose));
+          const variant = lookup.variant(sourcePath);
           if (variant) throw new Refusal('source_spelling', move.source, `index spelling is ${variant.path}`);
           if (items.some(item => item.stage !== 0)) throw new Refusal('unmerged_source', move.source, 'source has unmerged index stages');
           if (items.some(item => item.tag === 'S')) throw new Refusal('skip_worktree', move.source, 'source has the skip-worktree bit');
         });
         if (failedAt(move.source)) continue;
         check(move.destination, 'tracking_probe', () => {
-          const variant = index.find(item => fold(item.path) === fold(move.destination) && !sameSpelling(item.path, move.destination, root.precompose));
-          if (variant) throw new Refusal('source_spelling', move.destination, `index spelling is ${variant.path}`);
-          const key = fold(move.destination);
-          const conflict = index.find(item => key === fold(item.path) || key.startsWith(`${fold(item.path)}/`) || fold(item.path).startsWith(`${key}/`));
-          if (conflict) throw new Refusal('dest_in_index', move.destination, `destination conflicts with index entry ${conflict.path}`);
+          const destinationPaths = new Set([destinationPath]);
+          if (move.resolvedParent && contains(gitTop, move.resolvedParent)) {
+            destinationPaths.add(relative(gitTop, join(move.resolvedParent, basename(move.destination))));
+          }
+          for (const path of destinationPaths) {
+            const variant = lookup.variant(path);
+            if (variant) throw new Refusal('dest_in_index', move.destination, `index spelling is ${variant.path}`);
+            const conflict = lookup.conflict(path);
+            if (conflict) throw new Refusal('dest_in_index', move.destination, `destination conflicts with index entry ${conflict.path}`);
+          }
           if (move.tracking !== 'tracked') return;
           let current = root.path;
           for (const component of move.destination.split('/').slice(0, -1)) {

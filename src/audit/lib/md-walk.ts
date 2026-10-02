@@ -51,7 +51,9 @@ export function walkMdFiles(
       let st;
       try {
         st = statSync(full);
-      } catch {
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EACCES' || code === 'EPERM') onUnreadable?.(dir, error);
         continue;
       }
       if (st.isDirectory()) {

@@ -26,7 +26,7 @@ export function parseArgs(argv: string[]): Options {
     else if (arg === '--authorize-external') options.authorize = true;
     else if (arg === '--root' || arg === '--plan-id' || arg === '--exclude') {
       const value = argv[++i];
-      if (value === undefined || value.startsWith('--')) throw new Error(`${arg} requires a value`);
+      if (value === undefined) throw new Error(`${arg} requires a value`);
       if (arg === '--root') { if (options.root !== undefined) throw new Error('duplicate --root'); options.root = value; }
       else if (arg === '--plan-id') { if (options.planId !== undefined) throw new Error('duplicate --plan-id'); options.planId = value; }
       else options.excludes.push(value);
@@ -63,6 +63,7 @@ directories require explicit --root. The filesystem root and HOME refuse.
 --exclude SRC is repeatable and matches an exact audit source. Exclusions
 are part of the id; pass the same exclusions to apply. They escape item
 refusals and are listed under Excluded; unmatched sources refuse.
+Values after --root and --exclude are literal, including names beginning with --.
 --scaffold-only creates docs/, docs/designs/ and docs/archive/ without
 checking moves. One-shot caller: layout-scaffold apply --root DIR --scaffold-only
 may omit --plan-id; a supplied id is always checked. Excludes are unsupported.
@@ -173,8 +174,8 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
 function errnoFor(error: unknown): string { return (error as Error)?.message ?? String(error); }
 
 if (import.meta.main) {
-  // The audit's existing Git gateway reads process.env directly. Sanitize only
-  // this entry point; imported main(argv, io) never mutates the process env.
+  // Sanitize inherited Git overrides at this entry point; imported
+  // main(argv, io) never mutates the process env.
   const clean = childEnv(process.env);
   for (const key of Object.keys(process.env)) if (key.startsWith('GIT_')) delete process.env[key];
   Object.assign(process.env, clean);
