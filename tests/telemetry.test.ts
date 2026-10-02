@@ -3,14 +3,28 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+// Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
+import Ajv from 'ajv';
 import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
 
 const HAS_GSTACK = existsSync(REAL_GSTACK_ROOT);
+const HAS_STATE_RESOLVER = (() => {
+  try {
+    return readFileSync(join(REAL_GSTACK_ROOT, 'bin/gstack-telemetry-log'), 'utf8')
+      .includes('gstack_state_root_select');
+  } catch {
+    return false;
+  }
+})();
 afterAll(cleanupTelemetryFixtures);
 const ROOT = join(import.meta.dir, '..');
+// The running checkout's release, read only. Tests that need another release build a disposable copy.
+const RELEASE = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+const validRow = new Ajv({ strict: true, allErrors: true })
+  .compile(JSON.parse(readFileSync(join(ROOT, 'docs/stage-runs.schema.json'), 'utf8')));
 function skillBlock(path: string, kind: 'start' | 'finish') {
   const text = readFileSync(path, 'utf8');
   const marker = new RegExp('<!-- SHARED:telemetry-' + kind + ' -->[\\s\\S]*?<!-- /SHARED:telemetry-' + kind + ' -->');
@@ -65,6 +79,11 @@ describe('shipped blocks and installation lookup', () => {
       const rows = fix.readJsonl();
       expect(rows).toHaveLength(2);
       expect(rows[0].session_id).toBe(rows[1].session_id);
+      // The installed copy resolves to this checkout, so the provenance row names its release.
+      const ledger = fix.readLedger();
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 1, producer_version: RELEASE });
+      expect(validRow(ledger[0])).toBe(true);
     }, 30_000);
   }
   test('missing python3 is a silent no-op and diagnosable without failing the skill', () => {
@@ -328,16 +347,19 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
     test.if(mode === 'stub' || HAS_GSTACK)('sink agreement for HOME/STATE_ROOT/STATE_DIR overrides (' + mode + ')', () => {
       for (const override of ['GSTACK_HOME', 'GSTACK_STATE_ROOT', 'GSTACK_STATE_DIR']) {
         const fix = makeTelemetryFixture('community', mode);
+        if (mode === 'stub') {
+          // A colocated resolver alone must not opt a legacy logger into new sink rules.
+          writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'), 'return 1\n');
+        }
         const alternate = join(fix.home, 'alternate');
         mkdirSync(alternate);
         writeFileSync(join(alternate, 'config.yaml'), 'telemetry: community\n');
         const env = { ...fix.env, [override]: alternate };
         runHelper(env, ['start', '--skill', 'extend:roadmap']);
         runHelper(env, ['finish', '--skill', 'extend:roadmap']);
-        const modern = existsSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'));
-        const relocated = modern || override === 'GSTACK_STATE_DIR';
-        const expected = relocated ? alternate : join(fix.home, '.gstack');
-        const other = relocated ? join(fix.home, '.gstack') : alternate;
+        const alternateSink = override === 'GSTACK_STATE_DIR' || (mode === 'real' && HAS_STATE_RESOLVER);
+        const expected = alternateSink ? alternate : join(fix.home, '.gstack');
+        const other = alternateSink ? join(fix.home, '.gstack') : alternate;
         const rows = readFileSync(join(expected, 'analytics/skill-usage.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         expect(rows).toHaveLength(2);
         expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
@@ -415,7 +437,7 @@ PY
     expect(report.skills.find((row: any) => row.skill === 'roadmap')).toMatchObject({ paired: 1, denominator: 1 });
   });
   test('a broken modern resolver preserves provenance and an existing handoff without writing a legacy finish', () => {
-    const fix = makeTelemetryFixture('community');
+    const fix = makeModernResolverFixture();
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'), 'return 1\n');
     const finish = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']);
@@ -424,7 +446,7 @@ PY
     expect(fix.readJsonl()).toHaveLength(1);
     expect(fix.readLedger()).toHaveLength(1);
     expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
-    rmSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'));
+    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'), STATE_ROOT_FIXTURE);
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
     const rows = fix.readJsonl();
     expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
@@ -435,9 +457,7 @@ PY
   for (const phase of ['start', 'finish']) {
     for (const failure of ['error', 'timeout']) {
       test('a second resolver ' + failure + ' during ' + phase + ' preserves provenance and retry bookkeeping', () => {
-        const fix = makeTelemetryFixture('community');
-        writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'),
-          'gstack_state_root_select() { _gstack_sr_root="$HOME/.gstack"; }\n');
+        const fix = makeModernResolverFixture();
         if (phase === 'finish') expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
         // Fail only the late resolver boundary, after its initial validation succeeded.
         // Inject timeout exceptions without a real wait or a global subprocess stub.
@@ -479,6 +499,107 @@ module.main([sys.argv[3], '--skill', 'extend:roadmap'])
       });
     }
   }
+  test.if(HAS_STATE_RESOLVER)('modern upstream precedence and raw paths pair in the doctor and logger', () => {
+    for (const selected of ['root', 'home', 'dir', 'plugin', 'foreign-plugin', 'default', 'relative']) {
+      const fix = makeTelemetryFixture('community', 'real');
+      const roots = {
+        root: join(fix.home, 'root\r\n雪\n'), home: join(fix.home, 'home'),
+        dir: join(fix.home, 'dir'), plugin: join(fix.home, 'plugin'), default: join(fix.home, '.gstack'),
+      };
+      for (const root of Object.values(roots)) {
+        mkdirSync(root, { recursive: true });
+        writeFileSync(join(root, 'config.yaml'), 'telemetry: community\n');
+      }
+      mkdirSync(join(fix.home, 'relative-state'));
+      writeFileSync(join(fix.home, 'relative-state/config.yaml'), 'telemetry: community\n');
+      const env = { ...fix.env, GSTACK_STATE_ROOT: '', GSTACK_HOME: '', GSTACK_STATE_DIR: '',
+        CLAUDE_PLUGIN_ROOT: '/plugins/GsTaCk', CLAUDE_PLUGIN_DATA: roots.plugin };
+      let expected = roots.default;
+      if (selected === 'root') {
+        Object.assign(env, { GSTACK_STATE_ROOT: roots.root, GSTACK_HOME: roots.home, GSTACK_STATE_DIR: roots.dir });
+        expected = roots.root;
+      } else if (selected === 'home') {
+        Object.assign(env, { GSTACK_HOME: roots.home, GSTACK_STATE_DIR: roots.dir });
+        expected = roots.home;
+      } else if (selected === 'dir') {
+        env.GSTACK_STATE_DIR = roots.dir;
+        expected = roots.dir;
+      } else if (selected === 'plugin') {
+        expected = roots.plugin;
+      } else if (selected === 'foreign-plugin') {
+        env.CLAUDE_PLUGIN_ROOT = '/plugins/another-tool';
+      } else if (selected === 'default') {
+        env.CLAUDE_PLUGIN_DATA = '';
+      } else {
+        env.GSTACK_STATE_ROOT = 'relative-state';
+        expected = 'relative-state';
+      }
+      for (const command of ['start', 'finish']) {
+        const run = runHelper(env, [command, '--skill', 'extend:roadmap'], fix.home);
+        expect([run.status, run.stderr]).toEqual([0, '']);
+      }
+      const sink = join(expected, 'analytics/skill-usage.jsonl');
+      const rows = readFileSync(expected === 'relative-state' ? join(fix.home, sink) : sink, 'utf8')
+        .trim().split('\n').map(line => JSON.parse(line));
+      expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+      expect(rows[1].session_id).toBe(rows[0].session_id);
+      for (const root of Object.values(roots)) {
+        if (root !== expected) expect(existsSync(join(root, 'analytics/skill-usage.jsonl'))).toBe(false);
+      }
+      const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'],
+        { env, cwd: fix.home, encoding: 'utf8', timeout: 10_000 });
+      expect([doctor.status, doctor.stderr]).toEqual([0, '']);
+      const report = JSON.parse(doctor.stdout);
+      expect(report.sink).toBe(sink);
+      expect(report.skills.find((row: any) => row.skill === 'roadmap').paired).toBe(1);
+    }
+  }, 90_000);
+  test.if(HAS_STATE_RESOLVER)('modern upstream keeps the most restrictive telemetry tier across roots', () => {
+    for (const offRoot of ['default', 'selected']) {
+      const fix = makeTelemetryFixture(offRoot === 'default' ? 'off' : 'community', 'real');
+      const alternate = join(fix.home, 'alternate');
+      mkdirSync(alternate);
+      writeFileSync(join(alternate, 'config.yaml'), `telemetry: ${offRoot === 'selected' ? 'off' : 'community'}\n`);
+      const env = { ...fix.env, GSTACK_STATE_ROOT: alternate };
+      runHelper(env, ['start', '--skill', 'extend:roadmap']);
+      runHelper(env, ['finish', '--skill', 'extend:roadmap']);
+      expect(fix.readJsonl()).toHaveLength(0);
+      expect(existsSync(join(alternate, 'analytics/skill-usage.jsonl'))).toBe(false);
+      expect(fix.readLedger()).toHaveLength(1);
+    }
+  }, 30_000);
+  test.if(HAS_STATE_RESOLVER)('missing or failing modern resolver preserves provenance without phantom usage', () => {
+    for (const broken of ['missing', 'failing']) {
+      const fix = makeTelemetryFixture('community', 'real');
+      const resolver = join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh');
+      if (broken === 'missing') rmSync(resolver);
+      else writeFileSync(resolver, 'printf "private-resolver-content" >&2\nreturn 1\n');
+      // Keep tier lookup working so start exercises the sink resolver's own failure path.
+      writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-config'), '#!/bin/sh\nprintf "community\\n"\n');
+      for (const command of ['start', 'finish']) {
+        const run = runHelper(fix.env, [command, '--skill', 'extend:roadmap']);
+        expect([run.status, run.stderr]).toEqual([0, '']);
+      }
+      expect(fix.readJsonl()).toHaveLength(0);
+      expect(fix.readLedger()).toHaveLength(1);
+      // An explicit finish reaches delegation even though the failed start wrote no usage marker.
+      const debug = runHelper({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' },
+        ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'resolver-diagnostic']);
+      expect([debug.status, debug.stdout]).toEqual([0, '']);
+      expect(debug.stderr).toContain('gstack state resolver unavailable');
+      expect(debug.stderr).toContain('reinstall gstack');
+      expect(debug.stderr).not.toContain('sink unwritable');
+      expect(debug.stderr).not.toContain('repair permissions');
+      expect(debug.stderr).not.toContain('at None: None');
+      expect(debug.stderr).not.toContain('private-resolver-content');
+      expect(fix.readJsonl()).toHaveLength(0);
+      const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'],
+        { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+      expect(doctor.status).toBe(0);
+      expect(doctor.stdout).not.toContain('private-resolver-content');
+      expect(JSON.parse(doctor.stdout).error).toContain('gstack state resolver unavailable');
+    }
+  }, 30_000);
   test('valid/leading-zero/future start values and session validation are safe', () => {
     const fix = makeTelemetryFixture('community');
     for (const start of [String(Math.floor(Date.now() / 1000)), '0000000001', '9223372036854775807']) {
@@ -495,8 +616,27 @@ module.main([sys.argv[3], '--skill', 'extend:roadmap'])
 });
 
 
-function runHelper(env: Record<string, string>, args: string[]) {
-  return spawnSync(HELPER_BIN, args, { env, encoding: 'utf8', timeout: 10_000 });
+const STATE_ROOT_FIXTURE = 'gstack_state_root_select() { _gstack_sr_root="$HOME/.gstack"; }\n';
+function makeModernResolverFixture() {
+  const fix = makeTelemetryFixture('community');
+  const bin = join(fix.home, '.claude/skills/gstack/bin');
+  const legacy = join(bin, 'fixture-legacy-logger');
+  writeFileSync(legacy, readFileSync(join(bin, 'gstack-telemetry-log')));
+  chmodSync(legacy, 0o755);
+  writeFileSync(join(bin, 'gstack-state-root.sh'), STATE_ROOT_FIXTURE);
+  // This logger actually consumes the colocated resolver; an unrelated helper is insufficient.
+  writeFileSync(join(bin, 'gstack-telemetry-log'), `#!/bin/bash
+${NO_SWEEP_LINE}. "$(dirname "$0")/gstack-state-root.sh" || exit 1
+gstack_state_root_select || exit 1
+export GSTACK_STATE_DIR="$_gstack_sr_root"
+exec "$(dirname "$0")/fixture-legacy-logger" "$@"
+`);
+  chmodSync(join(bin, 'gstack-telemetry-log'), 0o755);
+  return fix;
+}
+
+function runHelper(env: Record<string, string>, args: string[], cwd?: string) {
+  return spawnSync(HELPER_BIN, args, { env, cwd, encoding: 'utf8', timeout: 10_000 });
 }
 
 describe('bin/gstack-extend-telemetry (unit)', () => {
@@ -1267,7 +1407,8 @@ describe('writer and reader agree for every installed skill', () => {
 // ─── Execution provenance: the local-only stage-runs.jsonl row ───
 
 const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
-  'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw'];
+  'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
+  'agent_source', 'model_source', 'effort_source'];
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const writeJsonl = (file: string, records: object[]) => {
   mkdirSync(dirname(file), { recursive: true });
@@ -1301,7 +1442,8 @@ describe('execution provenance', () => {
       writeJsonl(join(fix.home, '.claude/projects/project/outer-session.jsonl'), [claudeTurn(start - 100, 'old', 'claude-fixture', 'high')]);
       writeJsonl(join(fix.home, '.cursor/projects/project/agent-transcripts/cursor-session/transcript.jsonl'), [{ role: 'assistant', message: 'fixture' }]);
     });
-    expect(row).toMatchObject({ agent: 'cursor', route: 'cli', model: null, effort: null });
+    expect(row).toMatchObject({ agent: 'cursor', route: 'cli', model: null, effort: null,
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown' });
     expect(existsSync(join(fix.home, '.gstack-extend/quota'))).toBe(false);
     expect(fix.readJsonl()).toHaveLength(0);
   });
@@ -1316,7 +1458,9 @@ describe('execution provenance', () => {
     const { row, epoch, sid } = provenanceRun(fix, {}, undefined, ['--outcome', 'success'], repo);
     expect(Object.keys(row)).toEqual(SCHEMA);
     expect(row).toMatchObject({ stage: 'roadmap', agent: null, model: null, effort: null, rung: 0, outcome: 'success',
-      session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend' });
+      session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend',
+      schema_version: 1, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
+    expect(validRow(row)).toBe(true);
     expect(row.started_at).toBe(iso(epoch).replace(/\.\d{3}Z$/, 'Z'));
     expect(Number.isInteger(row.duration_s) && row.duration_s >= 0).toBe(true);
     expect(fix.readJsonl()).toHaveLength(0);
@@ -1361,7 +1505,8 @@ describe('execution provenance', () => {
     const { row } = provenanceRun(fix, {}, undefined, ['--outcome', 'error', '--agent', 'claude', '--model', 'claude-opus-5',
       '--effort', 'xhigh', '--work-item', '4D']);
     expect(fix.readJsonl().map(usage => usage.session_id)).toEqual([row.session_id, row.session_id]);
-    expect(row).toMatchObject({ outcome: 'error', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: '4D' });
+    expect(row).toMatchObject({ outcome: 'error', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: '4D',
+      agent_source: 'flag', model_source: 'flag', effort_source: 'flag' });
     // Provenance overrides stay local: gstack's logger never sees them.
     const forwarded = fix.readStubArgs()[0].split('\t');
     for (const flag of ['--agent', '--model', '--effort', '--work-item']) expect(forwarded).not.toContain(flag);
@@ -1397,14 +1542,16 @@ describe('execution provenance', () => {
         { type: 'user', timestamp: iso(now), message: { role: 'user', content: 'ok' } },
       ]);
     });
-    expect(row).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+    expect(row).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh',
+      agent_source: 'detected', model_source: 'detected', effort_source: 'detected' });
     // A per-turn effort override is the level that turn actually used.
     const perTurn = provenanceRun(fix, env, () =>
       writeJsonl(transcript, [claudeTurn(Date.now() / 1000, 'p1', 'claude-opus-5', 'xhigh', { perTurnEffort: 'max' })])).row;
     expect(perTurn.effort).toBe('max');
     // A skill run by a subagent leaves the parent transcript idle: its earlier turn must not be inherited.
     const idle = provenanceRun(fix, env, start => writeJsonl(transcript, [claudeTurn(start - 5, 'p2', 'claude-opus-5', 'xhigh')])).row;
-    expect(idle).toMatchObject({ agent: 'claude', model: null, effort: null });
+    expect(idle).toMatchObject({ agent: 'claude', model: null, effort: null,
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown' });
   }, 30_000);
 
   test('Codex: the turn open when the stage began supplies model and effort from the rollout', () => {
@@ -1470,13 +1617,17 @@ describe('execution provenance', () => {
       [claudeTurn(Date.now() / 1000, 'm1', 'claude-opus-5', 'xhigh')]);
     expect(provenanceRun(fix, env, logs, ['--agent', 'codex', '--model', 'gpt-6-astra', '--effort', 'high',
       '--work-item', '4D', '--outcome', 'abort']).row)
-      .toMatchObject({ agent: 'codex', model: 'gpt-6-astra', effort: 'high', work_item: '4D', outcome: 'abort' });
+      .toMatchObject({ agent: 'codex', model: 'gpt-6-astra', effort: 'high', work_item: '4D', outcome: 'abort',
+        agent_source: 'flag', model_source: 'flag', effort_source: 'flag' });
     expect(provenanceRun(fix, env, logs, ['--agent', 'codex']).row)
-      .toMatchObject({ agent: 'codex', model: null, effort: null, outcome: 'unknown' });
+      .toMatchObject({ agent: 'codex', model: null, effort: null, outcome: 'unknown',
+        agent_source: 'flag', model_source: 'unknown', effort_source: 'unknown' });
     expect(provenanceRun(fix, env, logs, ['--agent', 'claude', '--effort', 'max']).row)
-      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'max' });
+      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'max',
+        agent_source: 'flag', model_source: 'detected', effort_source: 'flag' });
     expect(provenanceRun(fix, env, logs, ['--agent', 'gpt', '--model', 'bad\u0007id', '--work-item', ' ', '--outcome', 'exploded']).row)
-      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: null, outcome: 'unknown' });
+      .toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', work_item: null, outcome: 'unknown',
+        agent_source: 'detected', model_source: 'detected', effort_source: 'detected' });
   }, 30_000);
 
   test('a finish retried after a partial failure never duplicates either row', () => {
@@ -1594,7 +1745,8 @@ describe('execution provenance', () => {
       env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid }, encoding: 'utf8', timeout: 5_000,
     });
     expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
-    expect(fix.readLedger()[0]).toMatchObject({ agent: 'claude', model: null, session_id: 'sid-fifo' });
+    expect(fix.readLedger()[0]).toMatchObject({ agent: 'claude', model: null, session_id: 'sid-fifo',
+      agent_source: 'detected', model_source: 'unknown' });
   });
 
   test('a FIFO at the provenance sink does not block finish', () => {
@@ -1677,6 +1829,219 @@ describe('execution provenance', () => {
     expect(runHelper(fix.env, ['--skill', 'extend:roadmap', '--duration', '1', '--session-id', 'sid-closed']).status).toBe(0);
     expect(fix.readLedger()).toHaveLength(0);
   });
+});
+
+/** A disposable copy of the wrapper and module with its own VERSION; the real VERSION is never written. */
+function copiedInstall(fix: TelemetryFixture, name: string, version: string | null) {
+  const root = join(fix.home, name);
+  mkdirSync(join(root, 'bin/lib'), { recursive: true });
+  copyFileSync(HELPER_BIN, join(root, 'bin/gstack-extend-telemetry'));
+  chmodSync(join(root, 'bin/gstack-extend-telemetry'), 0o755);
+  copyFileSync(join(ROOT, 'bin/lib/telemetry.py'), join(root, 'bin/lib/telemetry.py'));
+  if (version !== null) writeFileSync(join(root, 'VERSION'), version);
+  const run = (args: string[], env: Record<string, string> = {}) =>
+    spawnSync(join(root, 'bin/gstack-extend-telemetry'), args, { env: { ...fix.env, ...env }, encoding: 'utf8', timeout: 15_000 });
+  return { root, versionFile: join(root, 'VERSION'), run };
+}
+
+const UNKNOWN_PRODUCER = (reason: string) => `telemetry: producer_version unknown (${reason}); the row still records. `
+  + 'Fix: restore or upgrade the gstack-extend installation so its VERSION holds a valid release. See docs/telemetry.md.';
+
+describe('row version, producer and sources', () => {
+  test('producer_version names the running installation, never the caller repository, gstack, or an override', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const caller = gitRepo(fix, 'caller-repo');
+    writeFileSync(join(caller, 'VERSION'), '9.9.9.9\n');
+    writeFileSync(join(fix.home, '.claude/skills/gstack/VERSION'), '8.8.8.8\n');
+    const decoy = join(fix.home, 'decoy');
+    mkdirSync(decoy);
+    writeFileSync(join(decoy, 'VERSION'), '7.7.7.7\n');
+    // The fixture install links bin/ into this checkout; its unresolved parent has no VERSION to read.
+    const installed = join(fix.home, '.claude/skills/gstack-extend');
+    expect(existsSync(join(installed, 'VERSION'))).toBe(false);
+    const env = { ...fix.env, GSTACK_DIR: decoy, GSTACK_EXTEND_DIR: decoy };
+    const options = { env, cwd: caller, encoding: 'utf8' as const, timeout: 15_000 };
+    expect(spawnSync(join(installed, 'bin/gstack-extend-telemetry'), ['start', '--skill', 'extend:roadmap'], options).status).toBe(0);
+    const finish = spawnSync(join(installed, 'bin/gstack-extend-telemetry'), ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], options);
+    expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 1, producer_version: RELEASE });
+    // Release and sources stay local: the completion the logger receives carries none of them.
+    const forwarded = fix.readStubArgs().join('\n') + JSON.stringify(fix.readJsonl());
+    for (const text of [RELEASE, 'schema', 'producer', '_source']) expect(forwarded).not.toContain(text);
+  }, 30_000);
+
+  test('an unusable installation VERSION leaves producer_version null, quietly, and the row still records', () => {
+    const fix = makeTelemetryFixture('off');
+    const unreadable = 'VERSION is unreadable, oversized, or not a private regular file';
+    const malformed = 'VERSION is not a four-part numeric release';
+    const cases: Array<[string, (file: string) => void, string | null, string | null]> = [
+      ['plain', file => writeFileSync(file, '0.40.1.2\n'), '0.40.1.2', null],
+      ['CRLF and spaces', file => writeFileSync(file, ' 0.40.1.2\r\n'), '0.40.1.2', null],
+      ['vertical-tab and form-feed', file => writeFileSync(file, '\v0.40.1.2\f\n'), '0.40.1.2', null],
+      ['Unicode surrounding whitespace', file => writeFileSync(file, '\u00a00.40.1.2\u2003\n'), '0.40.1.2', null],
+      ['exactly the cap', file => writeFileSync(file, '0.40.1.2' + ' '.repeat(119) + '\n'), '0.40.1.2', null],
+      ['missing', () => {}, null, 'VERSION is missing'],
+      ['one byte over the cap', file => writeFileSync(file, '0.40.1.2' + ' '.repeat(120) + '\n'), null, unreadable],
+      ['symlink', file => { writeFileSync(file + '.real', '0.40.1.2\n'); symlinkSync(file + '.real', file); }, null, unreadable],
+      ['hard link', file => { writeFileSync(file, '0.40.1.2\n'); linkSync(file, file + '.second'); }, null, unreadable],
+      ['FIFO', file => expect(spawnSync('mkfifo', [file]).status).toBe(0), null, unreadable],
+      ['directory', file => mkdirSync(file), null, unreadable],
+      ['invalid UTF-8', file => writeFileSync(file, Buffer.from([0x30, 0x2e, 0xff, 0xfe, 0x0a])), null, 'VERSION is not UTF-8'],
+      ['Unicode digits', file => writeFileSync(file, '٠.40.1.2\n'), null, malformed],
+      ['three parts', file => writeFileSync(file, '0.40.1\n'), null, malformed],
+      ['internal space', file => writeFileSync(file, '0.40. 1.2\n'), null, malformed],
+      ['private contents', file => writeFileSync(file, 'SENTINEL-RELEASE-TEXT\n'), null, malformed],
+    ];
+    cases.forEach(([name, plant, producer, reason], index) => {
+      const install = copiedInstall(fix, 'install-' + index, null);
+      plant(install.versionFile);
+      const args = ['finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 1), '--outcome', 'success'];
+      const quiet = install.run([...args, '--session-id', 'sid-quiet-' + index]);
+      expect([name, quiet.status, quiet.stdout, quiet.stderr]).toEqual([name, 0, '', '']);
+      const row = fix.readLedger().find(entry => entry.session_id === 'sid-quiet-' + index)!;
+      expect([name, row.producer_version, validRow(row)]).toEqual([name, producer, true]);
+      const debug = install.run([...args, '--session-id', 'sid-debug-' + index], DEBUG);
+      const lines = debug.stderr.split('\n').filter(line => line.includes('producer_version'));
+      expect([name, lines]).toEqual([name, reason ? [UNKNOWN_PRODUCER(reason)] : []]);
+      expect(debug.stderr).not.toContain('SENTINEL-RELEASE-TEXT');
+      expect(fix.readLedger().filter(entry => entry.session_id === 'sid-debug-' + index)).toHaveLength(1);
+    });
+    // Delegated completion proceeds without a release.
+    const usage = makeTelemetryFixture('community', 'stub');
+    const install = copiedInstall(usage, 'install-missing', null);
+    expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(install.run(['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 1 }]);
+    expect(usage.readJsonl().map(entry => entry.event_type)).toEqual(['skill_start', 'skill_run']);
+  }, 60_000);
+
+  test('the source matrix labels the value each constructed row holds', () => {
+    // detect() and route_for() are stubbed in-process, so every case runs the real constructor without detector waits.
+    const harness = [
+      'import contextlib, io, json, os, sys',
+      'from unittest import mock',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'real_open = os.open',
+      'def denied(path, *args, **kwargs):',
+      '    if str(path) == str(telemetry.VERSION_FILE):',
+      '        raise PermissionError(13, "Permission denied")',
+      '    return real_open(path, *args, **kwargs)',
+      'results = []',
+      'for case in json.load(sys.stdin):',
+      '    os.environ.pop("GSTACK_EXTEND_TELEMETRY_DEBUG", None)',
+      '    if case.get("debug"):',
+      '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
+      '    stderr = io.StringIO()',
+      '    with contextlib.ExitStack() as stack:',
+      '        stack.enter_context(contextlib.redirect_stderr(stderr))',
+      '        stack.enter_context(mock.patch.object(telemetry, "detect", return_value=tuple(case["detected"])))',
+      '        stack.enter_context(mock.patch.object(telemetry, "route_for", return_value=(telemetry.ROUTE_UNKNOWN, None)))',
+      '        if case.get("deny"):',
+      '            stack.enter_context(mock.patch.object(telemetry.os, "open", side_effect=denied))',
+      '        row = telemetry.provenance_row("roadmap", "sid-matrix", 1790000000, 5, case["flags"], None)',
+      '    results.append({"row": row, "stderr": stderr.getvalue()})',
+      'print(json.dumps(results))',
+    ].join('\n');
+    type Value = string | null;
+    const D: [Value, Value, Value] = ['claude', 'claude-opus-5', 'xhigh'];
+    const NONE: [Value, Value, Value] = [null, null, null];
+    const LONG = 'm'.repeat(200);
+    const cases: Array<[string, [Value, Value, Value], Record<string, string>, [Value, Value, Value, string, string, string]]> = [
+      ['no markers', NONE, {}, [null, null, null, 'unknown', 'unknown', 'unknown']],
+      ['marked harness with an unreadable log', ['claude', null, null], {}, ['claude', null, null, 'detected', 'unknown', 'unknown']],
+      ['full detection', D, {}, [...D, 'detected', 'detected', 'detected']],
+      ['same agent flag', D, { '--agent': 'claude' }, [...D, 'flag', 'detected', 'detected']],
+      ['same agent flag, nothing else detected', ['claude', null, null], { '--agent': 'claude' }, ['claude', null, null, 'flag', 'unknown', 'unknown']],
+      ['changed agent drops detected values', D, { '--agent': 'codex' }, ['codex', null, null, 'flag', 'unknown', 'unknown']],
+      ['changed agent, partial override', D, { '--agent': 'codex', '--model': 'gpt-6-astra' }, ['codex', 'gpt-6-astra', null, 'flag', 'flag', 'unknown']],
+      ['agent flag over nothing', NONE, { '--agent': 'cursor' }, ['cursor', null, null, 'flag', 'unknown', 'unknown']],
+      ['equal-value model flag', D, { '--model': 'claude-opus-5' }, [...D, 'detected', 'flag', 'detected']],
+      ['effort-only flag', D, { '--effort': 'max' }, ['claude', 'claude-opus-5', 'max', 'detected', 'detected', 'flag']],
+      ['model flag without an agent', NONE, { '--model': 'gpt-6-astra' }, [null, 'gpt-6-astra', null, 'unknown', 'flag', 'unknown']],
+      ['200-character model flag', D, { '--model': LONG }, ['claude', LONG, 'xhigh', 'detected', 'flag', 'detected']],
+      ['invalid agent flag', D, { '--agent': 'gpt' }, [...D, 'detected', 'detected', 'detected']],
+      ['invalid agent flag over nothing', NONE, { '--agent': 'Claude' }, [null, null, null, 'unknown', 'unknown', 'unknown']],
+      ['invalid agent beside a valid model', ['codex', 'gpt-6-astra', 'high'], { '--agent': 'gpt', '--model': 'o4' }, ['codex', 'o4', 'high', 'detected', 'flag', 'detected']],
+      ['blank model flag', D, { '--model': '  ' }, [...D, 'detected', 'detected', 'detected']],
+      ['control-character model flag', D, { '--model': 'bad\u0007id' }, [...D, 'detected', 'detected', 'detected']],
+      ['201-character effort flag', D, { '--effort': LONG + 'm' }, [...D, 'detected', 'detected', 'detected']],
+      ['empty effort flag over nothing', NONE, { '--effort': '' }, [null, null, null, 'unknown', 'unknown', 'unknown']],
+      ['newline effort flag over a marked harness', ['codex', null, null], { '--effort': 'hi\nlo' }, ['codex', null, null, 'detected', 'unknown', 'unknown']],
+    ];
+    const input = [...cases.map(([, detected, flags]) => ({ detected, flags })), { detected: D, flags: {}, deny: true, debug: true }];
+    const fix = makeTelemetryFixture('off');
+    const result = spawnSync('python3', ['-B', '-I', '-c', harness, join(ROOT, 'bin/lib')],
+      { env: fix.env, input: JSON.stringify(input), encoding: 'utf8', timeout: 15_000 });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    const rows = JSON.parse(result.stdout) as Array<{ row: Record<string, unknown>; stderr: string }>;
+    cases.forEach(([name, , , expected], index) => {
+      const { row, stderr } = rows[index];
+      expect([name, Object.keys(row), stderr]).toEqual([name, SCHEMA, '']);
+      expect([name, row.agent, row.model, row.effort, row.agent_source, row.model_source, row.effort_source])
+        .toEqual([name, ...expected]);
+      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 1, RELEASE, true]);
+    });
+    // A read the operating system refuses (no portable chmod needed) costs only the release.
+    const denied = rows.at(-1)!;
+    expect(denied.row).toMatchObject({ agent: 'claude', model_source: 'detected', producer_version: null });
+    expect(validRow(denied.row)).toBe(true);
+    expect(denied.stderr.trim()).toBe(UNKNOWN_PRODUCER('VERSION is unreadable, oversized, or not a private regular file'));
+  });
+
+  test('a retried row keeps its construction metadata across an upgrade; a saved legacy row stays legacy', () => {
+    const fix = makeTelemetryFixture('off');
+    const older = copiedInstall(fix, 'install-older', '0.40.0.0\n');
+    const newer = copiedInstall(fix, 'install-newer', '0.41.0.0\n');
+    const start = ['start', '--skill', 'extend:roadmap'];
+    const finish = ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'];
+    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const lines = () => existsSync(ledger) ? readFileSync(ledger, 'utf8').split('\n').filter(Boolean) : [];
+    // A plain file where analytics/ belongs makes the first append fail, so the handoff saves the row.
+    const blocker = join(fix.home, '.gstack-extend/analytics');
+    const failFirstAppend = (install: ReturnType<typeof copiedInstall>, env: Record<string, string> = {}) => {
+      expect(install.run(start).status).toBe(0);
+      const kept = existsSync(blocker);
+      if (kept) renameSync(blocker, blocker + '.kept');
+      writeFileSync(blocker, '');
+      expect(install.run(finish, env).status).toBe(0);
+      rmSync(blocker);
+      if (kept) renameSync(blocker + '.kept', blocker);
+      return readHandoff(fix).row as Record<string, unknown>;
+    };
+
+    // A v1 row built by the older release is appended by the newer one exactly as built, whatever the retry passes.
+    const saved = failFirstAppend(older, { CLAUDECODE: '1' });
+    expect(saved).toMatchObject({ agent: 'claude', schema_version: 1, producer_version: '0.40.0.0',
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown' });
+    expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread' }).status).toBe(0);
+    expect(lines()).toEqual([JSON.stringify(saved)]);
+    expect(handoffs(fix)).toHaveLength(0);
+
+    // A null producer cached before the installation was repaired stays null.
+    const broken = copiedInstall(fix, 'install-broken', '0.41\n');
+    const cached = failFirstAppend(broken);
+    expect(cached.producer_version).toBeNull();
+    writeFileSync(broken.versionFile, '0.41.0.1\n');
+    expect(broken.run(finish).status).toBe(0);
+    expect(lines().at(-1)).toBe(JSON.stringify(cached));
+    expect(validRow(cached)).toBe(true);
+
+    // Rows a pre-version writer saved are appended as those legacy rows; no version, producer or source is invented.
+    for (const keep of [15, 13]) {
+      expect(newer.run(start).status).toBe(0);
+      const sid = readHandoff(fix).session_id as string;
+      const legacy = Object.fromEntries(Object.entries({ stage: 'roadmap', agent: 'codex', model: 'gpt-5-codex', effort: 'high',
+        rung: 0, outcome: 'success', started_at: '2026-09-22T14:50:06Z', duration_s: 42, session_id: sid, repo: 'acme/widget',
+        branch: 'main', work_item: null, source: 'gstack-extend', route: 'conductor', entrypoint_raw: null }).slice(0, keep));
+      rewriteHandoff(fix, { row: legacy, done: [] });
+      expect(newer.run(finish).status).toBe(0);
+      expect(lines().at(-1)).toBe(JSON.stringify(legacy));
+      expect(validRow(legacy)).toBe(true);
+      expect(handoffs(fix)).toHaveLength(0);
+    }
+  }, 30_000);
 });
 
 const BOUND_S = 86400;

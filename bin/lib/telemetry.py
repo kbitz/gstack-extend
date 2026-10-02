@@ -32,6 +32,19 @@ PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
 HARNESSES = ("claude", "codex", "grok", "cursor")
 OUTCOMES = ("success", "error", "abort", "unknown")
+ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "conductor", "sdk", "unknown"
+ROUTES = (ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN)
+# Where a row's agent, model or effort value came from. A null value is always unknown.
+SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN = "flag", "detected", "unknown"
+SOURCES = (SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN)
+# The stage-runs row format in docs/stage-runs.schema.json. Bump it, and add a schema branch, when the row's
+# shape or meaning changes; a release alone does not. Unrelated to skill-usage's v and PROTOCOL_MARKER.
+SCHEMA_VERSION = 1
+# The installation running this file, resolved so a symlinked bin/ names its real checkout. Never the caller's
+# repository, an environment override, or gstack's VERSION.
+VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
+VERSION_BYTES = 128
+RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
@@ -258,21 +271,24 @@ def supports_no_sweep(logger):
 
 def sink_path(logger=None):
     # Use the selected logger's resolver, not a version guess or another install's helper.
-    # Older loggers have no shared resolver and honor only GSTACK_STATE_DIR.
+    # A stray helper must not opt a legacy logger into modern sink rules.
     logger = logger or resolve("gstack-telemetry-log")
-    helper = Path(logger).with_name("gstack-state-root.sh") if logger else None
-    if helper and helper.is_file():
-        result = subprocess.run(
-            ["bash", "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
-             "gstack-extend", str(helper)],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
-        if result.returncode != 0 or not result.stdout:
-            # Do not silently split the pair into the legacy sink if the shared resolver fails.
-            raise OSError("gstack state-root resolver failed")
-        root = Path(os.fsdecode(result.stdout))  # Preserve path bytes, including trailing newlines.
-    else:
-        root = Path(os.environ.get("GSTACK_STATE_DIR") or Path.home() / ".gstack")
-    return root / "analytics/skill-usage.jsonl"
+    try:
+        modern = bool(logger and b"gstack_state_root_select" in Path(logger).read_bytes())
+        if modern:
+            helper = Path(logger).with_name("gstack-state-root.sh")
+            result = subprocess.run(
+                ["bash", "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
+                 "gstack-extend", str(helper)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
+            if result.returncode != 0 or not result.stdout:
+                # Never fall back to a different sink when a modern resolver fails.
+                raise OSError("empty or failing state root")
+            return Path(os.fsdecode(result.stdout)) / "analytics/skill-usage.jsonl"
+    except (OSError, subprocess.SubprocessError):
+        # Normalize helper failures for the doctor, without exposing helper output.
+        raise OSError("gstack state resolver unavailable; reinstall gstack") from None
+    return Path(os.environ.get("GSTACK_STATE_DIR") or Path.home() / ".gstack") / "analytics/skill-usage.jsonl"
 
 
 def capture(args):
@@ -304,6 +320,26 @@ def read_json(path):
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def producer_version():
+    """This installation's release, or None. Only the producer is unknown then: the row still records."""
+    try:
+        text = read_capped(VERSION_FILE, VERSION_BYTES).decode("utf-8").strip()
+    except FileNotFoundError:
+        reason = "VERSION is missing"
+    except OSError:
+        reason = "VERSION is unreadable, oversized, or not a private regular file"
+    except UnicodeDecodeError:
+        reason = "VERSION is not UTF-8"
+    else:
+        if RELEASE_RE.fullmatch(text):
+            return text
+        reason = "VERSION is not a four-part numeric release"
+    # Never the file's contents. trace(), not debug(): nothing is skipped.
+    trace(f"producer_version unknown ({reason}); the row still records. Fix: restore or upgrade the "
+          "gstack-extend installation so its VERSION holds a valid release. See docs/telemetry.md.")
+    return None
 
 
 def save_state(path, state):
@@ -679,15 +715,15 @@ def cursor_turns(root, begin):
 def route_for(agent, conductor_match=False):
     entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if agent == "claude" else os.environ.get("CURSOR_INVOKED_AS", "") if agent == "cursor" else ""
     if agent == "claude" and entry.startswith("sdk-"):
-        route = "conductor" if os.environ.get("CONDUCTOR_SESSION_ID") else "sdk"
+        route = ROUTE_CONDUCTOR if os.environ.get("CONDUCTOR_SESSION_ID") else ROUTE_SDK
     elif agent == "cursor" and conductor_match:
-        route = "conductor"
+        route = ROUTE_CONDUCTOR
     elif entry or (agent == "codex" and (os.environ.get("CLAUDECODE") or os.environ.get("CURSOR_AGENT") or os.environ.get("GROK_AGENT"))) or (agent == "claude" and (os.environ.get("CURSOR_AGENT") or os.environ.get("CODEX_THREAD_ID"))) or (agent == "cursor" and (os.environ.get("CLAUDECODE") or os.environ.get("CODEX_THREAD_ID"))):
-        route = "cli"
+        route = ROUTE_CLI
     elif agent == "codex" and os.environ.get("CONDUCTOR_SESSION_ID"):
-        route = "conductor"
+        route = ROUTE_CONDUCTOR
     else:
-        route = "unknown"
+        route = ROUTE_UNKNOWN
     return route, clean(entry)
 
 
@@ -773,13 +809,27 @@ def provenance_row(stage, sid, start, duration, values, root):
     now = time.time()
     begin = start if start is not None else int(now) - duration
     agent, model, effort = detect(begin, now, root)
+    # A source labels the value finally written, so a rejected flag leaves the detected value's source in place.
+    flagged = set()
     explicit = values.get("--agent")
     if explicit in HARNESSES:
         if explicit != agent:
             model = effort = None  # detected values describe a different harness
         agent = explicit
+        flagged.add("agent")
     elif explicit is not None:
         trace(f"ignored invalid --agent {explicit!r} (expected claude, codex, cursor or grok)")
+    model_flag, effort_flag = clean(values.get("--model")), clean(values.get("--effort"))
+    if model_flag is not None:
+        model = model_flag
+        flagged.add("model")
+    if effort_flag is not None:
+        effort = effort_flag
+        flagged.add("effort")
+
+    def source(field, value):
+        return SOURCE_UNKNOWN if value is None else SOURCE_FLAG if field in flagged else SOURCE_DETECTED
+
     repo = branch = None
     if root:
         try:
@@ -789,7 +839,6 @@ def provenance_row(stage, sid, start, duration, values, root):
             # A stuck git must not skip the skill-usage completion that follows this row.
             repo = branch = None
     outcome = values.get("--outcome")
-    # Field order is the schema shared with the orchestrator; rung is always 0 for a hand-run skill (no fallback chain).
     conductor_match=False
     if agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS"):
         try:
@@ -800,11 +849,15 @@ def provenance_row(stage, sid, start, duration, values, root):
         except (OSError,ValueError):
             pass
     route, entrypoint = route_for(agent,conductor_match)
-    return dict(stage=stage, agent=agent, model=clean(values.get("--model")) or model,
-                effort=clean(values.get("--effort")) or effort, rung=0,
+    # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
+    # ones. rung is always 0 for a hand-run skill (no fallback chain).
+    return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,
                 outcome=outcome if outcome in OUTCOMES else "unknown", started_at=iso(begin), duration_s=duration,
                 session_id=sid, repo=repo, branch=branch, work_item=clean(values.get("--work-item")),
-                source="gstack-extend", route=route, entrypoint_raw=entrypoint)
+                source="gstack-extend", route=route, entrypoint_raw=entrypoint,
+                schema_version=SCHEMA_VERSION, producer_version=producer_version(),
+                agent_source=source("agent", agent), model_source=source("model", model),
+                effort_source=source("effort", effort))
 
 
 def main(args):
@@ -974,7 +1027,8 @@ def main(args):
     usage_ok = state.get("usage") if state.get("session_id") == sid and "usage" in state else True
     saved = state.get("row") if state.get("session_id") == sid and isinstance(state.get("row"), dict) else None
     if provenance and "provenance" not in done:
-        # Reuse the first attempt's row so a retry does not re-detect the model or stretch duration_s.
+        # Reuse the first attempt's row so a retry does not re-detect the model or stretch duration_s. A saved row is
+        # appended as saved, even by a later release: its version, producer and sources describe its construction.
         row = saved or provenance_row(skill.removeprefix("extend:"), sid, start, duration, values, root)
         trace(f"provenance agent={row['agent']} model={row['model']} effort={row['effort']}")
         if append_row(ledger, row, "provenance sink"):

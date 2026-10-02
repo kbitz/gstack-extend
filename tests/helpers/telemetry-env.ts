@@ -62,9 +62,10 @@ export function makeTelemetryFixture(tier: TelemetryTier, mode: FixtureMode = 's
       copyFileSync(join(REAL_GSTACK_BIN, name), join(upstreamBin, name));
       chmodSync(join(upstreamBin, name), 0o755);
     }
-    // gstack 1.91.11+ sources this sibling from both scripts; without it they cannot resolve a state root. Older installs lack it.
-    const stateRoot = join(REAL_GSTACK_BIN, 'gstack-state-root.sh');
-    if (existsSync(stateRoot)) copyFileSync(stateRoot, join(upstreamBin, 'gstack-state-root.sh'));
+    // New upstream scripts source this shared resolver; older releases have no such file.
+    // Copy only their local dependency, never the sync helper that could upload fixture rows.
+    const stateResolver = join(REAL_GSTACK_BIN, 'gstack-state-root.sh');
+    if (existsSync(stateResolver)) copyFileSync(stateResolver, join(upstreamBin, 'gstack-state-root.sh'));
     copyFileSync(join(REAL_GSTACK_ROOT, 'VERSION'), join(upstream, 'VERSION'));
   } else if (mode === 'stub') {
     const config = `#!/usr/bin/env python3

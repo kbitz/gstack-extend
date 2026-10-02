@@ -97,12 +97,17 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 
 ## Development
 
+Development and tests need Bun 1.2 or newer. Install the pinned development
+dependencies once per checkout, before any test command:
+
 ```bash
+bun install --frozen-lockfile   # Once per checkout; never changes bun.lock
 bun run test        # Select tests from the committed diff against the base branch
 bun run test:full   # Run all tests, including checks for uncommitted changes
 ```
 
-[`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
+Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
+install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
 [`VERSION`](VERSION) is the version source of truth, using up to four segments:
 `MAJOR.MINOR.PATCH.MICRO`. Release history is in [CHANGELOG.md](CHANGELOG.md);
 planned work is in [docs/ROADMAP.md](docs/ROADMAP.md).
