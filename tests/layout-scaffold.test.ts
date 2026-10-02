@@ -153,7 +153,9 @@ describe('CLI contract and roots', () => {
   });
   const usage = [[], ['unknown'], ['plan', '--wat'], ['plan', '--json'], ['apply'], ['apply', '--plan-id', 'ABC'],
     ['apply', '--plan-id', 'a'.repeat(63)], ['plan', '--authorize-external'], ['plan', '--root'],
-    ['apply', '--scaffold-only', '--authorize-external'], ['plan', '--scaffold-only', '--exclude', 'arch.md']];
+    ['apply', '--scaffold-only', '--authorize-external'], ['plan', '--scaffold-only', '--exclude', 'arch.md'],
+    // Value: protects=duplicate --root, duplicate --plan-id and plan --plan-id are usage errors (exit 2, empty stdout, nothing written); fails_when=a guard is dropped and the last value wins or plan accepts an id; why_new=existing usage rows cover malformed ids and plan --authorize-external only; seam=none
+    ['plan', '--root', 'first', '--root', 'second'], ['apply', '--plan-id', 'a'.repeat(64), '--plan-id', 'b'.repeat(64)], ['plan', '--plan-id', 'a'.repeat(64)]];
   for (const args of usage) test(`usage ${JSON.stringify(args)}`, () => {
     const before = tree(); const result = invoke(args); expect(tree()).toBe(before);
     expect(result.code).toBe(2); expect(result.stdout).toBe(''); expect(result.stderr).toMatch(/^ERROR usage: .*\nFIX: /);
@@ -488,6 +490,14 @@ describe('apply and post-apply failures', () => {
     expect(defaultAudit(root).moves).toEqual([]); const before = tree(); const done = plan(); expect(done.stdout).toContain('already canonical');
     status(applyId(id(done)), 'applied', 0); expect(tree()).toBe(before);
   });
+  // Value: protects=a PLAN_ID consumed by a successful apply is stale on replay and writes nothing (STATUS: stale, exit 1, REFUSAL plan_id_stale); fails_when=apply stops recomputing the plan and trusts the id, or the id ignores applied moves and directories; why_new=existing stale rows drift a plan before its first apply or pass a made-up id, never replay a consumed one; seam=none
+  test('replaying a consumed PLAN_ID after a successful apply is stale and writes nothing', () => {
+    file('TODOS.md', 'todos'); file('arch.md', DESIGN); const p = plan(); expect(p.stdout).toContain('Scaffold:'); expect(p.stdout).toContain('Moves:');
+    status(applyId(id(p)), 'applied', 0);
+    expect(readFileSync(join(root, 'docs/TODOS.md'), 'utf8')).toBe('todos'); expect(readFileSync(join(root, 'docs/designs/arch.md'), 'utf8')).toBe(DESIGN);
+    const before = tree(); const replay = applyId(id(p));
+    status(replay, 'stale', 1, false); expect(replay.stdout).toContain('REFUSAL plan_id_stale:'); expect(replay.stderr).toBe(''); expect(tree()).toBe(before);
+  });
   test('scaffold-only creates dirs, ignores misplaced doc, and second apply is byte-identical', () => {
     file('TODOS.md'); const result = invoke(['apply', '--root', root, '--scaffold-only']); status(result, 'applied', 0);
     expect(readFileSync(join(root, 'TODOS.md'), 'utf8')).toBe('example\n'); for (const path of CANONICAL_DIRS) expect(statSync(join(root, path)).isDirectory()).toBe(true);
@@ -555,6 +565,32 @@ describe('apply and post-apply failures', () => {
     });
     status(applyId(id(p), [], { fs }), 'partial', 4); expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('raced'); expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toBe('source');
   });
+  // Value: protects=after a link fallback the helper never unlinks a destination another writer created, keeps the source intact and reports a failed cleanup; fails_when=the EEXIST or absent-before-copy guard is dropped, or a cleanup failure is hidden; why_new=existing tests raise EEXIST from linkSync, which skips the copy fallback, and only cover a successful cleanup; seam=none
+  test('copy fallback never removes a raced destination and reports a failed partial-copy cleanup', () => {
+    const exdev = () => { throw Object.assign(new Error('cross device'), { code: 'EXDEV' }); };
+    const rows: { name: string; fs: Partial<FileSystem>; failed: string; dest: string; remains: boolean }[] = [
+      // Destination appears after the absent check; the real exclusive copy raises its own EEXIST.
+      { name: 'raced EEXIST at the exclusive copy', failed: 'EEXIST', dest: 'raced', remains: false, fs: { linkSync: exdev,
+        copyFileSync: (src, dest, flags) => { writeFileSync(dest, 'raced'); defaultFs.copyFileSync(src, dest, flags); } } },
+      // Destination already exists when the fallback starts and the copy fails with something other than EEXIST.
+      { name: 'present before the copy, non-EEXIST failure', failed: 'EIO', dest: 'raced', remains: false, fs: {
+        linkSync: (_src, dest) => { writeFileSync(dest, 'raced'); exdev(); },
+        copyFileSync: () => { throw Object.assign(new Error('io failure'), { code: 'EIO' }); } } },
+      // Our own partial copy cannot be removed: report it and leave the source alone.
+      { name: 'own partial copy with failed cleanup', failed: 'ENOSPC', dest: 'partial', remains: true, fs: { linkSync: exdev,
+        copyFileSync: (_src, dest) => { writeFileSync(dest, 'partial'); throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); },
+        unlinkSync: path => { if (path === join(root, 'README.md')) throw Object.assign(new Error('unlink denied'), { code: 'EACCES' }); defaultFs.unlinkSync(path); } } },
+    ];
+    for (const row of rows) {
+      rmSync(root, { recursive: true }); mkdirSync(root); canonical(); file('docs/README.md', 'source');
+      const result = applyId(id(plan()), [], { fs: withFs(row.fs) });
+      status(result, 'partial', 4); expect(result.stdout).toContain(`Failed:\n- move docs/README.md → README.md: ${row.failed}`);
+      expect(result.stdout).not.toContain('removed exclusively created');
+      if (row.remains) expect(result.stdout).toContain('partial copy README.md remains'); else expect(result.stdout).not.toContain('partial copy');
+      expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe(row.dest); expect(readFileSync(join(root, 'docs/README.md'), 'utf8')).toBe('source');
+      expect(readdirSync(root).sort()).toEqual(['README.md', 'docs']); expect(readdirSync(join(root, 'docs')).sort()).toEqual(['README.md', 'archive', 'designs']);
+    }
+  });
   for (const name of ['README.md', 'LICENSE']) test(`failed unlink of ${name} leaves both paths and next plan Blocked`, () => {
     canonical(); file(`docs/${name}`, 'original'); const p = plan(); const fs = withFs({ unlinkSync: path => {
       if (path === join(root, 'docs', name)) throw Object.assign(new Error('unlink failure'), { code: 'EACCES' }); defaultFs.unlinkSync(path);
@@ -596,6 +632,21 @@ describe('both-exist precision and unreadable discovery', () => {
     utimesSync(join(root, 'docs/LICENSE'), new Date(1_700_000_000_000), new Date(1_700_000_000_000));
     expect(plan().stdout).toContain('BLOCKED: 0'); unlinkSync(join(root, 'docs/LICENSE')); linkSync(join(root, 'LICENSE'), join(root, 'docs/LICENSE'));
     const result = plan(); expect(result.stdout).toContain('BLOCKED: 1'); expect(result.stdout).not.toContain('already canonical');
+  });
+  // Value: protects=a root/docs pair with equal size and equal mtime but different bytes is a differing copy (not Blocked), and identical bytes at that mtime stay Blocked; fails_when=bothExist compares size and mtime only, so a coincidental match blocks canonical work; why_new=existing rows vary mtime or content separately, never size and mtime equal with bytes different; seam=none
+  test('same size and same mtime with different bytes is not Blocked; identical bytes at that mtime are', () => {
+    canonical(); const stamp = new Date(1_650_000_000_000);
+    const pair = (rootBytes: string, docsBytes: string) => {
+      file('LICENSE', rootBytes); file('docs/LICENSE', docsBytes);
+      for (const path of ['LICENSE', 'docs/LICENSE']) utimesSync(join(root, path), stamp, stamp);
+    };
+    pair('AAAAAA', 'BBBBBB');
+    expect(statSync(join(root, 'LICENSE')).size).toBe(statSync(join(root, 'docs/LICENSE')).size);
+    expect(statSync(join(root, 'LICENSE')).mtimeMs).toBe(statSync(join(root, 'docs/LICENSE')).mtimeMs);
+    expect(statSync(join(root, 'LICENSE')).ino).not.toBe(statSync(join(root, 'docs/LICENSE')).ino);
+    const different = plan(); status(different, 'ok', 0, true, true); expect(different.stdout).toContain('BLOCKED: 0'); expect(different.stdout).toContain('already canonical');
+    pair('AAAAAA', 'AAAAAA');
+    const identical = plan(); status(identical, 'ok', 0, true, true); expect(identical.stdout).toContain('BLOCKED: 1'); expect(identical.stdout).not.toContain('already canonical');
   });
   test('identical bytes and mtime from failed copy/unlink are Blocked', () => {
     canonical(); file('docs/LICENSE', 'original'); const p = plan();
@@ -688,6 +739,18 @@ describe('Process: entry-point Git safety and launcher failures', () => {
     const lookup = spawnSync('/bin/sh', ['-c', 'command() { printf "./bun\\n"; }; . "$1"', 'lookup', join(EXTEND_ROOT, 'bin/layout-scaffold')],
       { env: testEnv, cwd: root, input: '', encoding: 'utf8' });
     expect(lookup.status).toBe(5); expect(lookup.stderr).toContain('ERROR bun_not_absolute:'); expect(lookup.stdout).toBe('');
+  });
+  // Value: protects=package.json engines.bun, BUN_FLOOR and the launcher bun_missing FIX text name one Bun floor (version token only); fails_when=one of the three is bumped or reverted without the others; why_new=the existing help check only compares BUN_FLOOR with help text; seam=none
+  test('package engines, BUN_FLOOR and both launcher bun_missing FIX lines name the same Bun floor', () => {
+    const version = (text: string | undefined) => text?.match(/\d+\.\d+\.\d+/)?.[0];
+    const engines: string = JSON.parse(readFileSync(join(EXTEND_ROOT, 'package.json'), 'utf8')).engines.bun;
+    expect(BUN_FLOOR).toMatch(/^\d+\.\d+\.\d+$/); expect(version(engines)).toBe(BUN_FLOOR);
+    // An empty PATH and a PATH with no bun reach the launcher's two bun_missing sites.
+    for (const path of ['', temp]) {
+      const result = bin(['plan', '--root', root], { ...testEnv, PATH: path });
+      expect(result.status).toBe(5); expect(result.stdout).toBe(''); expect(result.stderr).toContain('ERROR bun_missing:');
+      expect(version(result.stderr.split('FIX:')[1])).toBe(BUN_FLOOR);
+    }
   });
   test('source missing, relative symlinked launcher, and symlink-loop resolution', () => {
     const copied = join(temp, 'copy/bin/layout-scaffold'); mkdirSync(resolve(copied, '..'), { recursive: true }); copyFileSync(join(EXTEND_ROOT, 'bin/layout-scaffold'), copied); chmodSync(copied, 0o755);
