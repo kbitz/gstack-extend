@@ -235,22 +235,45 @@ absolute path printed by the bash block.
 
 ## Active Session Guard
 
-On **Init**, before starting Phase 1, check for an existing session:
+On **Init**, before starting Phase 1, run the Path Resolution block, then read `<SESSION_DIR>/session.yaml`.
 
-```
-Glob pattern: <SESSION_DIR>/session.yaml
-```
+- **No file:** run the Init state block below.
+- **`phase: complete`:** ask nothing. Run the Init state block, which archives the finished session.
+- **Unreadable** (the file exists but cannot be read): ask with one option, naming the `<SESSION_DIR>/session.yaml` path and what could not be read.
+  - Question: "Could not read `<SESSION_DIR>/session.yaml` ([what could not be read]). Start a fresh review?"
+  - Options: ["Start a fresh review (archives the old one)"]
+- **Any other phase:** ask Resume or Start fresh, naming the session's `branch`, `commit` and `started`. When that `branch` differs from the current branch, add "If /full-review is still running in that branch's workspace, finish it there first." and recommend Start fresh. Otherwise recommend Resume.
+  - Question: "You have an existing review session on branch [branch] at commit [commit], started [started]. [When the branch differs: If /full-review is still running in that branch's workspace, finish it there first.] What would you like to do?"
+  - Options when the branch matches: ["Resume triage where you left off" (recommended), "Start a fresh review (archives the old one)"]
+  - Options when the branch differs: ["Start a fresh review (archives the old one)" (recommended), "Resume triage where you left off"]
 
-If an active session exists, read it and present via AskUserQuestion:
+Resume goes to Resume Flow. Start fresh runs the Init state block.
 
-- Question: "You have an existing review session (started [date], [N] findings, [M] triaged). What would you like to do?"
-- Options: ["Resume triage where you left off", "Start a fresh review (archives the old one)"]
+On any non-zero exit or `ERROR:` line from the Init state block, stop and relay the output. Never write session state over an unarchived session.
 
-If "Start a fresh review", archive the old state:
+Whenever the block prints `ARCHIVED=<path>`, print "Archived the previous review to <path>." and name that path in the next question's action receipt.
+
+### Init state block
+
+Run once per Init, before Phase 1. It replaces the old archive block and Phase 1 Step 4's `mkdir`.
+
 ```bash
-TS=$(date -u +%Y%m%d-%H%M%S)
-ARCHIVE_DIR=$(session_archive_dir full-review "$TS")
-mv "$SESSION_DIR" "$ARCHIVE_DIR"
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+SESSION_DIR=$(session_dir full-review)
+[ -n "$SESSION_DIR" ] || { echo "ERROR: could not resolve the /full-review session directory. Re-run setup --host auto from your gstack-extend checkout." >&2; exit 1; }
+if [ -e "$SESSION_DIR" ]; then
+  _ENTRIES=$(ls -A "$SESSION_DIR") || { echo "ERROR: cannot list $SESSION_DIR. Check its permissions, then run /full-review again. Nothing was moved." >&2; exit 1; }
+  if [ -n "$_ENTRIES" ]; then
+    ARCHIVE_DIR=$(session_archive_dir full-review "$(date -u +%Y%m%d-%H%M%S)")
+    if [ -e "$ARCHIVE_DIR" ]; then echo "ERROR: $ARCHIVE_DIR already exists. Run /full-review again in a few seconds." >&2; exit 1; fi
+    mv "$SESSION_DIR" "$ARCHIVE_DIR" || { echo "ERROR: could not move $SESSION_DIR to $ARCHIVE_DIR. Check permissions on its parent directory, then run /full-review again. The old session is unchanged." >&2; exit 1; }
+    echo "ARCHIVED=$ARCHIVE_DIR"
+  fi
+fi
+mkdir -p "$SESSION_DIR" || { echo "ERROR: could not create $SESSION_DIR. Check permissions on its parent directory, then run /full-review again." >&2; exit 1; }
+echo "SESSION_DIR=$SESSION_DIR"
 ```
 
 ---
@@ -461,19 +484,19 @@ After all agents return, validate each output:
 - Check that it contains at least one `FILE:` line or `NO_FINDINGS`
 - If an agent returned prose instead of structured findings, extract what you can
   and annotate those findings with `(unstructured)` in the description
+- An output with no `FILE:` line, no `NO_FINDINGS` and nothing extractable counts as `failed`.
 
-**Error handling:**
-- 1 agent failed or timed out: proceed with 2 agents' findings. Note the gap.
-- 2 agents failed or timed out: present via AskUserQuestion: "Only 1 of 3 review agents
-  completed. Proceed with partial results or retry?"
-- All 3 failed: "All review agents failed. This usually means the codebase is
-  too large for single-pass review. Try scoping to a specific directory."
+**Error handling.** Retries are counted per run. One retry re-dispatches every failed agent. After 3 retries, remove the Retry option. If all three agents still fail, the run stops as BLOCKED without another question.
+
+- 1 agent failed or timed out: proceed with the other agents' findings. Note the gap.
+- 2 agents failed or timed out: present via AskUserQuestion. Options: "Proceed with partial results", "Retry the failed agents", "Stop (records a BLOCKED run)".
+- All 3 failed: present via AskUserQuestion. Options: "Retry the failed agents", "Stop (records a BLOCKED run)". Tell the user: "Run /full-review again; the stopped session is archived automatically. If it fails again, the agent errors above are the cause."
+
+On Stop, or on that automatic stop after 3 retries: tell the user what failed, run Step 4 with each agent's status and the real `findings_total`, add the line `status: BLOCKED` to `session.yaml`, then go to Phase 6.
 
 ### Step 4: Write state checkpoint
 
-```bash
-mkdir -p "$SESSION_DIR"
-```
+The Init state block created the directory. Do not `mkdir` again.
 
 Write `session.yaml`:
 ```yaml
@@ -531,11 +554,11 @@ Each cluster gets:
 ### Step 3: Write state checkpoint
 
 Write clusters to `<SESSION_DIR>/clusters.md`. Update `session.yaml`:
-set `phase: clusters_complete`, add `clusters_total: <count>`.
+set `phase: clusters_complete`, add `clusters_total: <count>` and `edge_case_dropped: <count>`.
 
 ### Step 4: Handle empty results
 
-If all agents returned `NO_FINDINGS`, skip Phases 3-5 and go to Phase 6.
+When clustering produced no clusters (every completed agent returned `NO_FINDINGS`, every finding was `edge-case` and dropped, or a mix), skip Phases 3-5 and go to Phase 6.
 
 ---
 
@@ -615,11 +638,13 @@ Mark all remaining untriaged clusters as `rejected`. Update state. Exit triage l
 After all clusters are triaged (or user chose "Done triaging"), update
 `session.yaml`: set `phase: triage_complete`, record final counts.
 
-If no clusters were approved, skip Phase 5 and proceed to Phase 6.
+If no cluster is approved, go to Phase 6.
 
 ---
 
 ## Phase 5: Persist to TODOS.md
+
+If no cluster is approved, go to Phase 6.
 
 ### Step 1: Locate TODOS.md
 
@@ -649,10 +674,12 @@ For each approved cluster, write each finding as a rich-format entry under
 ### [full-review:<severity>] <finding title>
 - **Description:** <DESCRIPTION text from the finding — the reviewer agent's framing of what's wrong>
 - **Hypothesis (untested):** <HYPOTHESIS text> — re-investigate before implementing; the reviewer agent did not verify this direction.
-- **Found in:** <file>:<line>
-- **Context:** From /full-review cluster "<theme>" on branch <branch> (<date>).
+- **Found in:** <the finding's FILE:LINE, copied verbatim from clusters.md>
+- **Context:** <the cluster theme, copied verbatim from clusters.md>
 - **Effort:** ? (user triages in /roadmap)
 ```
+
+`**Found in:**` is the finding's `FILE:LINE` copied verbatim from `clusters.md`. `**Context:**` names the cluster theme verbatim.
 
 Two framing choices are load-bearing:
 - `**Description:**` (not `**Why:**`) signals the reviewer's analytical
@@ -672,37 +699,46 @@ it as a tag attribute for /roadmap's placement heuristic:
 ### [full-review:<severity>,files=<path>] <finding title>
 ```
 
+The template adds one path today (single-file clusters); several paths join with `|` (`files=a.ts|b.ts`); omit `files=` when any path contains `[`, `]`, `,`, `;`, `|`, a backtick or `$(` (for example `app/[id]/page.tsx`), and keep the path in `**Found in:**`. The single-file-cluster condition is unchanged.
+
 Order within the section: critical first, then necessary, then nice-to-have.
 
-**IMPORTANT:** Append to the existing `## Unprocessed` section. Do NOT remove or
-modify existing items. Do NOT create new sections.
+**IMPORTANT:** Append all approved entries in one edit to the existing `## Unprocessed` section. Skip any entry whose `**Found in:**` value and cluster theme (in `**Context:**`) both match an entry already under `## Unprocessed`. For an existing entry, use the entire `**Context:**` value as the theme in the current format; for the legacy `From /full-review cluster "<theme>" on branch <branch> (<date>).` format, extract the quoted cluster theme. Compare that theme and `**Found in:**` against the verbatim values in `clusters.md`, so a resumed run, including one an older version interrupted, matches even when it words the title differently. Do NOT remove or modify existing items. Do NOT create new sections.
 
 ### Step 4: Commit
 
-Stage the TODOS.md file (whichever path was used) and commit:
+Stage the TODOS.md path and commit only that path. N counts entries appended in this run. The pathspec keeps other staged work out of the commit.
+
 ```bash
-git add <path-to-TODOS.md>
+git add <path>
 ```
 ```bash
-_OUT=$(git commit -m "chore: add full-review findings to TODOS.md (<N> items)" 2>&1)
+_OUT=$(git commit -m "chore: add full-review findings to TODOS.md (<N> items)" -- <path> 2>&1)
 _RC=$?
 if [ $_RC -ne 0 ]; then echo "$_OUT"; fi
 ```
 
 If the commit fails because there's nothing to commit, that's fine — continue.
+Any other failure makes the run DONE_WITH_CONCERNS. Phase 6 Step 2 gives the exact recovery: `git -C <repo root> add <path>` and `git -C <repo root> commit -m "<message>" -- <path>`.
 The captured `$_OUT` surfaces any real failure (pre-commit hook reject, missing
 `user.email`, detached HEAD, etc.) instead of swallowing it silently.
 
-### Step 5: Write report
+---
 
-Write `<SESSION_DIR>/report.md`:
+## Phase 6: Report and Handoff
+
+Every run reaches this phase except a NEEDS_CONTEXT stop. Step 1 is the only report write and the only `phase: complete` update.
+
+### Step 1: Write report
+
+Write `<SESSION_DIR>/report.md`. The report starts with the GSTACK REVIEW REPORT table. Its `Branch:` and `Commit:` come from `session.yaml`. Empty cluster lists and "Items Written to TODOS.md" read `None`.
 
 ```markdown
 # Full Review Report
 
 Date: <ISO 8601>
-Branch: <branch>
-Commit: <short hash>
+Branch: <branch from session.yaml>
+Commit: <short hash from session.yaml>
 
 ## Agent Status
 - Reviewer: <completed|failed|timeout> (<N> findings)
@@ -711,8 +747,8 @@ Commit: <short hash>
 
 ## Summary
 - Total findings (post-edge-case-drop): <N>
-- Edge-case findings dropped at source: <N>
-- Clusters: <N>
+- Edge-case findings dropped at source: <edge_case_dropped>
+- Clusters: <clusters_total>
 - Approved: <N> clusters (<M> findings)
 - Rejected: <N> clusters (<M> findings)
 - Deferred: <N> clusters (<M> findings)
@@ -720,28 +756,36 @@ Commit: <short hash>
 
 ## Approved Clusters
 ### <Theme> (severity: <severity>, <N> findings)
-<findings list>
+<findings list; write None instead of this block when the list is empty>
 
 ## Rejected Clusters
 ### <Theme> (severity: <severity>, <N> findings)
-<reason: user rejected | pre-deduped>
+<reason: user rejected | pre-deduped; write None instead of this block when the list is empty>
 
 ## Deferred Clusters
 ### <Theme> (severity: <severity>, <N> findings)
+<findings list; write None instead of this block when the list is empty>
 
 ## Items Written to TODOS.md
-<list of items written, with path to TODOS.md>
+<list of items written, with path to TODOS.md; write None when empty>
+
+Already in TODOS.md (skipped): <N>
 ```
 
-Update `session.yaml`: set `phase: complete`.
+Add "Already in TODOS.md (skipped): <N>" for entries the idempotent append skipped. For BLOCKED, add "Untriaged findings in raw-findings.md: <N>".
 
----
+Missing counts:
+- On a `status: BLOCKED` run, `clusters_total` and `edge_case_dropped` read "not applicable".
+- On a run that reached Phase 2, a missing `edge_case_dropped` reads "not recorded".
+- A session at `clusters_complete` or later, not BLOCKED, with no `clusters_total` is malformed (NEEDS_CONTEXT). Do not write the report and do not mark it complete.
 
-## Phase 6: Handoff
+Update `session.yaml`: set `phase: complete` and `status: <STATUS>`.
 
-Present completion summary via AskUserQuestion:
+### Step 2: Handoff
 
-- **Question:** "[Action receipt: N items written to TODOS.md]\n\n**Full review complete.**\n- Agents: [N]/3 completed\n- Findings: [N] total, [M] clusters\n- Triage: [A] approved, [R] rejected, [D] deferred\n- Written to TODOS.md: [N] items ([path])\n\n[If approved > 0: 'Run /roadmap to organize these findings into your execution topology.']\n[If all agents completed with 0 findings: 'Clean codebase — no action items.']"
+Present completion summary via AskUserQuestion. The header is "**Full review stopped.**" when the status is BLOCKED, and "**Full review complete.**" otherwise. Name the failed agents for BLOCKED and DONE_WITH_CONCERNS.
+
+- **Question:** "[Action receipt]\n\n**Full review complete.**\n- Status: <STATUS>\n- Report: <SESSION_DIR>/report.md\n- Agents: [N]/3 completed\n- Findings: [N] total, [M] clusters\n- Triage: [A] approved, [R] rejected, [D] deferred\n- Written to TODOS.md: [N] items ([path])\n\n[If BLOCKED, header is '**Full review stopped.**' instead, name the failed agents, and show: 'Run /full-review again; the stopped session is archived automatically. If it fails again, the agent errors above are the cause.']\n[If DONE_WITH_CONCERNS, name the failed agents.]\n[If the TODOS.md commit failed: `git -C <repo root> add <path>` and `git -C <repo root> commit -m "<message>" -- <path>`.]\n[If approved > 0: 'Run /roadmap to organize these findings into your execution topology.']\n[If every agent returned `NO_FINDINGS`: 'No findings from 3/3 agents.']\n[If findings existed but all were edge-case and dropped: 'No retained findings (<N> edge-case findings dropped).']"
 - **Options** vary:
   - If approved items > 0: ["Continue to /roadmap", "Done for now"]
   - If no items approved: ["Done"]
@@ -762,13 +806,20 @@ If no state found: "No active review session. Want to start a fresh review?"
 
 ### Step 2: Read state and determine phase
 
-Read `session.yaml`. Check the `phase` field:
+Read `session.yaml`. For `/full-review resume` only (not `status`, not a `complete` session), before any phase runs, compare the session's `branch` with the current branch. When they differ, ask with the warning "If /full-review is still running in that branch's workspace, finish it there first." Options: "Continue here" or "Start a fresh review (archives the old one)" (recommended). No phase runs and nothing is archived before the answer.
 
+Choosing Start fresh runs the Init state block, then Phase 1. Choosing Continue here proceeds to the phase selection below.
+
+Before selecting or running a resumed phase, apply the Completion Status Protocol's NEEDS_CONTEXT rule to `session.yaml` and that phase's required inputs. Malformed state, including a session at `clusters_complete` or later, not BLOCKED, with no `clusters_total`, stops before triage or persistence; show the chat-only report and escalation without writing a report or marking the session complete.
+
+Then match the `phase` field, first match wins:
+
+- `complete` → finished. Show status (or "not recorded" when `status` is absent) and the report path.
+- Any other phase with `status: BLOCKED` → Phase 6.
 - `dispatch_complete` → agents ran, synthesis not done. Run Phase 2 onwards.
-- `clusters_complete` → clusters formed, triage not started. Run Phase 3 onwards.
+- `clusters_complete` → Phase 6 when `clusters_total` is 0, else Phase 3 onwards.
 - `dedup_complete` → dedup done, triage not started. Run Phase 4.
 - `triage_complete` → triage done, not persisted. Run Phase 5.
-- `complete` → everything done. Show report summary.
 
 ### Step 3: Present status
 
@@ -781,11 +832,14 @@ AGENTS: <N>/3 completed | FINDINGS: <N> total
 CLUSTERS: <N> total | <M> triaged | <K> remaining
 TRIAGE: <A> approved, <R> rejected, <D> deferred
 PHASE: <current phase>
+STATUS: <status> | REPORT: <path>
 ```
 
-If `/full-review status`, stop here.
+Add `STATUS: <status> | REPORT: <path>` when the phase is `complete`. Earlier runs are kept as `<project dir>/full-review-archived-<UTC timestamp>/`, each with its `report.md`.
 
-If `/full-review resume`, continue from the current phase.
+If `/full-review status`, stop here. Do not ask a branch question.
+
+If `/full-review resume`, continue from the phase chosen above.
 
 ---
 
@@ -816,12 +870,12 @@ When completing a skill workflow, report status using one of:
 
 For /full-review specifically: map the five session phases (`dispatch_complete`,
 `clusters_complete`, `dedup_complete`, `triage_complete`, `complete`) and per-agent
-outcomes to the session-level enum at session-done. Rollup rule:
+outcomes to the session-level enum at session-done. Rollup rule, first match wins:
 
-- All 3 agents completed, clustering + dedup + triage done, approved items written to TODOS.md → **DONE**
-- Complete but some clusters deferred, or agents returned warnings that weren't actioned → **DONE_WITH_CONCERNS** (list deferred clusters + warnings)
-- One or more agents timed out, crashed, or returned no usable output AND no fallback path succeeded → **BLOCKED**
-- Session interrupted or state files are missing/malformed on resume → **NEEDS_CONTEXT**
+- **NEEDS_CONTEXT** — on resume, `session.yaml` exists but is malformed (including a session at `clusters_complete` or later, not BLOCKED, with no `clusters_total`), or a phase is about to run without its input (`raw-findings.md` for Phase 2, `clusters.md` for Phases 3-5, and `clusters.md` for Phase 6 when `clusters_total` is above 0 and the status is not BLOCKED). Phase 6 does not run and nothing is marked complete. Show the GSTACK REVIEW REPORT table in chat only. The escalation RECOMMENDATION reads "Run /full-review and choose Start fresh. The old files move to an archive; nothing is deleted." A missing `session.yaml` keeps "No active review session".
+- **BLOCKED** — the run stopped before synthesis (Stop at an agent-failure prompt, or all three agents still failed after 3 retries).
+- **DONE_WITH_CONCERNS** — the run finished with one or two failed agents (named), a deferred cluster, `(unstructured)` output, or a TODOS commit failure other than nothing to commit.
+- **DONE** — all three agents completed with structured output and the run finished with approved findings written, zero clusters, or every cluster rejected.
 
 <!-- SHARED:escalation-opener -->
 ### Escalation
@@ -829,7 +883,7 @@ outcomes to the session-level enum at session-done. Rollup rule:
 It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result." Bad work is worse than no work. You will not be penalized for escalating.
 <!-- /SHARED:escalation-opener -->
 
-- If an agent has been retried 3 times without producing usable output, STOP and escalate.
+- If an agent has been retried 3 times without producing usable output, follow the Phase 1 Step 3 agent-failure prompt: after 3 retries the Retry option is removed, and if all three agents still fail the run stops as BLOCKED without another question.
 - If you are uncertain whether a cluster represents a real issue or a false positive, STOP and present the evidence.
 - If the scope of findings exceeds what can be sensibly triaged in one session, STOP and escalate (offer to split into multiple sessions).
 
@@ -861,7 +915,7 @@ This does NOT apply to routine cluster naming, obvious approve/reject calls wher
 
 ## GSTACK REVIEW REPORT
 
-At session-done, prepend this table to `<SESSION_DIR>/report.md` as the first section (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately.
+Phase 6 Step 1 writes this table first in `<SESSION_DIR>/report.md` (above the narrative clusters). Also emit it verbatim in the chat response so the user gets the same dashboard immediately. A NEEDS_CONTEXT stop shows the table in chat only and does not write the report.
 
 Template:
 
@@ -881,12 +935,12 @@ Substitutions:
 - `<N>`, `<approved>`, `<deferred>`, `<rejected>` come from the triage record.
 - `<one-line summary>` names the concrete outcome: "3 approved clusters landed in TODOS.md", "2 deferred for next review", "agent dispatch blocked — see BLOCKED entry above", etc.
 
-Verdict-to-status mapping (same as the Completion Status Protocol rollup):
+Status comes from the Completion Status Protocol rollup above. Verdict shapes:
 
-- All 3 agents completed + clustering + dedup + triage done + approved items written → verdict "DONE — <N> approved clusters landed in TODOS.md".
-- Complete with deferred clusters or warnings → verdict "DONE_WITH_CONCERNS — <specifics>".
-- Agent timeout/crash/no-output → verdict "BLOCKED — <which agent>, <what was tried>".
-- State files missing on resume → verdict "NEEDS_CONTEXT — <which state is missing>".
+- DONE — "<N> approved clusters landed in TODOS.md", "no findings after the edge-case drop", or "all <N> clusters rejected".
+- DONE_WITH_CONCERNS — "<specifics>".
+- BLOCKED — "<which agents>, <what was tried>".
+- NEEDS_CONTEXT — "<which state is missing>" (chat only).
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
