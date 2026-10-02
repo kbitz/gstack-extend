@@ -1,0 +1,147 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "gstack-extend stage-runs row",
+  "description": "One line of the local-only stage-runs.jsonl ledger that gstack-extend writes for a hand-run skill (source gstack-extend, rung 0). A row with schema_version must match the v1 definition; a row without it is a legacy row from a writer older than the version field. Rows from other producers follow their own contracts. See docs/telemetry.md#schema-validation.",
+  "$comment": "The root names every allowed key; the v1 and legacy definitions constrain them. A row-shape or meaning change adds a new schema_version branch and keeps the existing ones; a release-only change does not bump schema_version. Readers pin a release or commit of this file, or vendor it.",
+  "type": "object",
+  "properties": {
+    "stage": true, "agent": true, "model": true, "effort": true, "rung": true, "outcome": true,
+    "started_at": true, "duration_s": true, "session_id": true, "repo": true, "branch": true,
+    "work_item": true, "source": true, "route": true, "entrypoint_raw": true,
+    "schema_version": true, "producer_version": true, "agent_source": true, "model_source": true,
+    "effort_source": true
+  },
+  "additionalProperties": false,
+  "if": { "type": "object", "properties": { "schema_version": true }, "required": ["schema_version"] },
+  "then": { "$ref": "#/definitions/v1" },
+  "else": { "$ref": "#/definitions/legacy" },
+  "definitions": {
+    "stage": { "description": "Skill name without the extend: prefix.", "type": "string" },
+    "agent": {
+      "description": "Harness that ran the stage; null when unverifiable.",
+      "type": ["string", "null"],
+      "enum": ["claude", "codex", "grok", "cursor", null]
+    },
+    "model": { "description": "Model ID in the harness's own vocabulary; null when unverifiable.", "type": ["string", "null"] },
+    "effort": { "description": "Effort level in the harness's own vocabulary; null when unverifiable.", "type": ["string", "null"] },
+    "rung": { "description": "Always 0: a hand-run skill has no fallback chain.", "type": "integer", "const": 0 },
+    "outcome": { "type": "string", "enum": ["success", "error", "abort", "unknown"] },
+    "started_at": {
+      "description": "UTC start at second precision; null when the start cannot be represented. The pattern is the writer's shape, not calendar validation.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "duration_s": { "description": "Session wall-clock seconds including human waits; never capped.", "type": "integer", "minimum": 0 },
+    "session_id": { "type": "string" },
+    "repo": { "type": ["string", "null"] },
+    "branch": { "type": ["string", "null"] },
+    "work_item": { "type": ["string", "null"] },
+    "source": {
+      "description": "Writer label. The producer chooses it, so any caller writing it is indistinguishable from gstack-extend. Not related to the *_source fields.",
+      "type": "string",
+      "const": "gstack-extend"
+    },
+    "route": { "type": "string", "enum": ["cli", "conductor", "sdk", "unknown"] },
+    "entrypoint_raw": { "type": ["string", "null"] },
+    "schema_version": {
+      "description": "Row format version. Unrelated to the skill-usage v field and the start-finish protocol marker.",
+      "type": "integer",
+      "const": 1
+    },
+    "producer_version": {
+      "description": "Release in the VERSION file of the gstack-extend installation that constructed the row; null when that file was missing, unsafe or malformed. A retried row keeps the release that first constructed it.",
+      "type": ["string", "null"],
+      "pattern": "^[0-9]+(\\.[0-9]+){3}$"
+    },
+    "evidence_source": {
+      "description": "Where the matching agent, model or effort value came from: flag (an accepted finish flag), detected (the harness's own markers or session log) or unknown (the value is null).",
+      "type": "string",
+      "enum": ["flag", "detected", "unknown"]
+    },
+    "v1": {
+      "type": "object",
+      "properties": {
+        "stage": { "$ref": "#/definitions/stage" },
+        "agent": { "$ref": "#/definitions/agent" },
+        "model": { "$ref": "#/definitions/model" },
+        "effort": { "$ref": "#/definitions/effort" },
+        "rung": { "$ref": "#/definitions/rung" },
+        "outcome": { "$ref": "#/definitions/outcome" },
+        "started_at": { "$ref": "#/definitions/started_at" },
+        "duration_s": { "$ref": "#/definitions/duration_s" },
+        "session_id": { "$ref": "#/definitions/session_id" },
+        "repo": { "$ref": "#/definitions/repo" },
+        "branch": { "$ref": "#/definitions/branch" },
+        "work_item": { "$ref": "#/definitions/work_item" },
+        "source": { "$ref": "#/definitions/source" },
+        "route": { "$ref": "#/definitions/route" },
+        "entrypoint_raw": { "$ref": "#/definitions/entrypoint_raw" },
+        "schema_version": { "$ref": "#/definitions/schema_version" },
+        "producer_version": { "$ref": "#/definitions/producer_version" },
+        "agent_source": { "$ref": "#/definitions/evidence_source" },
+        "model_source": { "$ref": "#/definitions/evidence_source" },
+        "effort_source": { "$ref": "#/definitions/evidence_source" }
+      },
+      "required": [
+        "stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
+        "repo", "branch", "work_item", "source", "route", "entrypoint_raw",
+        "schema_version", "producer_version", "agent_source", "model_source", "effort_source"
+      ],
+      "allOf": [
+        { "$ref": "#/definitions/agent_evidence" },
+        { "$ref": "#/definitions/model_evidence" },
+        { "$ref": "#/definitions/effort_evidence" }
+      ]
+    },
+    "agent_evidence": {
+      "description": "A null agent has agent_source unknown; any other agent has flag or detected.",
+      "type": "object",
+      "if": { "type": "object", "properties": { "agent": { "type": "null" } }, "required": ["agent"] },
+      "then": { "type": "object", "properties": { "agent_source": { "const": "unknown" } } },
+      "else": { "type": "object", "properties": { "agent_source": { "enum": ["flag", "detected"] } } }
+    },
+    "model_evidence": {
+      "description": "A null model has model_source unknown; any other model has flag or detected.",
+      "type": "object",
+      "if": { "type": "object", "properties": { "model": { "type": "null" } }, "required": ["model"] },
+      "then": { "type": "object", "properties": { "model_source": { "const": "unknown" } } },
+      "else": { "type": "object", "properties": { "model_source": { "enum": ["flag", "detected"] } } }
+    },
+    "effort_evidence": {
+      "description": "A null effort has effort_source unknown; any other effort has flag or detected.",
+      "type": "object",
+      "if": { "type": "object", "properties": { "effort": { "type": "null" } }, "required": ["effort"] },
+      "then": { "type": "object", "properties": { "effort_source": { "const": "unknown" } } },
+      "else": { "type": "object", "properties": { "effort_source": { "enum": ["flag", "detected"] } } }
+    },
+    "legacy": {
+      "description": "Rows from writers older than schema_version. route and entrypoint_raw are each optional and the v1 metadata fields are not allowed. Never fill defaults for them: an absent key is unknown and proves no particular older release.",
+      "type": "object",
+      "properties": {
+        "stage": { "$ref": "#/definitions/stage" },
+        "agent": { "$ref": "#/definitions/agent" },
+        "model": { "$ref": "#/definitions/model" },
+        "effort": { "$ref": "#/definitions/effort" },
+        "rung": { "$ref": "#/definitions/rung" },
+        "outcome": { "$ref": "#/definitions/outcome" },
+        "started_at": { "$ref": "#/definitions/started_at" },
+        "duration_s": { "$ref": "#/definitions/duration_s" },
+        "session_id": { "$ref": "#/definitions/session_id" },
+        "repo": { "$ref": "#/definitions/repo" },
+        "branch": { "$ref": "#/definitions/branch" },
+        "work_item": { "$ref": "#/definitions/work_item" },
+        "source": { "$ref": "#/definitions/source" },
+        "route": { "$ref": "#/definitions/route" },
+        "entrypoint_raw": { "$ref": "#/definitions/entrypoint_raw" },
+        "producer_version": false,
+        "agent_source": false,
+        "model_source": false,
+        "effort_source": false
+      },
+      "required": [
+        "stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
+        "repo", "branch", "work_item", "source"
+      ]
+    }
+  }
+}

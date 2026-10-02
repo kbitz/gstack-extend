@@ -3,12 +3,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.2.0"
   },
   "scripts": {
     "setup": "./setup",
     "test": "bun scripts/select-tests.ts",
     "test:full": "bun test tests/"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
   },
   "version": "0.33.2"
 }
