@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.0.0] - 2026-10-02
+
+### Added
+
+- **`bin/layout-scaffold` fixes a project's documentation layout instead of leaving every move to prose.** `plan` lists the canonical directories to create and the audit's misplaced-document moves in a fixed order, then prints a plan ID. `apply --plan-id <ID>` recomputes the plan and answers `STATUS: stale` if anything changed since you confirmed it, so you only ever apply what you were shown. `--scaffold-only` creates just the directories, and `--exclude <path>` leaves one move out. The `/roadmap` and init callers are not wired to it yet.
+- **Every refusal happens before the first write.** The helper checks the whole batch first. It refuses a missing, empty or home-directory root, a bare or untrusted Git repository, a source that is a link, a destination that already exists, and anything inside Git's own directories or a submodule. A directory or untracked move that resolves outside the project needs `--authorize-external` for that exact resolved target, and a tracked move through a link is never allowed. Each refusal names the cause, says nothing was written and gives the next safe step.
+- **A half-finished apply says so.** The helper stops at the first failure, reports `STATUS: partial` with what it did and did not do, never overwrites an existing file and leaves the source alone when a copy fails. After a clean apply it checks the layout again, and running `plan` after a partial apply shows only the work that remains.
+- **A 183-test suite locks the helper's contract.** It drives the real launcher against Git and plain-directory projects, hostile repositories (a `bunfig.toml` preload, a planted `git`, an inherited `GIT_DIR`), injected filesystem failures, stale confirmations and a replayed plan ID, and it checks that the Bun floor named in `package.json`, the helper's constant and the launcher text agree.
+
+### Changed
+
+- **The roadmap commands start Bun with safer flags.** `roadmap-audit`, `roadmap-pack`, `roadmap-touches` and `roadmap-renumber` now run `bun --no-env-file --no-install --config=/dev/null`, so a project's `.env`, `bunfig.toml` or auto-install cannot change what they execute. These flags need **Bun 1.3.3 or newer**, and `package.json` now says so in `engines.bun`.
+- **The layout checks can hand their suggested moves to a caller as data.** The location and document-type checks keep the same printed text and snapshots, and a directory the scan cannot read is now reported to callers that ask instead of being skipped silently.
+
 ## [0.33.5.0] - 2026-10-02
 
 ### Changed
