@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.4.0] - 2026-10-02
+
+### Added
+
+- **Every stage-run row now says which release wrote it and where its agent, model and effort came from.** New rows in `stage-runs.jsonl` carry `schema_version` (the row format, currently `1`), `producer_version` (the release of the gstack-extend installation that built the row, `null` when its `VERSION` cannot be read) and `agent_source`, `model_source` and `effort_source` (`flag`, `detected` or `unknown`). A value you pass with a flag is labelled `flag` even when it equals what was detected. The first 15 fields keep their order and the five new ones follow. Rows written before this release stay valid and are never rewritten.
+- **A published schema for the row.** `docs/stage-runs.schema.json` is one self-contained JSON Schema (draft-07) with a legacy branch for the 13-field and 15-field rows already on disk and a v1 branch for new ones. It replaces the per-field release notes in `docs/telemetry.md`. A new Schema validation section gives a copy-paste Bun command that sorts a ledger into v1, legacy, unsupported-version, other-producer and invalid rows. It reports line, path and keyword for each problem without printing row contents.
+
+### Changed
+
+- **A retried row keeps the metadata it was built with.** A saved row that is appended after an upgrade keeps its exact bytes, including a legacy row without the new fields, and `producer_version` names the release that built it.
+- **Telemetry follows the state location the installed gstack selects.** With a newer gstack, the start check, the writer and the doctor all use that gstack's own state-root resolver, and an unavailable resolver gives a reinstall hint instead of a permissions error. Older gstack keeps its existing behavior.
+- **Development and tests need Bun 1.2 or newer.** Run `bun install --frozen-lockfile` once per checkout to get the pinned, development-only Ajv 8 that the contract tests use. The runtime install floor stays Bun 1.0, and nothing is added to what users install.
+
 ## [0.33.2.0] - 2026-10-01
 
 ### Fixed
