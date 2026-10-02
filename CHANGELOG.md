@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.33.3.0] - 2026-10-02
+## [0.33.5.0] - 2026-10-02
 
 ### Changed
 
@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **Telemetry start and finish rows follow gstack's state-root rule.** With gstack 1.91.11 and later, both rows use the installed logger's state-root helper, so `GSTACK_HOME` and `GSTACK_STATE_ROOT` overrides keep the pair together. The doctor reads the same sink, older loggers retain their legacy sink rule, and real-mode test fixtures include the helper that current gstack scripts require.
+
 ## [0.33.4.0] - 2026-10-02
 
 ### Added
