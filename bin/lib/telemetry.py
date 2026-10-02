@@ -256,9 +256,23 @@ def supports_no_sweep(logger):
         return False
 
 
-def sink_path():
-    # gstack-telemetry-log honors STATE_DIR only. HOME/STATE_ROOT affect config.
-    return Path(os.environ.get("GSTACK_STATE_DIR") or Path.home() / ".gstack") / "analytics/skill-usage.jsonl"
+def sink_path(logger=None):
+    # Use the selected logger's resolver, not a version guess or another install's helper.
+    # Older loggers have no shared resolver and honor only GSTACK_STATE_DIR.
+    logger = logger or resolve("gstack-telemetry-log")
+    helper = Path(logger).with_name("gstack-state-root.sh") if logger else None
+    if helper and helper.is_file():
+        result = subprocess.run(
+            ["bash", "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
+             "gstack-extend", str(helper)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
+        if result.returncode != 0 or not result.stdout:
+            # Do not silently split the pair into the legacy sink if the shared resolver fails.
+            raise OSError("gstack state-root resolver failed")
+        root = Path(os.fsdecode(result.stdout))  # Preserve path bytes, including trailing newlines.
+    else:
+        root = Path(os.environ.get("GSTACK_STATE_DIR") or Path.home() / ".gstack")
+    return root / "analytics/skill-usage.jsonl"
 
 
 def capture(args):
@@ -375,7 +389,12 @@ def usage_logger():
     if tier not in ("anonymous", "community"):
         debug(f"telemetry tier off, missing, or invalid ({tier!r})", "run gstack-config set telemetry community")
         return None
-    trace(f"logger={logger} config={config} tier={tier} sink={sink_path()}")
+    try:
+        sink = sink_path(logger)
+    except (OSError, subprocess.SubprocessError) as error:
+        debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
+        return "retry"
+    trace(f"logger={logger} config={config} tier={tier} sink={sink}")
     return logger
 
 
@@ -385,7 +404,11 @@ def delegate(logger, skill, sid, duration, values):
         debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP})",
               "run gstack-upgrade")
         return False
-    sink = sink_path()
+    try:
+        sink = sink_path(logger)
+    except (OSError, subprocess.SubprocessError) as error:
+        debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
+        return False
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
         # Same private-file rules as the ledger, without writing. A blocking open here holds the repo+skill lock.
@@ -865,7 +888,12 @@ def main(args):
                    repo=Path(root).name if root else "unknown", source="gstack-extend")
         # Provenance still needs the handoff when the skill-usage append fails. Finish must not then
         # invent a skill_run for a start that never landed.
-        wrote_usage = bool(logger and append_row(sink_path(), row, "sink"))
+        wrote_usage = False
+        if logger:
+            try:
+                wrote_usage = append_row(sink_path(logger), row, "sink")
+            except (OSError, subprocess.SubprocessError) as error:
+                debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
         if not wrote_usage and not provenance:
             return
         fingerprint, marker_names = harness_fingerprint()

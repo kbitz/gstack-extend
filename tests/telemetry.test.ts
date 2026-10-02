@@ -334,14 +334,150 @@ describe('tier gates, escaping, sink resolution and diagnostics', () => {
         const env = { ...fix.env, [override]: alternate };
         runHelper(env, ['start', '--skill', 'extend:roadmap']);
         runHelper(env, ['finish', '--skill', 'extend:roadmap']);
-        const expected = override === 'GSTACK_STATE_DIR' ? alternate : join(fix.home, '.gstack');
-        const other = override === 'GSTACK_STATE_DIR' ? join(fix.home, '.gstack') : alternate;
+        const modern = existsSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'));
+        const relocated = modern || override === 'GSTACK_STATE_DIR';
+        const expected = relocated ? alternate : join(fix.home, '.gstack');
+        const other = relocated ? join(fix.home, '.gstack') : alternate;
         const rows = readFileSync(join(expected, 'analytics/skill-usage.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
         expect(rows).toHaveLength(2);
+        expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
         expect(rows[1].session_id).toBe(rows[0].session_id);
         expect(existsSync(join(other, 'analytics/skill-usage.jsonl'))).toBe(false);
       }
     }, 30_000);
+    test.if(mode === 'stub' || HAS_GSTACK)('state-root precedence and plugin fallback keep one paired sink (' + mode + ')', () => {
+      const cases = [
+        { values: { GSTACK_STATE_ROOT: 'root', GSTACK_HOME: 'home', GSTACK_STATE_DIR: 'dir' }, modern: 'root', legacy: 'dir' },
+        { values: { GSTACK_STATE_ROOT: '', GSTACK_HOME: 'home', GSTACK_STATE_DIR: 'dir' }, modern: 'home', legacy: 'dir' },
+        { values: { GSTACK_STATE_DIR: 'dir', CLAUDE_PLUGIN_DATA: 'plugin', CLAUDE_PLUGIN_ROOT: '/plugins/gstack' }, modern: 'dir', legacy: 'dir' },
+        { values: { CLAUDE_PLUGIN_DATA: 'plugin', CLAUDE_PLUGIN_ROOT: '/plugins/GsTaCk' }, modern: 'plugin', legacy: '.gstack' },
+        { values: { CLAUDE_PLUGIN_DATA: 'plugin', CLAUDE_PLUGIN_ROOT: '/plugins/other' }, modern: '.gstack', legacy: '.gstack' },
+      ];
+      for (const item of cases) {
+        const fix = makeTelemetryFixture('community', mode);
+        const env = { ...fix.env };
+        for (const name of ['root', 'home', 'dir', 'plugin']) {
+          mkdirSync(join(fix.home, name));
+          writeFileSync(join(fix.home, name, 'config.yaml'), 'telemetry: community\n');
+        }
+        for (const [key, value] of Object.entries(item.values)) {
+          env[key] = value && key !== 'CLAUDE_PLUGIN_ROOT' ? join(fix.home, value) : value;
+        }
+        expect(runHelper(env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+        expect(runHelper(env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+        const modern = existsSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'));
+        const expected = modern ? item.modern : item.legacy;
+        const rows = readFileSync(join(fix.home, expected, 'analytics/skill-usage.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+        expect(rows[1].session_id).toBe(rows[0].session_id);
+        for (const name of ['root', 'home', 'dir', 'plugin', '.gstack'].filter(name => name !== expected)) {
+          expect(existsSync(join(fix.home, name, 'analytics/skill-usage.jsonl'))).toBe(false);
+        }
+      }
+    }, 60_000);
+  }
+  test('sink follows the selected logger resolver verbatim, including unusual path bytes; doctor reads the pair', () => {
+    const fix = makeTelemetryFixture('community');
+    const bin = join(fix.home, "logger '$()\n", 'bin');
+    mkdirSync(bin, { recursive: true });
+    const chosen = join(fix.home, "chosen '$()\r\n");
+    // Deliberately use a different root rule so a copied precedence ladder cannot pass.
+    writeFileSync(join(bin, 'gstack-state-root.sh'), 'gstack_state_root_select() { _gstack_sr_root="$CHOSEN_SINK"; }\n');
+    writeFileSync(join(bin, 'gstack-telemetry-log'), `#!/bin/bash
+${NO_SWEEP_LINE}. "$(dirname "$0")/gstack-state-root.sh"
+gstack_state_root_select
+python3 - "$_gstack_sr_root" "$@" <<'PY'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+sink = Path(sys.argv[1]) / 'analytics/skill-usage.jsonl'
+sink.parent.mkdir(parents=True, exist_ok=True)
+args = iter(sys.argv[2:])
+values = {flag: (True if flag == '--no-sweep' else next(args)) for flag in args}
+with sink.open('a') as f:
+    f.write(json.dumps(dict(v=1, event_type='skill_run', source=values['--source'],
+                           skill=values['--skill'], session_id=values['--session-id'],
+                           ts=datetime.now(timezone.utc).isoformat())) + '\\n')
+PY
+`);
+    chmodSync(join(bin, 'gstack-telemetry-log'), 0o755);
+    const env = { ...fix.env, PATH: bin + ':' + fix.env.PATH, CHOSEN_SINK: chosen };
+    expect(runHelper(env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runHelper(env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    const rows = readFileSync(join(chosen, 'analytics/skill-usage.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+    expect(rows[1].session_id).toBe(rows[0].session_id);
+    expect(fix.readJsonl()).toHaveLength(0);
+    const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'], { env, encoding: 'utf8', timeout: 10_000 });
+    expect(doctor.status).toBe(0);
+    const report = JSON.parse(doctor.stdout);
+    expect(report.sink).toBe(join(chosen, 'analytics/skill-usage.jsonl'));
+    expect(report.skills.find((row: any) => row.skill === 'roadmap')).toMatchObject({ paired: 1, denominator: 1 });
+  });
+  test('a broken modern resolver preserves provenance and an existing handoff without writing a legacy finish', () => {
+    const fix = makeTelemetryFixture('community');
+    expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'), 'return 1\n');
+    const finish = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']);
+    expect(finish.status).toBe(0);
+    expect(finish.stderr).toBe('');
+    expect(fix.readJsonl()).toHaveLength(1);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+    rmSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'));
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    const rows = fix.readJsonl();
+    expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+    expect(rows[1].session_id).toBe(rows[0].session_id);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
+  });
+  for (const phase of ['start', 'finish']) {
+    for (const failure of ['error', 'timeout']) {
+      test('a second resolver ' + failure + ' during ' + phase + ' preserves provenance and retry bookkeeping', () => {
+        const fix = makeTelemetryFixture('community');
+        writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'),
+          'gstack_state_root_select() { _gstack_sr_root="$HOME/.gstack"; }\n');
+        if (phase === 'finish') expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+        // Fail only the late resolver boundary, after its initial validation succeeded.
+        // Inject timeout exceptions without a real wait or a global subprocess stub.
+        const script = `import importlib.util, sys
+spec = importlib.util.spec_from_file_location('telemetry', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original = module.subprocess.run
+calls = 0
+def run(args, **kwargs):
+    global calls
+    if args[0] == 'bash' and args[-1].endswith('/gstack-state-root.sh'):
+        calls += 1
+        if calls == 2:
+            if sys.argv[2] == 'timeout':
+                raise module.subprocess.TimeoutExpired(args, 10)
+            raise OSError('synthetic late resolver failure')
+    return original(args, **kwargs)
+module.subprocess.run = run
+module.main([sys.argv[3], '--skill', 'extend:roadmap'])
+`;
+        const result = spawnSync('python3', ['-I', '-c', script, join(ROOT, 'bin/lib/telemetry.py'), failure, phase],
+          { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe('');
+        expect(fix.readJsonl()).toHaveLength(phase === 'start' ? 0 : 1);
+        expect(fix.readLedger()).toHaveLength(phase === 'start' ? 0 : 1);
+        expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+        expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+        expect(fix.readLedger()).toHaveLength(1);
+        expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
+        const rows = fix.readJsonl();
+        if (phase === 'finish') {
+          expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
+          expect(rows[1].session_id).toBe(rows[0].session_id);
+        } else {
+          expect(rows).toHaveLength(0); // An unwritten start must never invent a completion.
+        }
+      });
+    }
   }
   test('valid/leading-zero/future start values and session validation are safe', () => {
     const fix = makeTelemetryFixture('community');

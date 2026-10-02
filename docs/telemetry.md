@@ -49,12 +49,26 @@ gstack-telemetry-sync upload the file. Enabling is an explicit choice:
 gstack-config set telemetry community. Provenance rows have their own switch; with
 both off, start and finish write nothing, not even a handoff.
 
-The sink exactly follows **gstack-telemetry-log**: GSTACK_STATE_DIR, defaulting to
-$HOME/.gstack, then analytics/skill-usage.jsonl. **gstack-config** instead reads
-config.yaml from GSTACK_STATE_ROOT → GSTACK_HOME → GSTACK_STATE_DIR →
-$HOME/.gstack. Setting only GSTACK_HOME changes config lookup, not the sink.
-The effective tier is whichever file that ladder selects for the process that
-ran. Tests isolate HOME as well as overrides and never write to the real user sink.
+Start, finish, and the doctor use the sink selected by **gstack-telemetry-log**,
+with `analytics/skill-usage.jsonl` under that root. When the selected logger
+ships a sibling `gstack-state-root.sh` (gstack 1.91.11 and later), the wrapper
+sources that exact helper. Its precedence is `GSTACK_STATE_ROOT` → `GSTACK_HOME`
+→ `GSTACK_STATE_DIR` → `CLAUDE_PLUGIN_DATA` → `$HOME/.gstack`.
+The plugin fallback applies only when `CLAUDE_PLUGIN_ROOT` contains `gstack`
+(case insensitive). Setting only `GSTACK_HOME` or `GSTACK_STATE_ROOT` therefore
+relocates both rows. A failed shared resolver skips skill-usage rather than
+falling back to a different sink; provenance still records, and an existing
+start keeps its handoff so finish can retry.
+
+Older loggers without that helper keep the legacy sink rule:
+`GSTACK_STATE_DIR` → `$HOME/.gstack`. Their **gstack-config** lookup uses
+`GSTACK_STATE_ROOT` → `GSTACK_HOME` → `GSTACK_STATE_DIR` → `$HOME/.gstack`,
+so setting only `GSTACK_HOME` or `GSTACK_STATE_ROOT` changes config lookup
+without relocating rows. Newer **gstack-config** uses the shared state root
+and merges the telemetry setting with `$HOME/.gstack/config.yaml`, keeping the
+more restrictive tier (`off` before `anonymous` before `community`). The
+effective tier depends on the selected install and the config read by that
+process. Tests isolate HOME as well as overrides and never write to the real user sink.
 
 ### gstack helper lookup
 
@@ -641,8 +655,11 @@ Captured 2026-09-25T12:28:18Z: stage-runs rows were read and their key sets chec
 on one machine's files; skill-usage has no v1 `skill_start` in the window, so
 pairing is unvalidated. This is a one-machine field smoke check. The files carry
 no machine identifier. Tier read at capture: off. The effective tier during the
-window is not established, because each process resolves config through
-`GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `GSTACK_STATE_DIR`, then `HOME`.
+window is not established. The config lookup documented at capture was
+`GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `GSTACK_STATE_DIR`, then
+`$HOME/.gstack`; that does not establish which root any earlier process used.
+See [Configuration and storage](#configuration-and-storage) for the current
+rules for both gstack generations.
 Provenance config file was absent, which the writer treats as on.
 
 | Question | Status | Evidence |
@@ -726,7 +743,8 @@ re-runnable capture is the doctor-coverage TODO. Re-capture after any change to
 the writer, the doctor, or the upstream fields this contract names
 (`_repo_slug`, `_branch`, `gstack_version`, the 86400-second nulling).
 
-Sources: `$GSTACK_STATE_DIR/analytics/skill-usage.jsonl` (default `~/.gstack`),
+Sources: `analytics/skill-usage.jsonl` under the selected logger's state root
+(default `~/.gstack`; see [Configuration and storage](#configuration-and-storage)),
 `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl`, `telemetry/*.json`, and
 `telemetry-locks/*.lock` (default `~/.gstack-extend`). An absent file is zero
 rows with the absence recorded. Malformed JSONL lines are counted. A failure to
