@@ -276,9 +276,12 @@ def sink_path(logger=None):
     try:
         modern = bool(logger and b"gstack_state_root_select" in Path(logger).read_bytes())
         if modern:
+            bash = which("bash")
+            if not bash:
+                raise OSError("bash unavailable")
             helper = Path(logger).with_name("gstack-state-root.sh")
             result = subprocess.run(
-                ["bash", "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
+                [bash, "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
                  "gstack-extend", str(helper)],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
             if result.returncode != 0 or not result.stdout:

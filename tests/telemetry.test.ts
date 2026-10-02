@@ -454,6 +454,26 @@ PY
     expect(fix.readLedger()).toHaveLength(1);
     expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
   });
+  // Protect the interpreter boundary itself: existing relative-helper tests never execute this resolver.
+  test('the modern resolver ignores a planted bash in a relative PATH entry', () => {
+    const fix = makeModernResolverFixture();
+    mkdirSync(join(fix.home, 'trap-bin'));
+    writeFileSync(join(fix.home, 'trap-bin/bash'), '#!/bin/sh\nprintf owned > "$HOME/planted-bash-ran"\nexec /bin/bash "$@"\n');
+    chmodSync(join(fix.home, 'trap-bin/bash'), 0o755);
+    const script = `import importlib.util, sys
+spec = importlib.util.spec_from_file_location('telemetry', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module.sink_path(sys.argv[2]))
+`;
+    const run = spawnSync('python3', ['-I', '-c', script, join(ROOT, 'bin/lib/telemetry.py'),
+      join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log')],
+      { cwd: fix.home, env: { ...fix.env, PATH: 'trap-bin:' + fix.env.PATH }, encoding: 'utf8', timeout: 10_000 });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe('');
+    expect(run.stdout).toBe(join(fix.home, '.gstack/analytics/skill-usage.jsonl') + '\n');
+    expect(existsSync(join(fix.home, 'planted-bash-ran'))).toBe(false);
+  });
   for (const phase of ['start', 'finish']) {
     for (const failure of ['error', 'timeout']) {
       test('a second resolver ' + failure + ' during ' + phase + ' preserves provenance and retry bookkeeping', () => {
@@ -469,7 +489,7 @@ original = module.subprocess.run
 calls = 0
 def run(args, **kwargs):
     global calls
-    if args[0] == 'bash' and args[-1].endswith('/gstack-state-root.sh'):
+    if module.os.path.basename(args[0]) == 'bash' and args[-1].endswith('/gstack-state-root.sh'):
         calls += 1
         if calls == 2:
             if sys.argv[2] == 'timeout':
