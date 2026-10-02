@@ -595,8 +595,11 @@ summary: rows=2 valid=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
 
 ### Contributor setup
 
-Development and tests need Bun 1.2 or newer, for the text `bun.lock`; installing
-and running the skills still needs only Bun 1.0. Run `bun install
+Development and tests need Bun 1.3.3 or newer (`engines.bun` in `package.json`;
+the text `bun.lock` alone needs 1.2). The suites run launchers that start Bun with
+`--no-env-file --no-install --config=/dev/null`, whose three flags first coexist in
+1.3.3. Telemetry itself needs no Bun: the wrapper is Python and the skill blocks
+only call it. Run `bun install
 --frozen-lockfile` once per checkout before `bun run test`, `bun run test:full`,
 or the telemetry suites. The telemetry suites compile the actual schema and run
 the exact command above. Tests never install packages: without the install they

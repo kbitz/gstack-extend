@@ -12,7 +12,8 @@ later time window, and backtest write-ups should cite `policy_sha256`.
 
 ## Quick start
 
-Prerequisites: git 2.41 or newer (2.45 in a partial clone), bun, and `gh` for
+Prerequisites: git 2.41 or newer (2.45 in a partial clone), bun 1.3.3 or newer
+(the shim passes `--no-env-file --no-install --config=/dev/null`), and `gh` for
 pull-request mode, plus `/usr/bin/readlink` for symlinked installs. Collector v1
 supports Git repositories using SHA-1 objects;
 SHA-256 object-format repositories are outside its scope. The binary is not on
@@ -192,8 +193,9 @@ jq -s --slurpfile log /tmp/log.jsonl '
 The test-only variables are honored only when `GSTACK_EXTEND_MERGE_GATE_TEST=1`
 and either `GSTACK_EXTEND_STATE_DIR` is set or `--no-record` is passed.
 Otherwise the gate exits `test_env_refused`. Honored overrides are listed on
-the evidence as `test_overrides`. The shim runs bun with `--no-env-file` and
-`--config=/dev/null`, so a checkout's `.env` or `bunfig.toml` never loads.
+the evidence as `test_overrides`. The shim runs bun with `--no-env-file`,
+`--no-install` and `--config=/dev/null`, so a checkout's `.env` or `bunfig.toml`
+never loads and Bun never auto-installs a package.
 
 ## Storage
 
