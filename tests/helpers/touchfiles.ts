@@ -184,6 +184,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // registers skills/** and setup itself; skill-protocols registers skills/** above
   // for the canonical-block drift assertions. The wide entries below over-select on
   // purpose: a missed dependency is worse than an extra ~40s run.
+  // Both telemetry suites validate rows against the published schema and assert the row's producer_version, which
+  // the writer reads from VERSION: a release-only diff still runs them.
   'tests/telemetry.test.ts': [
     'bin/config',
     'bin/lib/quota/common.py',
@@ -193,15 +195,25 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/install-safety.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
+    'docs/stage-runs.schema.json',
     'setup',
     'skills/**',
+    'VERSION',
   ],
   'tests/telemetry-contract.test.ts': [
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
     'bin/lib/telemetry*.py',
+    // The v1 quota-reader fixture runs `gstack-extend quota runs`.
+    'bin/lib/install-safety.sh',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/quota-cli.py',
+    'bin/lib/quota/**',
+    'tests/fixtures/quota/**',
+    'docs/stage-runs.schema.json',
     'docs/telemetry.md',
     'setup',
+    'VERSION',
   ],
   'tests/telemetry-doctor.test.ts': [
     'bin/gstack-extend',
@@ -236,6 +248,8 @@ export const GLOBAL_TOUCHFILES: string[] = [
   'tests/helpers/fixture-repo.ts',
   'tests/helpers/run-bin.ts',
   'package.json',
+  // A lockfile-only change can move a transitive validator dependency under every test that loads it.
+  'bun.lock',
   'tsconfig.json',
 ];
 
