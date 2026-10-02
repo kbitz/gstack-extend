@@ -2,6 +2,11 @@
  * packing.ts — written Groups must match the packer's bins.
  *
  * Builds PackTracks from unshipped, non-legacy, non-hotfix-group Tracks.
+ * Current Plan and In Progress use the same remaining-work partition:
+ * shipped Tracks leave both input and written sets, including individual
+ * archive receipts. Their satisfied blockers are filtered from input only.
+ * Partial shipment can require a complete remainder repack; active IDs do
+ * not exempt a Group from bin equality. Legacy inline markers still parse.
  * Hotfix Groups are not packer bins — STRUCTURE owns the 1-track rule.
  * Packer input is track-level `_blocked-by:` + `_touches:` only.
  * Group-level `_Depends on:` is derived output / validation, not input.

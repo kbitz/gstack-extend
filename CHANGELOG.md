@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.5.0] - 2026-10-02
+
+### Changed
+
+- **`/roadmap` records a finished Track on its own instead of waiting for its whole Group.** A Track that shipped with a verified merge, its land-time ID and complete approved scope gets an individual receipt in the shipped history and leaves the plan. Its unfinished siblings repack under the unchanged packing rules, in both `## In Progress` and `## Current Plan`. `## In Progress` now means work you have named (a branch, a session or an open PR), so a shipped sibling alone no longer freezes a Group. The next regeneration is the recorder; shipping may record early only when the complete candidate validates.
+- **Track IDs are harder to recycle by accident.** Allocation skips the prefix of every shipped Group and every full historical Track ID. A Group you pin to active work keeps its label whenever the label fits a computed bin, and a tombstone is written only after the pin is released or the work retired. Two pinned Groups that cannot share a bin, or one that must split, stop with the exact IDs and bins and write nothing.
+- **Legacy inline `✓ Shipped` and `✓ Complete` markers keep working.** The first regeneration after upgrading previews the conversion count and the receipts it would write, and Hold or a refusal leaves both files byte-identical, unless a complete closure-only candidate that keeps every unfinished bin qualifies. Scheduler and parser runtime and the shared protocol blocks are unchanged.
+- **The skill now spells out its write path.** It states the pre-write validation on the complete candidate, the freshness check before Apply, how an interrupted Apply resumes without a duplicate receipt, and when a closure is DONE_WITH_CONCERNS or BLOCKED. The archived v2 state-model spec carries a dated note pointing at it.
+
+### Added
+
+- **Seventeen packing tests lock the receipt contract.** They cover the receipt shape, shipped siblings in both active states, tombstone placement, satisfied blockers, collision warnings and pinned-Group backfill, plus the exact drift and collision messages.
+
+### Fixed
+
+- **Telemetry start and finish rows follow gstack's state-root rule.** With gstack 1.91.11 and later, both rows use the installed logger's state-root helper, so `GSTACK_HOME` and `GSTACK_STATE_ROOT` overrides keep the pair together. The doctor reads the same sink, older loggers retain their legacy sink rule, and real-mode test fixtures include the helper that current gstack scripts require.
+
 ## [0.33.4.0] - 2026-10-02
 
 ### Added
