@@ -29,7 +29,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { runCheckDocType } from '../src/audit/checks/doc-type.ts';
+import { docTypeMoves, runCheckDocType } from '../src/audit/checks/doc-type.ts';
 import type { AuditCtx, AuditFileExists, MdFileSnapshot } from '../src/audit/types.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 
@@ -477,4 +477,30 @@ describe('runCheckDocType: collision branch suppresses git mv', () => {
     // No destructive git mv emitted.
     expect(body).not.toContain('git mv -- ');
   });
+});
+
+
+describe('docTypeMoves: literal record/render agreement', () => {
+  for (const shape of ['missing-parent', 'move', 'collision', 'inbox']) {
+    test(shape, () => {
+      const repoRoot = join(baseTmp, `record-${shape}`);
+      mkdirSync(repoRoot, { recursive: true });
+      if (shape === 'move' || shape === 'collision') mkdirSync(join(repoRoot, 'docs/designs'), { recursive: true });
+      if (shape === 'collision') writeFileSync(join(repoRoot, 'docs/designs/arch.md'), 'existing');
+      const ctx = makeCtx({ repoRoot, mdFiles: [makeFile('arch.md', shape === 'inbox' ? ['- [ ] one', '- [ ] two', '- [ ] three', '- [ ] four', '- [ ] five'].join('\n') : MERMAID_CONTENT)] });
+      const inbox = shape === 'inbox';
+      expect(docTypeMoves(ctx)).toEqual([{ check: 'DOC_TYPE_MISMATCH', source: 'arch.md',
+        destination: inbox ? null : 'docs/designs/arch.md', missingParent: shape === 'missing-parent' ? 'docs/designs' : null,
+        heuristic: !inbox, blocked: inbox ? 'inbox' : shape === 'collision' ? 'collision' : null }]);
+      const suggestions = {
+        'missing-parent': "  Suggested: mkdir -p 'docs/designs' && git mv -- 'arch.md' 'docs/designs/arch.md'",
+        move: "  Suggested: git mv -- 'arch.md' 'docs/designs/arch.md'",
+        collision: '  Suggested: review and move (no automated suggestion — destination ambiguous)',
+        inbox: '  Suggested: review and move (no automated suggestion — inbox content typically wants merge, not rename)',
+      };
+      expect(runCheckDocType(ctx).body).toEqual(['FINDINGS:', inbox
+        ? '- arch.md: looks like a TODO inbox (checkbox density >= 0.5) but is outside TODOS.md'
+        : '- arch.md: looks like a design doc (mermaid/plantuml fence) but is outside docs/designs/', suggestions[shape], '']);
+    });
+  }
 });

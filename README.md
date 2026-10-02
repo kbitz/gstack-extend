@@ -21,8 +21,12 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 
 ## Installation
 
-Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/) 1.0+, and a supported
-agent: Claude Code, Codex, OpenCode, or Cursor. Install
+Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
+agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
+`--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
+`/roadmap` audit tools, `gstack-extend init`, the merge gate, and
+`bin/layout-scaffold`. `setup` only checks that `bun` is installed, not its
+version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
 
@@ -97,8 +101,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 
 ## Development
 
-Development and tests need Bun 1.2 or newer. Install the pinned development
-dependencies once per checkout, before any test command:
+Development and tests need Bun 1.3.3 or newer (`engines.bun` in `package.json`).
+Install the pinned development dependencies once per checkout, before any test
+command:
 
 ```bash
 bun install --frozen-lockfile   # Once per checkout; never changes bun.lock

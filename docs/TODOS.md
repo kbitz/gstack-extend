@@ -2,6 +2,20 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=22C,defer=true] Warn before documentation moves break relative links or images (X11)
+- **Description:** A documentation move can break relative links and image references; the post-apply location audit does not check them. Design-document detection uses a mermaid/plantuml fence and can match a tutorial. Track 22C labels heuristic moves and supports individual exclusions, but leaves link warnings for later work.
+- **Hypothesis (untested):** Inspect relative references before a move and show the affected paths so the caller can exclude the item or repair its links.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Track 22C CEO/DX review, 2026-10-01; X11's exclusion behavior ships with the helper, while reference warnings remain deferred.
+
+### [plan-ceo-review:track=22C,defer=true] Route archive-candidate moves through layout-scaffold (X10)
+- **Description:** ARCHIVE_CANDIDATES identifies moves from docs/designs/ to docs/archive/ without a Suggested line. Callers still carry out those moves from prose, outside the executable layout preflight.
+- **Hypothesis (untested):** Add archive move records and route confirmed archive batches through the same helper.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Track 22C CEO review, 2026-10-01; archive routing was deferred to keep the helper limited to DOC_LOCATION and DOC_TYPE_MISMATCH.
+
 ### [plan-ceo-review:track=22D,defer=true] Resolve SESSION_DIR in /pair-review's archive block
 - **Why:** `skills/pair-review.md` "Active Session Guard" runs `session_archive_dir pair-review "$TS" "$BRANCH"` and `mv "$SESSION_DIR" "$ARCHIVE_DIR"` in a block with no guarded `session-paths.sh` setup; only the prose says "re-source the helper if this is a fresh bash block". Run alone, `session_archive_dir` is undefined and `$SESSION_DIR` and `$BRANCH` are empty, so the archive fails and a new session can be written over the old one. Track 22D fixes the same defect in `/full-review`.
 - **Context:** Found by Track 22D's /autoplan (CEO, E8). Give the block the guarded setup Track 22D uses (guard line, `source`, `BRANCH`, `SESSION_DIR`, archive only a non-empty directory, stop on `mv` failure or an existing archive path) and raise `tests/skill-protocols.test.ts` L7's guard count by one in the same change.
