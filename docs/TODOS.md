@@ -16,13 +16,6 @@
 - **Priority:** P3
 - **Depends on:** Track 22D landing.
 
-### [ship] Telemetry sink-agreement test disagrees with gstack's state-root rule
-- **Why:** `tests/telemetry.test.ts` "sink agreement for HOME/STATE_ROOT/STATE_DIR overrides (real)" fails against gstack 1.91.11 and later. With only `GSTACK_HOME` or `GSTACK_STATE_ROOT` set, the real `gstack-telemetry-log` also writes under that root, and the test finds one of its two rows at `~/.gstack`. `docs/telemetry.md` says setting only `GSTACK_HOME` changes config lookup, not the sink.
-- **Context:** Found while shipping Track 22B (PR #126) and reproduced on a clean `origin/main`. The other eleven real-mode failures were the fixture missing `gstack-state-root.sh` and are fixed in 0.33.3.0. Decide whether the helper's sink follows gstack's state root (change `bin/gstack-extend-telemetry`, `docs/telemetry.md` lines 52-55 and the test) or keeps its documented rule (pin gstack's behavior in the contract test and note the divergence).
-- **Effort:** S (human: ~2h / CC: ~20min)
-- **Priority:** P2
-- **Depends on:** None.
-
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read

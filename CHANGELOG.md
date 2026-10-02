@@ -17,7 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Real-mode telemetry test fixtures work with a current gstack install.** The fixture now copies the state-root helper that gstack 1.91.11 and later source. Without it the real gstack scripts refused to run, which failed eleven telemetry tests. One sink-agreement test still disagrees with gstack's newer state-root rule and is not changed here.
+- **Telemetry start and finish rows follow gstack's state-root rule.** With gstack 1.91.11 and later, both rows use the installed logger's state-root helper, so `GSTACK_HOME` and `GSTACK_STATE_ROOT` overrides keep the pair together. The doctor reads the same sink, older loggers retain their legacy sink rule, and real-mode test fixtures include the helper that current gstack scripts require.
 
 ## [0.33.2.0] - 2026-10-01
 
