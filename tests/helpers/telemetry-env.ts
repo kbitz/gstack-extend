@@ -62,7 +62,7 @@ export function makeTelemetryFixture(tier: TelemetryTier, mode: FixtureMode = 's
       copyFileSync(join(REAL_GSTACK_BIN, name), join(upstreamBin, name));
       chmodSync(join(upstreamBin, name), 0o755);
     }
-    // gstack 1.91.11+ sources this sibling from both scripts; without it the tier reads as off. Older installs lack it.
+    // gstack 1.91.11+ sources this sibling from both scripts; without it they cannot resolve a state root. Older installs lack it.
     const stateRoot = join(REAL_GSTACK_BIN, 'gstack-state-root.sh');
     if (existsSync(stateRoot)) copyFileSync(stateRoot, join(upstreamBin, 'gstack-state-root.sh'));
     copyFileSync(join(REAL_GSTACK_ROOT, 'VERSION'), join(upstream, 'VERSION'));
