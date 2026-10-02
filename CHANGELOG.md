@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.33.2.0] - 2026-10-01
+
+### Fixed
+
+- **`/full-review` no longer offers to resume a run that already finished.** Every run whose session can be read now ends finished, with a report and a status. That includes runs where every agent found nothing, every finding was dropped, nothing was approved in triage, or you stopped after agent failures. A completed session is archived at the next start without a question. A run that was interrupted mid-way, including one an older version left unfinished, still asks once whether to resume, naming the session's branch, commit and start time.
+- **Agent failures get honest options.** Unusable agent output counts as failed. With one failed agent the run proceeds on the others' findings. With two it offers to proceed on partial results, retry (up to three retries per run) or stop; with three it offers a retry or a stop. A stop records a BLOCKED run with a report instead of a half-written session.
+- **The start-of-run archive and scoping steps resolve their own paths.** They set up the session directory themselves, refuse to write over an unarchived session, and stop with the error instead of carrying on.
+- **Backlog entries can no longer carry a malformed tag.** A file path containing `[`, `]`, `,`, `;`, `|`, a backtick or `$(` (for example `app/[id]/page.tsx`) leaves out the `files=` hint and stays in `Found in`, and several paths join with `|`. A resumed run skips entries whose `Found in` and theme already exist, and a failed commit of those entries finishes as DONE_WITH_CONCERNS with the exact commands to recover. `/pair-review` gets the same tag rule in a follow-up.
+
+### Changed
+
+- **The final handoff and report are complete.** `report.md` is written once, at the end, with the report table first, the branch and commit from the session, and a status that rolls up as NEEDS_CONTEXT, BLOCKED, DONE_WITH_CONCERNS or DONE. A session that is malformed or missing an input stops with NEEDS_CONTEXT before anything is triaged or written.
+- **Drift-lock tests cover the run-state rules.** `tests/skill-protocols.test.ts` runs the start-of-run archive block in a sandbox under bash and zsh, including permission failures, and locks the resume rows, the agent-failure prompts, the rollup rows and the commit command. `tests/audit-compliance.test.ts` checks the backlog tag rules against the tag contract.
+
 ## [0.33.1.0] - 2026-10-01
 
 ### Added
