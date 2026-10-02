@@ -60,6 +60,8 @@ resolver, then use analytics/skill-usage.jsonl. Relative overrides and embedded
 CR/LF characters follow upstream unchanged. An unavailable or failing resolver
 skips usage writes and makes the doctor report unavailable; local provenance
 can still record, without inventing a completion for an unwritten start.
+An existing start keeps its handoff so finish can retry; a late resolver failure
+also preserves the provenance acknowledgement, preventing a duplicate on retry.
 
 Older loggers keep their GSTACK_STATE_DIR → $HOME/.gstack sink behavior.
 Their **gstack-config** lookup is GSTACK_STATE_ROOT → GSTACK_HOME →
@@ -922,8 +924,11 @@ Captured 2026-09-25T12:28:18Z: stage-runs rows were read and their key sets chec
 on one machine's files; skill-usage has no v1 `skill_start` in the window, so
 pairing is unvalidated. This is a one-machine field smoke check. The files carry
 no machine identifier. Tier read at capture: off. The effective tier during the
-window is not established, because each process resolves config through
-`GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `GSTACK_STATE_DIR`, then `HOME`.
+window is not established. The config lookup documented at capture was
+`GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `GSTACK_STATE_DIR`, then
+`$HOME/.gstack`; that does not establish which root any earlier process used.
+See [Configuration and storage](#configuration-and-storage) for the current
+rules for both gstack generations.
 Provenance config file was absent, which the writer treats as on.
 
 | Question | Status | Evidence |
@@ -1007,7 +1012,8 @@ re-runnable capture is the doctor-coverage TODO. Re-capture after any change to
 the writer, the doctor, or the upstream fields this contract names
 (`_repo_slug`, `_branch`, `gstack_version`, the 86400-second nulling).
 
-Sources: `$GSTACK_STATE_DIR/analytics/skill-usage.jsonl` (default `~/.gstack`),
+Sources: `analytics/skill-usage.jsonl` under the selected logger's state root
+(default `~/.gstack`; see [Configuration and storage](#configuration-and-storage)),
 `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl`, `telemetry/*.json`, and
 `telemetry-locks/*.lock` (default `~/.gstack-extend`). An absent file is zero
 rows with the absence recorded. Malformed JSONL lines are counted. A failure to

@@ -5,7 +5,7 @@ description: |
   execution plan (## In Progress / ## Current Plan / ## Future / ## Shipped)
   and regenerates In Progress + Current Plan whole on each substantive run.
   Future membership is re-derived; staying-deferred text is kept. Only
-  shipped work has stable IDs. Spec:
+  shipped IDs are frozen; declared active IDs are pinned. Spec:
   `docs/archive/roadmap-v2-state-model.md`.
   Use when asked to "regenerate the roadmap", "restructure TODOs",
   "clean up the roadmap", "reorganize backlog", "tidy up docs",
@@ -172,7 +172,8 @@ Active plan sits at the top. Shipped history lives in
 ROADMAP always carries both pointers. Every substantive run **regenerates**
 `## In Progress` + `## Current Plan` from scratch. Future *membership* is
 re-derived (place / defer / kill / discharge); staying-deferred text is
-left untouched. Only shipped work has stable IDs.
+left untouched. Shipped IDs are frozen; declared active work keeps its IDs
+until its pin is released.
 
 Groups are launch batches the packer assigns. Tracks are one-PR cards
 `/autoplan` will read. The grammar lives in this file; the packer is
@@ -196,27 +197,272 @@ Grammar, severity taxonomy, and dedup rules live in
 `docs/source-tag-contract.md`. The audit's `TODO_FORMAT` check validates
 entries against it.
 
+## Shipped-Track reconciliation
+
+The **next /roadmap regeneration is the required recorder** of verified,
+completed merged Tracks, before recycling idle IDs. Record each Track
+independently in `docs/roadmap-shipped.md`; pack only the unfinished remainder.
+An authorized shipping session may record earlier only if it owns the same
+complete candidate and passes the same gates below. Otherwise defer **both**
+active and archive writes to regeneration. This adds no shipping invocation,
+post-merge push, or authorization to edit another skill's files.
+
+### Common path
+
+1. Verify land-time identity and **every approved scope/acceptance obligation**
+   using attributable PR/plan evidence and merged content. An explicit user
+   reduction/deferral counts with its evidence; a merge, branch/title similarity,
+   or matching file footprint alone does not. Use Step 1's bounded history
+   inventory and inspect candidate raw receipt IDs, lineage and bodies.
+2. Put declared pins (Track ID, owning Group, named branch/session or PR) and
+   identity/evidence/dated lineage in the existing proposal **Summary**. State
+   `none declared` explicitly; clarify uncertain associations before approval
+   or Apply. This inventory comes from the invocation/conversation, not automatic
+   PR discovery.
+3. Draft independent receipts and remove verified completed work from the
+   active candidate. Pack **all** unfinished non-legacy, non-hotfix Tracks in
+   both active sections. Retain satisfied `_blocked-by:` prerequisites using
+   canonical receipt IDs; rewrite historical aliases in the simultaneous map.
+   Regenerate Group dependencies from the remaining bins.
+4. Assign labels using [Renumbering](#renumbering): preserve feasible pins,
+   reserve shipped Group numbers, individual Track numeric prefixes and
+   tombstones, and skip historical full Track IDs when backfilling letters.
+   Repack the final labeled draft; label preservation never waives PACKING.
+5. Validate the **complete candidate before either write**, using
+   [Complete-candidate validation](#complete-candidate-validation), raw receipt
+   evidence and pin feasibility. A packer preview alone is insufficient.
+6. Show receipts, remaining bins/dependencies, conversions, no-ops/resumes and
+   deferred conflicts in the proposal. Apply only the user's existing approved
+   candidate, after the freshness check in Step 3. A refusal preserves both files.
+
+Prerequisites: installed skill, Git/Bun, a valid project, and attributable
+identity, scope and merge evidence (local saved proof can suffice; remote-only
+proof needs access). The **2-5 minute target** covers one supplied-evidence,
+no-pin/conflict Track to an understood preview or safe refusal, excluding setup
+and historical investigation. Measured human time is unknown; no release gate
+or telemetry is implied. During the acceptance walkthrough record one attempt,
+separating prerequisite gathering, reading, agent execution and human understanding.
+
+**Illustrative start/evidence**, not a claim about PR #109: Group 22 contains
+landed 22A and unfinished 22B; Group 23 contains unfinished 23A, with disjoint
+`src/a.ts`, `src/b.ts`, `src/c.ts` and cap 2. The legacy active start parses as:
+
+```markdown
+## Current Plan
+### Group 22: Partial shipment
+_Depends on: none_
+#### Track 22A: Record landed work ✓ Shipped (v1.2.3.0)
+_1 task . ~50 LOC . low risk_
+_touches: src/a.ts_
+- Record the landed task (~50 lines).
+#### Track 22B: Second remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/b.ts_
+- Finish the second task (~50 lines).
+### Group 23: Third work
+_Depends on: none_
+#### Track 23A: Third remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/c.ts_
+- Finish the third task (~50 lines).
+```
+
+| Active ID | Canonical land-time ID | Attributable closure evidence | Dated lineage |
+|-----------|------------------------|-------------------------------|---------------|
+| 22A | 22A | illustrative approved plan, all acceptance met; merged PR #109 / abc1234 | 2026-10-01: original Group 22 |
+
+Append a receipt of this exact shape using verified identity/evidence, even after an earlier archived Group. The H2 resets
+Group context; never claim the whole original Group shipped:
+
+```markdown
+## Individual Track history
+
+### Track 22A: Record landed work ✓ Shipped (v1.2.3.0)
+- 2026-10-01: merged PR #109 (commit abc1234); verified land-time Track 22A, original Group 22.
+```
+
+Use the attributable historical release version when available. Otherwise use
+bare `✓ Shipped` and include `release version unknown` in the dated evidence;
+never invent a version or use today's VERSION for old work. Preserve existing
+archive bytes and both roadmap pointers. Once no pinned active Group uses 22,
+append a new `## Individual Track history` section with `_tombstone: 22_`
+immediately after the H2, outside any Track body. While Group 22 is pinned,
+omit that tombstone but reserve prefix 22 for new Groups and skip archived 22A.
+Parser `groupNum: 0` on an independent receipt is a placeholder, not a Group
+to allocate, freeze or tombstone.
+
+**Remainder preview.** With no pins, map old `22B=23A,23A=23B` in one atomic
+pass, reserving retired 22. This example's cap 2 (and default cap 6) yields one
+bin, no dependencies. Use the caller's actual cap/output if different.
+Resolve the project root before Step 1's audit using its rule: an explicit audit
+directory when supplied, otherwise Git top-level or the directory being audited.
+Run this block there; for an explicit directory replace the first assignment
+with that observed quoted path. Canonicalize and print the root, or stop on error:
+
+```bash
+_ROADMAP_INPUT=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+_ROADMAP_ROOT=$(bun -e 'const { realpathSync } = await import("node:fs"); const { isAbsolute } = await import("node:path"); const root = realpathSync(process.argv[1]); if (!isAbsolute(root)) throw new Error("Absolute project root required"); process.stdout.write(root);' -- "$_ROADMAP_INPUT") || exit 1
+case "$_ROADMAP_ROOT" in /*) ;; *) echo 'Absolute project root required' >&2; exit 1 ;; esac
+printf '_ROADMAP_ROOT=%q\n' "$_ROADMAP_ROOT"
+```
+
+Print the actual project cap next; every separate
+shell call starts with the literal `_EXTEND_ROOT=…` printed by the preamble
+and `_ROADMAP_ROOT=…` for that project. Commands published to the user replace
+variables with those observed literal absolute paths, including draft/script paths.
+
+```bash
+# First paste both resolved root assignments as described above.
+bun -e 'const extendDir = process.argv[1]; const repoRoot = process.argv[2]; const { buildAuditCtx } = await import(extendDir + "/src/audit/cli.ts"); const ctx = buildAuditCtx({ repoRoot, extendDir, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } }); const { fillCap } = await import(extendDir + "/src/audit/lib/pack.ts"); console.log("PROJECT_ROOT:", repoRoot, "EXTEND_ROOT:", extendDir, "PARALLELISM_CAP:", fillCap(ctx.parallelismCap));' -- "$_EXTEND_ROOT" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
+"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin <<'MD'
+## Current Plan
+### Group 23: Repacked remainder
+_Depends on: none_
+#### Track 23A: Second remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/b.ts_
+- Finish the second task (~50 lines).
+#### Track 23B: Third remaining
+_1 task . ~50 LOC . low risk_
+_touches: src/c.ts_
+- Finish the third task (~50 lines).
+MD
+```
+
+Draft `--from` / `--stdin` packing skips archive merge: raw history reservations
+are a separate lookup, never an allocator feature of the packer. Empty stdin
+falls back to the live file; use a **nonempty full state scaffold** even for an
+empty remainder. This snippet proves packing only, not the whole audit gate.
+
+### Complete-candidate validation
+
+Save active/archive drafts and this temporary Bun script **outside the workspace**
+in the durable proposal directory or scratch. Run it with four explicit absolute
+arguments: project root, resolved extend root, active draft, archive draft.
+It reads real Git/version/cap/scaffold metadata, overlays raw docs, reparses
+phases, merges shipped/Future history and replaces markdown snapshots; it never
+writes live files. This closure-only recipe requires every other artifact to remain byte-unchanged,
+including TODOS and the Future satellite even when its pointer count is unchanged.
+It preserves Future/scaffold declarations.
+For wider regeneration overlay **every** changed artifact and rebuild all its
+derived context (inbox, Future, design docs, existence/scaffold maps, etc.), or
+defer both writes. Test stub metadata and live write-and-restore are insufficient.
+
+```typescript
+import { isAbsolute, join, relative } from 'node:path'
+const [repoRoot, extendRoot, activeDraftPath, archiveDraftPath] = process.argv.slice(2)
+if (![repoRoot, extendRoot, activeDraftPath, archiveDraftPath].every(p => p && isAbsolute(p))) throw new Error('Four absolute paths required')
+const { buildAuditCtx, runAudit } = await import(join(extendRoot, 'src/audit/cli.ts'))
+const { parseRoadmap, mergeShippedArchive, mergeFutureArchive } = await import(join(extendRoot, 'src/audit/parsers/roadmap.ts'))
+const { parsePhases } = await import(join(extendRoot, 'src/audit/parsers/phases.ts'))
+const { CANONICAL_SECTIONS, parseAuditSections } = await import(join(extendRoot, 'src/audit/sections.ts'))
+const base = buildAuditCtx({ repoRoot, extendDir: extendRoot, argv: { repoRoot, scanState: false, futureIndex: false, prompt: null } })
+if (!base.paths.roadmap) throw new Error('No live roadmap; use the greenfield flow')
+const active = await Bun.file(activeDraftPath).text()
+const archive = await Bun.file(archiveDraftPath).text()
+const futureBody = text => text.split(/^## Future(?:[ \t].*)?$/m)[1]?.split(/^## /m)[0] ?? ''
+if (futureBody(active) !== futureBody(base.files.roadmap)) throw new Error('Future changed; rebuild complete context')
+const ctx = { ...base, paths: { ...base.paths }, files: { ...base.files } }
+ctx.paths.shippedArchive ??= join(repoRoot, 'docs/roadmap-shipped.md')
+ctx.files.roadmap = active
+ctx.files.shippedArchive = archive
+const rawArchive = parseRoadmap(archive)
+ctx.roadmap = mergeFutureArchive(mergeShippedArchive(parseRoadmap(active), rawArchive), parseRoadmap(base.files.futureArchive))
+ctx.phases = parsePhases(active)
+const scaffolds = parsed => parsed.value.phases.flatMap(p => p.scaffoldPaths.map(path => p.num + '|' + path)).sort()
+if (JSON.stringify(scaffolds(ctx.phases)) !== JSON.stringify(scaffolds(base.phases))) throw new Error('Scaffolds changed; rebuild complete context')
+const replacements = new Map([[ctx.paths.roadmap, active], [ctx.paths.shippedArchive, archive]])
+ctx.mdFiles = base.mdFiles.map(file => ({ ...file, content: replacements.get(file.abs) ?? file.content }))
+for (const [path, content] of replacements) {
+  if (!ctx.mdFiles.some(file => file.abs === path)) ctx.mdFiles.push({ abs: path, rel: relative(repoRoot, path), content })
+}
+const report = runAudit(ctx)
+console.log(report)
+console.log('RAW ARCHIVE DIAGNOSTICS', JSON.stringify({ errors: rawArchive.errors, warnings: rawArchive.value.styleLintWarnings }))
+console.log('MERGED DIAGNOSTICS', JSON.stringify({ errors: ctx.roadmap.errors, warnings: ctx.roadmap.value.styleLintWarnings }))
+const sections = parseAuditSections(report)
+if (!CANONICAL_SECTIONS.every(name => sections.some(s => s.name === name))) throw new Error('Incomplete audit section coverage')
+const blockers = new Set(['SIZE', 'COLLISIONS', 'PACKING', 'STRUCTURE', 'STATE_SECTIONS', 'VERSION', 'GROUP_DEPS', 'PARALLELISM_BUDGET', 'FUTURE'])
+if (rawArchive.errors.length || sections.some(s => blockers.has(s.name) && s.body.includes('STATUS: fail'))) process.exit(1)
+```
+
+After copying the script to its actual absolute path, invoke it with Bun and
+the four observed absolute paths as quoted arguments. Inspect **every blocking
+STATUS**, expected section coverage, context completeness, candidate-specific
+raw receipt IDs/evidence, duplicates and archive collision warnings under the
+existing audit policy. CLI exit zero or an all-pass PACKING subsection does not
+approve a candidate. The recipe checks audit status; identity, scope, raw-history
+and pin feasibility remain mandatory agent gates. Incomplete proof means no writes.
+
+### Exceptions and recovery
+
+- **Historical identity/completion:** land as 16D, later relabel to 18B, then
+  regenerate after a newer roadmap commit: receipt ID is verified land-time
+  16D, with dated original/current lineage. Scan back to introduction, not the
+  last run. Missing/shallow history or inaccessible identity/approval evidence
+  needs supplied proof or refusal before recycling. A merged-but-incomplete
+  Track stays active with the exact missing obligations, unless attributable
+  user scope reduction supplies the closure proof.
+- **Duplicates/collisions:** inspect raw archive parser errors/warnings and
+  candidate bodies; archive merge omits raw duplicate warnings. Same ID/evidence
+  with verified work already inactive is a no-op. Same work still active after
+  archive-first interruption means **resume** removal/repack without appending.
+  An unrelated reused ID, contradictory evidence or unresolved raw duplicate is
+  refusal; active-wins collision warnings never authorize closure. Do not rewrite
+  old history to hide a conflict.
+- **Pins:** one computed bin with one pinned owning Group keeps that label and
+  frozen Track IDs, backfilling fresh letters (22B stays, incoming old 23A becomes
+  22C, skipping archived 22A). Two pinned Groups in one bin, or one pinned Group
+  spanning bins, is incompatible. Show exact IDs, bins and named branches/PRs;
+  defer active/archive edits until pin release or a user-approved compatible
+  arrangement, then retry reconciliation before any later recycling.
+- **Hold:** keep the active plan. Only a complete closure candidate that retains
+  the current unfinished partition **and dependency output** and passes packer,
+  identity/raw-history/pin gates and all blockers may apply under Hold approval.
+  Allowed: retire a fully shipped/empty Group while other bins/dependencies stay
+  identical. Refused: remove 22A from a partial Group when [22B | 23A] must become
+  [22B,23A], or when dependency output changes. Keep both originals and the
+  would-be archive append unapplied; full regeneration is required. Present the
+  exact closure-only candidate with the Hold choice before it authorizes edits.
+- **Legacy conversion:** on the first regeneration count inline `✓ Complete` /
+  `✓ Shipped` Tracks proposed for independent receipts, verify identity/full
+  scope and preview receipts plus remainder bins. Hold/refusal leaves originals
+  byte-identical unless the complete no-repack candidate above qualifies. Legacy
+  inline markers and v1 fallback remain parseable without a sunset; current
+  writing uses independent history. Carry this policy change into later shipping
+  release notes; do not update release files during regeneration.
+
+Use the existing [Escalation](#escalation) REASON/ATTEMPTED/RECOMMENDATION fields
+for every reconciliation refusal. DONE_WITH_CONCERNS reuses those fields in the
+final report outside the Escalation block; preserve its BLOCKED/NEEDS_CONTEXT
+STATUS values. REASON names Track IDs, precise conflict/missing obligations and observed
+cause; ATTEMPTED gives evidence, bins and declared branch/session/PR as applicable;
+RECOMMENDATION gives the smallest supported recovery, named retry condition,
+`active/archive unchanged` (or Step 3's explicit partial state), and the relevant
+heading link above. Required recorder ownership means attempt and retry, never
+bypass a blocker. Use DONE_WITH_CONCERNS for otherwise successful regeneration
+with deferred closure; explicitly requested unfinishable closure is BLOCKED.
+
 ## The four lifecycle states
 
 | State           | Section heading      | Granularity         | Mutability                       |
 |-----------------|----------------------|---------------------|----------------------------------|
 | Shipped         | `## Shipped`         | Phase / Group / Track | Frozen IDs forever, append-only  |
-| In Progress     | `## In Progress`     | Phase / Group        | Volatile (Tracks pinned only by open PR) |
+| In Progress     | `## In Progress`     | Phase / Group / Track | Declared active Track/Group IDs pinned |
 | Current Plan    | `## Current Plan`    | Phase / Group / Track | Fully volatile — regenerated each run |
 | Future          | `docs/roadmap-future.md` (pointer in ROADMAP) | Flat bullets | Membership re-derived; staying-deferred text kept |
 
 Granularity rules:
-- A **Track** is `shipped` (in `## Shipped`) or unshipped (in `## In Progress`
-  Group with `✓ Shipped` inline, or in `## Current Plan` Group). Tracks have
-  no separate "in progress" state — they're 1 PR each, and the branch-open →
-  PR-merge window is short.
-- A **Group** is `shipped` (all Tracks shipped → in `## Shipped`),
-  `in progress` (≥1 shipped Track and ≥1 not → in `## In Progress`),
-  or `current plan` (no shipped Tracks → in `## Current Plan`). Shipped
-  Tracks within an in-progress Group stay co-located (with `✓` markers)
-  until the whole Group lands.
-- A **Phase** mirrors Group rules: shipped (all Groups shipped),
-  in progress (partial), or current plan.
+- A **Track** is shipped once verified merged work meets its approved scope and
+  acceptance; it leaves the active plan independently for a frozen receipt.
+  Unfinished Tracks inherit `in-progress` or `current-plan` from their Group.
+- A **Group** in `## In Progress` contains user-identified active work (a named
+  working branch/session or open PR). `## Current Plan` is remaining unstarted
+  work. Shipped siblings alone do not pin a Group; unfinished work in both
+  sections obeys the same PACKING partition. Whole-Group history may describe
+  a verified fully shipped Group, never imply closure of unfinished siblings.
+- A **Phase** groups current launch batches for a named end-state; active work
+  determines In Progress. Partial shipment alone does not preserve stale bins.
 
 A **Hotfix** is not a special primitive — it's a Group whose title starts
 with `Hotfix:`, contains exactly one Track, and (when not yet shipped) has
@@ -243,10 +489,17 @@ the one signal every repo has:
    completed last. `git log --oneline -40` plus the scoped queries below, and
    `git tag` / `git describe --tags` for the latest released version where tags
    exist. This is the spine of "what's done."
-2. **Track-ID grep** — for every In Progress / Current Plan Track ID, run
-   `git log --since="$LAST_ROADMAP_RUN" --grep="Track <ID>"`. Surface
-   "commit X claims to close Track Y — verify and move to Shipped." Commit
-   bodies that say "Closes the live remainder of Track 82A" count.
+2. **Landed-work inventory** — after reading active cards in 1b, trace each
+   unresolved Track's introduction and dated ID lineage through Git history.
+   Build one shared commit/PR inventory back to the earliest such introduction,
+   with a raw archive ID/lineage index and candidate-only receipt body reads.
+   Reuse attributable acceptance receipts while checking every approved
+   obligation. Explicit PR/plan identity plus merged content identifies the
+   land-time ID; historical roadmap/diffs corroborate, and approved scope
+   amendments take precedence over stale cards. Current-ID grep and the last
+   regeneration cutoff are shortcuts, never proof that older work did not land.
+   Unknown introduction, shallow/missing history or unavailable PR/approval
+   evidence requires supplied proof or a no-write refusal before ID recycling.
 3. **CHANGELOG.md / PROGRESS.md** — optional corroboration when present (a
    version number, a "what's new" note). Don't assume they exist, don't block
    on them, and when a doc and the commits disagree, **the commits win.**
@@ -254,21 +507,25 @@ the one signal every repo has:
 **Do NOT reconstruct "what's done" by walking ROADMAP.md's `## Shipped` section
 and re-verifying each entry against git** — that's the slow path that burns the
 context window cycling "is this one done yet?" over and over. ROADMAP.md is read
-next (1b), where the git-derived ground truth is cross-referenced against it —
-only to map that truth onto Track/Group IDs and see what's still open. When the
-roadmap and the ground truth disagree, the ground truth wins.
+next (1b), where candidates are associated with explicit identity and full-scope
+evidence. Merged status proves a merge, not Track completion. Surface discrepancies
+and missing obligations instead of closing ambiguous or partial work.
 
 ### 1b. Read the roadmap, inbox, and audit
 
+Resolve the project root with the Common path resolver before this first audit.
+Each separate call must paste both printed root assignments; a missing root stops.
+
 ```bash
-"$_EXTEND_ROOT/bin/roadmap-audit" > /tmp/roadmap-audit.txt
+# First paste both resolved root assignments from Common path.
+"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" > /tmp/roadmap-audit.txt
 ```
 
-Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" --future-index` and Read that output (title + source + first sentence). Do **not** Read `docs/roadmap-future.md` unless promoting an item or its source Track shipped since `LAST_ROADMAP_RUN`. If `docs/roadmap-shipped.md` exists, load **only an ID+title index** (Group/Track headings), not the bodies. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence). Do **not** Read `docs/roadmap-future.md` unless promoting an item or reconciling a shipped source Track. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
-**Default split.** If `## Shipped` still has Group/Phase/Track headings (not just the pointer + in-progress sibling Tracks), move that body to `docs/roadmap-shipped.md` as part of apply — no extra question. If `## Future` still has bullets and `docs/roadmap-future.md` is missing **or has no `- ` bullets** (header-only stub from init `--migrate`), move the live bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop. Never delete live Future bullets to "finish" a split against an empty satellite.
+**Default split.** If `## Shipped` still has Group/Phase/Track headings rather than just the pointer, include their archive migration in the complete candidate — no extra scope question. Independently reconcile inline shipped Tracks under the policy above. If `## Future` still has bullets and `docs/roadmap-future.md` is missing **or has no `- ` bullets** (header-only stub from init `--migrate`), move the live bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop. Never delete live Future bullets to "finish" a split against an empty satellite.
 
-**LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` if no prior commit.
+**LAST_ROADMAP_RUN cutoff.** Use the timestamp of the most recent commit touching `docs/ROADMAP.md`: `git log -1 --format=%ai -- docs/ROADMAP.md`. Fall back to `4 weeks ago` for recent-activity hints only. Closure reconciliation uses introduction/lineage bounds, never this cutoff as absence proof.
 
 **Recent commits on referenced files** (null-safe; tolerate deleted/renamed paths and large arg lists):
 
@@ -290,9 +547,9 @@ for tag in <each unprocessed item's tag>: "$_EXTEND_ROOT/bin/roadmap-route" "$ta
 
 `route_source_tag` returns `action=KEEP|KILL|PROMPT` plus reason; `compute_dedup_hash` lets you collapse duplicates surfaced by different reviewers before regeneration sees them.
 
-**Origin tags vs recycled numbers.** `[pair-review:group=N]` aimed at a **Shipped** or **In Progress** Group keeps using the number (those IDs are stable). A tag aimed at a **Current Plan** Group is resolved by **normalized title** at inbox-drain time, not by number. If `group=91` no longer matches that title, consult the renames table, then ask. Do not invent a second ID namespace.
+**Origin tags vs recycled numbers.** `[pair-review:group=N]` aimed at a **Shipped** or declared pinned active Group keeps using the number. A tag aimed at other unfinished work is resolved by **normalized title** and dated lineage at inbox-drain time, not number alone. If `group=91` no longer matches that title, consult the renames table, then ask. Do not invent a second ID namespace.
 
-**Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — In Progress + Current Plan must be re-emitted in v2 grammar. Existing `✓ Complete` Groups become `## Shipped` (then migrate to `docs/roadmap-shipped.md`). Existing Future bullets move verbatim into `docs/roadmap-future.md`.
+**Migration shortcut.** When the audit reports `STATE_SECTIONS: fail` with `MIGRATION_NEEDED` (v1 grammar), regeneration is mandatory — In Progress + Current Plan must be re-emitted in v2 grammar. Verify identity/full completion of inline-marked work, preview independent receipts (or verified fully shipped Group history) and report the conversion count. Existing Future bullets move verbatim into `docs/roadmap-future.md`. The complete candidate gate and Hold/refusal preservation apply to migration too.
 
 ## Step 2: Regenerate
 
@@ -366,8 +623,8 @@ it. Do not invent a `_regen:` field.
 
 Walk through these questions as one continuous read of the inputs gathered in Step 1. Don't run them as a checklist:
 
-- **What is shipped?** You already established this in Step 1a from git commits (corroborated by CHANGELOG/PROGRESS where they exist) — that ground truth is authoritative. Now reconcile the existing `## Shipped` (or v1 `✓ Complete` Groups) against it: those IDs are frozen and form the tail of the new ROADMAP.md (after `## Future`), so don't re-verify already-Shipped entries — trust them. But if a Track/Group shows as shipped in the ground truth while still sitting in `## Current Plan` or `## In Progress`, move it to Shipped now, and surface any roadmap-vs-ground-truth discrepancy in the proposal rather than silently trusting stale roadmap state.
-- **What's actually in flight?** Look for Tracks/Groups that have shipped activity since intro (git_inferred_freshness signal), Groups with some shipped Tracks but not all, or Tracks with open PRs. These belong in `## In Progress` with their existing IDs preserved.
+- **What is shipped?** Reconcile the Step 1 inventory with explicit identity and complete approved-scope/acceptance proof. Record verified completed Tracks independently and exactly once before recycling; preserve existing history. Preview legacy inline conversions and report their count. Missing proof keeps work active; surface the discrepancy and retry condition.
+- **What's actually in flight?** User-identified named working branches/sessions or open PRs define active work and pins. Show Track/owning Group/branch-or-PR rows in Summary, including none declared or uncertain. Shipped siblings alone do not make a Group active. Feasible pins preserve labels; infeasible bins defer reconciliation under Exceptions and recovery.
 - **What Tracks does the Current Plan need?** Combine: leftover unshipped work from prior plan (re-derived against HEAD, not copied) + inbox items (verified at drain time, not observation time) + closure debt for in-flight Groups + hotfix candidates. Decompose into Tracks (1 PR / 1 session each), each with an explicit `_touches:_` footprint and `_blocked-by: Track X` on **every serialized chain** (settings, cutover-after-X, R1→R6). Collisions only order tracks inside the same dependency layer; within a layer, placement is most-constrained-first, then **packIdent** (scheduling touches + normalized title) — never ID, never live document order. Omitting the edge lets the packer reverse a chain. Two colliding tracks whose order is not already fixed by `_blocked-by`, the packer bin DAG, or the written Group DAG emit a STYLE_LINT `unordered collision` warn. _Don't assign Tracks to Groups yet_ — run `"$_EXTEND_ROOT/bin/roadmap-pack"` (see "Collision-driven grouping" below). After bins settle, paint recycled Group/Track numbers (see Renumbering). Optional Phases (named end-state spanning ≥2 Groups) are layered on top of the resulting Groups.
 - **What's actually deferred?** Items the user isn't sure about, or that are too speculative to commit to. Those become flat bullets in `docs/roadmap-future.md`. Keep the filed review context (symptom, source, why deferred, load-bearing file/symbol). Do not collapse a review finding to a title. Do not paste a whole design doc — if it needs headings, write `docs/designs/` and point at it. Items that stay deferred keep their existing text; do not rewrite them shorter. Declined / do-not-re-propose records leave Future (proposal killed list only — never `roadmap-shipped.md`). Promotion to Current Plan is the moment of commitment.
 - **Hotfix vs deferred-scope.** An inbox item source-tagged to a shipped Group (`[pair-review:group=5]`) is closure debt only when it's a regression on shipped behavior. If it's just polish or new scope on the same surface, it's a normal Current Plan item, not a hotfix. When in doubt, ask.
@@ -408,15 +665,21 @@ Group assignment is **the packer's job**, not a theme judgment.
 1. Draft Tracks only. Each has `_touches:_`, tasks, and `_blocked-by: Track X` on every serialized chain. Splits get ordinary per-Group letters; the renames table carries lineage. Do not invent dotted family IDs.
 2. Pack the **draft**, not the live file:
    ```bash
-   "$_EXTEND_ROOT/bin/roadmap-pack" --from /tmp/draft-tracks.md
+   # First paste both resolved root assignments from Common path.
+   "$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --from /tmp/draft-tracks.md
    ```
-   Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" --stdin`. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
+   Or pipe: `"$_EXTEND_ROOT/bin/roadmap-pack" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --stdin` after the same root assignments. Drafts are nonempty full state scaffolds; archive reservations are looked up separately. The packer iterates internally: bins + `DEPENDS` lines + `CRITICAL_PATH`. Write Groups from those bins. `BINS: EMPTY` means no unshipped Tracks (or headings the parser skipped); `BINS: CYCLE` is a `_blocked-by` loop. Do not treat a first-run empty as a mystery — read the hint.
    On the first regen after the v3 cutover, also run `--materialize` and write any implicit previous-Group edges the author still wants. After that, unspecified = none. Group-level `_Depends on:` is **output**, not packer input — do not expect writing those lines to change the bins.
 3. Name the bins the packer emitted. Titles may use `∥` for mixed lanes. Theme is a name. Do not re-partition.
 4. Write lean cards (`_out:`, `_read-first:`, `_produces:`). Fill `_out:` / `_read-first:` from the packer's siblings and edges — do not invent them.
 5. Paste the packer's adjacency (or the audit's `GROUP_DEPS` ADJACENCY after apply) into the Execution Map. Do not hand-write a line. Do **not** add a second critical-path, edge list, or "derived from the adjacency" prose block — if it is a function of the bins, the packer already emitted it. A hand-written copy will drift. Document order is not execution order.
 
 `PACKING: fail` after apply means the written Groups are not the packer's bins. Do not apply a taste override. Fix the proposal or escalate.
+
+The unchanged diagnostic is `written Groups do not match packer bins — re-run /roadmap Step 2 (draft Tracks, then bin/roadmap-pack)`.
+Partial shipment can cause this drift: it is an expected **full-regeneration
+trigger**. Repack the complete unfinished remainder in both active sections,
+not only the old Group's siblings; see [Shipped-Track reconciliation](#shipped-track-reconciliation).
 
 **Groups are launch batches filled up to `parallelism_cap`** (default 6, hard max 8). Same files → different Groups (or one merged Track). Collision-split Groups are serial: the packer emits a later layer and `← {ids}`; write `_Depends on: Group N` from that edge. Unrelated files → same Group. Capacity overflow (more disjoint Tracks than the cap) stays a ready sibling — the leftover is never absorbed past the fill cap. Bins are printed in topological order; paste `DEPENDS` as Group numbers in that order. A 1-track Group is legal whenever the packer emits one (Hotfix, scan-scope, or leftover singleton) — tool behavior is the rule.
 
@@ -428,27 +691,50 @@ Shared docs (`ROADMAP.md`, `TODOS.md`, `PROGRESS.md`, `CHANGELOG.md`, `VERSION`,
 
 ### Renumbering
 
-Only **SHIPPED** numbers are frozen. Current Plan Group/Track numbers are ephemeral labels, recycled every regeneration.
+**SHIPPED** identities are frozen. Declared active Track IDs and their owning
+Group labels remain pinned until release; all other unfinished labels recycle.
 
-Start at the first free integer after shipped history. Skip every number in `_tombstone: 84, 86, 90_` (document- or Current-Plan-level italics; the audit fails an unshipped Group that reuses one). Shipped Groups may keep a tombstoned number. Do **not** keep minting fresh numbers above the last Current Plan range; that is noise.
+For new idle Groups, start at the first free integer after historical shipped
+Group numbers **and numeric prefixes of individual shipped Track IDs**; skip
+all tombstones and pinned labels. Read raw archive identities, not placeholder
+groupNum 0. Skip every number in `_tombstone: 84, 86, 90_` (outside Track bodies;
+STRUCTURE fails active reuse). Append missing retirement tombstones without
+rewriting history only once no pinned active Group uses that prefix. A still
+pinned owning Group may keep its label and backfill unused letters, skipping
+every historical full Track ID. Do not keep minting above idle Current Plan
+ranges. Release a pin explicitly, then retry reservation/allocation and audits.
 
-**IDs are paint.** The packer never ties on them. After bins settle, letter tracks to match the Group (`91A` in Group 91) via `"$_EXTEND_ROOT/bin/roadmap-renumber"` (below). `PACKING` must still pass — write-then-renumber is a fixpoint because FFD keys on packIdent, not the labels you just applied.
+**IDs are paint.** The packer never ties on them. After bins settle, letter tracks to match the Group (`91A` in Group 91) using the candidate map below. `PACKING` must still pass — regroup-and-rename is a fixpoint because FFD keys on packIdent, not the labels you just applied.
 
 Track numbers must match their Group: Track 91A lives in Group 91. Letters cycle A, B, C… per Group. Splits get the next letter in that Group; the renames table carries lineage. Dotted split IDs (`102A.1`) are legacy — still parsed, never assigned.
 
-In Progress IDs stay put when a Track has an open PR (the user will call that out). Idle In Progress without a PR recycles with Current Plan.
+Declared active branch/session or PR pins must fit the computed bins. One owning
+label per bin supports backfill; two incompatible labels in one bin or one
+pinned Group across bins requires no-write deferral, precise conflict and retry.
+Idle In Progress work recycles with Current Plan.
 
-Renumbering is part of every regen. After bins settle and you have the old→new map, run one atomic sweep — never sequential find-replace (old/new sets overlap when recycling):
+Renumbering is part of every regen. After bins settle use one simultaneous map
+on candidate text via the existing `applyRenames` API — never sequential
+find-replace (old/new sets overlap). Include canonical satisfied-blocker aliases
+in that map. Preview only the active draft through the API below, replacing its
+path/map with observed proposal inputs; save stdout as the renamed active draft
+outside the workspace. Never transform frozen archive receipts. The CLI preview
+that follows inspects live documents and does not transform the candidate:
 
 ```bash
-"$_EXTEND_ROOT/bin/roadmap-renumber" --map old=new,old=new
+# First paste both resolved root assignments from Common path.
+bun -e 'const [extendDir, draftPath, mapArg] = process.argv.slice(1); const { applyRenames, parseMapArg } = await import(extendDir + "/src/audit/lib/renumber.ts"); process.stdout.write(applyRenames(await Bun.file(draftPath).text(), parseMapArg(mapArg)).text);' -- "$_EXTEND_ROOT" '/absolute/proposal/active-draft.md' '22B=23A,23A=23B'
+"$_EXTEND_ROOT/bin/roadmap-renumber" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --map old=new,old=new --dry-run
 # or: --map-file /tmp/renames.txt
-# add --dry-run to preview
 ```
 
 The helper (a) applies every pair in one pass, (b) matches with digit/letter lookarounds so `Group 147_` italics work (`\b` does not — `_` is a word char), and (c) skips dated-historical mentions (absorption notes, "split from", "the retired 104C", anything next to an ISO date). Date-qualify lineage instead of remapping it to a live ID.
 
-If a Track has an open PR (rare in practice), the user will call that out during regen review — preserve that ID for the regen. Don't build machinery to detect open PRs automatically.
+The CLI's writing mode sweeps several docs, including the archive. Do not run
+it against live files before candidate approval, or let it rewrite frozen history.
+Any authorized cross-document changes must be part of the complete overlay and
+proposal; otherwise apply the candidate's direct writes only. Declared pins
+come from the user; no automatic open-PR/branch detection is promised.
 
 ### Greenfield
 
@@ -487,7 +773,7 @@ Format:
 <flat bullets>
 
 ## Shipped (preserved — IDs frozen, lives in docs/roadmap-shipped.md)
-<verbatim from existing shipped archive, or migrated from v1 ✓ Complete / inline ## Shipped>
+<existing archive bytes plus proposed independent receipts/retirement reservations or verified inline-history migration>
 
 ## Hotfix proposals
 <each Hotfix Group called out with rationale>
@@ -499,6 +785,12 @@ Format:
 - D items discharged (already done — sha + one-line evidence each)
 - J Hotfix Groups proposed
 - Migration: v1 → v2 (when applicable)
+- Legacy inline-shipped receipt conversions: N (identity/scope proof and remaining bins)
+- New receipts / inactive no-ops / interrupted resumes / deferred closures: counts and IDs
+- Identity/evidence/dated-lineage rows: active ID → canonical land-time ID, original/current labels, merged PR/commit, approved scope/acceptance proof, historical version or unknown
+- Declared pin rows: Track ID | owning Group | named branch/session or PR; none declared or uncertain associations stated explicitly; release/retry conditions
+- Candidate gate: final bins/dependencies, every blocking STATUS, raw history/collision checks, context completeness and feasible labels
+- Approved input fingerprints: active/archive and other affected raw bytes, evidence HEAD and declared pin inventory
 
 ## Discharged
 - **<title>** — discharged@<sha> — <one-line evidence>
@@ -517,7 +809,7 @@ The proposal is one document, so the question loop is collapsed. Two clusters:
 >
 > A) Approve — apply the full proposal
 > B) Revise — specify what to change
-> C) Hold — keep current plan; only apply trivial closures (mark fully-shipped Groups as Shipped, drop empty Tracks)
+> C) Hold — keep current plan; apply only the presented complete no-repack closure candidate if partition/dependencies and every blocking/identity/history/pin gate pass; otherwise write neither active nor archive and require full regeneration
 
 The v1 placement-batch and deferral-batch clusters no longer exist. In Progress + Current Plan are regenerated as one document; Future apply is a title-keyed membership edit, not a one-shot rewrite.
 
@@ -527,26 +819,51 @@ The v1 placement-batch and deferral-batch clusters no longer exist. In Progress 
 
 Apply the user's approved proposal to ROADMAP.md and TODOS.md.
 
+**Freshness before the first write:** compare active/archive raw-byte fingerprints,
+other affected input fingerprints, Git evidence HEAD and declared pins with the
+approved proposal. Any changed input requires a renewed proposal and approval.
+This is a check, not a writer lock; simultaneous writers can still race.
+
+Satellite-first Apply is **not filesystem atomic**. On interruption, write failure
+or post-apply blocker, stop; report completed/failed/unattempted edits and preserve
+current files/diff. Do not automatically restore/reset. Next run revalidates the
+complete remaining proposal. Identical same-work receipt with the Track still
+active is resume: reuse the receipt, propose only remaining removal/repack and
+recheck all gates. Inactive identical work is no-op; contradictory/unrelated ID
+reuse is refusal under Exceptions and recovery.
+
 - **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete bullets whose titles were killed, discharged, or promoted; append newly deferred inbox items (full richness); leave every other line in `docs/roadmap-future.md` untouched. Write satellite files first, then ROADMAP.
+  Under Hold, apply only the approved validated closure-only candidate; retain
+  all other plan/inbox/Future content and the unfinished partition/dependencies.
 - **Always write both pointers** in ROADMAP, including `(0 items)` when Future is empty:
   `Deferred: docs/roadmap-future.md (N items)` and `History: docs/roadmap-shipped.md`.
-- **Shipped** is append-only in `docs/roadmap-shipped.md`. ROADMAP `## Shipped` is the pointer plus any in-progress Group's shipped sibling Tracks. Existing inline Shipped body is migrated on first apply.
+- **Shipped** is append-only in `docs/roadmap-shipped.md`. ROADMAP `## Shipped`
+  contains only its history pointer. Verified inline history migrates on first
+  approved apply; independent completed Tracks leave both active sections.
 - **TODOS.md drain.** Every inbox item that the proposal placed, deferred, killed, or discharged is removed from `TODOS.md ## Unprocessed`. Items the user kept on hold stay in the inbox.
-- **No helper invocations.** There's no split-track helper anymore. All edits are direct file writes.
+- **No split-track helper.** Candidate parsing/packing/rename helpers are read-only
+  before approval; Apply writes only the validated authorized artifacts.
 - **Track / Group completion conventions:**
-  - **In-progress Group with shipped Tracks**: shipped Tracks stay co-located with the Group, marked `✓ Shipped (vX.Y.Z.W)` inline.
-  - **Group fully shipped**: the whole Group moves from `## In Progress` to `## Shipped` as one block.
-  - **Track shipped within Current Plan Group**: the Track gets `✓ Shipped (vX.Y.Z.W)` inline; the Group moves to `## In Progress` if not all Tracks are shipped, or to `## Shipped` if all are.
+  - **Track independently shipped:** append the canonical H2/H3 receipt once;
+    remove verified completed work and repack the complete unfinished remainder.
+    Keep canonical satisfied prerequisites in writing; filter them from scheduling.
+  - **Group fully shipped:** retire its active block; whole-Group history requires
+    all original obligations proved and must not duplicate existing Track receipts.
+  - **Remaining Group:** In Progress only for declared active work, otherwise
+    Current Plan. Preserve feasible pins, never a stale partial-shipment partition.
 
 ### Audit-after-apply
 
 Run the audit immediately after writing edits:
 
 ```bash
-"$_EXTEND_ROOT/bin/roadmap-audit"
+# First paste both resolved root assignments from Common path.
+"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}"
 ```
 
-This is a drift safety net, not the primary check. COLLISIONS in particular should already be satisfied by Step 3's collision-driven grouping; an audit failure here means either (a) the regeneration skipped the matrix step, or (b) human edits between regeneration and apply introduced a collision. Either way, escalate per the Escalation Protocol with the diff intact rather than silently shipping malformed ROADMAP.md.
+This is a drift safety net after complete pre-write validation. COLLISIONS and
+PACKING should already pass the candidate gate; any failure stops Apply with
+the explicit partial-state summary and diff intact. Revalidate before recovery.
 
 The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PACKING, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
 
@@ -635,7 +952,7 @@ Commit message reflects what ran. Examples:
 - Greenfield: `docs: bootstrap roadmap (v2 state-section model)`
 - Regeneration with structural changes: `docs: regenerate roadmap — N new Tracks, M deferred to Future`
 - Migration v1 → v2: `docs: migrate roadmap to v2 state-section model`
-- Pure closures: `docs: move shipped Groups to Shipped section`
+- Pure closures: `docs: archive verified shipped Track receipts`
 - Inbox drain only: `docs: drain TODOS inbox into roadmap`
 
 **Never stage VERSION, CHANGELOG.md, or any code files.**
@@ -663,7 +980,6 @@ No regen diary. Constraints are not rewritten unless the user edits them.)
 
 #### Group 5: <Title>
 
-##### Track 5A: <Title> ✓ Shipped (v0.18.14.0)
 ##### Track 5B: <Title>
 _<N tasks . ~LOC . risk . files>_
 _touches: a, b, c_
@@ -721,7 +1037,6 @@ Adjacency list (from the packer / GROUP_DEPS — not document order):
 Track detail per group:
 \`\`\`
 Group 5: <Title>          (in progress)
-  +-- Track 5A ........... ✓ shipped
   +-- Track 5B ........... ~M . 3 tasks
 
 Group 6: <Title>
@@ -922,6 +1237,7 @@ When completing a skill workflow, report status using one of:
 For /roadmap specifically: map the audit output plus the run's work (regeneration decisions, ROADMAP.md updates, PROGRESS.md appends) to the enum. Rollup:
 
 - Audit clean, regeneration applied, no unresolved blockers → **DONE**
+- Otherwise successful regeneration with deferred reconciliation → **DONE_WITH_CONCERNS** (Track IDs and named retry condition); explicitly requested unfinishable closure → **BLOCKED**
 - Audit returned advisory findings (VERSION_TAG_STALENESS, TAXONOMY advisories, SIZE_LABEL_MISMATCH, MIGRATION_NEEDED) acknowledged but not fixed → **DONE_WITH_CONCERNS** (list them)
 - Audit returned blockers (SIZE caps, COLLISIONS, STRUCTURE errors, STATE_SECTIONS errors, VERSION errors) unresolved → **BLOCKED**
 - Required inputs missing or ambiguous → **NEEDS_CONTEXT**
@@ -984,6 +1300,7 @@ Verdict-to-status mapping:
 
 - Audit clean + regeneration applied + no unresolved blockers → "DONE — {ops summary}".
 - Only advisory findings, acknowledged → "DONE_WITH_CONCERNS — {advisory list}".
+- Otherwise successful regeneration with deferred closure → "DONE_WITH_CONCERNS — {Track IDs, retry condition}"; explicitly requested unfinishable closure → "BLOCKED — {Track IDs, evidence/conflict and retry}".
 - Blocker findings unresolved → "BLOCKED — {blocker list}; resolve before re-running".
 - Missing inputs / conflicting states → "NEEDS_CONTEXT — {what is missing}".
 

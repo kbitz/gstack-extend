@@ -270,9 +270,8 @@ def supports_no_sweep(logger):
 
 
 def sink_path(logger=None):
-    # Follow the selected logger's capability, not the presence/version of another installation.
-    # Older loggers use DIR/default even when config honors ROOT/HOME. New ones source a shared
-    # resolver: ask that exact colocated helper so start, preflight, finish and doctor agree.
+    # Use the selected logger's resolver, not a version guess or another install's helper.
+    # A stray helper must not opt a legacy logger into modern sink rules.
     logger = logger or resolve("gstack-telemetry-log")
     try:
         modern = bool(logger and b"gstack_state_root_select" in Path(logger).read_bytes())
@@ -280,14 +279,17 @@ def sink_path(logger=None):
             bash = which("bash")
             if not bash:
                 raise OSError("bash unavailable")
-            root = capture([bash, "-c", '. "$1" >/dev/null 2>&1 && gstack_state_root && printf "\\n"',
-                            "gstack-state-root", str(Path(logger).parent / "gstack-state-root.sh")])
-            # capture removes exactly our added newline; CR/LF inside the real root round-trip.
-            if not root:
-                raise OSError("empty state root")
-            return Path(root) / "analytics/skill-usage.jsonl"
+            helper = Path(logger).with_name("gstack-state-root.sh")
+            result = subprocess.run(
+                [bash, "-c", '. "$1" && gstack_state_root_select && printf "%s" "$_gstack_sr_root"',
+                 "gstack-extend", str(helper)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=CONFIG_TIMEOUT_S)
+            if result.returncode != 0 or not result.stdout:
+                # Never fall back to a different sink when a modern resolver fails.
+                raise OSError("empty or failing state root")
+            return Path(os.fsdecode(result.stdout)) / "analytics/skill-usage.jsonl"
     except (OSError, subprocess.SubprocessError):
-        # Never guess a different sink or expose a broken helper's stderr/content.
+        # Normalize helper failures for the doctor, without exposing helper output.
         raise OSError("gstack state resolver unavailable; reinstall gstack") from None
     return Path(os.environ.get("GSTACK_STATE_DIR") or Path.home() / ".gstack") / "analytics/skill-usage.jsonl"
 
@@ -426,11 +428,12 @@ def usage_logger():
     if tier not in ("anonymous", "community"):
         debug(f"telemetry tier off, missing, or invalid ({tier!r})", "run gstack-config set telemetry community")
         return None
-    if os.environ.get("GSTACK_EXTEND_TELEMETRY_DEBUG") == "1":
-        try:
-            trace(f"logger={logger} config={config} tier={tier} sink={sink_path(logger)}")
-        except OSError:
-            trace("gstack state resolver unavailable; sink lookup failed. Fix: reinstall gstack. See docs/telemetry.md.")
+    try:
+        sink = sink_path(logger)
+    except (OSError, subprocess.SubprocessError) as error:
+        debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
+        return "retry"
+    trace(f"logger={logger} config={config} tier={tier} sink={sink}")
     return logger
 
 
@@ -442,8 +445,8 @@ def delegate(logger, skill, sid, duration, values):
         return False
     try:
         sink = sink_path(logger)
-    except OSError:
-        debug("gstack state resolver unavailable", "reinstall gstack")
+    except (OSError, subprocess.SubprocessError) as error:
+        debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
         return False
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
@@ -941,11 +944,12 @@ def main(args):
                    repo=Path(root).name if root else "unknown", source="gstack-extend")
         # Provenance still needs the handoff when the skill-usage append fails. Finish must not then
         # invent a skill_run for a start that never landed.
-        try:
-            wrote_usage = bool(logger and append_row(sink_path(logger), row, "sink"))
-        except OSError:
-            debug("gstack state resolver unavailable", "reinstall gstack")
-            wrote_usage = False
+        wrote_usage = False
+        if logger:
+            try:
+                wrote_usage = append_row(sink_path(logger), row, "sink")
+            except (OSError, subprocess.SubprocessError) as error:
+                debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
         if not wrote_usage and not provenance:
             return
         fingerprint, marker_names = harness_fingerprint()

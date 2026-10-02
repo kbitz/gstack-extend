@@ -3,6 +3,13 @@
 Status: APPROVED (this session). Replaces the surgical-reassessment model with
 a regenerate-the-plan model organized by lifecycle state.
 
+**2026-10-01 — Track 22B supersession:** the lifecycle, recording, pin,
+reservation and Hold rules below are reconciled with deterministic PACKING.
+Verified completed Tracks archive independently; unfinished launch batches
+repack. The current authority and complete pre-write/Apply recovery recipe is
+`skills/roadmap.md` → Shipped-Track reconciliation. Other v2 design details
+remain historical; this is a policy correction, not a scheduler/parser rewrite.
+
 ## Why
 
 The v1 skill optimized for incremental reassessment of an upcoming plan (extend
@@ -47,29 +54,29 @@ past completed work to see what's happening now and next:
 
 | State            | Section heading              | Granularity          |
 |------------------|------------------------------|----------------------|
-| In Progress      | `## In Progress`             | Phase / Group         |
+| In Progress      | `## In Progress`             | Phase / Group / Track |
 | Current Plan     | `## Current Plan`            | Phase / Group / Track |
 | Deferred Future  | `## Future`                  | Flat bullets only     |
 | Shipped          | `## Shipped`                 | Phase / Group / Track |
 
 State applies to **discrete units**:
 
-- A **Track** is `shipped` (in `## Shipped` at the document tail) or unshipped
-  (in `## Current Plan`, inside its parent Group). Tracks have no separate
-  "in progress" state — they are 1 PR; the window between branch-open and
-  PR-merge is short, and ID stability over that window is handled as an
-  implementation rule, not a state.
-- A **Group** is `shipped` (all its Tracks have shipped), `in progress` (≥1
-  shipped Track and ≥1 unshipped), or `current plan` (no shipped Tracks yet).
-  Shipped Tracks within an in-progress Group stay co-located with their Group
-  in `## In Progress` (with `✓` markers); they only relocate to `## Shipped`
-  when the whole Group lands.
-- A **Phase** mirrors Group rules: `shipped` (all Groups shipped), `in
-  progress` (≥1 shipped Group and ≥1 unshipped), or `current plan`.
+- A **Track** ships only with verified merge, land-time identity and complete
+  approved scope/acceptance (or attributable user reductions/deferrals).
+  It leaves the active plan independently for `docs/roadmap-shipped.md`.
+  Unfinished Tracks inherit their Group's active state.
+- A **Group** is a computed launch batch. `in progress` means it contains
+  user-identified active work: a named branch/session or open PR; `current
+  plan` means remaining unstarted work. Shipped siblings alone do not pin it.
+  Both active states pack all unfinished non-legacy, non-hotfix Tracks.
+  A fully shipped Group can have history only when all its work is proved.
+- A **Phase** groups launch batches for a named end-state; declared active
+  work determines In Progress. Shipment alone does not freeze remaining bins.
 
-This means a Group/Phase appears in exactly one state-section at a time. There
-is no fragmentation of a unit across sections. The shipped/unshipped boundary
-within an in-progress Group is shown by inline `✓` markers on individual Tracks.
+An active Group/Phase appears in one active section. Individual history records
+retain original Group lineage without claiming its unfinished siblings shipped.
+Legacy inline `✓ Complete` / `✓ Shipped` markers and v1 fallback remain parseable;
+new writing uses independent receipts and a repacked remainder.
 
 ## Document grammar
 
@@ -82,8 +89,8 @@ within an in-progress Group is shown by inline `✓` markers on individual Track
 
 ## In Progress
 
-(at most one Phase or one Group active at a time; Tracks with PRs open get a
-`(PR #NNN)` annotation but otherwise look like Current Plan Tracks)
+(Groups containing user-declared active branches/sessions or open PRs;
+declared pins preserve IDs only when their owning labels fit computed bins)
 
 ### Phase 3: <Title>
 
@@ -92,7 +99,6 @@ within an in-progress Group is shown by inline `✓` markers on individual Track
 
 #### Group 5: <Title> _(in progress)_
 
-##### Track 5A: <Title> ✓ Shipped (v0.18.14.0)
 ##### Track 5B: <Title>
 _<N tasks . ~LOC . risk . files>_
 _touches: a, b, c_
@@ -100,9 +106,8 @@ _touches: a, b, c_
 
 #### Group 6: <Title>
 
-(unshipped Tracks listed normally; the Group is "in progress" because Group 5
-has shipped Tracks but isn't fully done yet; or because work is actively
-underway across multiple Groups in the Phase)
+(unfinished Tracks listed normally; In Progress reflects declared active work,
+not earlier shipment; idle work returns to Current Plan after repacking)
 
 ---
 
@@ -145,7 +150,6 @@ Adjacency list:
 Track detail per group:
 ```
 Group 5: <Title>          (in progress)
-  +-- Track 5A ........... ✓ shipped
   +-- Track 5B ........... ~M . 3 tasks
 
 Group 6: <Title>
@@ -169,25 +173,27 @@ structure, no `_touches:_`, no sizing, no IDs.
 
 ## Shipped
 
-(append-only history, IDs frozen, byte-stable across regenerations. Lives at
-the document tail so the active plan above stays visible without scrolling.)
-
-### Phase 1: <Title> ✓ Shipped (vX.Y.Z.W)
-<one-line summary>
-
-#### Group 1: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 1A — _shipped (vX.Y.Z.W)_
-- Track 1B — _shipped (vX.Y.Z.W)_
-
-#### Group 2: <Title> ✓ Shipped (vX.Y.Z.W)
-- Track 2A — _shipped (vX.Y.Z.W)_
-
-### Phase 2: <Title> ✓ Shipped (vX.Y.Z.W)
-...
-
-(loose Groups not in a Phase are listed at the same H3 level under `## Shipped`
-without a Phase wrapper)
+History: docs/roadmap-shipped.md
 ```
+
+The current active document carries `Deferred: docs/roadmap-future.md (N items)`
+under Future too; flat deferred bullets live in that satellite. Existing shipped
+archive bytes are append-only. An individual archive section starts with an H2
+context reset even after an archived Group (illustrative evidence only):
+
+```markdown
+## Individual Track history
+
+### Track 22A: Record landed work ✓ Shipped (v1.2.3.0)
+- 2026-10-01: merged PR #109 (commit abc1234); verified land-time Track 22A, original Group 22.
+```
+
+Use a verified historical version, or bare `✓ Shipped` plus dated evidence and
+`release version unknown`. Do not duplicate receipts or imply original Group
+completion. Once no pinned active Group uses the prefix, append a fresh H2
+history section with `_tombstone: 22_` before any Track body. While Group 22 is
+pinned, omit that tombstone and reserve prefix/full historical IDs during label
+assignment. The parser's orphan `groupNum: 0` is not a real Group.
 
 ## Primitives
 
@@ -205,12 +211,12 @@ Groups stand alone.
 - **Required fields:** `**End-state:**` (one sentence), `**Groups:**` (≥2 Group
   numbers).
 - **Optional:** `**Scaffolding contract:**` block listing forward-references.
-- **State:** shipped when all Groups shipped; in-progress when partial; current
-  plan otherwise.
+- **State:** In Progress for declared active work; Current Plan for remaining
+  unstarted work. Shipped history requires verified end-state completion.
 
 ### Group
 
-A wave of Tracks that ship together. Within a Group, Tracks are **fully
+A computed launch batch; Tracks can ship independently. Within a Group, Tracks are **fully
 parallel-safe** — no exceptions, no `_Depends on:_` between Tracks in the same
 Group, no shared file footprint.
 
@@ -221,8 +227,8 @@ Group, no shared file footprint.
   linear chain) when no annotation.
 - **Hard rule:** every pair of Tracks within a Group must have set-disjoint
   `_touches:_` footprints. The audit enforces this without escape hatch.
-- **State:** shipped when all Tracks shipped; in-progress when partial;
-  current plan otherwise.
+- **State:** In Progress for declared active work, Current Plan otherwise;
+  verified completed Tracks leave independently and the remainder repacks.
 - **Pre-flight is gone.** What used to be a `**Pre-flight**` subsection is
   just a small earlier Group with a single Track, which the next Group depends
   on.
@@ -232,8 +238,8 @@ Group, no shared file footprint.
 Exactly one PR. No exceptions, no "ship as N PRs," no PR1/PR2 sub-blocks.
 
 - **Heading:** `##### Track NX: <Title>` (H5, nested under Group H4).
-  - Suffix `✓ Shipped (vX.Y.Z.W)` to mark a shipped Track inline (used in
-    `## In Progress` Groups for the shipped Tracks).
+  - Shipped Tracks use the independent H2/H3 archive receipt above; inline
+    shipped suffixes are compatibility input, not the current convention.
   - Suffix ` (PR #NNN)` to mark an open-PR Track inline.
 - **Required metadata** (immediately after heading):
   - `_<N tasks> . ~<LOC> . <risk> . <files summary>_`
@@ -271,11 +277,24 @@ not surgically extend Tracks or renumber upstream. It reads:
   preserved)
 - `## Future` (used as input)
 - `TODOS.md` `## Unprocessed` inbox
-- Recent git activity since last `/roadmap` commit
+- Shared landed-work inventory back to unresolved active Track introductions
+  and dated label lineage; recent-run cutoff is only an activity hint
 
 …then proposes a complete new `## In Progress` + `## Current Plan` + `## Future`
 as a single document. The user reviews the whole proposal, approves or
 revises, and the skill writes it.
+
+The next regeneration is the required closure recorder before ID recycling.
+An already-authorized shipping session may record earlier only by validating
+the same complete receipt/remainder/dependency/label candidate before either
+write; otherwise defer both. Explicit PR/plan identity and merged scope/acceptance
+proof are required; historical snapshots corroborate. Missing or shallow history,
+unknown introduction or inaccessible proof requires supplied evidence/refusal.
+Keep merged-but-incomplete Tracks active with missing obligations named.
+Index raw receipt IDs/lineage once, read only candidate bodies, and inspect raw
+duplicate diagnostics (not propagated by archive merge). Same inactive work is
+no-op; same still-active work after interruption is resume without append;
+unrelated reuse or contradictory evidence is refusal. Preserve both pointers.
 
 There is no item-by-item placement loop. There is no defer-or-keep ladder.
 The proposal is whole-document — clusters 3 (placement batch) and 4
@@ -285,14 +304,20 @@ The proposal is whole-document — clusters 3 (placement batch) and 4
 
 - **Shipped Track and Group IDs are frozen forever.** They appear in
   CHANGELOG, PROGRESS, commit messages, downstream skills.
-- **Everything else is volatile.** In-progress and Current-Plan Tracks can be
-  renumbered, re-grouped, or deleted on every regen. The Track-with-open-PR
-  case is rare enough in practice that we don't add machinery to detect it; if
-  the user has an open PR they want preserved, they can call it out during
-  the regen review.
+- **Declared active work is pinned.** Inventory Track ID, owning Group and
+  user-named branch/session or PR in proposal Summary; report none declared or
+  clarify uncertainty. No automatic discovery. Idle labels recycle in both states.
 
-The next available numeric ID after a regeneration is `max(shipped_group_num,
-in_progress_group_num) + 1`. Letters cycle A, B, C… within each Group.
+New idle Group labels start at the first free integer after shipped Group
+numbers and individual shipped Track numeric prefixes, skipping tombstones
+and pinned labels. A feasible single pinned owning label stays on its computed
+bin; backfill fresh letters, skipping every historical full ID. Two pinned
+labels in one bin or one pinned Group spanning bins is deferred reconciliation:
+show IDs/bins/named pins, write neither active nor archive, retry after release
+or an approved compatible arrangement. Pin preservation never waives PACKING.
+After release append missing retirement reservations outside Track bodies.
+Apply one simultaneous rename map, including canonical satisfied `_blocked-by`
+aliases; retain written historical prerequisites while packing filters them out.
 
 ## Audit changes from v1
 
@@ -371,8 +396,19 @@ Step 4 adds:
   proposal-{ts}.md`) becomes the entire `## In Progress` + `## Current
   Plan` + `## Future` block ready to swap in.
 - Single AskUserQuestion cluster: "Approve regenerated plan?" with options
-  Approve / Revise (specify what to change) / Hold (keep current plan, only
-  apply trivial closures). Per-item placement and deferral clusters are gone.
+  Approve / Revise / Hold. Hold keeps the plan and permits only the presented
+  complete closure candidate that preserves unfinished bins and dependency
+  output and passes all blocking, identity/history and pin gates. Fully shipped
+  or empty Group retirement can qualify; partial shipment needing repack cannot.
+  In that case both files remain unchanged and full regeneration is required.
+  Per-item placement and deferral clusters are gone.
+- Validate complete drafts with the skill's read-only audit API recipe, retaining
+  real Git/version/cap/scaffold context and every changed artifact's derived
+  context. Packer-only proof or CLI exit zero is insufficient. Before Apply
+  recheck approved file fingerprints, evidence HEAD and declared pins; changes
+  require renewed proposal/approval. Satellite-first writes are not filesystem
+  atomic: stop on failure, report completed/failed/unattempted edits, preserve
+  current files, then revalidate before resume. Do not automatically restore.
 
 Output Format template moves to the state-section grammar above.
 
@@ -388,9 +424,11 @@ Output Format template moves to the state-section grammar above.
 Migration happens organically on the first `/roadmap` run after this lands —
 no special migration code path. The skill's normal regeneration step:
 
-1. Reads the existing roadmap. Recognizes shipped work via the `✓ Complete`
-   marker on Groups and Tracks (v1 grammar) — these populate the new
-   `## Shipped` section with frozen IDs.
+1. Reads the existing roadmap. Recognizes inline `✓ Complete` / `✓ Shipped`
+   compatibility input, verifies identity/full scope and previews a visible count
+   of independent receipt conversions with dated evidence and remaining bins.
+   Hold/refusal preserves both originals unless the complete no-repack Hold
+   candidate qualifies. Required reconciliation precedes idle ID recycling.
 2. Regenerates `## In Progress` + `## Current Plan` + `## Future` in v2
    grammar from inboxes + git activity + leftover non-shipped Groups/Tracks.
 
@@ -400,6 +438,9 @@ regenerated, so v1 vocabulary (Pre-flight, Hotfix subsections,
 `_serialize: true_`, intra-Group `_Depends on:_`, Track-shaped Future
 entries) simply doesn't survive the next run — there's nothing for the audit
 to migrate after the regen lands.
+
+Carry the Track 22B writing-policy change into later shipping release notes;
+this specification adds no migration engine, legacy sunset or release-file edit.
 
 The audit enforces v2 grammar; a v1-shaped roadmap audited before the user
 has run `/roadmap` emits `MIGRATION_NEEDED: fail` pointing at this design
