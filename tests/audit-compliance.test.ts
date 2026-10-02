@@ -1,7 +1,7 @@
 /**
  * audit-compliance.test.ts — structural invariants for gstack-extend.
  *
- * Three describes:
+ * Four describes:
  *   (A) Frontmatter sanity — every skills/*.md has --- fence, matching
  *       name:, a non-empty description of at most 1024 UTF-16 code units,
  *       and allowed-tools:. In-memory fixtures lock the shared description
@@ -11,6 +11,8 @@
  *   (C) Source-tag registry consistency — REGISTERED_SOURCES from
  *       src/audit/lib/source-tag.ts matches the grammar list in
  *       docs/source-tag-contract.md exactly.
+ *   (D) /full-review vocabulary matches the source-tag contract — severities,
+ *       the three agent prompt copies, finding fields, and the tag-value rule.
  *
  * While editing a skill description, re-run this suite directly:
  *   bun test tests/audit-compliance.test.ts
@@ -20,7 +22,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { REGISTERED_SOURCES } from '../src/audit/lib/source-tag.ts';
+import { REGISTERED_SOURCES, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 import {
   assertSkillDescriptionWithinLimit,
@@ -724,5 +726,365 @@ describe('(C) source-tag registry consistency', () => {
       throw new Error(lines.join('\n'));
     }
     expect(contractSources.size).toBe(codeSources.size);
+  });
+});
+
+const TAXONOMY_HEADING = '### Severity taxonomy (full-review)';
+const GRAMMAR_HEADING = '## Item grammar';
+const KEYS_HEADING = '### Defined keys';
+const FORMAT_FIELDS = ['FILE', 'LINE', 'SEVERITY', 'DESCRIPTION', 'HYPOTHESIS'];
+const FINDING_NAMES = new Set(['file', 'line', 'severity', 'description', 'hypothesis']);
+
+function vocabError(skill: string, index: number, matched: string, expected: string, source: string): string {
+  const line = skill.slice(0, Math.max(0, index)).split('\n').length;
+  const shown = matched.replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `skills/full-review.md:${line}: matched ${JSON.stringify(shown)}; expected ${expected}; source: ${source}`;
+}
+
+function sectionFrom(text: string, heading: string, next: RegExp): string {
+  const start = text.indexOf(heading);
+  if (start < 0) return '';
+  const rest = text.slice(start + heading.length);
+  const end = next.exec(rest);
+  return text.slice(start, start + heading.length + (end?.index ?? rest.length));
+}
+
+function contractSeverities(contract: string): string[] {
+  const section = sectionFrom(contract, TAXONOMY_HEADING, /\n## /);
+  return [...section.matchAll(/^- \*\*([a-z-]+)\*\*/gm)].map((match) => match[1]!);
+}
+
+function grammarFields(contract: string): Array<{ name: string; scopes: string[] | null }> {
+  const start = contract.indexOf(GRAMMAR_HEADING);
+  const fence = /```[^\n]*\n([\s\S]*?)```/.exec(contract.slice(start));
+  const fields: Array<{ name: string; scopes: string[] | null }> = [];
+  if (!fence) return fields;
+  for (const line of (fence[1] ?? '').split('\n')) {
+    const bullet = /^- \*\*(.+?):\*\*(.*)$/.exec(line);
+    if (!bullet) continue;
+    const paren = /\(([^()]*)\)\s*$/.exec(bullet[2] ?? '');
+    let scopes: string[] | null = null;
+    if (paren) {
+      const items = paren[1]!.split(',').map((item) => item.trim()).filter(Boolean);
+      if (items.length > 0 && items.every((item) => REGISTERED_SOURCES.has(item))) scopes = items;
+    }
+    fields.push({ name: bullet[1]!, scopes });
+  }
+  return fields;
+}
+
+function throughLine(text: string, start: string, endPrefix: string): string | null {
+  const at = text.indexOf(start);
+  if (at < 0) return null;
+  const lines = text.slice(at).split('\n');
+  const end = lines.findIndex((line) => line.startsWith(endPrefix));
+  if (end < 0) return null;
+  return lines.slice(0, end + 1).join('\n');
+}
+
+function agentPrompts(skill: string): Array<{ index: number; body: string }> {
+  const marks = [...skill.matchAll(/^#### Agent \d+:.*$/gm)];
+  const step3 = skill.indexOf('\n### Step 3: Validate agent outputs');
+  return marks.map((mark, i) => {
+    const start = mark.index ?? 0;
+    const next = i + 1 < marks.length ? (marks[i + 1]!.index ?? skill.length) : skill.length;
+    const end = step3 > start && step3 < next ? step3 : next;
+    return { index: start, body: skill.slice(start, end) };
+  });
+}
+
+function templateFields(skill: string): Array<{ name: string; index: number }> {
+  const re = /```markdown\n([\s\S]*?)```/g;
+  let fence: RegExpExecArray | null;
+  while ((fence = re.exec(skill))) {
+    const body = fence[1] ?? '';
+    if (!body.includes('- **Hypothesis (untested):**')) continue;
+    const base = fence.index + '```markdown\n'.length;
+    const fields: Array<{ name: string; index: number }> = [];
+    for (const bullet of body.matchAll(/^- \*\*(.+?):\*\*/gm)) {
+      fields.push({ name: bullet[1]!, index: base + (bullet.index ?? 0) });
+    }
+    return fields;
+  }
+  return [];
+}
+
+function filesRuleParagraph(skill: string): { text: string; index: number } | null {
+  const at = skill.indexOf('files=<path>');
+  if (at < 0) return null;
+  const close = skill.indexOf('\n```', at);
+  if (close < 0) return null;
+  const after = skill.indexOf('\n', close + 1);
+  if (after < 0) return null;
+  const lines = skill.slice(after + 1).split('\n');
+  let skip = 0;
+  while (skip < lines.length && lines[skip]!.trim() === '') skip++;
+  const para: string[] = [];
+  for (let i = skip; i < lines.length; i++) {
+    if (lines[i]!.trim() === '') break;
+    para.push(lines[i]!);
+  }
+  const text = para.join('\n');
+  if (!text) return null;
+  return { text, index: skill.indexOf(text, after) };
+}
+
+function severityLists(skill: string, severities: string[]): {
+  slash: number;
+  gt: number;
+  order: number;
+  errors: string[];
+} {
+  const expected = severities.filter((name) => name !== 'edge-case');
+  const errors: string[] = [];
+  let slash = 0;
+  let gt = 0;
+  let order = 0;
+  const keep = (items: string[]) =>
+    items.every((item) => /^[a-z-]+$/.test(item)) && items.some((item) => severities.includes(item));
+  for (const match of skill.matchAll(/\(([^()\n]+)\)/g)) {
+    const inner = match[1] ?? '';
+    const kind = inner.includes('/') ? 'slash' : inner.includes('>') ? 'gt' : '';
+    if (!kind) continue;
+    const items = inner.split(kind === 'slash' ? '/' : '>').map((item) => item.trim());
+    if (!keep(items)) continue;
+    if (kind === 'slash') slash++;
+    else gt++;
+    if (items.join('\0') !== expected.join('\0')) {
+      errors.push(
+        vocabError(skill, match.index ?? 0, inner, expected.join(', '), TAXONOMY_HEADING),
+      );
+    }
+  }
+  const orderRe =
+    /\b([a-z-]+)(?:[ \t]+[a-z-]+)?[ \t\n]+first,[ \t\n]+then[ \t\n]+([a-z-]+),[ \t\n]+then[ \t\n]+([a-z-]+)\b/g;
+  for (const match of skill.matchAll(orderRe)) {
+    const items = [match[1]!, match[2]!, match[3]!];
+    if (!keep(items)) continue;
+    order++;
+    if (items.join('\0') !== expected.join('\0')) {
+      errors.push(vocabError(skill, match.index ?? 0, match[0], expected.join(', '), TAXONOMY_HEADING));
+    }
+  }
+  if (slash < 1) {
+    errors.push(vocabError(skill, 0, '(none)', 'at least one parenthesized / severity list', TAXONOMY_HEADING));
+  }
+  if (gt < 1) {
+    errors.push(vocabError(skill, 0, '(none)', 'at least one parenthesized > severity list', TAXONOMY_HEADING));
+  }
+  if (order < 1) {
+    errors.push(vocabError(skill, 0, '(none)', 'at least one "first, then, then" severity list', TAXONOMY_HEADING));
+  }
+  return { slash, gt, order, errors };
+}
+
+function fullReviewVocabErrors(skill: string, contract: string): string[] {
+  const errors: string[] = [];
+  const severities = contractSeverities(contract);
+  const prompts = agentPrompts(skill);
+  if (prompts.length !== 3) {
+    errors.push(vocabError(skill, prompts[3]?.index ?? 0, `${prompts.length} agent prompts`, 'exactly 3', 'test-owned'));
+  }
+  const heads: string[] = [];
+  const tails: string[] = [];
+  for (const prompt of prompts) {
+    const head = throughLine(prompt.body, '> Shell Rules:', '> Hot areas');
+    const tail = throughLine(
+      prompt.body,
+      '> Your hypothesis is a starting point',
+      '> If you find no issues, output: NO_FINDINGS',
+    );
+    if (head === null || tail === null) {
+      errors.push(vocabError(skill, prompt.index, prompt.body.slice(0, 80), 'prompt head and tail', 'test-owned'));
+      continue;
+    }
+    heads.push(head);
+    tails.push(tail);
+    const alternatives = /SEVERITY: <([^>\n]+)>/.exec(prompt.body);
+    const altNames = alternatives?.[1]?.split('|').map((name) => name.trim()) ?? [];
+    if (altNames.join('\0') !== severities.join('\0')) {
+      const at = prompt.body.indexOf('SEVERITY: <');
+      errors.push(
+        vocabError(skill, prompt.index + Math.max(0, at), altNames.join('|'), severities.join(', '), TAXONOMY_HEADING),
+      );
+    }
+    const semantics = [...prompt.body.matchAll(/^>\s+([a-z-]+)\s+\u2014/gm)].map((match) => match[1]!);
+    if (semantics.join('\0') !== severities.join('\0')) {
+      errors.push(
+        vocabError(skill, prompt.index, semantics.join(', '), severities.join(', '), TAXONOMY_HEADING),
+      );
+    }
+    const formatLine = prompt.body.split('\n').find((line) => line.includes('FILE:') && line.includes('HYPOTHESIS:'));
+    const fields = formatLine ? [...formatLine.matchAll(/\b([A-Z]+):/g)].map((match) => match[1]!) : [];
+    if (fields.join('\0') !== FORMAT_FIELDS.join('\0')) {
+      errors.push(
+        vocabError(skill, prompt.index, fields.join(', '), FORMAT_FIELDS.join(', '), 'test-owned'),
+      );
+    }
+  }
+  if (heads.length === prompts.length && heads.some((head) => head !== heads[0])) {
+    errors.push(vocabError(skill, prompts[1]?.index ?? 0, 'agent prompt heads', 'byte-identical heads', 'test-owned'));
+  }
+  if (tails.length === prompts.length && tails.some((tail) => tail !== tails[0])) {
+    errors.push(vocabError(skill, prompts[1]?.index ?? 0, 'agent prompt tails', 'byte-identical tails', 'test-owned'));
+  }
+
+  errors.push(...severityLists(skill, severities).errors);
+
+  const grammar = grammarFields(contract);
+  const required = grammar.filter((field) => field.scopes?.includes('full-review')).map((field) => field.name);
+  const forbidden = new Set(
+    grammar.filter((field) => field.scopes !== null && !field.scopes.includes('full-review')).map((field) => field.name),
+  );
+  const template = templateFields(skill);
+  const templateNames = new Set(template.map((field) => field.name));
+  const templateAt = template[0]?.index ?? skill.indexOf('```markdown');
+  for (const name of required) {
+    if (!templateNames.has(name)) {
+      errors.push(vocabError(skill, templateAt, template.map((field) => field.name).join(', '), name, GRAMMAR_HEADING));
+    }
+  }
+  for (const field of template) {
+    if (forbidden.has(field.name)) {
+      errors.push(
+        vocabError(skill, field.index, field.name, 'no field scoped only to other sources', GRAMMAR_HEADING),
+      );
+    }
+  }
+  if (!required.includes('Description') || !required.includes('Hypothesis (untested)')) {
+    const formatAt = skill.indexOf('DESCRIPTION:');
+    errors.push(
+      vocabError(skill, Math.max(0, formatAt), 'DESCRIPTION / HYPOTHESIS', 'Description and Hypothesis (untested)', GRAMMAR_HEADING),
+    );
+  }
+  const keys = sectionFrom(contract, KEYS_HEADING, /\n### /);
+  if (!keys.split('\n').some((line) => line.includes('`severity`') && line.includes('full-review'))) {
+    errors.push(vocabError(skill, Math.max(0, skill.indexOf('SEVERITY:')), 'SEVERITY', 'severity key', KEYS_HEADING));
+  }
+
+  for (const match of skill.matchAll(/findings with ([^.\n]+)/gi)) {
+    const items = (match[1] ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+    if (items.length < 3) continue;
+    const bad = items.filter((item) => !FINDING_NAMES.has(item.toLowerCase()));
+    if (bad.length > 0) {
+      errors.push(
+        vocabError(skill, match.index ?? 0, items.join(', '), FORMAT_FIELDS.join(', '), 'test-owned'),
+      );
+    }
+  }
+
+  const paragraph = filesRuleParagraph(skill);
+  const tokens = ['`[`', '`]`', '`,`', '`;`', '`|`', 'a backtick', '`$(`'];
+  if (!paragraph) {
+    errors.push(vocabError(skill, 0, '(none)', tokens.join(' '), 'test-owned'));
+  } else {
+    const missing = tokens.filter((token) => !paragraph.text.includes(token));
+    if (missing.length > 0) {
+      errors.push(vocabError(skill, paragraph.index, paragraph.text, missing.join(' '), 'test-owned'));
+    }
+  }
+
+  const headings = [
+    '### [full-review:<severity>] <finding title>',
+    '### [full-review:<severity>,files=<path>] <finding title>',
+  ];
+  for (const heading of headings) {
+    const at = skill.indexOf(heading);
+    if (at < 0) {
+      errors.push(vocabError(skill, 0, '(none)', heading, 'test-owned'));
+      continue;
+    }
+    const substituted = heading.replaceAll('<severity>', 'critical').replaceAll('<path>', 'src/a.ts');
+    const tag = /\[[^\[\]]+\]/.exec(substituted)?.[0] ?? '';
+    const result = validateTagExpression(tag);
+    if (!result.ok) {
+      errors.push(vocabError(skill, at, tag, 'validateTagExpression ok', 'test-owned'));
+    }
+  }
+  return errors;
+}
+
+function replaceNth(haystack: string, needle: string, replacement: string, nth: number): string {
+  let from = 0;
+  for (let seen = 1; seen <= nth; seen++) {
+    const at = haystack.indexOf(needle, from);
+    if (at < 0) throw new Error(`missing occurrence ${seen} of ${needle}`);
+    if (seen === nth) return haystack.slice(0, at) + replacement + haystack.slice(at + needle.length);
+    from = at + needle.length;
+  }
+  return haystack;
+}
+
+describe('(D) /full-review vocabulary matches the source-tag contract', () => {
+  const skill = readFileSync(join(SKILLS_DIR, 'full-review.md'), 'utf8');
+  const contract = readFileSync(CONTRACT_FILE, 'utf8');
+
+  test('the real skill has no vocabulary errors', () => {
+    expect(fullReviewVocabErrors(skill, contract)).toEqual([]);
+  });
+
+  test.each(['`[`', '`]`', '`,`', '`;`', '`|`', 'a backtick', '`$(`'])(
+    'requires every named unsafe character: %s',
+    (token) => {
+      const paragraph = filesRuleParagraph(skill)!;
+      expect(paragraph.text).toContain(token);
+      const mutated = skill.replace(paragraph.text, paragraph.text.replaceAll(token, ''));
+      expect(mutated).not.toBe(skill);
+      expect(fullReviewVocabErrors(mutated, contract).length).toBeGreaterThan(0);
+    },
+  );
+
+  test('mutations fail and one error names a line and its source', () => {
+    const rows = [
+      {
+        target: 'then necessary, then nice-to-have',
+        apply: (text: string) => text.replace('then necessary, then nice-to-have', 'then important, then minor'),
+      },
+      {
+        target: '> Frame it as one possible direction; the implementer will re-verify the',
+        apply: (text: string) =>
+          replaceNth(
+            text,
+            '> Frame it as one possible direction; the implementer will re-verify the',
+            '> Frame it as one possible direction; the implementer will re-verify the changed',
+            2,
+          ),
+      },
+      {
+        target: '- **Description:**',
+        apply: (text: string) => text.replace('- **Description:**', '- **Why:**'),
+      },
+    ];
+    let namedSource = false;
+    for (const row of rows) {
+      expect(skill).toContain(row.target);
+      const errors = fullReviewVocabErrors(row.apply(skill), contract);
+      expect(errors.length).toBeGreaterThan(0);
+      if (errors.some((error) => /:\d+:/.test(error) && error.includes('source: ## Item grammar'))) {
+        namedSource = true;
+      }
+    }
+    expect(namedSource).toBe(true);
+  });
+
+  test('order sentences and durations that are not severities stay quiet', () => {
+    const reviewer = `${skill}\nrun the reviewer first, then hygiene, then consistency\n`;
+    const duration = `${skill}\n(24h/48h/1 week)\n`;
+    const owner = skill.replace(
+      '- **Effort:** ? (user triages in /roadmap)',
+      '- **Effort:** ? (user triages in /roadmap)\n- **Owner:** someone',
+    );
+    expect(fullReviewVocabErrors(reviewer, contract)).toEqual([]);
+    expect(fullReviewVocabErrors(duration, contract)).toEqual([]);
+    expect(owner).not.toBe(skill);
+    expect(fullReviewVocabErrors(owner, contract)).toEqual([]);
+  });
+
+  test('validateTagExpression accepts the template shapes and rejects unsafe paths', () => {
+    expect(validateTagExpression('[full-review:critical]').ok).toBe(true);
+    expect(validateTagExpression('[full-review:critical,files=src/a.ts]').ok).toBe(true);
+    expect(validateTagExpression('[full-review:critical,files=app/[id]/page.tsx]').ok).toBe(false);
+    expect(validateTagExpression('[full-review:critical,files=src/`id`.ts]').ok).toBe(false);
+    expect(validateTagExpression('[full-review:critical,files=src/$(id).ts]').ok).toBe(false);
   });
 });

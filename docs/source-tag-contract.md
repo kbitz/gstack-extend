@@ -126,8 +126,8 @@ on triage; not parsed.
   `discovered`, `plan-ceo-review`, `plan-eng-review`.
 - `<key>=<value>` pairs provide structured metadata. Order does not matter.
 - Keys MUST be lowercase, `[a-z-]+`.
-- Values MUST NOT contain `[]`, `,`, or `;`. Values containing these should be
-  omitted or pipe-separated (for file lists: `files=a.ts|b.ts`).
+- Values MUST NOT contain `[]`, `,`, `;`, a backtick, or `$(`. Values containing
+  these should be omitted or pipe-separated (for file lists: `files=a.ts|b.ts`).
 
 `review-apparatus` and `test-plan` are retired skills. Their source tags remain
 accepted so existing project backlogs still validate and retain their routing.
@@ -237,6 +237,7 @@ per-entry findings:
   `- [source] ...` (legacy format dropped in v0.15.1).
 - `UNKNOWN_SOURCE_TAG` — tag source is not in the registered list above.
 - `MALFORMED_TAG` — `[source:key=value]` expression failed the grammar.
-- `INJECTION_ATTEMPT` — tag value contains `[`, `]`, `;`, or newlines.
+- `INJECTION_ATTEMPT` — tag contains a nested `[`, a `;`, a backtick, or `$(`.
+  A stray `]` or a `,` inside a value is `MALFORMED_TAG` instead.
 
 The skill surfaces validator failures during triage and blocks until resolved.
