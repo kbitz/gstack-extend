@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.2.0] - 2026-10-04
+
+### Added
+
+- **Updates report when a host install may still be stale.** Setup names hosts it skipped, even in quiet mode or when a later step fails. The refreshed upgrade skill distinguishes a successful checkout update from host installs it left untouched, and gives recovery steps.
+- **Shared-directory migration guidance explains how to refresh old generated copies safely.** It covers reviewing and backing up files, restoring Claude's source links, and separating Codex or OpenCode skills directories when needed.
+
+### Changed
+
+- **Setup protects skills and shared command links across hosts.** Codex and OpenCode skip directories they share with another host instead of replacing Claude's links; Claude preserves existing files. Generated copies keep authored shell paths and are replaced atomically, while uninstall keeps this checkout's command links until no host install still uses it.
+
 ## [0.34.0.0] - 2026-10-02
 
 ### Added
