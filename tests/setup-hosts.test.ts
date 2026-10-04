@@ -820,7 +820,29 @@ describe('setup --host flags', () => {
     const env: Record<string, string> = { PATH: isolatedPath(), HOME: home };
     const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], { encoding: 'utf8', env, timeout: 20000 });
     expect(r.error).toBeUndefined();
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('Error: cannot resolve');
+    expect(r.stderr).not.toContain('unbound variable');
+  });
+
+  test('an interrupted copy leaves no temp file behind', () => {
+    const home = join(baseTmp, 'interrupted-copy');
+    const bins = join(baseTmp, 'interrupting-awk-bins');
+    mkdirSync(home, { recursive: true });
+    plantFakeBins(bins, []);
+    if (!existsSync(join(bins, 'bun'))) symlinkSync(process.execPath, join(bins, 'bun'));
+    // awk runs only for a Codex copy, after the temp file exists; it signals setup mid-write.
+    writeFileSync(join(bins, 'awk'), '#!/bin/sh\nkill -TERM "$PPID"\nexit 1\n');
+    chmodSync(join(bins, 'awk'), 0o755);
+    const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], {
+      encoding: 'utf8', env: { PATH: `${bins}:/bin:/usr/bin`, HOME: home }, timeout: 20000,
+    });
     expect(r.status).not.toBe(0);
+    const dirs = existsSync(hostDir(home, 'codex')) ? readdirSync(hostDir(home, 'codex')) : [];
+    expect(dirs.length).toBeGreaterThan(0);
+    for (const dir of dirs) {
+      expect(readdirSync(join(hostDir(home, 'codex'), dir)).filter((name) => name.startsWith('.SKILL.md.'))).toEqual([]);
+    }
   });
 
   test('an uninstall whose every host is skipped removes nothing and keeps the CLI links', () => {
@@ -851,10 +873,41 @@ describe('setup --host flags', () => {
     for (const skill of SKILLS) rmSync(join(hostDir(home, 'claude'), skill, '.extend-root'));
     const r = runSetup(['--host', 'codex', '--uninstall'], home);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain(`  Install pointer: ${hostDir(home, 'claude')}/`);
+    expect(r.stdout).toContain(`  Kept for: ${hostDir(home, 'claude')}/`);
     for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
       expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
     }
+  });
+
+  test('a pointerless Claude link into another checkout does not keep the CLI links', () => {
+    const home = join(baseTmp, 'pointerless-foreign-links');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'codex', '--quiet'], home).exitCode).toBe(0);
+    const skill = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(skill, { recursive: true });
+    symlinkSync(join(home, 'other-checkout', 'skills', 'roadmap.md'), join(skill, 'SKILL.md'));
+    const r = runSetup(['--host', 'codex', '--uninstall'], home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('Kept for:');
+    for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+      expect(existsSync(join(bin, name))).toBe(false);
+    }
+  });
+
+  test('uninstall skips a skill whose .extend-root is a directory and finishes the rest', () => {
+    const home = join(baseTmp, 'extend-root-dir-uninstall');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const pointer = join(hostDir(home, 'claude'), 'roadmap', '.extend-root');
+    rmSync(pointer);
+    mkdirSync(pointer);
+    const r = runSetup(['--host', 'claude', '--uninstall'], home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Skipped roadmap (.extend-root is not a regular file)');
+    expect(readdirSync(hostDir(home, 'claude'))).toEqual(['roadmap']);
+    expect(lstatSync(join(hostDir(home, 'claude'), 'roadmap', 'SKILL.md')).isSymbolicLink()).toBe(true);
   });
 
   test('codex skips a skill whose .extend-root is a directory', () => {
@@ -1034,7 +1087,7 @@ describe('setup --host flags', () => {
       const removed = runSetup(['--host', host, '--uninstall'], home);
       expect(removed.exitCode).toBe(0);
       expect(removed.stdout).toContain('this checkout still has a host install');
-      expect(removed.stdout).toContain(`  Install pointer: ${join(kept, '.extend-root')}\n`);
+      expect(removed.stdout).toContain(`  Kept for: ${join(kept, '.extend-root')}\n`);
       for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
         expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
       }

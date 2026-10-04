@@ -275,13 +275,6 @@ extend_owned_link() {
   fi
 }
 
-# True when an existing directory also resolves under its upper-cased spelling.
-case_insensitive_dir() {
-  local upper
-  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  [ "$upper" != "$1" ] && [ "$1" -ef "$upper" ]
-}
-
 link_target() {
   local target
   target="$(readlink "$1")"
@@ -292,7 +285,7 @@ link_target() {
 }
 
 # Two skills dirs are the same when their deepest existing ancestors are the same directory (compared by inode, so
-# case variants on a case-insensitive disk match) and the missing parts below them are spelled the same. A dangling
+# case variants on a case-insensitive disk match) and the missing parts below them match. A dangling
 # link is followed to its target, so a link into a directory that does not exist yet compares by where it leads.
 same_skills_dir() {
   local a="$1" b="$2" rest_a="" rest_b="" hops=0
@@ -305,20 +298,18 @@ same_skills_dir() {
     if [ -L "$b" ] && [ "$hops" -lt 40 ]; then b="$(link_target "$b")"; hops=$((hops + 1)); continue; fi
     rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"
   done
-  # Missing components cannot be links, so collapse "." and ".." lexically. On a case-insensitive volume a case
-  # variant names the same directory once it exists, so compare those case-blind.
-  rest_a="$(lex_abs "${rest_a:-/}")"
-  rest_b="$(lex_abs "${rest_b:-/}")"
-  if [ "$rest_a" != "$rest_b" ] && case_insensitive_dir "$a"; then
-    rest_a="$(printf '%s' "$rest_a" | tr '[:upper:]' '[:lower:]')"
-    rest_b="$(printf '%s' "$rest_b" | tr '[:upper:]' '[:lower:]')"
-  fi
+  # Missing components cannot be links, so collapse "." and ".." lexically. Compare them case-blind: a case variant
+  # may name the same directory once it exists, and probing a volume's case rules is unreliable across mounts. On a
+  # case-sensitive volume a false match only skips a host, which is the safe direction.
+  rest_a="$(lex_abs "${rest_a:-/}" | tr '[:upper:]' '[:lower:]')"
+  rest_b="$(lex_abs "${rest_b:-/}" | tr '[:upper:]' '[:lower:]')"
   [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
 }
 
 # Shared CLI links belong to this checkout until its last host install is gone: a pointer naming it beside a
-# SKILL.md. Scan all installed names, including retired or user-detached skills; a pointer left without a SKILL.md
-# is not an install. Sets HOST_INSTALL_POINTER to the first pointer found so the caller can name it.
+# SKILL.md, or a pointerless Claude SKILL.md link into it. Scan all installed names, including retired or
+# user-detached skills; a pointer left without a SKILL.md is not an install. Sets HOST_INSTALL_POINTER to the first
+# pointer or link found so the caller can name it.
 HOST_INSTALL_POINTER=""
 checkout_has_host_install() {
   local host pointer root link
@@ -365,6 +356,10 @@ uninstall_from_dir() {
         continue
       fi
     else
+      continue
+    fi
+    if [ -e "$target/.extend-root" ] && [ ! -f "$target/.extend-root" ]; then
+      log "Skipped $skill (.extend-root is not a regular file)"
       continue
     fi
     if [ -L "$target/SKILL.md" ]; then
@@ -599,7 +594,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
         log "Skipped $_label symlink (points elsewhere: $link_target)"
       fi
     done
-    [ "$_kept_links" -eq 0 ] || log "  Install pointer: $HOST_INSTALL_POINTER"
+    [ "$_kept_links" -eq 0 ] || log "  Kept for: $HOST_INSTALL_POINTER"
   fi
 
   log "Uninstall complete."

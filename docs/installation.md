@@ -111,9 +111,10 @@ To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 Every host-specific uninstall, and `--host auto --uninstall`, keeps
 `~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry` while any
-of the four hosts has an `.extend-root` pointer naming this checkout, and names
-one such pointer. The last uninstall removes both links if they point at this
-checkout. A preserved, customized skill's pointer also keeps the links; a
+of the four hosts has an `.extend-root` pointer naming this checkout beside a
+`SKILL.md`, or a Claude `SKILL.md` link into it from an install that predates
+pointers, and prints that file as `Kept for: <path>`. The last uninstall removes
+both links if they point at this checkout. A preserved, customized skill's pointer also keeps the links; a
 pointer naming another checkout does not. Foreign links and regular files are left alone. Legacy
 `--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
 
@@ -143,7 +144,7 @@ Claude's shared skills, or use a separate directory with `setup --host cursor`.
 
 Uninstall leaves those regular copies in place too. While a pointer naming the
 checkout sits beside a `SKILL.md`, the shared CLI links stay, and the uninstall
-output names one such pointer. Review the copies, move aside the ones you no
+output names one such pointer as `Kept for: <path>`. Review the copies, move aside the ones you no
 longer want (as above), then rerun the uninstall; a pointer left without a
 `SKILL.md` does not keep the links.
 
