@@ -133,6 +133,8 @@ echo "AUTO_UPGRADE=${_AUTO:-false}"
 
 Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`.
 
+If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host in your message: setup left its skill install untouched, so it may be stale and the new version does not apply there yet. Relay setup's stderr reason with its fix: for a shared directory, **Shared-directory migration** in the checkout's `docs/installation.md`; for an unsafe directory, the directory fix setup printed. Never say every host was refreshed.
+
 **If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
 ```bash
 "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"
@@ -189,6 +191,16 @@ update is detected — this skill is the standalone entry point for when you wan
 check or upgrade on demand.
 
 ## After upgrading
+
+When the inline flow reports `SETUP_SKIPPED_HOSTS <csv>` hosts, add the
+recovery path. A shared directory follows `docs/installation.md`'s
+**Shared-directory migration**; an unsafe directory needs fixing first. With
+`UPGRADE_OK`, say the checkout upgraded but the listed host installs were
+skipped. Tell the user to run `"<root>/setup" --host auto` (the literal root
+path) after correcting the directories, rather than waiting for another version
+bump; do not run it before they have. After `UPGRADE_FAILED stage=setup`, tell
+them to rerun `"<root>/bin/update-run" "<root>"` instead, so its post-setup
+steps run too.
 
 Once `bin/update-run` reports `UPGRADE_OK <old> <new>`, the upgrade is installed for
 the *next* invocation — the current session keeps running the version it loaded.

@@ -196,6 +196,74 @@ function migrationPayload(scripts: Record<string, string>): Record<string, strin
 // ─── bin/update-run ─────────────────────────────────────────────────
 
 describe('bin/update-run', () => {
+  test('forwards real setup skipped hosts alongside checkout upgrade success', () => {
+    // bin/update-check makes the pair-review link setup-owned, so a copy pass
+    // that failed to skip the shared directory would replace it with a file.
+    const repo = createFixtureRepoWithRealSetup('skipped-hosts', {
+      beforeCommit(dir) {
+        writeFileSync(join(dir, 'bin', 'update-check'), '#!/usr/bin/env bash\n');
+        chmodSync(join(dir, 'bin', 'update-check'), 0o755);
+      },
+    });
+    pushNewVersion(`${baseTmp}/skipped-hosts-remote`, '1.1.0');
+    const home = join(baseTmp, 'skipped-hosts-home');
+    const claude = hostDir(home, 'claude', '');
+    mkdirSync(join(claude, 'pair-review'), { recursive: true });
+    symlinkSync(join(repo, 'skills', 'pair-review.md'), join(claude, 'pair-review', 'SKILL.md'));
+    const custom = join(claude, 'implement');
+    mkdirSync(custom);
+    writeFileSync(join(custom, 'SKILL.md'), 'CUSTOMIZED\n');
+    writeFileSync(join(custom, '.extend-root'), `${repo}\n`);
+    for (const host of ['codex', 'opencode', 'cursor'] as const) {
+      const root = hostDir(home, host, '');
+      mkdirSync(dirname(root), { recursive: true });
+      symlinkSync(claude, root);
+    }
+    const result = runBin(UPDATE_RUN, [repo], {
+      home, gstackExtendDir: repo, gstackExtendStateDir: join(baseTmp, 'skipped-hosts-state'),
+    });
+    expect(result.exitCode).toBe(0);
+    // Cursor yields to Claude, which this run refreshed; the copy hosts stay stale.
+    expect(result.stdout.match(/^SETUP_SKIPPED_HOSTS .+$/gm)).toEqual([
+      'SETUP_SKIPPED_HOSTS codex,opencode',
+    ]);
+    expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    expect(result.stderr).toContain('Shared-directory migration');
+    expect(lstatSync(join(claude, 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(custom, 'SKILL.md'), 'utf8')).toBe('CUSTOMIZED\n');
+  });
+
+  test('forwards setup skipped hosts when setup fails and still emits one failure result', () => {
+    const repo = createFixtureRepo('skipped-hosts-failure');
+    pushNewVersion(`${baseTmp}/skipped-hosts-failure-remote`, '1.1.0', {
+      setup: '#!/usr/bin/env bash\necho "SETUP_SKIPPED_HOSTS codex"\nexit 1\n',
+    });
+    const home = join(baseTmp, 'skipped-hosts-failure-home');
+    mkdirSync(home, { recursive: true });
+    const result = runBin(UPDATE_RUN, [repo], {
+      home, gstackExtendDir: repo, gstackExtendStateDir: join(baseTmp, 'skipped-hosts-failure-state'),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('SETUP_SKIPPED_HOSTS codex\n');
+    expect(result.stdout.match(/^UPGRADE_FAILED .+$/gm)).toHaveLength(1);
+    expect(result.stdout).toContain('UPGRADE_FAILED stage=setup');
+    expect(result.stdout).not.toContain('UPGRADE_OK');
+  });
+
+  // Auto-upgrades run the shared block from every preamble, so it must report skipped hosts itself.
+  test('the shared upgrade flow reports skipped hosts; the upgrade skill adds recovery', () => {
+    const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
+    const shared = skill.split('<!-- SHARED:upgrade-flow -->')[1]!.split('<!-- /SHARED:upgrade-flow -->')[0]!;
+    expect(shared).toContain('`SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host');
+    expect(shared).toContain('Shared-directory migration');
+    expect(shared).toContain('Never say every host was refreshed.');
+    const after = skill.split('## After upgrading')[1]!;
+    expect(after).toContain('`SETUP_SKIPPED_HOSTS <csv>`');
+    expect(after).toContain('`"<root>/setup" --host auto`');
+    expect(after).toContain('After `UPGRADE_FAILED stage=setup`, tell');
+    expect(after).toContain('`"<root>/bin/update-run" "<root>"`');
+  });
+
   describe('missing-arg + non-git rejection', () => {
     test('rejects missing repo root argument', () => {
       const r = spawnSync(UPDATE_RUN, [], { encoding: 'utf8' });
