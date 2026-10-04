@@ -15,6 +15,7 @@ import {
   readlinkSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -692,6 +693,23 @@ describe('setup --host flags', () => {
       expect(readFileSync(join(root, skill, 'SKILL.md'), 'utf8')).toBe(`LEGACY OR CUSTOMIZED ${skill}\n`);
       expect(readFileSync(join(root, skill, '.extend-root'), 'utf8')).toBe(`${ROOT}\n`);
     }
+  });
+
+  // Value: protects=Documented migration replaces a backed-up legacy copy with Claude's source link; fails_when=setup leaves SKILL.md absent or changes the backup; why_new=legacy preservation and orphan-pointer uninstall are tested separately; seam=none
+  test('Claude setup recreates a source link after a legacy copy is moved aside', () => {
+    const home = join(baseTmp, 'shared-legacy-migration');
+    const skillDir = join(hostDir(home, 'claude'), 'pair-review');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'SKILL.md'), 'LEGACY GENERATED COPY\n');
+    writeFileSync(join(skillDir, '.extend-root'), `${realpathSync(ROOT)}\n`);
+    renameSync(join(skillDir, 'SKILL.md'), join(skillDir, 'SKILL.md.backup'));
+
+    const result = runSetup(['--host', 'claude', '--quiet'], home);
+
+    expect(result.exitCode).toBe(0);
+    expect(lstatSync(join(skillDir, 'SKILL.md')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(skillDir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'pair-review.md'));
+    expect(readFileSync(join(skillDir, 'SKILL.md.backup'), 'utf8')).toBe('LEGACY GENERATED COPY\n');
   });
 
   test('Codex and OpenCode sharing a directory both skip, even without Claude detection', () => {
