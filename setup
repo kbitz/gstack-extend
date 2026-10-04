@@ -307,7 +307,7 @@ same_skills_dir() {
 }
 
 # Shared CLI links belong to this checkout until its last host install is gone: a pointer naming it beside a
-# SKILL.md, or a pointerless Claude SKILL.md link into it. Scan all installed names, including retired or
+# SKILL.md, or a Claude SKILL.md link into it. Scan all installed names, including retired or
 # user-detached skills; a pointer left without a SKILL.md is not an install. Sets HOST_INSTALL_POINTER to the first
 # pointer or link found so the caller can name it.
 HOST_INSTALL_POINTER=""
