@@ -2,11 +2,11 @@
 
 ## Unprocessed
 
-### [review] Report skipped hosts on the upgrade that first applies Track 22F's skip rule
-- **Why:** The session that runs the upgrade still follows the skill text it loaded before the pull, which predates `SETUP_SKIPPED_HOSTS`. It reports a plain "Update installed" and the line is lost; `update-check` then prints `JUST_UPGRADED`. A user whose Codex or OpenCode directory became skipped on that upgrade is never told until a later upgrade skips it again.
-- **Context:** Found by the Track 22F red-team review, 2026-10-03. Option: have setup save the skipped list in the state directory (cleared when nothing is skipped) and have `bin/update-check` print it with `JUST_UPGRADED` or while it is non-empty. Add a release note pointing to `docs/installation.md` Shared-directory migration.
+### [review] Report skipped hosts to sessions still running pre-22F skill text
+- **Why:** Reporting lives in skill text, but sessions that run an upgrade follow the text they loaded. Every upgrade into Track 22F's release reports a plain "Update installed", and `update-check` then prints `JUST_UPGRADED`. For users whose Codex or OpenCode directory is shared with Claude this never ends: setup preserves the old generated copies, so every Claude and Codex session keeps the pre-22F upgrade flow and no later upgrade reports the skip either, which is the case the Track set out to fix. Only `bin/update-check` and `bin/update-run` run new code for them.
+- **Context:** Found by the Track 22F red-team review, 2026-10-03. Option: have setup save the skipped list (and preserved-copy state) in the state directory, cleared when nothing is skipped, and have `bin/update-check` print it on every run while it is non-empty, worded so an old preamble that only relays its output still reaches the user. Add a release note pointing to `docs/installation.md` Shared-directory migration.
 - **Effort:** S (human: ~3h / CC: ~20min)
-- **Priority:** P2
+- **Priority:** P1
 
 ### [review] Report old copies Claude preserves in a shared directory
 - **Why:** In a directory Codex or OpenCode shares with Claude, old generated copies are regular files with this checkout's `.extend-root`. The Claude pass keeps them ("regular file, not overwriting", stderr only), so Claude reads frozen skills too, but only the copy host appears in `SETUP_SKIPPED_HOSTS`. After half a migration (the copy host moved, the copies left), no line is printed at all.

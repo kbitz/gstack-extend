@@ -792,6 +792,34 @@ describe('setup --host flags', () => {
     });
   }
 
+  // The share check is host-agnostic; exercise the link spellings once, through Codex.
+  for (const [name, target] of [
+    ['relative', '../.codex/skills'],
+    ['dot-component', '/HOME/.codex/skills/.'],
+    ['case-variant', '/HOME/.codex/Skills'],
+  ] as const) {
+    test(`codex skips when Claude's skills dir is a ${name} dangling link into its dir`, () => {
+      const home = join(baseTmp, `codex-dangling-${name}`);
+      mkdirSync(join(home, '.claude'), { recursive: true });
+      mkdirSync(join(home, '.codex'), { recursive: true });
+      symlinkSync(target.replace('/HOME', home), hostDir(home, 'claude'));
+      const r = runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS codex\n');
+      expect(readdirSync(join(home, '.codex'))).toEqual([]);
+    });
+  }
+
+  test('a self-referencing host skills link ends setup instead of hanging', () => {
+    const home = join(baseTmp, 'codex-link-loop');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    symlinkSync('skills', hostDir(home, 'codex'));
+    const env: Record<string, string> = { PATH: isolatedPath(), HOME: home };
+    const r = spawnSync(SETUP, ['--host', 'codex', '--quiet'], { encoding: 'utf8', env, timeout: 20000 });
+    expect(r.error).toBeUndefined();
+    expect(r.status).not.toBe(0);
+  });
+
   test('an uninstall whose every host is skipped removes nothing and keeps the CLI links', () => {
     const home = join(baseTmp, 'uninstall-all-skipped');
     const bin = join(home, '.local', 'bin');
@@ -810,6 +838,31 @@ describe('setup --host flags', () => {
     for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
       expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
     }
+  });
+
+  test('a Claude install without pointers keeps the CLI links on a Codex uninstall', () => {
+    const home = join(baseTmp, 'pointerless-claude-links');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    for (const skill of SKILLS) rmSync(join(hostDir(home, 'claude'), skill, '.extend-root'));
+    const r = runSetup(['--host', 'codex', '--uninstall'], home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain(`  Install pointer: ${hostDir(home, 'claude')}/`);
+    for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+      expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
+    }
+  });
+
+  test('codex skips a skill whose .extend-root is a directory', () => {
+    const home = join(baseTmp, 'extend-root-dir');
+    const pointer = join(hostDir(home, 'codex'), 'roadmap', '.extend-root');
+    mkdirSync(pointer, { recursive: true });
+    const r = runSetup(['--host', 'codex', '--quiet'], home);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain(`${pointer} is not a regular file, not overwriting`);
+    expect(readdirSync(join(hostDir(home, 'codex'), 'roadmap'))).toEqual(['.extend-root']);
+    expect(existsSync(join(hostDir(home, 'codex'), 'pair-review', 'SKILL.md'))).toBe(true);
   });
 
   test('a pointer left without a SKILL.md does not keep the CLI links', () => {

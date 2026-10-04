@@ -51,7 +51,12 @@ report_skipped_hosts() {
   [ -z "$SKIPPED_HOSTS" ] || printf 'SETUP_SKIPPED_HOSTS %s\n' "$SKIPPED_HOSTS"
   return 0
 }
-trap report_skipped_hosts EXIT
+REWRITE_TMP=""
+on_exit() {
+  [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP"
+  report_skipped_hosts
+}
+trap on_exit EXIT
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -162,6 +167,27 @@ refuse_package_root_link() {
   fi
 }
 
+# Keep shell paths as authored. Baking HOME into bash bodies changes parsing
+# when it contains spaces or shell metacharacters; the skill resolver probes hosts.
+host_skill_body() {
+  local src="$1" host="$2"
+  if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
+    awk '
+      BEGIN { fm=0; skip=0 }
+      /^---[[:space:]]*$/ {
+        if (fm==0) { fm=1; print; next }
+        skip=0; print; next
+      }
+      fm==1 && /^allowed-tools:[[:space:]]*$/ { skip=1; next }
+      skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
+      skip==1 { skip=0 }
+      { print }
+    ' "$src"
+  else
+    cat "$src"
+  fi
+}
+
 rewrite_skill_body() {
   local src="$1"
   local dest="$2"
@@ -173,38 +199,18 @@ rewrite_skill_body() {
   fi
 
   # Write beside dest, then rename over it: never truncate or write through the existing file (a hardlink to the
-  # source, say), and readers never see a partial copy. mktemp's 0600 becomes the umask's default file mode.
+  # source, say), and readers never see a partial copy. mktemp's 0600 becomes the umask's default file mode. The
+  # EXIT trap removes the temp file if setup dies or is interrupted before the rename.
   tmp="$(mktemp "$(dirname "$dest")/.SKILL.md.XXXXXX")"
-  if ! chmod "$(printf '%o' $(( 0666 & ~$(umask) )))" "$tmp"; then
-    rm -f "$tmp"
-    return 1
+  REWRITE_TMP="$tmp"
+  if chmod "$(printf '%o' $(( 0666 & ~$(umask) )))" "$tmp" && host_skill_body "$src" "$host" > "$tmp" &&
+    mv -f "$tmp" "$dest"; then
+    REWRITE_TMP=""
+    return 0
   fi
-
-  # Keep shell paths as authored. Baking HOME into bash bodies changes parsing
-  # when it contains spaces or shell metacharacters; the skill resolver probes hosts.
-  if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
-    if ! awk '
-      BEGIN { fm=0; skip=0 }
-      /^---[[:space:]]*$/ {
-        if (fm==0) { fm=1; print; next }
-        skip=0; print; next
-      }
-      fm==1 && /^allowed-tools:[[:space:]]*$/ { skip=1; next }
-      skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
-      skip==1 { skip=0 }
-      { print }
-    ' "$src" > "$tmp"; then
-      rm -f "$tmp"
-      return 1
-    fi
-  elif ! cat "$src" > "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  if ! mv -f "$tmp" "$dest"; then
-    rm -f "$tmp"
-    return 1
-  fi
+  rm -f "$tmp"
+  REWRITE_TMP=""
+  return 1
 }
 
 # A regular-file SKILL.md next to an .extend-root pointer is a copy setup generated for Codex/OpenCode/Cursor. Claude
@@ -291,6 +297,10 @@ same_skills_dir() {
     if [ -L "$b" ] && [ "$hops" -lt 40 ]; then b="$(link_target "$b")"; hops=$((hops + 1)); continue; fi
     rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"
   done
+  # Missing components cannot be links, so collapse "." and ".." lexically; ignore case, since a case variant may
+  # name the same directory once it exists (a false match only skips a host).
+  rest_a="$(lex_abs "${rest_a:-/}" | tr '[:upper:]' '[:lower:]')"
+  rest_b="$(lex_abs "${rest_b:-/}" | tr '[:upper:]' '[:lower:]')"
   [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
 }
 
@@ -299,7 +309,7 @@ same_skills_dir() {
 # is not an install. Sets HOST_INSTALL_POINTER to the first pointer found so the caller can name it.
 HOST_INSTALL_POINTER=""
 checkout_has_host_install() {
-  local host pointer root
+  local host pointer root link
   for host in claude codex opencode cursor; do
     for pointer in "$(host_skills_dir "$host")"/*/.extend-root; do
       [ -f "$pointer" ] && [ -r "$pointer" ] || continue
@@ -311,6 +321,14 @@ checkout_has_host_install() {
         return 0
       fi
     done
+  done
+  # Claude installs from before every host got a pointer are bare SKILL.md links into this checkout.
+  for link in "$(host_skills_dir claude)"/*/SKILL.md; do
+    [ -L "$link" ] || continue
+    if [ "$(lex_abs "$(link_target "$link")")" = "$SCRIPT_DIR/skills/$(basename "$(dirname "$link")").md" ]; then
+      HOST_INSTALL_POINTER="$link"
+      return 0
+    fi
   done
   return 1
 }
@@ -386,6 +404,10 @@ preflight_dir() {
       echo "$USAGE" >&2
       exit 1
     fi
+    if [ -e "$target/.extend-root" ] && [ ! -f "$target/.extend-root" ]; then
+      echo "Warning: $target/.extend-root is not a regular file, not overwriting" >&2
+      continue
+    fi
     if [ -e "$target/SKILL.md" ] && [ ! -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
       echo "Warning: $target/SKILL.md is not a regular file, not overwriting" >&2
       continue
@@ -419,6 +441,9 @@ install_into_dir() {
     src="$SCRIPT_DIR/skills/${skill}.md"
     [ -f "$src" ] || continue
     target="$skills_dir/$skill"
+    if [ -e "$target/.extend-root" ] && [ ! -f "$target/.extend-root" ]; then
+      continue
+    fi
     if [ -e "$target/SKILL.md" ] && [ ! -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
       continue
     fi
