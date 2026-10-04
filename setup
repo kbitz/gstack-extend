@@ -34,6 +34,25 @@ USAGE="Usage: ./setup [--host claude|codex|opencode|cursor|auto] [--uninstall] [
 
 log() { [ "$QUIET" -eq 0 ] && echo "$@" || true; }
 
+# Protocol output survives --quiet and failures after a host was skipped.
+SKIPPED_HOSTS=""
+SKIPPED_NON_CURSOR=0
+skip_host() {
+  case "$1" in
+    claude) INSTALL_CLAUDE=0 ;;
+    codex) INSTALL_CODEX=0 ;;
+    opencode) INSTALL_OPENCODE=0 ;;
+    cursor) INSTALL_CURSOR=0 ;;
+  esac
+  [ "$1" = "cursor" ] || SKIPPED_NON_CURSOR=1
+  SKIPPED_HOSTS="${SKIPPED_HOSTS:+$SKIPPED_HOSTS,}$1"
+}
+report_skipped_hosts() {
+  [ -z "$SKIPPED_HOSTS" ] || printf 'SETUP_SKIPPED_HOSTS %s\n' "$SKIPPED_HOSTS"
+  return 0
+}
+trap report_skipped_hosts EXIT
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --uninstall)
@@ -147,23 +166,24 @@ rewrite_skill_body() {
   local src="$1"
   local dest="$2"
   local host="$3"
-  local host_root skill
-  host_root="$(host_skills_dir "$host")"
+  local tmp
 
   if [ -L "$dest" ]; then
     rm -f "$dest"
   fi
 
-  local tmp
-  tmp="$(mktemp)"
-  local sed_args=()
-  for skill in "${SKILLS[@]}" gstack-extend; do
-    sed_args+=(-e "s|~/.claude/skills/${skill}|${host_root}/${skill}|g")
-  done
-  sed "${sed_args[@]}" "$src" > "$tmp"
+  # Write beside dest, then rename over it: never truncate or write through the existing file (a hardlink to the
+  # source, say), and readers never see a partial copy. mktemp's 0600 becomes the umask's default file mode.
+  tmp="$(mktemp "$(dirname "$dest")/.SKILL.md.XXXXXX")"
+  if ! chmod "$(printf '%o' $(( 0666 & ~$(umask) )))" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
 
+  # Keep shell paths as authored. Baking HOME into bash bodies changes parsing
+  # when it contains spaces or shell metacharacters; the skill resolver probes hosts.
   if [ "$host" = "codex" ] || [ "$host" = "cursor" ]; then
-    awk '
+    if ! awk '
       BEGIN { fm=0; skip=0 }
       /^---[[:space:]]*$/ {
         if (fm==0) { fm=1; print; next }
@@ -173,10 +193,17 @@ rewrite_skill_body() {
       skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
       skip==1 { skip=0 }
       { print }
-    ' "$tmp" > "$dest"
+    ' "$src" > "$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  elif ! cat "$src" > "$tmp"; then
     rm -f "$tmp"
-  else
-    mv "$tmp" "$dest"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp"
+    return 1
   fi
 }
 
@@ -241,13 +268,51 @@ extend_owned_link() {
   fi
 }
 
+link_target() {
+  local target
+  target="$(readlink "$1")"
+  case "$target" in
+    /*) printf '%s\n' "$target" ;;
+    *) printf '%s\n' "$(dirname "$1")/$target" ;;
+  esac
+}
+
 # Two skills dirs are the same when their deepest existing ancestors are the same directory (compared by inode, so
-# case variants on a case-insensitive disk match) and the missing parts below them are spelled the same.
+# case variants on a case-insensitive disk match) and the missing parts below them are spelled the same. A dangling
+# link is followed to its target, so a link into a directory that does not exist yet compares by where it leads.
 same_skills_dir() {
-  local a="$1" b="$2" rest_a="" rest_b=""
-  while [ ! -d "$a" ]; do rest_a="/$(basename "$a")$rest_a"; a="$(dirname "$a")"; done
-  while [ ! -d "$b" ]; do rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"; done
+  local a="$1" b="$2" rest_a="" rest_b="" hops=0
+  while [ ! -d "$a" ]; do
+    if [ -L "$a" ] && [ "$hops" -lt 40 ]; then a="$(link_target "$a")"; hops=$((hops + 1)); continue; fi
+    rest_a="/$(basename "$a")$rest_a"; a="$(dirname "$a")"
+  done
+  hops=0
+  while [ ! -d "$b" ]; do
+    if [ -L "$b" ] && [ "$hops" -lt 40 ]; then b="$(link_target "$b")"; hops=$((hops + 1)); continue; fi
+    rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"
+  done
   [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
+}
+
+# Shared CLI links belong to this checkout until its last host install is gone: a pointer naming it beside a
+# SKILL.md. Scan all installed names, including retired or user-detached skills; a pointer left without a SKILL.md
+# is not an install. Sets HOST_INSTALL_POINTER to the first pointer found so the caller can name it.
+HOST_INSTALL_POINTER=""
+checkout_has_host_install() {
+  local host pointer root
+  for host in claude codex opencode cursor; do
+    for pointer in "$(host_skills_dir "$host")"/*/.extend-root; do
+      [ -f "$pointer" ] && [ -r "$pointer" ] || continue
+      [ -e "${pointer%/.extend-root}/SKILL.md" ] || [ -L "${pointer%/.extend-root}/SKILL.md" ] || continue
+      root=""
+      IFS= read -r root < "$pointer" || true
+      if [ "$(lex_abs "$root")" = "$SCRIPT_DIR" ]; then
+        HOST_INSTALL_POINTER="$pointer"
+        return 0
+      fi
+    done
+  done
+  return 1
 }
 
 uninstall_from_dir() {
@@ -321,6 +386,10 @@ preflight_dir() {
       echo "$USAGE" >&2
       exit 1
     fi
+    if [ -e "$target/SKILL.md" ] && [ ! -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
+      echo "Warning: $target/SKILL.md is not a regular file, not overwriting" >&2
+      continue
+    fi
     if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       echo "Warning: $target/SKILL.md is a regular file, not overwriting" >&2
       continue
@@ -350,6 +419,9 @@ install_into_dir() {
     src="$SCRIPT_DIR/skills/${skill}.md"
     [ -f "$src" ] || continue
     target="$skills_dir/$skill"
+    if [ -e "$target/SKILL.md" ] && [ ! -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ]; then
+      continue
+    fi
     if [ -f "$target/SKILL.md" ] && [ ! -L "$target/SKILL.md" ] && ! generated_copy "$target" "$host"; then
       continue
     fi
@@ -399,28 +471,64 @@ elif [ "$HOST" = "cursor" ]; then
   INSTALL_CURSOR=1
 fi
 
-# Cursor also reads other hosts' skill dirs. When ~/.cursor/skills is one of them (a symlink to ~/.claude/skills,
-# say), that host owns it: a Cursor pass would turn its installs into copies, or remove them on uninstall.
-if [ "$INSTALL_CURSOR" -eq 1 ]; then
-  for _other in claude codex opencode; do
-    if same_skills_dir "$(host_skills_dir cursor)" "$(host_skills_dir "$_other")"; then
-      echo "Warning: $(host_skills_dir cursor) is the $_other skills directory; skipping cursor" >&2
-      INSTALL_CURSOR=0
+# A copy-producing pass must never rewrite or remove another host's directory, even if that other host was not
+# selected. Codex and OpenCode skip a directory shared with Claude or with each other; they need separate dirs.
+# Cursor yields to any host whose directory it shares, as it always has, and reads that host's install there.
+CURSOR_OWNER=""
+for _host in codex opencode cursor; do
+  case "$_host" in
+    codex) [ "$INSTALL_CODEX" -eq 1 ] || continue ;;
+    opencode) [ "$INSTALL_OPENCODE" -eq 1 ] || continue ;;
+    cursor) [ "$INSTALL_CURSOR" -eq 1 ] || continue ;;
+  esac
+  for _other in claude codex opencode cursor; do
+    case "$_other" in "$_host"|cursor) continue ;; esac
+    if same_skills_dir "$(host_skills_dir "$_host")" "$(host_skills_dir "$_other")"; then
+      echo "Warning: $(host_skills_dir "$_host") is the $_other skills directory; skipping $_host" >&2
+      if [ "$_host" = "cursor" ]; then
+        INSTALL_CURSOR=0
+        CURSOR_OWNER="$_other"
+      else
+        echo "  Use separate host skills directories. For legacy copies, see docs/installation.md: Shared-directory migration." >&2
+        skip_host "$_host"
+      fi
       break
     fi
   done
-fi
+done
 
 any_host_selected() {
   [ "$INSTALL_CLAUDE" -eq 1 ] || [ "$INSTALL_CODEX" -eq 1 ] || [ "$INSTALL_OPENCODE" -eq 1 ] || [ "$INSTALL_CURSOR" -eq 1 ]
 }
 
-if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && ! any_host_selected; then
+# A Cursor that yielded is served when this run also processes the host it yielded to; otherwise report it.
+# Call once host selection is final.
+report_unserved_cursor() {
+  local served=0
+  case "$CURSOR_OWNER" in
+    '') return 0 ;;
+    claude) served=$INSTALL_CLAUDE ;;
+    codex) served=$INSTALL_CODEX ;;
+    opencode) served=$INSTALL_OPENCODE ;;
+  esac
+  if [ "$served" -eq 0 ]; then
+    skip_host cursor
+  fi
+}
+
+# A lone yielded Cursor falls back to Claude, as detecting nothing does; a skipped Codex or OpenCode does not.
+if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ "$SKIPPED_NON_CURSOR" -eq 0 ] && ! any_host_selected; then
   INSTALL_CLAUDE=1
 fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
 if [ "$UNINSTALL" -eq 1 ]; then
+  report_unserved_cursor
+  # Every selected host was skipped: uninstall nothing, and leave the shared CLI links alone too.
+  if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && ! any_host_selected; then
+    log "Nothing uninstalled: skipped $SKIPPED_HOSTS."
+    exit 0
+  fi
   if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
     uninstall_from_dir "$SKILLS_DIR"
   else
@@ -430,43 +538,31 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ "$INSTALL_CURSOR" -eq 1 ] && uninstall_from_dir "$(host_skills_dir cursor)" cursor
   fi
 
-  if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "claude" ] || [ "$HOST" = "auto" ]; }; then
-    cli_link="$HOME/.local/bin/gstack-extend"
-    cli_expected="$SCRIPT_DIR/bin/gstack-extend"
-    if [ -L "$cli_link" ]; then
-      link_target="$(readlink "$cli_link" 2>/dev/null || true)"
-      if [ "$link_target" = "$cli_expected" ]; then
-        rm -f "$cli_link"
-        log "Removed gstack-extend CLI symlink ($cli_link)"
-      else
-        log "Skipped gstack-extend CLI symlink (points elsewhere: $link_target)"
-      fi
-    fi
-    tel_link="$HOME/.local/bin/gstack-extend-telemetry"
-    tel_expected="$SCRIPT_DIR/bin/gstack-extend-telemetry"
-    if [ -L "$tel_link" ]; then
-      link_target="$(readlink "$tel_link" 2>/dev/null || true)"
-      if [ "$link_target" = "$tel_expected" ]; then
-        rm -f "$tel_link"
-        log "Removed gstack-extend-telemetry symlink ($tel_link)"
-      else
-        log "Skipped gstack-extend-telemetry symlink (points elsewhere: $link_target)"
-      fi
-    fi
-  elif [ "$SKILLS_DIR_GIVEN" -eq 0 ] && { [ "$HOST" = "codex" ] || [ "$HOST" = "opencode" ] || [ "$HOST" = "cursor" ]; }; then
-    # Shared links stay until a Claude or auto uninstall. Say how to remove them by hand.
-    kept_ours=""
+  if [ "$SKILLS_DIR_GIVEN" -eq 0 ]; then
+    _keep_links=0
+    _kept_links=0
+    checkout_has_host_install && _keep_links=1
     for _pair in "gstack-extend|$SCRIPT_DIR/bin/gstack-extend" "gstack-extend-telemetry|$SCRIPT_DIR/bin/gstack-extend-telemetry"; do
       _name="${_pair%%|*}"
       _expected="${_pair#*|}"
       _link="$HOME/.local/bin/$_name"
-      if [ -L "$_link" ] && [ "$(readlink "$_link" 2>/dev/null || true)" = "$_expected" ]; then
-        kept_ours="$kept_ours ~/.local/bin/$_name"
+      _label="$_name"
+      [ "$_name" != "gstack-extend" ] || _label="gstack-extend CLI"
+      [ -L "$_link" ] || continue
+      link_target="$(readlink "$_link" 2>/dev/null || true)"
+      if [ "$link_target" = "$_expected" ]; then
+        if [ "$_keep_links" -eq 1 ]; then
+          log "Kept ~/.local/bin/$_name (this checkout still has a host install)"
+          _kept_links=1
+        else
+          rm -f "$_link"
+          log "Removed $_label symlink ($_link)"
+        fi
+      else
+        log "Skipped $_label symlink (points elsewhere: $link_target)"
       fi
     done
-    if [ -n "$kept_ours" ]; then
-      log "Kept$kept_ours (shared by all hosts; rm$kept_ours)"
-    fi
+    [ "$_kept_links" -eq 0 ] || log "  Install pointer: $HOST_INSTALL_POINTER"
   fi
 
   log "Uninstall complete."
@@ -477,7 +573,6 @@ fi
 # Auto mode skips a detected host whose skills dir fails the install-path check (outside HOME, not yours,
 # world-writable) instead of stopping every host; a host named with --host still stops setup.
 if [ "$HOST" = "auto" ]; then
-  _skipped_non_cursor=0
   for _host in claude codex opencode cursor; do
     case "$_host" in
       claude) [ "$INSTALL_CLAUDE" -eq 1 ] || continue ;;
@@ -488,24 +583,26 @@ if [ "$HOST" = "auto" ]; then
     if ! _unsafe=$(is_safe_install_path "$(host_skills_dir "$_host")" 2>&1); then
       echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
       echo "  Fix that directory, then run setup --host $_host." >&2
-      case "$_host" in
-        claude) INSTALL_CLAUDE=0; _skipped_non_cursor=1 ;;
-        codex) INSTALL_CODEX=0; _skipped_non_cursor=1 ;;
-        opencode) INSTALL_OPENCODE=0; _skipped_non_cursor=1 ;;
-        cursor) INSTALL_CURSOR=0 ;;
-      esac
+      skip_host "$_host"
     fi
   done
+fi
+report_unserved_cursor
+if [ "$HOST" = "auto" ] && ! any_host_selected; then
   # Cursor also reads ~/.claude/skills, so a lone skipped Cursor falls back to Claude as detecting nothing does.
-  # Any other skipped host would not read a Claude install, so that stays a failure.
-  if ! any_host_selected; then
-    if [ "$_skipped_non_cursor" -eq 1 ]; then
-      echo "Error: no detected host has a safe skills directory; nothing installed." >&2
-      echo "$USAGE" >&2
-      exit 1
-    fi
-    INSTALL_CLAUDE=1
+  # Any other skipped host needs its own refreshed copies, so that stays a failure.
+  if [ "$SKIPPED_NON_CURSOR" -eq 1 ]; then
+    echo "Error: no detected host has a usable skills directory (unsafe, or shared with another host); nothing installed." >&2
+    echo "$USAGE" >&2
+    exit 1
   fi
+  INSTALL_CLAUDE=1
+fi
+
+# A --host pass whose host was skipped installs nothing, so it leaves the shared CLI links and registry alone.
+if ! any_host_selected; then
+  log "Nothing installed: skipped $SKIPPED_HOSTS."
+  exit 0
 fi
 
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then

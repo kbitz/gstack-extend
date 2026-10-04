@@ -8,6 +8,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -15,6 +16,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -237,9 +239,9 @@ describe('setup --host flags', () => {
   });
 
   for (const host of ['codex', 'opencode', 'cursor'] as const) {
-    test(`${host} copies rewrite sibling paths in a fixture skill`, () => {
+    test(`${host} copies preserve authored shell paths under a HOME with spaces and metacharacters`, () => {
       const fixture = join(baseTmp, `rewrite-fixture-${host}`);
-      const home = join(baseTmp, `rewrite-home-${host}`);
+      const home = join(baseTmp, `home ${host} with spaces $(touch INJECTED) \`touch BACKTICK\``);
       mkdirSync(join(fixture, 'skills'), { recursive: true });
       mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
       mkdirSync(home, { recursive: true });
@@ -247,15 +249,114 @@ describe('setup --host flags', () => {
       copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
       for (const skill of SKILLS) {
         writeFileSync(join(fixture, 'skills', `${skill}.md`),
-          `---\nname: ${skill}\ndescription: Fixture\n---\nRead ~/.claude/skills/pair-review/SKILL.md\n`);
+          `---\nname: ${skill}\ndescription: Fixture\n---\n\`\`\`bash\nprintf '%s\\n' ~/.claude/skills/pair-review/SKILL.md\n\`\`\`\n`);
       }
       const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
       });
       expect(result.status).toBe(0);
       const body = readFileSync(join(hostDir(home, host), 'pair-review', 'SKILL.md'), 'utf8');
-      expect(body).toContain(`Read ${hostDir(home, host)}/pair-review/SKILL.md`);
-      expect(body).not.toContain('~/.claude/skills/');
+      expect(body).toContain('~/.claude/skills/pair-review/SKILL.md');
+      expect(body).not.toContain(home);
+      const shell = body.split('```bash\n')[1]!.split('```')[0]!;
+      const executed = spawnSync('bash', ['-c', shell], {
+        cwd: home, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+      });
+      expect(executed.status).toBe(0);
+      expect(executed.stdout).toBe(`${hostDir(home, 'claude')}/pair-review/SKILL.md\n`);
+      expect(executed.stderr).toBe('');
+      expect(existsSync(join(home, 'INJECTED'))).toBe(false);
+      expect(existsSync(join(home, 'BACKTICK'))).toBe(false);
+    });
+
+    test(`${host} replaces a generated copy without writing through a hardlink to its source`, () => {
+      const fixture = join(baseTmp, `hardlink-fixture-${host}`);
+      const home = join(baseTmp, `hardlink-home-${host}`);
+      mkdirSync(join(fixture, 'skills'), { recursive: true });
+      mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
+      copyFileSync(SETUP, join(fixture, 'setup'));
+      copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      const source = (skill: string) => `---\nname: ${skill}\ndescription: Fixture\nallowed-tools:\n  - Bash\n---\nBODY\n`;
+      for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), source(skill));
+      const dir = join(hostDir(home, host), 'pair-review');
+      mkdirSync(dir, { recursive: true });
+      linkSync(join(fixture, 'skills', 'pair-review.md'), join(dir, 'SKILL.md'));
+      writeFileSync(join(dir, '.extend-root'), `${realpathSync(fixture)}\n`);
+      const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
+        encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+      });
+      expect(result.status).toBe(0);
+      expect(readFileSync(join(fixture, 'skills', 'pair-review.md'), 'utf8')).toBe(source('pair-review'));
+      expect(statSync(join(dir, 'SKILL.md')).ino).not.toBe(statSync(join(fixture, 'skills', 'pair-review.md')).ino);
+      const installed = readFileSync(join(dir, 'SKILL.md'), 'utf8');
+      expect(installed).toBe(host === 'opencode'
+        ? source('pair-review')
+        : '---\nname: pair-review\ndescription: Fixture\n---\nBODY\n');
+      expect(readdirSync(dir).sort()).toEqual(['.extend-root', 'SKILL.md']);
+    });
+  }
+
+  // Generated copies keep source paths verbatim, so a Claude-only sibling path would ship to every host.
+  test('skill sources never hardcode a ~/.claude/skills/ path', () => {
+    for (const skill of SKILLS) {
+      expect(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8')).not.toContain('~/.claude/skills/');
+    }
+  });
+
+  for (const host of ['codex', 'opencode'] as const) {
+    test.skipIf(process.getuid?.() === 0)(`${host} keeps the previous copy and leaves no temp file when a rewrite fails`, () => {
+      const fixture = join(baseTmp, `rewrite-fail-fixture-${host}`);
+      const home = join(baseTmp, `rewrite-fail-home-${host}`);
+      mkdirSync(join(fixture, 'skills'), { recursive: true });
+      mkdirSync(join(fixture, 'bin', 'lib'), { recursive: true });
+      copyFileSync(SETUP, join(fixture, 'setup'));
+      copyFileSync(join(ROOT, 'bin/lib/install-safety.sh'), join(fixture, 'bin/lib/install-safety.sh'));
+      for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), `---\nname: ${skill}\ndescription: F\n---\nNEW\n`);
+      const dir = join(hostDir(home, host), 'pair-review');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), 'OLD\n');
+      writeFileSync(join(dir, '.extend-root'), `${realpathSync(fixture)}\n`);
+      const src = join(fixture, 'skills', 'pair-review.md');
+      chmodSync(src, 0o000);
+      try {
+        const r = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
+          encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
+        });
+        expect(r.status).not.toBe(0);
+      } finally {
+        chmodSync(src, 0o644);
+      }
+      expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('OLD\n');
+      expect(readdirSync(dir).sort()).toEqual(['.extend-root', 'SKILL.md']);
+    });
+  }
+
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
+    test(`${host} copies get the umask default mode, not mktemp's 0600`, () => {
+      const home = join(baseTmp, `copy-mode-${host}`);
+      mkdirSync(home, { recursive: true });
+      const r = spawnSync('bash', ['-c', 'umask 022; exec "$0" "$@"', SETUP, '--host', host, '--quiet'], {
+        encoding: 'utf8', env: { PATH: isolatedPath(), HOME: home },
+      });
+      expect(r.status).toBe(0);
+      for (const skill of SKILLS) {
+        expect(statSync(join(hostDir(home, host), skill, 'SKILL.md')).mode & 0o777).toBe(0o644);
+      }
+    });
+  }
+
+  for (const host of ['claude', 'codex'] as const) {
+    test(`${host} skips a SKILL.md that is a directory without claiming it`, () => {
+      const home = join(baseTmp, `skill-md-dir-${host}`);
+      const dir = join(hostDir(home, host), 'roadmap', 'SKILL.md');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'notes.txt'), 'KEEP\n');
+      const r = runSetup(['--host', host, '--quiet'], home);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain(`${dir} is not a regular file, not overwriting`);
+      expect(readdirSync(dir)).toEqual(['notes.txt']);
+      expect(existsSync(join(hostDir(home, host), 'roadmap', '.extend-root'))).toBe(false);
+      expect(existsSync(join(hostDir(home, host), 'pair-review', 'SKILL.md'))).toBe(true);
     });
   }
 
@@ -294,7 +395,7 @@ describe('setup --host flags', () => {
     });
   }
 
-  test('--host cursor writes native paths and strips allowed-tools from all skills', () => {
+  test('--host cursor preserves skill bodies and strips allowed-tools from all skills', () => {
     const home = join(baseTmp, 'cursor-explicit');
     mkdirSync(home, { recursive: true });
     expect(runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
@@ -309,12 +410,7 @@ describe('setup --host flags', () => {
       const frontmatter = body.slice(0, body.indexOf('\n---', 4));
       expect(frontmatter).not.toContain('allowed-tools:');
       expect(frontmatter).not.toMatch(/^  - /m);
-      for (const name of [...SKILLS, 'gstack-extend']) {
-        expect(body).not.toContain(`~/.claude/skills/${name}`);
-        if (source.includes(`~/.claude/skills/${name}`)) {
-          expect(body).toContain(`${hostDir(home, 'cursor')}/${name}`);
-        }
-      }
+      expect(body.slice(body.indexOf('\n---', 4))).toBe(source.slice(source.indexOf('\n---', 4)));
     }
     expect(existsSync(join(home, '.claude'))).toBe(false);
     expect(existsSync(join(hostDir(home, 'cursor'), 'gstack-extend', 'SKILL.md'))).toBe(false);
@@ -525,27 +621,210 @@ describe('setup --host flags', () => {
     expect(existsSync(join(dir, '.extend-root'))).toBe(false);
   });
 
-  test('Cursor skips a skills dir shared with Claude, on install and uninstall', () => {
-    const home = join(baseTmp, 'cursor-alias');
-    mkdirSync(join(home, '.cursor'), { recursive: true });
-    const path = isolatedPath(['claude']);
-    expect(runSetup(['--host', 'claude', '--quiet'], home, path, true).exitCode).toBe(0);
-    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'cursor'));
-    const custom = join(hostDir(home, 'claude'), 'implement', 'SKILL.md');
-    rmSync(custom);
-    writeFileSync(custom, 'CUSTOMIZED BY USER\n');
-    const auto = runSetup(['--host', 'auto', '--quiet'], home, path, true);
-    expect(auto.exitCode).toBe(0);
-    expect(auto.stderr).toContain('skipping cursor');
-    expect(readFileSync(custom, 'utf8')).toBe('CUSTOMIZED BY USER\n');
-    expect(lstatSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
-    const removed = runSetup(['--host', 'cursor', '--uninstall', '--quiet'], home, path, true);
-    expect(removed.exitCode).toBe(0);
-    expect(removed.stderr).toContain('skipping cursor');
-    expect(readFileSync(custom, 'utf8')).toBe('CUSTOMIZED BY USER\n');
-    for (const skill of SKILLS.filter((name) => name !== 'implement')) {
-      expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
+    test(`${host} skips a skills dir shared with Claude, on explicit/auto install and uninstall`, () => {
+      const home = join(baseTmp, `${host}-alias`);
+      mkdirSync(join(hostDir(home, host), '..'), { recursive: true });
+      const path = isolatedPath(['claude']);
+      expect(runSetup(['--host', 'claude', '--quiet'], home, path, true).exitCode).toBe(0);
+      symlinkSync(hostDir(home, 'claude'), hostDir(home, host));
+      const custom = join(hostDir(home, 'claude'), 'implement', 'SKILL.md');
+      rmSync(custom);
+      writeFileSync(custom, 'CUSTOMIZED BY USER\n');
+      const explicit = runSetup(['--host', host, '--quiet'], home, path, true);
+      expect(explicit.exitCode).toBe(0);
+      expect(explicit.stdout).toBe(`SETUP_SKIPPED_HOSTS ${host}\n`);
+      const auto = runSetup(['--host', 'auto', '--quiet'], home, path, true);
+      expect(auto.exitCode).toBe(0);
+      expect(auto.stderr).toContain(`skipping ${host}`);
+      // Cursor yields to Claude and reads the install this run refreshed; copy hosts are left stale.
+      expect(auto.stdout).toBe(host === 'cursor' ? '' : `SETUP_SKIPPED_HOSTS ${host}\n`);
+      if (host === 'cursor') expect(auto.stderr).not.toContain('Shared-directory migration');
+      expect(readFileSync(custom, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+      expect(lstatSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+      const removed = runSetup(['--host', host, '--uninstall', '--quiet'], home, path, true);
+      expect(removed.exitCode).toBe(0);
+      expect(removed.stderr).toContain(`skipping ${host}`);
+      expect(removed.stdout).toBe(`SETUP_SKIPPED_HOSTS ${host}\n`);
+      expect(readFileSync(custom, 'utf8')).toBe('CUSTOMIZED BY USER\n');
+      for (const skill of SKILLS.filter((name) => name !== 'implement')) {
+        expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
+      }
+    });
+
+    test(`${host} skips a parent alias before its shared skills directory exists`, () => {
+      const home = join(baseTmp, `${host}-parent-alias`);
+      const claude = join(home, '.claude');
+      mkdirSync(claude, { recursive: true });
+      const hostParent = join(hostDir(home, host), '..');
+      mkdirSync(join(hostParent, '..'), { recursive: true });
+      symlinkSync(claude, hostParent);
+      const r = runSetup(['--host', host, '--quiet'], home, isolatedPath(), true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe(`SETUP_SKIPPED_HOSTS ${host}\n`);
+      expect(readdirSync(claude)).toEqual([]);
+    });
+  }
+
+  test('shared legacy copies and customized Claude files stay untouched until manual migration', () => {
+    const home = join(baseTmp, 'shared-legacy');
+    const root = hostDir(home, 'claude');
+    for (const skill of SKILLS) {
+      const dir = join(root, skill);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), `LEGACY OR CUSTOMIZED ${skill}\n`);
+      writeFileSync(join(dir, '.extend-root'), `${ROOT}\n`);
     }
+    for (const host of ['codex', 'opencode', 'cursor'] as const) {
+      mkdirSync(join(hostDir(home, host), '..'), { recursive: true });
+      symlinkSync(root, hostDir(home, host));
+    }
+    const path = isolatedPath(['claude', 'codex', 'opencode', 'cursor']);
+    const r = runSetup(['--host', 'auto', '--quiet'], home, path, true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS codex,opencode\n');
+    expect(r.stderr).toContain('skipping cursor');
+    expect(r.stderr).toContain('Shared-directory migration');
+    for (const skill of SKILLS) {
+      expect(readFileSync(join(root, skill, 'SKILL.md'), 'utf8')).toBe(`LEGACY OR CUSTOMIZED ${skill}\n`);
+      expect(readFileSync(join(root, skill, '.extend-root'), 'utf8')).toBe(`${ROOT}\n`);
+    }
+  });
+
+  test('Codex and OpenCode sharing a directory both skip, even without Claude detection', () => {
+    const home = join(baseTmp, 'copy-hosts-alias');
+    const root = hostDir(home, 'opencode');
+    mkdirSync(root, { recursive: true });
+    mkdirSync(join(home, '.codex'));
+    writeFileSync(join(root, 'personal.md'), 'KEEP\n');
+    symlinkSync(root, hostDir(home, 'codex'));
+    const path = isolatedPath(['codex', 'opencode']);
+    const r = runSetup(['--host', 'auto', '--quiet'], home, path, true);
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS codex,opencode\n');
+    expect(readdirSync(root)).toEqual(['personal.md']);
+    expect(existsSync(join(home, '.claude'))).toBe(false);
+  });
+
+  for (const owner of ['codex', 'opencode'] as const) {
+    test(`Cursor pointed at the ${owner} dir leaves ${owner} as its owner`, () => {
+      const home = join(baseTmp, `cursor-into-${owner}`);
+      mkdirSync(hostDir(home, owner), { recursive: true });
+      mkdirSync(join(home, '.cursor'));
+      symlinkSync(hostDir(home, owner), hostDir(home, 'cursor'));
+      const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath([owner, 'cursor']), true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain(`is the ${owner} skills directory; skipping cursor`);
+      expect(r.stdout).toBe('');
+      for (const skill of SKILLS) {
+        const path = join(hostDir(home, owner), skill, 'SKILL.md');
+        expect(lstatSync(path).isFile()).toBe(true);
+      }
+    });
+  }
+
+  test('--host auto --uninstall falls back to Claude when the only detected host is an aliased Cursor', () => {
+    const home = join(baseTmp, 'cursor-only-alias-uninstall');
+    const skill = join(hostDir(home, 'claude'), 'implement');
+    mkdirSync(skill, { recursive: true });
+    mkdirSync(join(home, '.cursor'));
+    symlinkSync(join(realpathSync(ROOT), 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+    writeFileSync(join(skill, '.extend-root'), `${realpathSync(ROOT)}\n`);
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'cursor'));
+    const r = runSetup(['--host', 'auto', '--uninstall', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('skipping cursor');
+    expect(r.stdout).toBe('');
+    expect(existsSync(skill)).toBe(false);
+  });
+
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
+    test(`a skipped --host ${host} install leaves the CLI links and registry alone`, () => {
+      const home = join(baseTmp, `skipped-${host}-no-global`);
+      const bin = join(home, '.local', 'bin');
+      mkdirSync(hostDir(home, 'claude'), { recursive: true });
+      mkdirSync(join(hostDir(home, host), '..'), { recursive: true });
+      mkdirSync(bin, { recursive: true });
+      symlinkSync(hostDir(home, 'claude'), hostDir(home, host));
+      const foreign = join(home, 'other-checkout', 'bin', 'gstack-extend');
+      symlinkSync(foreign, join(bin, 'gstack-extend'));
+      const r = runSetup(['--host', host], home);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain(`Nothing installed: skipped ${host}.`);
+      expect(r.stdout.endsWith(`SETUP_SKIPPED_HOSTS ${host}\n`)).toBe(true);
+      expect(readlinkSync(join(bin, 'gstack-extend'))).toBe(foreign);
+      expect(existsSync(join(bin, 'gstack-extend-telemetry'))).toBe(false);
+      expect(existsSync(join(home, '.gstack-extend'))).toBe(false);
+      expect(readdirSync(hostDir(home, 'claude'))).toEqual([]);
+    });
+  }
+
+  for (const owner of ['codex', 'opencode'] as const) {
+    test(`a Cursor yielding to an unprocessed ${owner} dir is reported`, () => {
+      const home = join(baseTmp, `cursor-unserved-${owner}`);
+      mkdirSync(hostDir(home, owner), { recursive: true });
+      mkdirSync(join(home, '.cursor'));
+      symlinkSync(hostDir(home, owner), hostDir(home, 'cursor'));
+      const explicit = runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true);
+      expect(explicit.exitCode).toBe(0);
+      expect(explicit.stdout).toBe('SETUP_SKIPPED_HOSTS cursor\n');
+      expect(readdirSync(hostDir(home, owner))).toEqual([]);
+      // The owner turns unsafe after Cursor yielded to it, so neither host is refreshed.
+      chmodSync(hostDir(home, owner), 0o777);
+      const auto = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['claude', owner, 'cursor']), true);
+      expect(auto.exitCode).toBe(0);
+      expect(auto.stdout).toBe(`SETUP_SKIPPED_HOSTS ${owner},cursor\n`);
+      expect(readdirSync(hostDir(home, owner))).toEqual([]);
+      expect(lstatSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+    });
+  }
+
+  for (const host of ['codex', 'opencode', 'cursor'] as const) {
+    test(`${host} skips its not-yet-created dir when Claude's skills dir is a dangling link into it`, () => {
+      const home = join(baseTmp, `${host}-dangling-claude`);
+      mkdirSync(join(home, '.claude'), { recursive: true });
+      mkdirSync(join(hostDir(home, host), '..'), { recursive: true });
+      symlinkSync(hostDir(home, host), hostDir(home, 'claude'));
+      const r = runSetup(['--host', host, '--quiet'], home, isolatedPath(), true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe(`SETUP_SKIPPED_HOSTS ${host}\n`);
+      expect(existsSync(hostDir(home, host))).toBe(false);
+    });
+  }
+
+  test('an uninstall whose every host is skipped removes nothing and keeps the CLI links', () => {
+    const home = join(baseTmp, 'uninstall-all-skipped');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'opencode', '--quiet'], home).exitCode).toBe(0);
+    mkdirSync(join(home, '.codex'));
+    symlinkSync(hostDir(home, 'opencode'), hostDir(home, 'codex'));
+    const r = runSetup(['--host', 'auto', '--uninstall'], home, isolatedPath(['codex', 'opencode']), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('Nothing uninstalled: skipped codex,opencode.');
+    expect(r.stdout).not.toContain('Uninstall complete.');
+    expect(r.stdout.endsWith('SETUP_SKIPPED_HOSTS codex,opencode\n')).toBe(true);
+    for (const skill of SKILLS) {
+      expect(lstatSync(join(hostDir(home, 'opencode'), skill, 'SKILL.md')).isFile()).toBe(true);
+    }
+    for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+      expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
+    }
+  });
+
+  test('a pointer left without a SKILL.md does not keep the CLI links', () => {
+    const home = join(baseTmp, 'orphan-pointer-links');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const skill = join(hostDir(home, 'claude'), 'implement');
+    rmSync(join(skill, 'SKILL.md'));
+    writeFileSync(join(skill, 'SKILL.md.backup'), 'MOVED ASIDE\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+      expect(existsSync(join(bin, name))).toBe(false);
+    }
+    expect(readFileSync(join(skill, 'SKILL.md.backup'), 'utf8')).toBe('MOVED ASIDE\n');
   });
 
   test('--host auto skips a detected host with an unsafe skills dir; --host stops', () => {
@@ -558,6 +837,7 @@ describe('setup --host flags', () => {
     const auto = runSetup(['--host', 'auto', '--quiet'], home, path, true);
     expect(auto.exitCode).toBe(0);
     expect(auto.stderr).toContain('Warning: skipping cursor:');
+    expect(auto.stdout).toBe('SETUP_SKIPPED_HOSTS cursor\n');
     expect(auto.stderr).toContain('outside resolved $HOME');
     expect(lstatSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
     expect(readdirSync(outside)).toEqual([]);
@@ -581,6 +861,8 @@ describe('setup --host flags', () => {
       const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(), true);
       expect([layout, r.exitCode]).toEqual([layout, 0]);
       expect(r.stderr).toContain(layout === 'alias' ? 'skipping cursor' : 'Warning: skipping cursor:');
+      // An aliased Cursor reads the Claude install this run refreshed; an unsafe one is left stale.
+      expect(r.stdout).toBe(layout === 'alias' ? '' : 'SETUP_SKIPPED_HOSTS cursor\n');
       for (const skill of SKILLS) {
         expect(lstatSync(join(hostDir(home, 'claude'), skill, 'SKILL.md')).isSymbolicLink()).toBe(true);
       }
@@ -614,7 +896,8 @@ describe('setup --host flags', () => {
     const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['codex']), true);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('Warning: skipping codex:');
-    expect(r.stderr).toContain('no detected host has a safe skills directory');
+    expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS codex\n');
+    expect(r.stderr).toContain('no detected host has a usable skills directory (unsafe, or shared with another host)');
     expect(existsSync(join(home, '.claude'))).toBe(false);
     expect(readdirSync(outside)).toEqual([]);
   });
@@ -627,7 +910,7 @@ describe('setup --host flags', () => {
     symlinkSync(outside, join(home, '.claude'));
     const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['claude']), true);
     expect(r.exitCode).toBe(1);
-    expect(r.stderr).toContain('no detected host has a safe skills directory');
+    expect(r.stderr).toContain('no detected host has a usable skills directory (unsafe, or shared with another host)');
     expect(readdirSync(outside)).toEqual([]);
   });
 
@@ -655,6 +938,73 @@ describe('setup --host flags', () => {
       expect(existsSync(join(hostDir(home, 'codex'), skill, 'SKILL.md'))).toBe(false);
       expect(existsSync(join(hostDir(home, 'claude'), skill, 'SKILL.md'))).toBe(true);
     }
+  });
+
+  for (const host of ['claude', 'codex', 'opencode', 'cursor'] as const) {
+    test(`the last ${host} uninstall removes both owned CLI links and preserves a foreign link`, () => {
+      const home = join(baseTmp, `last-uninstall-${host}`);
+      const bin = join(home, '.local', 'bin');
+      mkdirSync(bin, { recursive: true });
+      expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+        expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
+      }
+      const removed = runSetup(['--host', host, '--uninstall'], home);
+      expect(removed.exitCode).toBe(0);
+      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+        expect(existsSync(join(bin, name))).toBe(false);
+        expect(removed.stdout).toContain(`Removed ${name === 'gstack-extend' ? 'gstack-extend CLI' : name} symlink`);
+      }
+      // A missing foreign target must still keep its link intact.
+      const foreign = join(home, 'other-checkout', 'bin', 'gstack-extend');
+      symlinkSync(foreign, join(bin, 'gstack-extend'));
+      expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+      expect(readlinkSync(join(bin, 'gstack-extend'))).toBe(foreign);
+    });
+  }
+
+  // The pointer scan covers all four host dirs; plant the surviving pointer instead of running a second install.
+  for (const remaining of ['claude', 'codex', 'opencode', 'cursor'] as const) {
+    test(`uninstall keeps CLI links while a ${remaining} pointer still names this checkout`, () => {
+      const home = join(baseTmp, `remaining-uninstall-${remaining}`);
+      const host = remaining === 'claude' ? 'codex' : 'claude';
+      const bin = join(home, '.local', 'bin');
+      mkdirSync(bin, { recursive: true });
+      expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+      const kept = join(hostDir(home, remaining), 'retired-skill');
+      mkdirSync(kept, { recursive: true });
+      writeFileSync(join(kept, 'SKILL.md'), 'CUSTOMIZED\n');
+      writeFileSync(join(kept, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      const removed = runSetup(['--host', host, '--uninstall'], home);
+      expect(removed.exitCode).toBe(0);
+      expect(removed.stdout).toContain('this checkout still has a host install');
+      expect(removed.stdout).toContain(`  Install pointer: ${join(kept, '.extend-root')}\n`);
+      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+        expect(readlinkSync(join(bin, name))).toBe(join(ROOT, 'bin', name));
+      }
+      rmSync(kept, { recursive: true });
+      expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+        expect(existsSync(join(bin, name))).toBe(false);
+      }
+    });
+  }
+
+  test('a preserved customized Claude file keeps CLI links; foreign pointers do not', () => {
+    const home = join(baseTmp, 'custom-uninstall-links');
+    const bin = join(home, '.local', 'bin');
+    mkdirSync(bin, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const skill = join(hostDir(home, 'claude'), 'implement');
+    rmSync(join(skill, 'SKILL.md'));
+    writeFileSync(join(skill, 'SKILL.md'), 'CUSTOMIZED\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(readlinkSync(join(bin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
+    writeFileSync(join(skill, '.extend-root'), '/another/checkout\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(join(skill, 'SKILL.md'), 'utf8')).toBe('CUSTOMIZED\n');
+    expect(existsSync(join(bin, 'gstack-extend'))).toBe(false);
+    expect(existsSync(join(bin, 'gstack-extend-telemetry'))).toBe(false);
   });
 
   test('generated host copies carry the extend-root resolver', () => {

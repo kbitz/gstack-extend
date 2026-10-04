@@ -200,20 +200,22 @@ describe('uninstall', () => {
     expect(existsSync(join(s.localBin, 'gstack-extend'))).toBe(false);
   });
 
-  test('--host codex --uninstall keeps both links and says how to remove them', () => {
+  test('--host codex --uninstall keeps both links while Claude remains installed', () => {
     const s = scope('uninstall-codex-keeps');
     runSetup(s);
     const r = runSetup(s, ['--host', 'codex', '--uninstall']);
     expect(r.exitCode).toBe(0);
     expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
     expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
-    expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+    for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+      expect(r.stdout).toContain(`Kept ~/.local/bin/${name} (this checkout still has a host install)`);
+    }
   });
 
   for (const owned of ['gstack-extend', 'gstack-extend-telemetry']) {
     for (const foreignKind of ['file', 'symlink']) {
-      test(`host uninstall hint names only its own ${owned} beside a foreign ${foreignKind}`, () => {
-        const s = scope(`uninstall-hint-${owned}-${foreignKind}`);
+      test(`host uninstall keeps only its own ${owned} beside a foreign ${foreignKind}`, () => {
+        const s = scope(`uninstall-keeps-own-${owned}-${foreignKind}`);
         runSetup(s);
         const foreignName = owned === 'gstack-extend' ? 'gstack-extend-telemetry' : 'gstack-extend';
         const foreign = join(s.localBin, foreignName);
@@ -223,7 +225,7 @@ describe('uninstall', () => {
         const r = runSetup(s, ['--host', 'codex', '--uninstall']);
         expect(r.exitCode).toBe(0);
         expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
-          .toBe(`Kept ~/.local/bin/${owned} (shared by all hosts; rm ~/.local/bin/${owned})`);
+          .toBe(`Kept ~/.local/bin/${owned} (this checkout still has a host install)`);
         if (foreignKind === 'file') expect(readFileSync(foreign, 'utf8')).toBe('user-managed executable\n');
         else expect(readlinkSync(foreign)).toBe('/usr/bin/true');
         expect(readlinkSync(join(s.localBin, owned))).toBe(join(ROOT, 'bin', owned));
@@ -232,14 +234,16 @@ describe('uninstall', () => {
   }
 
   for (const host of ['opencode', 'cursor'] as const) {
-    test(`--host ${host} --uninstall keeps both links and says how to remove them`, () => {
+    test(`--host ${host} --uninstall keeps both links while Claude remains installed`, () => {
       const s = scope(`uninstall-${host}-keeps`);
       runSetup(s);
       const r = runSetup(s, ['--host', host, '--uninstall']);
       expect(r.exitCode).toBe(0);
       expect(readlinkSync(join(s.localBin, 'gstack-extend'))).toBe(join(ROOT, 'bin', 'gstack-extend'));
       expect(readlinkSync(join(s.localBin, 'gstack-extend-telemetry'))).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
-      expect(r.stdout).toContain('Kept ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend ~/.local/bin/gstack-extend-telemetry)');
+      for (const name of ['gstack-extend', 'gstack-extend-telemetry']) {
+        expect(r.stdout).toContain(`Kept ~/.local/bin/${name} (this checkout still has a host install)`);
+      }
     });
 
     test(`--host ${host} --uninstall keeps an owned telemetry link and names only that link`, () => {
@@ -254,7 +258,7 @@ describe('uninstall', () => {
       expect(readlinkSync(tel)).toBe(join(ROOT, 'bin', 'gstack-extend-telemetry'));
       expect(readlinkSync(cli)).toBe('/usr/bin/true');
       expect(r.stdout.split('\n').find(line => line.includes('Kept ~/.local/bin/')))
-        .toBe('Kept ~/.local/bin/gstack-extend-telemetry (shared by all hosts; rm ~/.local/bin/gstack-extend-telemetry)');
+        .toBe('Kept ~/.local/bin/gstack-extend-telemetry (this checkout still has a host install)');
     });
   }
 
