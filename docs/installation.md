@@ -59,8 +59,10 @@ A link into a checkout that no longer exists is repointed only when setup's own
 
 Codex and OpenCode passes skip a skills directory shared with Claude or with
 each other, on both install and uninstall, even if that other host was not
-selected. This includes aliases through parent directories and case variants on
-a case-insensitive volume. Claude can maintain its symlinks in a shared
+selected. This includes aliases through parent directories, dangling links
+into a directory not created yet, and case variants: a not-yet-created
+directory is compared case-blind, so on a case-sensitive volume a case variant
+can skip a host. Claude can maintain its symlinks in a shared
 directory; Codex and OpenCode need separate directories to refresh their
 copies, so if they share one, both skip it. Cursor keeps yielding to whichever
 host's directory it shares, as described above. Setup preserves existing
@@ -112,8 +114,10 @@ To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 Every host-specific uninstall, and `--host auto --uninstall`, keeps
 `~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry` while any
 of the four hosts has an `.extend-root` pointer naming this checkout beside a
-`SKILL.md`, or a Claude `SKILL.md` link into it from an install that predates
-pointers, and prints that file as `Kept for: <path>`. The last uninstall removes
+`SKILL.md`, or a Claude `SKILL.md` link into it (installs that predate pointers
+have only the link), and prints that file as `Kept for: <path>`. A skill whose
+`.extend-root` is not a regular file is skipped on install and uninstall; remove
+that entry by hand. The last uninstall removes
 both links if they point at this checkout. A preserved, customized skill's pointer also keeps the links; a
 pointer naming another checkout does not. Foreign links and regular files are left alone. Legacy
 `--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
