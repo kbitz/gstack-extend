@@ -53,7 +53,7 @@ report_skipped_hosts() {
 }
 REWRITE_TMP=""
 on_exit() {
-  [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP"
+  [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP" 2>/dev/null || true
   report_skipped_hosts
 }
 trap on_exit EXIT
@@ -275,6 +275,13 @@ extend_owned_link() {
   fi
 }
 
+# True when an existing directory also resolves under its upper-cased spelling.
+case_insensitive_dir() {
+  local upper
+  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  [ "$upper" != "$1" ] && [ "$1" -ef "$upper" ]
+}
+
 link_target() {
   local target
   target="$(readlink "$1")"
@@ -298,10 +305,14 @@ same_skills_dir() {
     if [ -L "$b" ] && [ "$hops" -lt 40 ]; then b="$(link_target "$b")"; hops=$((hops + 1)); continue; fi
     rest_b="/$(basename "$b")$rest_b"; b="$(dirname "$b")"
   done
-  # Missing components cannot be links, so collapse "." and ".." lexically; ignore case, since a case variant may
-  # name the same directory once it exists (a false match only skips a host).
-  rest_a="$(lex_abs "${rest_a:-/}" | tr '[:upper:]' '[:lower:]')"
-  rest_b="$(lex_abs "${rest_b:-/}" | tr '[:upper:]' '[:lower:]')"
+  # Missing components cannot be links, so collapse "." and ".." lexically. On a case-insensitive volume a case
+  # variant names the same directory once it exists, so compare those case-blind.
+  rest_a="$(lex_abs "${rest_a:-/}")"
+  rest_b="$(lex_abs "${rest_b:-/}")"
+  if [ "$rest_a" != "$rest_b" ] && case_insensitive_dir "$a"; then
+    rest_a="$(printf '%s' "$rest_a" | tr '[:upper:]' '[:lower:]')"
+    rest_b="$(printf '%s' "$rest_b" | tr '[:upper:]' '[:lower:]')"
+  fi
   [ "$rest_a" = "$rest_b" ] && [ "$a" -ef "$b" ]
 }
 
