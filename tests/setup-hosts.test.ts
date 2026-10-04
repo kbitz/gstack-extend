@@ -47,9 +47,12 @@ function runSetup(
   const env: Record<string, string> = { PATH: path, HOME: home };
   if (process.env.TMPDIR !== undefined) env.TMPDIR = process.env.TMPDIR;
   const r = spawnSync(SETUP, args, { encoding: 'utf8', env });
+  const stderr = typeof r.stderr === 'string' ? r.stderr : '';
+  // Isolated PATHs run setup under /bin/bash, which is 3.2 on macOS; set -u errors there must fail every test.
+  expect(stderr).not.toContain('unbound variable');
   return {
     stdout: typeof r.stdout === 'string' ? r.stdout : '',
-    stderr: typeof r.stderr === 'string' ? r.stderr : '',
+    stderr,
     exitCode: r.status,
   };
 }

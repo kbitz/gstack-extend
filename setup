@@ -249,7 +249,8 @@ lex_abs() {
       *) stack[${#stack[@]}]="$part" ;;
     esac
   done
-  for item in "${stack[@]}"; do
+  # ${stack[@]+...}: bash 3.2 under set -u rejects expanding an empty array.
+  for item in ${stack[@]+"${stack[@]}"}; do
     out="$out/$item"
   done
   printf '%s\n' "${out:-/}"
