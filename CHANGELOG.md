@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.4.0] - 2026-10-06
+
+### Fixed
+
+- **Greptile configuration repairs preserve your settings in one file.** `/review-and-prep` and `/ship-and-land` propose renaming or consolidating legacy `.greptile.json` settings, keep labels and other filters, and show conflicting values before approval. The proposal also replaces legacy trigger keys and explains when previously ignored settings will become active.
+- **An approved Greptile repair no longer gets stuck on repeated research or permission questions.** The workflows reuse verified approval even before a draft PR exists and use the PR's source-branch configuration, so valid `"autoReview": []` does not require a separate base-branch change. Routine checks use the documented contract; unexpected settings or contradictory runs get one bounded lookup and a concrete repair question.
+
 ## [0.34.2.0] - 2026-10-04
 
 ### Added
