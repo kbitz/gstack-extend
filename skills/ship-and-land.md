@@ -473,6 +473,14 @@ arriving from the base makes Greptile applicable despite a handoff's skip, while
 release bookkeeping alone (VERSION, CHANGELOG, version-only manifest and lockfile edits) does
 not end a docs-only classification. When skipped, do not discover, trigger,
 fetch, poll, or reply to Greptile.
+Use Step 1's source-branch configuration contract and Step 4's configuration
+repair procedure from review-and-prep for automatic-trigger checks. A valid
+supported source-branch `"autoReview": []` disables automatic review without
+requiring the base branch to match. Reuse recorded approval for the exact
+repair; do not research valid settings again or ask a second marker-change
+question. When a repair is needed, show the concrete rename/consolidation and
+preserved settings before asking; never create `greptile.json` beside an
+existing `.greptile.json` or silently discard its labels.
 Always check authorized human blocking reviews separately. When applicable,
 preserve the PR-wide single-run allowance across commits and sessions; submitted
 requests, automatic runs, failures and cancellations consume it. This wrapper

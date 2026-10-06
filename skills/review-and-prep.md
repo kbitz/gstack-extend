@@ -146,7 +146,9 @@ Before invoking `/review`, determine whether Greptile applies:
   review for this PR. Record the default, the decision, and the resulting policy
   in the receipt before using the changed policy or skipping a review.
   The explicit decision is required before readiness even when the default
-  review policy is retained.
+  review policy is retained. An existing authorization for the exact marker
+  migration and settings change satisfies this decision; record it rather than
+  asking again because the filename changed.
 - Greptile documents `greptile.json` and recommends `.greptile/`, which takes
   precedence when both exist. `.greptile.json` is retained as a local policy
   signal used by existing repos; its presence does not prove that Greptile
@@ -203,9 +205,13 @@ A draft whose receipt records a pending exit question or a configuration pause
 under **Marking ready would start a second run.** (E1(a)) resumes like a
 manual-testing pause. Refresh the live PR, run state, and configuration, then
 re-evaluate the exit, because the edge may have resolved (for example, a run
-reported failed may have since completed). Ask again only if it still applies.
-If the session ended after that answer and before Step 3 created the draft, ask
-again; the answer is written into the receipt when the draft is created.
+reported failed may have since completed). Reuse verified authorization for
+the exact configuration repair and complete it within its approved scope.
+Ask again only if authorization cannot be verified, the proposed policy or
+conflicting values change, or the exit still needs a new decision. Before a
+draft exists, an available authorization from the user's conversation remains
+sufficient; record it when Step 3 creates the draft. If no verifiable
+authorization is available, ask again.
 
 Read the body receipt and the running account's `review-and-prep:paused:` and
 `review-and-prep:receipt:` comments, and use the newest record. Restrictions
@@ -290,10 +296,18 @@ applies under the rules above or a recorded request/run has already consumed
 the allowance. A user-policy waiver skips review and triage, but never this
 second-run safeguard. After a waiver, use the recorded request/run evidence
 and inspect trigger configuration without fetching or polling Greptile.
-Ask before `/review` and the local tests, so a configuration change can land
-while that work runs. Step 4
+Ask before `/review` and the local tests, so an approved configuration repair
+can be included in this draft. Step 4
 re-checks before any request and pauses only if the conflict is still
 unresolved. Step 6 re-checks before `gh pr ready`.
+
+Review trigger settings are read from the PR source branch. Read the intended
+head before every push, including pushes after a consumed run, then verify
+the pushed source branch before a request or ready transition. The base-tip configuration
+remains input to the root-marker policy comparison, not a second trigger gate.
+A valid source-branch `"autoReview": []` is sufficient even when the base still
+has older settings or only `.greptile.json`. Do not require a separate
+base-branch change.
 
 The ready transition starts an automatic run unless the effective trigger list
 excludes `open`. Normalize implied events first: `push` includes `open`, and
@@ -301,22 +315,21 @@ excludes `open`. Normalize implied events first: `push` includes `open`, and
 exclusion check: `triggerOnUpdates: true` is `["open","push","rebase"]`. A
 list containing `push` or `rebase` therefore cannot exclude the ready trigger,
 and it does not exclude those events for the waiver. Unknown values or invalid
-types are unverified configuration.
+types are unverified configuration. `labels` filters which PRs qualify; it
+does not limit a PR to one review. Once the label is present, configured
+automatic events may keep triggering reviews. `"autoReview": []` disables
+those events, including the trigger-label event; explicit requests still work.
 
-- Use verified settings (dashboard or run metadata, cited) when a tool actually
-  exposes them. That is rarely possible today, so file-based detection is the
-  practical default.
-- Otherwise take the list from Greptile's documented configuration files at
-  both the base tip and the intended head (`.greptile/config.json` takes
-  precedence over `greptile.json`). Read `autoReview` (default `["open"]`) or
+- Take the list from the source branch's supported effective configuration:
+  root `.greptile/` takes precedence over `greptile.json`; its settings belong
+  in `.greptile/config.json`. Read `autoReview` (default `["open"]`) or
   its legacy forms: `triggerOnUpdates: true` is `["open","push","rebase"]`, and
-  `skipReview: "AUTOMATIC"` means an empty list. The rule follows Greptile's
-  documented keys as of 2026-09-29. Cite the configuration reference or the
-  .greptile/ reference already linked above, matching the detected file. If an
-  unexpected second run appears, re-verify the vendor defaults.
-- For each tip, the effective file is `.greptile/config.json` when present,
-  otherwise `greptile.json`. Count `open` as excluded only when the effective
-  file at both tips excludes it, or when verified settings do. A file that
+  `skipReview: "AUTOMATIC"` means an empty list. Supported files override
+  dashboard defaults; an ignored `.greptile.json` does not override them.
+  Use verified dashboard settings or run metadata, cited, when no supported
+  file establishes the effective triggers.
+- Count `open` as excluded when the effective source-branch file excludes it,
+  or when verified settings do. A file that
   fails to parse as JSON is unreadable. These all count as starting one:
   - a repository whose only marker is `.greptile.json` (this step's local
     policy signal, which Greptile may not read)
@@ -324,16 +337,25 @@ types are unverified configuration.
   - unknown trigger values, invalid types, or conflicting sources
 - Other filters do not count unless verified settings show they exclude this PR.
 
+Use this configuration contract for routine checks; do not browse vendor docs
+or probe the dashboard merely to reconfirm a valid supported file. The linked
+references document these rules (verified 2026-10-06). Consult the matching
+reference only for an unsupported key, conflicting trigger settings, or an
+observed run that contradicts the file. If that lookup cannot resolve the
+unknown, name it in one concrete repair question; do not cycle through tools
+or ask the user to research the schema.
+
 When the detection is positive, ask **Marking ready would start a second run.**
 (E1) from Step 4 before `/review`. When no PR exists yet, write the answer into
-the receipt when Step 3 creates the draft. If the session ends before that, the
-next run asks again. When the detection is positive and a request or run
+the receipt when Step 3 creates the draft. Before that, reuse an available
+verified authorization for the exact repair under the resume rule above.
+When the detection is positive and a request or run
 already exists, readiness requires option (a) whatever other exit the user takes.
 
 Name the result in the question:
 
 - "Greptile's settings will start a review when this PR is marked ready" when
-  verified settings, or both tips' effective files, include `open`. Name each
+  verified settings, or the effective source-branch file, include `open`. Name each
   source, ref, and value.
 - "cannot rule out an automatic review" when a file is missing, unreadable
   (including one that fails to parse as JSON), has unknown trigger values or
@@ -607,13 +629,12 @@ return to Step 2 to merge it, review/test the integrated result, and push throug
 Step 3 while draft. Only then use the single Greptile run. Confirm the PR head
 matches that pushed SHA and record the integrated base tip.
 
-Read the intended head's configuration before triggering: root `.greptile/`
-takes precedence over `greptile.json`; inspect applicable nested `.greptile/`
-overrides too. If a marker was removed, also read its base-tip version and
-follow the explicit policy decision from Step 1. For dotted-file-only repos,
-read `.greptile.json` as declared intent; do not assume the bot reads that file.
-Use effective settings reported by an authenticated Greptile dashboard or
-review/run metadata when available, and cite that source. Otherwise record
+Use Step 1's source-branch configuration contract before triggering, including
+applicable nested `.greptile/` overrides. If a marker was removed, also read its
+base-tip version and follow the explicit policy decision from Step 1. Use a
+valid supported file directly. For dotted-file-only repos, read `.greptile.json`
+as declared intent; do not assume the bot reads that file. If no supported file
+or verified settings establish the effective configuration, record
 `effective configuration unverified — declared intent only`, apply any declared
 required labels, and use the trigger procedure below after checking for an
 existing run. Unknown settings alone do not justify skipping review; Step 4's
@@ -795,6 +816,8 @@ Every exit question uses this template:
 - The options, recommended first, each with its consequence and any stated
   residual.
 - The line "This is asked once for this PR; your answer is recorded in the receipt."
+  A changed policy or conflicting values require a new scoped decision; that
+  is the exception to asking once, not a reason to repeat an unchanged repair.
 
 Why each edge asks instead of taking a fixed default: each one changes behavior
 PR #102 specified. The answer is recorded per PR and reused. The same edge is
@@ -811,34 +834,27 @@ run.** whatever other exit the user takes, and each exit's question says so.
 re-checks before any request, and Step 6 re-checks before `gh pr ready`.
 
 When no request or run exists yet, offer (b) only when verified settings or
-both tips' valid effective trigger lists exclude `push` and `rebase`. Otherwise
+the source branch's valid effective trigger list excludes `push` and `rebase`. Otherwise
 offer (a) or (c) only: after a ready-transition run, release pushes could start
 a second run while the waiver skips review. Unknown settings do not establish
 this exclusion. This guard preserves the once-per-PR rule without changing
 `/ship-and-land`.
 
-- (a) **recommended:** pause for a one-time configuration change. Show the
-  detected file path and this copy-paste snippet, and cite the configuration
-  reference already linked in Step 1:
-
-  ```text
-  "autoReview": []
-  ```
-
-  Propose that edit in the documented effective file on the base branch. If
-  none exists, propose creating `.greptile/config.json` when `.greptile/`
-  exists, otherwise `greptile.json`; never propose `.greptile.json`, which
-  Greptile may not read. Use that destination in the snippet and question.
-  Say that this turns off automatic reviews for every PR in the repository, and that
+- (a) **recommended:** approve the concrete configuration repair below. Show
+  the current and proposed paths and complete proposed JSON or diff, preserving
+  existing settings. Cite Step 1's matching configuration reference. Say that
+  the source-branch change disables automatic reviews for this PR and, once
+  merged, becomes the repository default for future PR branches. If migrating
+  an ignored file, disclose that its preserved filters and settings may now
+  take effect. Explain that
   `"autoReview": []` stops only automatic reviews: explicit requests, including
   this workflow's, still work (manual requests still work). That is what this
   workflow's explicit request needs, but the user may prefer a narrower change.
-  Never make the edit. Changing the file inside this PR is a root-marker
-  content change and follows Step 1's policy-decision rule. After the user
-  chooses (a), continue local review and tests so the change can land during
-  that work. Step 4 pauses only if the detection is still positive before any
-  request. On resume, re-run the detection; it passes once both the base tip
-  and the head show the change.
+  Never make an unapproved repository-policy change. After approval, apply the
+  repair on the current feature branch through the normal draft review, test,
+  and push steps, within session permissions. Step 4 pauses only if the
+  detection is still positive before any request. On resume, re-run the
+  detection; it passes once the pushed source branch shows the approved change.
 - (b) Waive Greptile for this PR under the Step 1 extension. The option says
   that Greptile may still review automatically when the PR is marked ready.
   That run is the PR's only one, and neither this workflow nor
@@ -888,18 +904,63 @@ exited 1, or the reviewed object is missing after fetching.
 - (b) Stay draft.
 
 One rendered **Marking ready would start a second run.** question, with no
-existing request/run and verified `autoReview: ["open"]` at both tips:
+existing request/run and source-branch `autoReview: ["open"]`:
 
 ```text
 **Marking ready would start a second run.** (E1)
 Repository <owner/repo>, PR <url>, head <full SHA>.
 Greptile's settings will start a review when this PR is marked ready: <source> at <ref> has autoReview ["open"].
 This stops preparation because a manual request plus that automatic run would be two reviews, and this PR gets one.
-(a) Recommended: pause so you can set "autoReview": [] in <detected file path> on the base branch. That turns off automatic reviews for every PR in the repository. "autoReview": [] stops only automatic reviews: explicit requests, including this workflow's, still work (manual requests still work). See the configuration reference linked in Step 1. I will not make the edit.
+(a) Recommended: approve <concrete rename/consolidation/edit and preserved JSON or diff> on this feature branch. It disables automatic reviews for this PR and becomes the default for future PR branches once merged. "autoReview": [] stops only automatic reviews: explicit requests, including this workflow's, still work (manual requests still work). See the configuration reference linked in Step 1. This approval also covers the stated marker migration; I will apply it within this draft's normal review and push steps.
 (b) Waive Greptile for this PR. Greptile may still review automatically when the PR is marked ready. That run is this PR's only one, and neither this workflow nor /ship-and-land triages it.
 (c) Stay draft.
 This is asked once for this PR; your answer is recorded in the receipt.
+A changed policy or conflicting values require a new scoped decision.
 ```
+
+### Configuration repair
+
+Prepare the repair before asking for approval. This procedure is also used
+by `/ship-and-land` when an automatic trigger conflicts with the single run.
+
+- When a root `.greptile/` exists, consolidate root settings into
+  `.greptile/config.json`, even if that file does not exist yet. Preserve its
+  rules and other files; remove superseded root settings files in the same
+  approved repair, preserving their nonconflicting settings.
+- If a supported configuration exists without `.greptile.json`, amend the
+  supported effective file in place. Keep the repository's chosen format.
+- If only `.greptile.json` exists, rename `.greptile.json` to `greptile.json`
+  and amend the renamed file.
+- If legacy and supported settings files coexist, consolidate into the
+  supported effective file and remove the legacy file in the same approved
+  change. Preserve nonconflicting settings from both. Show conflicting keys
+  and their actual values before asking; do not guess which value to discard.
+  Prepare complete proposed variants for those values and include the user's
+  selection in the same repair approval question.
+- If no settings file exists, create `.greptile/config.json` only when a root
+  `.greptile/` already exists; otherwise create `greptile.json`.
+
+Preserve every existing setting, including `labels`, except the trigger
+settings the user approved changing. In the proposed trigger change, replace
+legacy `triggerOnUpdates` and `skipReview` keys with `"autoReview": []`, showing
+their removal in the complete diff for approval. Previously ignored settings
+may become active after migration; disclose that effect in the same proposal.
+Do not create a second settings file
+alongside `.greptile.json`. Do not introduce a `.greptile/` directory solely
+for this repair. For the legacy file containing only `labels: ["greptile"]`,
+the proposed renamed `greptile.json` is:
+
+```json
+{
+  "labels": ["greptile"],
+  "autoReview": []
+}
+```
+
+One approval of the concrete repair also satisfies Step 1's marker-change
+policy decision; record its source, paths, setting changes, and scope in the
+receipt. Reuse an existing authorization for that exact repair; ask again
+only if the proposed policy or conflicting values change.
 
 ## 5. Triage, fix, and verify locally
 
