@@ -66,6 +66,14 @@ instead of blocking silently when that run fails, stalls, goes stale, or would
 repeat when the PR is marked ready. The PR's receipt records the outcome. See
 the linked skill instructions for setup and gates.
 
+Greptile's `labels` filter selects PRs; `autoReview` controls automatic events.
+For a single explicitly requested review, use `"autoReview": []` while keeping
+existing filters. If an approved repair starts from `.greptile.json`, the
+workflow proposes renaming and amending it, preserving its settings. Existing
+duplicate files are consolidated in the same approved change. Trigger checks
+use the PR's source-branch configuration; a separate base-branch change is not
+required.
+
 `/review-and-prep` includes a `review-and-prep/v1` marker and reviewed snapshot
 in its final prompt. Paste that prompt to run `/ship-and-land`; it trusts those
 completed reviews across sessions/models after one receipt lookup and checks

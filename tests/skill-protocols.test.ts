@@ -1401,7 +1401,7 @@ describe('review-and-prep drift-locks', () => {
     expect(step4).toContain('### Greptile exits that need a user decision');
     expect(exits.length).toBeGreaterThan(0);
     expect(normalized).toContain('No exit requests another review or resets the allowance');
-    expect(normalized).toContain('Count `open` as excluded only when the effective file at both tips excludes it');
+    expect(normalized).toContain('Count `open` as excluded when the effective source-branch file excludes it');
     expect(normalized).toContain('autoReview` (default `["open"]`)');
     expect(normalized).toContain('Failed/cancelled runs consume the allowance and cannot be retried.');
     expect(normalized).toContain('whether it was accepted or ambiguous');
@@ -1476,7 +1476,7 @@ describe('review-and-prep drift-locks', () => {
   });
 
   test('ready-transition waivers rule out later automatic runs', () => {
-    expect(normalized).toContain("offer (b) only when verified settings or both tips' valid effective trigger lists exclude `push` and `rebase`.");
+    expect(normalized).toContain("offer (b) only when verified settings or the source branch's valid effective trigger list excludes `push` and `rebase`.");
     expect(normalized).toContain('Normalize the legacy key before the exclusion check: `triggerOnUpdates: true` is `["open","push","rebase"]`.');
     expect(normalized).toContain('Unknown settings do not establish this exclusion.');
   });
@@ -1486,10 +1486,51 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('has unknown trigger values or invalid types');
   });
 
-  test('configuration repair names a documented destination', () => {
-    expect(normalized).toContain('propose creating `.greptile/config.json` when `.greptile/` exists, otherwise `greptile.json`');
-    expect(normalized).toContain('never propose `.greptile.json`, which Greptile may not read');
-    expect(normalized).toContain('Never make the edit.');
+  test('configuration repair migrates legacy settings without creating a duplicate', () => {
+    const repair = content.slice(content.indexOf('### Configuration repair')).split(/\n## /)[0];
+    const flat = repair.replace(/\s+/g, ' ');
+    for (const clause of [
+      'If a supported configuration exists without `.greptile.json`, amend the supported effective file in place.',
+      'rename `.greptile.json` to `greptile.json`',
+      'Preserve every existing setting, including `labels`, except the trigger settings the user approved changing.',
+      'consolidate into the supported effective file and remove the legacy file in the same approved change',
+      'Show conflicting keys and their actual values before asking',
+      'Do not create a second settings file alongside `.greptile.json`.',
+      'Do not introduce a `.greptile/` directory solely for this repair.',
+      'When a root `.greptile/` exists, consolidate root settings into `.greptile/config.json`, even if that file does not exist yet.',
+      'replace legacy `triggerOnUpdates` and `skipReview` keys with `"autoReview": []`',
+      'Previously ignored settings may become active after migration; disclose that effect in the same proposal.',
+      'One approval of the concrete repair also satisfies Step 1',
+    ]) expect(flat).toContain(clause);
+
+    const json = Array.from(repair.matchAll(/```json\n([\s\S]*?)\n```/g), m => JSON.parse(m[1]));
+    expect(json).toContainEqual({ labels: ['greptile'], autoReview: [] });
+    expect(repair).not.toContain('on the base branch');
+    expect(content.indexOf('### Configuration repair')).toBeGreaterThan(
+      content.indexOf('One rendered **Marking ready would start a second run.** question'),
+    );
+  });
+
+  test('source-branch settings resolve the gate without a separate base-branch change', () => {
+    const detection = content.slice(content.indexOf('### Detect whether marking ready')).split(/\n## /)[0];
+    const flat = detection.replace(/\s+/g, ' ');
+    expect(flat).toContain('Review trigger settings are read from the PR source branch.');
+    expect(flat).toContain('Read the intended head before every push, including pushes after a consumed run');
+    expect(flat).toContain('A valid source-branch `"autoReview": []` is sufficient even when the base still has older settings or only `.greptile.json`.');
+    expect(flat).toContain('Do not require a separate base-branch change.');
+    expect(flat).toContain('`labels` filters which PRs qualify; it does not limit a PR to one review.');
+    expect(flat).not.toContain('file at both tips');
+  });
+
+  test('routine configuration checks reuse the contract and existing approval', () => {
+    const detection = content.slice(content.indexOf('### Detect whether marking ready')).split(/\n## /)[0];
+    const repair = content.slice(content.indexOf('### Configuration repair')).split(/\n## /)[0];
+    expect(detection.replace(/\s+/g, ' ')).toContain(
+      'Use this configuration contract for routine checks; do not browse vendor docs or probe the dashboard merely to reconfirm a valid supported file.',
+    );
+    expect(repair.replace(/\s+/g, ' ')).toContain(
+      'Reuse an existing authorization for that exact repair; ask again only if the proposed policy or conflicting values change.',
+    );
   });
 
   test('E1(b) and E6(b) waive Greptile only after posted findings are triaged', () => {
@@ -1520,7 +1561,7 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).toContain('Draft-push conflicts stay on this rule.');
     expect(normalized).toContain('Ask before `/review` and the local tests');
     expect(normalized).toContain('pauses only if the conflict is still unresolved');
-    expect(normalized).toContain('it passes once both the base tip and the head show the change.');
+    expect(normalized).toContain('it passes once the pushed source branch shows the approved change.');
   });
 
   test('uncertain ready-transition sources include dotted-file-only and legacy keys', () => {
@@ -1609,12 +1650,15 @@ describe('review-and-prep drift-locks', () => {
     );
   });
 
-  test('a pending exit resumes like manual testing until the answer is in the draft', () => {
+  test('a pending exit resumes without repeating a verified repair approval', () => {
     expect(normalized).toContain('resumes like a manual-testing pause.');
-    expect(normalized).toContain('Ask again only if it still applies.');
+    expect(normalized).toContain('Reuse verified authorization for the exact configuration repair');
     expect(normalized).toContain(
-      'If the session ended after that answer and before Step 3 created the draft, ask again',
+      "Before a draft exists, an available authorization from the user's conversation remains sufficient",
     );
+    expect(normalized).toContain('If no verifiable authorization is available, ask again.');
+    expect(normalized).not.toContain('If the session ended after that answer and before Step 3 created the draft, ask again');
+    expect(normalized).not.toContain('If the session ends before that, the next run asks again.');
   });
 });
 
@@ -1867,6 +1911,18 @@ describe('ship-and-land drift-locks', () => {
     expect(normalized).toContain(
       "Use review-and-prep's root-configuration/docs-only/user-policy applicability rules",
     );
+  });
+
+  test('Greptile repairs reuse preparation rules and preserve legacy settings', () => {
+    const greptile = content.slice(content.indexOf('### Greptile and new feedback')).split(/\n## /)[0];
+    const flat = greptile.replace(/\s+/g, ' ');
+    for (const clause of [
+      "Use Step 1's source-branch configuration contract and Step 4's configuration repair procedure from review-and-prep",
+      'without requiring the base branch to match',
+      'Reuse recorded approval for the exact repair',
+      'do not research valid settings again or ask a second marker-change question',
+      'never create `greptile.json` beside an existing `.greptile.json` or silently discard its labels',
+    ]) expect(flat).toContain(clause);
   });
 
   test('PR state, drafts, and reruns follow the upstream lifecycle', () => {
