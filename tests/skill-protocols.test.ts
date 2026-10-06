@@ -1783,6 +1783,28 @@ describe('implement drift-locks', () => {
   });
 });
 
+describe('host-managed workspace lifecycle', () => {
+  // Conductor and Paseo both own worktree/branch lifecycle; Paseo's archive
+  // teardown removes the worktree, so agents must not clean it up themselves.
+  const PASEO_MARKER =
+    'a Paseo worktree: `PASEO_AGENT_ID` is set and the checkout is under Paseo\'s worktree root, default `~/.paseo/worktrees/`';
+  for (const skill of ['implement', 'review-and-prep', 'ship-and-land']) {
+    test(`${skill} defers branch/worktree lifecycle to Conductor and Paseo`, () => {
+      const normalized = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8').replace(/\s+/g, ' ');
+      expect(normalized).toContain(`In a host-managed workspace (a Conductor workspace, or ${PASEO_MARKER})`);
+      // `.context/` scratch stays Conductor-only: Paseo has no equivalent.
+      expect(normalized).not.toMatch(/\bIn Conductor, (?:use the current|leave|do not)/);
+    });
+  }
+
+  test('ship-and-land declines land cleanup in any host-managed workspace', () => {
+    const normalized = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      "decline land's local branch/worktree cleanup offers and leave cleanup to the host.",
+    );
+  });
+});
+
 describe('ship-and-land drift-locks', () => {
   const content = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const normalized = content.replace(/\s+/g, ' ');

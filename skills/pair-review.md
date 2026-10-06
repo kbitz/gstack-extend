@@ -225,8 +225,8 @@ reliability mechanism: if context compacts, the skill re-reads from disk.
 ### Paths
 
 State lives in two scopes — a project-wide dir and a per-branch dir under it.
-Sessions are keyed by branch, so multiple branches (in different Conductor
-workspaces or on different machines) can each have their own active session
+Sessions are keyed by branch, so multiple branches (in different Conductor or Paseo
+workspaces, or on different machines) can each have their own active session
 without trampling each other.
 
 - `<PROJECT_DIR>` = `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/pair-review/`

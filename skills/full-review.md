@@ -217,7 +217,7 @@ If the user says "where was I" or "continue review", treat it as **Resume**.
 
 Session state lives in `<SESSION_DIR>` — a durable, per-project directory at
 `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/full-review/`. Survives
-Conductor workspace archival.
+workspace archival (Conductor, Paseo).
 
 Resolve `SESSION_DIR` at the start of every bash block that touches state:
 

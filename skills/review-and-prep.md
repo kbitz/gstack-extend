@@ -92,8 +92,10 @@ protocol tests keep these memberships separate.
   a version slot, bump manifests/lockfiles for a release, or mark work shipped.
   Preserve pre-existing version changes and report them; never silently undo them.
 - Stay on the current feature branch. Never commit/push to the base branch,
-  force-push, merge the PR, or enable auto-merge. In Conductor, leave branch and
-  worktree creation, renaming, and cleanup to Conductor.
+  force-push, merge the PR, or enable auto-merge. In a host-managed workspace
+  (a Conductor workspace, or a Paseo worktree: `PASEO_AGENT_ID` is set and the
+  checkout is under Paseo's worktree root, default `~/.paseo/worktrees/`),
+  leave branch and worktree creation, renaming, and cleanup to the host.
 - Use the installed `/review` skill as the source of review behavior. Step 1
   owns Greptile applicability. When applicable, require completion of the PR's
   single review, Step 4's no-response fallback, or a recorded Step 4 exit
@@ -379,8 +381,8 @@ Commit intended pending work before merging if needed to preserve it; do not
 overwrite or stage unrelated user changes. Resolve conflicts within the agreed
 scope, inspect the merge result, and run the review and required checks on the
 integrated tree. Record the fetched base tip and resulting HEAD. Stay on the
-existing feature branch; Conductor still owns branch/worktree creation and
-cleanup. This base merge is separate from the divergent published feature
+existing feature branch; a workspace host (Conductor, Paseo) still owns
+branch/worktree creation and cleanup. This base merge is separate from the divergent published feature
 history that blocks push recovery in Step 3.
 
 Run the missing or invalidated `/review` stages with the Greptile applicability
@@ -505,7 +507,7 @@ the diagnosis; preserve the local work and leave preparation incomplete.
 For every blocked push, update the Step 6 receipt on an existing draft with
 the blocker, completed verification, and remaining reconciliation work. If no
 PR exists yet, retain that evidence in the durable local handoff instead.
-The user or Conductor owns reconciliation outside this workflow. Resume only
+The user or the workspace host owns reconciliation outside this workflow. Resume only
 after reconciliation, re-read the branch/PR state, and refresh review/test
 evidence for any changed content or base. Do not push unknown commits
 introduced by another actor without reviewing and verifying them.
