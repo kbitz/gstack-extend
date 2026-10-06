@@ -70,11 +70,13 @@ approve that same scope again.
 
 Inspect the current branch, target base, HEAD, and committed, staged, unstaged,
 and untracked changes. Record existing work so you can build on it and preserve
-unrelated edits. Follow the host's branch/worktree rules; in Conductor, use the
-current workspace and branch and leave their lifecycle to Conductor. If the
-current branch is the target base or the repository default branch, stop: do
-not implement there. This workflow does not create branches. In Conductor,
-wait for a feature-branch workspace.
+unrelated edits. Follow the host's branch/worktree rules. In a host-managed
+workspace (a Conductor workspace, or a Paseo worktree: `PASEO_AGENT_ID` is set
+and the checkout is under Paseo's worktree root, default `~/.paseo/worktrees/`),
+use the current workspace and branch and leave their lifecycle to the host. If
+the current branch is the target base or the repository default branch, stop:
+do not implement there. This workflow does not create branches. In a
+host-managed workspace, wait for a feature-branch workspace.
 
 Make a compact checklist covering every in-scope deliverable and acceptance
 criterion, retaining plan item IDs or source sections. Include wiring, tests,

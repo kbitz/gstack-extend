@@ -1783,6 +1783,68 @@ describe('implement drift-locks', () => {
   });
 });
 
+describe('host-managed workspace lifecycle', () => {
+  // Conductor and Paseo both own worktree/branch lifecycle; Paseo's archive
+  // teardown removes the worktree, so agents must not clean it up themselves.
+  const PASEO_MARKER =
+    'a Paseo worktree: `PASEO_AGENT_ID` is set and the checkout is under Paseo\'s worktree root, default `~/.paseo/worktrees/`';
+  for (const skill of ['implement', 'review-and-prep', 'ship-and-land']) {
+    test(`${skill} defers branch/worktree lifecycle to Conductor and Paseo`, () => {
+      const normalized = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8').replace(/\s+/g, ' ');
+      expect(normalized).toContain(`In a host-managed workspace (a Conductor workspace, or ${PASEO_MARKER})`);
+      // `.context/` scratch stays Conductor-only: Paseo has no equivalent.
+      expect(normalized).not.toMatch(/\bIn Conductor, (?:use the current|leave|do not)/);
+    });
+  }
+
+  test('ship-and-land declines land cleanup in any host-managed workspace', () => {
+    const normalized = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      "decline land's local branch/worktree cleanup offers and leave cleanup to the host.",
+    );
+  });
+});
+
+describe('Paseo lifecycle wording beyond the primary workflow guards', () => {
+  test('review-and-prep base merge leaves lifecycle to the workspace host', () => {
+    // Value: protects=review-and-prep base merge defers branch and worktree lifecycle to the host; fails_when=the ownership clause is removed; why_new=primary prep guard does not cover the merge step; seam=none
+    const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      'existing feature branch; a workspace host (Conductor, Paseo) still owns branch/worktree creation and cleanup.',
+    );
+  });
+
+  test('review-and-prep assigns blocked-push reconciliation to the user or host', () => {
+    // Value: protects=blocked-push reconciliation is owned by the user or workspace host; fails_when=the owner sentence is dropped or narrowed to Conductor; why_new=primary prep guard does not cover blocked-push recovery; seam=none
+    const normalized = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      'The user or the workspace host owns reconciliation outside this workflow.',
+    );
+  });
+
+  test('pair-review keeps branch-keyed sessions independent across Paseo workspaces', () => {
+    // Value: protects=pair-review identifies Paseo workspaces as independent homes for branch-keyed sessions; fails_when=Paseo is removed from the scope; why_new=existing lifecycle assertions cover only implement prep and land; seam=none
+    const normalized = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      'multiple branches (in different Conductor or Paseo workspaces, or on different machines) can each have their own active session',
+    );
+  });
+
+  test('full-review session state survives Paseo workspace archival', () => {
+    // Value: protects=full-review documents durable session state across Paseo archival; fails_when=Paseo is removed from the archival guarantee; why_new=existing tests do not pin durable-state wording; seam=none
+    const normalized = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain('Survives workspace archival (Conductor, Paseo).');
+  });
+
+  test('roadmap proposals survive Paseo workspace archival', () => {
+    // Value: protects=roadmap proposal artifacts are durable across Paseo archival; fails_when=Paseo is removed from the durability guarantee; why_new=existing tests do not pin durable-state wording; seam=none
+    const normalized = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8').replace(/\s+/g, ' ');
+    expect(normalized).toContain(
+      'durable, survives workspace archival (Conductor, Paseo).',
+    );
+  });
+});
+
 describe('ship-and-land drift-locks', () => {
   const content = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
   const normalized = content.replace(/\s+/g, ' ');

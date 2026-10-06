@@ -115,9 +115,11 @@ Before any release mutation, require the current branch to be the bound PR's
 head branch and local HEAD to equal or descend from its head; otherwise stop.
 Local commits beyond the PR head that this workflow did not create need the
 user's confirmation that they are in scope.
-In Conductor, do not create, rename, switch, or remove branches/worktrees;
-decline land's local branch/worktree cleanup offers and leave cleanup to
-Conductor. Never force-push or merge old published history into rewritten
+In a host-managed workspace (a Conductor workspace, or a Paseo worktree:
+`PASEO_AGENT_ID` is set and the checkout is under Paseo's worktree root,
+default `~/.paseo/worktrees/`), do not create, rename, switch, or remove
+branches/worktrees; decline land's local branch/worktree cleanup offers and
+leave cleanup to the host. Never force-push or merge old published history into rewritten
 history to recover a rejected push. Diagnose divergence and stop with the
 local/remote tips. Stage named intended files, preserve unrelated work, never
 modify credentials without authorization, and omit co-authorship trailers.
