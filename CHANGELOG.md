@@ -2,13 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.34.3.0] - 2026-10-06
+## [0.34.5.0] - 2026-10-06
 
 ### Added
 
 - **A decision core answers "what next?" for a PR's Greptile review.** Give it the recorded state (draft or ready PR, run history, trigger and reservation markers, receipts, the repository's Greptile settings and the local review gates) and it returns exactly one action: trigger, wait, ask with the documented named options, continue with a named prerequisite, or ready-eligible. Each result carries a stable rule ID, a reason and the evidence it relied on. It reads no files or clock and sends nothing, so the caller supplies the data and performs any effect. Nothing calls it yet: `/review-and-prep` and `/ship-and-land` still follow their written rules, and the input contract is internal version 1, not a stable interface.
 - **It never recommends a second Greptile run.** Every run counts, whoever started it and however it ended, and a submission that was accepted but is not visible yet, or whose outcome is unknown, still counts. A crash between reserving and triggering, two sessions racing on both trigger routes, a late run after the ten-minute fallback, a rewritten history on a shallow clone and an older receipt all resolve without a second trigger recommendation. Unknown, failed, incomplete and stale evidence stay distinct from a known-empty history, and the ten-minute wait ends at exactly 600,000 ms on a clock the caller supplies.
 - **A 408-test suite pins every documented exit.** Table-driven scenarios cover each rule family and named choice, the six synthetic recorded histories above, malformed and mixed-unit input, frozen inputs, shuffled record order, and checks that an early or invalid answer cannot become valid when a paused session resumes. `bun test tests/greptile-lifecycle.test.ts -t "crash between reservation"` runs the documented first example.
+
+## [0.34.4.0] - 2026-10-06
+
+### Fixed
+
+- **Greptile configuration repairs preserve your settings in one file.** `/review-and-prep` and `/ship-and-land` propose renaming or consolidating legacy `.greptile.json` settings, keep labels and other filters, and show conflicting values before approval. The proposal also replaces legacy trigger keys and explains when previously ignored settings will become active.
+- **An approved Greptile repair no longer gets stuck on repeated research or permission questions.** The workflows reuse verified approval even before a draft PR exists and use the PR's source-branch configuration, so valid `"autoReview": []` does not require a separate base-branch change. Routine checks use the documented contract; unexpected settings or contradictory runs get one bounded lookup and a concrete repair question.
 
 ## [0.34.2.0] - 2026-10-04
 
