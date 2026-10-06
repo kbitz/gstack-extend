@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.35.0.0] - 2026-10-06
+
+### Added
+
+- **Paseo worktrees are supported as host-managed workspaces.** `/implement`, `/review-and-prep`, and `/ship-and-land` leave branch and worktree lifecycle to Paseo, while `/pair-review`, `/full-review`, and `/roadmap` keep their documented state durable across workspace archival.
+
 ## [0.34.5.0] - 2026-10-06
 
 ### Added
