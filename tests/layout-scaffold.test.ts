@@ -78,7 +78,11 @@ let testEnv: NodeJS.ProcessEnv;
 beforeEach(() => {
   temp = realpathSync(mkdtempSync(join(tmpdir(), 'layout-scaffold-')));
   root = join(temp, 'root'); mkdirSync(root); mkdirSync(join(temp, 'home'));
-  testEnv = { PATH: process.env.PATH, HOME: join(temp, 'home'), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  // Bun 1.4 writes its runtime transpiler cache under HOME (~/Library/Caches/bun on macOS), and tree() snapshots HOME.
+  testEnv = {
+    PATH: process.env.PATH, HOME: join(temp, 'home'), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0',
+  };
 });
 afterEach(() => rmSync(temp, { recursive: true, force: true }));
 function file(path: string, content = 'example\n') {

@@ -8,8 +8,11 @@
 # This avoids hardcoding paths and works regardless of where the repo is cloned.
 #
 # Output:
-#   UPGRADE_OK <old> <new>      — upgrade succeeded
+#   UPGRADE_OK <old> <new>      — checkout upgraded; hosts in SETUP_SKIPPED_HOSTS were not refreshed
 #   UPGRADE_FAILED <reason>     — upgrade failed
+# Additional lines, before the result:
+#   SETUP_SKIPPED_HOSTS <csv>   — forwarded from setup: it left these hosts untouched
+#   MIGRATION_WARN <script> exit=<n> — forwarded from run-migrations.sh: a migration or its helper failed
 #
 # Exactly one result line is always emitted. The script runs under `set -e`;
 # an EXIT trap guarantees a UPGRADE_FAILED line even when a git stage dies
@@ -141,6 +144,7 @@ if ! git -C "$INSTALL_DIR" pull --ff-only origin main; then
 fi
 
 _STAGE="setup"
+# Forward setup stdout verbatim, including SETUP_SKIPPED_HOSTS even on failure.
 "$INSTALL_DIR/setup" --host auto --quiet
 
 # Read NEW after pull so the helper sees the landed VERSION. Insert before

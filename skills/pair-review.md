@@ -84,6 +84,8 @@ echo "AUTO_UPGRADE=${_AUTO:-false}"
 
 Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`.
 
+If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host in your message: setup left its skill install untouched, so it may be stale. Relay setup's stderr reason with its fix: for a shared directory, **Shared-directory migration** in the checkout's `docs/installation.md`; for an unsafe directory, the directory fix setup printed. Never say every host was refreshed.
+
 **If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
 ```bash
 "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"

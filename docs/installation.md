@@ -42,7 +42,7 @@ skill install. Detection can create `~/.cursor/skills`; without either signal,
 auto mode leaves `~/.cursor` absent. Explicit `--host cursor` installs even
 without a detected Cursor installation.
 
-Cursor receives regular-file copies with native skill paths, a multiline
+Cursor receives regular-file copies with the authored shell paths, a multiline
 description, and no `allowed-tools` frontmatter, plus an `.extend-root` pointer
 to the checkout. Setup refreshes generated copies. A user-owned regular
 `SKILL.md` is preserved without claiming ownership, and setup still exits 0.
@@ -57,9 +57,22 @@ skill, say) is treated like a user-owned file: setup warns and leaves it alone.
 A link into a checkout that no longer exists is repointed only when setup's own
 `.extend-root` beside it still names that checkout.
 
-Cursor is the only host setup keeps out of another host's skills directory.
-If you share `~/.codex/skills` or `~/.config/opencode/skills` with Claude through
-a symlink, that host's copies replace the Claude links, as before.
+Codex and OpenCode passes skip a skills directory shared with Claude or with
+each other, on both install and uninstall, even if that other host was not
+selected. This includes aliases through parent directories, dangling links
+into a directory not created yet, and case variants: path components that do
+not exist yet are compared case-blind, so on a case-sensitive volume a case
+variant can skip a host until that directory exists. Claude can maintain its symlinks in a shared
+directory; Codex and OpenCode need separate directories to refresh their
+copies, so if they share one, both skip it. Cursor keeps yielding to whichever
+host's directory it shares, as described above. Setup preserves existing
+regular files in Claude's directory, including old generated copies; see
+**Shared-directory migration** below. A `--host` run whose host was skipped
+installs or uninstalls nothing and leaves the CLI links and registry alone.
+
+Generated copies preserve shell paths as written in the source; setup never
+substitutes a literal HOME into skill bodies. The runtime resolver probes the
+four host directories and uses their `.extend-root` pointers.
 
 If a skill directory is already a personal symlink (for example, linked from
 dotfiles), setup stops before installing anything on any selected host. It
@@ -74,6 +87,23 @@ still install. Naming that host with `--host` stops setup instead. If nothing
 is left to install, setup installs Claude when only Cursor was skipped (Cursor
 also reads `~/.claude/skills`) and fails otherwise.
 
+When hosts are skipped because of shared or unsafe directories, stdout includes
+one `SETUP_SKIPPED_HOSTS <csv>` line (for example,
+`SETUP_SKIPPED_HOSTS codex,opencode`) even with `--quiet` or when setup later
+fails. No such line is printed when no host was skipped. During an install, a
+Cursor that yields is listed only when the same run did not process the host it
+yields to; otherwise Cursor reads that host's refreshed install. Reasons and
+recovery guidance remain on stderr. `bin/update-run` forwards the line;
+`UPGRADE_OK` means the checkout upgraded, while listed hosts were left untouched
+and may still have stale copies. The refreshed `/gstack-extend-upgrade` skill and
+other refreshed skills' auto-upgrade flows report both outcomes. Older copies
+preserved in a shared directory may ignore the report; follow **Shared-directory
+migration** below to refresh them. After separating shared or unsafe directories,
+rerun `setup --host auto` from that checkout to refresh installable copies without
+another upgrade. After `UPGRADE_FAILED stage=setup`,
+rerun `<checkout>/bin/update-run <checkout>` instead so its post-setup steps
+also run.
+
 Setup also registers the checkout as `gstack-extend` in
 `$HOME/.gstack-extend/projects.json`. It ignores `GSTACK_EXTEND_STATE_DIR` for
 that child registration; direct `init` still honors the override. Registration
@@ -83,14 +113,51 @@ command in Bash.
 
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
-`--host claude` and `--host auto` also remove `~/.local/bin/gstack-extend` and
-`~/.local/bin/gstack-extend-telemetry` when those symlinks point at this checkout.
-`--host codex`, `--host opencode`, and `--host cursor` leave both shared links in
-place and print an `rm` command for each link this checkout owns. A link that
-points somewhere else is left alone.
+Every host-specific uninstall, and `--host auto --uninstall`, keeps
+`~/.local/bin/gstack-extend` and `~/.local/bin/gstack-extend-telemetry` while any
+of the four hosts has an `.extend-root` pointer naming this checkout beside a
+`SKILL.md`, or a Claude `SKILL.md` link into it (installs that predate pointers
+have only the link), and prints that file as `Kept for: <path>`. A non-dangling
+`.extend-root` that does not resolve to a regular file causes setup to skip the
+skill on install and uninstall. A link to a regular marker is followed
+for ownership checks, but setup removes the link itself before writing a
+replacement and never writes through it. A dangling marker link is treated as
+absent, not ownership evidence: setup leaves an unrecognized regular `SKILL.md`
+beside it untouched, and removes the dangling link only when it otherwise
+refreshes or removes that skill. The last uninstall removes both links if they
+point at this checkout. A preserved, customized skill's pointer also keeps the links; a
+pointer naming another checkout does not. Foreign links and regular files are left alone. Legacy
+`--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
 
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,
 foreign install pointers, and unrelated files are preserved.
+
+### Shared-directory migration
+
+Earlier Codex and OpenCode passes could replace Claude symlinks with generated
+copies in a shared directory. Setup now leaves those copies untouched: an
+`.extend-root` beside a regular Claude `SKILL.md` cannot distinguish an old
+generated copy from a user's customized file. There is no automatic conversion.
+
+Review and back up the regular `SKILL.md` files in the shared Claude directory.
+Compare them with `skills/<name>.md` in the checkout. For each old generated
+copy you want Claude to maintain, move that file aside (for example, to
+`SKILL.md.backup` in the same skill directory), then run `setup --host claude`
+from the upgraded checkout to recreate the source symlink. Preserve customized
+files; setup will continue to warn without overwriting them. Do not bulk-delete
+files based on the pointer alone.
+
+For Codex or OpenCode, back up the shared-directory wiring and give the host a
+separate skills directory, then run `setup --host codex` or
+`setup --host opencode` to install fresh copies there. Apply the same separation
+when only copy-producing hosts share a directory. Cursor can continue reading
+Claude's shared skills, or use a separate directory with `setup --host cursor`.
+
+Uninstall leaves those regular copies in place too. While a pointer naming the
+checkout sits beside a `SKILL.md`, the shared CLI links stay, and the uninstall
+output names one such pointer as `Kept for: <path>`. Review the copies, move aside the ones you no
+longer want (as above), then rerun the uninstall; a pointer left without a
+`SKILL.md` does not keep the links.
 
 ## Troubleshooting
 
@@ -103,6 +170,10 @@ foreign install pointers, and unrelated files are preserved.
 | `bin/update-check` is not a readable executable file | `git checkout -- bin/update-check` in that checkout, then `setup --host auto` |
 | `bin/update-check` lacks `# extend-root-protocol: v1` (older checkout, or not gstack-extend) | `git pull --ff-only` in that checkout, then `setup --host auto` |
 | The pointer names a non-absolute path | `setup --host auto` from your gstack-extend checkout |
+
+If that pointer sits beside a regular `SKILL.md` in a directory Codex or
+OpenCode shares with Claude, rerunning setup does not regenerate it; follow
+**Shared-directory migration** instead.
 
 Copy-paste checks, replacing `<skill>` and `<root>`:
 
