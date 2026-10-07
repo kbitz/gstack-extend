@@ -2,7 +2,8 @@
  * scattered-todos.ts — port of check_scattered_todos (~L1576-1607).
  *
  * Scans every `.md` file at maxdepth 2 (excluding ROOT_DOCS, DOCS_DIR_DOCS,
- * docs/archive, .context, etc.) and reports any with TODO-like patterns.
+ * the /project-spec product spec, docs/archive, .context, etc.) and reports any
+ * with TODO-like patterns.
  * Output sorted by path-discovery order (matches `find ... | sort` in
  * bash via `walkMdFiles` which sorts ascending).
  *
@@ -27,6 +28,7 @@
  * keeps us honest if bash's order ever drifts.
  */
 
+import { isProductSpec } from '../lib/product-spec.ts';
 import { countTodoPatterns } from '../lib/todo-patterns.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
@@ -46,6 +48,7 @@ export function runCheckScatteredTodos(ctx: AuditCtx): CheckResult {
     const bn = basename(f.rel);
     if (ROOT_DOCS.has(bn)) continue;
     if (PROJECT_DOCS.has(bn)) continue;
+    if (isProductSpec(f.rel, f.content)) continue;
     // Archived already excluded by walker.
     const count = countTodoPatterns(f.content);
     if (count > 0) {
