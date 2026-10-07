@@ -323,14 +323,12 @@ export function routeSourceTag(raw: string): RouteOutcome {
 
     case 'plan-ceo-review':
     case 'plan-eng-review':
-      // `defer=true` flag → KEEP (in-scope work cut by the review; /roadmap
-      // regen places it). Without `defer` → PROMPT (review surfaced
-      // out-of-scope work; ask user whether it's a real defer or a new
-      // finding).
+      // Deferral records provenance, not a commitment to schedule. /roadmap
+      // evaluates the selected target before placing or deferring this work.
       if (parsed.value.pairs.defer === 'true') {
         return {
-          action: 'KEEP',
-          reason: `${source} — work cut from Track during plan review; /roadmap regen will place`,
+          action: 'PROMPT',
+          reason: `${source} — review deferral; evaluate selected target before placement`,
           source,
         };
       }

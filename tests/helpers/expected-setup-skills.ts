@@ -3,6 +3,7 @@
 export const EXPECTED_SETUP_SKILLS = [
   'pair-review',
   'roadmap',
+  'project-spec',
   'full-review',
   'gstack-extend-upgrade',
   'gstack-extend-init',

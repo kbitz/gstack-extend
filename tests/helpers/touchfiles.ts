@@ -109,6 +109,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/source-tag.test.ts': [
     'tests/fixtures/source-tag-hash-corpus.json',
+    'bin/roadmap-route',
+    'bin/lib/source-tag.sh',
   ],
   'tests/skill-protocols.test.ts': [
     'skills/**',

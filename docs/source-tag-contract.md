@@ -2,7 +2,7 @@
 
 Canonical schema for items written to `TODOS.md` by skills. All producer skills
 (`/pair-review`, `/full-review`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
-scrutiny gate, closure-bias placement, and dedup pipeline parse entries against
+scrutiny gate, outcome-based admission, and dedup pipeline parse entries against
 this contract. `bin/roadmap-audit` validates entries and emits `STATUS: fail`
 on malformed ones.
 
@@ -22,6 +22,7 @@ attribute bullets, optionally followed by prose paragraphs.
 - **Context:** optional background
 - **Priority:** P1 | P2 | P3
 - **Hypothesis (untested):** optional reviewer guess at direction (full-review, review)
+- **Revisit when:** concrete reassessment trigger (required on deferrals)
 
 Optional free-form prose paragraphs here.
 ```
@@ -88,6 +89,8 @@ Parsers tolerate their absence. Recommended fields:
 - `- **Context:**` ... — any provenance, branch reference, or prior decisions
   that explain why this item exists.
 - `- **Priority:**` P1 | P2 | P3 — optional priority. Drives display ordering.
+- `- **Revisit when:**` ... — the concrete trigger for reassessing deferred
+  work. Optional in the inbox; `/roadmap` requires it on every deferral.
 - `- **Symptom:**` ... — observed behavior (used by pair-review, investigate).
   Pairs with `**Repro:**`. Replaces the older `Why:` framing for
   observation-source items.
@@ -145,6 +148,16 @@ accepted so existing project backlogs still validate and retain their routing.
 
 ### Source-default routing matrix (used by /roadmap scrutiny gate)
 
+These defaults prioritize evaluation, not execution. KEEP retains an observation;
+it does not promise a Track. PROMPT requires a disposition using the selected
+target and existing user decisions; it need not ask a redundant question when
+those decisions already settle it. Malformed or unknown tags still need the
+user's explicit decision. Source/severity alone never admits work.
+For placement, `/roadmap` must explain the concrete impact on SPEC's intended
+users, supported conditions and acceptance. A deferral requires why it can wait
+and a revisit trigger. Existing explicit commitments require an approved scope
+amendment to cut; writing `defer=true` does not supply that approval.
+
 | Source | Default | Notes |
 |---|---|---|
 | `manual` | KEEP | User wrote it deliberately |
@@ -159,8 +172,8 @@ accepted so existing project backlogs still validate and retain their routing.
 | `full-review:edge-case` | SUGGEST_KILL | Edge or hypothetical — bias toward drop |
 | `full-review` (no severity, legacy) | PROMPT | Legacy tag without taxonomy |
 | `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. |
-| `plan-ceo-review:track=<id>,defer=true` | KEEP | Work cut from a Track during CEO plan review; `/roadmap` decides placement (new Track, Future, or kill) on next regen |
-| `plan-eng-review:track=<id>,defer=true` | KEEP | Work cut from a Track during eng plan review; same routing as plan-ceo-review |
+| `plan-ceo-review:track=<id>,defer=true` | PROMPT | Review deferral; reassess the selected target before placement, deferral or rejection |
+| `plan-eng-review:track=<id>,defer=true` | PROMPT | Same target-based reassessment as plan-ceo-review |
 | `plan-ceo-review` / `plan-eng-review` (no `defer=true`) | PROMPT | Review-surfaced finding that wasn't in original scope — ask user whether it's a deferred-scope item or new work |
 | `discovered:<path>` | PROMPT | Extracted from scattered doc, may be out of context |
 | `<unknown>` / missing | PROMPT | Unrecognized — ask user |
@@ -168,7 +181,7 @@ accepted so existing project backlogs still validate and retain their routing.
 ### Severity taxonomy (full-review)
 
 - **critical** — ship-blocker, data loss, security, correctness.
-- **necessary** — real defect, should fix in current or next Group.
+- **necessary** — reported real defect; verify evidence and target impact before scheduling.
 - **nice-to-have** — legitimate improvement, OK to defer.
 - **edge-case** — hypothetical or extreme-edge scenario. `/full-review` DROPS
   these at source (never written to TODOS.md). Listed here for completeness;
@@ -201,7 +214,8 @@ accepted so existing project backlogs still validate and retain their routing.
 
 ### [plan-ceo-review:track=4A,defer=true] Per-tenant isolation for cache layer
 - **Description:** original Track 4A scope included tenant-scoped cache keys. Cut during CEO review to keep PR sized correctly (~600 LOC vs ~250 cap).
-- **Hypothesis (untested):** likely fits as its own Track in the next Group, after Track 4A's cache primitives land.
+- **Hypothesis (untested):** may need tenant-scoped keys; verify that the selected target actually includes multiple tenants before proposing implementation.
+- **Revisit when:** the project admits a second tenant, or isolation is shown necessary for the current supported workflow.
 - **Effort:** M (human: ~1 day / CC: ~30 min)
 - **Found in:** `~/.gstack/projects/<slug>/ceo-plans/2026-05-10-track-4a.md` §"Deferred"
 ```

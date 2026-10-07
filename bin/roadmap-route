@@ -18,6 +18,7 @@
 #   severity=<severity if present>
 #
 # Exit code: 0 always (PROMPT is a valid action for unknown/malformed input).
+# KEEP retains an observation for evaluation; it never admits work to a target.
 
 set -euo pipefail
 

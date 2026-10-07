@@ -3,6 +3,7 @@ import { readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   formatFutureIndex,
+  futureIndexRows,
   mergeFutureArchive,
   mergeShippedArchive,
   parseRoadmap,
@@ -884,5 +885,33 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(out).not.toContain('Rest.');
     expect(out).toContain('- **Title only**');
     expect(out).not.toMatch(/Title only.*—/);
+  });
+
+  test('future index carries each bullet\'s complete revisit trigger', () => {
+    const rows = futureIndexRows([
+      '- **Bump parser** — Handle v2. **Revisit when:** docs/SPEC.md selects MVP-2 or v1.2.0 ships.',
+      '- **Old item** — No trigger here. More detail.',
+      '- **Trigger only** — **Revisit when:** a second tenant is admitted.',
+    ]);
+    expect(rows.map((r) => r.revisit)).toEqual([
+      'docs/SPEC.md selects MVP-2 or v1.2.0 ships',
+      null,
+      'a second tenant is admitted',
+    ]);
+    expect(rows[2]!.first).toBe('');
+    const out = formatFutureIndex([
+      '- **Bump parser** — Handle v2. **Revisit when:** docs/SPEC.md selects MVP-2 or v1.2.0 ships.',
+      '- **Old item** — No trigger here. More detail.',
+    ]);
+    expect(out).toContain('- **Bump parser** — Handle v2. — revisit: docs/SPEC.md selects MVP-2 or v1.2.0 ships');
+    expect(out).toContain('- **Old item** — No trigger here.\n');
+  });
+
+  test('the bullet-ending marker wins over a quoted mention of it', () => {
+    const [row] = futureIndexRows([
+      '- **Migrate triggers** — Index reads only inline `**Revisit when:**` markers. More. **Revisit when:** the next regeneration.',
+    ]);
+    expect(row!.revisit).toBe('the next regeneration');
+    expect(row!.first).toBe('Index reads only inline `**Revisit when:**` markers.');
   });
 });

@@ -283,12 +283,11 @@ route_source_tag() {
       echo "source=$source"
       ;;
     plan-ceo-review|plan-eng-review)
-      # `defer=true` → KEEP (in-scope work cut by the review; /roadmap
-      # regen places it). Without it → PROMPT (review surfaced out-of-scope
-      # work; ask user).
+      # Deferral records provenance, not a commitment to schedule. /roadmap
+      # evaluates the selected target before placing or deferring this work.
       if echo "$parsed" | grep -qE '^defer=true$'; then
-        echo "action=KEEP"
-        echo "reason=$source — work cut from Track during plan review; /roadmap regen will place"
+        echo "action=PROMPT"
+        echo "reason=$source — review deferral; evaluate selected target before placement"
       else
         echo "action=PROMPT"
         echo "reason=$source — review-surfaced finding without defer=true flag; surface for explicit decision"

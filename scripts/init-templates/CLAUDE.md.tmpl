@@ -6,6 +6,18 @@
 
 4-digit format: `MAJOR.MINOR.PATCH.MICRO`. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
 
+## Product scope
+
+When `docs/SPEC.md` exists with an `## Authority` section, read it before
+planning, roadmap, review and release decisions. Its selected target, intended users, audience ceiling, accepted
+limitations and release policy override generic scope and version-bump
+defaults. A backlog entry or review label alone does not create a release
+requirement. Preserve approved scope; defer unrelated improvements with a
+revisit trigger. `/project-spec` establishes these decisions and any transition
+from the initial version format. Open a current supporting document only when
+its listed role bears on the decision; superseded plans/specs are historical
+only. Do not load them routinely or extract new backlog items from them.
+
 ## Testing
 
 {{test_cmd_block}}
@@ -28,6 +40,7 @@ Key routing rules:
 - Ship and land, finish a prepared PR → invoke `/ship-and-land`
 - Update docs after shipping → invoke `/document-release`
 - Save progress, checkpoint, resume → invoke `/context-save` / `/context-restore`
+- Establish project outcomes or organize an existing project around its MVP → invoke `/project-spec`
 - Restructure TODOs, clean up roadmap → invoke `/roadmap`
 - Full codebase review → invoke `/full-review`
 - Manual testing, pair test → invoke `/pair-review`

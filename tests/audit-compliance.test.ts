@@ -22,7 +22,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { REGISTERED_SOURCES, validateTagExpression } from '../src/audit/lib/source-tag.ts';
+import { REGISTERED_SOURCES, routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 import {
   assertSkillDescriptionWithinLimit,
@@ -1086,5 +1086,28 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(validateTagExpression('[full-review:critical,files=app/[id]/page.tsx]').ok).toBe(false);
     expect(validateTagExpression('[full-review:critical,files=src/`id`.ts]').ok).toBe(false);
     expect(validateTagExpression('[full-review:critical,files=src/$(id).ts]').ok).toBe(false);
+  });
+
+  test.each(['critical', 'necessary', 'nice-to-have'])(
+    'agent prompts define %s exactly as the contract does',
+    (severity) => {
+      const def = new RegExp(`^- \\*\\*${severity}\\*\\* — (.+?)\\.?$`, 'm').exec(contract)?.[1];
+      expect(def).toBeDefined();
+      const prompts = [...skill.matchAll(new RegExp(`^>\\s+${severity}\\s+— (.+)$`, 'gm'))].map((m) => m[1]);
+      expect(prompts.length).toBe(3);
+      for (const prompt of prompts) expect(prompt).toBe(def);
+    },
+  );
+
+  test.each(['plan-ceo-review', 'plan-eng-review'])(
+    'the contract routing table matches the router for %s deferrals',
+    (source) => {
+      const row = new RegExp('^\\| `' + source + ':track=<id>,defer=true` \\| (\\w+) \\|', 'm').exec(contract)?.[1];
+      expect(row).toBe(routeSourceTag(`[${source}:track=4A,defer=true]`).action);
+    },
+  );
+
+  test('malformed and unknown tags keep an explicit user decision', () => {
+    expect(contract.replace(/\s+/g, ' ')).toContain("Malformed or unknown tags still need the user's explicit decision.");
   });
 });
