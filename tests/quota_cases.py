@@ -945,18 +945,55 @@ class QuotaTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'],'identity_unknown')
 
     def test_cursor_text_is_identity_evidence_but_not_zero_tokens(self):
-        import re
-        slug=re.sub(r'[^a-zA-Z0-9]','-',self.context['cwd']).strip('-')
-        transcript=self.home/'.cursor/projects'/slug/'agent-transcripts/conversation/conversation.txt'
-        transcript.parent.mkdir(parents=True)
-        transcript.write_text('user:\nA fixture conversation with no usage fields.\n')
-        result=scan(self.store,self.context)
-        self.assertFalse(result['complete'])
-        source=self.store.all('source')[0]
-        self.assertEqual(source['session'],self.store.digest('conversation','session'))
-        self.assertEqual(source['cwd'],self.context['cwd'])
-        self.assertEqual(source['reason'],'not_reported')
-        self.assertEqual(scan(self.store,self.context)['bytes_read'],0)
+        # Cursor cwd identity uses the run-collapsing mapping documented at
+        # docs/quota-ledger.md#dx-13-decision-table, Cursor cwd slug row.
+        # 2026-09-24 is dated probe context, not a fresh host or version claim.
+        # Paseo and Conductor rows are synthetic geometry. Conductor documents
+        # an ordinary layout in that same class, not native-host acceptance.
+        # Expected components are independent literals. case-digits pins kept
+        # letter case and digits; partial requires a whole-component match.
+        profiles=(
+            ('ordinary','/workspace/project','workspace-project',True),
+            ('paseo','/workspace/.paseo/worktrees/slot/project','workspace-paseo-worktrees-slot-project',True),
+            ('punctuation','/workspace/-- example..__ project--/','workspace-example-project',True),
+            ('conductor','/workspace/conductor/workspaces/project/topic','workspace-conductor-workspaces-project-topic',True),
+            ('case-digits','/Workspace/Project2','Workspace-Project2',True),
+            ('mismatch','/workspace/.paseo/worktrees/slot/project','workspace--paseo-worktrees-slot-project',False),
+            ('partial','/workspace/project','workspace-project-v2',False),
+        )
+        for name,cwd,component,matches in profiles:
+            with self.subTest(profile=name):
+                projects=self.dir/('cursor-projects-'+name)
+                projects.mkdir()
+                transcript=projects/component/'agent-transcripts'/'conversation'/'conversation.txt'
+                transcript.parent.mkdir(parents=True)
+                transcript.write_text('user:\nA fixture conversation with no usage fields.\n')
+                context=dict(self.context,cwd=cwd,repo_root=cwd,cursor_projects_dir=str(projects))
+                store=Store(self.dir/('cursor-store-'+name))
+                try:
+                    result=scan(store,context)
+                    self.assertFalse(result['complete'])
+                    sources=store.all('source')
+                    self.assertEqual(len(sources),1)
+                    source=sources[0]
+                    self.assertEqual(source['session'],store.digest('conversation','session'))
+                    self.assertFalse(source['complete'])
+                    self.assertEqual(source['reason'],'not_reported')
+                    self.assertEqual(store.all('usage'),[])
+                    if matches:
+                        self.assertIn('cwd',source,(
+                            f'{name}: missing cwd identity; literal cwd {cwd!r}; '
+                            f'expected project component {component!r}; '
+                            f'transcript components {transcript.parts}. '
+                            'Compare the fixture project component with the documented run-collapsing '
+                            'mapping in docs/quota-ledger.md#dx-13-decision-table, Cursor cwd slug row, '
+                            'probe date 2026-09-24.'))
+                        self.assertEqual(source['cwd'],cwd)
+                    else:
+                        self.assertNotIn('cwd',source)
+                    self.assertEqual(scan(store,context)['bytes_read'],0)
+                finally:
+                    store.close()
 
     def test_json_records_with_invalid_shapes_do_not_abort_scan(self):
         path=self.home/'.codex/sessions/malformed.jsonl'
