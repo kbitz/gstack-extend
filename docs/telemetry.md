@@ -925,7 +925,9 @@ stage, agent, model, effort, and route from provenance and does not print
 source labels. A quota row can name a model while the stage-runs source is
 `unknown`. That is not a substitute for this row and not permission to sample.
 
-The repair does not change supported Paseo behavior or Cursor CLI behavior.
+The repair does not change supported Paseo behavior or Cursor CLI behavior,
+except that a Cursor transcript read failure now prints the fixed
+`transcript-unreadable` reason instead of exception text.
 `CURSOR_INVOKED_AS` is CLI. Finish does not copy model or effort from a matching
 store on that path; an explicit `--model` or `--effort` stays `flag`. A row
 whose only Cursor signal is `--agent cursor` has `agent_source` `flag` and
@@ -964,7 +966,8 @@ most 200 characters, independent of `params`. `params` may be a dict with
 `effort` and `reasoning_effort`, or a list of `{id, value}` entries. A valid
 `effort` wins over a valid `reasoning_effort`. An invalid `effort` falls back.
 Identical list duplicates keep that value. Conflicting values for one
-recognized key make that key unknown and do not fall back. Entries such as
+recognized key make that key unknown and do not fall back. A null effort is
+missing, not malformed, like a null model id. Entries such as
 `fast`, malformed entries, and unsupported containers are ignored. Empty or
 missing params do not erase a usable model id. A non-dict `model` yields
 unknown fields and does not raise.
@@ -973,19 +976,25 @@ Identity is exact. `agents.ndjson` `cwd` must equal the process cwd, and when
 `CURSOR_CONVERSATION_ID` is set it must equal `agentId`. Identity is per shard:
 a run counts only when its own shard's `agents.ndjson` places that agent in the
 process cwd. An unknown process cwd, such as a deleted directory, matches no
-agent and the row still records. Within one shard, a
+agent; the store match never raises on it. Finish itself still needs a
+resolvable working directory to find its handoff. Within one shard, a
 cleaned `agentId` plus a cleaned `runId` is one run; snapshots of that run are
 not extra runs. A record with no usable `runId` stays its own candidate.
 Duplicate equivalent snapshots collapse. The newest `updatedAt` snapshot is
 kept whole, with no field merging, and only when `startedAt` is consistent.
 Equal-timestamp conflicts and an inconsistent start make that run unverifiable.
 An unverifiable run that could overlap the stage blocks certification even
-beside one eligible run; one wholly outside the window does not.
+beside one eligible run; one wholly outside the window does not. A run with an
+unreadable snapshot is unverifiable too when a readable snapshot of it could
+overlap the stage.
 The newest invalid or future snapshot is not replaced by an older one. Distinct
 run ids stay ambiguous even when the model and effort agree. A malformed
-neighbor does not erase a well-formed record. Unhashable ids are skipped.
+neighbor, a run with no readable snapshot, does not erase a well-formed
+record; the certification then carries the `malformed-neighbor` reason.
+Unhashable ids are skipped.
 
-The stage window is inclusive `[begin, end]`. The run window is inclusive
+The stage window is inclusive `[begin, end]`; an inverted stage window
+certifies nothing. The run window is inclusive
 `[startedAt, endedAt]`. Only an absent or null `endedAt` is an open run, treated
 as open through the stage end. `startedAt` and `updatedAt` are required, with
 `startedAt <= updatedAt <= end`. A non-null `endedAt` that does not parse, an
@@ -997,11 +1006,14 @@ cleaning. Zero eligible runs, or more than one, leave model and effort null and
 do not certify the route. A still-open stale run can overlap a later stage and
 make the result honestly ambiguous. There is no freshness TTL.
 
-A file over 8 MiB, an unreadable or non-regular sibling, a missing
-`agents.ndjson` next to runs, or a missing `runs.ndjson` next to agents cannot
-prove uniqueness, including when the session id is absent and a readable
+A file over 8 MiB, a file that grew past that cap or ends in a torn,
+unparseable line while being read (a writer mid-append), an unreadable or
+non-regular sibling, a missing `agents.ndjson` next to runs, or a missing
+`runs.ndjson` next to agents cannot prove uniqueness, including when the session id is absent and a readable
 sibling looks unique. This applies to every shard in the store, not only the
-one for this cwd. The row still records.
+one for this cwd. A shard directory with neither file is skipped. A malformed
+line, including one nested too deeply to decode, is skipped like any other bad
+line. The row still records.
 Transcript mtime remains the activity fallback when no store was captured, the
 candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
 use, or both model and effort are null. A usable model with unknown effort, or
@@ -1075,9 +1087,11 @@ caller's existing arguments. Do not export it only in a terminal the GUI will
 not inherit, and do not add a second start or finish. Whether the host UI keeps
 that stderr is unverified. The `cursor-sdk` reason lines are fixed tokens plus
 the anchor. They omit store fields, cwd, identity, exception text, and values.
-The same debug output also carries the existing sink line, which prints the
-ledger path, and the existing `provenance agent=… model=… effort=…` line,
-which prints the values the row records. Leave both out of a receipt.
+The same debug output also carries other lines, such as the sink line with
+the ledger path, the logger and config paths, skipped-output reasons, other
+harnesses' detection errors, and the `provenance agent=… model=… effort=…`
+line with the values the row records. Copy only lines that begin
+`telemetry: cursor-sdk` into a receipt.
 
 | Reason | Problem | Cause | Safe action |
 |---|---|---|---|
@@ -1086,11 +1100,12 @@ which prints the values the row records. Leave both out of a receipt.
 | <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | A file over 8 MiB, or a missing, non-regular, or unreadable sibling in any shard, could hide a run | Do not treat a readable shard as unique. The row stays unknown |
 | <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd | Compare `pwd -P` with the store privately. Exact match is required. Do not paste paths |
 | <a id="cursor-sdk-no-session-match"></a>`no-session-match` | No store metadata | The conversation id matches no agent or run | Record identity as unknown or absent. Do not copy the id into a receipt |
-| <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
+| <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the run or stage interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
 | <a id="cursor-sdk-no-eligible-window"></a>`no-eligible-window` | No store metadata | Runs were readable and none overlap the stage | Confirm the stage begin and end. A completed earlier run is not this stage |
-| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run whose snapshots conflict could overlap | Leave model, effort, and route unknown. A stale open run can do this |
+| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run whose snapshots conflict or are partly unreadable could overlap | Leave model, effort, and route unknown. A stale open run can do this |
 | <a id="cursor-sdk-malformed-metadata"></a>`malformed-metadata` | A field is null | The model or a recognized effort value failed cleaning, or effort values conflicted | Keep a usable sibling field. Do not guess the dropped one |
-| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The store gave no usable result and the Cursor transcript could not be listed or read | Restore read access to the Cursor transcript directory privately. The row keeps the agent; model and effort stay null |
+| <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no readable snapshot, so it could not be placed in or out of the window | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
+| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read, with no store observed (explicit CLI) or no usable store result | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
 
 <a id="cursor-ledger-recipe"></a>
 

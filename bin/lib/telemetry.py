@@ -47,7 +47,7 @@ VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
-# Fixed Conductor SDK diagnostics. The text after the hash is an anchor in docs/telemetry.md.
+# Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
 # Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
 CURSOR_SDK_REASONS = (
     ("store-absent", "cursor-sdk-store-absent"),
@@ -59,6 +59,7 @@ CURSOR_SDK_REASONS = (
     ("no-eligible-window", "cursor-sdk-no-eligible-window"),
     ("ambiguous-candidates", "cursor-sdk-ambiguous-candidates"),
     ("malformed-metadata", "cursor-sdk-malformed-metadata"),
+    ("malformed-neighbor", "cursor-sdk-malformed-neighbor"),
     ("transcript-unreadable", "cursor-sdk-transcript-unreadable"),
 )
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
@@ -736,6 +737,7 @@ def _cursor_store_root(store=None):
 def _read_bounded(path):
     # Same cap as tail_records. Status is how complete the read was. A file over the cap, or an unreadable one,
     # cannot prove that an older row is absent, so it is not parsed: that evidence would only be discarded.
+    # A writer mid-append is the same: growth past the cap during the read, or a torn final line, is clipped.
     try:
         if not path.exists():
             return [], "missing"
@@ -748,14 +750,20 @@ def _read_bounded(path):
             if stream.seek(0, os.SEEK_END) > LOG_TAIL_BYTES:
                 return [], "clipped"
             stream.seek(0)
-            blob = stream.read(LOG_TAIL_BYTES)
+            blob = stream.read(LOG_TAIL_BYTES + 1)
     except OSError:
         return [], "unreadable"
+    if len(blob) > LOG_TAIL_BYTES:
+        return [], "clipped"
     records = []
-    for line in blob.split(b"\n"):
+    lines = blob.split(b"\n")
+    for index, line in enumerate(lines):
         try:
             record = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # A malformed or too-deeply-nested line is skipped; an unterminated, unparseable last line is torn.
+            if index == len(lines) - 1 and line.strip():
+                return [], "clipped"
             continue
         if isinstance(record, dict):
             records.append(record)
@@ -814,12 +822,8 @@ def capture_cursor_store(store=None):
             except OSError:
                 complete = False
                 continue
-            try:
-                agents, agents_status = _read_bounded(child / "agents.ndjson")
-                runs, runs_status = _read_bounded(child / "runs.ndjson")
-            except OSError:
-                complete = False
-                continue
+            agents, agents_status = _read_bounded(child / "agents.ndjson")
+            runs, runs_status = _read_bounded(child / "runs.ndjson")
             if _shard_hides_rows(agents_status, runs_status, agents):
                 complete = False
             if agents_status == "missing" and runs_status == "missing":
@@ -832,7 +836,7 @@ def capture_cursor_store(store=None):
 
 
 def _effort_status(cleaned_values):
-    # missing: key never appeared. invalid: appeared but nothing survived clean().
+    # missing: key never appeared, or only as null. invalid: appeared but nothing survived clean().
     # conflict: two different cleaned values. ok: one cleaned value, duplicates allowed.
     if not cleaned_values:
         return "missing", None
@@ -848,7 +852,7 @@ def _effort_from_params(params):
     if isinstance(params, dict):
         found = {}
         for key in ("effort", "reasoning_effort"):
-            if key in params:
+            if params.get(key) is not None:
                 found[key] = [clean(params.get(key))]
         effort_state, effort = _effort_status(found.get("effort", []))
         reason_state, reason = _effort_status(found.get("reasoning_effort", []))
@@ -858,8 +862,9 @@ def _effort_from_params(params):
             if not isinstance(entry, dict):
                 continue
             key = entry.get("id")
-            # A list or dict id is malformed, not a lookup error that could discard the whole run.
-            if isinstance(key, str) and key in found:
+            # A list or dict id is malformed, not a lookup error that could discard the whole run. A null value
+            # is missing, like a null model id, not malformed.
+            if isinstance(key, str) and key in found and entry.get("value") is not None:
                 found[key].append(clean(entry.get("value")))
         effort_state, effort = _effort_status(found["effort"])
         reason_state, reason = _effort_status(found["reasoning_effort"])
@@ -941,9 +946,11 @@ def _classify_group(records, begin, end):
             return "malformed-bounds", None
     if not views:
         return "malformed-bounds", None
-    # Any unreadable updatedAt/startedAt hides which snapshot is newest, so the group cannot fall back.
-    if any(view["started"] is None or view["updated"] is None for view in views):
-        return "malformed-bounds", None
+    # Any unreadable updatedAt/startedAt hides which snapshot is newest, so the group cannot fall back. If a readable
+    # snapshot still places the run in the window, the run exists there and stays unverifiable ("partial").
+    readable = [view for view in views if view["started"] is not None and view["updated"] is not None]
+    if len(readable) != len(views):
+        return ("partial" if any(_may_overlap(view, begin, end) for view in readable) else "malformed-bounds"), None
     if len({view["started"] for view in views}) != 1:
         return _unverifiable(views, begin, end)
     latest = max(view["updated"] for view in views)
@@ -973,7 +980,7 @@ def select_cursor(capture, cwd, session, begin, end):
         return CursorSelection(False, None, None, False, ["store-unreadable"])
     if not capture.complete:
         return CursorSelection(False, None, None, False, ["incomplete-evidence"])
-    if not _finite_bound(begin) or not _finite_bound(end):
+    if not _finite_bound(begin) or not _finite_bound(end) or begin > end:
         return CursorSelection(False, None, None, False, ["malformed-bounds"])
     if not isinstance(cwd, str):
         # An unknown process cwd (deleted directory) never matches, including a record with no cwd field.
@@ -1015,7 +1022,7 @@ def select_cursor(capture, cwd, session, begin, end):
     if session is not None and not groups:
         return CursorSelection(False, None, None, False, ["no-session-match"])
     eligible, reasons = [], []
-    saw_malformed = saw_unresolved = False
+    saw_malformed = saw_unresolved = saw_partial = False
     for records in groups.values():
         try:
             status, chosen = _classify_group(records, begin, end)
@@ -1026,15 +1033,20 @@ def select_cursor(capture, cwd, session, begin, end):
             eligible.append(chosen)
         elif status == "malformed-bounds":
             saw_malformed = True
+        elif status == "partial":
+            saw_malformed = saw_partial = True
         elif status == "unresolved":
             saw_unresolved = True
     # An unverifiable run that could overlap the stage leaves uniqueness unproven, even beside one eligible run.
-    if len(eligible) > 1 or saw_unresolved:
+    if len(eligible) > 1 or saw_unresolved or (eligible and saw_partial):
         return CursorSelection(False, None, None, False, ["ambiguous-candidates"])
     if len(eligible) == 1:
         model, effort, bad = eligible[0]["meta"]
         if bad:
             reasons.append("malformed-metadata")
+        if saw_malformed:
+            # A malformed neighbor does not block the well-formed run; the reason makes that visible.
+            reasons.append("malformed-neighbor")
         return CursorSelection(True, model, effort, model is not None or effort is not None, reasons,
                                eligible[0]["updated"])
     if saw_malformed:
@@ -1104,8 +1116,9 @@ def route_for(agent, conductor_match=False):
 
 
 def _trace_detection_error(agent, error):
-    # The store is captured before detect(), so a Cursor reader failure here is its transcript fallback. It gets a
-    # fixed reason without the exception text. Other harnesses keep the existing exception text.
+    # cursor_turns reads no store (a captured selection is passed in, or none on the CLI path), so a Cursor reader
+    # failure can only come from its transcript fallback. It gets a fixed reason without the exception text.
+    # Other harnesses keep the existing exception text.
     if agent == "cursor":
         _cursor_debug(["transcript-unreadable"])
         return

@@ -1963,6 +1963,51 @@ const CURSOR_HARNESS = [
   '    def missing_runs():',
   '        write_jsonl(store_root() / "a" / "agents.ndjson", [agent("x-agent", cwd)])',
   '        plant("b", [agent("y-agent", cwd)], [run("y-agent", "r1", {"id": "model-y"}, ended=None)])',
+  '    def fifo_runs():',
+  '        write_jsonl(store_root() / "pipe" / "agents.ndjson", [one])',
+  '        os.mkfifo(store_root() / "pipe" / "runs.ndjson")',
+  '    def empty_shard():',
+  '        (store_root() / "empty").mkdir(parents=True)',
+  '        plant("good", [one], [run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}})])',
+  '    good_line = json.dumps(run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}}))',
+  '    def torn_tail():',
+  '        write_jsonl(store_root() / "torn" / "agents.ndjson", [one])',
+  '        (store_root() / "torn" / "runs.ndjson").write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
+  '    def unterminated_tail():',
+  '        write_jsonl(store_root() / "whole" / "agents.ndjson", [one])',
+  '        (store_root() / "whole" / "runs.ndjson").write_text(good_line)',
+  '    def deep_line():',
+  '        write_jsonl(store_root() / "deep" / "agents.ndjson", [one])',
+  '        (store_root() / "deep" / "runs.ndjson").write_text("[" * 200000 + "]" * 200000 + "\\n" + good_line + "\\n")',
+  '    def grown():',
+  '        plant("grow", [one], [run("only-agent", "run-1", {"id": "model-kept"})])',
+  '        path = store_root() / "grow" / "runs.ndjson"',
+  '        payload = (good_line + "\\n").encode() * (telemetry.LOG_TAIL_BYTES // len(good_line) + 10)',
+  '        real_open = telemetry.Path.open',
+  '        class Grown:',
+  '            # Reports a size under the cap, then the writer appends past it before the read.',
+  '            def __init__(self): self.pos = 0',
+  '            def __enter__(self): return self',
+  '            def __exit__(self, *exc): return False',
+  '            def seek(self, offset, whence=0):',
+  '                self.pos = telemetry.LOG_TAIL_BYTES - 10 if whence == os.SEEK_END else offset',
+  '                return self.pos',
+  '            def read(self, size=-1):',
+  '                return payload[self.pos:self.pos + size]',
+  '        telemetry.Path.open = lambda self, *a, **k: Grown() if self == path else real_open(self, *a, **k)',
+  '        return real_open',
+  '    fifo_result = isolated(fifo_runs)',
+  '    empty_result = isolated(empty_shard)',
+  '    torn_result = isolated(torn_tail)',
+  '    whole_result = isolated(unterminated_tail)',
+  '    deep_result = isolated(deep_line)',
+  '    reset_store()',
+  '    restore = grown()',
+  '    try:',
+  '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
+  '    finally:',
+  '        telemetry.Path.open = restore',
+  '    grown_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
   '    os.environ["CURSOR_AGENT"] = "1"',
   '    os.environ.pop("CURSOR_CONVERSATION_ID", None)',
   '    reset_store()',
@@ -1991,7 +2036,8 @@ const CURSOR_HARNESS = [
   '    return {"agents_tail": {"certify": clipped.certify, "model": clipped.model, "reasons": clipped.reasons},',
   '            "runs_tail": {"certify": runs_clipped.certify, "model": runs_clipped.model, "reasons": runs_clipped.reasons},',
   '            "missing_agents": isolated(missing_agents), "nonregular": isolated(nonregular),',
-  '            "missing_runs": isolated(missing_runs),',
+  '            "missing_runs": isolated(missing_runs), "fifo_runs": fifo_result, "empty_shard": empty_result,',
+  '            "torn_tail": torn_result, "unterminated_tail": whole_result, "deep_line": deep_result, "grown": grown_result,',
   '            "file_root": isolated(file_root), "bad_json": isolated(bad_json),',
   '            "big": {"complete": big_capture.complete, "parsed": parsed[0]},',
   '            "inspected": inspected, "inspected_all": inspected_all,',
@@ -2103,6 +2149,17 @@ const CURSOR_HARNESS = [
   '            row = telemetry.provenance_row("roadmap", "sid-neighbor", int(time.time()) - 30, 5, {}, None)',
   '        text = stderr.getvalue() + json.dumps(row)',
   '        return {"agent": row["agent"], "model": row["model"], "route": row["route"], "stderr": stderr.getvalue(), "leaked": SENTINEL in text}',
+  '    if mode == "cli-transcript":',
+  '        os.environ["CURSOR_INVOKED_AS"] = "cursor-agent"',
+  '        os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"',
+  '        def broken(*args, **kwargs):',
+  '            raise PermissionError(13, SENTINEL)',
+  '        telemetry.cursor_logs = broken',
+  '        stderr = io.StringIO()',
+  '        with contextlib.redirect_stderr(stderr):',
+  '            row = telemetry.provenance_row("roadmap", "sid-cli-transcript", int(time.time()) - 5, 5, {}, None)',
+  '        text = stderr.getvalue()',
+  '        return {"agent": row["agent"], "route": row["route"], "model": row["model"], "stderr": text, "leaked": SENTINEL in text + json.dumps(row)}',
   '    if mode == "deleted-cwd":',
   '        os.environ.pop("CURSOR_CONVERSATION_ID", None)',
   '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high"}}, started=int(time.time()) - 60, updated=int(time.time()) - 10, ended=None)])',
@@ -2286,6 +2343,16 @@ describe('Conductor Cursor store', () => {
       { name: 'dict-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: 'bad\u0007', reasoning_effort: 'max' }))], session: 'conv-1' },
       { name: 'list-both', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'reasoning_effort', value: 'low' }, { id: 'effort', value: 'high' }]))], session: 'conv-1' },
       { name: 'reasoning-conflict', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'reasoning_effort', value: 'low' }, { id: 'reasoning_effort', value: 'high' }]))], session: 'conv-1' },
+      { name: 'eligible-plus-partial-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', {})), closed('conv-1', 'run-c', model('two', {})), { ...closed('conv-1', 'run-c', model('three', {})), updatedAt: undefined }] },
+      { name: 'eligible-plus-partial', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-p', model('one', {})), { ...closed('conv-1', 'run-p', model('two', {})), updatedAt: 'garbage' }] },
+      { name: 'eligible-plus-open-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-c', model('one', {}), begin - 100, begin - 50, null), closed('conv-1', 'run-c', model('two', {}), begin - 100, begin - 50, null)] },
+      { name: 'eligible-plus-bad-end-conflict', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { ...closed('conv-1', 'run-c', model('one', {}), begin + 10, begin + 20), endedAt: 'nope' }, { ...closed('conv-1', 'run-c', model('two', {}), begin + 10, begin + 20), endedAt: 'nope' }] },
+      { name: 'eligible-plus-older-snapshot-overlaps', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-s', good, begin - 100, begin - 50, null), closed('conv-1', 'run-s', good, begin - 90, begin - 40, begin - 30)] },
+      { name: 'malformed-neighbor', agents, session: 'conv-1', runs: [{ agentId: 'conv-1', runId: 'bad', startedAt: begin * 1000, endedAt: (begin + 10) * 1000, model: model('nope', { effort: 'low' }) }, closed('conv-1', 'run-1', good)] },
+      { name: 'inverted-stage', agents, runs: [closed('conv-1', 'run-1', good)], session: 'conv-1', begin: end + 50, end },
+      { name: 'null-effort', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null }))], session: 'conv-1' },
+      { name: 'null-effort-list', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: null }]))], session: 'conv-1' },
+      { name: 'null-effort-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null, reasoning_effort: 'max' }))], session: 'conv-1' },
     ];
     const normalized = cases.map(entry => ({
       ...entry,
@@ -2353,6 +2420,16 @@ describe('Conductor Cursor store', () => {
     expect(byName['dict-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', reasons: [] });
     expect(byName['list-both']).toMatchObject({ model: 'grok-4.7', effort: 'high', reasons: [] });
     expect(byName['reasoning-conflict']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
+    for (const name of ['eligible-plus-partial-conflict', 'eligible-plus-partial', 'eligible-plus-open-conflict', 'eligible-plus-bad-end-conflict', 'eligible-plus-older-snapshot-overlaps']) {
+      expect([name, byName[name]]).toMatchObject([name, { certify: false, model: null, reasons: ['ambiguous-candidates'] }]);
+    }
+    // A malformed neighbor does not block a well-formed run, but the certification says it saw one.
+    expect(byName['malformed-neighbor']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: ['malformed-neighbor'] });
+    expect(byName.neighbor.reasons).toEqual(['malformed-neighbor']);
+    expect(byName['inverted-stage']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
+    expect(byName['null-effort']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
+    expect(byName['null-effort-list']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
+    expect(byName['null-effort-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', reasons: [] });
     const registry = (cursorPy(fix, { op: 'registry' }) as Array<[string, string]>).map(([code]) => code);
     for (const result of selected) {
       for (const reason of result.reasons) expect(registry).toContain(reason);
@@ -2368,6 +2445,14 @@ describe('Conductor Cursor store', () => {
     expect(clipped.missing_agents.reasons).toEqual(['incomplete-evidence']);
     expect(clipped.nonregular.reasons).toEqual(['incomplete-evidence']);
     expect(clipped.missing_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    // A FIFO must not block open(); a stray empty shard directory must not darken the store.
+    expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.empty_shard).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
+    // A writer mid-append can hide a competing run: a torn final line or growth past the cap is incomplete.
+    expect(clipped.torn_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
+    expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.deep_line).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.big.complete).toBe(false);
     expect(clipped.big.parsed).toBeLessThan(10);
     expect(clipped.inspected).toEqual(['r1']);
@@ -2445,6 +2530,15 @@ describe('Conductor Cursor store', () => {
       }]);
     });
     expect(iso.row).toMatchObject({ agent: 'cursor', model: 'gpt-6-astra', effort: 'high', route: 'conductor' });
+
+    // Either Cursor marker alone captures the store: the conversation id without CURSOR_AGENT.
+    const convFix = makeTelemetryFixture('off');
+    const convOnly = cursorFinish(convFix, { CURSOR_CONVERSATION_ID: 'conv-1' }, (start, cwd) => {
+      const root = join(convFix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
+      writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
+      writeJsonl(join(root, 'runs.ndjson'), [overlapping('conv-1', 'run-1', 'grok-4.7', 'high', start)]);
+    });
+    expect(convOnly.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor' });
 
     const wrong = makeTelemetryFixture('off');
     const wrongCwd = cursorFinish(wrong, native, (start, cwd) => {
@@ -2546,6 +2640,11 @@ describe('Conductor Cursor store', () => {
     expect(redacted.stderr).toContain('cursor-sdk transcript-unreadable');
     expect(redacted.stderr).toContain('#cursor-sdk-transcript-unreadable');
     expect(redacted.stderr).not.toContain('store-unreadable');
+    // The explicit CLI path never reads the store, and its transcript failure is the same fixed reason.
+    const cliTranscript = cursorPy(fix, { op: 'observe', mode: 'cli-transcript' }, cwd);
+    expect(cliTranscript).toMatchObject({ agent: 'cursor', route: 'cli', model: null, leaked: false });
+    expect(cliTranscript.stderr).toContain('cursor-sdk transcript-unreadable');
+    expect(cliTranscript.stderr).not.toContain('provenance detection failed');
     expect(redacted.stderr).not.toContain(CURSOR_SENTINEL);
     const neighbor = cursorPy(fix, { op: 'observe', mode: 'neighbor' }, cwd);
     expect(neighbor).toMatchObject({ agent: 'claude', model: 'claude-opus-5', leaked: false });

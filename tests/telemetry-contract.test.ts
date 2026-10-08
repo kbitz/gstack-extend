@@ -1060,21 +1060,16 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(cursor).toContain('100000000000');
     expect(cursor).toContain('does not change supported Paseo behavior');
     expect(doc).toContain('Captured 2026-09-25T12:28:18Z');
-    for (const anchor of [
-      'cursor-sdk-store-absent',
-      'cursor-sdk-store-unreadable',
-      'cursor-sdk-incomplete-evidence',
-      'cursor-sdk-no-cwd-agent',
-      'cursor-sdk-no-session-match',
-      'cursor-sdk-malformed-bounds',
-      'cursor-sdk-no-eligible-window',
-      'cursor-sdk-ambiguous-candidates',
-      'cursor-sdk-malformed-metadata',
-      'cursor-sdk-transcript-unreadable',
-    ]) {
+    // Anchors come from the registry; the registry-to-docs lock test above owns their order and spelling.
+    const registry = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
+      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
+    expect(registry.status).toBe(0);
+    for (const [, anchor] of JSON.parse(registry.stdout) as Array<[string, string]>) {
       expect(cursor).toContain(`id="${anchor}"`);
     }
     // Debug privacy is promised only for the fixed reason lines; the provenance trace prints recorded values.
     expect(cursor.replace(/\s+/g, ' ')).toContain('provenance agent=… model=… effort=…');
+    expect(cursor.replace(/\s+/g, ' ')).toContain('Copy only lines that begin `telemetry: cursor-sdk` into a receipt');
   });
 });
