@@ -3,6 +3,16 @@
 Extension skills for [gstack](https://github.com/garrytan/gstack): plan work,
 implement it, review it, test it with a human, and ship it.
 
+## Product direction
+
+The project is in public beta. [The project spec](docs/SPEC.md) defines the
+1.0 contract: a dependable complete skill workflow on **Paseo and Conductor
+with equal priority**, plus stable handoffs for external orchestrators.
+Quota-driven routing and unattended shipping remain later work. The
+[roadmap](docs/ROADMAP.md) lists the required work;
+[acceptance records](docs/PROGRESS.md#acceptance) distinguish pending proof from
+shipped code. Workspace hosts and agent harnesses are separate support axes.
+
 ## Skills
 
 Each skill links to its full instructions. **Stable** skills are used and tested
@@ -143,7 +153,8 @@ bun run test:full   # Run all tests, including checks for uncommitted changes
 Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
 install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
 [`VERSION`](VERSION) is the version source of truth, using up to four segments:
-`MAJOR.MINOR.PATCH.MICRO`. Release history is in [CHANGELOG.md](CHANGELOG.md);
+`MAJOR.MINOR.PATCH.MICRO`. The [release policy](docs/SPEC.md#release-policy)
+requires a verified three-part transition before 1.0; it has not happened yet. Release history is in [CHANGELOG.md](CHANGELOG.md);
 planned work is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Acknowledgments

@@ -1,8 +1,25 @@
 # Progress
 
-## Phase 2: Gstack parity (current)
+## Acceptance
 
-Graft gstack's consistency patterns into extend's three daily-use skills (pair-review, roadmap, full-review) so workflows feel as reliable as gstack core.
+This section records achieved stage/checkpoint evidence under [SPEC](SPEC.md).
+Only the owner or an approved `/project-spec` revision adds acceptance entries;
+roadmap and release automation update the release-history table only. A baseline
+entry earns no version bump. Planned acceptance Tracks are not passing evidence.
+
+| Checkpoint or stage | Date | Evidence | Recorded by |
+|---|---|---|---|
+| public-beta — baseline | 2026-10-08 | Owner explicitly declared public-beta in this planning session. This records the current stage; independent onboarding, both-host 1.0 workflow and external-consumer acceptance remain pending. | Owner declaration, recorded by project-spec |
+
+Selected target: public-release 1.0.0. O1–O5 remain **pending**. No acceptance
+checkpoint is awarded by this documentation proposal, the upgrade to 0.36.0.0,
+or the roadmap audit. Existing release rows below retain their historical scope.
+
+
+## Release history — Gstack parity
+
+These entries record the parity work and later releases. [SPEC](SPEC.md) owns
+the current product target; this historical heading is not a stage declaration.
 
 | Version | Date | Summary |
 |---------|------|---------|
@@ -120,7 +137,10 @@ Built the `/browse-native` skill against real macOS apps. Beta never left beta; 
 | 0.1.1 | 2026-03-25 | Simplified to 3 gates, switched default to TextEdit, added close-button cleanup, fixed hotkey syntax |
 | 0.1.0 | 2026-03-24 | Initial /browse-native skill, validation gates (4 gates), design doc, TODOs |
 
-## Roadmap
+## Historical roadmap notes
+
+Retained for release context. [ROADMAP](ROADMAP.md) owns current scheduling;
+these old Group labels do not create active work or 1.0 gates.
 
 - **Phase 1 (Groups 1–4): Bun Test Migration** — ✓ Complete (v0.18.3 → v0.18.11.0). `bun test` is the sole entry point; `bin/roadmap-audit` is a 7-line shim invoking `src/audit/cli.ts`; touchfiles diff selection + audit-compliance shipped. Skill prose corpus also shipped in Track 4C but was later removed in Track 7A (calibration theater — parent gstack has no equivalent). Suite 113s → 32s; audit snapshots 124s → 7.3s.
 - **Group 5: Install Pipeline** — Single Track 5A "Install pipeline polish" with 5 tasks (preamble probe, layout scaffolding, doc type detection, update-run dir propagation, setup symlink hardening).
