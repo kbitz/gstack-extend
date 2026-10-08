@@ -4,8 +4,9 @@
 
 This section records achieved stage/checkpoint evidence under [SPEC](SPEC.md).
 Only the owner or an approved `/project-spec` revision adds acceptance entries;
-roadmap and release automation update the release-history table only. A baseline
-entry earns no version bump. Planned acceptance Tracks are not passing evidence.
+roadmap and release automation are to update the release-history table only
+(Track 24C adds the enforcement; until it lands they follow this rule by
+instruction). A baseline entry earns no version bump. Planned acceptance Tracks are not passing evidence.
 
 | Checkpoint or stage | Date | Evidence | Recorded by |
 |---|---|---|---|

@@ -157,7 +157,7 @@ _1 task . ~180 LOC incl. tests . medium risk_
 **Done when:** Upgrading a named legacy install to a three-part candidate passes comparison, migration, audit and tag checks; public instructions declare the new policy without changing old tags or assigning a release during this Track.
 _touches: tests/update.test.ts, tests/checks-version.test.ts, tests/telemetry-contract.test.ts, bin/lib/semver.sh, .github/workflows/auto-tag.yml, CLAUDE.md, README.md, docs/installation.md_
 _blocked-by: Track 25A, Track 23C, Track 23F_
-- **Qualify release compatibility and document the cutover** -- Exercise the existing three/four-part readers and change only demonstrated incompatibilities. Verify representative legacy-to-candidate upgrade and malformed-version controls, preserve tag history and schema guarantees, and reconcile this repo's maintained instructions. This does not change consumers' init defaults or reinterpret their versions. VERSION/package assignment belongs to the eventual release workflow. _~180 lines._ (M)
+- **Qualify release compatibility and document the transition** -- Exercise the existing three/four-part readers and change only demonstrated incompatibilities. Verify representative legacy-to-candidate upgrade and malformed-version controls, preserve tag history and schema guarantees, and reconcile this repo's maintained instructions. This does not change consumers' init defaults or reinterpret their versions. VERSION/package assignment belongs to the eventual release workflow. _~180 lines._ (M)
 
 ### Group 27: Equal host workflow acceptance
 
