@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.1.0] - 2026-10-08
+
+### Fixed
+
+- **The quota suite runs from a dot-directory checkout.** The Cursor identity check built its project slug from the checkout path one character at a time, so a path such as a Paseo worktree failed with `KeyError: 'cwd'`. It now checks independent path profiles against the documented run-collapsing mapping. Production slug behavior is unchanged.
+
 ## [0.36.0.1] - 2026-10-08
 
 ### Changed
