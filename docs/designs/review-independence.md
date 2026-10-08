@@ -223,7 +223,7 @@ Original CLI attempts: two of two budgeted attempts exited with authentication r
 | Claude primary/outside | Exact transcript/window `message.model`, served | Must verify execution/result chain and all contributing models |
 | Authors | Proven content-writing stages and their own harness evidence | Stage models may be overrides; direct/fix writers may be unrecorded |
 
-Filed gaps: `cursor_turns()` cannot read the Conductor store shape (Track 24A in [ROADMAP.md](../ROADMAP.md)), [The Cursor and quota sentence overstates what the store reader can read](../TODOS.md) (completed), and "File upstream: gstack review rows need per-voice observed model and vendor" in [roadmap-future.md](../roadmap-future.md).
+Filed gaps: `cursor_turns()` cannot read the Conductor store shape (Track 23B in [ROADMAP.md](../ROADMAP.md)), [The Cursor and quota sentence overstates what the store reader can read](../TODOS.md) (completed), and "File upstream: gstack review rows need per-voice observed model and vendor" in [roadmap-future.md](../roadmap-future.md).
 
 ## 9. Observed join keys (gstack 1.89.0.0, no stability guarantee)
 

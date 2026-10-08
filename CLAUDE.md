@@ -4,7 +4,27 @@ Extension skills for gstack.
 
 ## Versioning
 
-4-digit format: `MAJOR.MINOR.PATCH.MICRO`. Source of truth: `VERSION` file. Status: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+Current format: `MAJOR.MINOR.PATCH.MICRO`; the planned three-part transition and compatibility rules are in `docs/SPEC.md`. Until its tooling transition lands, retain the current format. Source of truth: `VERSION`. Release history and acceptance: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+
+## Product scope and releases
+
+Read docs/SPEC.md before roadmap, autoplan/planning, implementation, review or
+release decisions. Its selected target, intended users, audience ceiling,
+accepted limitations and release policy govern this project. Do not infer future
+scale from backlog entries. Review findings need concrete impact on that target;
+preserve approved scope unless the user explicitly changes it. Put unrelated
+improvements in the backlog with a revisit trigger. A priority label alone is
+not a launch gate. For version decisions, use the spec's policy and checkpoint
+acceptance evidence instead of generic line-count, feature-size or Group-closure
+heuristics. This project policy overrides those defaults in /ship; keep its
+other release gates. A change that edits SPEC's release policy or adds
+acceptance entries uses the base branch's policy, and its new entries count
+only after the user confirms them directly. PROGRESS.md `## Acceptance` owns achieved stage and
+evidence; SPEC owns definitions and target. Open a current supporting document
+only when its listed role bears on the decision. Superseded plans/specs are
+historical only: exclude them from routine discovery and backlog extraction.
+Consult a named archive only for a specific unresolved historical question;
+never use it to reintroduce scope or override the current spec.
 
 ## Testing
 

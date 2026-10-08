@@ -83,3 +83,44 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 #### Group 21: Audit Gate ✓ Shipped (v0.29.1.0)
 - Track 21A — _shipped (v0.29.1.0): DOC_LOCATION's `docs/`-absent finding fires only on a repo-local `bin/roadmap-audit` file; MIGRATION_NEEDED names the archived spec (#109). Planned as 16F._
 - _Groups 19 and 20 never shipped under those numbers; re-packed 2026-09-30 as 22C + 25A (layout-scaffold helper, then its callers), 26B (skill template), 26A (capability table) and 22B (roadmap closure)._
+
+## Individual Track history
+
+### Track 22A: Version stage-runs rows and publish their schema ✓ Shipped (v0.33.4.0)
+- 2026-10-02: merged [PR #127](https://github.com/kbitz/gstack-extend/pull/127) (commit `eb3bd7c`); verified land-time Track 22A, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- 39/39 approved requirements verified; schema, writer, validator and selected-upstream compatibility delivered. Native onboarding time remains unmeasured, with no manual gate in the approved scope.
+
+## Individual Track history
+
+### Track 22B: Reconcile shipped-Track closure with PACKING ✓ Shipped (v0.33.5.0)
+- 2026-10-02: merged [PR #126](https://github.com/kbitz/gstack-extend/pull/126) (commit `7af457b`); verified land-time Track 22B, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- 38 verified and 18 attended-acceptance obligations explicitly deferred by the user. Policy and parser evidence are complete; the installed-skill acceptance cases are scheduled as Current Plan Track 25B and are not claimed as passed.
+
+## Individual Track history
+
+### Track 22C: Layout Scaffolding executable helper ✓ Shipped (v0.34.0.0)
+- 2026-10-02: merged [PR #128](https://github.com/kbitz/gstack-extend/pull/128) (commit `217d630`); verified land-time Track 22C, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- 126 verified requirements and three explicit deferrals: caller integration remains Future ("Route Layout Scaffolding and init through the helper"); archive routing (X10) and relative-link warnings (X11) remain Future. Native owned CLI fixtures support helper acceptance.
+
+## Individual Track history
+
+### Track 22D: `/full-review` run-state and template fixes ✓ Shipped (v0.33.2.0)
+- 2026-10-02: merged [PR #125](https://github.com/kbitz/gstack-extend/pull/125) (commit `930d3d0`); verified land-time Track 22D, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- All 22 approved ENG items completed, including release text. Shell block execution and structural locks support this prose contract; end-to-end agent resume/concurrency is deferred to the session helper.
+
+## Individual Track history
+
+### Track 22E: Greptile lifecycle decision core with scenario tests ✓ Shipped (v0.34.5.0)
+- 2026-10-06: merged [PR #130](https://github.com/kbitz/gstack-extend/pull/130) (commit `ddb63cb`); verified land-time Track 22E, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- 44 verified and 31 user-deferred matrix rows under the approved core-only scope. Adoption and retained findings remain active prerequisites; the dropped human first-use check has no timing claim. Core policy is still pre-0.34.4.0 until the deferred repair (Future, "Bring the Greptile core up to the current approved policy").
+
+## Individual Track history
+
+### Track 22F: Setup host-safety follow-ups ✓ Shipped (v0.34.2.0)
+- 2026-10-06: merged [PR #129](https://github.com/kbitz/gstack-extend/pull/129) (commit `a289753`); verified land-time Track 22F, original Group 22. Introduced under this ID on 2026-09-30 in `756e566`; no later relabel before landing.
+- 15/15 approved items verified. The user accepted the named final documentation-audit freshness limitation; three retained preserved-copy/reporting follow-ups remain active work. No claim that shared copies auto-heal.
+
+## Individual Track history
+_tombstone: 22_
+
+- 2026-10-08: all six original Group 22 Tracks independently recorded above; no active pin declared. Prefix 22 is retired.
