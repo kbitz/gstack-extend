@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.0.1] - 2026-10-08
+
+### Changed
+
+- **The project now says who it is for and what 1.0 requires.** `docs/SPEC.md` records the selected target (public release 1.0.0), the audience ceiling, five acceptance outcomes (install and recover, plan, run the workflow on either host, hand stages to an external orchestrator, keep a stable release promise), the accepted limitations and a release policy. The current stage is public beta, recorded as a baseline in `docs/PROGRESS.md`. All five outcomes are still pending, no acceptance checkpoint is awarded and the four-part version format is unchanged.
+- **The roadmap is 14 Tracks in Groups 23–27 that serve those outcomes.** Paseo and Conductor have equal priority, and finishing code stays separate from accepting it on an installed host. The Tracks start with a working first audit and upgrade path and a quota suite that runs under Paseo paths, then stabilize run identity and external stage handoffs, and end with a verified three-part release transition and a complete workflow qualified on each host. Deferred work keeps its revisit trigger in `docs/roadmap-future.md`, shipped Track receipts moved to `docs/roadmap-shipped.md`, and the 2026-05 test-migration re-plan is archived as history.
+- **Agents read the spec before planning, reviewing or releasing.** `CLAUDE.md` points those decisions at the spec, ties review findings to its target and says release levels follow its policy rather than line counts. The README gains a short product-direction section.
+
 ## [0.36.0.0] - 2026-10-07
 
 ### Added
