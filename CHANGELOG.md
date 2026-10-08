@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.0.0] - 2026-10-07
+
+### Added
+
+- **`/project-spec` records who a project is for and how far it has to go.** Run it on a new or existing project to write `docs/SPEC.md`: the intended users, a selected target (personal MVP-1, small alpha, public beta or public release), the audience ceiling, acceptance criteria, accepted limitations and a release policy for that project. On an existing project it archives the plans and specs the new spec replaces with superseded notices and redirects, and repairs links to them. It finishes through `/roadmap` with one combined approval and one documentation commit. Setup installs it on every host, the telemetry doctor knows it, and project init guidance now starts with it.
+- **Tracks say what becomes possible, and Groups say what they deliver.** Track cards gain Outcome, Supports and Done-when lines, and each Group gains a delivery summary. Track-card parsing and packing are unchanged.
+- **Deferred work keeps the condition for revisiting it.** A deferral carries an inline `**Revisit when:**` trigger, and `--future-index` now prints it. Filing deferrals to a GitHub backlog is opt-in, with checks for repository visibility, sensitive content, quoting, duplicates and partial failure.
+
+### Changed
+
+- **`/roadmap` schedules work against the target.** Every placement names the outcome or prerequisite it serves and its concrete user impact; severity or source alone no longer puts work on the plan. Planning-review findings tagged `defer=true` now go to a prompt instead of being kept or dropped automatically, in both the shell and TypeScript routers.
+- **The release level follows the project's stage.** Before public beta the default is PATCH, and MINOR needs a selected checkpoint with a new entry under PROGRESS `## Acceptance`, measured from the last version commit on the base branch. Strict SemVer starts at public beta. `/ship-and-land`, `/review-and-prep` and `/implement` read the spec, and a branch that edits the spec is judged against the base branch's policy unless you approve the change.
+- **The audit leaves the canonical product spec alone.** A `docs/SPEC.md` with an `## Authority` section is a project doc, never a source of scattered TODOs or a move candidate. A `docs/SPEC.md` of any other kind keeps the normal checks.
+
 ## [0.35.0.0] - 2026-10-06
 
 ### Added
