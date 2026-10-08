@@ -137,16 +137,21 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     expect(r.stdout).toContain('FUTURE_INDEX: 0');
   });
 
-  test('--future-index on a split repo merges satellite bullets', () => {
+  // Value: protects=the roadmap skill's --future-index read surfaces each satellite bullet's inline Revisit-when
+  //   trigger through the real CLI; fails_when=satellite Future bullets are normalized or truncated before indexing,
+  //   or the CLI stops printing the trigger; why_new=parsers-roadmap.test.ts feeds literal strings to
+  //   formatFutureIndex and never crosses the process boundary; seam=none
+  test('--future-index on a split repo merges satellite bullets and their revisit triggers', () => {
     const repo = makeEmptyRepo(baseTmp);
     mkdirSync(join(repo, 'docs'), { recursive: true });
     writeFileSync(
       join(repo, 'docs', 'ROADMAP.md'),
-      '# Roadmap\n\n## Future\n\nDeferred: docs/roadmap-future.md (1 items)\n\n## Shipped\n\nHistory: docs/roadmap-shipped.md\n',
+      '# Roadmap\n\n## Future\n\nDeferred: docs/roadmap-future.md (2 items)\n\n## Shipped\n\nHistory: docs/roadmap-shipped.md\n',
     );
     writeFileSync(
       join(repo, 'docs', 'roadmap-future.md'),
-      '# Future\n\n## Future\n\n- **Keep the context** — filed from a review.\n',
+      '# Future\n\n## Future\n\n- **Keep the context** — filed from a review.\n'
+        + '- **Parser v2** — Handle the new format. **Revisit when:** a second tenant is admitted.\n',
     );
     writeFileSync(
       join(repo, 'docs', 'roadmap-shipped.md'),
@@ -154,9 +159,13 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     );
     const r = run(['--future-index', repo]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('FUTURE_INDEX: 1');
+    expect(r.stdout).toContain('FUTURE_INDEX: 2');
     expect(r.stdout).toContain('Keep the context');
     expect(r.stdout).toContain('filed from a review.');
+    const lines = r.stdout.split('\n');
+    expect(lines.find((l) => l.includes('Keep the context'))).not.toContain('revisit:');
+    expect(lines.find((l) => l.includes('Parser v2')))
+      .toBe('- **Parser v2** — Handle the new format. — revisit: a second tenant is admitted');
   });
 
   test('--scan-state always emits valid JSON', () => {

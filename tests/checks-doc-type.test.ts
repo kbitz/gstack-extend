@@ -558,4 +558,20 @@ describe('canonical docs/SPEC.md is a project doc', () => {
     expect(runCheckScatteredTodos(ctx).status).toBe('found');
     expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(['docs/api/SPEC.md']);
   });
+
+  // Value: protects=only an exact level-2 "Authority" heading (trailing blanks allowed) marks docs/SPEC.md as the
+  //   product spec; fails_when=the heading match is loosened to a substring so "### Authority" or "## Authority model"
+  //   exempts an ordinary spec; why_new=the cases above remove the heading entirely and never probe near-miss
+  //   headings; seam=none
+  test.each([
+    ['trailing blanks after the heading', '## Authority \t', true],
+    ['a deeper heading level', '### Authority', false],
+    ['extra words in the heading', '## Authority model', false],
+  ])('Authority heading boundary: %s', (_label, heading, exempt) => {
+    const variant = makeFile('docs/SPEC.md', spec.content.replace('## Authority\n', `${heading}\n`));
+    expect(variant.content).not.toBe(spec.content);
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [variant] });
+    expect(runCheckScatteredTodos(ctx).status).toBe(exempt ? 'pass' : 'found');
+    expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(exempt ? [] : ['docs/SPEC.md']);
+  });
 });
