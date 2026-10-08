@@ -27,6 +27,80 @@
 - **Effort:** S (human: ~3h / CC: ~20min)
 - **Priority:** P2
 
+### [review] Executable overlay validator for /project-spec candidates
+- **Why:** `/roadmap` Step 3 requires a `/project-spec` candidate's SPEC, instruction, stage-entry and document-retirement drafts (moves, redirects, notices, link edits) in "the full validation overlay". The only executable overlay covers the active ROADMAP and shipped archive: it rejects a changed Future and cannot represent a file leaving its old path. A combined candidate therefore relies on a hand-assembled overlay, which can pass a candidate the real audit would fail.
+- **Context:** Found by the project-spec PR's red-team review, 2026-10-07. Option: a `roadmap-audit` manifest mode that adds, replaces and removes arbitrary paths and rebuilds derived context, with a test covering a SPEC write plus an archive move. Point `/project-spec`'s composition at it once it exists.
+- **Revisit when:** the first real `/project-spec` adoption needs a validated candidate with document moves, or an applied candidate fails the post-apply audit.
+- **Effort:** M (human: ~1d / CC: ~45min)
+- **Priority:** P2
+
+### [review] Executable mover for /project-spec document retirement
+- **Why:** `/project-spec` retirement moves, redirects and link edits are carried out from prose. Their operand contract (repository-relative paths, single-quote rule, `--`, `GIT_LITERAL_PATHSPECS=1`) and the move/redirect/in-place distinctions are agent-applied, while `bin/layout-scaffold` accepts no caller-supplied move list.
+- **Context:** Found by the project-spec PR's cycle-2 security and Codex reviews, 2026-10-07. Option: a reviewed caller-supplied archive-move mode for `layout-scaffold` (plan + apply with plan ID) that also writes redirects. Its reference search should resolve incoming links relative to their containing documents (a bare `git grep` of the repository path misses `[Spec](old-spec.md)` in a sibling file) and check heading fragments (cycle-3 Codex review). Forward tests also found: a source that disappears between plan and apply should halt retirement rather than be dropped, since its redirect and notice depend on it; the submodule probe should include `docs/archive`; and a link edit to a roadmap-owned file should be folded into roadmap's single write. Related to `[plan-ceo-review:track=22C,defer=true] Route archive-candidate moves through layout-scaffold (X10)`.
+- **Revisit when:** the first real `/project-spec` adoption retires a document, or X10 is scheduled.
+- **Effort:** M (human: ~1d / CC: ~45min)
+- **Priority:** P2
+
+### [review] Lifecycle for GitHub-filed deferrals after filing
+- **Why:** When a Future issue pointer is promoted, killed, discharged or shipped, `/roadmap` deletes the local bullet but never comments on or closes the issue, and on promotion it has no step to read the issue body back. Open issues become a second owner of finished or rejected work and can be adopted again by a later deferral.
+- **Context:** Found by the project-spec PR's cycle-2 red-team review, 2026-10-07. Option: include closing/commenting on the issue with its disposition in the approved candidate; on promotion read the issue body as data to rebuild the card; adopt only open issues whose dedup marker matches. Cycle 3 added: verify that GitHub search indexes the HTML-comment dedup marker (otherwise a failed readback plus search lag can file a duplicate), and batch the per-item marker searches into one source-scoped list to avoid N searches. Define the marker's `<source owner/repo>` for a project with no remote (forward test, 2026-10-07).
+- **Revisit when:** a project selects a GitHub backlog destination and a filed item leaves Future.
+- **Effort:** S (human: ~3h / CC: ~20min)
+- **Priority:** P3
+
+### [review] ARCHIVE_CANDIDATES ignores SPEC's current supporting documents
+- **Why:** `ARCHIVE_CANDIDATES` recommends archiving any `docs/designs/` file whose first version string is at or below VERSION. A document SPEC lists as a current supporting contract can be recommended for `docs/archive/`, which `/project-spec` and the instruction bridge treat as superseded history.
+- **Context:** Found by the project-spec PR's cycle-2 red-team review, 2026-10-07. Option: read SPEC's supporting-documents map and exclude its current entries, or separate "completed design" archives from "superseded authority" archives.
+- **Revisit when:** a project with `docs/SPEC.md` receives an ARCHIVE_CANDIDATES finding for a document SPEC lists as current.
+- **Effort:** S (human: ~3h / CC: ~20min)
+- **Priority:** P3
+
+### [review] Apply SPEC release policy to an already-bumped branch
+- **Why:** When upstream `/ship` classifies a branch as ALREADY_BUMPED, it keeps the existing level. An earlier line-count MINOR survives even when SPEC policy says PATCH; `/ship-and-land`'s release-policy override does not compare them.
+- **Context:** Found by the project-spec PR's cycle-2 red-team review, 2026-10-07 (confidence 4/10). Option: in ship-and-land's 12–15 override, compare the derived level with the policy level and ask through ship's approved rebump path on a mismatch.
+- **Revisit when:** a SPEC-governed project ships a branch bumped before its policy applied.
+- **Effort:** S (human: ~2h / CC: ~15min)
+- **Priority:** P3
+
+### [review] Migrate legacy Future triggers into the inline marker
+- **Why:** Routine `/roadmap` runs reassess deferrals from the `revisit:` trigger in `--future-index`, which reads only inline `**Revisit when:**` markers. Existing entries state triggers in prose (this repo has 0 inline markers across 26 Future bullets), so they stay dormant until the target changes or the user asks.
+- **Context:** Found by the project-spec PR's cycle-2 red-team review, 2026-10-07. Option: have the index flag entries without a trigger, and propose a one-time migration that lifts each trigger from its `Deferred because` text into the inline marker with user approval.
+- **Revisit when:** the next substantive `/roadmap` regeneration of a project with legacy Future entries.
+- **Effort:** S (human: ~3h / CC: ~20min)
+- **Priority:** P3
+
+### [review] Make source-tag.sh hashing shell-independent
+- **Why:** `normalize_title` in `bin/lib/source-tag.sh` pipes titles through `echo`, which zsh treats as escape-interpreting. A title such as `Fix C:\new\temp path handling` hashes to `7a5b061a0bf3` under bash and `fa581c5bf62e` under zsh, so a GitHub dedup marker computed on a zsh host would not match one from a bash host. `/roadmap` now says to run its filing recipe under bash as the interim guard.
+- **Context:** Found by the project-spec PR's cycle-3 adversarial review, 2026-10-07. The function predates that PR. Option: use `printf '%s\n'` throughout the library, rerun `./scripts/regen-source-tag-corpus.sh`, and confirm the TS port's byte-exact parity (including titles that begin with `-e` or `-n`).
+- **Revisit when:** a project uses a GitHub backlog destination from a zsh host, or the next source-tag change.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Priority:** P2
+
+### [review] Keep roadmap's PROGRESS appends out of the Acceptance table
+- **Why:** `/project-spec` makes `## Acceptance` writable only by the user or a `/project-spec` revision, but `/roadmap` Step 4's subagent appends PROGRESS rows by matching "the existing row format" without excluding that table. If Acceptance is the last table, a version row can land inside it and read as a new checkpoint.
+- **Context:** Found by the project-spec PR's cycle-3 red-team review, 2026-10-07 (prose-only). Option: tell the Step 4 subagent to append only to the version-history table, and update the PROGRESS template comment that says it is "Maintained by /roadmap and /document-release".
+- **Revisit when:** the first `/roadmap` run on a project whose PROGRESS.md has an `## Acceptance` section.
+- **Effort:** S (human: ~1h / CC: ~10min)
+- **Priority:** P2
+
+### [investigate] Fresh init projects fail the audit's VERSION gate until tagged
+- **Symptom:** `src/audit/checks/version.ts` reports "No git tags found" for a repository with no tags, and `/roadmap` treats VERSION as a blocker. A project fresh from `gstack-extend init` has no tag, so the recommended first `/roadmap` (now via `/project-spec`) can end BLOCKED.
+- **Repro:** Run `gstack-extend init` into an empty directory, then `bin/roadmap-audit <dir>` and read the VERSION section.
+- **Hypothesis (untested):** the no-tag finding should be advisory, or init should record a baseline that satisfies it; upstream `/ship` does not create tags.
+- **Context:** Pre-existing at 4d988bf (init already recommended `/roadmap` first); surfaced by the project-spec PR's new-project forward test, 2026-10-07.
+- **Revisit when:** the next init or audit VERSION change, or the first report of a blocked first run.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Priority:** P1
+
+### [investigate] Quota cursor test fails when the checkout path contains a dot-directory
+- **Symptom:** `tests/quota.test.ts` fails `QuotaTests.test_cursor_text_is_identity_evidence_but_not_zero_tokens` with `KeyError: 'cwd'` when the checkout lives under a path such as `~/.paseo/worktrees/...`.
+- **Repro:** Run `bun test tests/quota.test.ts` from a checkout whose path contains `/.` (a dot-directory). The same commit passes from an ordinary path.
+- **Hypothesis (untested):** the test normalizes each non-alphanumeric character separately while the scanner collapses runs, so `/.` maps to different project keys.
+- **Context:** Pre-existing at 4d988bf; deferred by the user during the project-spec PR's review-and-prep, 2026-10-07. No quota code changed in that PR.
+- **Revisit when:** the next quota change, or before running the full suite from a dot-directory worktree in CI.
+- **Effort:** S (human: ~2h / CC: ~15min)
+- **Priority:** P2
+
 ### [plan-ceo-review:track=22C,defer=true] Warn before documentation moves break relative links or images (X11)
 - **Description:** A documentation move can break relative links and image references; the post-apply location audit does not check them. Design-document detection uses a mermaid/plantuml fence and can match a tutorial. Track 22C labels heuristic moves and supports individual exclusions, but leaves link warnings for later work.
 - **Hypothesis (untested):** Inspect relative references before a move and show the affected paths so the caller can exclude the item or repair its links.

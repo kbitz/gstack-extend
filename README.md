@@ -10,7 +10,8 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 
 | Skill | What it does | Status |
 |-------|-------------|--------|
-| [`/roadmap`](skills/roadmap.md) | Turns the backlog into a sequenced execution plan, with audits and dependency-aware grouping. | Stable |
+| [`/project-spec`](skills/project-spec.md) | Establishes users, MVP outcomes, audience limits and release policy for a new or existing project, then runs roadmap. | New |
+| [`/roadmap`](skills/roadmap.md) | Admits work against the selected product target and produces an execution plan with visible outcomes, audits and dependency-aware grouping. | Stable |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
@@ -86,8 +87,28 @@ explicitly accept prior code review and coverage audit outside a marked
 preparation handoff. Test runs, QA probes, CI, required manual testing and merge
 approval retain their own gates.
 
-Use `/roadmap` to organize upcoming work and `/full-review` for periodic
-codebase reviews.
+Use `/project-spec` once at inception or to organize an existing project, and
+again when deliberately changing its goals. It produces `docs/SPEC.md` and
+finishes through `/roadmap`. Routine `/roadmap` runs use that spec to select work
+for the intended users, preserving deferred items with revisit triggers. Each
+Track states its outcome and acceptance; Groups summarize what their batch
+delivers. `/full-review` remains the periodic codebase review.
+
+Adoption consolidates existing intent into one current spec, retires replaced
+plans/specs with explicit superseded notices, and updates active references.
+Historical links preserve decision rationale without feeding old scope back
+into routine planning; current implementation contracts and evidence retain
+their declared roles.
+
+The spec distinguishes MVP-1 (personal use), MVP-2 (a small supported alpha
+group), public-beta and public-release, with private-only as an independent
+audience policy. Projects choose their own version checkpoints before
+public-beta; strict SemVer starts at public-beta by default. Stage acceptance
+lives in progress records, not in the version number. `docs/SPEC.md` counts as
+the product spec only when it carries the template's `## Authority` section, so
+an existing file of another kind at that path keeps its meaning. See the
+[project-spec workflow](skills/project-spec.md) for the spec format, adoption
+path, local/issue backlog options and consumer-instruction block.
 
 ## Command-line tools
 

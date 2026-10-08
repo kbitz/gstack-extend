@@ -24,7 +24,8 @@
  * collision-suppression even runs.
  *
  * Skip rules (no finding emitted):
- *   - basename in ROOT_DOCS or DOCS_DIR_DOCS (doc-location.ts territory).
+ *   - basename in ROOT_DOCS or DOCS_DIR_DOCS (doc-location.ts territory),
+ *     or the /project-spec product spec at docs/SPEC.md (isProductSpec).
  *   - basename matches the docType-allowlist (CONTRIBUTING.md, RUNBOOK.md,
  *     CODE_OF_CONDUCT.md, *checklist*.md, README.md, CHANGELOG.md).
  *   - file has fewer than 5 content lines (avoids tripping on tiny stubs).
@@ -58,6 +59,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { isProductSpec } from '../lib/product-spec.ts';
 import { shellQuote } from '../lib/shell-quote.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 import type { DocMoveRecord } from './doc-location.ts';
@@ -159,6 +161,7 @@ export function docTypeMoves(ctx: Pick<AuditCtx, 'repoRoot' | 'mdFiles'>): DocMo
     const basename = basenameOf(f.rel);
     if (ROOT_DOCS.has(basename)) continue;
     if (PROJECT_DOCS.has(basename)) continue;
+    if (isProductSpec(f.rel, f.content)) continue;
     if (isAllowlisted(basename)) continue;
 
     const lines = f.content.split('\n');

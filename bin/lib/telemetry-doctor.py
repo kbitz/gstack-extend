@@ -9,7 +9,7 @@ from telemetry import (MIN_GSTACK_FOR_NO_SWEEP, RESUMABLE, capture, compatible_w
                        gstack_helper_warning, provenance_enabled, resolve, sink_path, state_root,
                        supports_no_sweep, which)
 
-SKILLS = ("pair-review", "roadmap", "full-review",
+SKILLS = ("pair-review", "roadmap", "project-spec", "full-review",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement", "ship-and-land")
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30

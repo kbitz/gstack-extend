@@ -6,7 +6,7 @@ Consumers validating stage-runs rows: [Schema validation](#schema-validation).
 Consumers joining the files: [Join contract](#join-contract).
 Anyone checking claims: [Evidence](#evidence).
 
-All eight installed skills carry optional start and finish calls. They record local
+All nine installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or

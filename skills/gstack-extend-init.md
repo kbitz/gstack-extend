@@ -156,7 +156,7 @@ If A:
 
 Stream the output. Three outcomes:
 
-- **Exit 0 + SUCCESS banner:** the project is onboarded. The CLI prints a "Next 30 minutes" checklist (`/roadmap`, `/full-review`). Restate it.
+- **Exit 0 + SUCCESS banner:** the project is onboarded. The CLI prints a "Next 30 minutes" checklist (`/project-spec` then its `/roadmap` step, `/full-review`). Restate it.
 - **Exit 1, audit failed:** the CLI per D3.A leaves rendered files in place and prints the audit output + retry hint. Walk the user through the failing audit sections; suggest `--migrate` retry after fixes.
 - **Exit 1, scaffold/register failed:** the CLI prints a specific reason. Surface it; suggest the obvious fix (permission, disk full, invalid name).
 

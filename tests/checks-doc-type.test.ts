@@ -29,7 +29,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { runCheckDocInventory } from '../src/audit/checks/doc-inventory.ts';
 import { docTypeMoves, runCheckDocType } from '../src/audit/checks/doc-type.ts';
+import { runCheckScatteredTodos } from '../src/audit/checks/scattered-todos.ts';
 import type { AuditCtx, AuditFileExists, MdFileSnapshot } from '../src/audit/types.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 
@@ -503,4 +505,73 @@ describe('docTypeMoves: literal record/render agreement', () => {
         : '- arch.md: looks like a design doc (mermaid/plantuml fence) but is outside docs/designs/', suggestions[shape], '']);
     });
   }
+});
+
+// ─── Canonical product spec ───────────────────────────────────────────
+//
+// /project-spec writes docs/SPEC.md as the project's product authority. The
+// layout checks must treat that exact path as a project doc: never a
+// scattered-TODO source and never a design doc to move. Other SPEC.md files
+// keep the normal heuristics.
+
+describe('canonical docs/SPEC.md is a project doc', () => {
+  const spec = makeFile('docs/SPEC.md', [
+    '# Notes — Project spec',
+    '',
+    '## Authority',
+    'This is the current authority for product scope, target and release policy.',
+    '',
+    '## Purpose',
+    'Local note search for its owner.',
+    '',
+    '```mermaid',
+    'graph TD; A-->B',
+    '```',
+    '',
+    '## Backlog policy',
+    '- Destination: local docs/roadmap-future.md',
+    '- Promotion: trigger observed, then reassess',
+  ].join('\n'));
+
+  test('scattered TODOs and inventory exempt the canonical path', () => {
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [spec] });
+    expect(runCheckScatteredTodos(ctx).status).toBe('pass');
+    expect(runCheckDocInventory(ctx).body).toContain('- docs/SPEC.md: 1 TODO patterns (project doc)');
+  });
+
+  test('a mermaid fence never proposes moving the canonical spec', () => {
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [spec] });
+    expect(docTypeMoves(ctx)).toEqual([]);
+  });
+
+  test('a docs/SPEC.md without the Authority section is not treated as the product spec', () => {
+    const unrelated = makeFile('docs/SPEC.md', spec.content.replace(/## Authority\n[^\n]*\n/, ''));
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [unrelated] });
+    expect(runCheckScatteredTodos(ctx).status).toBe('found');
+    expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(['docs/SPEC.md']);
+    expect(runCheckDocInventory(ctx).body.join('\n')).toContain('docs/SPEC.md: 1 TODO patterns (unknown)');
+  });
+
+  test('other SPEC.md files keep the normal heuristics', () => {
+    const other = makeFile('docs/api/SPEC.md', spec.content);
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [other] });
+    expect(runCheckScatteredTodos(ctx).status).toBe('found');
+    expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(['docs/api/SPEC.md']);
+  });
+
+  // Value: protects=only an exact level-2 "Authority" heading (trailing blanks allowed) marks docs/SPEC.md as the
+  //   product spec; fails_when=the heading match is loosened to a substring so "### Authority" or "## Authority model"
+  //   exempts an ordinary spec; why_new=the cases above remove the heading entirely and never probe near-miss
+  //   headings; seam=none
+  test.each([
+    ['trailing blanks after the heading', '## Authority \t', true],
+    ['a deeper heading level', '### Authority', false],
+    ['extra words in the heading', '## Authority model', false],
+  ])('Authority heading boundary: %s', (_label, heading, exempt) => {
+    const variant = makeFile('docs/SPEC.md', spec.content.replace('## Authority\n', `${heading}\n`));
+    expect(variant.content).not.toBe(spec.content);
+    const ctx = makeCtx({ repoRoot: '/fake', mdFiles: [variant] });
+    expect(runCheckScatteredTodos(ctx).status).toBe(exempt ? 'pass' : 'found');
+    expect(docTypeMoves(ctx).map((m) => m.source)).toEqual(exempt ? [] : ['docs/SPEC.md']);
+  });
 });

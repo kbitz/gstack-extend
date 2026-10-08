@@ -25,13 +25,13 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 
 `tests/audit-invariants.test.ts` is a structural-invariants safety net (NEW Track 3A). It walks every `expected.txt` and asserts every section has a `STATUS:` line, status values are in `CANONICAL_STATUSES`, MODE is last, and section order matches `CANONICAL_SECTIONS` (exported from `src/audit/sections.ts`). It trips on rubber-stamp `UPDATE_SNAPSHOTS=1` runs that scramble or drop sections.
 
-`tests/audit-compliance.test.ts` is a structural-invariants safety net for gstack-extend itself (Track 4D). Four describes: (A) frontmatter sanity for every `skills/*.md` (`---` fence, `name:` matches filename, non-empty `description:` of at most 1024 UTF-16 code units, `allowed-tools:` present); (B) `setup` ↔ `skills/*.md` symmetric (every name in `SKILLS=( … )` has a file, every file is in the array); (C) source-tag registry consistency — `REGISTERED_SOURCES` exported from `src/audit/lib/source-tag.ts` is the single source of truth, and `docs/source-tag-contract.md`'s grammar list must match it exactly; (D) `skills/full-review.md`'s severity names, finding fields, byte-identical agent-prompt heads and tails, and `files=` tag-value rule must match `docs/source-tag-contract.md` and `validateTagExpression`. When adding a source tag, update both sides; when adding a skill, register it in `setup`'s `SKILLS=( … )` array.
+`tests/audit-compliance.test.ts` is a structural-invariants safety net for gstack-extend itself (Track 4D). Four describes: (A) frontmatter sanity for every `skills/*.md` (`---` fence, `name:` matches filename, non-empty `description:` of at most 1024 UTF-16 code units, `allowed-tools:` present); (B) `setup` ↔ `skills/*.md` symmetric (every name in `SKILLS=( … )` has a file, every file is in the array); (C) source-tag registry consistency — `REGISTERED_SOURCES` exported from `src/audit/lib/source-tag.ts` is the single source of truth, and `docs/source-tag-contract.md`'s grammar list must match it exactly; (D) `skills/full-review.md`'s severity names and definitions, finding fields, byte-identical agent-prompt heads and tails, and `files=` tag-value rule must match `docs/source-tag-contract.md` and `validateTagExpression`, and the contract's `defer=true` routing rows must match `routeSourceTag`. When adding a source tag, update both sides; when adding a skill, register it in `setup`'s `SKILLS=( … )` array.
 
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
 Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
-`TELEMETRY_SKILLS` covers all eight setup skills; protocol/preamble cohorts stay
-narrow. The four utility/workflow skills may carry only telemetry SHARED markers.
+`TELEMETRY_SKILLS` covers all nine setup skills; protocol/preamble cohorts stay
+narrow. The five utility/workflow skills may carry only telemetry SHARED markers.
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
@@ -82,6 +82,7 @@ Key routing rules:
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 - Manual testing, "give me a test list", pair test → invoke pair-review
+- Establish project outcomes, organize an existing project around its MVP, write a project spec → invoke project-spec
 - Restructure TODOs, clean up roadmap, reorganize backlog, tidy docs → invoke roadmap
 - Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review

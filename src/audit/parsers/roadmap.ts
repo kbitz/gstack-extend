@@ -830,9 +830,13 @@ export type FutureIndexRow = {
   title: string;
   source: string | null;
   first: string;
+  /** Text after an inline `**Revisit when:**`, which ends its bullet. */
+  revisit: string | null;
 };
 
-/** One-line index row per Future bullet: title, source tag, first sentence. */
+const REVISIT_MARKER = '**Revisit when:**';
+
+/** One-line index row per Future bullet: title, source tag, first sentence, trigger. */
 export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
   return bullets.map((raw) => {
     const line = raw.replace(/^- /, '');
@@ -858,8 +862,14 @@ export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
       source = srcInTitle[1]!;
       title = srcInTitle[2]!;
     }
+    let revisit: string | null = null;
+    const marker = body.lastIndexOf(REVISIT_MARKER);
+    if (marker !== -1) {
+      revisit = body.slice(marker + REVISIT_MARKER.length).trim().replace(/\.$/, '');
+      body = body.slice(0, marker).trim();
+    }
     const first = body.split(/(?<=\.)\s/)[0] ?? body;
-    return { title: title.trim(), source, first: first.trim() };
+    return { title: title.trim(), source, first: first.trim(), revisit };
   });
 }
 
@@ -870,7 +880,8 @@ export function formatFutureIndex(bullets: string[]): string {
   for (const r of rows) {
     const src = r.source !== null ? ` ${r.source}` : '';
     const tail = r.first !== '' ? ` — ${r.first}` : '';
-    lines.push(`- **${r.title}**${src}${tail}`);
+    const trigger = r.revisit !== null ? ` — revisit: ${r.revisit}` : '';
+    lines.push(`- **${r.title}**${src}${tail}${trigger}`);
   }
   return lines.join('\n') + '\n';
 }

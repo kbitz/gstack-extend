@@ -763,7 +763,7 @@ gstack-extend init: SUCCESS.
   Canonical scaffolding and registration completed. Retained audit findings may need attention.
   Next 30 minutes:
     1. cd $quoted_target
-    2. /roadmap            (orient yourself + verify canonical layout)
+    2. /project-spec       (agree on users/outcomes; finishes with /roadmap)
     3. /full-review        (weekly cadence baseline)
 EOF
   return 0

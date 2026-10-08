@@ -1,21 +1,21 @@
 /**
  * tests/source-tag.test.ts — bun:test exercising src/audit/lib/source-tag.ts.
  *
- * Companion to scripts/test-source-tag.sh (which tests bin/lib/source-tag.sh).
- * Both must stay green; both run under /ship until Track 2A retires bash.
+ * Also exercises the installed bash route CLI to keep both consumers in sync.
  *
  * Critical assertions:
  *   - Byte-exact dedup-hash parity vs bash on the curated corpus
  *     (tests/fixtures/source-tag-hash-corpus.json). Any divergence here
  *     silently breaks the dedup table at the Track 2A boundary.
  *   - Table-driven routing matrix covering all 24 (source, severity) tuples
- *     from docs/source-tag-contract.md.
+ *     from docs/source-tag-contract.md, plus the plan-review defer variants.
  *   - Tight INJECTION_ATTEMPT vs MALFORMED_TAG classification for security
  *     taxonomy preservation.
  */
 
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   parseSourceTag,
@@ -280,6 +280,12 @@ describe('routeSourceTag (full source/severity matrix)', () => {
   };
 
   const rows: Row[] = [
+    // A review deferral is not automatic admission to the execution plan.
+    { raw: '[plan-ceo-review:track=4A,defer=true]', expectedAction: 'PROMPT', expectedSource: 'plan-ceo-review', expectedReasonContains: 'evaluate selected target' },
+    { raw: '[plan-eng-review:track=4A,defer=true]', expectedAction: 'PROMPT', expectedSource: 'plan-eng-review', expectedReasonContains: 'evaluate selected target' },
+    { raw: '[plan-ceo-review:track=4A]', expectedAction: 'PROMPT', expectedSource: 'plan-ceo-review', expectedReasonContains: 'without defer=true' },
+    { raw: '[plan-eng-review:track=4A,defer=false]', expectedAction: 'PROMPT', expectedSource: 'plan-eng-review', expectedReasonContains: 'without defer=true' },
+
     // KEEP: user-written deliberate items
     { raw: '[manual]', expectedAction: 'KEEP', expectedSource: 'manual', expectedReasonContains: 'user-written' },
     { raw: '[ship]', expectedAction: 'KEEP', expectedSource: 'ship', expectedReasonContains: 'user-written' },
@@ -329,12 +335,26 @@ describe('routeSourceTag (full source/severity matrix)', () => {
     },
   );
 
-  test('matrix covers all 24 canonical tuples (+1 metadata-bearing variant)', () => {
-    // 24 canonical (source, severity) tuples per docs/source-tag-contract.md.
-    // The +1 is the pair-review-with-metadata sanity check carried over from
-    // the original bash test — it doesn't add a new branch but verifies that
-    // metadata in the tag survives routing.
-    expect(rows.length).toBe(25);
+  test('matrix covers all 24 canonical tuples (+1 metadata and 4 plan-review variants)', () => {
+    // 24 canonical (source, severity) tuples per docs/source-tag-contract.md,
+    // the pair-review-with-metadata sanity row, and the four plan-review
+    // defer/no-defer rows that pin target-based reassessment.
+    expect(rows.length).toBe(29);
+  });
+
+  test.each(rows)('installed bash route agrees with audit routing: $raw', ({ raw }) => {
+    const result = spawnSync('bash', [join(import.meta.dir, '../bin/roadmap-route'), raw], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    const fields = Object.fromEntries(result.stdout.trim().split('\n').map((line) => {
+      const split = line.indexOf('=');
+      return [line.slice(0, split), line.slice(split + 1)];
+    }));
+    const expected = routeSourceTag(raw);
+    expect(fields.action).toBe(expected.action);
+    expect(fields.reason).toBe(expected.reason);
+    expect(fields.source).toBe(expected.source);
+    expect(fields.severity || undefined).toBe(expected.severity || undefined);
   });
 });
 

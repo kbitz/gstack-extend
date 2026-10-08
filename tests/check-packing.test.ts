@@ -61,6 +61,38 @@ _touches: src/c.ts_
 - Finish the third task (~50 lines).
 `;
 
+test('plain-language outcomes preserve Track tasks, dependencies and packer bins', () => {
+  const plain = REPACKED_REMAINDER
+    .replace('- Finish the second task (~50 lines).', '- **Search local notes** — Return matching files. (S)')
+    .replace('- Finish the third task (~50 lines).', '- **Identify results** — Show each source path. (S)');
+  const enriched = plain
+    .replace('_Depends on: none_', '_Depends on: none_\n\n**This group delivers:** Local search and readable results.')
+    .replace('#### Track 23A: Second remaining\n_1 task . ~50 LOC . low risk_', `#### Track 23A: Second remaining
+_1 task . ~50 LOC . low risk_
+**Outcome:** The owner can search local notes.
+**Supports:** MVP-1; SPEC O1.
+**Done when:** Search returns a known note from the fixture vault.`)
+    .replace('#### Track 23B: Third remaining\n_1 task . ~50 LOC . low risk_', `#### Track 23B: Third remaining
+_1 task . ~50 LOC . low risk_
+**Outcome:** Results identify the correct file.
+**Supports:** MVP-1; SPEC O2.
+**Done when:** Duplicate filenames remain distinguishable.
+**Release checkpoint:** C1 (O1 + O2); acceptance still required.`);
+  expect(enriched).not.toBe(plain);
+  expect(enriched.match(/^\*\*Outcome:\*\*/gm)?.length).toBe(2);
+  expect(enriched).toContain('**This group delivers:**');
+  const baseline = parsedCtx(plain);
+  const candidate = parsedCtx(enriched);
+  expect(candidate.roadmap.errors).toEqual([]);
+  expect(candidate.roadmap.value.styleLintWarnings).toEqual([]);
+  expect(candidate.roadmap.value.tracks.map((track) => track.tasksCount)).toEqual([1, 1]);
+  expect(tracksForPacker(candidate)).toEqual(tracksForPacker(baseline));
+  expect(packTracks(tracksForPacker(candidate), { target: 2, maxPerBin: 2 }))
+    .toEqual(packTracks(tracksForPacker(baseline), { target: 2, maxPerBin: 2 }));
+  expect(runCheckStructure(candidate).status).toBe('pass');
+  expect(runCheckPacking(candidate).status).toBe('pass');
+});
+
 describe('parsed individual shipment contract', () => {
   test('exact receipt after Group 11 ships only 22A while pinned Group 22 remains active', () => {
     const archive = parseRoadmap(PRIOR_ARCHIVE + INDIVIDUAL_RECEIPT);

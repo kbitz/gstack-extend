@@ -94,6 +94,19 @@ describe('template substitution', () => {
     expect(md).toContain('/full-review');
   });
 
+  test('init guidance leads with /project-spec and renders the product-scope bridge', () => {
+    const s = scope('project-spec-guidance');
+    const r = init(s);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toMatch(/2\. \/project-spec\s+\(agree on users\/outcomes; finishes with \/roadmap\)/);
+    const claude = readFileSync(join(s.target, 'CLAUDE.md'), 'utf8');
+    expect(claude).toContain('## Product scope');
+    expect(claude.replace(/\s+/g, ' ')).toContain('When `docs/SPEC.md` exists with an `## Authority` section, read it');
+    expect(claude).toContain('invoke `/project-spec`');
+    const todos = readFileSync(join(s.target, 'docs', 'TODOS.md'), 'utf8');
+    expect(todos).toContain('Suggested order: `/project-spec`');
+  });
+
   test('PROGRESS.md has a version-history table with 0.0.0.0 row', () => {
     const s = scope('progress');
     init(s);

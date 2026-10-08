@@ -349,7 +349,7 @@ Prompt:
 >
 > SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
->   necessary    — real defect, should fix in current or next Group
+>   necessary    — reported real defect; verify evidence and target impact before scheduling
 >   nice-to-have — legitimate improvement, OK to defer
 >   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
 >                  by /full-review. Only report them for the record; they will not be
@@ -403,7 +403,7 @@ Prompt:
 >
 > SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
->   necessary    — real defect, should fix in current or next Group
+>   necessary    — reported real defect; verify evidence and target impact before scheduling
 >   nice-to-have — legitimate improvement, OK to defer
 >   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
 >                  by /full-review. Only report them for the record; they will not be
@@ -468,7 +468,7 @@ Prompt:
 >
 > SEVERITY semantics:
 >   critical     — ship-blocker, data loss, security, correctness
->   necessary    — real defect, should fix in current or next Group
+>   necessary    — reported real defect; verify evidence and target impact before scheduling
 >   nice-to-have — legitimate improvement, OK to defer
 >   edge-case    — hypothetical or extreme-edge scenario. These are DROPPED at source
 >                  by /full-review. Only report them for the record; they will not be
