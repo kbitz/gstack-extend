@@ -734,26 +734,38 @@ def _cursor_store_root(store=None):
     return Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store"
 
 
+def _path_kind(path):
+    # os.stat, not Path.exists/is_dir/is_file: Python 3.14 pathlib answers False on a permission error, which would
+    # make an unsearchable shard look missing. Only ENOENT/ENOTDIR mean missing.
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    return "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "other"
+
+
 def _read_bounded(path):
     # Same cap as tail_records. Status is how complete the read was. A file over the cap, or an unreadable one,
     # cannot prove that an older row is absent, so it is not parsed: that evidence would only be discarded.
-    # A writer mid-append is the same: growth past the cap during the read, or a torn final line, is clipped.
-    try:
-        if not path.exists():
-            return [], "missing"
-        if not path.is_file():
-            return [], "nonregular"
-    except OSError:
-        return [], "unreadable"
+    # A writer mid-append is the same: growth past the cap or a shrink during the read is clipped, and so is a torn
+    # final line on a file that is still growing. A torn line on a file that is not growing is stale residue.
+    kind = _path_kind(path)
+    if kind in ("missing", "unreadable"):
+        return [], kind
+    if kind != "file":
+        return [], "nonregular"
     try:
         with path.open("rb") as stream:
-            if stream.seek(0, os.SEEK_END) > LOG_TAIL_BYTES:
+            size = stream.seek(0, os.SEEK_END)
+            if size > LOG_TAIL_BYTES:
                 return [], "clipped"
             stream.seek(0)
             blob = stream.read(LOG_TAIL_BYTES + 1)
     except OSError:
         return [], "unreadable"
-    if len(blob) > LOG_TAIL_BYTES:
+    if len(blob) > LOG_TAIL_BYTES or len(blob) < size:
         return [], "clipped"
     records = []
     lines = blob.split(b"\n")
@@ -761,9 +773,14 @@ def _read_bounded(path):
         try:
             record = json.loads(line)
         except (ValueError, RecursionError):
-            # A malformed or too-deeply-nested line is skipped; an unterminated, unparseable last line is torn.
+            # A malformed or too-deeply-nested line is skipped. An unterminated, unparseable last line is a
+            # writer mid-append only if the file has grown since the read; otherwise it is skipped like any other.
             if index == len(lines) - 1 and line.strip():
-                return [], "clipped"
+                try:
+                    if os.stat(path).st_size != len(blob):
+                        return [], "clipped"
+                except OSError:
+                    return [], "unreadable"
             continue
         if isinstance(record, dict):
             records.append(record)
@@ -806,21 +823,22 @@ def capture_cursor_store(store=None):
     # One traversal. Callers select from this object; they do not read the store again.
     try:
         root = _cursor_store_root(store)
+        kind = _path_kind(root)
+        if kind == "missing":
+            return CursorCapture("absent", [], False)
+        if kind != "dir":
+            return CursorCapture("unreadable", [], False)
         try:
-            if not root.exists():
-                return CursorCapture("absent", [], False)
-            if not root.is_dir():
-                return CursorCapture("unreadable", [], False)
             children = list(root.iterdir())
         except OSError:
             return CursorCapture("unreadable", [], False)
         shards, complete = [], True
         for child in children:
-            try:
-                if not child.is_dir():
-                    continue
-            except OSError:
+            kind = _path_kind(child)
+            if kind == "unreadable":
                 complete = False
+                continue
+            if kind != "dir":
                 continue
             agents, agents_status = _read_bounded(child / "agents.ndjson")
             runs, runs_status = _read_bounded(child / "runs.ndjson")
@@ -841,7 +859,8 @@ def _effort_status(cleaned_values):
     if not cleaned_values:
         return "missing", None
     distinct = {value for value in cleaned_values if value is not None}
-    if len(distinct) > 1:
+    # A recognized non-null value that fails clean() beside a clean one is still a conflicting value.
+    if len(distinct) > 1 or (distinct and None in cleaned_values):
         return "conflict", None
     if len(distinct) == 1:
         return "ok", next(iter(distinct))
@@ -922,20 +941,34 @@ def _equivalent(left, right):
         right["started"], right["updated"], right["ended"], right["meta"])
 
 
-def _may_overlap(view, begin, end):
+def _valid(view, end):
+    # A snapshot whose own bounds meet the contract: readable start and update, startedAt <= updatedAt <= the
+    # captured end, and a missing/null or readable endedAt no earlier than startedAt.
     kind, ended = view["ended"]
-    if kind == "bad":
-        return True
+    if view["started"] is None or view["updated"] is None or kind == "bad":
+        return False
+    return view["started"] <= view["updated"] <= end and (kind == "open" or ended >= view["started"])
+
+
+def _overlaps(view, begin, end):
+    # For a valid snapshot: the inclusive run window meets the inclusive stage window.
+    kind, ended = view["ended"]
     return view["started"] <= end and (end if kind == "open" else ended) >= begin
 
 
-def _unverifiable(views, begin, end):
-    # A run whose snapshots conflict cannot be read, but it still exists. If any snapshot could overlap the stage,
-    # uniqueness is unproven; a conflicting run wholly outside the window does not block another run.
-    return ("unresolved" if any(_may_overlap(view, begin, end) for view in views) else "outside"), None
+def _placed_outside(view, begin, end):
+    # Readable bounds that put a snapshot wholly after or before the stage, whatever else is wrong with it.
+    started, (kind, ended) = view["started"], view["ended"]
+    if started is not None and started > end:
+        return True
+    return kind == "ok" and ended < begin and (started is None or started < begin)
 
 
 def _classify_group(records, begin, end):
+    # One run identity. A run counts toward uniqueness when any snapshot has valid bounds and overlaps the stage;
+    # if its state then cannot be resolved to one valid newest snapshot, it blocks certification. A run with no
+    # valid snapshot is a malformed neighbor: it never blocks, unless its readable bounds place it outside the stage,
+    # in which case it is simply outside. The group never falls back to an older snapshot.
     views = []
     for record in records:
         if not isinstance(record, dict):
@@ -946,27 +979,23 @@ def _classify_group(records, begin, end):
             return "malformed-bounds", None
     if not views:
         return "malformed-bounds", None
-    # Any unreadable updatedAt/startedAt hides which snapshot is newest, so the group cannot fall back. If a readable
-    # snapshot still places the run in the window, the run exists there and stays unverifiable ("partial").
-    readable = [view for view in views if view["started"] is not None and view["updated"] is not None]
-    if len(readable) != len(views):
-        return ("partial" if any(_may_overlap(view, begin, end) for view in readable) else "malformed-bounds"), None
-    if len({view["started"] for view in views}) != 1:
-        return _unverifiable(views, begin, end)
+    valid = [_valid(view, end) for view in views]
+    overlapping = any(ok and _overlaps(view, begin, end) for ok, view in zip(valid, views))
+    if not all(valid):
+        # An invalid snapshot hides the run's newest state ("partial" when a valid one still places it in the window).
+        if overlapping:
+            return "partial", None
+        if all(ok or _placed_outside(view, begin, end) for ok, view in zip(valid, views)):
+            return "outside", None
+        return "malformed-bounds", None
+    starts = {view["started"] for view in views}
     latest = max(view["updated"] for view in views)
     tops = [view for view in views if view["updated"] == latest]
-    if any(not _equivalent(tops[0], view) for view in tops[1:]):
-        return _unverifiable(tops, begin, end)
+    if len(starts) != 1 or any(not _equivalent(tops[0], view) for view in tops[1:]):
+        # Inconsistent starts or an equal-timestamp conflict: unverifiable, blocking only if it could overlap.
+        return ("unresolved" if overlapping else "outside"), None
     chosen = tops[0]
-    if chosen["updated"] < chosen["started"] or chosen["updated"] > end:
-        return "malformed-bounds", None
-    kind, ended = chosen["ended"]
-    if kind == "bad" or (kind == "ok" and ended < chosen["started"]):
-        return "malformed-bounds", None
-    run_end = end if kind == "open" else ended
-    if chosen["started"] <= end and run_end >= begin:
-        return "eligible", chosen
-    return "outside", None
+    return ("eligible", chosen) if _overlaps(chosen, begin, end) else ("outside", None)
 
 
 def _finite_bound(value):

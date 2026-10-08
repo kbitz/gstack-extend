@@ -1014,6 +1014,15 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(statSync(dirtyFile).mtimeMs).toBe(dirtyMtime);
     expect(recipe).toContain('main()');
 
+    // Another writer's non-UTF-8 line is a skipped malformed line, not a traceback.
+    const binary = makeTelemetryFixture('off');
+    const binaryFile = writeStageRuns(join(binary.home, '.gstack-extend'), [known]);
+    writeFileSync(binaryFile, Buffer.concat([Buffer.from([0xff, 0xfe, 0x0a]), readFileSync(binaryFile)]));
+    const decoded = runCursorRecipe({ ...binary.env }, ['known-session'], binary.home);
+    expect([decoded.status, decoded.stderr]).toEqual([0, '']);
+    expect(decoded.stdout).toContain('malformed-lines: 1');
+    expect(decoded.stdout).toContain(JSON.stringify(known));
+
     // The documented invocation is isolated: a module planted in the operator's cwd is never imported.
     const invocation = readFileSync(DOC, 'utf8').split('\n').find(line => line.startsWith('python3 ') && line.includes("'known-session'"));
     expect(invocation?.startsWith('python3 -I - ')).toBe(true);

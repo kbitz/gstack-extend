@@ -982,16 +982,16 @@ cleaned `agentId` plus a cleaned `runId` is one run; snapshots of that run are
 not extra runs. A record with no usable `runId` stays its own candidate.
 Duplicate equivalent snapshots collapse. The newest `updatedAt` snapshot is
 kept whole, with no field merging, and only when `startedAt` is consistent.
-Equal-timestamp conflicts and an inconsistent start make that run unverifiable.
-An unverifiable run that could overlap the stage blocks certification even
-beside one eligible run; one wholly outside the window does not. A run with an
-unreadable snapshot is unverifiable too when a readable snapshot of it could
-overlap the stage.
-The newest invalid or future snapshot is not replaced by an older one. Distinct
-run ids stay ambiguous even when the model and effort agree. A malformed
-neighbor, a run with no readable snapshot, does not erase a well-formed
-record; the certification then carries the `malformed-neighbor` reason.
-Unhashable ids are skipped.
+A snapshot is valid when its own bounds meet the contract below. A run counts
+toward uniqueness when any of its snapshots is valid and overlaps the stage. If
+that run then cannot be resolved to one valid newest snapshot (an invalid or
+unreadable snapshot, an inconsistent start, or an equal-timestamp conflict), it
+blocks certification even beside one eligible run. The newest invalid or future
+snapshot is never replaced by an older one. Distinct run ids stay ambiguous
+even when the model and effort agree. A malformed neighbor, a run with no valid
+snapshot, does not erase a well-formed record; the certification then carries
+the `malformed-neighbor` reason, unless the neighbor's readable bounds place it
+wholly before or after the stage. Unhashable ids are skipped.
 
 The stage window is inclusive `[begin, end]`; an inverted stage window
 certifies nothing. The run window is inclusive
@@ -1006,14 +1006,18 @@ cleaning. Zero eligible runs, or more than one, leave model and effort null and
 do not certify the route. A still-open stale run can overlap a later stage and
 make the result honestly ambiguous. There is no freshness TTL.
 
-A file over 8 MiB, a file that grew past that cap or ends in a torn,
-unparseable line while being read (a writer mid-append), an unreadable or
+A file over 8 MiB, a file that grew past that cap or shrank while being read,
+a file that ends in a torn, unparseable line and has grown since the read (a
+writer mid-append), an unreadable, unsearchable, or
 non-regular sibling, a missing `agents.ndjson` next to runs, or a missing
 `runs.ndjson` next to agents cannot prove uniqueness, including when the session id is absent and a readable
 sibling looks unique. This applies to every shard in the store, not only the
-one for this cwd. A shard directory with neither file is skipped. A malformed
-line, including one nested too deeply to decode, is skipped like any other bad
-line. The row still records.
+one for this cwd. Because these files only grow, one file past 8 MiB in any
+shard, including an archived workspace's, keeps every capture incomplete; there
+is no in-repo repair, and that is a revisit trigger below. A shard directory
+with neither file is skipped. A malformed line, including one nested too deeply
+to decode, is skipped like any other bad line, and so is a torn last line on a
+file that has stopped growing (stale residue). The row still records.
 Transcript mtime remains the activity fallback when no store was captured, the
 candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
 use, or both model and effort are null. A usable model with unknown effort, or
@@ -1043,13 +1047,17 @@ correctness. A row with no `producer_version` keeps unknown producer status.
 This change does not lexically compare four-part versions. The release that
 ships the repair is the bound for the fixed implementation; earlier or unknown
 producer rows stay uncertified without their own implementation evidence.
-Invalid or ambiguous store evidence may now yield `route` `unknown`. If a
-consumer relied on the old overbroad label, the release that ships this repair
+Invalid or ambiguous store evidence may now yield `route` `unknown`, and an
+explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort from a
+matching store record of any shape; those stay null unless finish flags supply
+them. If a consumer relied on the old overbroad label or those CLI values, the release that ships this repair
 has to apply the spec's compatibility policy. No release is authorized by the
 reader change itself.
 
 Reconsider this private reader if a supported host publishes an official
-run-metadata contract, a qualified native shape changes, or the quota reader's
+run-metadata contract, a qualified native shape changes, store-wide
+completeness or exact-cwd identity proves too strict on a real install, or the
+quota reader's
 millisecond heuristic (magnitude above `100000000000`, plus numeric strings)
 diverges from this explicit-unit contract. That is a revisit trigger, not a
 second reader and not a quota change.
@@ -1097,14 +1105,14 @@ line with the values the row records. Copy only lines that begin
 |---|---|---|---|
 | <a id="cursor-sdk-store-absent"></a>`store-absent` | No store metadata | The SDK directory is not there | Confirm Conductor wrote a store for this host. Do not invent a model |
 | <a id="cursor-sdk-store-unreadable"></a>`store-unreadable` | No store metadata | The store directory cannot be listed | Restore the directory's permissions privately. The reason line is the whole diagnostic |
-| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | A file over 8 MiB, or a missing, non-regular, or unreadable sibling in any shard, could hide a run | Do not treat a readable shard as unique. The row stays unknown |
-| <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd | Compare `pwd -P` with the store privately. Exact match is required. Do not paste paths |
+| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | In any shard: a file over 8 MiB, a file that grew, shrank, or tore while being read, or a missing, non-regular, unreadable, or unsearchable sibling could hide a run | Do not treat a readable shard as unique. The row stays unknown. A transient mid-append read clears on the next finish; a file past 8 MiB stays until the store changes |
+| <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd, including a finish run from a subdirectory of the workspace | Compare `pwd -P` with the store privately. Exact match is required; run finish from the workspace root. Do not paste paths |
 | <a id="cursor-sdk-no-session-match"></a>`no-session-match` | No store metadata | The conversation id matches no agent or run | Record identity as unknown or absent. Do not copy the id into a receipt |
 | <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the run or stage interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
 | <a id="cursor-sdk-no-eligible-window"></a>`no-eligible-window` | No store metadata | Runs were readable and none overlap the stage | Confirm the stage begin and end. A completed earlier run is not this stage |
-| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run whose snapshots conflict or are partly unreadable could overlap | Leave model, effort, and route unknown. A stale open run can do this |
+| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run with a valid overlapping snapshot cannot be resolved | Leave model, effort, and route unknown. A stage that spans more than one Conductor prompt in one conversation does this, since each prompt is its own run; so can a stale open run |
 | <a id="cursor-sdk-malformed-metadata"></a>`malformed-metadata` | A field is null | The model or a recognized effort value failed cleaning, or effort values conflicted | Keep a usable sibling field. Do not guess the dropped one |
-| <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no readable snapshot, so it could not be placed in or out of the window | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
+| <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no valid snapshot (a missing or unreadable bound, an inverted interval, or an `updatedAt` after the captured end), and its readable bounds did not place it outside the stage | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
 | <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read, with no store observed (explicit CLI) or no usable store result | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
 
 <a id="cursor-ledger-recipe"></a>
@@ -1117,7 +1125,7 @@ The projections below are synthetic. They are not native evidence.
 |---|---|
 | detected | `model_source` and `effort_source` are `detected`, and a unique in-window store match can set `route` to `conductor` |
 | flag | `model_source` or `effort_source` is `flag` because finish passed `--model` or `--effort`. CLI stays `route` `cli` |
-| unknown | `model` and `effort` are null and those sources are `unknown`. The route is not certified |
+| unknown | `model` and `effort` are null and those sources are `unknown`. The route is certified only when one store run matched; such a run can still carry no usable model or effort |
 
 Several stage-runs lines for one session are a ledger choice: narrow with
 `stage` and `started_at`. Do not keep the last line because it is last.
@@ -1163,7 +1171,7 @@ def main():
         if not ledger.is_file():
             print("missing-file")
             return
-        stream = ledger.open("r", encoding="utf-8")
+        stream = ledger.open("rb")
     except OSError:
         print("missing-file")
         return
@@ -1175,7 +1183,7 @@ def main():
                 continue
             try:
                 row = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 malformed += 1
                 continue
             if not isinstance(row, dict) or row.get("session_id") != session:
@@ -1213,8 +1221,8 @@ PY
 `missing-file` means the ledger path is not a regular file. `no-match` means
 the session, and any stage or start you passed, hit nothing. `multiple-match`
 means more than one ledger line still qualifies; read those projections and
-narrow the selectors. `malformed-lines: N` counts skipped lines and does not
-print them. None of these results is a native Conductor receipt.
+narrow the selectors. `malformed-lines: N` counts skipped lines, including
+lines that are not UTF-8, and does not print them. None of these results is a native Conductor receipt.
 
 ## Evidence
 

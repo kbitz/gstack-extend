@@ -1982,7 +1982,8 @@ const CURSOR_HARNESS = [
   '    def grown():',
   '        plant("grow", [one], [run("only-agent", "run-1", {"id": "model-kept"})])',
   '        path = store_root() / "grow" / "runs.ndjson"',
-  '        payload = (good_line + "\\n").encode() * (telemetry.LOG_TAIL_BYTES // len(good_line) + 10)',
+  '        rival = json.dumps(run("only-agent", "run-2", {"id": "model-rival"}))',
+  '        payload = (good_line + "\\n" + " " * (telemetry.LOG_TAIL_BYTES - len(good_line) - 1) + "\\n" + rival + "\\n").encode()',
   '        real_open = telemetry.Path.open',
   '        class Grown:',
   '            # Reports a size under the cap, then the writer appends past it before the read.',
@@ -1996,6 +1997,58 @@ const CURSOR_HARNESS = [
   '                return payload[self.pos:self.pos + size]',
   '        telemetry.Path.open = lambda self, *a, **k: Grown() if self == path else real_open(self, *a, **k)',
   '        return real_open',
+  '    def stubbed(shard, reported, served):',
+  '        # The size probe sees `reported` bytes; the read sees `served`. The file on disk keeps its own bytes.',
+  '        rival = json.dumps(run("only-agent", "run-2", {"id": "model-rival"}))',
+  '        plant(shard, [one], [run("only-agent", "run-1", {"id": "model-kept"}), run("only-agent", "run-2", {"id": "model-rival"})])',
+  '        path = store_root() / shard / "runs.ndjson"',
+  '        real_open = telemetry.Path.open',
+  '        class Stub:',
+  '            def __init__(self): self.pos = 0',
+  '            def __enter__(self): return self',
+  '            def __exit__(self, *exc): return False',
+  '            def seek(self, offset, whence=0):',
+  '                self.pos = reported if whence == os.SEEK_END else offset',
+  '                return self.pos',
+  '            def read(self, size=-1):',
+  '                return served[self.pos:self.pos + size]',
+  '        telemetry.Path.open = lambda self, *a, **k: Stub() if self == path else real_open(self, *a, **k)',
+  '        return real_open',
+  '    def stub_result(shard, reported, served):',
+  '        reset_store()',
+  '        restore = stubbed(shard, reported, served)',
+  '        try:',
+  '            found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
+  '        finally:',
+  '            telemetry.Path.open = restore',
+  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
+  '    kept = (good_line + "\\n").encode()',
+  '    shrunk_result = stub_result("shrink", len(kept) * 2, kept)',
+  '    torn_growing_result = stub_result("tear", len(kept) + 20, kept + good_line.replace("run-1", "run-2").encode()[:20])',
+  '    def locked_shard():',
+  '        plant("open", [one], [run("only-agent", "run-1", {"id": "model-kept"}, ended=None)])',
+  '        plant("locked", [one], [run("only-agent", "run-2", {"id": "model-hidden"}, ended=None)])',
+  '        os.chmod(store_root() / "locked", 0)',
+  '    reset_store()',
+  '    locked_shard()',
+  '    # Python 3.14 pathlib answers False instead of raising on a permission error; emulate it on any runtime.',
+  '    saved = {name: getattr(Path, name) for name in ("exists", "is_dir", "is_file")}',
+  '    def lenient(method):',
+  '        def call(self, *args, **kwargs):',
+  '            try:',
+  '                return method(self, *args, **kwargs)',
+  '            except OSError:',
+  '                return False',
+  '        return call',
+  '    for name, method in saved.items():',
+  '        setattr(Path, name, lenient(method))',
+  '    try:',
+  '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
+  '    finally:',
+  '        for name, method in saved.items():',
+  '            setattr(Path, name, method)',
+  '        os.chmod(store_root() / "locked", 0o755)',
+  '    locked_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
   '    fifo_result = isolated(fifo_runs)',
   '    empty_result = isolated(empty_shard)',
   '    torn_result = isolated(torn_tail)',
@@ -2038,6 +2091,7 @@ const CURSOR_HARNESS = [
   '            "missing_agents": isolated(missing_agents), "nonregular": isolated(nonregular),',
   '            "missing_runs": isolated(missing_runs), "fifo_runs": fifo_result, "empty_shard": empty_result,',
   '            "torn_tail": torn_result, "unterminated_tail": whole_result, "deep_line": deep_result, "grown": grown_result,',
+  '            "shrunk": shrunk_result, "torn_growing": torn_growing_result, "locked": locked_result,',
   '            "file_root": isolated(file_root), "bad_json": isolated(bad_json),',
   '            "big": {"complete": big_capture.complete, "parsed": parsed[0]},',
   '            "inspected": inspected, "inspected_all": inspected_all,',
@@ -2353,6 +2407,11 @@ describe('Conductor Cursor store', () => {
       { name: 'null-effort', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null }))], session: 'conv-1' },
       { name: 'null-effort-list', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: null }]))], session: 'conv-1' },
       { name: 'null-effort-fallback', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', { effort: null, reasoning_effort: 'max' }))], session: 'conv-1' },
+      { name: 'eligible-plus-future-newer', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-x', model('old', {}), begin, begin + 10, begin + 20), closed('conv-1', 'run-x', model('new', {}), begin, end + 50, end + 60)] },
+      { name: 'eligible-plus-old-partial', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-o', model('one', {}), begin - 100, begin - 50, begin - 40), { ...closed('conv-1', 'run-o', model('two', {}), begin - 100, begin - 50, begin - 40), updatedAt: 'garbage' }] },
+      { name: 'eligible-plus-old-inverted', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-i', model('old', {}), begin - 90, begin - 80, begin - 95)] },
+      { name: 'eligible-plus-bad-end-single', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { ...closed('conv-1', 'run-b', model('one', {}), begin + 10, begin + 20), endedAt: 'nope' }] },
+      { name: 'effort-uncleanable-duplicate', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'high' }, { id: 'effort', value: 123 }]))], session: 'conv-1' },
     ];
     const normalized = cases.map(entry => ({
       ...entry,
@@ -2420,9 +2479,19 @@ describe('Conductor Cursor store', () => {
     expect(byName['dict-fallback']).toMatchObject({ model: 'grok-4.7', effort: 'max', reasons: [] });
     expect(byName['list-both']).toMatchObject({ model: 'grok-4.7', effort: 'high', reasons: [] });
     expect(byName['reasoning-conflict']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
-    for (const name of ['eligible-plus-partial-conflict', 'eligible-plus-partial', 'eligible-plus-open-conflict', 'eligible-plus-bad-end-conflict', 'eligible-plus-older-snapshot-overlaps']) {
+    // A run counts toward uniqueness when any snapshot has valid bounds and overlaps the stage but its state
+    // cannot be resolved. A run with no valid snapshot is a malformed neighbor: it never blocks.
+    for (const name of ['eligible-plus-partial-conflict', 'eligible-plus-partial', 'eligible-plus-open-conflict', 'eligible-plus-older-snapshot-overlaps', 'eligible-plus-future-newer']) {
       expect([name, byName[name]]).toMatchObject([name, { certify: false, model: null, reasons: ['ambiguous-candidates'] }]);
     }
+    for (const name of ['eligible-plus-bad-end-conflict', 'eligible-plus-bad-end-single']) {
+      expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', reasons: ['malformed-neighbor'] }]);
+    }
+    // A malformed run whose parseable bounds sit wholly before the stage is outside it, not a neighbor to flag.
+    for (const name of ['eligible-plus-old-partial', 'eligible-plus-old-inverted']) {
+      expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', reasons: [] }]);
+    }
+    expect(byName['effort-uncleanable-duplicate']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
     // A malformed neighbor does not block a well-formed run, but the certification says it saw one.
     expect(byName['malformed-neighbor']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: ['malformed-neighbor'] });
     expect(byName.neighbor.reasons).toEqual(['malformed-neighbor']);
@@ -2448,10 +2517,15 @@ describe('Conductor Cursor store', () => {
     // A FIFO must not block open(); a stray empty shard directory must not darken the store.
     expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.empty_shard).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
-    // A writer mid-append can hide a competing run: a torn final line or growth past the cap is incomplete.
-    expect(clipped.torn_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    // A writer mid-append can hide a competing run: growth past the cap, a shrink, or a torn final line on a file
+    // that is still growing is incomplete. A torn line on a file that is not growing is stale residue, skipped.
+    expect(clipped.torn_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
+    expect(clipped.torn_growing).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.shrunk).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    // A shard that cannot be searched is unreadable, never "missing", whatever pathlib answers.
+    expect(clipped.locked).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.deep_line).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.big.complete).toBe(false);
     expect(clipped.big.parsed).toBeLessThan(10);
