@@ -1971,8 +1971,16 @@ const CURSOR_HARNESS = [
   '        plant("good", [one], [run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}})])',
   '    good_line = json.dumps(run("only-agent", "run-1", {"id": "model-kept", "params": {"effort": "high"}}))',
   '    def torn_tail():',
+  '        # Crash residue: a torn last line on a file nobody has touched for a minute.',
   '        write_jsonl(store_root() / "torn" / "agents.ndjson", [one])',
-  '        (store_root() / "torn" / "runs.ndjson").write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
+  '        path = store_root() / "torn" / "runs.ndjson"',
+  '        path.write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
+  '        stale = time.time() - 60',
+  '        os.utime(path, (stale, stale))',
+  '    def torn_paused():',
+  '        # A writer paused mid-line: same size as the read, but modified just now.',
+  '        write_jsonl(store_root() / "paused" / "agents.ndjson", [one])',
+  '        (store_root() / "paused" / "runs.ndjson").write_text(good_line + "\\n" + good_line.replace("run-1", "run-2")[:40])',
   '    def unterminated_tail():',
   '        write_jsonl(store_root() / "whole" / "agents.ndjson", [one])',
   '        (store_root() / "whole" / "runs.ndjson").write_text(good_line)',
@@ -2052,6 +2060,7 @@ const CURSOR_HARNESS = [
   '    fifo_result = isolated(fifo_runs)',
   '    empty_result = isolated(empty_shard)',
   '    torn_result = isolated(torn_tail)',
+  '    paused_result = isolated(torn_paused)',
   '    whole_result = isolated(unterminated_tail)',
   '    deep_result = isolated(deep_line)',
   '    reset_store()',
@@ -2091,7 +2100,7 @@ const CURSOR_HARNESS = [
   '            "missing_agents": isolated(missing_agents), "nonregular": isolated(nonregular),',
   '            "missing_runs": isolated(missing_runs), "fifo_runs": fifo_result, "empty_shard": empty_result,',
   '            "torn_tail": torn_result, "unterminated_tail": whole_result, "deep_line": deep_result, "grown": grown_result,',
-  '            "shrunk": shrunk_result, "torn_growing": torn_growing_result, "locked": locked_result,',
+  '            "shrunk": shrunk_result, "torn_growing": torn_growing_result, "locked": locked_result, "torn_paused": paused_result,',
   '            "file_root": isolated(file_root), "bad_json": isolated(bad_json),',
   '            "big": {"complete": big_capture.complete, "parsed": parsed[0]},',
   '            "inspected": inspected, "inspected_all": inspected_all,',
@@ -2518,9 +2527,10 @@ describe('Conductor Cursor store', () => {
     expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.empty_shard).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     // A writer mid-append can hide a competing run: growth past the cap, a shrink, or a torn final line on a file
-    // that is still growing is incomplete. A torn line on a file that is not growing is stale residue, skipped.
+    // that changed size or was modified recently is incomplete. A torn line on a quiet file is stale residue, skipped.
     expect(clipped.torn_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.torn_growing).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.torn_paused).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
     expect(clipped.shrunk).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });

@@ -47,6 +47,7 @@ VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
+TORN_QUIET_S = 10  # a torn last line counts as crash residue only on a Conductor store file this long untouched
 # Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
 # Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
 CURSOR_SDK_REASONS = (
@@ -750,7 +751,7 @@ def _read_bounded(path):
     # Same cap as tail_records. Status is how complete the read was. A file over the cap, or an unreadable one,
     # cannot prove that an older row is absent, so it is not parsed: that evidence would only be discarded.
     # A writer mid-append is the same: growth past the cap or a shrink during the read is clipped, and so is a torn
-    # final line on a file that is still growing. A torn line on a file that is not growing is stale residue.
+    # final line on a file that changed size or was modified recently. A torn line on a quiet file is stale residue.
     kind = _path_kind(path)
     if kind in ("missing", "unreadable"):
         return [], kind
@@ -773,14 +774,16 @@ def _read_bounded(path):
         try:
             record = json.loads(line)
         except (ValueError, RecursionError):
-            # A malformed or too-deeply-nested line is skipped. An unterminated, unparseable last line is a
-            # writer mid-append only if the file has grown since the read; otherwise it is skipped like any other.
+            # A malformed or too-deeply-nested line is skipped. An unterminated, unparseable last line is skipped as
+            # crash residue only when the file still has the size that was read and has been quiet for TORN_QUIET_S;
+            # a writer paused mid-line looks the same except for its recent modification time.
             if index == len(lines) - 1 and line.strip():
                 try:
-                    if os.stat(path).st_size != len(blob):
-                        return [], "clipped"
+                    info = os.stat(path)
                 except OSError:
                     return [], "unreadable"
+                if info.st_size != len(blob) or time.time() - info.st_mtime < TORN_QUIET_S:
+                    return [], "clipped"
             continue
         if isinstance(record, dict):
             records.append(record)

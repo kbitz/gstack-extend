@@ -1007,8 +1007,9 @@ do not certify the route. A still-open stale run can overlap a later stage and
 make the result honestly ambiguous. There is no freshness TTL.
 
 A file over 8 MiB, a file that grew past that cap or shrank while being read,
-a file that ends in a torn, unparseable line and has grown since the read (a
-writer mid-append), an unreadable, unsearchable, or
+a file that ends in a torn, unparseable line and changed size since the read
+or was modified in the last 10 seconds (a writer mid-append, even a paused
+one), an unreadable, unsearchable, or
 non-regular sibling, a missing `agents.ndjson` next to runs, or a missing
 `runs.ndjson` next to agents cannot prove uniqueness, including when the session id is absent and a readable
 sibling looks unique. This applies to every shard in the store, not only the
@@ -1017,7 +1018,8 @@ shard, including an archived workspace's, keeps every capture incomplete; there
 is no in-repo repair, and that is a revisit trigger below. A shard directory
 with neither file is skipped. A malformed line, including one nested too deeply
 to decode, is skipped like any other bad line, and so is a torn last line on a
-file that has stopped growing (stale residue). The row still records.
+file that kept its size and has been untouched for 10 seconds (stale crash
+residue). The row still records.
 Transcript mtime remains the activity fallback when no store was captured, the
 candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
 use, or both model and effort are null. A usable model with unknown effort, or
