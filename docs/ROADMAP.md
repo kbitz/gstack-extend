@@ -15,37 +15,13 @@ separate gates. The owner approved this plan on 2026-10-08.
 
 ## In Progress
 
-_(no Tracks declared active in this invocation)_
-
----
-
-## Current Plan
-
-_tombstone: 17, 19, 20, 22_
-
-### Group 23: Repair supported install, planning and recovery paths
+### Group 23: Repair supported attribution, install, planning and recovery paths
 
 _Depends on: none_
 
-**This group delivers:** A working first audit and upgrade path, correctly sized tasks, reliable manual-test continuation, usable Conductor metadata and a quota suite that runs under Paseo paths.
+**This group delivers:** Conductor Cursor model and effort attribution on current Conductor builds, a working first audit and upgrade path, correctly sized tasks and reliable manual-test continuation.
 
-##### Track 23A: Repair quota fixture paths for Paseo worktrees
-_1 task . ~80 LOC incl. tests . medium risk_
-**Outcome:** The quota suite can verify a supported dot-directory checkout without a path-key failure.
-**Supports:** [SPEC](SPEC.md) O1/O3 — the full-suite qualification gate must run from the actual Paseo worktree path.
-**Done when:** The retained KeyError case passes from ordinary and dot-directory paths while the product normalization contract and identity/unknown-token assertions remain intact.
-_touches: tests/quota_cases.py, tests/quota.test.ts, bin/lib/quota/index.py_
-- **Align the fixture with the supported identity contract** -- Investigate the differing single-character versus run-collapsing path normalization before fixing it; change production behavior only if it violates its contract. Preserve the original assertion strength and run the relevant suite in both path profiles. Source: the user-deferred 2026-10-07 investigation, approved on 2026-10-08 for 1.0 qualification. _~80 lines._ (S)
-
-##### Track 23B: Read the Conductor store shape in `cursor_turns()`
-_1 task . ~160 LOC incl. tests . medium risk_
-**Outcome:** Conductor Cursor runs record available model and effort instead of losing them during store parsing.
-**Supports:** [SPEC](SPEC.md) O4 — equal-priority Conductor attribution; available store metadata is currently lost.
-**Done when:** Store fixtures with epoch-millisecond timestamps and list-valued model params select only the correct run window and emit the available model/effort; unknown values stay unknown.
-_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, docs/telemetry.md_
-_blocked-by: Track 22A_
-_read-first: 22A, docs/designs/review-independence.md_
-- **Parse the supported store representation** -- `parse_ts` still accepts only ISO strings and `cursor_turns` still requires dict params. Support epoch milliseconds in both model extraction and native-route time-window checks, read model.id independently of params shape, test list and dict params, and update the documented limit. Source: 2026-10-08 prior Track 24A and `docs/designs/review-independence.md` E4. _~160 lines._ (M)
+_Active: Track 23C on branch `autoplan-track-23c-preserved-skill-copies`, declared 2026-10-09. The other Group 23 Tracks are unstarted; 23A and 23B have shipped (see `docs/roadmap-shipped.md`)._
 
 ##### Track 23C: Make preserved skill copies visible to older upgrade sessions
 _2 tasks . ~170 LOC incl. tests . medium risk_
@@ -56,6 +32,18 @@ _touches: setup, bin/update-check, bin/update-run, skills/gstack-extend-upgrade.
 _blocked-by: Track 22F_
 - **Expose stale and preserved installs through updater state** -- Persist and expose skipped hosts plus owned regular copies that Claude preserves, including half-migrated directories. Clear state when resolved and exercise an upgrade followed by an older preamble. Source: `[review]` skipped-host and preserved-copy findings from PR #129. _~100 lines._ (M)
 - **Make recovery instructions match the preserved-copy policy** -- Cover moved/deleted pointers and legacy skill copies; direct users to Shared-directory migration when setup cannot heal them. Preserve current customized files and decide legacy-only cleanup explicitly. Source: `[review] Frozen shared-directory copies never heal through setup`. _~70 lines._ (S)
+
+##### Track 23G: Read the SQLite Conductor store shape in `cursor_turns()`
+_2 tasks . ~280 LOC incl. tests . medium risk_
+**Outcome:** A native Conductor Cursor run on a current Conductor build records its requested model and effort; anything the reader cannot read stays unknown.
+**Supports:** [SPEC](SPEC.md) O4, criterion 3 — requested-versus-observed model evidence with equal-priority Conductor attribution. On current Conductor builds the shipped reader finds no run at all.
+**Done when:** Fixture stores in the SQLite layout select exactly the one run overlapping the stage and emit its model and effort; an unrecognized layout is reported as incomplete evidence, never as an empty shard; the NDJSON layout still works; `docs/telemetry.md` and the release CHANGELOG state which layouts are supported.
+**Pending owner-side post-install gate (not Done when):** T42 native receipt 2 on an installed release with this Track, plus the 2-5 minute row-interpretation check. O4 acceptance stays unawarded until the owner confirms it.
+**Open owner question:** The T42 receipt 1 test was given expected effort `none`, but the store recorded `reasoning_effort` `xhigh` for every turn of that conversation. OWNER NOTE: `<fill in what the Conductor model picker showed for that session>`
+_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md_
+_read-first: 23B, docs/telemetry.md_
+- **Read the SQLite shard layout read-only** -- Evidence: T42 receipt 1 (2026-10-09, Conductor running Cursor with grok-4.7, installed 0.36.2.0) was negative. The row failed closed with route unknown, model and effort null and debug reason `no-cwd-agent`. The two newest of 24 shards under `Library/Application Support/com.conductor.app/cursor-sdk-store/` hold `<shard>/index.db` (plus `-wal`, `-shm` and an `agents/` directory) and no NDJSON files; `capture_cursor_store` skips a shard with neither `agents.ndjson` nor `runs.ndjson`, so it never saw the run. Confirmed shape: tables `agents(agent_id, workspace_ref, status, active_run_id, metadata_json, created_at, updated_at, …)`, `runs(run_id, agent_id, turn_number, status, model, model_params_json, started_at, finished_at, cancelled_at, updated_at, …)` and `run_events`; ids are UUID strings, timestamps ISO-8601 strings, `model` a plain string, `model_params_json` a JSON list of `{id, value}` (ids `fast`, `reasoning_effort`); run statuses RUNNING, FINISHED, CANCELLED. `CURSOR_CONVERSATION_ID` equals `agents.agent_id`, and `agents.workspace_ref` equals the process cwd (exact and physical). An in-progress run is visible (status RUNNING, `finished_at` null, `agents.active_run_id` set) with model and params already populated. Read with stdlib `sqlite3` through a `mode=ro` URI, select named columns only and never read `agents.metadata_json`, which holds an encryption-key field. Keep the "unique overlapping run, else unknown" rule for stages spanning several prompts; planning decides whether `agents.active_run_id` may serve as a tiebreaker. Sanitized evidence: `~/.gstack/projects/kbitz-gstack-extend/ship-and-land/2026-10-09-t42-native-receipt-1.md` (local). _~200 lines._ (M)
+- **Fail closed on unrecognized layouts and state the supported ones** -- A shard with neither NDJSON files nor a recognized SQLite schema reports incomplete evidence, never an empty shard. Keep fixed reason tokens with docs anchors, the v1 row schema and source labels; no raw values or paths in output or debug lines, and no new dependency. Retain NDJSON regression coverage. Update the supported-store-shape section and diagnosis table in `docs/telemetry.md`; the release CHANGELOG states the supported layouts, since the 0.36.2.0 headline holds only for NDJSON shards. _~80 lines._ (S)
 
 ##### Track 23D: `/pair-review` resume routing, safe archive and tag values
 _3 tasks . ~180 LOC incl. tests . medium risk_
@@ -85,6 +73,12 @@ _1 task . ~120 LOC incl. tests . medium risk_
 _touches: src/audit/checks/version.ts, tests/checks-version.test.ts (new), tests/init-bin.test.ts, tests/roadmap-audit/_
 - **Distinguish a missing first tag from version drift** -- Choose a narrow no-tag baseline/advisory rule and cover fresh init plus existing mismatched-tag controls. Update only affected audit expectations. Source: `[investigate] Fresh init projects fail the audit's VERSION gate until tagged`; `runCheckVersion` currently adds the no-tag notice to failing findings. _~120 lines._ (M)
 
+---
+
+## Current Plan
+
+_tombstone: 17, 19, 20, 22_
+
 ### Group 24: Stable run identity and workflow handoffs
 
 _Depends on: Group 23_
@@ -97,8 +91,8 @@ _1 task . ~240 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) O4 — concurrent invocations and retried finishes currently misattribute or duplicate records.
 **Done when:** The same-root collision and explicit-retry contract cases demonstrate one correctly attributed stage-runs row and skill_run per invocation, including logger timeouts that already wrote.
 _touches: bin/lib/telemetry.py, tests/telemetry-contract.test.ts, tests/telemetry.test.ts, docs/telemetry.md, docs/stage-runs.schema.json_
-_blocked-by: Track 23B_
-_read-first: 23B, 22A_
+_blocked-by: Track 23B, Track 23G_
+_read-first: 23G, 23B, 22A_
 - **Give each invocation a durable identity** -- Replace the shared-slot overwrite behavior while retaining harness/session refusal rules and saved retry metadata. Convert both `(current behavior)` tests to the accepted behavior and update the schema only if the row shape changes. Source: 2026-10-08 accepted Track 25B and the two named telemetry contract tests. _~240 lines._ (M)
 
 ##### Track 24B: Publish and enforce the external stage-handoff contract
@@ -171,8 +165,8 @@ _1 task . ~200 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) O1/O3/O4 — equal priority requires current host evidence in addition to legacy usage.
 **Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and cross-session handoff evidence; unknown model evidence remains unknown.
 _touches: docs/acceptance/conductor.md (new)_
-_blocked-by: Track 25A, Track 24B, Track 23A, Track 26A, Track 25B_
-- **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the store-reader fix. Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
+_blocked-by: Track 25A, Track 24B, Track 23A, Track 23G, Track 26A, Track 25B_
+- **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the SQLite store-reader fix from Track 23G. Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
 
 ##### Track 27B: Qualify the complete Paseo workflow and external handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
@@ -196,7 +190,7 @@ the two host acceptance Tracks may run in parallel after their prerequisites.
 - Group 27 ← {23, 24, 25, 26}
 ```
 
-**5 Groups / 14 Tracks remaining for the 1.0 target.**
+**5 Groups / 13 Tracks remaining for the 1.0 target.**
 
 Track completion is not stage acceptance. O1–O5 need owner-confirmed evidence
 in PROGRESS before the stable release. Operator acceptance Tracks remain open
@@ -207,7 +201,7 @@ are outside this target.
 
 ## Future
 
-Deferred: docs/roadmap-future.md (41 items)
+Deferred: docs/roadmap-future.md (42 items)
 
 ## Shipped
 

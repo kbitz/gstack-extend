@@ -2,15 +2,7 @@
 
 ## Unprocessed
 
-### [investigate] Cursor cwd attribution matches any ancestor path component
-
-- **Symptom:** `source_state` in `bin/lib/quota/index.py` attaches the run's cwd when `slug in path.parts`. That matches any component of the absolute transcript path, not just the project directory directly under `cursor_projects_dir`. A cwd whose slug equals an ancestor directory name, such as `/Users` on macOS or `/home` on Linux, stamps that cwd on every Cursor transcript. The ledger's `inside(source.cwd, repo_root)` filter then attributes those transcripts to the run.
-- **Repro:** Call `source_state` with context cwd `/Users` for a Cursor file under `/Users/<name>/.cursor/projects/<other-project>/agent-transcripts/`. The returned state carries `cwd='/Users'`. A review mutation that compares `Path(file['path']).relative_to(file['root']).parts[:1]` with `(slug,)` passed the complete quota suite.
-- **Related untested edges:** Every Cursor identity profile in `tests/quota_cases.py` sets `repo_root` equal to `cwd`, so a regression that builds the slug from `repo_root` would pass. Symlinked (logical versus physical) and non-ASCII cwd mappings are unprobed; pin them only after a dated Cursor transcript probe.
-- **Effort:** S (human: ~2h / CC: ~20min) for anchoring plus negative profiles; the symlink and non-ASCII probe needs a live Cursor run.
-- **Priority:** P3
-- **Depends on:** None. Track 23A was limited to fixture changes and left production mapping unchanged.
-- **Context:** Raised by the adversarial review passes during Track 23A review and prep on 2026-10-08. Quota adapters are experimental and do not gate 1.0 (`docs/SPEC.md`). Revisit when Cursor cwd attribution in `source_state` next changes or a misattributed Cursor transcript is reported.
+_(none)_
 
 ## Completed
 
