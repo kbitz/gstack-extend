@@ -2160,6 +2160,18 @@ const CURSOR_HARNESS = [
   '        return {"calls": len(calls), "with": {"model": with_session["model"], "route": with_session["route"], "effort": with_session["effort"]},',
   '                "without": {"model": without_session["model"], "route": without_session["route"], "model_source": without_session["model_source"]},',
   '                "blob": json.dumps(with_session) + json.dumps(without_session)}',
+  '    if mode == "no-marker":',
+  '        os.environ.pop("CURSOR_AGENT", None)',
+  '        os.environ.pop("CURSOR_CONVERSATION_ID", None)',
+  '        plant("shard-a", [agent("conv-1", cwd)], [run("conv-1", "run-1", {"id": "model-store", "params": {"effort": "high"}}, started=int(time.time()) - 60, updated=int(time.time()) - 10, ended=None)])',
+  '        def counting(self, mode="r", *args, **kwargs):',
+  '            if str(self).endswith(".ndjson"):',
+  '                opens.append(str(self))',
+  '            return real_open(self, mode, *args, **kwargs)',
+  '        telemetry.capture_cursor_store = lambda *args, **kwargs: calls.append("capture") or real_capture(*args, **kwargs)',
+  '        telemetry.Path.open = counting',
+  '        row = telemetry.provenance_row("roadmap", "sid-no-marker", int(time.time()) - 30, 5, {}, None)',
+  '        return {"calls": len(calls), "opens": len(opens), "model": row["model"], "route": row["route"]}',
   '    if mode == "empty":',
   '        store_root().mkdir(parents=True, exist_ok=True)',
   '        telemetry.capture_cursor_store = lambda *args, **kwargs: calls.append("capture") or real_capture(*args, **kwargs)',
@@ -2421,6 +2433,11 @@ describe('Conductor Cursor store', () => {
       { name: 'eligible-plus-old-inverted', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-i', model('old', {}), begin - 90, begin - 80, begin - 95)] },
       { name: 'eligible-plus-bad-end-single', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { ...closed('conv-1', 'run-b', model('one', {}), begin + 10, begin + 20), endedAt: 'nope' }] },
       { name: 'effort-uncleanable-duplicate', agents, runs: [closed('conv-1', 'run-1', model('grok-4.7', [{ id: 'effort', value: 'high' }, { id: 'effort', value: 123 }]))], session: 'conv-1' },
+      { name: 'no-model-key', agents, session: 'conv-1', runs: [{ agentId: 'conv-1', runId: 'run-1', startedAt: begin * 1000, updatedAt: (begin + 50) * 1000, endedAt: (begin + 80) * 1000 }] },
+      { name: 'null-model', agents, runs: [closed('conv-1', 'run-1', null as unknown as object)], session: 'conv-1' },
+      { name: 'null-model-id', agents, runs: [closed('conv-1', 'run-1', { id: null, params: { effort: 'high' } })], session: 'conv-1' },
+      { name: 'eligible-plus-open-then-closed-before', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), closed('conv-1', 'run-s', good, begin - 100, begin - 50, null), closed('conv-1', 'run-s', good, begin - 100, begin - 40, begin - 30)] },
+      { name: 'eligible-plus-malformed-after-stage', agents, session: 'conv-1', runs: [closed('conv-1', 'run-ok', good), { agentId: 'conv-1', runId: 'run-late', startedAt: (end + 50) * 1000, model: good }] },
     ];
     const normalized = cases.map(entry => ({
       ...entry,
@@ -2501,6 +2518,14 @@ describe('Conductor Cursor store', () => {
       expect([name, byName[name]]).toMatchObject([name, { certify: true, model: 'grok-4.7', reasons: [] }]);
     }
     expect(byName['effort-uncleanable-duplicate']).toMatchObject({ model: 'grok-4.7', effort: null, reasons: ['malformed-metadata'] });
+    // Value: protects=a run with no model block, a null model or a null id still certifies the route with no malformed-metadata reason; fails_when=an absent or null model is counted malformed; why_new=only scalar-model and blank-id rows cover odd model shapes; seam=none
+    expect(byName['no-model-key']).toMatchObject({ certify: true, model: null, effort: null, usable: false, reasons: [] });
+    expect(byName['null-model']).toMatchObject({ certify: true, model: null, effort: null, usable: false, reasons: [] });
+    expect(byName['null-model-id']).toMatchObject({ certify: true, model: null, effort: 'high', usable: true, reasons: [] });
+    // Value: protects=an earlier run stored as open then closed snapshots is outside the stage by its newest state and never blocks the current run; fails_when=outside is decided from any overlapping snapshot; why_new=older-snapshot-overlaps has differing starts and resolves to ambiguous; seam=none
+    expect(byName['eligible-plus-open-then-closed-before']).toMatchObject({ certify: true, model: 'grok-4.7', reasons: [] });
+    // Value: protects=a malformed run starting after the stage end is outside it and adds no malformed-neighbor reason; fails_when=the started-after-end clause in _placed_outside is removed; why_new=old-partial and old-inverted cover only runs that ended before the stage; seam=none
+    expect(byName['eligible-plus-malformed-after-stage']).toMatchObject({ certify: true, model: 'grok-4.7', reasons: [] });
     // A malformed neighbor does not block a well-formed run, but the certification says it saw one.
     expect(byName['malformed-neighbor']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'high', reasons: ['malformed-neighbor'] });
     expect(byName.neighbor.reasons).toEqual(['malformed-neighbor']);
@@ -2566,6 +2591,9 @@ describe('Conductor Cursor store', () => {
     expect(skipped.without).toMatchObject({ model: 'flag-model', route: 'cli', model_source: 'flag' });
     expect(skipped.blob).not.toContain('model-store');
     expect(skipped.blob).not.toContain(CURSOR_SENTINEL);
+    // Value: protects=a finish without a Cursor marker never captures or opens the Conductor store; fails_when=_observe_cursor_store returns true without a marker; why_new=the cli mode asserts zero reads only for CURSOR_INVOKED_AS; seam=none
+    const unmarked = cursorPy(fix, { op: 'observe', mode: 'no-marker' }, cwd);
+    expect(unmarked).toMatchObject({ calls: 0, opens: 0, model: null, route: 'unknown' });
     const empty = cursorPy(fix, { op: 'observe', mode: 'empty' }, cwd);
     expect(empty.calls).toBe(1);
     expect(empty.model).toBeNull();

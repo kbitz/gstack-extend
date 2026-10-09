@@ -1033,6 +1033,23 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(isolated.status).toBe(0);
     expect(isolated.stdout.trim()).toBe(JSON.stringify(known));
     expect(isolated.stdout + isolated.stderr).not.toContain(CURSOR_LEDGER_SENTINEL);
+
+    // Value: protects=the recipe's stage selector and its started_at selector each narrow a session's rows, and a blank ledger line is not malformed; fails_when=either selector is dropped from the recipe; why_new=the earlier narrowing row differs in both fields so one filter hides the other; seam=none
+    const selectors = makeTelemetryFixture('off');
+    const later = { ...known, started_at: '2026-10-08T18:05:00Z', model: 'later-run' };
+    const elsewhere = { ...known, stage: 'review', model: 'other-stage' };
+    const selectorFile = writeStageRuns(join(selectors.home, '.gstack-extend'), [known, later, elsewhere]);
+    writeFileSync(selectorFile, readFileSync(selectorFile, 'utf8').replace('\n', '\n\n'));
+    const byStage = runCursorRecipe({ ...selectors.env }, ['known-session', 'implement'], selectors.home);
+    expect(byStage.status).toBe(0);
+    expect(byStage.stdout.split('\n')[0]).toBe('multiple-match');
+    expect(byStage.stdout).toContain('"model":"grok-4.7"');
+    expect(byStage.stdout).toContain('"model":"later-run"');
+    expect(byStage.stdout).not.toContain('other-stage');
+    expect(byStage.stdout).not.toContain('malformed-lines');
+    const byStart = runCursorRecipe({ ...selectors.env }, ['known-session', 'implement', known.started_at], selectors.home);
+    expect(byStart.status).toBe(0);
+    expect(byStart.stdout.trim()).toBe(JSON.stringify(known));
   });
 
   test('every Cursor reader reason in the registry has its documented anchor row', () => {
