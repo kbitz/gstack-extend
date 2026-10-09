@@ -23,19 +23,23 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { computeRenames, formatRenamesTable } from '../src/audit/lib/renames-diff.ts';
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
 import { countTodoPatterns } from '../src/audit/lib/todo-patterns.ts';
+import { validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import {
   CANONICAL_SPAN,
   CMD_BIN_RE,
@@ -2449,7 +2453,7 @@ describe('Track 16D extend-root resolver locks', () => {
         }
       }
     }
-    expect(guards).toBe(5);
+    expect(guards).toBe(6);
   });
 });
 
@@ -3671,4 +3675,464 @@ describe('project-spec composition drift-locks', () => {
     }
     expect(specN).toContain('consumers and the audit use it to recognize the product spec.');
   });
+});
+
+// Track 23D: executable fences and consumer routing contracts.
+const PAUSED_CHECK = [
+  "PR_CLASS=lookup-failure",
+  "PR_REASON=",
+  "if [ -z \"$(git remote)\" ]; then",
+  "  PR_CLASS=no-github",
+  "elif ! command -v gh >/dev/null 2>&1; then",
+  "  PR_REASON=gh-missing",
+  "elif [ -z \"$(git branch --show-current)\" ]; then",
+  "  PR_REASON=detached",
+  "else",
+  "  _PR_ERR=$(mktemp) || { printf 'PR_CLASS=lookup-failure\\nPR_REASON=api\\n'; exit 0; }",
+  "  trap 'rm -f \"$_PR_ERR\" \"${_PR_OUT:-}\"' EXIT",
+  "  _PR_OUT=$(mktemp) || { printf 'PR_CLASS=lookup-failure\\nPR_REASON=api\\n'; exit 0; }",
+  "  gh pr view --json state,isDraft,url,body,comments --jq '",
+  "(.comments // [] | map(select(.viewerDidAuthor == true and",
+  "  (.body | contains(\"<!-- review-and-prep:paused:\") or contains(\"<!-- review-and-prep:receipt:\"))))",
+  "  | sort_by(.createdAt)) as $markers",
+  "| ($markers | map(select(.body | contains(\"<!-- review-and-prep:paused:\"))) | last) as $pause",
+  "| (($markers | last | .body // \"\" | contains(\"<!-- review-and-prep:paused:\"))",
+  "   or (.isDraft == true and $pause != null)) as $comment_paused",
+  "| (.body // \"\" | split(\"\\n\") | map(rtrimstr(\"\\r\"))",
+  "   | reduce .[] as $line ({active: false, paused: false};",
+  "     if $line == \"## Review and prep\" then .active = true",
+  "     else if ($line | startswith(\"## \")) then .active = false",
+  "     else if .active and ($line | contains(\"PAUSED\") and contains(\"manual testing required\"))",
+  "       then .paused = true else . end end end)) as $section",
+  "| ($pause.body // \"\" | split(\"<!-- review-and-prep:paused:\")[1] // \"\"",
+  "   | split(\" \")[0] // \"\" | split(\"\\n\")[0] // \"\" | split(\"-->\")[0] // \"\") as $candidate",
+  "| (if ($candidate | length) == 40 and",
+  "       ($candidate | explode | all((. >= 48 and . <= 57) or (. >= 97 and . <= 102)))",
+  "   then $candidate else \"\" end) as $sha",
+  "| \"PR_STATE=\\(.state)\", \"PR_DRAFT=\\(.isDraft == true)\", \"PR_URL=\\(.url)\",",
+  "  \"BODY_PAUSED=\\($section.paused == true)\", \"COMMENT_PAUSED=\\($comment_paused == true)\", \"PAUSE_SHA=\\($sha)\"",
+  "' >\"$_PR_OUT\" 2>\"$_PR_ERR\"",
+  "  PR_VIEW_RC=$?",
+  "  cat \"$_PR_ERR\" >&2",
+  "  printf 'PR_VIEW_RC=%s\\n' \"$PR_VIEW_RC\"",
+  "  if [ \"$PR_VIEW_RC\" -ne 0 ]; then",
+  "    _PR_ERROR=$(LC_ALL=C tr '[:upper:]' '[:lower:]' < \"$_PR_ERR\")",
+  "    case \"$_PR_ERROR\" in",
+  "      *'of the git remotes configured for this repository point to a known github host'*|*'no git remotes found'*) PR_CLASS=no-github ;;",
+  "      *'no pull requests found for branch'*) PR_CLASS=no-pr ;;",
+  "      *) if [ \"$PR_VIEW_RC\" -eq 4 ] || case \"$_PR_ERROR\" in *'gh auth login'*) true ;; *) false ;; esac; then PR_REASON=auth; else PR_REASON=api; fi ;;",
+  "    esac",
+  "  elif LC_ALL=C awk '",
+  "    NR == 1 && /^PR_STATE=(OPEN|CLOSED|MERGED)$/ {next}",
+  "    NR == 2 && /^PR_DRAFT=(true|false)$/ {next}",
+  "    NR == 3 && /^PR_URL=https?:\\/\\/[^[:space:]]+$/ {next}",
+  "    NR == 4 && /^BODY_PAUSED=(true|false)$/ {next}",
+  "    NR == 5 && /^COMMENT_PAUSED=(true|false)$/ {next}",
+  "    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($0) == 50)) {next}",
+  "    {bad = 1}",
+  "    END {exit (bad || NR != 6)}' \"$_PR_OUT\"; then",
+  "    awk '{print}' \"$_PR_OUT\"",
+  "    if grep -Eq '^(BODY_PAUSED|COMMENT_PAUSED)=true$' \"$_PR_OUT\"; then",
+  "      if grep -qx 'PR_STATE=OPEN' \"$_PR_OUT\"; then PR_CLASS=paused; else PR_CLASS=closed-paused; fi",
+  "    else",
+  "      PR_CLASS=no-pause",
+  "    fi",
+  "  else",
+  "    PR_REASON=unreadable",
+  "  fi",
+  "fi",
+  "printf 'PR_CLASS=%s\\n' \"$PR_CLASS\"",
+  "if [ -n \"$PR_REASON\" ]; then printf 'PR_REASON=%s\\n' \"$PR_REASON\"; fi",
+].join('\n');
+const pairSkill = readFileSync(join(ROOT, 'skills', 'pair-review.md'), 'utf8');
+const pairNext = skillSection(skillSection(pairSkill, '## Phase 4: Completion'), '### Step 3: Offer next steps');
+const pausedFence = extractFences(pairNext).find(f => f.body.includes('PR_CLASS=lookup-failure'))!.body.trimEnd();
+const pauseProgram = /--jq '([\s\S]*?)' >/.exec(pausedFence)![1]!;
+const pairGuard = skillSection(pairSkill, '## Active Session Guard');
+const pairArchive = extractFences(pairGuard).find(f => f.body.includes('session_archive_dir pair-review'))!.body.trimEnd();
+const PAUSE_SHA = 'abcde01234'.repeat(4);
+const PR_URL = 'https://github.com/example/project/pull/7';
+const STAMP = '20261009-120000';
+const jqBin = Bun.which('jq');
+const TIMEOUT_23D = 30_000;
+const pauseComment = (body = `<!-- review-and-prep:paused:${PAUSE_SHA} -->`, viewerDidAuthor = true, createdAt = '2026-10-09T10:00:00Z') => ({ body, viewerDidAuthor, createdAt });
+const receiptComment = (viewerDidAuthor = true, createdAt = '2026-10-09T11:00:00Z') => pauseComment('<!-- review-and-prep:receipt:ready -->', viewerDidAuthor, createdAt);
+const prJson = (patch: Record<string, unknown> = {}) => ({ state: 'OPEN', isDraft: false, url: PR_URL, body: '', comments: [], ...patch });
+const prLines = (state = 'OPEN', draft = false, body = false, comment = false, sha = '') =>
+  `PR_STATE=${state}\nPR_DRAFT=${draft}\nPR_URL=${PR_URL}\nBODY_PAUSED=${body}\nCOMMENT_PAUSED=${comment}\nPAUSE_SHA=${sha}\n`;
+
+type PairFixture = ReturnType<typeof pairFixture>;
+function pairGit(cwd: string, home: string, args: string[]): string {
+  const r = spawnSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false', ...args], {
+    cwd, env: scopedEnv(home, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }), encoding: 'utf8', timeout: 15_000,
+  });
+  if (r.status !== 0) throw new Error(`fixture git ${args.join(' ')}: ${r.stderr}`);
+  return r.stdout;
+}
+function pairFixture(name: string) {
+  const fx = initFixture(`23d-${name}`);
+  pairGit(fx.cwd, fx.home, ['init', '--quiet', '--initial-branch=feature/session']);
+  pairGit(fx.cwd, fx.home, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'fixture']);
+  const project = join(fx.slugDir, 'pair-review');
+  const session = join(project, 'branches', 'feature--session');
+  const archive = join(project, 'archives', `feature--session-${STAMP}`);
+  const shim = join(fx.home, 'shim');
+  const temp = join(fx.home, 'temp');
+  mkdirSync(shim, { recursive: true });
+  mkdirSync(temp, { recursive: true });
+  writeFileSync(join(shim, 'date'), `#!/bin/sh\nprintf '%s\\n' '${STAMP}'\n`, { mode: 0o755 });
+  return { ...fx, project, session, archive, shim, temp };
+}
+function pairRun(fx: PairFixture, block: string, shell: ReturnType<typeof agentShells>[number], extra: Record<string, string> = {}, root = true) {
+  return runShell(shell.shell, shell.args, `${root ? '_EXTEND_ROOT="$CHECKOUT"\n' : ''}${block}\n`, scopedEnv(fx.home, {
+    CHECKOUT: fx.checkout, GSTACK_STATE_ROOT: fx.state, TMPDIR: fx.temp,
+    PATH: `${fx.shim}:/usr/bin:/bin`, ...extra,
+  }), fx.cwd);
+}
+function treeBytes(dir: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  if (!existsSync(dir)) return entries;
+  const walk = (path: string, relative: string) => {
+    const st = lstatSync(path);
+    if (st.isSymbolicLink()) entries[relative] = `link:${readlinkSync(path)}`;
+    else if (st.isDirectory()) {
+      entries[`${relative}/`] = 'directory';
+      for (const name of readdirSync(path).sort()) walk(join(path, name), `${relative}/${name}`);
+    } else entries[relative] = readFileSync(path).toString('base64');
+  };
+  walk(dir, '');
+  return entries;
+}
+
+// Value: protects=failed lookups never become no-pause, and gh/gojq consumes the same program as jq;
+// fails_when=validation, remote/auth ordering, or the draft-receipt rule changes;
+// why_new=earlier routing did not read the PR; seam=PATH gh shim.
+// Live read-only check: extract PAUSED_CHECK and run its unchanged fence in this repo,
+// changing only `gh pr view` to `gh pr view 126` (also 130 and 136).
+// For the 126/130 body checks, prefix its --jq program with exactly:
+// .body = ([.comments[] | select(.body | contains("review-and-prep:paused:"))][0].body) |
+// Expect 126/130 PR_STATE=MERGED, COMMENT_PAUSED=false; body-prefix BODY_PAUSED=true;
+// 136 BODY_PAUSED=false. Recheck this Track's PR once it exists.
+describe('Track 23D paused-check fence', () => {
+  test('the complete read-only fence and jq program are locked literally', () => {
+    expect(pausedFence).toBe(PAUSED_CHECK);
+    expect(stateBashFences(pairSkill).some(f => f.body.includes('PR_CLASS='))).toBe(false);
+    expect(pairNext.indexOf(pausedFence)).toBeLessThan(pairNext.indexOf('gstack-review-read'));
+    expect(pauseProgram).not.toContain("'");
+    const allow = new Set('split rtrimstr contains startswith map select sort_by last any length explode all ascii_downcase join if then else end and or not true false null def as reduce foreach'.split(' '));
+    const code = pauseProgram.replace(/"(?:\\.|[^"\\])*"/g, '')
+      .replace(/[.$][A-Za-z_][A-Za-z_0-9]*/g, '').replace(/\b[A-Za-z_][A-Za-z_0-9]*\s*:/g, '');
+    const identifiers = code.match(/\b[A-Za-z_][A-Za-z_0-9]*\b/g) ?? [];
+    expect(identifiers.filter(id => !allow.has(id))).toEqual([]);
+    const producer = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+    for (const marker of ['<!-- review-and-prep:paused:', '<!-- review-and-prep:receipt:', 'PAUSED', 'manual testing required']) {
+      expect(pauseProgram).toContain(marker);
+      expect(producer).toContain(marker);
+    }
+  }, TIMEOUT_23D);
+
+  const cases: Array<{ name: string; cls: string; reason?: string; rc?: number; error?: string; raw?: string; json?: Record<string, unknown>; noRemote?: boolean; noGh?: boolean; detached?: boolean }> = [
+    { name: 'no remote', cls: 'no-github', noRemote: true },
+    { name: 'remote without gh', cls: 'lookup-failure', reason: 'gh-missing', noGh: true },
+    { name: 'detached HEAD', cls: 'lookup-failure', reason: 'detached', detached: true },
+    ...['none of the git remotes configured for this repository point to a known GitHub host. Use gh auth login', 'None of the Git Remotes Configured for this repository point to a known GitHub host. Use gh auth login', 'no git remotes found'].map((error, n) => ({ name: `non-GitHub message ${n}`, cls: 'no-github', rc: 1, error })),
+    { name: 'no PR', cls: 'no-pr', rc: 1, error: 'no pull requests found for branch "feature/session"' },
+    { name: 'exit 4', cls: 'lookup-failure', reason: 'auth', rc: 4, error: 'not logged in' },
+    { name: 'bad token', cls: 'lookup-failure', reason: 'auth', rc: 1, error: 'Try gh auth login' },
+    { name: 'API error', cls: 'lookup-failure', reason: 'api', rc: 1, error: 'network unavailable' },
+    { name: 'empty success', cls: 'lookup-failure', reason: 'unreadable', raw: '' },
+    { name: 'missing field', cls: 'lookup-failure', reason: 'unreadable', raw: prLines().replace('COMMENT_PAUSED=false\n', '') },
+    ...[
+      prLines().replace('PR_STATE=OPEN', 'PR_STATE=unknown'),
+      prLines().replace('PR_DRAFT=false', 'PR_DRAFT=null'),
+      prLines().replace(PR_URL, 'null'),
+      prLines().replace('BODY_PAUSED=false', 'BODY_PAUSED=maybe'),
+      prLines().replace('COMMENT_PAUSED=false', 'COMMENT_PAUSED=1'),
+      prLines().replace('PAUSE_SHA=', 'PAUSE_SHA=xyz'),
+      prLines() + '\n',
+      prLines() + 'EXTRA=private body text\n',
+    ].map((raw, n) => ({ name: `invalid success ${n}`, cls: 'lookup-failure', reason: 'unreadable', raw })),
+    { name: 'open paused', cls: 'paused', json: prJson({ isDraft: true, comments: [pauseComment()] }) },
+    { name: 'closed paused', cls: 'closed-paused', json: prJson({ state: 'CLOSED', comments: [pauseComment()] }) },
+    { name: 'merged body paused', cls: 'closed-paused', json: prJson({ state: 'MERGED', body: '## Review and prep\n**PAUSED — manual testing required**' }) },
+    { name: 'merged cleared', cls: 'no-pause', json: prJson({ state: 'MERGED', comments: [pauseComment(), receiptComment()] }) },
+    { name: 'open no pause', cls: 'no-pause', json: prJson() },
+  ];
+  for (const shell of agentShells()) for (const c of cases) {
+    // Only JSON cases reach the shim's jq; the rest still run without jq.
+    test.skipIf((c.json !== undefined && !jqBin) || (c.noGh === true && existsSync('/usr/bin/gh')))(`${shell.shell}: ${c.name}`, () => {
+      const fx = pairFixture(`check-${shell.shell}-${c.name.replace(/[^a-z0-9]/gi, '-')}`);
+      if (!c.noRemote) pairGit(fx.cwd, fx.home, ['remote', 'add', 'origin', 'https://github.com/example/project.git']);
+      if (c.detached) pairGit(fx.cwd, fx.home, ['checkout', '--quiet', '--detach']);
+      const calls = join(fx.home, 'gh-called');
+      const data = join(fx.home, 'pr.json');
+      const err = join(fx.home, 'gh-stderr');
+      const raw = join(fx.home, 'gh-stdout');
+      writeFileSync(data, JSON.stringify(c.json ?? prJson()));
+      writeFileSync(err, c.error ? `${c.error}\n` : '');
+      writeFileSync(raw, c.raw ?? '');
+      if (!c.noGh) writeFileSync(join(fx.shim, 'gh'), `#!/bin/sh
+printf 'called\\n' > "$PR_CALLS"
+cat "$PR_ERROR" >&2
+[ "$PR_RC" -eq 0 ] || exit "$PR_RC"
+if [ "$PR_RAW" = 1 ]; then cat "$PR_OUTPUT"; exit 0; fi
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --jq ]; then shift; exec "$PR_JQ" -r "$1" "$PR_JSON"; fi
+  shift
+done
+exit 2
+`, { mode: 0o755 });
+      const result = pairRun(fx, pausedFence, shell, {
+        PR_CALLS: calls, PR_ERROR: err, PR_RC: String(c.rc ?? 0), PR_RAW: String(c.raw === undefined ? 0 : 1),
+        PR_OUTPUT: raw, PR_JSON: data, PR_JQ: jqBin ?? '/nonexistent/jq',
+      });
+      expect(result.status).toBe(0);
+      const tokens = (result.stdout ?? '').trimEnd().split('\n');
+      expect(tokens.slice(c.reason ? -2 : -1)).toEqual([`PR_CLASS=${c.cls}`, ...(c.reason ? [`PR_REASON=${c.reason}`] : [])]);
+      expect(result.stderr ?? '').toBe(c.error ? `${c.error}\n` : '');
+      const called = !c.noRemote && !c.noGh && !c.detached;
+      expect(existsSync(calls)).toBe(called);
+      if (called) expect(tokens[0]).toBe(`PR_VIEW_RC=${c.rc ?? 0}`);
+      if (c.raw !== undefined || c.rc) expect(result.stdout).not.toContain('PR_STATE=');
+      // /usr/bin/git may initialize macOS's xcrun cache in this isolated TMPDIR.
+      expect(readdirSync(fx.temp).filter(name => name !== 'xcrun_db')).toEqual([]);
+    }, TIMEOUT_23D);
+  }
+});
+
+describe('Track 23D jq projection', () => {
+  const cases: Array<{ name: string; json: Record<string, unknown>; expected: string }> = [
+    { name: 'pause then receipt, ready', json: prJson({ comments: [pauseComment(), receiptComment()] }), expected: prLines('OPEN', false, false, false, PAUSE_SHA) },
+    { name: 'pause then receipt, still draft', json: prJson({ isDraft: true, comments: [pauseComment(), receiptComment()] }), expected: prLines('OPEN', true, false, true, PAUSE_SHA) },
+    { name: 'receipt then pause', json: prJson({ comments: [receiptComment(true, '2026-10-09T09:00:00Z'), pauseComment()] }), expected: prLines('OPEN', false, false, true, PAUSE_SHA) },
+    { name: 'other viewer receipt', json: prJson({ comments: [pauseComment(), receiptComment(false)] }), expected: prLines('OPEN', false, false, true, PAUSE_SHA) },
+    { name: 'both markers', json: prJson({ comments: [pauseComment(`<!-- review-and-prep:receipt:ready -->\n<!-- review-and-prep:paused:${PAUSE_SHA} -->`)] }), expected: prLines('OPEN', false, false, true, PAUSE_SHA) },
+    ...[
+      `<!-- review-and-prep:paused:${PAUSE_SHA} -->\nprivate comment`,
+      `private comment\n<!-- review-and-prep:paused:${PAUSE_SHA} -->\nend`,
+      `a—b <!-- review-and-prep:paused:${PAUSE_SHA}-->`,
+      `<!-- review-and-prep:paused:${PAUSE_SHA}\n-->`,
+    ].map((body, n) => ({ name: `marker position ${n}`, json: prJson({ comments: [pauseComment(body)] }), expected: prLines('OPEN', false, false, true, PAUSE_SHA) })),
+    ...['g'.repeat(40), 'abc123', PAUSE_SHA.toUpperCase()].map(sha => ({ name: `invalid SHA ${sha}`, json: prJson({ comments: [pauseComment(`<!-- review-and-prep:paused:${sha} -->`)] }), expected: prLines('OPEN', false, false, true) })),
+    ...['**PAUSED — manual testing required.**', '**PAUSED — manual testing required**', '**Status: PAUSED — manual testing required.**', '**PAUSED – manual testing required.**'].map((line, n) => ({ name: `body shape ${n}`, json: prJson({ body: `## Review and prep\n${line}\n## Next\nprivate body` }), expected: prLines('OPEN', false, true) })),
+    { name: 'CRLF body', json: prJson({ body: '## Review and prep\r\n**Status: PAUSED — manual testing required**\r\n## Next\r\n' }), expected: prLines('OPEN', false, true) },
+    ...['## Review and prep\n**Status: prepared.**', '## Review and prep\nready\n## Other\nPAUSED — manual testing required', '## Review and prep\n**Status:** unrelated', '## Other\nPAUSED — manual testing required'].map((body, n) => ({ name: `no body pause ${n}`, json: prJson({ body }), expected: prLines() })),
+    { name: 'other viewer pause only', json: prJson({ comments: [pauseComment(undefined, false)] }), expected: prLines() },
+  ];
+  for (const c of cases) test.skipIf(!jqBin)(c.name, () => {
+    const fx = initFixture(`23d-jq-${c.name.replace(/[^a-z0-9]/gi, '-')}`);
+    const result = spawnSync(jqBin!, ['-r', pauseProgram], { input: JSON.stringify(c.json), encoding: 'utf8', timeout: 15_000, cwd: fx.cwd, env: scopedEnv(fx.home, { GSTACK_STATE_ROOT: fx.state }) });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(result.stdout).toBe(c.expected);
+    expect(result.stdout).not.toMatch(/private (body|comment)|<!--/);
+  }, TIMEOUT_23D);
+});
+
+// Value: protects=old sessions and other branches survive every fresh-start path;
+// fails_when=the archive block loses resolution, collision checks, error stops or nesting postcondition;
+// why_new=the old archive fence could not run in a fresh shell; seam=PATH date/mv shims.
+describe('Track 23D Archive block', () => {
+  const cases = ['success', 'missing', 'empty', 'collision', 'symlink', 'dangling symlink', 'read-only archives', 'uncreatable parent', 'unreadable session', 'no root', 'empty session path', 'detached', 'mid-move destination', 'ls function', 'cross-volume move', 'inode unavailable'] as const;
+  // Agent shells may alias or wrap ls (eza-style: no inode outside long view).
+  const nameOnlyLs = 'ls() { for a; do case $a in -*) ;; *) printf "%s\\n" "$a" ;; esac; done; }';
+  const moved = ['success', 'ls function', 'cross-volume move'];
+  for (const shell of agentShells()) for (const name of cases) {
+    test.skipIf(runningAsRoot && ['read-only archives', 'uncreatable parent', 'unreadable session'].includes(name))(`${shell.shell}: ${name}`, () => {
+      const fx = pairFixture(`archive-${shell.shell}-${name.replaceAll(' ', '-')}`);
+      const other = join(fx.project, 'branches', 'other', 'report.md');
+      mkdirSync(join(fx.project, 'branches', 'other'), { recursive: true });
+      writeFileSync(other, 'other branch\n');
+      writeFileSync(join(fx.project, 'deploy.md'), 'deploy recipe\n');
+      if (name !== 'missing') mkdirSync(fx.session, { recursive: true });
+      if (!['missing', 'empty'].includes(name)) {
+        mkdirSync(join(fx.session, 'groups'), { recursive: true });
+        writeFileSync(join(fx.session, 'session.yaml'), 'branch: feature/session\n');
+        writeFileSync(join(fx.session, 'groups', 'auth.md'), 'test results\n');
+      }
+      if (name === 'collision') {
+        mkdirSync(fx.archive, { recursive: true });
+        writeFileSync(join(fx.archive, 'kept'), 'destination\n');
+      }
+      if (name.includes('symlink')) {
+        mkdirSync(join(fx.project, 'archives'), { recursive: true });
+        symlinkSync(name === 'symlink' ? fx.session : join(fx.project, 'absent'), fx.archive);
+      }
+      if (name === 'detached') pairGit(fx.cwd, fx.home, ['checkout', '--quiet', '--detach']);
+      if (name === 'empty session path') writeFileSync(join(fx.checkout, 'bin', 'lib', 'session-paths.sh'), 'session_dir() { :; }\n');
+      if (name === 'mid-move destination') writeFileSync(join(fx.shim, 'mv'), '#!/bin/sh\nmkdir -p "$2"\nexec /bin/mv "$@"\n', { mode: 0o755 });
+      // A move across volumes copies, so the archive gets a new inode.
+      if (name === 'cross-volume move') writeFileSync(join(fx.shim, 'mv'), `#!/bin/sh\n/bin/cp -R "$1" "$2" && /bin/mv "$1" '${join(fx.home, 'moved-aside')}'\n`, { mode: 0o755 });
+      if (name === 'inode unavailable') writeFileSync(join(fx.shim, 'ls'), '#!/bin/sh\n[ "$1" = -di ] && exit 1\nexec /bin/ls "$@"\n', { mode: 0o755 });
+      const before = treeBytes(fx.project);
+      const sessionBefore = treeBytes(fx.session);
+      const restricted = name === 'read-only archives' ? join(fx.project, 'archives') : name === 'uncreatable parent' ? fx.project : name === 'unreadable session' ? fx.session : '';
+      if (restricted) { mkdirSync(restricted, { recursive: true }); chmodSync(restricted, name === 'unreadable session' ? 0o300 : 0o555); }
+      let result: ReturnType<typeof pairRun>;
+      try { result = pairRun(fx, name === 'ls function' ? `${nameOnlyLs}\n${pairArchive}` : pairArchive, shell, {}, name !== 'no root'); }
+      finally { if (restricted) chmodSync(restricted, 0o755); }
+      const errors: Record<string, string> = {
+        collision: `ERROR: ${fx.archive} already exists; run /pair-review again in a few seconds. The old session is unchanged.`,
+        symlink: `ERROR: ${fx.archive} is a symlink; inspect or remove it. The old session is unchanged.`,
+        'dangling symlink': `ERROR: ${fx.archive} is a symlink; inspect or remove it. The old session is unchanged.`,
+        'read-only archives': `ERROR: could not move ${fx.session} to ${fx.archive}; check permissions on its parent directory. The old session is unchanged.`,
+        'uncreatable parent': `ERROR: could not create ${join(fx.project, 'archives')}; check permissions on ${fx.project}. The old session is unchanged.`,
+        'unreadable session': `ERROR: cannot list ${fx.session}; check its permissions. Nothing was moved.`,
+        'no root': 'ERROR: no verified gstack-extend root. Re-run this skill\'s preamble, or run setup --host auto from your gstack-extend checkout',
+        'empty session path': 'ERROR: could not resolve the /pair-review session directory. Re-run setup --host auto from your gstack-extend checkout. Nothing was moved.',
+        detached: "ERROR: this checkout is on a detached HEAD, so the session branch is unknown. Check out the session's branch, then run /pair-review again. Nothing was moved.",
+        'mid-move destination': `ERROR: ${fx.archive} appeared during the move; the old session is now at ${join(fx.archive, 'feature--session')}.`,
+        'inode unavailable': `ERROR: cannot list ${fx.session}; check its permissions. Nothing was moved.`,
+      };
+      expect(result!.status).toBe(errors[name] ? 1 : 0);
+      if (errors[name]) {
+        expect(result!.stderr).toContain(`${errors[name]}\n`);
+        expect(result!.stdout).toBe('');
+      } else expect(result!.stderr).toBe('');
+      if (moved.includes(name)) {
+        expect(result!.stdout).toBe(`ARCHIVED=${fx.archive}\n`);
+        expect(treeBytes(fx.archive)).toEqual(sessionBefore);
+        expect(existsSync(fx.session)).toBe(false);
+      } else if (name === 'mid-move destination') {
+        expect(treeBytes(join(fx.archive, 'feature--session'))).toEqual(sessionBefore);
+      } else {
+        expect(treeBytes(fx.session)).toEqual(sessionBefore);
+        if (['detached', 'collision', 'symlink', 'dangling symlink', 'missing', 'empty', 'no root', 'empty session path', 'inode unavailable'].includes(name)) expect(treeBytes(fx.project)).toEqual(before);
+      }
+      expect(readFileSync(other, 'utf8')).toBe('other branch\n');
+      expect(readFileSync(join(fx.project, 'deploy.md'), 'utf8')).toBe('deploy recipe\n');
+    }, TIMEOUT_23D);
+  }
+  // A branch whose slug matches a session entry (groups/) must not look nested.
+  for (const shell of agentShells()) {
+    test(`${shell.shell}: branch named like a session entry`, () => {
+      const fx = pairFixture(`archive-${shell.shell}-groups-branch`);
+      pairGit(fx.cwd, fx.home, ['checkout', '--quiet', '-b', 'groups']);
+      const session = join(fx.project, 'branches', 'groups');
+      const archive = join(fx.project, 'archives', `groups-${STAMP}`);
+      mkdirSync(join(session, 'groups'), { recursive: true });
+      writeFileSync(join(session, 'session.yaml'), 'branch: groups\n');
+      writeFileSync(join(session, 'groups', 'auth.md'), 'test results\n');
+      const sessionBefore = treeBytes(session);
+      const result = pairRun(fx, pairArchive, shell);
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(`ARCHIVED=${archive}\n`);
+      expect(treeBytes(archive)).toEqual(sessionBefore);
+      expect(existsSync(session)).toBe(false);
+    }, TIMEOUT_23D);
+  }
+});
+
+const ORDINARY_PAIR_ROUTING = [
+  "Before presenting options, determine the recommended next step:",
+  "",
+  "1. Run `gstack-review-read` and check its output.",
+  "2. If the output is **not** \"NO_REVIEWS\", a review exists for this branch — recommend `/ship`.",
+  "3. If the output **is** \"NO_REVIEWS\", check the diff size: run `git diff --stat main...HEAD` and count changed lines (insertions + deletions).",
+  "   - **≤ 30 lines changed** (trivial): recommend `/ship` — the changes are minor enough to skip review.",
+  "   - **> 30 lines changed**: recommend `/review` first.",
+  "",
+  "Present via AskUserQuestion:",
+  "",
+  "**If recommending `/review`:**",
+  "- Question: \"**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\\n\\n[One-line summary of parked bug outcomes if any]\\n\\nYou haven't run `/review` on this branch yet and there are meaningful code changes — worth a quick review before shipping.\"",
+  "- Options: [\"Continue to /review\", \"Skip review, continue to /ship\", \"Commit the report to the repo\", \"Done for now\"]",
+  "",
+  "**If recommending `/ship`:**",
+  "- Question: \"**Test session complete.** [N] items tested, [M] fixes applied, [K] bugs parked.\\n\\n[One-line summary of parked bug outcomes if any]\"",
+  "- Options: [\"Continue to /ship\", \"Commit the report to the repo\", \"Done for now\"]",
+].join('\n');
+
+describe('Track 23D routing, archive callers and tag clauses', () => {
+  test('ordinary no-github/no-pr/no-pause routing is byte-preserved', () => {
+    expect(pairNext.slice(pairNext.indexOf('Before presenting options')).split('\n---\n')[0]!.trimEnd()).toBe(ORDINARY_PAIR_ROUTING);
+    expect(flatProse(pairNext)).toContain('**`no-github`, `no-pr`, `no-pause`:** use the ordinary routing below unchanged.'.replaceAll('**', ''));
+  }, TIMEOUT_23D);
+
+  test('paused handoff carries identity, build, counts, omissions and cross-machine evidence', () => {
+    const handoff = /  ```text\n([\s\S]*?)  ```/.exec(pairNext)![1]!.split('\n').filter(Boolean).map(l => l.trimStart());
+    expect(handoff).toEqual([
+      'Run /review-and-prep resume for PR <URL> on <owner/repo>, branch <branch>.',
+      'Paused at: <PAUSE_SHA>',
+      'Keep the PR draft.',
+      'Session started at build <build_commit>; current HEAD <full git rev-parse HEAD>.',
+      'Results: <N> items, <P> passed (<C> by coverage), <F> fixed, <S> skipped, <K> parked bugs.',
+      'Not passed: <titles of FAILED-unfixed and SKIPPED items and PARKED/DEFERRED bugs, or none>.',
+      'Local report (this machine only): <SESSION_DIR>/report.md. On another machine, paste its contents into the resumed session.',
+      'Do not run /ship on this PR.',
+    ]);
+    expect(flatProse(pairNext)).toContain('Omit `Paused at:` when `PAUSE_SHA` is empty; include `Keep the PR draft.` only when `PR_DRAFT=true`.');
+    expect(handoff.filter(l => !l.startsWith('Paused at:') && l !== 'Keep the PR draft.')).toHaveLength(6);
+    expect(flatProse(pairNext)).toContain('Continue to /review-and-prep resume runs it in this session; the fenced handoff is for a fresh session.');
+    expect(flatProse(pairNext)).toContain('Track 24B owns the future canonical hold/resume detector and may replace this check.');
+  }, TIMEOUT_23D);
+
+  test('all hold routes keep their exact questions, reason fixes and permitted labels', () => {
+    const routes = pairNext.split(/\n- \*\*`/).slice(1, 4);
+    const expectedOptions = [
+      ['Continue to /review-and-prep resume', 'Commit the report to the repo', 'Done for now'],
+      ['Commit the report to the repo', 'Done for now'],
+      ['Retry the check', 'Continue to /review-and-prep resume', 'Commit the report to the repo', 'Done for now'],
+    ];
+    for (let i = 0; i < routes.length; i++) {
+      const optionRow = routes[i]!.split('\n').find(l => l.trimStart().startsWith('- Options:'))!;
+      const labels = [...optionRow.matchAll(/"([^"]+)"/g)].map(m => m[1]!);
+      expect(labels).toEqual(expectedOptions[i]!);
+      expect(labels).not.toContain('Continue to /ship');
+      expect(labels).not.toContain('Continue to /review');
+    }
+    expect(routes).toHaveLength(3);
+    expect(routes[0]).toContain('"Continue to /review-and-prep resume" (recommended)');
+    expect(routes[1]).toContain('"Done for now" (recommended)');
+    expect(routes[1]).toContain('PR <URL> is <state> while its /review-and-prep preparation was paused. Do not run /ship; a replacement PR needs a new /review-and-prep decision.');
+    expect(routes[2]).toContain("Could not check this branch's PR for a paused /review-and-prep (<reason>). <fix>. The test report is saved at <SESSION_DIR>/report.md. If /review-and-prep sent you here, return to it and do not run /ship until this check passes.");
+    for (const row of [
+      '| `gh-missing` | install the GitHub CLI and run `gh auth login` | Done for now |',
+      '| `auth` | run `gh auth status`, then `gh auth login` | Done for now |',
+      "| `detached` | check out the PR's branch | Done for now |",
+      '| `api` | retry | Retry the check |',
+      '| `unreadable` | retry, and report `PR_VIEW_RC` | Retry the check |',
+    ]) expect(routes[2]).toContain(row);
+    expect(flatProse(routes[2]!)).toContain('"Retry the check" reruns the fence.');
+  }, TIMEOUT_23D);
+
+  test('every fresh-start caller uses the guarded Archive block and relays its receipt', () => {
+    const clauses: Clause[] = [
+      { id: 'stop', heading: '## Active Session Guard', text: 'On any non-zero exit or `ERROR:` line from the Archive block, stop and relay the output. Never write session state over an unarchived session.' },
+      { id: 'receipt', heading: '## Active Session Guard', text: 'Whenever the block prints `ARCHIVED=<path>`, tell the user "Archived the previous test session to <path>." and name that path in the next question\'s action receipt.' },
+      { id: 'archive-results', heading: '## Active Session Guard', text: '`/review-and-prep resume` reads only the current session, so give it this archive path if those results are still needed.' },
+      { id: 'leftovers', heading: '## Active Session Guard', text: 'When `<SESSION_DIR>` has files but no `session.yaml`, run the **Archive block** before Phase 0, with no question.' },
+      { id: 'start-new', heading: '## Active Session Guard', text: 'If the user chooses "Start a new session (archives the old one)", run the **Archive block** before Phase 0.' },
+      { id: 'resume-fresh', heading: '## Phase 3: Resume', text: 'If "Start fresh", run the **Archive block** under the Active Session Guard\'s stop-and-relay and `ARCHIVED=` receipt rules before Init.' },
+      { id: 'corrupt-fresh', heading: '### State file corrupt', text: 'On "Start fresh", run the **Archive block** under the Active Session Guard\'s stop-and-relay and `ARCHIVED=` receipt rules before Init.' },
+    ];
+    expect(missingClauses(pairSkill, clauses)).toEqual([]);
+    expect(pairGuard).toContain('**Archive block**');
+    expect(guardOrdered(pairArchive)).toBe(true);
+    expect(extractFences(pairSkill).find(f => f.body.includes('session_dir pair-review "$BRANCH"'))!.body).not.toContain('session_archive_dir');
+  }, TIMEOUT_23D);
+
+  const tagRule = '`[`, `]`, `,`, `;`, `|`, a backtick or `$(`';
+  for (const heading of ['### Group completion triage', '## Phase 2.5: Post-Testing Fix Queue']) {
+    test(`tag values are safe and self-contained: ${heading}`, () => {
+      const section = skillSection(pairSkill, heading);
+      expect(section).toContain(tagRule);
+      expect(flatProse(section)).toContain("Take `group=` and `item=` values from the bug's own parked-bugs.md `Noticed during:` field.");
+      expect(flatProse(section)).toContain('Tags carry no `files=` key; file paths stay in the entry body.');
+      expect(flatProse(section)).toContain('with no `item=` key.');
+      expect(flatProse(section)).toContain('keep the group name in Noticed during:');
+      const forms = ['[pair-review:group=<group-slug>,item=<item-index>]', '[pair-review:group=pre-test]', '[pair-review:item=<item-index>]'];
+      for (const form of forms) {
+        expect(section).toContain(`### ${form} <Bug title>`);
+        expect(validateTagExpression(form.replace('<group-slug>', 'auth').replace('<item-index>', '2')).ok).toBe(true);
+      }
+    }, TIMEOUT_23D);
+  }
+  test('contract references and both false routing claims are removed', () => {
+    expect(pairSkill).not.toContain('docs/source-tag-contract.md');
+    expect(flatProse(pairSkill)).not.toContain('lets /roadmap route the bug back to the Group');
+    expect(flatProse(pairSkill)).not.toContain('route to PRIMARY in-flight');
+    expect(flatProse(pairSkill)).toContain('`group=` names the test group that surfaced the bug; `pre-test` records that it was parked before testing.');
+  }, TIMEOUT_23D);
 });
