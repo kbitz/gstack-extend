@@ -152,7 +152,10 @@ These defaults prioritize evaluation, not execution. KEEP retains an observation
 it does not promise a Track. PROMPT requires a disposition using the selected
 target and existing user decisions; it need not ask a redundant question when
 those decisions already settle it. Malformed or unknown tags still need the
-user's explicit decision. Source/severity alone never admits work.
+user's explicit decision. Source/severity alone never admits work. KEEP does
+not exempt an unobserved defect from `/roadmap`'s manifestation gate: unless it
+risks irreversible, consequential harm (data loss, exposure, an unretractable
+outward action), it is killed until it manifests.
 For placement, `/roadmap` must explain the concrete impact on SPEC's intended
 users, supported conditions and acceptance. A deferral requires why it can wait
 and a revisit trigger. Existing explicit commitments require an approved scope

@@ -661,6 +661,47 @@ are estimates. A number another artifact will cite must be computed
 in that artifact, or the plan must name the command that produces
 it. Do not invent a `_regen:` field.
 
+### Unobserved defects wait for manifestation
+
+A claim that something is broken is **hypothetical** until it manifests. Judge
+from the item's evidence, not its source tag or severity: a review-pass finding
+filed as `[investigate]` is still unobserved. A constructed repro (fixture,
+mutation, crafted input, injected failure, one-off shell demonstration) proves
+a code path exists, not that real use reaches it.
+
+**Manifested** means a user, operator or tester hit it in real use; a CI,
+release or production run failed from it; a log, telemetry row or bug report
+records it; or the normal supported path triggers it deterministically (running
+that path is the evidence, not a crafted setup).
+
+Place each hypothetical defect on two axes, **reversible → irreversible** and
+**inconsequential → consequential**, judged by its worst *realistic* outcome,
+not the worst imaginable chain. Only the irreversible-and-consequential
+quadrant continues to admission without manifestation:
+
+- user-owned data or uncommitted work lost or overwritten with no recovery path;
+- secrets, credentials or private content exposed, including text sent to an
+  external service;
+- an unauthorized outward action that cannot be retracted (push, merge, deploy,
+  publish, issue filing).
+
+Kill everything else: wrong output a rerun fixes, a crash with a clear error,
+stale or misattributed data that can be recomputed, docs, cosmetics,
+performance and experimental features. The reason is `unobserved;
+<reversible|inconsequential>; reopen if it manifests`. Do not defer it with a
+manifestation trigger, schedule a probe or ask an implementer to reproduce it.
+If it manifests, it returns as a new item carrying that evidence.
+
+The gate covers inbox items, leftover plan bullets and Future entries on every
+substantive run; pruning Future this way is a kill, not a reassessment. It
+judges defect claims only. Capability work, acceptance obligations and approved
+scope commitments keep their existing rules.
+
+Before pruning a Future defect, read its complete bullet and referenced
+evidence needed for classification. This targeted read is an exception to
+Step 1b's index-only default: missing evidence in the abbreviated index does
+not establish non-manifestation. Keep unrelated Future essays unread.
+
 ### Admission before decomposition
 
 For every proposed placement, including leftover Current Plan work, answer:
@@ -669,8 +710,8 @@ unusable if this is deferred?** Cite an outcome/acceptance criterion and the
 specific behavior, necessary prerequisite or credible risk it affects. Merely
 attaching “reliability” or an outcome ID is insufficient. A new capability need
 not already have a failing test, but its prerequisite chain must be concrete.
-Security/data-loss findings can qualify through a demonstrated exposure without
-waiting for harm. Personal-use data is real data, not disposable fixture state.
+Security/data-loss findings that pass the manifestation gate can qualify through
+a demonstrated exposure without waiting for harm. Personal-use data is real data, not disposable fixture state.
 
 Place only work that delivers the target, a necessary prerequisite, or a bounded
 repair to promised behavior. Severity, source, ease of implementation, speculative
@@ -696,7 +737,8 @@ before unattended operation, or an observed workload beyond the supported
 envelope. Existing deferred text stays intact; add a missing trigger when
 deliberately reassessing that item. Never promote an item merely because it
 reappears in the index or is old. Reassess only when its trigger is met, the
-target changes, or the user explicitly asks.
+target changes, or the user explicitly asks. The manifestation gate's prune is
+not a reassessment and runs every time.
 
 For a user-selected GitHub backlog, the approval artifact names the destination
 `owner/repo` (matching `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`), its visibility from
@@ -781,7 +823,7 @@ Walk through these questions as one continuous read of the inputs gathered in St
 
 ### Adversarial-flagged items get prompt assessment
 
-Items from `[full-review:severity=critical|necessary]` or `[investigate]` warrant prompt assessment. Verify concrete impact on supported users before admission; the tag alone does not create a gate. For qualifying findings:
+Items from `[full-review:severity=critical|necessary]` or `[investigate]` that pass the manifestation gate warrant prompt assessment. Verify concrete impact on supported users before admission; the tag alone does not create a gate. For qualifying findings:
 
 - A critical pair-review finding that's a regression on a shipped Group → propose a Hotfix Group with one Track.
 - An investigate finding referencing in-flight Track files → fold into the Track's regeneration (or split off into a sibling Track if scope justifies).
@@ -936,7 +978,7 @@ Format:
 - Version recommendation: policy mode, newly satisfied checkpoint/compatibility change, evidence and bump level (not a reserved version)
 - N Groups newly added to Current Plan
 - M items deferred to Future
-- K items killed (with reasons)
+- K items killed (with reasons; H of them unobserved defects pruned by the manifestation gate)
 - D items discharged (already done — sha + one-line evidence each)
 - J Hotfix Groups proposed
 - Migration: v1 → v2 (when applicable)
