@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.3.1] - 2026-10-09
+
+### Changed
+
+- **The roadmap now schedules a reader for Conductor's SQLite Cursor store.** Current Conductor builds write shards the shipped NDJSON reader skips, so a native run can still finish with no model or effort. Track 23G is that follow-up: read the SQLite layout, keep the NDJSON path for older shards, and treat an unrecognized layout as incomplete evidence. Group 23 is in progress. Tracks 23A and 23B are recorded as already shipped. A possible Cursor cwd mis-attribution stays deferred until that mapping changes or a real transcript is misattributed. No acceptance checkpoint is awarded.
+
 ## [0.36.3.0] - 2026-10-09
 
 ### Fixed
