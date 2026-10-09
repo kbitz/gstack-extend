@@ -85,6 +85,54 @@ _(none)_
 - **Priority:** P3
 - **Revisit when:** Together with the state-directory trust item above, or a report involving a shared or hand-edited state directory.
 
+### [plan-eng-review:track=23D] Decide what `/pair-review`'s `group=` tag value means
+
+- **Description:** `/pair-review` writes `group=<test-group slug>` (`skills/pair-review.md`), but `docs/source-tag-contract.md` defines `group` as an integer Roadmap Group or `pre-test`. `/roadmap` treats `[pair-review:group=N]` as a Roadmap Group ID (`skills/roadmap.md`), and ORIGIN_STATS counts only numeric values (`src/audit/checks/origin-stats.ts`). A test group whose slug happens to be a number would be read as a Roadmap Group, and the triage prompts still describe deferral as Group "closure debt".
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Found by Track 23D's /autoplan (Eng, native voice). Track 23D keeps the slug, corrects the two false routing sentences and leaves the triage-prompt wording unchanged. Options: rename the key (for example `test-group=`) and register it in the contract, or map to the Roadmap Group when one is known. Either changes the contract's key table and `/roadmap`'s routing text.
+- **Priority:** P3
+- **Revisit when:** `/roadmap` mis-routes or miscounts a pair-review entry, or the source-tag contract's key table next changes.
+
+### [plan-eng-review:track=23D] `/pair-review` ordinary routing diffs against a hardcoded `main`
+
+- **Description:** Phase 4 Step 3's ordinary routing runs `git diff --stat main...HEAD` to size the change. In a project whose base branch is not `main`, the command fails or measures the wrong range, so the review-versus-ship recommendation rests on a wrong count.
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Found by Track 23D's /autoplan (CEO). Track 23D preserves this ordinary routing unchanged by its task text. The paused-check fence added there already reads the branch PR, so its base (`baseRefName`) or the repository default branch could feed the diff.
+- **Priority:** P3
+- **Revisit when:** A consumer project with a non-`main` base reports a wrong `/pair-review done` recommendation, or Phase 4 Step 3 next changes.
+
+### [plan-eng-review:track=23D] Branch names that sanitize alike share one `/pair-review` session slot
+
+- **Description:** `session_sanitize_branch` (`bin/lib/session-paths.sh`) maps `/` to `--` and strips other characters, so `feature/a` and `feature--a` resolve to the same `branches/<slug>/` session directory. The two branches share and overwrite one session, and Track 23D's Archive block will archive whichever session is there. The data is moved, not deleted, and `ARCHIVED=` names the path.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Raised by the Codex outside voice in Track 23D's /autoplan (Eng) and deferred under HOLD SCOPE (taste T6). Candidate fix: before archiving or resuming, compare `session.yaml`'s `branch:` with the current branch and refuse a mismatch. The skill-protocols lock against the legacy stale-branch awk parse has to stay satisfied. A collision-free path format would change the shared helper and every caller. Track 23D's /review-and-prep found a related case: valid non-ASCII branch names such as `é.é` or `é.éé.é` sanitize to `.` or `..`, so `SESSION_DIR` becomes `branches/` or the project directory. The Archive block then fails safe (`mv` returns EINVAL, nothing moves), but every Init on that branch stops with a misleading permissions message. Mapping dot-only slugs to `unknown-branch` fixes it.
+- **Priority:** P3
+- **Revisit when:** A report of two branches sharing or losing a pair-review session, or the next change to `session_sanitize_branch`.
+
+### [review] `/pair-review`'s paused check misses a PR opened from a fork
+
+- **Description:** Phase 4 Step 3's paused-preparation check runs `gh pr view` with no PR selector. In a checkout whose `origin` is a fork and whose PR targets upstream, gh looks in the fork, prints `no pull requests found for branch`, and the check classifies `no-pr`, so the ordinary routing can recommend `/ship` on a paused draft. This is the behavior before Track 23D, not a regression. `/review-and-prep`'s own handoff already says not to follow a generic `/ship` suggestion.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Reproduced read-only by the Claude adversarial pass in Track 23D's /review-and-prep on 2026-10-09: a fork-only remote, a nonstandard upstream remote name and an untracked branch all returned `no-pr`; only a remote named `upstream` plus a tracked branch found the PR. Fix: record the PR URL handed over by `/review-and-prep` at Init and query it directly, treating `no-pr` for a recorded URL as a lookup failure. That Init binding belongs with Track 24B's published hold/resume detector.
+- **Priority:** P3
+- **Revisit when:** Track 24B starts, or a fork-based PR is routed to `/ship` from `/pair-review done`.
+
+### [review] `/pair-review`'s paused check always fails under `noclobber`
+
+- **Description:** The paused-preparation fence writes gh output with plain `>"$_PR_OUT" 2>"$_PR_ERR"` onto files `mktemp` already created. With `noclobber` set (bash `set -C`, or zsh with `CLOBBER` unset, as some zsh frameworks do), the redirect fails before gh runs, so every `/pair-review done` reports `lookup-failure` with reason `api`. "Retry the check" can never succeed, and the ordinary `/review`/`/ship` routing is never offered. It fails closed: nothing recommends `/ship` on a paused PR.
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Reproduced by the red-team pass in round 3 of Track 23D's /review-and-prep on 2026-10-09 (bash 5.3 and zsh 5.9 under `set -C`). It was backlogged under the owner's stop rule for review tails. Fix: use `>|` and `2>|` for both redirects; add bash and zsh fence cases that run `set -C` first and expect `PR_CLASS=no-pr`. Update the literal fence lock in `tests/skill-protocols.test.ts`.
+- **Priority:** P2
+- **Revisit when:** A report of a permanent "Could not check this branch's PR … (api)" from `/pair-review done`, or the next edit of the paused-check fence.
+
+### [review] Lock the Archive block's `command ls` bypass in tests
+
+- **Description:** The Archive block reads `ls` through `command` so a user's alias or shell function cannot change its output. Under the final nesting check, removing every `command` still leaves the suite green. Two failures would go unnoticed: an `ls` wrapper combined with a mid-move destination prints `ARCHIVED=` while the session actually sits one level down, and an `ls -l` wrapper makes an empty session directory look non-empty, so it gets archived anyway. The Archive matrix's Value comment also still names only `date`/`mv` shims as its seam.
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Found by the testing and maintainability passes in round 3 of Track 23D's /review-and-prep on 2026-10-09 (verified on a scratch copy) and backlogged under the owner's stop rule. Add two rows under bash and zsh: a name-only `ls` function plus the `mkdir -p "$2"` `mv` shim, which should give the nesting ERROR; and `ls() { /bin/ls -l "$@"; }` with an empty session, which should exit 0, print nothing and leave the project tree unchanged. Refresh the Value comment.
+- **Priority:** P3
+- **Revisit when:** The next change to the Archive block or its test matrix.
+
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
