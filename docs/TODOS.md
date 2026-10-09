@@ -12,22 +12,38 @@
 - **Depends on:** None. Track 23A was limited to fixture changes and left production mapping unchanged.
 - **Context:** Raised by the adversarial review passes during Track 23A review and prep on 2026-10-08. Quota adapters are experimental and do not gate 1.0 (`docs/SPEC.md`). Revisit when Cursor cwd attribution in `source_state` next changes or a misattributed Cursor transcript is reported.
 
-### Investigate ownership receipts for customized generated copies
+### [plan-ceo-review:track=23C,defer=true] Investigate ownership receipts for customized generated copies
 
-**What:** Verify whether copy-host refresh should distinguish edited generated skill bodies from untouched ones before proposing an ownership receipt.
+- **Why:** `setup:generated_copy` treats a regular `SKILL.md` beside an `.extend-root` pointer as generated on Codex, OpenCode and Cursor. Claude preserves regular files. An intentional edit to a managed copy may therefore be replaced on refresh. Verify whether copy-host refresh should distinguish edited generated skill bodies from untouched ones before proposing an ownership receipt.
+- **Effort:** M (human: ~1 day / CC: ~1 hour)
+- **Depends on:** A named supported-host reproduction or an explicit owner decision about protecting edits to managed copies.
+- **Context:** Deferred from Track 23C's planning review. Begin with `setup:generated_copy`, `host_skill_body`, the generated-copy refresh tests in `tests/setup-hosts.test.ts`, and `docs/installation.md`'s ownership contract. Track 23C preserves that existing refresh policy while repairing warning visibility and recovery; this investigation is not a new release gate. Pros: clarifies user intent and could protect intentional edits to managed copies. Cons: receipt migration and changed refresh semantics would need separate compatibility decisions and host qualification.
+- **Priority:** P3
+- **Revisit when:** O1 qualification reproduces loss of an intentional generated-copy edit, or the owner explicitly requests protection for edits to those managed copies.
 
-**Why:** `setup:generated_copy` treats a regular `SKILL.md` beside an `.extend-root` pointer as generated on Codex, OpenCode and Cursor. Claude preserves regular files. An intentional edit to a managed copy may therefore be replaced on refresh.
+### [review] Refuse install-status writes in a state directory other users can write
 
-**Context:** Deferred from Track 23C's planning review: `[plan-ceo-review:track=23C,defer=true]`. Begin with `setup:generated_copy`, `host_skill_body`, the generated-copy refresh tests in `tests/setup-hosts.test.ts`, and `docs/installation.md`'s ownership contract. Track 23C preserves that existing refresh policy while repairing warning visibility and recovery; this investigation is not a new release gate.
+- **Description:** `setup` publishes `install-status` through a `mktemp` file it reopens by path. If another account can write to the state directory, it can swap that temporary file for a symlink and truncate a file the user owns. The default `~/.gstack-extend` belongs to the user, and Track 23C's threat model is same-user. Refusing group-writable directories would turn the feature off for anyone with umask 002, because the macOS `staff` group contains every local user.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Raised by the Codex adversarial pass during Track 23C review and prep on 2026-10-09. The owner chose to backlog it. Candidate fix: refuse to publish when the state directory is not owned by the user or is world-writable without the sticky bit, and report a `status_unsaved` cause.
+- **Priority:** P3
+- **Revisit when:** A supported setup or documented recipe places `GSTACK_EXTEND_STATE_DIR` in a shared location, or a report shows install-status written by another account.
 
-**Pros:** Clarifies user intent and could protect intentional edits to managed copies.
+### [review] install-safety.sh reads ownership through GNU stat's -f output
 
-**Cons:** Receipt migration and changed refresh semantics would need separate compatibility decisions and host qualification.
+- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C switched its own stat calls to try `-c` first; this pre-existing helper sits outside that track's files.
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Found during Track 23C review and prep on 2026-10-09 while confirming the same ordering bug in the new install-status code. A probe with `/opt/homebrew/bin/gstat` first in PATH showed the multi-line capture.
+- **Priority:** P2
+- **Revisit when:** The next change to `bin/lib/install-safety.sh`, or a report of setup skipping every host on a machine with GNU coreutils on PATH.
 
-**Effort:** M (human: ~1 day / CC: ~1 hour)
-**Priority:** P3
-**Depends on:** A named supported-host reproduction or an explicit owner decision about protecting edits to managed copies.
-**Revisit when:** O1 qualification reproduces loss of an intentional generated-copy edit, or the owner explicitly requests protection for edits to those managed copies.
+### [review] Tune install-status read bounds against bash 3.2 parse time
+
+- **Description:** Both readers accept up to 1 MiB and 4096 records, the bounds the Track 23C plan set. Under `/bin/bash` 3.2, reading near those bounds takes seconds to minutes, and `bin/update-check` runs on every skill invocation. Setup itself writes about 25 records per HOME, so only a damaged, foreign or long-accumulated file gets near the cap.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Measured by the performance specialist during Track 23C review and prep on 2026-10-09: 1,000 records for this HOME took about 10 s in the checker. Lower the caps, stream records instead of indexing one large array, and cap emitted lines with one summary line.
+- **Priority:** P3
+- **Revisit when:** A real install-status file passes a few hundred records, or a skill preamble is reported slow because of update-check.
 
 ## Completed
 

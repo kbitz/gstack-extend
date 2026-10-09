@@ -1960,7 +1960,7 @@ describe('track 23C update visibility', () => {
     expect(again.status).toBe(0);
     const seen = checkInstall(absent.repo, home, join(home, '.gstack-extend'), [], absent.remote);
     expect(seen.stdout).not.toContain('INSTALL_WARN');
-  });
+  }, 30000);
 
   test('W2 an independent frame round-trips both records', () => {
     const home = join(baseTmp, 'w2-home');
@@ -1983,9 +1983,9 @@ describe('track 23C update visibility', () => {
         detect: 'not_applicable',
       }),
     ];
-    const frame = encodeFrame(records);
-    writeFileSync(join(state, 'install-status'), frame);
-    const decoy = encodeFrame([factRecord(decoyHome, {
+    // Another HOME's record sits in the same frame. It is skipped, not printed
+    // and not treated as malformed, even though its path is outside this HOME.
+    const decoy = factRecord(decoyHome, {
       logical: join(decoyHome, '.claude', 'skills'),
       skill: 'roadmap',
       reason: 'preserved_regular',
@@ -1993,8 +1993,9 @@ describe('track 23C update visibility', () => {
       canon: 'differs_canonical',
       variant: 'differs_stripped',
       detect: 'not_applicable',
-    })]);
-    writeFileSync(join(decoyHome, '.gstack-extend', 'install-status'), decoy);
+    });
+    const frame = encodeFrame([records[0]!, decoy, records[1]!]);
+    writeFileSync(join(state, 'install-status'), frame);
     const repo = createFixtureRepo('w2-repo');
     seedUpdateCheckBinaries(repo);
     const remote = join(baseTmp, 'w2-remote');
@@ -2008,9 +2009,10 @@ describe('track 23C update visibility', () => {
     expect(seen.stdout).toContain('variant=differs_stripped');
     expect(seen.stdout).toContain('observed=0.36.0.1');
     expect(seen.stdout).toContain(`path=${logical}`);
+    expect(seen.stdout).toContain(`checkout=/origin/checkout`);
     expect(seen.stdout).not.toContain('decoyfact');
+    expect(seen.stdout).not.toContain('status_unverified');
     expect(readFileSync(join(state, 'install-status'))).toEqual(frame);
-    expect(readFileSync(join(decoyHome, '.gstack-extend', 'install-status'))).toEqual(decoy);
   });
 
   test('W3 unknown, truncated, extra and oversized state stays visible', () => {
@@ -2112,8 +2114,10 @@ exec /bin/mv "$@"
     seedUpdateCheckBinaries(repo);
     const remote = join(baseTmp, 'w6-remote');
     writeFileSync(remote, '1.0.0\n');
+    // The reader must not wait for the lock the writer holds.
+    const readStarted = Date.now();
     const during = checkInstall(repo, home, join(home, '.gstack-extend'), [], `file://${remote}`);
-    expect(Date.now() - started).toBeLessThan(5000);
+    expect(Date.now() - readStarted).toBeLessThan(3000);
     expect(during.stdout).toContain('reason=status_pending');
     expect(during.stdout).toContain('skill=implement');
     expect(during.stdout).not.toContain('skill=pair-review');
@@ -2261,12 +2265,12 @@ exec /bin/mv "$@"
   });
 
   test('R7 warning text is inert, deduped, and pinned to the recorded version', () => {
-    const home = join(baseTmp, 'r7-home');
+    const pwned = join(baseTmp, 'r7-pwned');
+    const home = join(baseTmp, `r7-home-$(touch ${pwned})`);
     const state = join(baseTmp, 'r7-state');
     mkdirSync(home, { recursive: true });
     mkdirSync(state, { recursive: true });
-    const pwned = join(home, 'pwned');
-    const nasty = join(home, `$(touch ${pwned})`);
+    const nasty = join(home, '.claude', 'skills');
     mkdirSync(nasty, { recursive: true });
     const repo = createFixtureRepo('r7');
     seedUpdateCheckBinaries(repo);
@@ -2287,6 +2291,96 @@ exec /bin/mv "$@"
     expect(later.stdout).toContain('observed=9.9.9');
     expect(later.stdout).toContain('freshness=unverified');
     expect(later.stdout).not.toContain('observed=3.0.0');
+  });
+
+  test('R7 a record for this HOME must name a host directory under HOME', () => {
+    const fx = warnedFixture('r7-bound');
+    const status = join(fx.state, 'install-status');
+    const cases: Array<[string, Partial<Record<string, string>>]> = [
+      ['dot segments', { logical: `${fx.home}/../../etc` }],
+      ['foreign directory', { logical: join(fx.home, 'Documents') }],
+      ['wrong host directory', { host: 'codex', logical: join(fx.home, '.claude', 'skills') }],
+      ['parent skill', { skill: '..', reason: 'preserved_regular', cause: 'regular_file_not_overwritten', detect: 'not_applicable' }],
+      ['non-ASCII cause', { cause: 'café' }],
+    ];
+    for (const [label, over] of cases) {
+      writeFileSync(status, encodeFrame([factRecord(fx.home, over)]));
+      const seen = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+      expect(seen.stdout, label).toContain('reason=status_unverified');
+      expect(seen.stdout, label).toContain('cause=malformed');
+      expect(seen.stdout, label).not.toMatch(/INSTALL_WARN host=/);
+    }
+    // A trailing slash on HOME does not unbind this HOME's own records.
+    writeFileSync(status, fx.frame);
+    const slashed = runBin(join(fx.repo, 'bin', 'update-check'), [], {
+      home: `${fx.home}/`,
+      gstackExtendDir: fx.repo,
+      gstackExtendStateDir: fx.state,
+      extraEnv: { PATH: '/bin:/usr/bin', GSTACK_EXTEND_REMOTE_URL: fx.remote },
+    });
+    expect(slashed.stdout).toContain('skill=implement');
+    expect(slashed.stdout).not.toContain('status_unverified');
+  }, 20000);
+
+  test('R7 paths stay escaped under a UTF-8 locale on every available bash', () => {
+    const home = join(baseTmp, 'r7-utf8-x IMPORTANT line');
+    const state = join(baseTmp, 'r7-utf8-state');
+    mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, 'install-status'), encodeFrame([factRecord(home)]));
+    const repo = createFixtureRepo('r7-utf8');
+    seedUpdateCheckBinaries(repo);
+    for (const bash of ['/bin/bash', '/opt/homebrew/bin/bash', '/usr/local/bin/bash']) {
+      if (!existsSync(bash)) continue;
+      const r = spawnSync(bash, [join(repo, 'bin', 'update-check')], {
+        encoding: 'utf8',
+        env: {
+          PATH: '/bin:/usr/bin',
+          HOME: home,
+          LC_ALL: 'en_US.UTF-8',
+          GSTACK_EXTEND_DIR: repo,
+          GSTACK_EXTEND_STATE_DIR: state,
+          GSTACK_EXTEND_REMOTE_URL: 'file:///nonexistent',
+        },
+      });
+      expect(r.stdout, bash).toContain('reason=shared_directory');
+      expect(r.stdout, bash).not.toMatch(/[^\x20-\x7e\n]/);
+    }
+  });
+
+  test('W1 an unreadable HOME warns only when a snapshot exists', () => {
+    const repo = createFixtureRepo('w1-nohome');
+    seedUpdateCheckBinaries(repo);
+    const state = join(baseTmp, 'w1-nohome-state');
+    mkdirSync(state, { recursive: true });
+    const missingHome = join(baseTmp, 'w1-nohome-missing');
+    const quiet = checkInstall(repo, missingHome, state, [], 'file:///nonexistent');
+    expect(quiet.stdout).not.toContain('INSTALL_WARN');
+    writeFileSync(join(state, 'install-status'), encodeFrame([]));
+    const warned = checkInstall(repo, missingHome, state, [], 'file:///nonexistent');
+    expect(warned.stdout).toContain('cause=home_unreadable');
+  });
+
+  test('W2 GNU stat ahead of /usr/bin still reads the snapshot', () => {
+    const gnu = ['/opt/homebrew/bin/gstat', '/usr/local/bin/gstat', '/usr/bin/stat'].find((p) => {
+      if (!existsSync(p)) return false;
+      const v = spawnSync(p, ['--version'], { encoding: 'utf8' });
+      return v.status === 0 && (v.stdout ?? '').includes('GNU');
+    });
+    if (!gnu) return;
+    const fx = warnedFixture('w2-gnu-stat');
+    const bins = join(baseTmp, 'w2-gnu-bins');
+    mkdirSync(bins, { recursive: true });
+    if (!existsSync(join(bins, 'stat'))) symlinkSync(gnu, join(bins, 'stat'));
+    const r = runBin(join(fx.repo, 'bin', 'update-check'), [], {
+      home: fx.home,
+      gstackExtendDir: fx.repo,
+      gstackExtendStateDir: fx.state,
+      extraEnv: { PATH: `${bins}:/bin:/usr/bin`, GSTACK_EXTEND_REMOTE_URL: fx.remote },
+    });
+    expect(r.stdout).toContain('skill=implement');
+    expect(r.stdout).not.toContain('status_unreadable');
+    expect(r.stdout).not.toContain('status_unverified');
   });
 
   test('U1 a git failure leaves install status untouched', () => {

@@ -45,14 +45,32 @@ fi
 
 # Local install diagnostics. Armed only after the disabled-check exit so
 # update_check=false stays completely silent. The EXIT trap prints warnings
-# after any version line this process already wrote.
+# after any version line this process already wrote. The C locale makes
+# printf %q escape every byte above ASCII, whatever bash or locale runs this.
+LC_ALL=C
 INSTALL_WARN_ARMED=0
-INSTALL_WARN_BODY=""
 _UC_LINES=()
+_UC_LOWER=abcdefghijklmnopqrstuvwxyz
+_UC_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+_UC_DIGIT=0123456789
+_UC_HEX=0123456789abcdef
+_UC_HOME_NORM=""
+# GNU stat is tried first: with GNU coreutils ahead of /usr/bin, `stat -f`
+# prints file-system details before failing. BSD stat rejects -c silently.
 _uc_home_id() {
-  local phys=""
-  phys=$(cd -P "$HOME" 2>/dev/null && pwd -P) || return 1
-  stat -f '%d:%i' "$phys" 2>/dev/null || stat -c '%d:%i' "$phys" 2>/dev/null
+  stat -L -c '%d:%i' "$HOME" 2>/dev/null || stat -L -f '%d:%i' "$HOME" 2>/dev/null
+}
+# _uc_norm_path <path> sets _UC_NORM: repeated slashes collapsed, no trailing slash.
+_uc_norm_path() {
+  local s=$1 sl=/
+  while :; do
+    case "$s" in
+      *//*) s=${s//$sl$sl/$sl} ;;
+      *) break ;;
+    esac
+  done
+  [ "$s" = "/" ] || s=${s%/}
+  _UC_NORM=$s
 }
 _uc_emit() {
   local line="$1" i=0
@@ -62,15 +80,13 @@ _uc_emit() {
   done
   _UC_LINES[${#_UC_LINES[@]}]="$line"
 }
-_uc_fix() {
-  printf '%q' "$EXTEND_DIR/docs/installation.md#$1"
-}
 _uc_status_line() {
-  local reason="$1" cause="$2" path="$3" q docs
-  q=$(printf '%q' "$path")
-  docs=$(_uc_fix state-recovery)
-  _uc_emit "$(printf 'INSTALL_WARN reason=%s path=%s cause=%s freshness=unknown saved=kept Fix: %s' \
-    "$reason" "$q" "$cause" "$docs")"
+  local reason="$1" cause="$2" path="$3" q docs line
+  printf -v q '%q' "$path"
+  printf -v docs '%q' "$EXTEND_DIR/docs/installation.md#state-recovery"
+  printf -v line 'INSTALL_WARN reason=%s path=%s cause=%s freshness=unknown saved=kept Fix: %s' \
+    "$reason" "$q" "$cause" "$docs"
+  _uc_emit "$line"
 }
 _uc_enum() {
   local want="$1" item
@@ -80,10 +96,12 @@ _uc_enum() {
   done
   return 1
 }
+# Structure every record must have, whichever HOME wrote it. Character classes
+# are spelled out so the locale cannot widen them.
 _uc_valid_fact() {
   local kind="$1" home="$2" origin="$3" oqual="$4" host="$5" logical="$6" physical="$7"
   local inode="$8" skill="$9" reason="${10}" cause="${11}" canon="${12}" variant="${13}"
-  local version="${14}" sha="${15}" detect="${16}" path
+  local version="${14}" sha="${15}" detect="${16}"
   _uc_enum "$kind" fact || return 1
   _uc_enum "$oqual" this_checkout verified_checkout prior_qualified || return 1
   _uc_enum "$host" claude codex opencode cursor || return 1
@@ -91,19 +109,28 @@ _uc_valid_fact() {
   _uc_enum "$canon" matches_canonical differs_canonical source_unavailable not_applicable || return 1
   _uc_enum "$variant" matches_stripped differs_stripped not_applicable unavailable || return 1
   _uc_enum "$detect" binary existing_skill cursor_home explicit_host not_applicable || return 1
-  case "$cause" in *[!a-z0-9_]*) return 1 ;; "") return 1 ;; esac
-  case "$home" in [0-9]*:[0-9]*) ;; *) return 1 ;; esac
-  case "$home" in *[!0-9:]*) return 1 ;; esac
-  case "$inode" in "") ;; [0-9]*:[0-9]*) case "$inode" in *[!0-9:]*) return 1 ;; esac ;; *) return 1 ;; esac
+  case "$cause" in ""|*[!${_UC_LOWER}${_UC_DIGIT}_]*) return 1 ;; esac
+  [ "${#cause}" -le 64 ] || return 1
+  case "$home" in [${_UC_DIGIT}]*:[${_UC_DIGIT}]*) ;; *) return 1 ;; esac
+  case "$home" in *[!${_UC_DIGIT}:]*) return 1 ;; esac
+  case "$inode" in
+    "") ;;
+    [${_UC_DIGIT}]*:[${_UC_DIGIT}]*) case "$inode" in *[!${_UC_DIGIT}:]*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
   case "$sha" in
     "") ;;
     *)
       [ "${#sha}" -eq 64 ] || return 1
-      case "$sha" in *[!0-9a-f]*) return 1 ;; esac
+      case "$sha" in *[!${_UC_HEX}]*) return 1 ;; esac
       ;;
   esac
-  case "$version" in *[!0-9A-Za-z._+-]*) return 1 ;; "") return 1 ;; esac
-  case "$skill" in "") ;; *[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$version" in ""|*[!${_UC_LOWER}${_UC_UPPER}${_UC_DIGIT}._+-]*) return 1 ;; esac
+  [ "${#version}" -le 64 ] || return 1
+  case "$skill" in
+    "") ;;
+    .|..|*[!${_UC_LOWER}${_UC_UPPER}${_UC_DIGIT}._-]*) return 1 ;;
+  esac
   case "$origin" in /*) ;; *) return 1 ;; esac
   case "$logical" in /*) ;; *) return 1 ;; esac
   case "$physical" in "") ;; /*) ;; *) return 1 ;; esac
@@ -111,30 +138,40 @@ _uc_valid_fact() {
     preserved_regular) [ -n "$skill" ] || return 1 ;;
     *) [ -z "$skill" ] || return 1 ;;
   esac
-  if [ -n "$skill" ]; then path="$logical/$skill"; else path="$logical"; fi
-  case "$path/" in
-    "$HOME"/*) ;;
+  return 0
+}
+# A record for this HOME must name this host's skills directory under HOME.
+_uc_bound_fact() {
+  local host="$1" logical="$2" want
+  case "$host" in
+    claude) want=/.claude/skills ;;
+    codex) want=/.codex/skills ;;
+    opencode) want=/.config/opencode/skills ;;
+    cursor) want=/.cursor/skills ;;
     *) return 1 ;;
   esac
-  return 0
+  _uc_norm_path "$logical"
+  [ "$_UC_NORM" = "$_UC_HOME_NORM$want" ]
 }
 _uc_emit_fact() {
   local host="$1" skill="$2" logical="$3" reason="$4" cause="$5" canon="$6" variant="$7"
-  local version="$8" oqual="$9" detect="${10}" path skill_tok q anchor docs
-  if [ -n "$skill" ]; then path="$logical/$skill"; skill_tok=$skill; else path=$logical; skill_tok="-"; fi
-  q=$(printf '%q' "$path")
+  local version="$8" oqual="$9" detect="${10}" origin="${11}" path q checkout anchor docs line
+  if [ -n "$skill" ]; then path="$logical/$skill"; else path=$logical; fi
+  printf -v q '%q' "$path"
+  printf -v checkout '%q' "$origin"
   case "$reason" in
-    unsafe_directory) anchor=troubleshooting ;;
+    unsafe_directory) anchor=unsafe-skills-directory ;;
     *) anchor=shared-directory-migration ;;
   esac
-  docs=$(_uc_fix "$anchor")
+  printf -v docs '%q' "$EXTEND_DIR/docs/installation.md#$anchor"
   if [ -n "$skill" ]; then
-    _uc_emit "$(printf 'INSTALL_WARN host=%s skill=%s path=%s reason=%s cause=%s compare=%s variant=%s observed=%s origin=%s freshness=unverified Fix: %s' \
-      "$host" "$skill_tok" "$q" "$reason" "$cause" "$canon" "$variant" "$version" "$oqual" "$docs")"
+    printf -v line 'INSTALL_WARN host=%s skill=%s path=%s reason=%s cause=%s compare=%s variant=%s observed=%s origin=%s checkout=%s freshness=unverified Fix: %s' \
+      "$host" "$skill" "$q" "$reason" "$cause" "$canon" "$variant" "$version" "$oqual" "$checkout" "$docs"
   else
-    _uc_emit "$(printf 'INSTALL_WARN host=%s skill=%s path=%s reason=%s cause=%s detection=%s freshness=unverified Fix: %s' \
-      "$host" "$skill_tok" "$q" "$reason" "$cause" "$detect" "$docs")"
+    printf -v line 'INSTALL_WARN host=%s skill=- path=%s reason=%s cause=%s detection=%s checkout=%s freshness=unverified Fix: %s' \
+      "$host" "$q" "$reason" "$cause" "$detect" "$checkout" "$docs"
   fi
+  _uc_emit "$line"
 }
 _uc_read_status() {
   local file="$1" home_id="$2" bytes fields i n
@@ -143,9 +180,9 @@ _uc_read_status() {
   if [ -p "$file" ]; then _uc_status_line status_unreadable fifo "$file"; return 0; fi
   if [ ! -f "$file" ]; then _uc_status_line status_unreadable not_regular "$file"; return 0; fi
   if [ ! -r "$file" ]; then _uc_status_line status_unreadable not_readable "$file"; return 0; fi
-  bytes=$(stat -f '%z' "$file" 2>/dev/null || stat -c '%s' "$file" 2>/dev/null || echo "")
+  bytes=$(stat -c '%s' "$file" 2>/dev/null || stat -f '%z' "$file" 2>/dev/null || echo "")
   case "$bytes" in
-    ""|*[!0-9]*) _uc_status_line status_unreadable not_readable "$file"; return 0 ;;
+    ""|*[!${_UC_DIGIT}]*) _uc_status_line status_unreadable not_readable "$file"; return 0 ;;
   esac
   if [ "$bytes" -gt 1048576 ]; then
     _uc_status_line status_unverified oversized "$file"
@@ -170,7 +207,7 @@ _uc_read_status() {
     if [ "${fields[$i]}" = "END" ]; then
       if [ $((i + 2)) -ne "$n" ]; then _uc_status_line status_unverified extra_data "$file"; return 0; fi
       case "${fields[$((i + 1))]}" in
-        ""|*[!0-9]*) _uc_status_line status_unverified count_mismatch "$file"; return 0 ;;
+        ""|*[!${_UC_DIGIT}]*) _uc_status_line status_unverified count_mismatch "$file"; return 0 ;;
       esac
       [ "${fields[$((i + 1))]}" -eq "$_UC_FACTS" ] || { _uc_status_line status_unverified count_mismatch "$file"; return 0; }
       return 0
@@ -186,11 +223,16 @@ _uc_read_status() {
       _uc_status_line status_unverified malformed "$file"
       return 0
     fi
+    # Another HOME's facts stay in the file and are not printed for this one.
     if [ "${fields[$((i+1))]}" = "$home_id" ]; then
+      if ! _uc_bound_fact "${fields[$((i+4))]}" "${fields[$((i+5))]}"; then
+        _uc_status_line status_unverified malformed "$file"
+        return 0
+      fi
       _uc_emit_fact \
         "${fields[$((i+4))]}" "${fields[$((i+8))]}" "${fields[$((i+5))]}" "${fields[$((i+9))]}" \
         "${fields[$((i+10))]}" "${fields[$((i+11))]}" "${fields[$((i+12))]}" "${fields[$((i+13))]}" \
-        "${fields[$((i+3))]}" "${fields[$((i+15))]}"
+        "${fields[$((i+3))]}" "${fields[$((i+15))]}" "${fields[$((i+2))]}"
     fi
     _UC_FACTS=$((_UC_FACTS + 1))
     i=$((i + 16))
@@ -202,13 +244,16 @@ _uc_collect() {
   if [ -d "$lock" ]; then
     _uc_status_line status_pending lock_held "$lock"
   fi
-  if ! home_id=$(_uc_home_id); then
-    _uc_status_line status_unverified home_unreadable "$status"
-    return 0
-  fi
-  if [ -e "$status" ] || [ -L "$status" ]; then
-    _uc_read_status "$status" "$home_id"
-  fi
+  [ -e "$status" ] || [ -L "$status" ] || return 0
+  home_id=$(_uc_home_id) || home_id=""
+  case "$home_id" in
+    [${_UC_DIGIT}]*:[${_UC_DIGIT}]*) ;;
+    *) _uc_status_line status_unverified home_unreadable "$status"; return 0 ;;
+  esac
+  _uc_norm_path "$HOME"
+  _UC_HOME_NORM=$_UC_NORM
+  [ "$_UC_HOME_NORM" != "/" ] || _UC_HOME_NORM=""
+  _uc_read_status "$status" "$home_id"
 }
 _uc_on_exit() {
   local i=0

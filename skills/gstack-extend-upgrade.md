@@ -122,6 +122,10 @@ fi
 - `up-to-date`: tell user "You're on the latest version (v{local})."
 - `remote ... differs`: compare the two versions. If the remote is newer (rare; the periodic check should have caught it), follow the **Inline upgrade flow** below, treating the remote version as `{new}`. If the local version is newer, this is a development checkout ahead of the published release: tell the user "You're on v{local}, ahead of the published v{remote}." and do not upgrade.
 
+`INSTALL_WARN` lines in the update-check output are not a version result and do
+not change any answer above. Relay each one with its Fix link; see
+**After upgrading**.
+
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
@@ -225,7 +229,12 @@ to delete `.extend-root` or `install-status` to get silence.
 Say that `UPGRADE_OK` upgraded the checkout. Preserved regular copies, shared
 directories, unsafe directories, and an unserved Cursor install still need the
 repair in `$_EXTEND_ROOT/docs/installation.md`. A partial repair leaves a
-warning for every remaining entry. Customized files and retired copies whose
+warning for every remaining entry. A preserved-copy warning clears only when
+setup finds `SKILL.md.backup` holding the recorded bytes in the same skill
+directory, plus the canonical link (for a retired name, no `SKILL.md`). The
+per-file and retired examples there produce exactly that; deleting the copy
+instead leaves the warning. `reason=unsafe_directory` uses
+`docs/installation.md#unsafe-skills-directory`. Customized files and retired copies whose
 source is gone stay until the user moves those specific files aside; do not
 treat a pointer as permission to replace them. A moved or deleted checkout
 pointer does not clear a fact. The same-version command after a successful

@@ -150,14 +150,32 @@ foreign install pointers, and unrelated files are preserved.
 
 Setup records associated regular Claude `SKILL.md` files and skipped-host
 facts under `${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/install-status`.
-A successful setup stays quiet on stdout. The checker prints the facts. Each
-`INSTALL_WARN` line names the host, skill, path, reason, and a Fix link in
-this checkout's `docs/installation.md`. `reason=preserved_regular` means the
-file was left in place. `compare=` and `observed=` describe that file against
+A successful setup stays quiet on stdout. The checker prints the facts. A fact
+line names the host, the skill (`-` for a whole host directory), the path, the
+reason and cause, the checkout that recorded it, and a Fix link in this
+checkout's `docs/installation.md`. A status line (`reason=status_*`) names the
+state path and its cause instead. Paths are shell-quoted when needed. Treat the
+text after `INSTALL_WARN` as a human-readable diagnostic: rely on that token and
+the `reason=` and `cause=` values, not on field order.
+`reason=preserved_regular` means the file was left in place. `compare=` and `observed=` describe that file against
 the checkout's source at the version setup recorded. `freshness=unverified`
 means that comparison is not a promise the copy is current, customized, owned,
 or disposable. A later setup can replace the observation; it does not clear
 the fact until the repair below is verified.
+
+A preserved-copy fact clears only when setup can show that the bytes it
+recorded were kept: the skill directory is the same directory,
+`SKILL.md.backup` in it holds exactly the bytes setup last recorded, and the
+skill path is now this checkout's symlink (for a retired name, there is no
+`SKILL.md` at all). The examples below run setup once before setting the file
+aside, so the recorded bytes match. Deleting the copy, moving the whole
+directory, or editing the copy after the last setup leaves the warning,
+because setup cannot tell a kept copy from a lost one. While the copy is still
+there, run the example again. Once it is gone, the warning stays until you put
+the file back and repeat the example, or turn checks off as described below.
+A host fact clears when that host's setup succeeds into a safe directory of
+its own; `shared_directory` also needs the directory separated from every
+other host's.
 
 A pointer that names a moved or deleted checkout does not by itself refresh
 or delete the copy. A second verified checkout can clear a fact only for the
@@ -180,9 +198,10 @@ generated copy from a user's customized file. There is no automatic conversion.
 
 Review and back up the regular `SKILL.md` files in the shared Claude directory.
 Compare them with `skills/<name>.md` in the checkout. For each old generated
-copy you want Claude to maintain, move that file aside (for example, to
-`SKILL.md.backup` in the same skill directory), then run `setup --host claude`
-from the upgraded checkout to recreate the source symlink. Preserve customized
+copy you want Claude to maintain, run the per-file example below. It keeps the
+original as `SKILL.md.backup` in the same skill directory, which is also what
+lets its warning clear, then runs `setup --host claude` from the upgraded
+checkout to recreate the source symlink. Preserve customized
 files; setup will continue to warn without overwriting them. Do not bulk-delete
 files based on the pointer alone.
 
@@ -191,6 +210,9 @@ separate skills directory, then run `setup --host codex` or
 `setup --host opencode` to install fresh copies there. Apply the same separation
 when only copy-producing hosts share a directory. Cursor can continue reading
 Claude's shared skills, or use a separate directory with `setup --host cursor`.
+If you no longer use that host, its `shared_directory` warning stays until its
+setup succeeds once into a directory of its own. Run that setup, then
+`setup --host <host> --uninstall` if you do not want its copies.
 
 Uninstall leaves those regular copies in place too. While a pointer naming the
 checkout sits beside a `SKILL.md`, the shared CLI links stay, and the uninstall
@@ -198,37 +220,55 @@ output names one such pointer as `Kept for: <path>`. Review the copies, move asi
 longer want (as above), then rerun the uninstall; a pointer left without a
 `SKILL.md` does not keep the links.
 
-The examples below are the recovery to run. They use
-`GSTACK_EXTEND_RECOVERY_CHECKOUT` (the verified checkout) and
-`GSTACK_EXTEND_RECOVERY_SKILL` (one skill directory name). The reviewed
-`SKILL.md` must be a regular file, not a symlink. The example refuses to
-replace an existing backup, checks that the move actually happened, and does
-not run setup when the move failed. If setup never ran, leave the backup
-where it is and run the example again; it resumes without moving that backup.
-A second run after the symlink exists does nothing to that symlink. A retired
-name whose source file is gone is not moved by this example; keep that
-regular file until you choose to set it aside yourself. A foreign symlink is
-left alone. Repairing one skill does not repair the others.
+The examples below are the recovery to run. First set
+`GSTACK_EXTEND_RECOVERY_CHECKOUT` to the verified checkout and
+`GSTACK_EXTEND_RECOVERY_SKILL` to one skill directory name, for example
+`export GSTACK_EXTEND_RECOVERY_CHECKOUT=~/.claude/skills/gstack-extend GSTACK_EXTEND_RECOVERY_SKILL=implement`.
+Each block runs in a subshell, so its `exit` lines do not close your terminal.
+
+The per-file example needs the reviewed `SKILL.md` to be a regular file, not
+a symlink. It runs setup once so the recorded bytes match the file, keeps the
+file as `SKILL.md.backup` with `ln` (which refuses to replace an existing
+backup), and removes the original name only after both names point at the
+same file. `RECOVERY_SETUP_FAILED` (exit 5) means setup failed and
+`RECOVERY_NOT_LINKED` (exit 6) means setup finished without linking the
+skill; the backup stays in place either way. Fix the cause and run the
+example again: it resumes from the backup without moving it. A second run
+after the symlink exists does nothing to that symlink. A retired name whose
+source file is gone is not moved by this example. A foreign symlink is left
+alone. Repairing one skill does not repair the others.
 
 <!-- recovery-example:per-file -->
 ```bash
+(
 checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
 skill=${GSTACK_EXTEND_RECOVERY_SKILL:?}
+checkout=$(cd -P "$checkout" && pwd -P) || { echo RECOVERY_NO_CHECKOUT; exit 2; }
 dir="$HOME/.claude/skills/$skill"
 file="$dir/SKILL.md"
 backup="$dir/SKILL.md.backup"
 source="$checkout/skills/$skill.md"
-if [ ! -f "$source" ] || [ -L "$source" ]; then
-  echo RECOVERY_RETIRED_MANUAL
-  exit 0
-fi
-if [ -L "$file" ]; then
+linked() {
+  [ -L "$file" ] || return 1
   target=$(readlink "$file" || true)
   case "$target" in
     /*) ;;
     *) target="$dir/$target" ;;
   esac
-  if [ "$target" = "$source" ]; then
+  [ "$target" = "$source" ]
+}
+run_setup() {
+  if ! "$checkout/setup" --host claude --quiet; then
+    echo RECOVERY_SETUP_FAILED
+    exit 5
+  fi
+}
+if [ ! -f "$source" ] || [ -L "$source" ]; then
+  echo RECOVERY_RETIRED_MANUAL
+  exit 0
+fi
+if [ -L "$file" ]; then
+  if linked; then
     echo RECOVERY_ALREADY_REPAIRED
     exit 0
   fi
@@ -236,67 +276,152 @@ if [ -L "$file" ]; then
   exit 0
 fi
 if [ ! -e "$file" ]; then
-  if [ -f "$backup" ] && [ ! -L "$backup" ]; then
-    echo RECOVERY_RESUME
-    "$checkout/setup" --host claude --quiet
-    echo RECOVERY_MIGRATED
+  if [ ! -f "$backup" ] || [ -L "$backup" ]; then
+    echo RECOVERY_MISSING
     exit 0
   fi
-  echo RECOVERY_MISSING
-  exit 0
-fi
-if [ ! -f "$file" ]; then
-  echo RECOVERY_NOT_REGULAR
-  exit 2
-fi
-if cmp -s "$file" "$source"; then
-  echo RECOVERY_COMPARE_MATCHES
+  echo RECOVERY_RESUME
 else
-  echo RECOVERY_COMPARE_DIFFERS
+  if [ ! -f "$file" ]; then
+    echo RECOVERY_NOT_REGULAR
+    exit 2
+  fi
+  if cmp -s "$file" "$source"; then
+    echo RECOVERY_COMPARE_MATCHES
+  else
+    echo RECOVERY_COMPARE_DIFFERS
+  fi
+  if [ -e "$backup" ] || [ -L "$backup" ]; then
+    echo RECOVERY_COLLISION
+    exit 3
+  fi
+  run_setup
+  if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
+    echo RECOVERY_MOVE_FAILED
+    exit 4
+  fi
+  rm -f "$file"
+  if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ]; then
+    echo RECOVERY_MOVE_FAILED
+    exit 4
+  fi
 fi
-if [ -e "$backup" ] || [ -L "$backup" ]; then
-  echo RECOVERY_COLLISION
-  exit 3
+run_setup
+if ! linked; then
+  echo RECOVERY_NOT_LINKED
+  exit 6
 fi
-mv "$file" "$backup"
-if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ] || [ -L "$backup" ]; then
-  echo RECOVERY_MOVE_FAILED
-  exit 4
-fi
-"$checkout/setup" --host claude --quiet
 echo RECOVERY_MIGRATED
+)
 ```
 <!-- /recovery-example:per-file -->
 
-A customized file you want to keep is not a migration. This example does not
-move it. `update_check=false` also suppresses ordinary version notifications
-and is not an acknowledgement of one copy. Stop after the `false` command
-only when that broader silence is what you want; the `true` command restores
-both version notices and install warnings. Do not delete the pointer or the
-status file.
+A retired name has no source to link to. Run this only after you have
+reviewed that copy and decided to set it aside. It keeps the file as
+`SKILL.md.backup` in the same directory, which lets its warning clear, and
+uses the same refusals and resume as the per-file example.
+
+<!-- recovery-example:retired -->
+```bash
+(
+checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
+skill=${GSTACK_EXTEND_RECOVERY_SKILL:?}
+checkout=$(cd -P "$checkout" && pwd -P) || { echo RECOVERY_NO_CHECKOUT; exit 2; }
+dir="$HOME/.claude/skills/$skill"
+file="$dir/SKILL.md"
+backup="$dir/SKILL.md.backup"
+run_setup() {
+  if ! "$checkout/setup" --host claude --quiet; then
+    echo RECOVERY_SETUP_FAILED
+    exit 5
+  fi
+}
+if [ -f "$checkout/skills/$skill.md" ]; then
+  echo RECOVERY_NOT_RETIRED
+  exit 2
+fi
+if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+  if [ ! -f "$backup" ] || [ -L "$backup" ]; then
+    echo RECOVERY_MISSING
+    exit 0
+  fi
+  echo RECOVERY_RESUME
+else
+  if [ -L "$file" ] || [ ! -f "$file" ]; then
+    echo RECOVERY_NOT_REGULAR
+    exit 2
+  fi
+  if [ -e "$backup" ] || [ -L "$backup" ]; then
+    echo RECOVERY_COLLISION
+    exit 3
+  fi
+  run_setup
+  if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
+    echo RECOVERY_MOVE_FAILED
+    exit 4
+  fi
+  rm -f "$file"
+  if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ]; then
+    echo RECOVERY_MOVE_FAILED
+    exit 4
+  fi
+fi
+run_setup
+echo RECOVERY_RETIRED_SET_ASIDE
+)
+```
+<!-- /recovery-example:retired -->
+
+A customized file you want to keep is not a migration, and these examples do
+not move it. Its warning stays. The only switch that hides it is
+`"$checkout/bin/config" set update_check false`, which also hides ordinary
+version notifications and is not an acknowledgement of one copy;
+`update_check true` brings both back. Set `GSTACK_EXTEND_RECOVERY_UPDATE_CHECK`
+to `false` or `true`. Do not delete the pointer or the status file.
 
 <!-- recovery-example:custom-retain -->
 ```bash
+(
 checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
-"$checkout/bin/config" set update_check false
-"$checkout/bin/config" set update_check true
-echo RECOVERY_CUSTOM_RETAINED
+value=${GSTACK_EXTEND_RECOVERY_UPDATE_CHECK:?}
+case "$value" in
+  false|true) ;;
+  *) echo RECOVERY_VALUE_REFUSED; exit 2 ;;
+esac
+if ! "$checkout/bin/config" set update_check "$value"; then
+  echo RECOVERY_CONFIG_FAILED
+  exit 5
+fi
+echo "RECOVERY_UPDATE_CHECK_$value"
+)
 ```
 <!-- /recovery-example:custom-retain -->
 
 Codex, OpenCode, or Cursor already using its own skills directory is refreshed
-with that host's setup. This does not rewrite Claude's preserved files.
+with that host's setup. This does not rewrite Claude's preserved files. Set
+`GSTACK_EXTEND_RECOVERY_HOST` to the host. `RECOVERY_HOST_SKIPPED` (exit 6)
+means setup still skipped that host, usually because its directory is shared.
 
 <!-- recovery-example:separate-host -->
 ```bash
+(
 checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
 host=${GSTACK_EXTEND_RECOVERY_HOST:?}
 case "$host" in
   codex|opencode|cursor) ;;
   *) echo RECOVERY_HOST_REFUSED; exit 2 ;;
 esac
-"$checkout/setup" --host "$host" --quiet
+if ! out=$("$checkout/setup" --host "$host" --quiet); then
+  [ -z "$out" ] || printf '%s\n' "$out"
+  echo RECOVERY_SETUP_FAILED
+  exit 5
+fi
+[ -z "$out" ] || printf '%s\n' "$out"
+case "$out" in
+  *SETUP_SKIPPED_HOSTS*) echo RECOVERY_HOST_SKIPPED; exit 6 ;;
+esac
 echo RECOVERY_HOST_SETUP
+)
 ```
 <!-- /recovery-example:separate-host -->
 
@@ -328,6 +453,22 @@ Running `setup` from a worktree repoints every host at that worktree. Re-run `se
 
 The resolver probes Claude, then Codex, then OpenCode, then Cursor, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
 
+### Unsafe skills directory
+
+`reason=unsafe_directory` means setup left that host's skills directory alone
+because the directory, or its nearest existing parent, failed the install-path
+check. `path=` names the directory and `cause=` says why:
+
+| `cause=` | Meaning | Fix |
+|---|---|---|
+| `world_writable` | Other users can write to it | `chmod o-w <path>` |
+| `not_owned` | It belongs to another user | Make it yours, or move it aside and let setup create a new one |
+| `outside_home` | It resolves outside your home directory, usually through a symlink | Point the link inside HOME, or remove the link so setup creates the directory |
+| `unresolvable`, `stat_failed`, `empty_path`, `unsafe_directory` | Setup could not resolve or inspect it | Check that the path and each parent exist and are readable |
+
+Then run `"<checkout>/setup" --host <host>` from the verified checkout. The
+warning clears when that run installs the host into the corrected directory.
+
 ## State recovery
 
 `install-status` is a private data file in
@@ -339,10 +480,13 @@ points here. It does not treat that file as a clean install.
 
 | What you see | Cause | What to do |
 |---|---|---|
-| `status_unsaved` / `temp_failed`, `write_failed`, `chmod_failed`, `rename_failed`, `mkdir_failed` | This run could not publish a new snapshot | The previous file, if any, is still there. Fix the named cause and rerun setup from the verified checkout. |
+| `status_unsaved` / `temp_failed`, `write_failed`, `chmod_failed`, `rename_failed`, `mkdir_failed`, `lock_failed` | This run could not create its lock or publish a new snapshot, for example on a full disk or a read-only state directory | The previous file, if any, is still there. Fix the named cause and rerun setup from the verified checkout. |
+| `status_unsaved` / `invalid_record` or `oversized` | This run's own observations would not pass the reader's checks, so setup kept the previous file | Check HOME and the host directories, then rerun setup from a verified checkout. If it repeats, report the warning line. |
 | `lock_timeout` or `status_pending` / `lock_held` | Another setup holds `install-status.lock`, or a setup was interrupted and left it | Do not delete `install-status`. See whether the owner process is still running. If you have confirmed it is gone, move the lock directory aside and rerun setup. Setup does not take over a lock by itself. |
-| `predecessor_symlink`, `predecessor_directory`, `predecessor_fifo`, `unsafe_target`, or a matching `status_unreadable` cause | The status path is not a regular file | Leave the unexpected object in place, move it aside only if you know it is not something you need, and rerun setup. Do not follow a link or replace a directory to force a clean result. |
-| `predecessor_malformed`, `unknown_schema`, `unknown_record`, `truncated`, `extra_data`, `count_mismatch`, `oversized`, or `status_unverified` | The file is not a schema-1 snapshot this checkout can reconcile | Keep the file. Correct or replace it only with a snapshot you trust, then rerun setup from a verified checkout. Unknown bytes are not deleted to make the warning stop. |
+| `not_readable` (from setup, `predecessor_not_readable`) | The status file exists but cannot be read | Restore read access or ownership. Keep the file. |
+| `symlink`, `directory`, `fifo`, `not_regular` (from setup, with `predecessor_`), or `unsafe_target` | The status path is not a regular file | Leave the unexpected object in place, move it aside only if you know it is not something you need, and rerun setup. Do not follow a link or replace a directory to force a clean result. |
+| `unknown_schema` (from setup, `predecessor_unknown_schema`) | A newer gstack-extend wrote the file | Run setup and checks from that newer checkout, or upgrade this one. Keep the file. |
+| `malformed`, `unknown_record`, `truncated`, `extra_data`, `count_mismatch`, `oversized` (from setup, with `predecessor_`) | The file is damaged, or is not a snapshot this checkout reads | Move it aside under a dated name so the bytes are kept, for example `mv "$state/install-status" "$state/install-status.damaged-$(date +%Y%m%d%H%M%S)"` where `$state` is the directory above, then rerun setup from a verified checkout. Setup records again what it can see now. A copy whose pointer names a deleted checkout is not recorded again. |
 | `home_unreadable` | HOME could not be identified | Fix HOME, then rerun setup. Facts already in the file stay there. |
 
 A failed or partial setup adds what it saw and does not clear older unresolved

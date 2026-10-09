@@ -74,12 +74,12 @@ HOST_DONE_claude=0
 HOST_DONE_codex=0
 HOST_DONE_opencode=0
 HOST_DONE_cursor=0
-IS_NEW=()
+IS_NEW_F=()
 IS_NEW_KEY=()
 IS_NEW_QUAL=()
-IS_PREV=()
+IS_PREV_F=()
 IS_PREV_KEY=()
-IS_OUT=()
+IS_OUT_F=()
 IS_OUT_KEY=()
 IS_RESOLVE=()
 on_exit() {
@@ -90,9 +90,12 @@ on_exit() {
   # Publication normally runs in the main shell so a signal during the rename
   # can still reach this trap and drop only this invocation's lock. Early exits
   # that never reached that call publish here. A second call is a no-op.
-  install_status_finalize || true
-  [ -z "${INSTALL_STATUS_TMP:-}" ] || rm -f "$INSTALL_STATUS_TMP" 2>/dev/null || true
-  install_status_release_lock || true
+  # Usage errors exit before the install-status functions are defined.
+  if declare -F install_status_finalize >/dev/null 2>&1; then
+    install_status_finalize || true
+    [ -z "${INSTALL_STATUS_TMP:-}" ] || rm -f "$INSTALL_STATUS_TMP" 2>/dev/null || true
+    install_status_release_lock || true
+  fi
   report_skipped_hosts
 }
 finish_setup() {
@@ -526,56 +529,77 @@ install_into_dir() {
 # magic, schema 1, sixteen fields per fact, END, count.
 # kind, home id, origin, origin qual, host, logical dir, physical dir,
 # dir id, skill, reason, cause, canonical compare, stripped compare,
-# observed version, sha256, detection. In-memory records are sixteen
-# base64 words so paths can contain spaces. The checker reads the frame;
-# this writer never sources it.
-_is_b64e() {
-  if [ -z "$1" ]; then
-    printf '~'
+# observed version, sha256, detection. In memory each record is sixteen
+# consecutive elements of a flat array (IS_NEW_F, IS_PREV_F, IS_OUT_F), so a
+# field keeps every byte except NUL without a subprocess per field. The
+# checker reads the frame; this writer never sources it.
+IS_FIELDS=16
+IS_LOWER=abcdefghijklmnopqrstuvwxyz
+IS_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+IS_DIGIT=0123456789
+IS_HEX=0123456789abcdef
+IS_HOME_NORM=""
+INSTALL_STATUS_VERSION=""
+# _is_append <array> <field>... appends to a flat record array. The array name
+# is always a literal from this file; values are assigned, never evaluated.
+_is_append() {
+  local __is_arr=$1 __is_n __is_v __is_i=0
+  shift
+  eval "__is_n=\${#$__is_arr[@]}"
+  for __is_v in "$@"; do
+    eval "$__is_arr[\$((__is_n + __is_i))]=\$__is_v"
+    __is_i=$((__is_i + 1))
+  done
+}
+# _is_set_uf <sixteen fields> sets UF_* and the fact's path, UF_PATH.
+_is_set_uf() {
+  UF_KIND=$1 UF_HOME=$2 UF_ORIGIN=$3 UF_OQUAL=$4 UF_HOST=$5 UF_LOGICAL=$6
+  UF_PHYSICAL=$7 UF_INODE=$8 UF_SKILL=$9 UF_REASON=${10} UF_CAUSE=${11}
+  UF_CANON=${12} UF_VARIANT=${13} UF_VERSION=${14} UF_SHA=${15} UF_DETECT=${16}
+  if [ -n "$UF_SKILL" ]; then UF_PATH="$UF_LOGICAL/$UF_SKILL"; else UF_PATH=$UF_LOGICAL; fi
+}
+# _is_load <array> <record index> sets UF_* from one record.
+_is_load() {
+  local b=$(( $2 * IS_FIELDS ))
+  eval "_is_set_uf \"\${$1[$b]}\" \"\${$1[$((b + 1))]}\" \"\${$1[$((b + 2))]}\" \
+    \"\${$1[$((b + 3))]}\" \"\${$1[$((b + 4))]}\" \"\${$1[$((b + 5))]}\" \
+    \"\${$1[$((b + 6))]}\" \"\${$1[$((b + 7))]}\" \"\${$1[$((b + 8))]}\" \
+    \"\${$1[$((b + 9))]}\" \"\${$1[$((b + 10))]}\" \"\${$1[$((b + 11))]}\" \
+    \"\${$1[$((b + 12))]}\" \"\${$1[$((b + 13))]}\" \"\${$1[$((b + 14))]}\" \
+    \"\${$1[$((b + 15))]}\""
+}
+# _is_store <array> [record index] writes UF_* as a new record, or over the
+# record at that index.
+_is_store() {
+  local __is_base __is_v __is_i=0
+  if [ -n "${2:-}" ]; then
+    __is_base=$(( $2 * IS_FIELDS ))
   else
-    printf '%s' "$1" | base64 | tr -d '\n'
+    eval "__is_base=\${#$1[@]}"
   fi
+  for __is_v in "$UF_KIND" "$UF_HOME" "$UF_ORIGIN" "$UF_OQUAL" "$UF_HOST" "$UF_LOGICAL" \
+    "$UF_PHYSICAL" "$UF_INODE" "$UF_SKILL" "$UF_REASON" "$UF_CAUSE" "$UF_CANON" \
+    "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT"; do
+    eval "$1[\$((__is_base + __is_i))]=\$__is_v"
+    __is_i=$((__is_i + 1))
+  done
 }
-_is_b64d() {
-  if [ "$1" = "~" ] || [ -z "$1" ]; then
-    printf ''
-  else
-    printf '%s' "$1" | base64 -D 2>/dev/null || printf '%s' "$1" | base64 -d 2>/dev/null
-  fi
+# _is_key <home> <host> <path> <reason> sets IS_KEY, the fact identity. Length
+# prefixes keep path bytes from colliding with the separators.
+_is_key() {
+  IS_KEY="${#1}:$1|${#2}:$2|${#3}:$3|${#4}:$4"
 }
-_is_pack() {
-  printf '%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s' \
-    "$(_is_b64e "$1")" "$(_is_b64e "$2")" "$(_is_b64e "$3")" "$(_is_b64e "$4")" \
-    "$(_is_b64e "$5")" "$(_is_b64e "$6")" "$(_is_b64e "$7")" "$(_is_b64e "$8")" \
-    "$(_is_b64e "$9")" "$(_is_b64e "${10}")" "$(_is_b64e "${11}")" "$(_is_b64e "${12}")" \
-    "$(_is_b64e "${13}")" "$(_is_b64e "${14}")" "$(_is_b64e "${15}")" "$(_is_b64e "${16}")"
-}
-_is_unpack() {
-  set -- $1
-  [ "$#" -eq 16 ] || return 1
-  UF_KIND=$(_is_b64d "$1")
-  UF_HOME=$(_is_b64d "$2")
-  UF_ORIGIN=$(_is_b64d "$3")
-  UF_OQUAL=$(_is_b64d "$4")
-  UF_HOST=$(_is_b64d "$5")
-  UF_LOGICAL=$(_is_b64d "$6")
-  UF_PHYSICAL=$(_is_b64d "$7")
-  UF_INODE=$(_is_b64d "$8")
-  UF_SKILL=$(_is_b64d "$9")
-  UF_REASON=$(_is_b64d "${10}")
-  UF_CAUSE=$(_is_b64d "${11}")
-  UF_CANON=$(_is_b64d "${12}")
-  UF_VARIANT=$(_is_b64d "${13}")
-  UF_VERSION=$(_is_b64d "${14}")
-  UF_SHA=$(_is_b64d "${15}")
-  UF_DETECT=$(_is_b64d "${16}")
-}
-_is_uf_path() {
-  if [ -n "$UF_SKILL" ]; then
-    printf '%s/%s' "$UF_LOGICAL" "$UF_SKILL"
-  else
-    printf '%s' "$UF_LOGICAL"
-  fi
+# _is_norm_path <path> sets IS_NORM: repeated slashes collapsed, no trailing slash.
+_is_norm_path() {
+  local s=$1 sl=/
+  while :; do
+    case "$s" in
+      *//*) s=${s//$sl$sl/$sl} ;;
+      *) break ;;
+    esac
+  done
+  [ "$s" = "/" ] || s=${s%/}
+  IS_NORM=$s
 }
 _is_sha() {
   local out=""
@@ -589,15 +613,24 @@ _is_sha() {
   fi
   return 1
 }
+# GNU stat is tried first: with GNU coreutils ahead of /usr/bin, `stat -f`
+# prints file-system details before failing. BSD stat rejects -c silently.
 _is_home_id() {
-  local phys=""
-  phys=$(cd -P "$HOME" 2>/dev/null && pwd -P) || return 1
-  stat -f '%d:%i' "$phys" 2>/dev/null || stat -c '%d:%i' "$phys" 2>/dev/null
+  stat -L -c '%d:%i' "$HOME" 2>/dev/null || stat -L -f '%d:%i' "$HOME" 2>/dev/null
 }
 _is_ensure_home() {
   [ -n "$INSTALL_STATUS_HOME_ID" ] && return 0
-  INSTALL_STATUS_HOME_ID=$(_is_home_id) || return 1
-  [ -n "$INSTALL_STATUS_HOME_ID" ]
+  local id=""
+  id=$(_is_home_id) || return 1
+  case "$id" in
+    [${IS_DIGIT}]*:[${IS_DIGIT}]*) ;;
+    *) return 1 ;;
+  esac
+  case "$id" in *[!${IS_DIGIT}:]*) return 1 ;; esac
+  INSTALL_STATUS_HOME_ID=$id
+  _is_norm_path "$HOME"
+  IS_HOME_NORM=$IS_NORM
+  [ "$IS_HOME_NORM" != "/" ] || IS_HOME_NORM=""
 }
 _is_dir_id() {
   IS_PHYSICAL=""
@@ -605,16 +638,15 @@ _is_dir_id() {
   local phys=""
   if phys=$(cd -P "$1" 2>/dev/null && pwd -P); then
     IS_PHYSICAL=$phys
-    IS_INODE=$(stat -f '%d:%i' "$phys" 2>/dev/null || stat -c '%d:%i' "$phys" 2>/dev/null || true)
+    IS_INODE=$(stat -c '%d:%i' "$phys" 2>/dev/null || stat -f '%d:%i' "$phys" 2>/dev/null || true)
   fi
 }
 _is_version() {
-  local v=""
+  [ -z "$INSTALL_STATUS_VERSION" ] || return 0
   if [ -f "$SCRIPT_DIR/VERSION" ]; then
-    v=$(tr -d '[:space:]' < "$SCRIPT_DIR/VERSION" || true)
+    INSTALL_STATUS_VERSION=$(tr -d '[:space:]' < "$SCRIPT_DIR/VERSION" || true)
   fi
-  [ -n "$v" ] || v=unknown
-  printf '%s' "$v"
+  [ -n "$INSTALL_STATUS_VERSION" ] || INSTALL_STATUS_VERSION=unknown
 }
 _is_detect() {
   case "$1" in
@@ -688,28 +720,24 @@ _is_compare() {
   fi
   rm -f "$tmp" || true
 }
-_is_identity_key() {
-  printf '%s %s %s %s' \
-    "$(_is_b64e "$UF_HOME")" "$(_is_b64e "$UF_HOST")" \
-    "$(_is_b64e "$(_is_uf_path)")" "$(_is_b64e "$UF_REASON")"
-}
+# _is_push_new <qualification> appends UF_* to the observations of this run.
 _is_push_new() {
-  IS_NEW[${#IS_NEW[@]}]="$1"
-  IS_NEW_KEY[${#IS_NEW_KEY[@]}]="$2"
-  IS_NEW_QUAL[${#IS_NEW_QUAL[@]}]="$3"
+  _is_store IS_NEW_F
+  _is_key "$UF_HOME" "$UF_HOST" "$UF_PATH" "$UF_REASON"
+  IS_NEW_KEY[${#IS_NEW_KEY[@]}]=$IS_KEY
+  IS_NEW_QUAL[${#IS_NEW_QUAL[@]}]=$1
 }
 install_status_note_host() {
-  local host="$1" reason="$2" cause="$3" logical ver detect
+  local host="$1" reason="$2" cause="$3" logical detect
   _is_ensure_home || return 0
   logical=$(host_skills_dir "$host")
   _is_dir_id "$logical"
-  ver=$(_is_version)
+  _is_version
   detect=$(_is_detect "$host")
-  _is_push_new "$(_is_pack fact "$INSTALL_STATUS_HOME_ID" "$SCRIPT_DIR" this_checkout \
+  _is_set_uf fact "$INSTALL_STATUS_HOME_ID" "$SCRIPT_DIR" this_checkout \
     "$host" "$logical" "$IS_PHYSICAL" "$IS_INODE" "" "$reason" "$cause" \
-    not_applicable not_applicable "$ver" "" "$detect")" \
-    "$(_is_b64e "$INSTALL_STATUS_HOME_ID") $(_is_b64e "$host") $(_is_b64e "$logical") $(_is_b64e "$reason")" \
-    this_checkout
+    not_applicable not_applicable "$INSTALL_STATUS_VERSION" "" "$detect"
+  _is_push_new this_checkout
 }
 install_status_note_unsafe() {
   local host="$1" msg="$2" cause
@@ -725,18 +753,17 @@ install_status_note_unsafe() {
   install_status_note_host "$host" unsafe_directory "$cause"
 }
 install_status_note_preserved() {
-  local dir="$1" skill="$2" sha="" ver logical
+  local dir="$1" skill="$2" sha="" logical
   _is_ensure_home || return 0
   logical=$(host_skills_dir claude)
   _is_compare "$dir/SKILL.md" "$skill"
   sha=$(_is_sha "$dir/SKILL.md" || true)
   _is_dir_id "$dir"
-  ver=$(_is_version)
-  _is_push_new "$(_is_pack fact "$INSTALL_STATUS_HOME_ID" "$IS_ORIGIN_FOUND" "$IS_QUAL" \
+  _is_version
+  _is_set_uf fact "$INSTALL_STATUS_HOME_ID" "$IS_ORIGIN_FOUND" "$IS_QUAL" \
     claude "$logical" "$IS_PHYSICAL" "$IS_INODE" "$skill" preserved_regular \
-    regular_file_not_overwritten "$IS_CANON" "$IS_VARIANT" "$ver" "$sha" not_applicable)" \
-    "$(_is_b64e "$INSTALL_STATUS_HOME_ID") $(_is_b64e "claude") $(_is_b64e "$logical/$skill") $(_is_b64e "preserved_regular")" \
-    "$IS_QUAL"
+    regular_file_not_overwritten "$IS_CANON" "$IS_VARIANT" "$INSTALL_STATUS_VERSION" "$sha" not_applicable
+  _is_push_new "$IS_QUAL"
 }
 install_status_scan() {
   local skills_dir skill dir
@@ -770,19 +797,22 @@ _is_separated() {
   return 0
 }
 _is_mark() {
-  IS_RESOLVE[${#IS_RESOLVE[@]}]="$(_is_b64e "$1") $(_is_b64e "$2") $(_is_b64e "$3") $(_is_b64e "$4")"
+  _is_key "$1" "$2" "$3" "$4"
+  IS_RESOLVE[${#IS_RESOLVE[@]}]=$IS_KEY
 }
+# Candidate resolutions. Each one is reverified under the lock before a fact
+# clears. An unsafe directory needs only to pass safety now; a shared one must
+# also be separated from every other host's directory.
 install_status_mark_resolutions() {
   local host dir skill skills_dir home
-  _is_ensure_home || return 0
   home=$INSTALL_STATUS_HOME_ID
   for host in claude codex opencode cursor; do
     _is_host_done "$host" || continue
     dir=$(host_skills_dir "$host")
-    _is_separated "$host" || continue
     is_safe_install_path "$dir" >/dev/null 2>&1 || continue
-    _is_mark "$home" "$host" "$dir" shared_directory
     _is_mark "$home" "$host" "$dir" unsafe_directory
+    _is_separated "$host" || continue
+    _is_mark "$home" "$host" "$dir" shared_directory
   done
   dir=$(host_skills_dir cursor)
   if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
@@ -805,8 +835,8 @@ install_status_mark_resolutions() {
 _is_warn() {
   local cause="$1" path q docs
   path="$INSTALL_STATUS_DIR/install-status"
-  q=$(printf '%q' "$path")
-  docs=$(printf '%q' "$SCRIPT_DIR/docs/installation.md#state-recovery")
+  q=$(LC_ALL=C; printf '%q' "$path")
+  docs=$(LC_ALL=C; printf '%q' "$SCRIPT_DIR/docs/installation.md#state-recovery")
   printf 'INSTALL_WARN reason=status_unsaved path=%s cause=%s freshness=unknown saved=no Fix: %s\n' \
     "$q" "$cause" "$docs"
 }
@@ -824,12 +854,20 @@ install_status_release_lock() {
   fi
   INSTALL_STATUS_LOCK_OWNED=0
 }
+# _is_acquire returns 0 with the lock held, 1 after five seconds of contention,
+# or 2 when the lock cannot be created at all.
 _is_acquire() {
   local lock="$INSTALL_STATUS_DIR/install-status.lock" start
   INSTALL_STATUS_NONCE=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)
   [ -n "$INSTALL_STATUS_NONCE" ] || INSTALL_STATUS_NONCE=$$
   start=$SECONDS
   while ! mkdir "$lock" 2>/dev/null; do
+    if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
+      # Nothing holds the name, so mkdir itself is failing. One retry covers a
+      # holder that released between the two calls.
+      mkdir "$lock" 2>/dev/null && break
+      [ -d "$lock" ] || return 2
+    fi
     if [ $((SECONDS - start)) -ge 5 ]; then
       return 1
     fi
@@ -837,8 +875,11 @@ _is_acquire() {
   done
   INSTALL_STATUS_LOCK_OWNED=1
   if ! printf '%s %s\n' "$$" "$INSTALL_STATUS_NONCE" > "$lock/owner"; then
-    install_status_release_lock || true
-    return 1
+    # This invocation just created the lock and nothing else can own it yet.
+    rm -f "$lock/owner" 2>/dev/null || true
+    rmdir "$lock" 2>/dev/null || true
+    INSTALL_STATUS_LOCK_OWNED=0
+    return 2
   fi
   return 0
 }
@@ -850,8 +891,9 @@ _is_enum() {
   done
   return 1
 }
-_is_valid_unpacked() {
-  local path
+# Structure every record must have, whichever HOME wrote it. Character classes
+# are spelled out so the locale cannot widen them.
+_is_valid_fact() {
   _is_enum "$UF_KIND" fact || return 1
   _is_enum "$UF_OQUAL" this_checkout verified_checkout prior_qualified || return 1
   _is_enum "$UF_HOST" claude codex opencode cursor || return 1
@@ -859,19 +901,28 @@ _is_valid_unpacked() {
   _is_enum "$UF_CANON" matches_canonical differs_canonical source_unavailable not_applicable || return 1
   _is_enum "$UF_VARIANT" matches_stripped differs_stripped not_applicable unavailable || return 1
   _is_enum "$UF_DETECT" binary existing_skill cursor_home explicit_host not_applicable || return 1
-  case "$UF_CAUSE" in *[!a-z0-9_]*) return 1 ;; "") return 1 ;; esac
-  case "$UF_HOME" in [0-9]*:[0-9]*) ;; *) return 1 ;; esac
-  case "$UF_HOME" in *[!0-9:]*) return 1 ;; esac
-  case "$UF_INODE" in "") ;; [0-9]*:[0-9]*) case "$UF_INODE" in *[!0-9:]*) return 1 ;; esac ;; *) return 1 ;; esac
+  case "$UF_CAUSE" in ""|*[!${IS_LOWER}${IS_DIGIT}_]*) return 1 ;; esac
+  [ "${#UF_CAUSE}" -le 64 ] || return 1
+  case "$UF_HOME" in [${IS_DIGIT}]*:[${IS_DIGIT}]*) ;; *) return 1 ;; esac
+  case "$UF_HOME" in *[!${IS_DIGIT}:]*) return 1 ;; esac
+  case "$UF_INODE" in
+    "") ;;
+    [${IS_DIGIT}]*:[${IS_DIGIT}]*) case "$UF_INODE" in *[!${IS_DIGIT}:]*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
   case "$UF_SHA" in
     "") ;;
     *)
       [ "${#UF_SHA}" -eq 64 ] || return 1
-      case "$UF_SHA" in *[!0-9a-f]*) return 1 ;; esac
+      case "$UF_SHA" in *[!${IS_HEX}]*) return 1 ;; esac
       ;;
   esac
-  case "$UF_VERSION" in *[!0-9A-Za-z._+-]*) return 1 ;; "") return 1 ;; esac
-  case "$UF_SKILL" in "") ;; *[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$UF_VERSION" in ""|*[!${IS_LOWER}${IS_UPPER}${IS_DIGIT}._+-]*) return 1 ;; esac
+  [ "${#UF_VERSION}" -le 64 ] || return 1
+  case "$UF_SKILL" in
+    "") ;;
+    .|..|*[!${IS_LOWER}${IS_UPPER}${IS_DIGIT}._-]*) return 1 ;;
+  esac
   case "$UF_ORIGIN" in /*) ;; *) return 1 ;; esac
   case "$UF_LOGICAL" in /*) ;; *) return 1 ;; esac
   case "$UF_PHYSICAL" in "") ;; /*) ;; *) return 1 ;; esac
@@ -879,16 +930,32 @@ _is_valid_unpacked() {
     preserved_regular) [ -n "$UF_SKILL" ] || return 1 ;;
     *) [ -z "$UF_SKILL" ] || return 1 ;;
   esac
-  path=$(_is_uf_path)
-  case "$path/" in
-    "$HOME"/*) ;;
+  return 0
+}
+# A record for this HOME must name this host's skills directory under HOME.
+# Another HOME's records keep only the structural check and pass through.
+_is_bound_fact() {
+  local want
+  case "$UF_HOST" in
+    claude) want=/.claude/skills ;;
+    codex) want=/.codex/skills ;;
+    opencode) want=/.config/opencode/skills ;;
+    cursor) want=/.cursor/skills ;;
     *) return 1 ;;
   esac
+  _is_norm_path "$UF_LOGICAL"
+  [ "$IS_NORM" = "$IS_HOME_NORM$want" ]
+}
+_is_check_fact() {
+  _is_valid_fact || return 1
+  if [ "$UF_HOME" = "$INSTALL_STATUS_HOME_ID" ]; then
+    _is_bound_fact || return 1
+  fi
   return 0
 }
 _is_load_prev() {
-  local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n rec_at
-  IS_PREV=()
+  local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n
+  IS_PREV_F=()
   IS_PREV_KEY=()
   IS_READ=absent
   if [ ! -e "$file" ] && [ ! -L "$file" ]; then
@@ -899,16 +966,16 @@ _is_load_prev() {
   if [ -p "$file" ]; then IS_READ=fifo; return 0; fi
   if [ ! -f "$file" ]; then IS_READ=not_regular; return 0; fi
   if [ ! -r "$file" ]; then IS_READ=not_readable; return 0; fi
-  bytes=$(stat -f '%z' "$file" 2>/dev/null || stat -c '%s' "$file" 2>/dev/null || echo "")
+  bytes=$(stat -c '%s' "$file" 2>/dev/null || stat -f '%z' "$file" 2>/dev/null || echo "")
   case "$bytes" in
-    ""|*[!0-9]*) IS_READ=not_readable; return 0 ;;
+    ""|*[!${IS_DIGIT}]*) IS_READ=not_readable; return 0 ;;
   esac
   if [ "$bytes" -gt 1048576 ]; then IS_READ=oversized; return 0; fi
   fields=()
   while IFS= read -r -d '' _is_field || [ -n "${_is_field:-}" ]; do
     fields[${#fields[@]}]="$_is_field"
     _is_field=""
-    if [ "${#fields[@]}" -gt $((2 + 4096 * 16 + 2)) ]; then
+    if [ "${#fields[@]}" -gt $((2 + 4096 * IS_FIELDS + 2)) ]; then
       IS_READ=oversized
       return 0
     fi
@@ -922,63 +989,46 @@ _is_load_prev() {
     if [ "${fields[$i]}" = "END" ]; then
       if [ $((i + 2)) -ne "$n" ]; then IS_READ=extra_data; return 0; fi
       case "${fields[$((i + 1))]}" in
-        ""|*[!0-9]*) IS_READ=count_mismatch; return 0 ;;
+        ""|*[!${IS_DIGIT}]*) IS_READ=count_mismatch; return 0 ;;
       esac
-      [ "${fields[$((i + 1))]}" -eq "${#IS_PREV[@]}" ] || { IS_READ=count_mismatch; return 0; }
+      [ "${fields[$((i + 1))]}" -eq "${#IS_PREV_KEY[@]}" ] || { IS_READ=count_mismatch; return 0; }
       IS_READ=ok
       return 0
     fi
-    if [ $((i + 16)) -gt "$n" ]; then IS_READ=truncated; return 0; fi
-    if [ "${#IS_PREV[@]}" -ge 4096 ]; then IS_READ=oversized; return 0; fi
-    rec_at=$i
-    UF_KIND=${fields[$((rec_at + 0))]}
-    UF_HOME=${fields[$((rec_at + 1))]}
-    UF_ORIGIN=${fields[$((rec_at + 2))]}
-    UF_OQUAL=${fields[$((rec_at + 3))]}
-    UF_HOST=${fields[$((rec_at + 4))]}
-    UF_LOGICAL=${fields[$((rec_at + 5))]}
-    UF_PHYSICAL=${fields[$((rec_at + 6))]}
-    UF_INODE=${fields[$((rec_at + 7))]}
-    UF_SKILL=${fields[$((rec_at + 8))]}
-    UF_REASON=${fields[$((rec_at + 9))]}
-    UF_CAUSE=${fields[$((rec_at + 10))]}
-    UF_CANON=${fields[$((rec_at + 11))]}
-    UF_VARIANT=${fields[$((rec_at + 12))]}
-    UF_VERSION=${fields[$((rec_at + 13))]}
-    UF_SHA=${fields[$((rec_at + 14))]}
-    UF_DETECT=${fields[$((rec_at + 15))]}
+    if [ $((i + IS_FIELDS)) -gt "$n" ]; then IS_READ=truncated; return 0; fi
+    if [ "${#IS_PREV_KEY[@]}" -ge 4096 ]; then IS_READ=oversized; return 0; fi
+    _is_set_uf "${fields[$i]}" "${fields[$((i + 1))]}" "${fields[$((i + 2))]}" \
+      "${fields[$((i + 3))]}" "${fields[$((i + 4))]}" "${fields[$((i + 5))]}" \
+      "${fields[$((i + 6))]}" "${fields[$((i + 7))]}" "${fields[$((i + 8))]}" \
+      "${fields[$((i + 9))]}" "${fields[$((i + 10))]}" "${fields[$((i + 11))]}" \
+      "${fields[$((i + 12))]}" "${fields[$((i + 13))]}" "${fields[$((i + 14))]}" \
+      "${fields[$((i + 15))]}"
     if [ "$UF_KIND" != "fact" ]; then IS_READ=unknown_record; return 0; fi
-    _is_valid_unpacked || { IS_READ=malformed; return 0; }
-    IS_PREV[${#IS_PREV[@]}]="$(_is_pack "$UF_KIND" "$UF_HOME" "$UF_ORIGIN" "$UF_OQUAL" "$UF_HOST" "$UF_LOGICAL" "$UF_PHYSICAL" "$UF_INODE" "$UF_SKILL" "$UF_REASON" "$UF_CAUSE" "$UF_CANON" "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT")"
-    IS_PREV_KEY[${#IS_PREV_KEY[@]}]="$(_is_identity_key)"
-    i=$((i + 16))
+    _is_check_fact || { IS_READ=malformed; return 0; }
+    _is_store IS_PREV_F
+    _is_key "$UF_HOME" "$UF_HOST" "$UF_PATH" "$UF_REASON"
+    IS_PREV_KEY[${#IS_PREV_KEY[@]}]=$IS_KEY
+    i=$((i + IS_FIELDS))
   done
   IS_READ=truncated
 }
-_is_same_identity() {
-  local home="$1" host="$2" path="$3" reason="$4"
-  [ "$UF_HOME" = "$home" ] && [ "$UF_HOST" = "$host" ] && [ "$(_is_uf_path)" = "$path" ] && [ "$UF_REASON" = "$reason" ]
-}
-_is_prev_qualified() {
+_is_prev_has() {
   local key="$1" i=0
   [ -n "$key" ] || return 1
   while [ "$i" -lt "${#IS_PREV_KEY[@]}" ]; do
-    if [ "${IS_PREV_KEY[$i]}" = "$key" ]; then
-      _is_unpack "${IS_PREV[$i]}" || return 1
-      case "$UF_OQUAL" in
-        this_checkout|verified_checkout|prior_qualified) return 0 ;;
-      esac
-    fi
+    [ "${IS_PREV_KEY[$i]}" = "$key" ] && return 0
     i=$((i + 1))
   done
   return 1
 }
+# _is_out_index <key> sets IS_IDX to the matching output record.
 _is_out_index() {
   local key="$1" i=0
+  IS_IDX=""
   [ -n "$key" ] || return 1
   while [ "$i" -lt "${#IS_OUT_KEY[@]}" ]; do
     if [ "${IS_OUT_KEY[$i]}" = "$key" ]; then
-      printf '%s' "$i"
+      IS_IDX=$i
       return 0
     fi
     i=$((i + 1))
@@ -1019,13 +1069,14 @@ _is_canonical_link() {
   [ "$(lex_abs "$target")" = "$(lex_abs "$expected")" ]
 }
 _is_reverify() {
-  local path dir current_inode host
-  path=$(_is_uf_path)
+  local dir current_inode host
   case "$UF_REASON" in
     shared_directory|unsafe_directory)
       _is_host_done "$UF_HOST" || return 1
       [ "$UF_LOGICAL" = "$(host_skills_dir "$UF_HOST")" ] || return 1
-      _is_separated "$UF_HOST" || return 1
+      if [ "$UF_REASON" = shared_directory ]; then
+        _is_separated "$UF_HOST" || return 1
+      fi
       is_safe_install_path "$UF_LOGICAL" >/dev/null 2>&1 || return 1
       return 0
       ;;
@@ -1045,7 +1096,7 @@ _is_reverify() {
     preserved_regular)
       [ "$UF_HOST" = "claude" ] || return 1
       [ "$UF_LOGICAL" = "$(host_skills_dir claude)" ] || return 1
-      dir="$path"
+      dir="$UF_PATH"
       [ -n "$UF_INODE" ] || return 1
       _is_dir_id "$dir"
       current_inode=$IS_INODE
@@ -1069,74 +1120,75 @@ _is_marked_key() {
   done
   return 1
 }
+# Start from the latest predecessor and fold in this run's observations. An
+# observation for a missing origin counts only when that exact fact was
+# already recorded.
 _is_merge() {
-  local i=0 rec qual idx key kept=() kept_key=() j=0
-  IS_OUT=()
-  IS_OUT_KEY=()
-  while [ "$i" -lt "${#IS_PREV[@]}" ]; do
-    IS_OUT[$i]="${IS_PREV[$i]}"
-    IS_OUT_KEY[$i]="${IS_PREV_KEY[$i]}"
-    i=$((i + 1))
-  done
-  i=0
-  while [ "$i" -lt "${#IS_NEW[@]}" ]; do
-    rec="${IS_NEW[$i]}"
-    key="${IS_NEW_KEY[$i]}"
-    qual="${IS_NEW_QUAL[$i]}"
-    if [ "$qual" = "prior_qualified" ]; then
-      _is_prev_qualified "$key" || { i=$((i + 1)); continue; }
+  local i=0 n key
+  IS_OUT_F=(${IS_PREV_F[@]+"${IS_PREV_F[@]}"})
+  IS_OUT_KEY=(${IS_PREV_KEY[@]+"${IS_PREV_KEY[@]}"})
+  n=${#IS_NEW_KEY[@]}
+  while [ "$i" -lt "$n" ]; do
+    key=${IS_NEW_KEY[$i]}
+    if [ "${IS_NEW_QUAL[$i]}" = "prior_qualified" ] && ! _is_prev_has "$key"; then
+      i=$((i + 1))
+      continue
     fi
-    if idx=$(_is_out_index "$key"); then
-      IS_OUT[$idx]="$rec"
-      IS_OUT_KEY[$idx]="$key"
+    _is_load IS_NEW_F "$i"
+    if _is_out_index "$key"; then
+      _is_store IS_OUT_F "$IS_IDX"
     else
-      IS_OUT[${#IS_OUT[@]}]="$rec"
-      IS_OUT_KEY[${#IS_OUT_KEY[@]}]="$key"
+      _is_store IS_OUT_F
+      IS_OUT_KEY[${#IS_OUT_KEY[@]}]=$key
     fi
     i=$((i + 1))
   done
-  if [ "$INSTALL_STATUS_RECONCILE" -eq 1 ]; then
-    i=0
-    while [ "$i" -lt "${#IS_OUT[@]}" ]; do
-      rec="${IS_OUT[$i]}"
-      key="${IS_OUT_KEY[$i]}"
-      if _is_marked_key "$key" && _is_unpack "$rec" && _is_reverify; then
-        i=$((i + 1))
-        continue
-      fi
-      kept[$j]="$rec"
-      kept_key[$j]="$key"
-      j=$((j + 1))
+}
+# Drop only facts whose candidate resolution reverifies now.
+_is_reconcile() {
+  local i=0 n kept_f=() kept_key=()
+  n=${#IS_OUT_KEY[@]}
+  while [ "$i" -lt "$n" ]; do
+    _is_load IS_OUT_F "$i"
+    if _is_marked_key "${IS_OUT_KEY[$i]}" && _is_reverify; then
       i=$((i + 1))
-    done
-    IS_OUT=()
-    IS_OUT_KEY=()
-    i=0
-    while [ "$i" -lt "${#kept[@]}" ]; do
-      IS_OUT[$i]="${kept[$i]}"
-      IS_OUT_KEY[$i]="${kept_key[$i]}"
-      i=$((i + 1))
-    done
-  fi
+      continue
+    fi
+    _is_store kept_f
+    kept_key[${#kept_key[@]}]=${IS_OUT_KEY[$i]}
+    i=$((i + 1))
+  done
+  IS_OUT_F=(${kept_f[@]+"${kept_f[@]}"})
+  IS_OUT_KEY=(${kept_key[@]+"${kept_key[@]}"})
+}
+# Never publish a frame the readers would reject.
+_is_out_valid() {
+  local i=0 n=${#IS_OUT_KEY[@]}
+  [ "$n" -le 4096 ] || return 1
+  while [ "$i" -lt "$n" ]; do
+    _is_load IS_OUT_F "$i"
+    _is_check_fact || return 1
+    i=$((i + 1))
+  done
+  return 0
 }
 _is_write_out() {
-  local dest="$1" i=0 n
-  n=${#IS_OUT[@]}
+  local dest="$1" i=0 n=${#IS_OUT_KEY[@]}
   {
-    printf '%s\0%s\0' "gstack-extend-install-status" "1"
+    printf '%s\0%s\0' "gstack-extend-install-status" "1" || return 1
     while [ "$i" -lt "$n" ]; do
-      _is_unpack "${IS_OUT[$i]}" || return 1
+      _is_load IS_OUT_F "$i"
       printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$UF_KIND" "$UF_HOME" "$UF_ORIGIN" "$UF_OQUAL" "$UF_HOST" "$UF_LOGICAL" \
         "$UF_PHYSICAL" "$UF_INODE" "$UF_SKILL" "$UF_REASON" "$UF_CAUSE" \
-        "$UF_CANON" "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT"
+        "$UF_CANON" "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT" || return 1
       i=$((i + 1))
     done
-    printf '%s\0%s\0' "END" "$n"
+    printf '%s\0%s\0' "END" "$n" || return 1
   } > "$dest"
 }
 _is_publish_file() {
-  local dest="$INSTALL_STATUS_DIR/install-status" tmp
+  local dest="$INSTALL_STATUS_DIR/install-status" tmp bytes
   if [ -L "$dest" ] || [ -d "$dest" ] || [ -p "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
     _is_warn unsafe_target
     return 0
@@ -1150,6 +1202,16 @@ _is_publish_file() {
     rm -f "$tmp" || true
     INSTALL_STATUS_TMP=""
     _is_warn write_failed
+    return 0
+  fi
+  bytes=$(stat -c '%s' "$tmp" 2>/dev/null || stat -f '%z' "$tmp" 2>/dev/null || echo "")
+  case "$bytes" in
+    ""|*[!${IS_DIGIT}]*) bytes=0 ;;
+  esac
+  if [ "$bytes" -gt 1048576 ]; then
+    rm -f "$tmp" || true
+    INSTALL_STATUS_TMP=""
+    _is_warn oversized
     return 0
   fi
   if ! chmod 0600 "$tmp"; then
@@ -1168,6 +1230,7 @@ _is_publish_file() {
   return 0
 }
 install_status_finalize() {
+  local rc=0
   [ "${INSTALL_STATUS_FINALIZED:-0}" -eq 1 ] && return 0
   INSTALL_STATUS_FINALIZED=1
   [ "$INSTALL_STATUS_ACTIVE" -eq 1 ] || return 0
@@ -1176,20 +1239,19 @@ install_status_finalize() {
     _is_warn home_unreadable
     return 0
   fi
-  if [ "$INSTALL_STATUS_RECONCILE" -eq 1 ]; then
-    install_status_mark_resolutions || true
-  fi
-  if [ "$INSTALL_STATUS_RECONCILE" -eq 0 ] && [ "${#IS_NEW[@]}" -eq 0 ]; then
+  if [ "$INSTALL_STATUS_RECONCILE" -eq 0 ] && [ "${#IS_NEW_KEY[@]}" -eq 0 ]; then
     return 0
   fi
   if ! mkdir -p "$INSTALL_STATUS_DIR"; then
     _is_warn mkdir_failed
     return 0
   fi
-  if ! _is_acquire; then
-    _is_warn lock_timeout
-    return 0
-  fi
+  _is_acquire || rc=$?
+  case "$rc" in
+    0) ;;
+    1) _is_warn lock_timeout; return 0 ;;
+    *) _is_warn lock_failed; return 0 ;;
+  esac
   _is_load_prev || true
   case "$IS_READ" in
     absent|ok) ;;
@@ -1199,7 +1261,16 @@ install_status_finalize() {
       return 0
       ;;
   esac
-  _is_merge || true
+  _is_merge
+  if [ "$INSTALL_STATUS_RECONCILE" -eq 1 ] && [ "${#IS_OUT_KEY[@]}" -gt 0 ]; then
+    install_status_mark_resolutions || true
+    _is_reconcile
+  fi
+  if ! _is_out_valid; then
+    _is_warn invalid_record
+    install_status_release_lock || true
+    return 0
+  fi
   _is_publish_file || true
   install_status_release_lock || true
 }
@@ -1288,6 +1359,7 @@ report_unserved_cursor() {
 # A lone yielded Cursor falls back to Claude, as detecting nothing does; a skipped Codex or OpenCode does not.
 if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ "$SKIPPED_NON_CURSOR" -eq 0 ] && ! any_host_selected; then
   INSTALL_CLAUDE=1
+  [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
 
 # ─── Uninstall ─────────────────────────────────────────────────────
@@ -1368,6 +1440,7 @@ if [ "$HOST" = "auto" ] && ! any_host_selected; then
     finish_setup 1
   fi
   INSTALL_CLAUDE=1
+  [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
 
 # A --host pass whose host was skipped installs nothing, so it leaves the shared CLI links and registry alone.
