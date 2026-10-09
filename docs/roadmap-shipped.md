@@ -124,3 +124,15 @@ Suite 113s → 32s; audit snapshots 124s → 7.3s.
 _tombstone: 22_
 
 - 2026-10-08: all six original Group 22 Tracks independently recorded above; no active pin declared. Prefix 22 is retired.
+
+## Individual Track history
+
+### Track 23A: Repair quota fixture paths for Paseo worktrees ✓ Shipped (v0.36.1.0)
+- 2026-10-08: merged [PR #135](https://github.com/kbitz/gstack-extend/pull/135) (commit `a25f8f1`); verified land-time Track 23A, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing. The ID had earlier labeled the unrelated `/pair-review` resume Track (2026-09-30, `756e566`), which remains unshipped.
+- Plan completion passed: 25 items done and 1 user-approved change (a `docs/TODOS.md` backlog note beyond the `tests/quota_cases.py` fence). Independent literal path profiles cover ordinary and dot-directory checkouts; production slug normalization is unchanged. Native host and provider acceptance stay with their SPEC/PROGRESS owners.
+
+## Individual Track history
+
+### Track 23B: Read the Conductor store shape in `cursor_turns()` ✓ Shipped (v0.36.2.0)
+- 2026-10-09: merged [PR #136](https://github.com/kbitz/gstack-extend/pull/136) (commit `faa17ac`); verified land-time Track 23B, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
+- 56/56 approved plan items verified (T01–T42, R01–R14). Fixtures cover epoch-millisecond times and list-valued params in the NDJSON store shape. T42's in-PR obligation (handoff and procedure) was met; its native receipt was a separate post-install gate. Receipt 1 (2026-10-09) was negative: current Conductor builds write SQLite shards this reader does not read. The follow-up is the SQLite store-reader Track (Track 23G as of 2026-10-09). O4 is not awarded.
