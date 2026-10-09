@@ -3,7 +3,7 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
@@ -775,7 +775,9 @@ describe('setup --host flags', () => {
       expect(r.stdout.endsWith(`SETUP_SKIPPED_HOSTS ${host}\n`)).toBe(true);
       expect(readlinkSync(join(bin, 'gstack-extend'))).toBe(foreign);
       expect(existsSync(join(bin, 'gstack-extend-telemetry'))).toBe(false);
-      expect(existsSync(join(home, '.gstack-extend'))).toBe(false);
+      // The skip is recorded. Registry registration still does not run.
+      expect(existsSync(join(home, '.gstack-extend', 'projects.json'))).toBe(false);
+      expect(existsSync(join(home, '.gstack-extend', 'install-status'))).toBe(true);
       expect(readdirSync(hostDir(home, 'claude'))).toEqual([]);
     });
   }
@@ -1272,6 +1274,737 @@ describe('setup --host flags', () => {
     });
   }
 });
+
+const VERSION_TEXT = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+const REMOTE_VERSION = join(baseTmp, 'track23c-remote-version');
+writeFileSync(REMOTE_VERSION, `${VERSION_TEXT}\n`);
+
+function homeDeviceId(home: string): string {
+  const st = statSync(realpathSync(home));
+  return `${st.dev}:${st.ino}`;
+}
+
+function statusPath(home: string): string {
+  return join(home, '.gstack-extend', 'install-status');
+}
+
+function checkFacts(home: string, state = join(home, '.gstack-extend')): { stdout: string; exitCode: number | null } {
+  const r = spawnSync(join(ROOT, 'bin', 'update-check'), [], {
+    encoding: 'utf8',
+    env: {
+      PATH: '/bin:/usr/bin',
+      HOME: home,
+      GSTACK_EXTEND_DIR: realpathSync(ROOT),
+      GSTACK_EXTEND_STATE_DIR: state,
+      GSTACK_EXTEND_REMOTE_URL: `file://${REMOTE_VERSION}`,
+    },
+  });
+  return { stdout: r.stdout ?? '', exitCode: r.status };
+}
+
+function plantRegularSkill(home: string, skill: string, body: string, origin = realpathSync(ROOT)): string {
+  const dir = join(hostDir(home, 'claude'), skill);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), body);
+  writeFileSync(join(dir, '.extend-root'), `${origin}\n`);
+  return dir;
+}
+
+function recoveryBody(id: string): string {
+  const docs = readFileSync(join(ROOT, 'docs/installation.md'), 'utf8');
+  const start = `<!-- recovery-example:${id} -->`;
+  const end = `<!-- /recovery-example:${id} -->`;
+  const at = docs.indexOf(start);
+  const to = docs.indexOf(end);
+  expect(at).toBeGreaterThanOrEqual(0);
+  expect(to).toBeGreaterThan(at);
+  const fence = docs.slice(at + start.length, to).match(/```bash\n([\s\S]*?)```/);
+  expect(fence).not.toBeNull();
+  return fence![1]!;
+}
+
+function runRecovery(
+  id: string,
+  home: string,
+  extra: Record<string, string> = {},
+  pathPrefix?: string,
+): { stdout: string; stderr: string; exitCode: number | null } {
+  const r = spawnSync('/bin/bash', ['-c', recoveryBody(id)], {
+    encoding: 'utf8',
+    env: {
+      PATH: pathPrefix ? `${pathPrefix}:/bin:/usr/bin` : (process.env.PATH ?? '/usr/bin:/bin'),
+      HOME: home,
+      GSTACK_EXTEND_RECOVERY_CHECKOUT: realpathSync(ROOT),
+      ...extra,
+    },
+  });
+  return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', exitCode: r.status };
+}
+
+function waitUntil(pred: () => boolean, ms: number): boolean {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (pred()) return true;
+    spawnSync('/bin/sleep', ['0.05']);
+  }
+  return pred();
+}
+
+function sha256(file: string): string {
+  const r = spawnSync('shasum', ['-a', '256', file], { encoding: 'utf8' });
+  return (r.stdout ?? '').split(' ')[0] ?? '';
+}
+
+function dirId(dir: string): string {
+  const st = statSync(realpathSync(dir));
+  return `${st.dev}:${st.ino}`;
+}
+
+describe('track 23C preserved skill copies', () => {
+  test('O1 shared-directory skip stays visible on a later check', () => {
+    const home = join(baseTmp, 'o1-shared');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
+    const r = runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS codex\n');
+    expect(r.stdout).not.toContain('INSTALL_WARN');
+    const first = checkFacts(home);
+    const second = checkFacts(home);
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain('reason=shared_directory');
+    expect(first.stdout).toContain('cause=shared_with_claude');
+    expect(first.stdout).toContain('detection=explicit_host');
+    expect(first.stdout).toContain('#shared-directory-migration');
+    expect(second.stdout).toBe(first.stdout);
+  });
+
+  test('O2 unsafe auto and explicit hosts keep a cause and do not rewrite files', () => {
+    const home = join(baseTmp, 'o2-unsafe');
+    const skills = hostDir(home, 'claude');
+    mkdirSync(skills, { recursive: true });
+    writeFileSync(join(skills, 'keep.txt'), 'untouched\n');
+    chmodSync(skills, 0o777);
+    const auto = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['claude']), true);
+    expect(auto.exitCode).toBe(1);
+    expect(auto.stdout).not.toContain('INSTALL_WARN');
+    expect(readFileSync(join(skills, 'keep.txt'), 'utf8')).toBe('untouched\n');
+    const warned = checkFacts(home);
+    expect(warned.stdout).toContain('host=claude');
+    expect(warned.stdout).toContain('reason=unsafe_directory');
+    expect(warned.stdout).toContain('cause=world_writable');
+    expect(warned.stdout).toContain('#troubleshooting');
+    chmodSync(skills, 0o755);
+
+    const explicitHome = join(baseTmp, 'o2-explicit');
+    const codex = hostDir(explicitHome, 'codex');
+    mkdirSync(codex, { recursive: true });
+    writeFileSync(join(codex, 'keep.txt'), 'explicit\n');
+    chmodSync(codex, 0o777);
+    const explicit = runSetup(['--host', 'codex', '--quiet'], explicitHome, isolatedPath(), true);
+    expect(explicit.exitCode).toBe(1);
+    expect(explicit.stderr).toContain('world-writable');
+    expect(readFileSync(join(codex, 'keep.txt'), 'utf8')).toBe('explicit\n');
+    expect(checkFacts(explicitHome).stdout).toContain('cause=world_writable');
+  });
+
+  test('O3 served Cursor stays quiet while a preserved owner copy still warns', () => {
+    const home = join(baseTmp, 'o3-served');
+    plantRegularSkill(home, 'implement', 'OWNER COPY\n');
+    mkdirSync(hostDir(home, 'cursor'), { recursive: true });
+    const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['claude', 'cursor']), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    const warned = checkFacts(home);
+    expect(warned.stdout).toContain('skill=implement');
+    expect(warned.stdout).toContain('reason=preserved_regular');
+    expect(warned.stdout).not.toContain('reason=cursor_unserved');
+    expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('OWNER COPY\n');
+  });
+
+  test('O3 unserved Cursor warns and does not hide the owner copy', () => {
+    const home = join(baseTmp, 'o3-unserved');
+    plantRegularSkill(home, 'implement', 'STILL HERE\n');
+    mkdirSync(join(home, '.cursor'));
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'cursor'));
+    const r = runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('SETUP_SKIPPED_HOSTS cursor\n');
+    const warned = checkFacts(home);
+    expect(warned.stdout).toContain('reason=cursor_unserved');
+    expect(warned.stdout).toContain('cause=owner_not_selected');
+    expect(warned.stdout).toContain('skill=implement');
+    expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('STILL HERE\n');
+  });
+
+  test('O4 raw-equal and stripped-variant copies stay observations', () => {
+    const home = join(baseTmp, 'o4-compare');
+    const raw = readFileSync(join(ROOT, 'skills', 'roadmap.md'));
+    plantRegularSkill(home, 'roadmap', raw.toString());
+    const strippedRun = spawnSync('/bin/bash', ['-c', `awk '
+      BEGIN { fm=0; skip=0 }
+      /^---[[:space:]]*$/ {
+        if (fm==0) { fm=1; print; next }
+        skip=0; print; next
+      }
+      fm==1 && /^allowed-tools:[[:space:]]*$/ { skip=1; next }
+      skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
+      skip==1 { skip=0 }
+      { print }
+    ' "$1"`, 'bash', join(ROOT, 'skills', 'roadmap.md')], { encoding: 'utf8' });
+    expect(strippedRun.status).toBe(0);
+    expect(strippedRun.stdout).not.toBe(raw.toString());
+    const variantHome = join(baseTmp, 'o4-variant');
+    plantRegularSkill(variantHome, 'roadmap', strippedRun.stdout);
+    runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    runSetup(['--host', 'claude', '--quiet'], variantHome, isolatedPath(), true);
+    const rawWarn = checkFacts(home).stdout;
+    const variantWarn = checkFacts(variantHome).stdout;
+    expect(rawWarn).toContain('skill=roadmap');
+    expect(rawWarn).toContain('compare=matches_canonical');
+    expect(rawWarn).toContain(`observed=${VERSION_TEXT}`);
+    expect(rawWarn).toContain('freshness=unverified');
+    expect(rawWarn).not.toContain('customized');
+    expect(rawWarn).not.toContain('disposable');
+    expect(variantWarn).toContain('compare=differs_canonical');
+    expect(variantWarn).toContain('variant=matches_stripped');
+    expect(readFileSync(join(hostDir(home, 'claude'), 'roadmap', 'SKILL.md'))).toEqual(raw);
+    expect(readFileSync(join(hostDir(variantHome, 'claude'), 'roadmap', 'SKILL.md'), 'utf8')).toBe(strippedRun.stdout);
+  });
+
+  test('O5 a retired regular copy is kept and reported source-unavailable', () => {
+    const home = join(baseTmp, 'o5-retired');
+    const body = 'RETIRED COPY\n';
+    const dir = plantRegularSkill(home, 'review-apparatus', body);
+    const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe(body);
+    const warned = checkFacts(home).stdout;
+    expect(warned).toContain('skill=review-apparatus');
+    expect(warned).toContain('reason=preserved_regular');
+    expect(warned).toContain('compare=source_unavailable');
+    expect(warned).toContain('variant=not_applicable');
+  });
+
+  test('O6 foreign, marker-only and non-regular files are not claimed or changed', () => {
+    const home = join(baseTmp, 'o6-foreign');
+    const foreignDir = join(baseTmp, 'o6-not-a-checkout');
+    mkdirSync(foreignDir, { recursive: true });
+    const foreign = plantRegularSkill(home, 'implement', 'FOREIGN\n', foreignDir);
+    const marker = join(hostDir(home, 'claude'), 'pair-review');
+    mkdirSync(marker, { recursive: true });
+    writeFileSync(join(marker, '.extend-root'), `${realpathSync(ROOT)}\n`);
+    writeFileSync(join(marker, 'notes.md'), 'marker only\n');
+    const odd = join(hostDir(home, 'claude'), 'roadmap');
+    mkdirSync(odd, { recursive: true });
+    mkdirSync(join(odd, 'SKILL.md'));
+    writeFileSync(join(odd, '.extend-root'), `${realpathSync(ROOT)}\n`);
+    const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(join(foreign, 'SKILL.md'), 'utf8')).toBe('FOREIGN\n');
+    expect(lstatSync(join(marker, 'SKILL.md')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(marker, 'notes.md'), 'utf8')).toBe('marker only\n');
+    expect(lstatSync(join(odd, 'SKILL.md')).isDirectory()).toBe(true);
+    const warned = checkFacts(home).stdout;
+    expect(warned).not.toContain('skill=implement');
+    expect(warned).not.toContain('skill=pair-review');
+    expect(warned).not.toContain('skill=roadmap');
+  });
+
+  test('O7 another HOME and an unrepaired origin do not clear this install', () => {
+    const home = join(baseTmp, 'o7-home');
+    const otherHome = join(baseTmp, 'o7-other-home');
+    mkdirSync(otherHome, { recursive: true });
+    plantRegularSkill(home, 'implement', 'KEEP ORIGIN\n');
+    const other = join(baseTmp, 'o7-other-checkout');
+    mkdirSync(join(other, 'bin'), { recursive: true });
+    mkdirSync(join(other, 'skills'), { recursive: true });
+    copyFileSync(SETUP, join(other, 'setup'));
+    chmodSync(join(other, 'setup'), 0o755);
+    mkdirSync(join(other, 'bin', 'lib'), { recursive: true });
+    copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
+    copyFileSync(join(ROOT, 'bin', 'update-check'), join(other, 'bin', 'update-check'));
+    chmodSync(join(other, 'bin', 'update-check'), 0o755);
+    writeFileSync(join(other, 'skills', 'implement.md'), 'other source\n');
+    writeFileSync(join(other, 'VERSION'), '9.9.9\n');
+    const otherSkill = plantRegularSkill(home, 'pair-review', 'OTHER ORIGIN\n', realpathSync(other));
+    runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    const before = readFileSync(statusPath(home));
+    const elsewhere = spawnSync(join(other, 'setup'), ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: { PATH: isolatedPath(), HOME: home },
+    });
+    expect(elsewhere.status).toBe(0);
+    expect(readFileSync(join(otherSkill, 'SKILL.md'), 'utf8')).toBe('OTHER ORIGIN\n');
+    expect(checkFacts(home).stdout).toContain('skill=pair-review');
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    const moved = checkFacts(otherHome, join(home, '.gstack-extend'));
+    expect(moved.stdout).not.toContain('skill=implement');
+    expect(readFileSync(statusPath(home)).length).toBeGreaterThan(0);
+    expect(before.length).toBeGreaterThan(0);
+  });
+
+  test('O8 preflight failure and all-skipped setup keep prior facts', () => {
+    const home = join(baseTmp, 'o8-keep');
+    const dir = plantRegularSkill(home, 'implement', 'PRIOR\n');
+    const first = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(first.exitCode).toBe(0);
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    chmodSync(hostDir(home, 'claude'), 0o777);
+    const failed = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(failed.exitCode).toBe(1);
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PRIOR\n');
+    const after = checkFacts(home).stdout;
+    expect(after).toContain('skill=implement');
+    expect(after).toContain('reason=unsafe_directory');
+    expect(after).toContain('cause=world_writable');
+  });
+
+  test('W1 a clean install publishes an empty snapshot and stays quiet', () => {
+    const home = join(baseTmp, 'w1-clean');
+    mkdirSync(home, { recursive: true });
+    const absent = checkFacts(home);
+    expect(absent.exitCode).toBe(0);
+    expect(absent.stdout).toBe('');
+    const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect((statSync(statusPath(home)).mode & 0o777)).toBe(0o600);
+    expect(lstatSync(statusPath(home)).isSymbolicLink()).toBe(false);
+    expect(checkFacts(home).stdout).toBe('');
+    expect(checkFacts(home).stdout).toBe('');
+  });
+
+  test('W4 symlink, directory and fifo status are not followed or replaced', () => {
+    const home = join(baseTmp, 'w4-types');
+    mkdirSync(join(home, '.gstack-extend'), { recursive: true });
+    const victim = join(home, 'victim');
+    writeFileSync(victim, 'SECRET-VICTIM\n');
+    symlinkSync(victim, statusPath(home));
+    plantRegularSkill(home, 'implement', 'STAY\n');
+    const linked = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(linked.exitCode).toBe(0);
+    expect(linked.stdout).toContain('cause=predecessor_symlink');
+    expect(readFileSync(victim, 'utf8')).toBe('SECRET-VICTIM\n');
+    expect(lstatSync(statusPath(home)).isSymbolicLink()).toBe(true);
+    const read = checkFacts(home);
+    expect(read.stdout).toContain('reason=status_unreadable');
+    expect(read.stdout).toContain('cause=symlink');
+    expect(read.stdout).not.toContain('SECRET-VICTIM');
+    rmSync(statusPath(home));
+
+    mkdirSync(statusPath(home));
+    const asDir = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(asDir.stdout).toContain('cause=predecessor_directory');
+    expect(lstatSync(statusPath(home)).isDirectory()).toBe(true);
+    rmSync(statusPath(home), { recursive: true });
+
+    spawnSync('mkfifo', [statusPath(home)]);
+    const started = Date.now();
+    const fifoRead = checkFacts(home);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(fifoRead.stdout).toContain('cause=fifo');
+    const fifoWrite = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(fifoWrite.stdout).toContain('predecessor_fifo');
+    expect(lstatSync(statusPath(home)).isFIFO()).toBe(true);
+    expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('STAY\n');
+  });
+
+  test('W5 temp, chmod, write and rename failures keep the previous snapshot', () => {
+    const home = join(baseTmp, 'w5-fail');
+    plantRegularSkill(home, 'implement', 'PRIOR BYTE\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const prior = readFileSync(statusPath(home));
+    const bins = join(baseTmp, 'w5-bins');
+    mkdirSync(bins, { recursive: true });
+    const cases: Array<[string, string, string]> = [
+      ['mktemp', 'temp_failed', `#!/bin/bash
+for a in "$@"; do case "$a" in *install-status*) echo no >&2; exit 1 ;; esac; done
+exec /usr/bin/mktemp "$@"
+`],
+      ['chmod', 'chmod_failed', `#!/bin/bash
+case "$2" in */install-status.*) echo no >&2; exit 1 ;; esac
+exec /bin/chmod "$@"
+`],
+      ['mktemp', 'write_failed', `#!/bin/bash
+out=$(/usr/bin/mktemp "$@") || exit $?
+case "$out" in */install-status.*) chmod 000 "$out" ;; esac
+printf '%s\\n' "$out"
+`],
+      ['mv', 'rename_failed', `#!/bin/bash
+dest=""
+for a in "$@"; do dest=$a; done
+case "$dest" in */install-status) echo no >&2; exit 1 ;; esac
+exec /bin/mv "$@"
+`],
+    ];
+    for (const [bin, cause, body] of cases) {
+      writeFileSync(join(bins, bin), body);
+      chmodSync(join(bins, bin), 0o755);
+      const r = runSetup(['--host', 'claude', '--quiet'], home, `${bins}:${isolatedPath()}`, true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toContain(`cause=${cause}`);
+      expect(r.stdout).toContain('saved=no');
+      expect(readFileSync(statusPath(home))).toEqual(prior);
+      expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('PRIOR BYTE\n');
+      rmSync(join(bins, bin));
+    }
+  }, 30000);
+
+  test('W7 two writers keep a disjoint add and a resolve-plus-add', async () => {
+    const home = join(baseTmp, 'w7-race');
+    const kept = plantRegularSkill(home, 'implement', 'WRITER A\n');
+    const coord = join(baseTmp, 'w7-coord');
+    const bins = join(baseTmp, 'w7-bins');
+    mkdirSync(coord, { recursive: true });
+    mkdirSync(bins, { recursive: true });
+    const release = join(coord, 'release');
+    const seen = join(coord, 'seen');
+    spawnSync('mkfifo', [release]);
+    writeFileSync(join(bins, 'mv'), `#!/bin/bash
+dest=""
+for a in "$@"; do dest=$a; done
+case "$dest" in
+  */install-status)
+    if [ ! -f ${JSON.stringify(seen)} ]; then
+      : > ${JSON.stringify(seen)}
+      cat ${JSON.stringify(release)} >/dev/null
+    fi
+    ;;
+esac
+exec /bin/mv "$@"
+`);
+    chmodSync(join(bins, 'mv'), 0o755);
+    const path = `${bins}:${isolatedPath()}`;
+    const env = { PATH: path, HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' };
+    const first = spawn(SETUP, ['--host', 'claude', '--quiet'], { env });
+    expect(waitUntil(() => existsSync(seen), 15000)).toBe(true);
+    mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
+    const second = spawn(SETUP, ['--host', 'codex', '--quiet'], { env });
+    expect(waitUntil(() => second.exitCode === null && existsSync(join(home, '.gstack-extend', 'install-status.lock')), 5000)).toBe(true);
+    const releaser = spawn('/bin/sh', ['-c', `printf go > ${JSON.stringify(release)}`]);
+    const [a, b] = await Promise.all([waitChild(first, 20000), waitChild(second, 20000)]);
+    releaser.kill();
+    expect(a.code).toBe(0);
+    expect(b.code).toBe(0);
+    const added = checkFacts(home).stdout;
+    expect(added).toContain('skill=implement');
+    expect(added).toContain('reason=shared_directory');
+    expect(readFileSync(join(kept, 'SKILL.md'), 'utf8')).toBe('WRITER A\n');
+
+    rmSync(seen);
+    const backup = readFileSync(join(kept, 'SKILL.md'));
+    writeFileSync(join(kept, 'SKILL.md.backup'), backup);
+    rmSync(join(kept, 'SKILL.md'));
+    symlinkSync(join(realpathSync(ROOT), 'skills', 'implement.md'), join(kept, 'SKILL.md'));
+    const resolver = spawn(SETUP, ['--host', 'claude', '--quiet'], { env });
+    expect(waitUntil(() => existsSync(seen), 15000)).toBe(true);
+    const adder = spawn(SETUP, ['--host', 'codex', '--quiet'], { env });
+    const releaser2 = spawn('/bin/sh', ['-c', `printf go > ${JSON.stringify(release)}`]);
+    const [c, d] = await Promise.all([waitChild(resolver, 20000), waitChild(adder, 20000)]);
+    releaser2.kill();
+    expect(c.code).toBe(0);
+    expect(d.code).toBe(0);
+    const resolved = checkFacts(home).stdout;
+    expect(resolved).not.toContain('skill=implement');
+    expect(resolved).toContain('reason=shared_directory');
+    expect(readFileSync(join(kept, 'SKILL.md.backup'))).toEqual(backup);
+  }, 40000);
+
+  test('W8 an abandoned lock is not stolen and this invocation releases its own', async () => {
+    const home = join(baseTmp, 'w8-lock');
+    plantRegularSkill(home, 'implement', 'LOCKED\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const prior = readFileSync(statusPath(home));
+    const lock = join(home, '.gstack-extend', 'install-status.lock');
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'owner'), '999999 deadnonce\n');
+    const started = Date.now();
+    const blocked = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(5000);
+    expect(blocked.exitCode).toBe(0);
+    expect(blocked.stdout).toContain('cause=lock_timeout');
+    expect(readFileSync(join(lock, 'owner'), 'utf8')).toBe('999999 deadnonce\n');
+    expect(readFileSync(statusPath(home))).toEqual(prior);
+    expect(checkFacts(home).stdout).toContain('reason=status_pending');
+    rmSync(lock, { recursive: true });
+
+    const coord = join(baseTmp, 'w8-coord');
+    const bins = join(baseTmp, 'w8-bins');
+    mkdirSync(coord, { recursive: true });
+    mkdirSync(bins, { recursive: true });
+    const release = join(coord, 'release');
+    const seen = join(coord, 'seen');
+    spawnSync('mkfifo', [release]);
+    writeFileSync(join(bins, 'mv'), `#!/bin/bash
+dest=""
+for a in "$@"; do dest=$a; done
+case "$dest" in
+  */install-status)
+    : > ${JSON.stringify(seen)}
+    cat ${JSON.stringify(release)} >/dev/null
+    ;;
+esac
+exec /bin/mv "$@"
+`);
+    chmodSync(join(bins, 'mv'), 0o755);
+    const child = spawn(SETUP, ['--host', 'claude', '--quiet'], {
+      env: { PATH: `${bins}:${isolatedPath()}`, HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+      detached: true,
+    });
+    expect(waitUntil(() => existsSync(seen), 15000)).toBe(true);
+    const pending = waitChild(child, 5000);
+    process.kill(child.pid!, 'SIGTERM');
+    const stopped = await pending;
+    expect(stopped.code !== null || stopped.signal !== null).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+    expect(readFileSync(statusPath(home))).toEqual(prior);
+  }, 20000);
+
+  test('M1 partial migration clears only the repaired copy', () => {
+    const home = join(baseTmp, 'm1-partial');
+    const keep = plantRegularSkill(home, 'implement', 'KEEP ME\n');
+    const fix = plantRegularSkill(home, 'pair-review', 'FIX ME\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const backupBody = readFileSync(join(fix, 'SKILL.md'));
+    writeFileSync(join(fix, 'SKILL.md.backup'), backupBody);
+    rmSync(join(fix, 'SKILL.md'));
+    symlinkSync(join(realpathSync(ROOT), 'skills', 'pair-review.md'), join(fix, 'SKILL.md'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const warned = checkFacts(home).stdout;
+    expect(warned).toContain('skill=implement');
+    expect(warned).not.toContain('skill=pair-review');
+    expect(readFileSync(join(keep, 'SKILL.md'), 'utf8')).toBe('KEEP ME\n');
+    expect(readFileSync(join(fix, 'SKILL.md.backup'))).toEqual(backupBody);
+    expect(lstatSync(join(fix, 'SKILL.md')).isSymbolicLink()).toBe(true);
+  });
+
+  test('M2 a retired copy clears only with the same directory and matching backup', () => {
+    const home = join(baseTmp, 'm2-retired');
+    const dir = plantRegularSkill(home, 'review-apparatus', 'OLD RETIRED\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).toContain('skill=review-apparatus');
+    const inode = dirId(dir);
+    writeFileSync(join(dir, 'SKILL.md.backup'), 'NOT THE ORIGINAL\n');
+    rmSync(join(dir, 'SKILL.md'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).toContain('skill=review-apparatus');
+    writeFileSync(join(dir, 'SKILL.md.backup'), 'OLD RETIRED\n');
+    expect(dirId(dir)).toBe(inode);
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).not.toContain('skill=review-apparatus');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('OLD RETIRED\n');
+    expect(existsSync(join(dir, 'SKILL.md'))).toBe(false);
+  });
+
+  test('M3 a missing backup or empty digest does not resolve the fact', () => {
+    const home = join(baseTmp, 'm3-digest');
+    const dir = plantRegularSkill(home, 'implement', 'DIGEST ME\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    rmSync(join(dir, 'SKILL.md'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    writeFileSync(join(dir, 'SKILL.md.backup'), 'DIGEST ME\n');
+    const frame = readFileSync(statusPath(home));
+    const text = frame.toString('utf8');
+    const sha = sha256(join(dir, 'SKILL.md.backup'));
+    expect(text.includes(sha)).toBe(true);
+    writeFileSync(statusPath(home), frame.toString('utf8').replace(sha, '').split('\0').join('\0'));
+    // Restoring the NUL frame with an empty digest field: rewrite the sha field only.
+    const fields = frame.toString('utf8').split('\0');
+    const shaAt = fields.indexOf(sha);
+    expect(shaAt).toBeGreaterThan(0);
+    fields[shaAt] = '';
+    writeFileSync(statusPath(home), Buffer.from(fields.join('\0')));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('DIGEST ME\n');
+  });
+
+  test('M4 deleting an origin or retargeting one pointer does not clear the other path', () => {
+    const home = join(baseTmp, 'm4-origin');
+    const keep = plantRegularSkill(home, 'implement', 'STAY PUT\n');
+    const repair = plantRegularSkill(home, 'roadmap', readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    writeFileSync(join(keep, '.extend-root'), '/missing/deleted-checkout\n');
+    const backup = readFileSync(join(repair, 'SKILL.md'));
+    writeFileSync(join(repair, 'SKILL.md.backup'), backup);
+    rmSync(join(repair, 'SKILL.md'));
+    symlinkSync(join(realpathSync(ROOT), 'skills', 'roadmap.md'), join(repair, 'SKILL.md'));
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const warned = checkFacts(home).stdout;
+    expect(warned).toContain('skill=implement');
+    expect(warned).not.toContain('skill=roadmap');
+    expect(readFileSync(join(keep, 'SKILL.md'), 'utf8')).toBe('STAY PUT\n');
+    expect(readFileSync(join(repair, 'SKILL.md.backup'))).toEqual(backup);
+  });
+
+  test('M5 the documented example refuses collisions, failed moves and repeat moves', () => {
+    const home = join(baseTmp, 'm5-example');
+    const dir = plantRegularSkill(home, 'implement', 'MOVE ME\n');
+    writeFileSync(join(dir, 'SKILL.md.backup'), 'ALREADY BACKED UP\n');
+    const collision = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(collision.exitCode).toBe(3);
+    expect(collision.stdout).toContain('RECOVERY_COLLISION');
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('MOVE ME\n');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('ALREADY BACKED UP\n');
+    rmSync(join(dir, 'SKILL.md.backup'));
+
+    const bins = join(baseTmp, 'm5-bins');
+    mkdirSync(bins, { recursive: true });
+    writeFileSync(join(bins, 'mv'), '#!/bin/bash\nexit 0\n');
+    chmodSync(join(bins, 'mv'), 0o755);
+    const failed = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' }, bins);
+    expect(failed.exitCode).toBe(4);
+    expect(failed.stdout).toContain('RECOVERY_MOVE_FAILED');
+    expect(failed.stdout).not.toContain('RECOVERY_MIGRATED');
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('MOVE ME\n');
+    expect(existsSync(join(dir, 'SKILL.md.backup'))).toBe(false);
+
+    const migrated = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(migrated.exitCode).toBe(0);
+    expect(migrated.stdout).toContain('RECOVERY_MIGRATED');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('MOVE ME\n');
+    expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'implement.md'));
+    const again = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(again.exitCode).toBe(0);
+    expect(again.stdout).toContain('RECOVERY_ALREADY_REPAIRED');
+    expect(again.stdout).not.toContain('RECOVERY_MIGRATED');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('MOVE ME\n');
+    expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'implement.md'));
+  });
+
+  test('M6 an interrupted example resumes without moving the backup again', () => {
+    const home = join(baseTmp, 'm6-resume');
+    const dir = plantRegularSkill(home, 'implement', 'INTERRUPTED\n');
+    renameSync(join(dir, 'SKILL.md'), join(dir, 'SKILL.md.backup'));
+    const resumed = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.stdout).toContain('RECOVERY_RESUME');
+    expect(resumed.stdout).toContain('RECOVERY_MIGRATED');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('INTERRUPTED\n');
+    expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'implement.md'));
+  });
+
+  test('M5 missing and foreign links do not move a repaired or unrelated file', () => {
+    const home = join(baseTmp, 'm5-branches');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    const missing = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(missing.exitCode).toBe(0);
+    expect(missing.stdout).toContain('RECOVERY_MISSING');
+    const foreignDir = join(hostDir(home, 'claude'), 'implement');
+    mkdirSync(foreignDir, { recursive: true });
+    symlinkSync('/usr/bin/true', join(foreignDir, 'SKILL.md'));
+    const foreign = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(foreign.exitCode).toBe(0);
+    expect(foreign.stdout).toContain('RECOVERY_FOREIGN_LINK');
+    expect(readlinkSync(join(foreignDir, 'SKILL.md'))).toBe('/usr/bin/true');
+  });
+
+  test('M7 custom retain and retired-source examples do not replace bytes', () => {
+    const home = join(baseTmp, 'm7-custom');
+    const dir = plantRegularSkill(home, 'implement', 'CUSTOM INTENT\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const kept = runRecovery('custom-retain', home, {
+      GSTACK_EXTEND_STATE_DIR: join(home, '.gstack-extend'),
+    });
+    expect(kept.exitCode).toBe(0);
+    expect(kept.stdout).toContain('RECOVERY_CUSTOM_RETAINED');
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('CUSTOM INTENT\n');
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    const docs = readFileSync(join(ROOT, 'docs/installation.md'), 'utf8');
+    expect(docs).toContain('update_check false');
+    expect(docs).toContain('update_check true');
+    expect(docs).toContain('Tracks 27A and 27B');
+    expect(docs).toContain('Do not delete `.extend-root` or `install-status`');
+    expect(docs).not.toContain('rm install-status');
+    const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
+    const shared = skill.split('<!-- SHARED:upgrade-flow -->')[1]!.split('<!-- /SHARED:upgrade-flow -->')[0]!;
+    expect(shared).not.toContain('INSTALL_WARN');
+    expect(skill).toContain('INSTALL_WARN');
+    expect(skill).toContain('Tracks 27A and 27B');
+
+    const retiredHome = join(baseTmp, 'm7-retired');
+    const retired = plantRegularSkill(retiredHome, 'review-apparatus', 'RETIRED KEEP\n');
+    const manual = runRecovery('per-file', retiredHome, { GSTACK_EXTEND_RECOVERY_SKILL: 'review-apparatus' });
+    expect(manual.exitCode).toBe(0);
+    expect(manual.stdout).toContain('RECOVERY_RETIRED_MANUAL');
+    expect(readFileSync(join(retired, 'SKILL.md'), 'utf8')).toBe('RETIRED KEEP\n');
+    expect(existsSync(join(retired, 'SKILL.md.backup'))).toBe(false);
+  });
+
+  test('F1 strict bash 3.2 records a preserved copy without an unbound variable', () => {
+    const home = join(baseTmp, 'f1-bash');
+    plantRegularSkill(home, 'implement', 'BASH32\n');
+    const version = spawnSync('/bin/bash', ['-c', 'printf %s "$BASH_VERSION"'], { encoding: 'utf8' });
+    expect(version.stdout.startsWith('3.2')).toBe(true);
+    const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('unbound variable');
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+  });
+
+  test('F2 status uses the state override and registration still uses HOME', () => {
+    const home = join(baseTmp, 'f2-home');
+    const state = join(baseTmp, 'f2-state');
+    mkdirSync(state, { recursive: true });
+    const sentinel = '{"projects":[{"slug":"override-sentinel"}]}\n';
+    writeFileSync(join(state, 'projects.json'), sentinel);
+    plantRegularSkill(home, 'implement', 'OVERRIDE\n');
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    const r = spawnSync(SETUP, ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: {
+        PATH: isolatedPath(),
+        HOME: home,
+        GSTACK_EXTEND_STATE_DIR: state,
+      },
+    });
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(state, 'projects.json'), 'utf8')).toBe(sentinel);
+    expect(existsSync(join(state, 'install-status'))).toBe(true);
+    expect(existsSync(join(home, '.gstack-extend', 'install-status'))).toBe(false);
+    expect(existsSync(join(home, '.gstack-extend', 'projects.json'))).toBe(true);
+    const live = process.env.HOME ? join(process.env.HOME, '.gstack-extend', 'install-status') : '';
+    if (live && existsSync(live)) {
+      expect(readFileSync(live).includes(home)).toBe(false);
+    }
+    expect(checkFacts(home, state).stdout).toContain('skill=implement');
+  });
+
+  test('separate-host example refreshes that host and leaves the Claude copy', () => {
+    const home = join(baseTmp, 'm7-separate');
+    const dir = plantRegularSkill(home, 'implement', 'CLAUDE COPY\n');
+    mkdirSync(hostDir(home, 'codex'), { recursive: true });
+    const r = runRecovery('separate-host', home, { GSTACK_EXTEND_RECOVERY_HOST: 'codex' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('RECOVERY_HOST_SETUP');
+    expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('CLAUDE COPY\n');
+    expect(lstatSync(join(hostDir(home, 'codex'), 'implement', 'SKILL.md')).isFile()).toBe(true);
+  });
+});
+
+function dirnameOf(path: string): string {
+  return join(path, '..');
+}
+
+function waitChild(child: ChildProcess, ms: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try { process.kill(child.pid!, 'SIGTERM'); } catch { /* already gone */ }
+      resolve({ code: null, signal: null });
+    }, ms);
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
+}
 
 describe('source skill descriptions fit Codex limit', () => {
   for (const skill of SKILLS) {

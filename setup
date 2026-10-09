@@ -52,9 +52,52 @@ report_skipped_hosts() {
   return 0
 }
 REWRITE_TMP=""
+# Install-status observations. The successful path and finish_setup publish in
+# the main shell so a signal during the rename can still run the EXIT trap and
+# drop only this invocation's lock. Early exits that never reach that call
+# publish from the trap. A second call is a no-op. Success stays quiet on
+# stdout; only an unsaved snapshot prints INSTALL_WARN.
+INSTALL_STATUS_ACTIVE=0
+INSTALL_STATUS_RECONCILE=0
+INSTALL_STATUS_SCAN_CLAUDE=0
+INSTALL_STATUS_FINALIZED=0
+INSTALL_STATUS_LOCK_OWNED=0
+INSTALL_STATUS_NONCE=""
+INSTALL_STATUS_TMP=""
+INSTALL_STATUS_DIR=""
+INSTALL_STATUS_HOME_ID=""
+HOST_DETECT_claude=""
+HOST_DETECT_codex=""
+HOST_DETECT_opencode=""
+HOST_DETECT_cursor=""
+HOST_DONE_claude=0
+HOST_DONE_codex=0
+HOST_DONE_opencode=0
+HOST_DONE_cursor=0
+IS_NEW=()
+IS_NEW_KEY=()
+IS_NEW_QUAL=()
+IS_PREV=()
+IS_PREV_KEY=()
+IS_OUT=()
+IS_OUT_KEY=()
+IS_RESOLVE=()
 on_exit() {
+  # Command groups and substitutions must not publish. Bash resets traps in
+  # subshells today; the guard keeps a future shell from publishing twice.
+  [ "${BASH_SUBSHELL:-0}" -eq 0 ] || return 0
   [ -z "$REWRITE_TMP" ] || rm -f "$REWRITE_TMP" 2>/dev/null || true
+  # Publication normally runs in the main shell so a signal during the rename
+  # can still reach this trap and drop only this invocation's lock. Early exits
+  # that never reached that call publish here. A second call is a no-op.
+  install_status_finalize || true
+  [ -z "${INSTALL_STATUS_TMP:-}" ] || rm -f "$INSTALL_STATUS_TMP" 2>/dev/null || true
+  install_status_release_lock || true
   report_skipped_hosts
+}
+finish_setup() {
+  install_status_finalize || true
+  exit "${1:-0}"
 }
 trap on_exit EXIT
 
@@ -396,9 +439,12 @@ uninstall_from_dir() {
 preflight_dir() {
   local skills_dir="$1"
   local host="$2"
-  if ! is_safe_install_path "$skills_dir"; then
+  local unsafe_msg=""
+  if ! unsafe_msg=$(is_safe_install_path "$skills_dir" 2>&1); then
+    printf '%s\n' "$unsafe_msg" >&2
+    install_status_note_unsafe "$host" "$unsafe_msg"
     echo "$USAGE" >&2
-    exit 1
+    finish_setup 1
   fi
   local skill target src
   for skill in "${SKILLS[@]}"; do
@@ -410,7 +456,7 @@ preflight_dir() {
     fi
     if ! is_safe_target_path "$target"; then
       echo "$USAGE" >&2
-      exit 1
+      finish_setup 1
     fi
     if [ -e "$target/.extend-root" ] && [ ! -f "$target/.extend-root" ]; then
       echo "Warning: $target/.extend-root is not a regular file, not overwriting" >&2
@@ -476,6 +522,688 @@ install_into_dir() {
   log "Installed $installed skills into $skills_dir"
 }
 
+# Install status is a private NUL frame in the updater state root:
+# magic, schema 1, sixteen fields per fact, END, count.
+# kind, home id, origin, origin qual, host, logical dir, physical dir,
+# dir id, skill, reason, cause, canonical compare, stripped compare,
+# observed version, sha256, detection. In-memory records are sixteen
+# base64 words so paths can contain spaces. The checker reads the frame;
+# this writer never sources it.
+_is_b64e() {
+  if [ -z "$1" ]; then
+    printf '~'
+  else
+    printf '%s' "$1" | base64 | tr -d '\n'
+  fi
+}
+_is_b64d() {
+  if [ "$1" = "~" ] || [ -z "$1" ]; then
+    printf ''
+  else
+    printf '%s' "$1" | base64 -D 2>/dev/null || printf '%s' "$1" | base64 -d 2>/dev/null
+  fi
+}
+_is_pack() {
+  printf '%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s' \
+    "$(_is_b64e "$1")" "$(_is_b64e "$2")" "$(_is_b64e "$3")" "$(_is_b64e "$4")" \
+    "$(_is_b64e "$5")" "$(_is_b64e "$6")" "$(_is_b64e "$7")" "$(_is_b64e "$8")" \
+    "$(_is_b64e "$9")" "$(_is_b64e "${10}")" "$(_is_b64e "${11}")" "$(_is_b64e "${12}")" \
+    "$(_is_b64e "${13}")" "$(_is_b64e "${14}")" "$(_is_b64e "${15}")" "$(_is_b64e "${16}")"
+}
+_is_unpack() {
+  set -- $1
+  [ "$#" -eq 16 ] || return 1
+  UF_KIND=$(_is_b64d "$1")
+  UF_HOME=$(_is_b64d "$2")
+  UF_ORIGIN=$(_is_b64d "$3")
+  UF_OQUAL=$(_is_b64d "$4")
+  UF_HOST=$(_is_b64d "$5")
+  UF_LOGICAL=$(_is_b64d "$6")
+  UF_PHYSICAL=$(_is_b64d "$7")
+  UF_INODE=$(_is_b64d "$8")
+  UF_SKILL=$(_is_b64d "$9")
+  UF_REASON=$(_is_b64d "${10}")
+  UF_CAUSE=$(_is_b64d "${11}")
+  UF_CANON=$(_is_b64d "${12}")
+  UF_VARIANT=$(_is_b64d "${13}")
+  UF_VERSION=$(_is_b64d "${14}")
+  UF_SHA=$(_is_b64d "${15}")
+  UF_DETECT=$(_is_b64d "${16}")
+}
+_is_uf_path() {
+  if [ -n "$UF_SKILL" ]; then
+    printf '%s/%s' "$UF_LOGICAL" "$UF_SKILL"
+  else
+    printf '%s' "$UF_LOGICAL"
+  fi
+}
+_is_sha() {
+  local out=""
+  if out=$(shasum -a 256 "$1" 2>/dev/null); then
+    printf '%s' "${out%% *}"
+    return 0
+  fi
+  if out=$(sha256sum "$1" 2>/dev/null); then
+    printf '%s' "${out%% *}"
+    return 0
+  fi
+  return 1
+}
+_is_home_id() {
+  local phys=""
+  phys=$(cd -P "$HOME" 2>/dev/null && pwd -P) || return 1
+  stat -f '%d:%i' "$phys" 2>/dev/null || stat -c '%d:%i' "$phys" 2>/dev/null
+}
+_is_ensure_home() {
+  [ -n "$INSTALL_STATUS_HOME_ID" ] && return 0
+  INSTALL_STATUS_HOME_ID=$(_is_home_id) || return 1
+  [ -n "$INSTALL_STATUS_HOME_ID" ]
+}
+_is_dir_id() {
+  IS_PHYSICAL=""
+  IS_INODE=""
+  local phys=""
+  if phys=$(cd -P "$1" 2>/dev/null && pwd -P); then
+    IS_PHYSICAL=$phys
+    IS_INODE=$(stat -f '%d:%i' "$phys" 2>/dev/null || stat -c '%d:%i' "$phys" 2>/dev/null || true)
+  fi
+}
+_is_version() {
+  local v=""
+  if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    v=$(tr -d '[:space:]' < "$SCRIPT_DIR/VERSION" || true)
+  fi
+  [ -n "$v" ] || v=unknown
+  printf '%s' "$v"
+}
+_is_detect() {
+  case "$1" in
+    claude) printf '%s' "${HOST_DETECT_claude:-explicit_host}" ;;
+    codex) printf '%s' "${HOST_DETECT_codex:-explicit_host}" ;;
+    opencode) printf '%s' "${HOST_DETECT_opencode:-explicit_host}" ;;
+    cursor) printf '%s' "${HOST_DETECT_cursor:-explicit_host}" ;;
+    *) printf '%s' explicit_host ;;
+  esac
+}
+_is_checkout_ok() {
+  local root="$1" bin
+  [ -d "$root" ] || return 1
+  [ -f "$root/setup" ] && [ ! -L "$root/setup" ] || return 1
+  bin="$root/bin/update-check"
+  [ -f "$bin" ] && [ ! -L "$bin" ] && [ -r "$bin" ] && [ -x "$bin" ] || return 1
+  grep -qx '# extend-root-protocol: v1' "$bin" 2>/dev/null
+}
+_is_qualify() {
+  IS_QUAL=""
+  IS_ORIGIN_FOUND=""
+  local dir="$1" skill_md pointer root
+  skill_md="$dir/SKILL.md"
+  pointer="$dir/.extend-root"
+  [ -f "$skill_md" ] && [ ! -L "$skill_md" ] || return 1
+  [ -f "$pointer" ] && [ ! -L "$pointer" ] && [ -r "$pointer" ] || return 1
+  IFS= read -r root < "$pointer" || return 1
+  root=${root%$'\r'}
+  root=$(lex_abs "$root")
+  case "$root" in /*) ;; *) return 1 ;; esac
+  if [ "$root" = "$SCRIPT_DIR" ]; then
+    IS_QUAL=this_checkout
+    IS_ORIGIN_FOUND=$root
+    return 0
+  fi
+  if _is_checkout_ok "$root"; then
+    IS_QUAL=verified_checkout
+    IS_ORIGIN_FOUND=$root
+    return 0
+  fi
+  if [ ! -e "$root" ]; then
+    IS_QUAL=prior_qualified
+    IS_ORIGIN_FOUND=$root
+    return 0
+  fi
+  return 1
+}
+_is_compare() {
+  IS_CANON=source_unavailable
+  IS_VARIANT=not_applicable
+  local file="$1" skill="$2" src tmp
+  src="$SCRIPT_DIR/skills/${skill}.md"
+  [ -f "$src" ] && [ ! -L "$src" ] || return 0
+  if cmp -s "$file" "$src"; then
+    IS_CANON=matches_canonical
+  else
+    IS_CANON=differs_canonical
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/gstack-extend-variant.XXXXXX") || {
+    IS_VARIANT=unavailable
+    return 0
+  }
+  if host_skill_body "$src" codex > "$tmp"; then
+    if cmp -s "$file" "$tmp"; then
+      IS_VARIANT=matches_stripped
+    else
+      IS_VARIANT=differs_stripped
+    fi
+  else
+    IS_VARIANT=unavailable
+  fi
+  rm -f "$tmp" || true
+}
+_is_identity_key() {
+  printf '%s %s %s %s' \
+    "$(_is_b64e "$UF_HOME")" "$(_is_b64e "$UF_HOST")" \
+    "$(_is_b64e "$(_is_uf_path)")" "$(_is_b64e "$UF_REASON")"
+}
+_is_push_new() {
+  IS_NEW[${#IS_NEW[@]}]="$1"
+  IS_NEW_KEY[${#IS_NEW_KEY[@]}]="$2"
+  IS_NEW_QUAL[${#IS_NEW_QUAL[@]}]="$3"
+}
+install_status_note_host() {
+  local host="$1" reason="$2" cause="$3" logical ver detect
+  _is_ensure_home || return 0
+  logical=$(host_skills_dir "$host")
+  _is_dir_id "$logical"
+  ver=$(_is_version)
+  detect=$(_is_detect "$host")
+  _is_push_new "$(_is_pack fact "$INSTALL_STATUS_HOME_ID" "$SCRIPT_DIR" this_checkout \
+    "$host" "$logical" "$IS_PHYSICAL" "$IS_INODE" "" "$reason" "$cause" \
+    not_applicable not_applicable "$ver" "" "$detect")" \
+    "$(_is_b64e "$INSTALL_STATUS_HOME_ID") $(_is_b64e "$host") $(_is_b64e "$logical") $(_is_b64e "$reason")" \
+    this_checkout
+}
+install_status_note_unsafe() {
+  local host="$1" msg="$2" cause
+  case "$msg" in
+    *outside\ resolved*) cause=outside_home ;;
+    *owned\ by\ uid*) cause=not_owned ;;
+    *world-writable*) cause=world_writable ;;
+    *cannot\ resolve*) cause=unresolvable ;;
+    *stat\ could\ not*) cause=stat_failed ;;
+    *empty\ path*) cause=empty_path ;;
+    *) cause=unsafe_directory ;;
+  esac
+  install_status_note_host "$host" unsafe_directory "$cause"
+}
+install_status_note_preserved() {
+  local dir="$1" skill="$2" sha="" ver logical
+  _is_ensure_home || return 0
+  logical=$(host_skills_dir claude)
+  _is_compare "$dir/SKILL.md" "$skill"
+  sha=$(_is_sha "$dir/SKILL.md" || true)
+  _is_dir_id "$dir"
+  ver=$(_is_version)
+  _is_push_new "$(_is_pack fact "$INSTALL_STATUS_HOME_ID" "$IS_ORIGIN_FOUND" "$IS_QUAL" \
+    claude "$logical" "$IS_PHYSICAL" "$IS_INODE" "$skill" preserved_regular \
+    regular_file_not_overwritten "$IS_CANON" "$IS_VARIANT" "$ver" "$sha" not_applicable)" \
+    "$(_is_b64e "$INSTALL_STATUS_HOME_ID") $(_is_b64e "claude") $(_is_b64e "$logical/$skill") $(_is_b64e "preserved_regular")" \
+    "$IS_QUAL"
+}
+install_status_scan() {
+  local skills_dir skill dir
+  [ "$INSTALL_STATUS_SCAN_CLAUDE" -eq 1 ] || return 0
+  skills_dir=$(host_skills_dir claude)
+  for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
+    dir="$skills_dir/$skill"
+    if _is_qualify "$dir" "$skill"; then
+      install_status_note_preserved "$dir" "$skill"
+    fi
+  done
+}
+_is_host_done() {
+  case "$1" in
+    claude) [ "$HOST_DONE_claude" -eq 1 ] ;;
+    codex) [ "$HOST_DONE_codex" -eq 1 ] ;;
+    opencode) [ "$HOST_DONE_opencode" -eq 1 ] ;;
+    cursor) [ "$HOST_DONE_cursor" -eq 1 ] ;;
+    *) return 1 ;;
+  esac
+}
+_is_separated() {
+  local host="$1" dir other
+  dir=$(host_skills_dir "$host")
+  for other in claude codex opencode cursor; do
+    [ "$other" = "$host" ] && continue
+    if same_skills_dir "$dir" "$(host_skills_dir "$other")"; then
+      return 1
+    fi
+  done
+  return 0
+}
+_is_mark() {
+  IS_RESOLVE[${#IS_RESOLVE[@]}]="$(_is_b64e "$1") $(_is_b64e "$2") $(_is_b64e "$3") $(_is_b64e "$4")"
+}
+install_status_mark_resolutions() {
+  local host dir skill skills_dir home
+  _is_ensure_home || return 0
+  home=$INSTALL_STATUS_HOME_ID
+  for host in claude codex opencode cursor; do
+    _is_host_done "$host" || continue
+    dir=$(host_skills_dir "$host")
+    _is_separated "$host" || continue
+    is_safe_install_path "$dir" >/dev/null 2>&1 || continue
+    _is_mark "$home" "$host" "$dir" shared_directory
+    _is_mark "$home" "$host" "$dir" unsafe_directory
+  done
+  dir=$(host_skills_dir cursor)
+  if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
+    _is_mark "$home" cursor "$dir" cursor_unserved
+  else
+    for host in claude codex opencode; do
+      if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
+        _is_mark "$home" cursor "$dir" cursor_unserved
+        break
+      fi
+    done
+  fi
+  if [ "$HOST_DONE_claude" -eq 1 ] || [ "$INSTALL_STATUS_SCAN_CLAUDE" -eq 1 ]; then
+    skills_dir=$(host_skills_dir claude)
+    for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
+      _is_mark "$home" claude "$skills_dir/$skill" preserved_regular
+    done
+  fi
+}
+_is_warn() {
+  local cause="$1" path q docs
+  path="$INSTALL_STATUS_DIR/install-status"
+  q=$(printf '%q' "$path")
+  docs=$(printf '%q' "$SCRIPT_DIR/docs/installation.md#state-recovery")
+  printf 'INSTALL_WARN reason=status_unsaved path=%s cause=%s freshness=unknown saved=no Fix: %s\n' \
+    "$q" "$cause" "$docs"
+}
+install_status_release_lock() {
+  [ "${INSTALL_STATUS_LOCK_OWNED:-0}" -eq 1 ] || return 0
+  local lock="$INSTALL_STATUS_DIR/install-status.lock" line="" pid nonce
+  if [ -n "$INSTALL_STATUS_DIR" ] && [ -f "$lock/owner" ]; then
+    IFS= read -r line < "$lock/owner" || line=""
+    pid=${line%% *}
+    nonce=${line#* }
+    if [ "$pid" = "$$" ] && [ "$nonce" = "$INSTALL_STATUS_NONCE" ]; then
+      rm -f "$lock/owner" || true
+      rmdir "$lock" 2>/dev/null || true
+    fi
+  fi
+  INSTALL_STATUS_LOCK_OWNED=0
+}
+_is_acquire() {
+  local lock="$INSTALL_STATUS_DIR/install-status.lock" start
+  INSTALL_STATUS_NONCE=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' || true)
+  [ -n "$INSTALL_STATUS_NONCE" ] || INSTALL_STATUS_NONCE=$$
+  start=$SECONDS
+  while ! mkdir "$lock" 2>/dev/null; do
+    if [ $((SECONDS - start)) -ge 5 ]; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  INSTALL_STATUS_LOCK_OWNED=1
+  if ! printf '%s %s\n' "$$" "$INSTALL_STATUS_NONCE" > "$lock/owner"; then
+    install_status_release_lock || true
+    return 1
+  fi
+  return 0
+}
+_is_enum() {
+  local want="$1" item
+  shift
+  for item in "$@"; do
+    [ "$item" = "$want" ] && return 0
+  done
+  return 1
+}
+_is_valid_unpacked() {
+  local path
+  _is_enum "$UF_KIND" fact || return 1
+  _is_enum "$UF_OQUAL" this_checkout verified_checkout prior_qualified || return 1
+  _is_enum "$UF_HOST" claude codex opencode cursor || return 1
+  _is_enum "$UF_REASON" shared_directory unsafe_directory cursor_unserved preserved_regular || return 1
+  _is_enum "$UF_CANON" matches_canonical differs_canonical source_unavailable not_applicable || return 1
+  _is_enum "$UF_VARIANT" matches_stripped differs_stripped not_applicable unavailable || return 1
+  _is_enum "$UF_DETECT" binary existing_skill cursor_home explicit_host not_applicable || return 1
+  case "$UF_CAUSE" in *[!a-z0-9_]*) return 1 ;; "") return 1 ;; esac
+  case "$UF_HOME" in [0-9]*:[0-9]*) ;; *) return 1 ;; esac
+  case "$UF_HOME" in *[!0-9:]*) return 1 ;; esac
+  case "$UF_INODE" in "") ;; [0-9]*:[0-9]*) case "$UF_INODE" in *[!0-9:]*) return 1 ;; esac ;; *) return 1 ;; esac
+  case "$UF_SHA" in
+    "") ;;
+    *)
+      [ "${#UF_SHA}" -eq 64 ] || return 1
+      case "$UF_SHA" in *[!0-9a-f]*) return 1 ;; esac
+      ;;
+  esac
+  case "$UF_VERSION" in *[!0-9A-Za-z._+-]*) return 1 ;; "") return 1 ;; esac
+  case "$UF_SKILL" in "") ;; *[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$UF_ORIGIN" in /*) ;; *) return 1 ;; esac
+  case "$UF_LOGICAL" in /*) ;; *) return 1 ;; esac
+  case "$UF_PHYSICAL" in "") ;; /*) ;; *) return 1 ;; esac
+  case "$UF_REASON" in
+    preserved_regular) [ -n "$UF_SKILL" ] || return 1 ;;
+    *) [ -z "$UF_SKILL" ] || return 1 ;;
+  esac
+  path=$(_is_uf_path)
+  case "$path/" in
+    "$HOME"/*) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+_is_load_prev() {
+  local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n rec_at
+  IS_PREV=()
+  IS_PREV_KEY=()
+  IS_READ=absent
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    return 0
+  fi
+  if [ -L "$file" ]; then IS_READ=symlink; return 0; fi
+  if [ -d "$file" ]; then IS_READ=directory; return 0; fi
+  if [ -p "$file" ]; then IS_READ=fifo; return 0; fi
+  if [ ! -f "$file" ]; then IS_READ=not_regular; return 0; fi
+  if [ ! -r "$file" ]; then IS_READ=not_readable; return 0; fi
+  bytes=$(stat -f '%z' "$file" 2>/dev/null || stat -c '%s' "$file" 2>/dev/null || echo "")
+  case "$bytes" in
+    ""|*[!0-9]*) IS_READ=not_readable; return 0 ;;
+  esac
+  if [ "$bytes" -gt 1048576 ]; then IS_READ=oversized; return 0; fi
+  fields=()
+  while IFS= read -r -d '' _is_field || [ -n "${_is_field:-}" ]; do
+    fields[${#fields[@]}]="$_is_field"
+    _is_field=""
+    if [ "${#fields[@]}" -gt $((2 + 4096 * 16 + 2)) ]; then
+      IS_READ=oversized
+      return 0
+    fi
+  done < "$file"
+  [ "${#fields[@]}" -ge 4 ] || { IS_READ=truncated; return 0; }
+  [ "${fields[0]}" = "gstack-extend-install-status" ] || { IS_READ=malformed; return 0; }
+  [ "${fields[1]}" = "1" ] || { IS_READ=unknown_schema; return 0; }
+  i=2
+  n=${#fields[@]}
+  while [ "$i" -lt "$n" ]; do
+    if [ "${fields[$i]}" = "END" ]; then
+      if [ $((i + 2)) -ne "$n" ]; then IS_READ=extra_data; return 0; fi
+      case "${fields[$((i + 1))]}" in
+        ""|*[!0-9]*) IS_READ=count_mismatch; return 0 ;;
+      esac
+      [ "${fields[$((i + 1))]}" -eq "${#IS_PREV[@]}" ] || { IS_READ=count_mismatch; return 0; }
+      IS_READ=ok
+      return 0
+    fi
+    if [ $((i + 16)) -gt "$n" ]; then IS_READ=truncated; return 0; fi
+    if [ "${#IS_PREV[@]}" -ge 4096 ]; then IS_READ=oversized; return 0; fi
+    rec_at=$i
+    UF_KIND=${fields[$((rec_at + 0))]}
+    UF_HOME=${fields[$((rec_at + 1))]}
+    UF_ORIGIN=${fields[$((rec_at + 2))]}
+    UF_OQUAL=${fields[$((rec_at + 3))]}
+    UF_HOST=${fields[$((rec_at + 4))]}
+    UF_LOGICAL=${fields[$((rec_at + 5))]}
+    UF_PHYSICAL=${fields[$((rec_at + 6))]}
+    UF_INODE=${fields[$((rec_at + 7))]}
+    UF_SKILL=${fields[$((rec_at + 8))]}
+    UF_REASON=${fields[$((rec_at + 9))]}
+    UF_CAUSE=${fields[$((rec_at + 10))]}
+    UF_CANON=${fields[$((rec_at + 11))]}
+    UF_VARIANT=${fields[$((rec_at + 12))]}
+    UF_VERSION=${fields[$((rec_at + 13))]}
+    UF_SHA=${fields[$((rec_at + 14))]}
+    UF_DETECT=${fields[$((rec_at + 15))]}
+    if [ "$UF_KIND" != "fact" ]; then IS_READ=unknown_record; return 0; fi
+    _is_valid_unpacked || { IS_READ=malformed; return 0; }
+    IS_PREV[${#IS_PREV[@]}]="$(_is_pack "$UF_KIND" "$UF_HOME" "$UF_ORIGIN" "$UF_OQUAL" "$UF_HOST" "$UF_LOGICAL" "$UF_PHYSICAL" "$UF_INODE" "$UF_SKILL" "$UF_REASON" "$UF_CAUSE" "$UF_CANON" "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT")"
+    IS_PREV_KEY[${#IS_PREV_KEY[@]}]="$(_is_identity_key)"
+    i=$((i + 16))
+  done
+  IS_READ=truncated
+}
+_is_same_identity() {
+  local home="$1" host="$2" path="$3" reason="$4"
+  [ "$UF_HOME" = "$home" ] && [ "$UF_HOST" = "$host" ] && [ "$(_is_uf_path)" = "$path" ] && [ "$UF_REASON" = "$reason" ]
+}
+_is_prev_qualified() {
+  local key="$1" i=0
+  [ -n "$key" ] || return 1
+  while [ "$i" -lt "${#IS_PREV_KEY[@]}" ]; do
+    if [ "${IS_PREV_KEY[$i]}" = "$key" ]; then
+      _is_unpack "${IS_PREV[$i]}" || return 1
+      case "$UF_OQUAL" in
+        this_checkout|verified_checkout|prior_qualified) return 0 ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+_is_out_index() {
+  local key="$1" i=0
+  [ -n "$key" ] || return 1
+  while [ "$i" -lt "${#IS_OUT_KEY[@]}" ]; do
+    if [ "${IS_OUT_KEY[$i]}" = "$key" ]; then
+      printf '%s' "$i"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+_is_backup_matches() {
+  local dir="$1" want="$2" got="" f
+  [ -n "$want" ] || return 1
+  if [ -f "$dir/SKILL.md.backup" ] && [ ! -L "$dir/SKILL.md.backup" ]; then
+    got=$(_is_sha "$dir/SKILL.md.backup" || true)
+    [ "$got" = "$want" ] && return 0
+  fi
+  for f in "$dir"/backup-before-migration.*/SKILL.md; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    got=$(_is_sha "$f" || true)
+    [ "$got" = "$want" ] && return 0
+  done
+  return 1
+}
+_is_legacy_skill() {
+  local s="$1" x
+  for x in "${LEGACY_SKILLS[@]}"; do
+    [ "$x" = "$s" ] && return 0
+  done
+  return 1
+}
+_is_canonical_link() {
+  local dir="$1" skill="$2" link target expected
+  link="$dir/SKILL.md"
+  [ -L "$link" ] || return 1
+  target=$(readlink "$link" 2>/dev/null || true)
+  case "$target" in
+    /*) ;;
+    *) target="$dir/$target" ;;
+  esac
+  expected="$SCRIPT_DIR/skills/$skill.md"
+  [ "$(lex_abs "$target")" = "$(lex_abs "$expected")" ]
+}
+_is_reverify() {
+  local path dir current_inode host
+  path=$(_is_uf_path)
+  case "$UF_REASON" in
+    shared_directory|unsafe_directory)
+      _is_host_done "$UF_HOST" || return 1
+      [ "$UF_LOGICAL" = "$(host_skills_dir "$UF_HOST")" ] || return 1
+      _is_separated "$UF_HOST" || return 1
+      is_safe_install_path "$UF_LOGICAL" >/dev/null 2>&1 || return 1
+      return 0
+      ;;
+    cursor_unserved)
+      dir=$(host_skills_dir cursor)
+      [ "$UF_LOGICAL" = "$dir" ] || return 1
+      if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
+        return 0
+      fi
+      for host in claude codex opencode; do
+        if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
+          return 0
+        fi
+      done
+      return 1
+      ;;
+    preserved_regular)
+      [ "$UF_HOST" = "claude" ] || return 1
+      [ "$UF_LOGICAL" = "$(host_skills_dir claude)" ] || return 1
+      dir="$path"
+      [ -n "$UF_INODE" ] || return 1
+      _is_dir_id "$dir"
+      current_inode=$IS_INODE
+      [ -n "$current_inode" ] && [ "$current_inode" = "$UF_INODE" ] || return 1
+      _is_backup_matches "$dir" "$UF_SHA" || return 1
+      if _is_legacy_skill "$UF_SKILL"; then
+        [ ! -e "$dir/SKILL.md" ] && [ ! -L "$dir/SKILL.md" ]
+      else
+        _is_canonical_link "$dir" "$UF_SKILL"
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+_is_marked_key() {
+  local key="$1" i=0
+  [ -n "$key" ] || return 1
+  while [ "$i" -lt "${#IS_RESOLVE[@]}" ]; do
+    [ "${IS_RESOLVE[$i]}" = "$key" ] && return 0
+    i=$((i + 1))
+  done
+  return 1
+}
+_is_merge() {
+  local i=0 rec qual idx key kept=() kept_key=() j=0
+  IS_OUT=()
+  IS_OUT_KEY=()
+  while [ "$i" -lt "${#IS_PREV[@]}" ]; do
+    IS_OUT[$i]="${IS_PREV[$i]}"
+    IS_OUT_KEY[$i]="${IS_PREV_KEY[$i]}"
+    i=$((i + 1))
+  done
+  i=0
+  while [ "$i" -lt "${#IS_NEW[@]}" ]; do
+    rec="${IS_NEW[$i]}"
+    key="${IS_NEW_KEY[$i]}"
+    qual="${IS_NEW_QUAL[$i]}"
+    if [ "$qual" = "prior_qualified" ]; then
+      _is_prev_qualified "$key" || { i=$((i + 1)); continue; }
+    fi
+    if idx=$(_is_out_index "$key"); then
+      IS_OUT[$idx]="$rec"
+      IS_OUT_KEY[$idx]="$key"
+    else
+      IS_OUT[${#IS_OUT[@]}]="$rec"
+      IS_OUT_KEY[${#IS_OUT_KEY[@]}]="$key"
+    fi
+    i=$((i + 1))
+  done
+  if [ "$INSTALL_STATUS_RECONCILE" -eq 1 ]; then
+    i=0
+    while [ "$i" -lt "${#IS_OUT[@]}" ]; do
+      rec="${IS_OUT[$i]}"
+      key="${IS_OUT_KEY[$i]}"
+      if _is_marked_key "$key" && _is_unpack "$rec" && _is_reverify; then
+        i=$((i + 1))
+        continue
+      fi
+      kept[$j]="$rec"
+      kept_key[$j]="$key"
+      j=$((j + 1))
+      i=$((i + 1))
+    done
+    IS_OUT=()
+    IS_OUT_KEY=()
+    i=0
+    while [ "$i" -lt "${#kept[@]}" ]; do
+      IS_OUT[$i]="${kept[$i]}"
+      IS_OUT_KEY[$i]="${kept_key[$i]}"
+      i=$((i + 1))
+    done
+  fi
+}
+_is_write_out() {
+  local dest="$1" i=0 n
+  n=${#IS_OUT[@]}
+  {
+    printf '%s\0%s\0' "gstack-extend-install-status" "1"
+    while [ "$i" -lt "$n" ]; do
+      _is_unpack "${IS_OUT[$i]}" || return 1
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        "$UF_KIND" "$UF_HOME" "$UF_ORIGIN" "$UF_OQUAL" "$UF_HOST" "$UF_LOGICAL" \
+        "$UF_PHYSICAL" "$UF_INODE" "$UF_SKILL" "$UF_REASON" "$UF_CAUSE" \
+        "$UF_CANON" "$UF_VARIANT" "$UF_VERSION" "$UF_SHA" "$UF_DETECT"
+      i=$((i + 1))
+    done
+    printf '%s\0%s\0' "END" "$n"
+  } > "$dest"
+}
+_is_publish_file() {
+  local dest="$INSTALL_STATUS_DIR/install-status" tmp
+  if [ -L "$dest" ] || [ -d "$dest" ] || [ -p "$dest" ] || { [ -e "$dest" ] && [ ! -f "$dest" ]; }; then
+    _is_warn unsafe_target
+    return 0
+  fi
+  tmp=$(mktemp "$INSTALL_STATUS_DIR/install-status.XXXXXX") || {
+    _is_warn temp_failed
+    return 0
+  }
+  INSTALL_STATUS_TMP=$tmp
+  if ! _is_write_out "$tmp"; then
+    rm -f "$tmp" || true
+    INSTALL_STATUS_TMP=""
+    _is_warn write_failed
+    return 0
+  fi
+  if ! chmod 0600 "$tmp"; then
+    rm -f "$tmp" || true
+    INSTALL_STATUS_TMP=""
+    _is_warn chmod_failed
+    return 0
+  fi
+  if ! mv -f "$tmp" "$dest"; then
+    rm -f "$tmp" || true
+    INSTALL_STATUS_TMP=""
+    _is_warn rename_failed
+    return 0
+  fi
+  INSTALL_STATUS_TMP=""
+  return 0
+}
+install_status_finalize() {
+  [ "${INSTALL_STATUS_FINALIZED:-0}" -eq 1 ] && return 0
+  INSTALL_STATUS_FINALIZED=1
+  [ "$INSTALL_STATUS_ACTIVE" -eq 1 ] || return 0
+  INSTALL_STATUS_DIR="${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"
+  if ! _is_ensure_home; then
+    _is_warn home_unreadable
+    return 0
+  fi
+  if [ "$INSTALL_STATUS_RECONCILE" -eq 1 ]; then
+    install_status_mark_resolutions || true
+  fi
+  if [ "$INSTALL_STATUS_RECONCILE" -eq 0 ] && [ "${#IS_NEW[@]}" -eq 0 ]; then
+    return 0
+  fi
+  if ! mkdir -p "$INSTALL_STATUS_DIR"; then
+    _is_warn mkdir_failed
+    return 0
+  fi
+  if ! _is_acquire; then
+    _is_warn lock_timeout
+    return 0
+  fi
+  _is_load_prev || true
+  case "$IS_READ" in
+    absent|ok) ;;
+    *)
+      _is_warn "predecessor_${IS_READ}"
+      install_status_release_lock || true
+      return 0
+      ;;
+  esac
+  _is_merge || true
+  _is_publish_file || true
+  install_status_release_lock || true
+}
+
 # ─── Resolve which hosts to touch ──────────────────────────────────
 INSTALL_CLAUDE=0
 INSTALL_CODEX=0
@@ -485,23 +1213,27 @@ INSTALL_CURSOR=0
 if [ "$SKILLS_DIR_GIVEN" -eq 1 ]; then
   :
 elif [ "$HOST" = "auto" ]; then
-  command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
-  command -v codex >/dev/null 2>&1 && INSTALL_CODEX=1
-  command -v opencode >/dev/null 2>&1 && INSTALL_OPENCODE=1
-  command -v cursor >/dev/null 2>&1 && INSTALL_CURSOR=1
-  [ -d "${HOME}/.cursor" ] && INSTALL_CURSOR=1
-  [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ] && INSTALL_CLAUDE=1
-  [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ] && INSTALL_CODEX=1
-  [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ] && INSTALL_OPENCODE=1
-  [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ] && INSTALL_CURSOR=1
+  if command -v claude >/dev/null 2>&1; then INSTALL_CLAUDE=1; HOST_DETECT_claude=binary; fi
+  if command -v codex >/dev/null 2>&1; then INSTALL_CODEX=1; HOST_DETECT_codex=binary; fi
+  if command -v opencode >/dev/null 2>&1; then INSTALL_OPENCODE=1; HOST_DETECT_opencode=binary; fi
+  if command -v cursor >/dev/null 2>&1; then INSTALL_CURSOR=1; HOST_DETECT_cursor=binary; fi
+  if [ -d "${HOME}/.cursor" ]; then INSTALL_CURSOR=1; [ -n "$HOST_DETECT_cursor" ] || HOST_DETECT_cursor=cursor_home; fi
+  if [ -e "${HOME}/.claude/skills/pair-review/SKILL.md" ]; then INSTALL_CLAUDE=1; [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=existing_skill; fi
+  if [ -e "${HOME}/.codex/skills/pair-review/SKILL.md" ]; then INSTALL_CODEX=1; [ -n "$HOST_DETECT_codex" ] || HOST_DETECT_codex=existing_skill; fi
+  if [ -e "${HOME}/.config/opencode/skills/pair-review/SKILL.md" ]; then INSTALL_OPENCODE=1; [ -n "$HOST_DETECT_opencode" ] || HOST_DETECT_opencode=existing_skill; fi
+  if [ -e "${HOME}/.cursor/skills/pair-review/SKILL.md" ]; then INSTALL_CURSOR=1; [ -n "$HOST_DETECT_cursor" ] || HOST_DETECT_cursor=existing_skill; fi
 elif [ "$HOST" = "claude" ]; then
   INSTALL_CLAUDE=1
+  HOST_DETECT_claude=explicit_host
 elif [ "$HOST" = "codex" ]; then
   INSTALL_CODEX=1
+  HOST_DETECT_codex=explicit_host
 elif [ "$HOST" = "opencode" ]; then
   INSTALL_OPENCODE=1
+  HOST_DETECT_opencode=explicit_host
 elif [ "$HOST" = "cursor" ]; then
   INSTALL_CURSOR=1
+  HOST_DETECT_cursor=explicit_host
 fi
 
 # A copy-producing pass must never rewrite or remove another host's directory, even if that other host was not
@@ -523,6 +1255,8 @@ for _host in codex opencode cursor; do
         CURSOR_OWNER="$_other"
       else
         echo "  Use separate host skills directories. For legacy copies, see docs/installation.md: Shared-directory migration." >&2
+        install_status_note_host "$_host" shared_directory "shared_with_${_other}"
+        [ "$_other" = "claude" ] && INSTALL_STATUS_SCAN_CLAUDE=1
         skip_host "$_host"
       fi
       break
@@ -545,6 +1279,8 @@ report_unserved_cursor() {
     opencode) served=$INSTALL_OPENCODE ;;
   esac
   if [ "$served" -eq 0 ]; then
+    install_status_note_host cursor cursor_unserved owner_not_selected
+    [ "$CURSOR_OWNER" = "claude" ] && INSTALL_STATUS_SCAN_CLAUDE=1
     skip_host cursor
   fi
 }
@@ -616,26 +1352,33 @@ if [ "$HOST" = "auto" ]; then
     if ! _unsafe=$(is_safe_install_path "$(host_skills_dir "$_host")" 2>&1); then
       echo "Warning: skipping $_host: ${_unsafe#Error: }" >&2
       echo "  Fix that directory, then run setup --host $_host." >&2
+      install_status_note_unsafe "$_host" "$_unsafe"
       skip_host "$_host"
     fi
   done
 fi
 report_unserved_cursor
+INSTALL_STATUS_ACTIVE=1
 if [ "$HOST" = "auto" ] && ! any_host_selected; then
   # Cursor also reads ~/.claude/skills, so a lone skipped Cursor falls back to Claude as detecting nothing does.
   # Any other skipped host needs its own refreshed copies, so that stays a failure.
   if [ "$SKIPPED_NON_CURSOR" -eq 1 ]; then
     echo "Error: no detected host has a usable skills directory (unsafe, or shared with another host); nothing installed." >&2
     echo "$USAGE" >&2
-    exit 1
+    finish_setup 1
   fi
   INSTALL_CLAUDE=1
 fi
 
 # A --host pass whose host was skipped installs nothing, so it leaves the shared CLI links and registry alone.
+# Observations are recorded before that return. Failure and all-skipped runs add facts and do not clear older ones.
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  INSTALL_STATUS_SCAN_CLAUDE=1
+fi
+install_status_scan || true
 if ! any_host_selected; then
   log "Nothing installed: skipped $SKIPPED_HOSTS."
-  exit 0
+  finish_setup 0
 fi
 
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
@@ -651,10 +1394,23 @@ if [ "$INSTALL_CURSOR" -eq 1 ]; then
   preflight_dir "$(host_skills_dir cursor)" cursor
 fi
 
-[ "$INSTALL_CLAUDE" -eq 1 ] && install_into_dir "$(host_skills_dir claude)" claude
-[ "$INSTALL_CODEX" -eq 1 ] && install_into_dir "$(host_skills_dir codex)" codex
-[ "$INSTALL_OPENCODE" -eq 1 ] && install_into_dir "$(host_skills_dir opencode)" opencode
-[ "$INSTALL_CURSOR" -eq 1 ] && install_into_dir "$(host_skills_dir cursor)" cursor
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  install_into_dir "$(host_skills_dir claude)" claude
+  HOST_DONE_claude=1
+fi
+if [ "$INSTALL_CODEX" -eq 1 ]; then
+  install_into_dir "$(host_skills_dir codex)" codex
+  HOST_DONE_codex=1
+fi
+if [ "$INSTALL_OPENCODE" -eq 1 ]; then
+  install_into_dir "$(host_skills_dir opencode)" opencode
+  HOST_DONE_opencode=1
+fi
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  install_into_dir "$(host_skills_dir cursor)" cursor
+  HOST_DONE_cursor=1
+fi
+INSTALL_STATUS_RECONCILE=1
 
 cli_bin_dir="$HOME/.local/bin"
 
@@ -724,3 +1480,8 @@ if [ -x "$cli_bin_src" ]; then
   fi
   rm -f "$_self_register_log"
 fi
+
+# Publish before the process ends so a signal during the rename still runs the
+# EXIT trap and releases this invocation's lock. The trap publishes if we exit
+# earlier without reaching this call.
+install_status_finalize || true

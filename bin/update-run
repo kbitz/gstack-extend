@@ -13,6 +13,9 @@
 # Additional lines, before the result:
 #   SETUP_SKIPPED_HOSTS <csv>   — forwarded from setup: it left these hosts untouched
 #   MIGRATION_WARN <script> exit=<n> — forwarded from run-migrations.sh: a migration or its helper failed
+#   INSTALL_WARN ...            — forwarded from setup when install diagnostics could not be saved
+# INSTALL_WARN is not an upgrade result. Exactly one UPGRADE_OK or UPGRADE_FAILED
+# line is still the outcome. A later update-check prints saved install facts.
 #
 # Exactly one result line is always emitted. The script runs under `set -e`;
 # an EXIT trap guarantees a UPGRADE_FAILED line even when a git stage dies

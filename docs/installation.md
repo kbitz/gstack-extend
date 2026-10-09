@@ -104,6 +104,20 @@ another upgrade. After `UPGRADE_FAILED stage=setup`,
 rerun `<checkout>/bin/update-run <checkout>` instead so its post-setup steps
 also run.
 
+`UPGRADE_OK` means the git checkout upgraded. It does not mean every on-disk
+skill copy was refreshed. A preserved regular file, a shared directory, an
+unsafe directory, or a Cursor install whose owner was not processed stays
+recorded. The next enabled `bin/update-check` prints one `INSTALL_WARN` line
+per unresolved fact, including when the version check is cached, snoozed, or
+offline. Those lines are not version results. `update_check=false` hides them
+and also hides ordinary version notifications; turning it back to `true`
+shows the same facts again. That switch is not a per-copy acknowledgement.
+Do not delete `.extend-root` or `install-status` to make an unresolved install
+quiet. See **Preserved installs**, **Shared-directory migration**, and
+**State recovery**. Real-host recovery on each supported host is later work
+(Tracks 27A and 27B). How long a person takes to follow one known recovery
+is unmeasured.
+
 Setup also registers the checkout as `gstack-extend` in
 `$HOME/.gstack-extend/projects.json`. It ignores `GSTACK_EXTEND_STATE_DIR` for
 that child registration; direct `init` still honors the override. Registration
@@ -132,6 +146,31 @@ pointer naming another checkout does not. Foreign links and regular files are le
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,
 foreign install pointers, and unrelated files are preserved.
 
+### Preserved installs
+
+Setup records associated regular Claude `SKILL.md` files and skipped-host
+facts under `${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/install-status`.
+A successful setup stays quiet on stdout. The checker prints the facts. Each
+`INSTALL_WARN` line names the host, skill, path, reason, and a Fix link in
+this checkout's `docs/installation.md`. `reason=preserved_regular` means the
+file was left in place. `compare=` and `observed=` describe that file against
+the checkout's source at the version setup recorded. `freshness=unverified`
+means that comparison is not a promise the copy is current, customized, owned,
+or disposable. A later setup can replace the observation; it does not clear
+the fact until the repair below is verified.
+
+A pointer that names a moved or deleted checkout does not by itself refresh
+or delete the copy. A second verified checkout can clear a fact only for the
+exact host path it re-checks and finds repaired. Another HOME's facts stay
+in the file and are not printed for this HOME. Copy-producing hosts that
+already have their own skills directory are refreshed with
+`setup --host codex`, `setup --host opencode`, or `setup --host cursor`.
+Cursor can keep reading Claude's directory when that owner was installed in
+the same run; otherwise the warning says `cursor_unserved`.
+
+On-disk repair does not replace text this session already loaded. After the
+files and a repeat check look right, reload the skill or start a new session.
+
 ### Shared-directory migration
 
 Earlier Codex and OpenCode passes could replace Claude symlinks with generated
@@ -158,6 +197,108 @@ checkout sits beside a `SKILL.md`, the shared CLI links stay, and the uninstall
 output names one such pointer as `Kept for: <path>`. Review the copies, move aside the ones you no
 longer want (as above), then rerun the uninstall; a pointer left without a
 `SKILL.md` does not keep the links.
+
+The examples below are the recovery to run. They use
+`GSTACK_EXTEND_RECOVERY_CHECKOUT` (the verified checkout) and
+`GSTACK_EXTEND_RECOVERY_SKILL` (one skill directory name). The reviewed
+`SKILL.md` must be a regular file, not a symlink. The example refuses to
+replace an existing backup, checks that the move actually happened, and does
+not run setup when the move failed. If setup never ran, leave the backup
+where it is and run the example again; it resumes without moving that backup.
+A second run after the symlink exists does nothing to that symlink. A retired
+name whose source file is gone is not moved by this example; keep that
+regular file until you choose to set it aside yourself. A foreign symlink is
+left alone. Repairing one skill does not repair the others.
+
+<!-- recovery-example:per-file -->
+```bash
+checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
+skill=${GSTACK_EXTEND_RECOVERY_SKILL:?}
+dir="$HOME/.claude/skills/$skill"
+file="$dir/SKILL.md"
+backup="$dir/SKILL.md.backup"
+source="$checkout/skills/$skill.md"
+if [ ! -f "$source" ] || [ -L "$source" ]; then
+  echo RECOVERY_RETIRED_MANUAL
+  exit 0
+fi
+if [ -L "$file" ]; then
+  target=$(readlink "$file" || true)
+  case "$target" in
+    /*) ;;
+    *) target="$dir/$target" ;;
+  esac
+  if [ "$target" = "$source" ]; then
+    echo RECOVERY_ALREADY_REPAIRED
+    exit 0
+  fi
+  echo RECOVERY_FOREIGN_LINK
+  exit 0
+fi
+if [ ! -e "$file" ]; then
+  if [ -f "$backup" ] && [ ! -L "$backup" ]; then
+    echo RECOVERY_RESUME
+    "$checkout/setup" --host claude --quiet
+    echo RECOVERY_MIGRATED
+    exit 0
+  fi
+  echo RECOVERY_MISSING
+  exit 0
+fi
+if [ ! -f "$file" ]; then
+  echo RECOVERY_NOT_REGULAR
+  exit 2
+fi
+if cmp -s "$file" "$source"; then
+  echo RECOVERY_COMPARE_MATCHES
+else
+  echo RECOVERY_COMPARE_DIFFERS
+fi
+if [ -e "$backup" ] || [ -L "$backup" ]; then
+  echo RECOVERY_COLLISION
+  exit 3
+fi
+mv "$file" "$backup"
+if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ] || [ -L "$backup" ]; then
+  echo RECOVERY_MOVE_FAILED
+  exit 4
+fi
+"$checkout/setup" --host claude --quiet
+echo RECOVERY_MIGRATED
+```
+<!-- /recovery-example:per-file -->
+
+A customized file you want to keep is not a migration. This example does not
+move it. `update_check=false` also suppresses ordinary version notifications
+and is not an acknowledgement of one copy. Stop after the `false` command
+only when that broader silence is what you want; the `true` command restores
+both version notices and install warnings. Do not delete the pointer or the
+status file.
+
+<!-- recovery-example:custom-retain -->
+```bash
+checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
+"$checkout/bin/config" set update_check false
+"$checkout/bin/config" set update_check true
+echo RECOVERY_CUSTOM_RETAINED
+```
+<!-- /recovery-example:custom-retain -->
+
+Codex, OpenCode, or Cursor already using its own skills directory is refreshed
+with that host's setup. This does not rewrite Claude's preserved files.
+
+<!-- recovery-example:separate-host -->
+```bash
+checkout=${GSTACK_EXTEND_RECOVERY_CHECKOUT:?}
+host=${GSTACK_EXTEND_RECOVERY_HOST:?}
+case "$host" in
+  codex|opencode|cursor) ;;
+  *) echo RECOVERY_HOST_REFUSED; exit 2 ;;
+esac
+"$checkout/setup" --host "$host" --quiet
+echo RECOVERY_HOST_SETUP
+```
+<!-- /recovery-example:separate-host -->
 
 ## Troubleshooting
 
@@ -186,3 +327,26 @@ grep -x '# extend-root-protocol: v1' <root>/bin/update-check
 Running `setup` from a worktree repoints every host at that worktree. Re-run `setup --host auto` from the stable checkout before archiving the worktree.
 
 The resolver probes Claude, then Codex, then OpenCode, then Cursor, and uses the first verified checkout. If those installs point at different checkouts, a session on any host updates the Claude one. Host-aware ordering is not implemented.
+
+## State recovery
+
+`install-status` is a private data file in
+`${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}`. Setup publishes a complete
+replacement only after it can read the previous file. A reader that finds a
+problem prints `INSTALL_WARN` with `reason=status_unreadable`,
+`reason=status_unverified`, or `reason=status_pending`, names the cause, and
+points here. It does not treat that file as a clean install.
+
+| What you see | Cause | What to do |
+|---|---|---|
+| `status_unsaved` / `temp_failed`, `write_failed`, `chmod_failed`, `rename_failed`, `mkdir_failed` | This run could not publish a new snapshot | The previous file, if any, is still there. Fix the named cause and rerun setup from the verified checkout. |
+| `lock_timeout` or `status_pending` / `lock_held` | Another setup holds `install-status.lock`, or a setup was interrupted and left it | Do not delete `install-status`. See whether the owner process is still running. If you have confirmed it is gone, move the lock directory aside and rerun setup. Setup does not take over a lock by itself. |
+| `predecessor_symlink`, `predecessor_directory`, `predecessor_fifo`, `unsafe_target`, or a matching `status_unreadable` cause | The status path is not a regular file | Leave the unexpected object in place, move it aside only if you know it is not something you need, and rerun setup. Do not follow a link or replace a directory to force a clean result. |
+| `predecessor_malformed`, `unknown_schema`, `unknown_record`, `truncated`, `extra_data`, `count_mismatch`, `oversized`, or `status_unverified` | The file is not a schema-1 snapshot this checkout can reconcile | Keep the file. Correct or replace it only with a snapshot you trust, then rerun setup from a verified checkout. Unknown bytes are not deleted to make the warning stop. |
+| `home_unreadable` | HOME could not be identified | Fix HOME, then rerun setup. Facts already in the file stay there. |
+
+A failed or partial setup adds what it saw and does not clear older unresolved
+facts. After a successful upgrade, rerun `"<checkout>/setup" --host auto` to
+refresh installs. After `UPGRADE_FAILED stage=setup`, rerun
+`"<checkout>/bin/update-run" "<checkout>"` so the updater's later steps run.
+Neither command replaces skill text a session has already loaded.

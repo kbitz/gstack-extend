@@ -21,7 +21,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -1814,4 +1814,650 @@ describe('update-check with 4-digit versions', () => {
     });
     expect(r.stdout.trim()).toBe('');
   });
+});
+
+// Track 23C checker and upgrade visibility. Frames below are built in the test,
+// not by setup's writer, so the reader contract stands on its own.
+
+function deviceId(path: string): string {
+  const resolved = realpathSync(path);
+  const mac = spawnSync('/usr/bin/stat', ['-f', '%d:%i', resolved], { encoding: 'utf8' });
+  if (mac.status === 0 && (mac.stdout ?? '').trim()) return (mac.stdout ?? '').trim();
+  const linux = spawnSync('/usr/bin/stat', ['-c', '%d:%i', resolved], { encoding: 'utf8' });
+  return (linux.stdout ?? '').trim();
+}
+
+function encodeFrame(records: string[][]): Buffer {
+  const fields = ['gstack-extend-install-status', '1'];
+  for (const record of records) fields.push(...record);
+  fields.push('END', String(records.length));
+  return Buffer.concat(fields.map((field) => Buffer.from(`${field}\0`, 'utf8')));
+}
+
+function factRecord(home: string, over: Partial<Record<string, string>> = {}): string[] {
+  const logical = over.logical ?? join(home, '.claude', 'skills');
+  return [
+    'fact',
+    over.homeId ?? deviceId(home),
+    over.origin ?? '/origin/checkout',
+    over.oqual ?? 'this_checkout',
+    over.host ?? 'claude',
+    logical,
+    over.physical ?? '',
+    over.inode ?? '',
+    over.skill ?? '',
+    over.reason ?? 'shared_directory',
+    over.cause ?? 'shared_with_codex',
+    over.canon ?? 'not_applicable',
+    over.variant ?? 'not_applicable',
+    over.version ?? '1.0.0',
+    over.sha ?? '',
+    over.detect ?? 'explicit_host',
+  ];
+}
+
+function isolatedTools(tag: string): string {
+  const dir = join(baseTmp, `path-${tag}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'claude'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(dir, 'claude'), 0o755);
+  if (!existsSync(join(dir, 'bun'))) symlinkSync(process.execPath, join(dir, 'bun'));
+  const git = spawnSync('/bin/bash', ['-lc', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  if (git && !existsSync(join(dir, 'git'))) symlinkSync(git, join(dir, 'git'));
+  return `${dir}:/bin:/usr/bin`;
+}
+
+function checkInstall(repo: string, home: string, state: string, args: string[] = [], remote = ''): ReturnType<typeof runBin> {
+  return runBin(join(repo, 'bin', 'update-check'), args, {
+    home,
+    gstackExtendDir: repo,
+    gstackExtendStateDir: state,
+    extraEnv: {
+      PATH: '/bin:/usr/bin',
+      ...(remote ? { GSTACK_EXTEND_REMOTE_URL: remote } : {}),
+    },
+  });
+}
+
+function warnedFixture(name: string, remoteBody = '1.0.0\n', version = '9.9.9') {
+  const repo = createFixtureRepo(name);
+  seedUpdateCheckBinaries(repo);
+  const home = join(baseTmp, `${name}-home`);
+  const state = join(baseTmp, `${name}-state`);
+  mkdirSync(home, { recursive: true });
+  mkdirSync(state, { recursive: true });
+  const remoteFile = join(baseTmp, `${name}-remote-ver`);
+  writeFileSync(remoteFile, remoteBody);
+  const logical = join(home, '.claude', 'skills');
+  const record = factRecord(home, {
+    logical,
+    skill: 'implement',
+    reason: 'preserved_regular',
+    cause: 'regular_file_not_overwritten',
+    canon: 'differs_canonical',
+    variant: 'differs_stripped',
+    version,
+    detect: 'not_applicable',
+  });
+  const frame = encodeFrame([record]);
+  writeFileSync(join(state, 'install-status'), frame);
+  return { repo, home, state, remote: `file://${remoteFile}`, frame, logical };
+}
+
+const ORDINARY_CAPTURE = `_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true`;
+const FORCE_CAPTURE = `_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" --force 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true`;
+
+function runFrozen(repo: string, home: string, state: string, capture: string, remote: string) {
+  const script = `set -euo pipefail\n_EXTEND_ROOT=${JSON.stringify(repo)}\n${capture}\n`;
+  return spawnSync('/bin/bash', ['-c', script], {
+    encoding: 'utf8',
+    env: {
+      PATH: '/bin:/usr/bin',
+      HOME: home,
+      GSTACK_EXTEND_STATE_DIR: state,
+      GSTACK_EXTEND_REMOTE_URL: remote,
+    },
+  });
+}
+
+function plantCopy(home: string, skill: string, body: string, origin: string): string {
+  const dir = join(home, '.claude', 'skills', skill);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), body);
+  writeFileSync(join(dir, '.extend-root'), `${origin}\n`);
+  return dir;
+}
+
+describe('track 23C update visibility', () => {
+  test('W1 absent and empty snapshots stay quiet', () => {
+    const absent = warnedFixture('w1-absent');
+    rmSync(join(absent.state, 'install-status'));
+    const missing = checkInstall(absent.repo, absent.home, absent.state, [], absent.remote);
+    expect(missing.exitCode).toBe(0);
+    expect(missing.stdout).not.toContain('INSTALL_WARN');
+    expect(existsSync(join(absent.state, 'install-status'))).toBe(false);
+
+    const empty = warnedFixture('w1-empty');
+    writeFileSync(join(empty.state, 'install-status'), encodeFrame([]));
+    const quiet = checkInstall(empty.repo, empty.home, empty.state, [], empty.remote);
+    expect(quiet.exitCode).toBe(0);
+    expect(quiet.stdout).not.toContain('INSTALL_WARN');
+
+    const home = join(baseTmp, 'w1-clean-home');
+    mkdirSync(home, { recursive: true });
+    const setup = spawnSync(SETUP, ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: { PATH: isolatedTools('w1'), HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+    });
+    expect(setup.status).toBe(0);
+    expect(setup.stdout ?? '').not.toContain('INSTALL_WARN');
+    const again = spawnSync(SETUP, ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: { PATH: isolatedTools('w1b'), HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+    });
+    expect(again.status).toBe(0);
+    const seen = checkInstall(absent.repo, home, join(home, '.gstack-extend'), [], absent.remote);
+    expect(seen.stdout).not.toContain('INSTALL_WARN');
+  });
+
+  test('W2 an independent frame round-trips both records', () => {
+    const home = join(baseTmp, 'w2-home');
+    const state = join(baseTmp, 'w2-state');
+    const decoyHome = join(baseTmp, 'w2-decoy-home');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(state, { recursive: true });
+    mkdirSync(join(decoyHome, '.gstack-extend'), { recursive: true });
+    const logical = join(home, '.claude', 'skills');
+    const records = [
+      factRecord(home, { logical, reason: 'shared_directory', cause: 'shared_with_codex', skill: '' }),
+      factRecord(home, {
+        logical,
+        skill: 'implement',
+        reason: 'preserved_regular',
+        cause: 'regular_file_not_overwritten',
+        canon: 'differs_canonical',
+        variant: 'differs_stripped',
+        version: '0.36.0.1',
+        detect: 'not_applicable',
+      }),
+    ];
+    const frame = encodeFrame(records);
+    writeFileSync(join(state, 'install-status'), frame);
+    const decoy = encodeFrame([factRecord(decoyHome, {
+      logical: join(decoyHome, '.claude', 'skills'),
+      skill: 'roadmap',
+      reason: 'preserved_regular',
+      cause: 'decoyfact',
+      canon: 'differs_canonical',
+      variant: 'differs_stripped',
+      detect: 'not_applicable',
+    })]);
+    writeFileSync(join(decoyHome, '.gstack-extend', 'install-status'), decoy);
+    const repo = createFixtureRepo('w2-repo');
+    seedUpdateCheckBinaries(repo);
+    const remote = join(baseTmp, 'w2-remote');
+    writeFileSync(remote, '1.0.0\n');
+    const seen = checkInstall(repo, home, state, [], `file://${remote}`);
+    expect(seen.exitCode).toBe(0);
+    expect(seen.stdout).toContain('reason=shared_directory');
+    expect(seen.stdout).toContain('cause=shared_with_codex');
+    expect(seen.stdout).toContain('skill=implement');
+    expect(seen.stdout).toContain('compare=differs_canonical');
+    expect(seen.stdout).toContain('variant=differs_stripped');
+    expect(seen.stdout).toContain('observed=0.36.0.1');
+    expect(seen.stdout).toContain(`path=${logical}`);
+    expect(seen.stdout).not.toContain('decoyfact');
+    expect(readFileSync(join(state, 'install-status'))).toEqual(frame);
+    expect(readFileSync(join(decoyHome, '.gstack-extend', 'install-status'))).toEqual(decoy);
+  });
+
+  test('W3 unknown, truncated, extra and oversized state stays visible', () => {
+    const fx = warnedFixture('w3');
+    const status = join(fx.state, 'install-status');
+    const cases: Array<[string, Buffer, string]> = [
+      ['unknown_schema', Buffer.from('gstack-extend-install-status\x002\x00END\x000\x00', 'utf8'), 'unknown_schema'],
+      ['unknown_record', encodeFrame([['note', ...factRecord(fx.home).slice(1)]]), 'unknown_record'],
+      ['truncated', Buffer.from('gstack-extend-install-status\x001\x00fact\x00', 'utf8'), 'truncated'],
+      ['extra_data', Buffer.concat([encodeFrame([]), Buffer.from('extra\0', 'utf8')]), 'extra_data'],
+      ['count_mismatch', Buffer.from('gstack-extend-install-status\x001\x00END\x001\x00', 'utf8'), 'count_mismatch'],
+      ['malformed', Buffer.from('not-the-magic\x001\x00END\x000\x00', 'utf8'), 'malformed'],
+    ];
+    for (const [label, body, cause] of cases) {
+      writeFileSync(status, body);
+      const seen = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+      expect(seen.stdout, label).toContain(`cause=${cause}`);
+      expect(seen.stdout, label).toContain('reason=status_unverified');
+      expect(readFileSync(status), label).toEqual(body);
+    }
+
+    const other = factRecord(fx.home, { homeId: '9:9', cause: 'otherhome' });
+    const last = factRecord(fx.home, { skill: 'implement', reason: 'preserved_regular', cause: 'cause4097', canon: 'differs_canonical', variant: 'differs_stripped', detect: 'not_applicable' });
+    const many = encodeFrame([...Array.from({ length: 4096 }, () => other), last]);
+    expect(many.length).toBeLessThanOrEqual(1048576);
+    writeFileSync(status, many);
+    const limited = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(limited.stdout).toContain('cause=oversized');
+    expect(limited.stdout).not.toContain('cause4097');
+    expect(readFileSync(status)).toEqual(many);
+
+    const huge = Buffer.alloc(1048577, 0x61);
+    writeFileSync(status, huge);
+    const oversized = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(oversized.stdout).toContain('cause=oversized');
+    expect(readFileSync(status)).toEqual(huge);
+  }, 20000);
+
+  test('W4 a symlink status is diagnosed and the target is untouched', () => {
+    const fx = warnedFixture('w4');
+    const status = join(fx.state, 'install-status');
+    const victim = join(fx.state, 'victim');
+    writeFileSync(victim, 'VICTIM\n');
+    rmSync(status);
+    symlinkSync(victim, status);
+    const seen = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(seen.stdout).toContain('reason=status_unreadable');
+    expect(seen.stdout).toContain('cause=symlink');
+    expect(readFileSync(victim, 'utf8')).toBe('VICTIM\n');
+  });
+
+  test('W6 readers see the predecessor, then the successor', async () => {
+    const home = join(baseTmp, 'w6-home');
+    const origin = realpathSync(ROOT);
+    mkdirSync(home, { recursive: true });
+    plantCopy(home, 'implement', 'WRITER A\n', origin);
+    const first = spawnSync(SETUP, ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: { PATH: isolatedTools('w6a'), HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+    });
+    expect(first.status).toBe(0);
+    const status = join(home, '.gstack-extend', 'install-status');
+    const prior = readFileSync(status);
+    rmSync(join(home, '.claude', 'skills', 'pair-review'), { recursive: true, force: true });
+    plantCopy(home, 'pair-review', 'WRITER B\n', origin);
+
+    const coord = join(baseTmp, 'w6-coord');
+    const bins = join(baseTmp, 'w6-bins');
+    mkdirSync(coord, { recursive: true });
+    mkdirSync(bins, { recursive: true });
+    const release = join(coord, 'release');
+    const seen = join(coord, 'seen');
+    spawnSync('mkfifo', [release]);
+    writeFileSync(join(bins, 'mv'), `#!/bin/bash
+dest=""
+for a in "$@"; do dest=$a; done
+case "$dest" in
+  */install-status)
+    : > ${JSON.stringify(seen)}
+    cat ${JSON.stringify(release)} >/dev/null
+    ;;
+esac
+exec /bin/mv "$@"
+`);
+    chmodSync(join(bins, 'mv'), 0o755);
+    const child = spawn(SETUP, ['--host', 'claude', '--quiet'], {
+      env: { PATH: `${bins}:${isolatedTools('w6b')}`, HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+    });
+    const started = Date.now();
+    expect(await new Promise<boolean>((resolve) => {
+      const timer = setInterval(() => {
+        if (existsSync(seen) || Date.now() - started > 10000) {
+          clearInterval(timer);
+          resolve(existsSync(seen));
+        }
+      }, 20);
+    })).toBe(true);
+    const repo = createFixtureRepo('w6-repo');
+    seedUpdateCheckBinaries(repo);
+    const remote = join(baseTmp, 'w6-remote');
+    writeFileSync(remote, '1.0.0\n');
+    const during = checkInstall(repo, home, join(home, '.gstack-extend'), [], `file://${remote}`);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(during.stdout).toContain('reason=status_pending');
+    expect(during.stdout).toContain('skill=implement');
+    expect(during.stdout).not.toContain('skill=pair-review');
+    expect(readFileSync(status)).toEqual(prior);
+    writeFileSync(release, '\n');
+    const code = await new Promise<number | null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), 10000);
+      child.on('exit', (exitCode) => {
+        clearTimeout(timer);
+        resolve(exitCode);
+      });
+    });
+    expect(code).toBe(0);
+    const after = checkInstall(repo, home, join(home, '.gstack-extend'), [], `file://${remote}`);
+    expect(after.stdout).not.toContain('reason=status_pending');
+    expect(after.stdout).toContain('skill=implement');
+    expect(after.stdout).toContain('skill=pair-review');
+    const next = readFileSync(status);
+    expect(next.includes(Buffer.from('gstack-extend-install-status\0'))).toBe(true);
+    expect(next.includes(Buffer.from('\0END\0'))).toBe(true);
+    expect(next).not.toEqual(prior);
+  }, 20000);
+
+  test('R1 disabled checks stay silent and re-enable restores the warning', () => {
+    const fx = warnedFixture('r1', '2.0.0\n');
+    const status = join(fx.state, 'install-status');
+    writeFileSync(join(fx.state, 'config'), 'update_check=false\n');
+    const silent = checkInstall(fx.repo, fx.home, fx.state, ['--force'], fx.remote);
+    expect(silent.exitCode).toBe(0);
+    expect(silent.stdout).toBe('');
+    expect(readFileSync(status)).toEqual(fx.frame);
+    writeFileSync(join(fx.state, 'config'), 'update_check=true\n');
+    const restored = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(restored.stdout).toContain('skill=implement');
+    expect(restored.stdout).toContain('reason=preserved_regular');
+    expect(readFileSync(status)).toEqual(fx.frame);
+  });
+
+  test('R2 a warm cache still prints local warnings', () => {
+    const current = warnedFixture('r2-current');
+    writeFileSync(join(current.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\n');
+    const upToDate = checkInstall(current.repo, current.home, current.state, [], current.remote);
+    expect(upToDate.exitCode).toBe(0);
+    expect(upToDate.stdout).not.toContain('UPGRADE_AVAILABLE');
+    expect(upToDate.stdout).toContain('reason=preserved_regular');
+
+    const newer = warnedFixture('r2-newer', '2.0.0\n');
+    writeFileSync(join(newer.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    const available = checkInstall(newer.repo, newer.home, newer.state, [], newer.remote);
+    const lines = available.stdout.trim().split('\n');
+    expect(lines[0]).toBe('UPGRADE_AVAILABLE 1.0.0 2.0.0');
+    expect(lines.slice(1).join('\n')).toContain('reason=preserved_regular');
+  });
+
+  test('R3 snooze hides the version line and keeps the warning', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const active = warnedFixture('r3-active', '2.0.0\n');
+    writeFileSync(join(active.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(active.state, 'update-snoozed'), `2.0.0 1 ${now}\n`);
+    const snoozed = checkInstall(active.repo, active.home, active.state, [], active.remote);
+    expect(snoozed.stdout).not.toContain('UPGRADE_AVAILABLE');
+    expect(snoozed.stdout).toContain('reason=preserved_regular');
+
+    const expired = warnedFixture('r3-expired', '2.0.0\n');
+    writeFileSync(join(expired.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(expired.state, 'update-snoozed'), '2.0.0 1 1\n');
+    const elapsed = checkInstall(expired.repo, expired.home, expired.state, [], expired.remote);
+    expect(elapsed.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
+    expect(elapsed.stdout).toContain('reason=preserved_regular');
+
+    const moved = warnedFixture('r3-moved', '2.0.0\n');
+    writeFileSync(join(moved.state, 'last-update-check'), 'UPGRADE_AVAILABLE 1.0.0 2.0.0\n');
+    writeFileSync(join(moved.state, 'update-snoozed'), `9.9.9 1 ${now}\n`);
+    const changed = checkInstall(moved.repo, moved.home, moved.state, [], moved.remote);
+    expect(changed.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
+    expect(changed.stdout).toContain('reason=preserved_regular');
+
+    const forced = warnedFixture('r3-force', '2.0.0\n');
+    writeFileSync(join(forced.state, 'last-update-check'), 'UP_TO_DATE 1.0.0\n');
+    writeFileSync(join(forced.state, 'update-snoozed'), `2.0.0 1 ${now}\n`);
+    const busted = checkInstall(forced.repo, forced.home, forced.state, ['--force'], forced.remote);
+    expect(busted.stdout).toContain('UPGRADE_AVAILABLE 1.0.0 2.0.0');
+    expect(busted.stdout).toContain('reason=preserved_regular');
+    expect(existsSync(join(forced.state, 'update-snoozed'))).toBe(false);
+  });
+
+  test('R4 missing version and a bad remote still show local warnings', () => {
+    const missing = warnedFixture('r4-missing');
+    rmSync(join(missing.repo, 'VERSION'));
+    const noVersion = checkInstall(missing.repo, missing.home, missing.state, [], missing.remote);
+    expect(noVersion.exitCode).toBe(0);
+    expect(noVersion.stdout).toContain('reason=preserved_regular');
+    expect(noVersion.stdout).not.toContain('UPGRADE_AVAILABLE');
+
+    const empty = warnedFixture('r4-empty');
+    writeFileSync(join(empty.repo, 'VERSION'), '\n');
+    const blank = checkInstall(empty.repo, empty.home, empty.state, [], empty.remote);
+    expect(blank.exitCode).toBe(0);
+    expect(blank.stdout).toContain('reason=preserved_regular');
+
+    const invalid = warnedFixture('r4-invalid', '<html>nope</html>\n');
+    const bad = checkInstall(invalid.repo, invalid.home, invalid.state, [], invalid.remote);
+    expect(bad.exitCode).toBe(0);
+    expect(bad.stdout).toContain('reason=preserved_regular');
+    expect(bad.stdout).not.toContain('UPGRADE_AVAILABLE');
+
+    const offline = warnedFixture('r4-offline');
+    const down = checkInstall(offline.repo, offline.home, offline.state, [], 'http://127.0.0.1:9/VERSION');
+    expect(down.exitCode).toBe(0);
+    expect(down.stdout).toContain('reason=preserved_regular');
+    expect(down.stdout).not.toContain('UPGRADE_AVAILABLE');
+  });
+
+  test('R5 just-upgraded stays first and the marker is one-shot', () => {
+    const fx = warnedFixture('r5', '2.0.0\n');
+    writeFileSync(join(fx.state, 'just-upgraded-from'), '0.9.0\n');
+    const first = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    const text = first.stdout;
+    const just = text.indexOf('JUST_UPGRADED 0.9.0 1.0.0');
+    const available = text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0');
+    const warn = text.indexOf('reason=preserved_regular');
+    expect(just).toBeGreaterThanOrEqual(0);
+    expect(just).toBeLessThan(available);
+    expect(available).toBeLessThan(warn);
+    expect(existsSync(join(fx.state, 'just-upgraded-from'))).toBe(false);
+    const second = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(second.stdout).not.toContain('JUST_UPGRADED');
+    expect(second.stdout).toContain('reason=preserved_regular');
+  });
+
+  test('R6 frozen preambles show warnings after version results', () => {
+    for (const skill of ['roadmap.md', 'pair-review.md', 'full-review.md']) {
+      expect(readFileSync(join(ROOT, 'skills', skill), 'utf8')).toContain(ORDINARY_CAPTURE.split('\n')[0]!);
+    }
+    expect(readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8')).toContain(FORCE_CAPTURE.split('\n')[0]!);
+    const fx = warnedFixture('r6', '2.0.0\n');
+    for (const capture of [ORDINARY_CAPTURE, FORCE_CAPTURE]) {
+      const seen = runFrozen(fx.repo, fx.home, fx.state, capture, fx.remote);
+      expect(seen.status).toBe(0);
+      const text = seen.stdout ?? '';
+      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeGreaterThanOrEqual(0);
+      expect(text.indexOf('UPGRADE_AVAILABLE 1.0.0 2.0.0')).toBeLessThan(text.indexOf('reason=preserved_regular'));
+      expect(seen.stderr ?? '').not.toContain('INSTALL_WARN');
+    }
+  });
+
+  test('R7 warning text is inert, deduped, and pinned to the recorded version', () => {
+    const home = join(baseTmp, 'r7-home');
+    const state = join(baseTmp, 'r7-state');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(state, { recursive: true });
+    const pwned = join(home, 'pwned');
+    const nasty = join(home, `$(touch ${pwned})`);
+    mkdirSync(nasty, { recursive: true });
+    const repo = createFixtureRepo('r7');
+    seedUpdateCheckBinaries(repo);
+    const remote = join(baseTmp, 'r7-ver');
+    writeFileSync(remote, '1.0.0\n');
+    const hostile = factRecord(home, { logical: nasty, cause: 'shared_with_codex' });
+    writeFileSync(join(state, 'install-status'), encodeFrame([hostile, hostile]));
+    const seen = runFrozen(repo, home, state, ORDINARY_CAPTURE, `file://${remote}`);
+    expect(seen.status).toBe(0);
+    const warnings = (seen.stdout ?? '').split('\n').filter((line) => line.includes('reason=shared_directory'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('\\$\\(touch');
+    expect(existsSync(pwned)).toBe(false);
+
+    const pinned = warnedFixture('r7-pin');
+    writeFileSync(join(pinned.repo, 'VERSION'), '3.0.0\n');
+    const later = checkInstall(pinned.repo, pinned.home, pinned.state, [], pinned.remote);
+    expect(later.stdout).toContain('observed=9.9.9');
+    expect(later.stdout).toContain('freshness=unverified');
+    expect(later.stdout).not.toContain('observed=3.0.0');
+  });
+
+  test('U1 a git failure leaves install status untouched', () => {
+    const repo = createFixtureRepo('u1-diverged');
+    writeFileSync(join(repo, 'local-only.txt'), 'local-only change\n');
+    spawnSync('git', ['-C', repo, 'add', 'local-only.txt']);
+    spawnSync('git', ['-C', repo, 'commit', '-m', 'local diverge', '--quiet']);
+    const work = `${baseTmp}/u1-diverged-remote-work`;
+    spawnSync('git', ['clone', '--quiet', `${baseTmp}/u1-diverged-remote`, work]);
+    writeFileSync(join(work, 'remote-only.txt'), 'remote\n');
+    spawnSync('git', ['-C', work, 'add', 'remote-only.txt']);
+    spawnSync('git', ['-C', work, 'commit', '-m', 'remote diverge', '--quiet']);
+    spawnSync('git', ['-C', work, 'push', 'origin', 'main', '--quiet']);
+    rmSync(work, { recursive: true, force: true });
+    writeFileSync(join(repo, 'dirty.txt'), 'keep me\n');
+    const home = join(baseTmp, 'u1-home');
+    const state = join(baseTmp, 'u1-state');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(state, { recursive: true });
+    const prior = encodeFrame([factRecord(home, { skill: 'implement', reason: 'preserved_regular', cause: 'regular_file_not_overwritten', canon: 'differs_canonical', variant: 'differs_stripped', detect: 'not_applicable' })]);
+    writeFileSync(join(state, 'install-status'), prior);
+    const result = runBin(UPDATE_RUN, [repo], { home, gstackExtendDir: repo, gstackExtendStateDir: state });
+    const out = result.stdout + result.stderr;
+    expect((out.match(/UPGRADE_FAILED/g) ?? []).length).toBe(1);
+    expect(out).not.toContain('UPGRADE_OK');
+    expect(readFileSync(join(state, 'install-status'))).toEqual(prior);
+    expect(readFileSync(join(repo, 'dirty.txt'), 'utf8')).toBe('keep me\n');
+    const log = spawnSync('git', ['-C', repo, 'log', '--oneline', '-1'], { encoding: 'utf8' });
+    expect(log.stdout).toContain('local diverge');
+  });
+
+  test('U2 an old runner pulls the new setup and the frozen preamble sees it', () => {
+    const repo = createFixtureRepoWithRealSetup('u2', {
+      setupText: '#!/usr/bin/env bash\necho "old setup"\n',
+      beforeCommit(dir) {
+        writeFileSync(join(dir, 'bin', 'update-check'), '#!/usr/bin/env bash\nexit 0\n');
+        chmodSync(join(dir, 'bin', 'update-check'), 0o755);
+      },
+    });
+    pushNewVersion(`${baseTmp}/u2-remote`, '1.1.0', {
+      setup: readFileSync(SETUP, 'utf8'),
+      'bin/update-check': readFileSync(UPDATE_CHECK, 'utf8'),
+      'bin/lib/semver.sh': readFileSync(SEMVER_LIB, 'utf8'),
+      'bin/config': readFileSync(join(ROOT, 'bin', 'config'), 'utf8'),
+    });
+    const home = join(baseTmp, 'u2-home');
+    const state = join(baseTmp, 'u2-state');
+    mkdirSync(state, { recursive: true });
+    plantCopy(home, 'implement', 'CUSTOM COPY\n', realpathSync(repo));
+    const result = runBin(UPDATE_RUN, [repo], {
+      home,
+      gstackExtendDir: repo,
+      gstackExtendStateDir: state,
+      extraEnv: { PATH: isolatedTools('u2') },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    expect(result.stdout).not.toContain('UPGRADE_FAILED');
+    expect(readFileSync(join(home, '.claude', 'skills', 'implement', 'SKILL.md'), 'utf8')).toBe('CUSTOM COPY\n');
+    const remote = join(baseTmp, 'u2-ver');
+    writeFileSync(remote, '1.1.0\n');
+    const seen = runFrozen(repo, home, state, ORDINARY_CAPTURE, `file://${remote}`);
+    expect(seen.status).toBe(0);
+    expect(seen.stdout ?? '').toContain('skill=implement');
+    expect(seen.stdout ?? '').toContain('reason=preserved_regular');
+    expect(seen.stderr ?? '').not.toContain('INSTALL_WARN');
+  }, 20000);
+
+  test('U3 a failed setup keeps one failure and the observations', () => {
+    const repo = createFixtureRepoWithRealSetup('u3');
+    pushNewVersion(`${baseTmp}/u3-remote`, '1.1.0');
+    const home = join(baseTmp, 'u3-home');
+    const state = join(baseTmp, 'u3-state');
+    mkdirSync(state, { recursive: true });
+    const skills = join(home, '.claude', 'skills');
+    mkdirSync(skills, { recursive: true });
+    chmodSync(skills, 0o777);
+    const prior = encodeFrame([factRecord(home, {
+      skill: 'implement',
+      reason: 'preserved_regular',
+      cause: 'regular_file_not_overwritten',
+      canon: 'differs_canonical',
+      variant: 'differs_stripped',
+      detect: 'not_applicable',
+    })]);
+    writeFileSync(join(state, 'install-status'), prior);
+    const result = runBin(UPDATE_RUN, [repo], {
+      home,
+      gstackExtendDir: repo,
+      gstackExtendStateDir: state,
+      extraEnv: { PATH: isolatedTools('u3') },
+    });
+    const out = result.stdout + result.stderr;
+    expect(result.exitCode).toBe(1);
+    expect((out.match(/UPGRADE_FAILED/g) ?? []).length).toBe(1);
+    expect(out).not.toContain('UPGRADE_OK');
+    seedUpdateCheckBinaries(repo);
+    const remote = join(baseTmp, 'u3-ver');
+    writeFileSync(remote, '1.1.0\n');
+    const seen = checkInstall(repo, home, state, [], `file://${remote}`);
+    expect(seen.stdout).toContain('reason=unsafe_directory');
+    expect(seen.stdout).toContain('cause=world_writable');
+    expect(seen.stdout).toContain('skill=implement');
+  }, 20000);
+
+  test('U4 a publication failure still yields one UPGRADE_OK', () => {
+    const repo = createFixtureRepoWithRealSetup('u4');
+    pushNewVersion(`${baseTmp}/u4-remote`, '1.1.0');
+    const home = join(baseTmp, 'u4-home');
+    const state = join(baseTmp, 'u4-state');
+    mkdirSync(home, { recursive: true });
+    mkdirSync(state, { recursive: true });
+    const prior = encodeFrame([factRecord(home, {
+      skill: 'implement',
+      reason: 'preserved_regular',
+      cause: 'regular_file_not_overwritten',
+      canon: 'differs_canonical',
+      variant: 'differs_stripped',
+      detect: 'not_applicable',
+    })]);
+    writeFileSync(join(state, 'install-status'), prior);
+    const bins = join(baseTmp, 'u4-bins');
+    mkdirSync(bins, { recursive: true });
+    writeFileSync(join(bins, 'mv'), `#!/bin/bash
+dest=""
+for a in "$@"; do dest=$a; done
+case "$dest" in
+  */install-status) exit 1 ;;
+esac
+exec /bin/mv "$@"
+`);
+    chmodSync(join(bins, 'mv'), 0o755);
+    const result = runBin(UPDATE_RUN, [repo], {
+      home,
+      gstackExtendDir: repo,
+      gstackExtendStateDir: state,
+      extraEnv: { PATH: `${bins}:${isolatedTools('u4')}` },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.1.0');
+    expect((result.stdout.match(/UPGRADE_OK/g) ?? []).length).toBe(1);
+    expect(result.stdout).not.toContain('UPGRADE_FAILED');
+    expect(result.stdout).toContain('cause=rename_failed');
+    expect(result.stdout).toContain('saved=no');
+    expect(readFileSync(join(state, 'install-status'))).toEqual(prior);
+    expect(lstatSync(join(home, '.claude', 'skills', 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+  }, 20000);
+
+  test('U5 a same-version setup retry records the preserved copy', () => {
+    const repo = createFixtureRepoWithRealSetup('u5');
+    const home = join(baseTmp, 'u5-home');
+    const state = join(baseTmp, 'u5-state');
+    mkdirSync(state, { recursive: true });
+    plantCopy(home, 'implement', 'STILL CUSTOM\n', realpathSync(repo));
+    const result = runBin(UPDATE_RUN, [repo], {
+      home,
+      gstackExtendDir: repo,
+      gstackExtendStateDir: state,
+      extraEnv: { PATH: isolatedTools('u5') },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('UPGRADE_OK 1.0.0 1.0.0');
+    expect((result.stdout.match(/UPGRADE_OK/g) ?? []).length).toBe(1);
+    expect(readFileSync(join(repo, 'VERSION'), 'utf8')).toBe('1.0.0\n');
+    seedUpdateCheckBinaries(repo);
+    expect(readFileSync(join(home, '.claude', 'skills', 'implement', 'SKILL.md'), 'utf8')).toBe('STILL CUSTOM\n');
+    const remote = join(baseTmp, 'u5-ver');
+    writeFileSync(remote, '1.0.0\n');
+    const seen = checkInstall(repo, home, state, [], `file://${remote}`);
+    expect(seen.stdout).toContain('skill=implement');
+    expect(seen.stdout).toContain('reason=preserved_regular');
+    expect(seen.stdout).toContain('freshness=unverified');
+  }, 20000);
 });
