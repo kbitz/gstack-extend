@@ -3,7 +3,22 @@
 ## Unprocessed
 
 
-_(none)_
+### Investigate ownership receipts for customized generated copies
+
+**What:** Verify whether copy-host refresh should distinguish edited generated skill bodies from untouched ones before proposing an ownership receipt.
+
+**Why:** `setup:generated_copy` treats a regular `SKILL.md` beside an `.extend-root` pointer as generated on Codex, OpenCode and Cursor. Claude preserves regular files. An intentional edit to a managed copy may therefore be replaced on refresh.
+
+**Context:** Deferred from Track 23C's planning review: `[plan-ceo-review:track=23C,defer=true]`. Begin with `setup:generated_copy`, `host_skill_body`, the generated-copy refresh tests in `tests/setup-hosts.test.ts`, and `docs/installation.md`'s ownership contract. Track 23C preserves that existing refresh policy while repairing warning visibility and recovery; this investigation is not a new release gate.
+
+**Pros:** Clarifies user intent and could protect intentional edits to managed copies.
+
+**Cons:** Receipt migration and changed refresh semantics would need separate compatibility decisions and host qualification.
+
+**Effort:** M (human: ~1 day / CC: ~1 hour)
+**Priority:** P3
+**Depends on:** A named supported-host reproduction or an explicit owner decision about protecting edits to managed copies.
+**Revisit when:** O1 qualification reproduces loss of an intentional generated-copy edit, or the owner explicitly requests protection for edits to those managed copies.
 
 ## Completed
 
