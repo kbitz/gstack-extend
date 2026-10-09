@@ -166,8 +166,11 @@ whatever `checkout=` shows. A status line (`reason=status_*`) names the state
 path and its cause instead. Paths are shell-quoted when needed. Treat the
 text after `INSTALL_WARN` as a human-readable diagnostic: rely on that token and
 the `reason=` and `cause=` values, not on field order.
-`reason=preserved_regular` means the file was left in place. `compare=` and `observed=` describe that file against
-the checkout's source at the version setup recorded. `freshness=unverified`
+`reason=preserved_regular` means the file was left in place. `compare=` says
+whether that file matched the checkout source (`matches_canonical`,
+`differs_canonical`, or `source_unavailable`). `variant=` is that comparison
+after the copy-host frontmatter strip. `observed=` is the checkout version
+recorded with the fact, not another reading of the file. `freshness=unverified`
 means that comparison is not a promise the copy is current, customized, owned,
 or disposable. A later setup can replace the observation; it does not clear
 the fact until the repair below is verified.
@@ -183,8 +186,13 @@ because setup cannot tell a kept copy from a lost one. While the copy is still
 there, run the example again. Once it is gone, the warning stays until you put
 the file back and repeat the example, or turn checks off as described below.
 A host fact clears when that host's setup succeeds into a safe directory of
-its own; `shared_directory` also needs the directory separated from every
-other host's.
+its own. `shared_directory` also needs that directory separated from the other
+copy-producing hosts. Cursor still reading the directory does not keep the
+fact. A Cursor `unsafe_directory` or `cursor_unserved` fact clears when this
+run installed the host whose skills directory Cursor points at (`setup --host
+auto`, or `setup --host` for that owner). `unsafe_directory` still needs that
+directory to pass the install-path check. `setup --host cursor` does not clear
+either fact while Cursor still yields.
 
 A pointer that names a moved or deleted checkout does not by itself refresh
 or delete the copy. A second verified checkout can clear a fact only for the
@@ -503,6 +511,8 @@ check. `path=` names the directory and `cause=` says why:
 
 Then run `"<checkout>/setup" --host <host>` from the verified checkout. The
 warning clears when that run installs the host into the corrected directory.
+If Cursor's directory is the skills directory of a host this run installs,
+that host's setup clears the Cursor fact; `setup --host cursor` still skips it.
 
 ## State recovery
 
