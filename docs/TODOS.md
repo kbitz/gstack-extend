@@ -45,6 +45,22 @@
 - **Priority:** P3
 - **Revisit when:** A real install-status file passes a few hundred records, or a skill preamble is reported slow because of update-check.
 
+### [review] Check that the install-status HOME id survives volume changes
+
+- **Description:** Records are keyed on the HOME directory's `st_dev:st_ino`. If macOS renumbers the device (for example a home on an external volume), every record silently becomes another HOME's: `bin/update-check` prints nothing for them, and a fact whose pointer names a deleted checkout is not recorded again. Live copies are recorded again by the next setup under the new id.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Raised by the adversarial pass during Track 23C review and prep on 2026-10-09. Stability of `st_dev` for the Data volume on the declared macOS profile was not verified. Candidate fixes: key on the physical path plus inode, or print a status line when only other-HOME records exist.
+- **Priority:** P3
+- **Revisit when:** A report of install warnings disappearing after a reboot, migration or volume change, or Track 27A qualification on a home outside the boot volume.
+
+### [review] Map unsafe-directory causes from a code, not install-safety's message text
+
+- **Description:** `setup:install_status_note_unsafe` derives `cause=` by matching the wording of `is_safe_install_path`'s stderr (`outside resolved`, `owned by uid`, `world-writable`, ...). Rewording a message silently downgrades its cause to the generic `unsafe_directory`, and the Unsafe skills directory table then cannot point at the specific fix. Tests pin `world_writable` and `outside_home` only.
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Context:** Raised by the maintainability passes during Track 23C review and prep on 2026-10-09. Have `is_safe_install_path` set a machine-readable cause, or add tests for the remaining causes.
+- **Priority:** P3
+- **Revisit when:** The next change to `bin/lib/install-safety.sh` messages.
+
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read

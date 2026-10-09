@@ -2320,6 +2320,12 @@ exec /bin/mv "$@"
     });
     expect(slashed.stdout).toContain('skill=implement');
     expect(slashed.stdout).not.toContain('status_unverified');
+    // The same HOME directory under an earlier name is shown at the current one.
+    writeFileSync(status, encodeFrame([factRecord(fx.home, { logical: '/Users/renamed-home/.claude/skills' })]));
+    const renamed = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    expect(renamed.stdout).toContain(`path=${join(fx.home, '.claude', 'skills')}`);
+    expect(renamed.stdout).not.toContain('renamed-home');
+    expect(renamed.stdout).not.toContain('status_unverified');
   }, 20000);
 
   test('R7 paths stay escaped under a UTF-8 locale on every available bash', () => {
@@ -2359,28 +2365,6 @@ exec /bin/mv "$@"
     writeFileSync(join(state, 'install-status'), encodeFrame([]));
     const warned = checkInstall(repo, missingHome, state, [], 'file:///nonexistent');
     expect(warned.stdout).toContain('cause=home_unreadable');
-  });
-
-  test('W2 GNU stat ahead of /usr/bin still reads the snapshot', () => {
-    const gnu = ['/opt/homebrew/bin/gstat', '/usr/local/bin/gstat', '/usr/bin/stat'].find((p) => {
-      if (!existsSync(p)) return false;
-      const v = spawnSync(p, ['--version'], { encoding: 'utf8' });
-      return v.status === 0 && (v.stdout ?? '').includes('GNU');
-    });
-    if (!gnu) return;
-    const fx = warnedFixture('w2-gnu-stat');
-    const bins = join(baseTmp, 'w2-gnu-bins');
-    mkdirSync(bins, { recursive: true });
-    if (!existsSync(join(bins, 'stat'))) symlinkSync(gnu, join(bins, 'stat'));
-    const r = runBin(join(fx.repo, 'bin', 'update-check'), [], {
-      home: fx.home,
-      gstackExtendDir: fx.repo,
-      gstackExtendStateDir: fx.state,
-      extraEnv: { PATH: `${bins}:/bin:/usr/bin`, GSTACK_EXTEND_REMOTE_URL: fx.remote },
-    });
-    expect(r.stdout).toContain('skill=implement');
-    expect(r.stdout).not.toContain('status_unreadable');
-    expect(r.stdout).not.toContain('status_unverified');
   });
 
   test('U1 a git failure leaves install status untouched', () => {

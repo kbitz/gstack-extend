@@ -55,10 +55,28 @@ _UC_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
 _UC_DIGIT=0123456789
 _UC_HEX=0123456789abcdef
 _UC_HOME_NORM=""
-# GNU stat is tried first: with GNU coreutils ahead of /usr/bin, `stat -f`
-# prints file-system details before failing. BSD stat rejects -c silently.
+# Frame limits. setup keeps the same values in IS_MAX_*.
+_UC_MAX_FACTS=4096
+_UC_MAX_BYTES=1048576
+_UC_MAX_TOKEN=64
+# BSD stat is tried first and its output kept only when it has the expected
+# shape: with GNU coreutils ahead of /usr/bin, `stat -f` prints file-system
+# details instead, and the GNU form (-c) is used.
 _uc_home_id() {
-  stat -L -c '%d:%i' "$HOME" 2>/dev/null || stat -L -f '%d:%i' "$HOME" 2>/dev/null
+  local out=""
+  out=$(stat -L -f '%d:%i' "$HOME" 2>/dev/null) || out=""
+  case "$out" in
+    [${_UC_DIGIT}]*:[${_UC_DIGIT}]*) case "$out" in *[!${_UC_DIGIT}:]*) out="" ;; esac ;;
+    *) out="" ;;
+  esac
+  [ -n "$out" ] || out=$(stat -L -c '%d:%i' "$HOME" 2>/dev/null) || return 1
+  printf '%s' "$out"
+}
+_uc_size() {
+  local out=""
+  out=$(stat -f '%z' "$1" 2>/dev/null) || out=""
+  case "$out" in ""|*[!${_UC_DIGIT}]*) out=$(stat -c '%s' "$1" 2>/dev/null) || return 1 ;; esac
+  printf '%s' "$out"
 }
 # _uc_norm_path <path> sets _UC_NORM: repeated slashes collapsed, no trailing slash.
 _uc_norm_path() {
@@ -110,7 +128,7 @@ _uc_valid_fact() {
   _uc_enum "$variant" matches_stripped differs_stripped not_applicable unavailable || return 1
   _uc_enum "$detect" binary existing_skill cursor_home explicit_host not_applicable || return 1
   case "$cause" in ""|*[!${_UC_LOWER}${_UC_DIGIT}_]*) return 1 ;; esac
-  [ "${#cause}" -le 64 ] || return 1
+  [ "${#cause}" -le "$_UC_MAX_TOKEN" ] || return 1
   case "$home" in [${_UC_DIGIT}]*:[${_UC_DIGIT}]*) ;; *) return 1 ;; esac
   case "$home" in *[!${_UC_DIGIT}:]*) return 1 ;; esac
   case "$inode" in
@@ -126,7 +144,7 @@ _uc_valid_fact() {
       ;;
   esac
   case "$version" in ""|*[!${_UC_LOWER}${_UC_UPPER}${_UC_DIGIT}._+-]*) return 1 ;; esac
-  [ "${#version}" -le 64 ] || return 1
+  [ "${#version}" -le "$_UC_MAX_TOKEN" ] || return 1
   case "$skill" in
     "") ;;
     .|..|*[!${_UC_LOWER}${_UC_UPPER}${_UC_DIGIT}._-]*) return 1 ;;
@@ -140,7 +158,8 @@ _uc_valid_fact() {
   esac
   return 0
 }
-# A record for this HOME must name this host's skills directory under HOME.
+# A record for this HOME must name this host's skills directory. It is shown
+# under the current spelling of HOME, as setup rebinds it (_is_bind_fact).
 _uc_bound_fact() {
   local host="$1" logical="$2" want
   case "$host" in
@@ -151,7 +170,11 @@ _uc_bound_fact() {
     *) return 1 ;;
   esac
   _uc_norm_path "$logical"
-  [ "$_UC_NORM" = "$_UC_HOME_NORM$want" ]
+  case "$_UC_NORM" in
+    *"$want") ;;
+    *) return 1 ;;
+  esac
+  _UC_BOUND="$_UC_HOME_NORM$want"
 }
 _uc_emit_fact() {
   local host="$1" skill="$2" logical="$3" reason="$4" cause="$5" canon="$6" variant="$7"
@@ -180,11 +203,11 @@ _uc_read_status() {
   if [ -p "$file" ]; then _uc_status_line status_unreadable fifo "$file"; return 0; fi
   if [ ! -f "$file" ]; then _uc_status_line status_unreadable not_regular "$file"; return 0; fi
   if [ ! -r "$file" ]; then _uc_status_line status_unreadable not_readable "$file"; return 0; fi
-  bytes=$(stat -c '%s' "$file" 2>/dev/null || stat -f '%z' "$file" 2>/dev/null || echo "")
+  bytes=$(_uc_size "$file" || true)
   case "$bytes" in
     ""|*[!${_UC_DIGIT}]*) _uc_status_line status_unreadable not_readable "$file"; return 0 ;;
   esac
-  if [ "$bytes" -gt 1048576 ]; then
+  if [ "$bytes" -gt "$_UC_MAX_BYTES" ]; then
     _uc_status_line status_unverified oversized "$file"
     return 0
   fi
@@ -192,7 +215,7 @@ _uc_read_status() {
   while IFS= read -r -d '' _uc_field || [ -n "${_uc_field:-}" ]; do
     fields[${#fields[@]}]="$_uc_field"
     _uc_field=""
-    if [ "${#fields[@]}" -gt $((2 + 4096 * 16 + 2)) ]; then
+    if [ "${#fields[@]}" -gt $((2 + _UC_MAX_FACTS * 16 + 2)) ]; then
       _uc_status_line status_unverified oversized "$file"
       return 0
     fi
@@ -213,7 +236,7 @@ _uc_read_status() {
       return 0
     fi
     if [ $((i + 16)) -gt "$n" ]; then _uc_status_line status_unverified truncated "$file"; return 0; fi
-    if [ "$_UC_FACTS" -ge 4096 ]; then _uc_status_line status_unverified oversized "$file"; return 0; fi
+    if [ "$_UC_FACTS" -ge "$_UC_MAX_FACTS" ]; then _uc_status_line status_unverified oversized "$file"; return 0; fi
     if [ "${fields[$i]}" != "fact" ]; then _uc_status_line status_unverified unknown_record "$file"; return 0; fi
     if ! _uc_valid_fact \
       "${fields[$i]}" "${fields[$((i+1))]}" "${fields[$((i+2))]}" "${fields[$((i+3))]}" \
@@ -230,7 +253,7 @@ _uc_read_status() {
         return 0
       fi
       _uc_emit_fact \
-        "${fields[$((i+4))]}" "${fields[$((i+8))]}" "${fields[$((i+5))]}" "${fields[$((i+9))]}" \
+        "${fields[$((i+4))]}" "${fields[$((i+8))]}" "$_UC_BOUND" "${fields[$((i+9))]}" \
         "${fields[$((i+10))]}" "${fields[$((i+11))]}" "${fields[$((i+12))]}" "${fields[$((i+13))]}" \
         "${fields[$((i+3))]}" "${fields[$((i+15))]}" "${fields[$((i+2))]}"
     fi

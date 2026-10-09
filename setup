@@ -534,28 +534,24 @@ install_into_dir() {
 # field keeps every byte except NUL without a subprocess per field. The
 # checker reads the frame; this writer never sources it.
 IS_FIELDS=16
+# Frame limits. bin/update-check keeps the same values in _UC_MAX_*.
+IS_MAX_FACTS=4096
+IS_MAX_BYTES=1048576
+IS_MAX_TOKEN=64
 IS_LOWER=abcdefghijklmnopqrstuvwxyz
 IS_UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
 IS_DIGIT=0123456789
 IS_HEX=0123456789abcdef
 IS_HOME_NORM=""
 INSTALL_STATUS_VERSION=""
-# _is_append <array> <field>... appends to a flat record array. The array name
-# is always a literal from this file; values are assigned, never evaluated.
-_is_append() {
-  local __is_arr=$1 __is_n __is_v __is_i=0
-  shift
-  eval "__is_n=\${#$__is_arr[@]}"
-  for __is_v in "$@"; do
-    eval "$__is_arr[\$((__is_n + __is_i))]=\$__is_v"
-    __is_i=$((__is_i + 1))
-  done
-}
 # _is_set_uf <sixteen fields> sets UF_* and the fact's path, UF_PATH.
 _is_set_uf() {
   UF_KIND=$1 UF_HOME=$2 UF_ORIGIN=$3 UF_OQUAL=$4 UF_HOST=$5 UF_LOGICAL=$6
   UF_PHYSICAL=$7 UF_INODE=$8 UF_SKILL=$9 UF_REASON=${10} UF_CAUSE=${11}
   UF_CANON=${12} UF_VARIANT=${13} UF_VERSION=${14} UF_SHA=${15} UF_DETECT=${16}
+  _is_set_path
+}
+_is_set_path() {
   if [ -n "$UF_SKILL" ]; then UF_PATH="$UF_LOGICAL/$UF_SKILL"; else UF_PATH=$UF_LOGICAL; fi
 }
 # _is_load <array> <record index> sets UF_* from one record.
@@ -601,22 +597,47 @@ _is_norm_path() {
   [ "$s" = "/" ] || s=${s%/}
   IS_NORM=$s
 }
+# _is_host_dir <host> sets IS_HOST_DIR, the host's skills directory as facts
+# record it: slashes normalized, so a trailing slash on HOME names the same fact.
+_is_host_dir() {
+  _is_norm_path "$(host_skills_dir "$1")"
+  IS_HOST_DIR=$IS_NORM
+}
+# The file is read on stdin so an unusual name cannot change the output format.
 _is_sha() {
   local out=""
-  if out=$(shasum -a 256 "$1" 2>/dev/null); then
+  [ -r "$1" ] || return 1
+  if out=$(shasum -a 256 < "$1" 2>/dev/null); then
     printf '%s' "${out%% *}"
     return 0
   fi
-  if out=$(sha256sum "$1" 2>/dev/null); then
+  if out=$(sha256sum < "$1" 2>/dev/null); then
     printf '%s' "${out%% *}"
     return 0
   fi
   return 1
 }
-# GNU stat is tried first: with GNU coreutils ahead of /usr/bin, `stat -f`
-# prints file-system details before failing. BSD stat rejects -c silently.
+# BSD stat is tried first and its output kept only when it has the expected
+# shape: with GNU coreutils ahead of /usr/bin, `stat -f` prints file-system
+# details instead, and the GNU form (-c) is used.
+_is_stat_id() {
+  local out=""
+  out=$(stat -L -f '%d:%i' "$1" 2>/dev/null) || out=""
+  case "$out" in
+    [${IS_DIGIT}]*:[${IS_DIGIT}]*) case "$out" in *[!${IS_DIGIT}:]*) out="" ;; esac ;;
+    *) out="" ;;
+  esac
+  [ -n "$out" ] || out=$(stat -L -c '%d:%i' "$1" 2>/dev/null) || return 1
+  printf '%s' "$out"
+}
+_is_stat_size() {
+  local out=""
+  out=$(stat -f '%z' "$1" 2>/dev/null) || out=""
+  case "$out" in ""|*[!${IS_DIGIT}]*) out=$(stat -c '%s' "$1" 2>/dev/null) || return 1 ;; esac
+  printf '%s' "$out"
+}
 _is_home_id() {
-  stat -L -c '%d:%i' "$HOME" 2>/dev/null || stat -L -f '%d:%i' "$HOME" 2>/dev/null
+  _is_stat_id "$HOME"
 }
 _is_ensure_home() {
   [ -n "$INSTALL_STATUS_HOME_ID" ] && return 0
@@ -638,7 +659,7 @@ _is_dir_id() {
   local phys=""
   if phys=$(cd -P "$1" 2>/dev/null && pwd -P); then
     IS_PHYSICAL=$phys
-    IS_INODE=$(stat -c '%d:%i' "$phys" 2>/dev/null || stat -f '%d:%i' "$phys" 2>/dev/null || true)
+    IS_INODE=$(_is_stat_id "$phys" || true)
   fi
 }
 _is_version() {
@@ -730,7 +751,8 @@ _is_push_new() {
 install_status_note_host() {
   local host="$1" reason="$2" cause="$3" logical detect
   _is_ensure_home || return 0
-  logical=$(host_skills_dir "$host")
+  _is_host_dir "$host"
+  logical=$IS_HOST_DIR
   _is_dir_id "$logical"
   _is_version
   detect=$(_is_detect "$host")
@@ -755,7 +777,8 @@ install_status_note_unsafe() {
 install_status_note_preserved() {
   local dir="$1" skill="$2" sha="" logical
   _is_ensure_home || return 0
-  logical=$(host_skills_dir claude)
+  _is_host_dir claude
+  logical=$IS_HOST_DIR
   _is_compare "$dir/SKILL.md" "$skill"
   sha=$(_is_sha "$dir/SKILL.md" || true)
   _is_dir_id "$dir"
@@ -810,23 +833,26 @@ install_status_mark_resolutions() {
     _is_host_done "$host" || continue
     dir=$(host_skills_dir "$host")
     is_safe_install_path "$dir" >/dev/null 2>&1 || continue
-    _is_mark "$home" "$host" "$dir" unsafe_directory
+    _is_host_dir "$host"
+    _is_mark "$home" "$host" "$IS_HOST_DIR" unsafe_directory
     _is_separated "$host" || continue
-    _is_mark "$home" "$host" "$dir" shared_directory
+    _is_mark "$home" "$host" "$IS_HOST_DIR" shared_directory
   done
   dir=$(host_skills_dir cursor)
+  _is_host_dir cursor
   if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
-    _is_mark "$home" cursor "$dir" cursor_unserved
+    _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
   else
     for host in claude codex opencode; do
       if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
-        _is_mark "$home" cursor "$dir" cursor_unserved
+        _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
         break
       fi
     done
   fi
   if [ "$HOST_DONE_claude" -eq 1 ] || [ "$INSTALL_STATUS_SCAN_CLAUDE" -eq 1 ]; then
-    skills_dir=$(host_skills_dir claude)
+    _is_host_dir claude
+    skills_dir=$IS_HOST_DIR
     for skill in "${SKILLS[@]}" "${LEGACY_SKILLS[@]}"; do
       _is_mark "$home" claude "$skills_dir/$skill" preserved_regular
     done
@@ -902,7 +928,7 @@ _is_valid_fact() {
   _is_enum "$UF_VARIANT" matches_stripped differs_stripped not_applicable unavailable || return 1
   _is_enum "$UF_DETECT" binary existing_skill cursor_home explicit_host not_applicable || return 1
   case "$UF_CAUSE" in ""|*[!${IS_LOWER}${IS_DIGIT}_]*) return 1 ;; esac
-  [ "${#UF_CAUSE}" -le 64 ] || return 1
+  [ "${#UF_CAUSE}" -le "$IS_MAX_TOKEN" ] || return 1
   case "$UF_HOME" in [${IS_DIGIT}]*:[${IS_DIGIT}]*) ;; *) return 1 ;; esac
   case "$UF_HOME" in *[!${IS_DIGIT}:]*) return 1 ;; esac
   case "$UF_INODE" in
@@ -918,7 +944,7 @@ _is_valid_fact() {
       ;;
   esac
   case "$UF_VERSION" in ""|*[!${IS_LOWER}${IS_UPPER}${IS_DIGIT}._+-]*) return 1 ;; esac
-  [ "${#UF_VERSION}" -le 64 ] || return 1
+  [ "${#UF_VERSION}" -le "$IS_MAX_TOKEN" ] || return 1
   case "$UF_SKILL" in
     "") ;;
     .|..|*[!${IS_LOWER}${IS_UPPER}${IS_DIGIT}._-]*) return 1 ;;
@@ -932,9 +958,11 @@ _is_valid_fact() {
   esac
   return 0
 }
-# A record for this HOME must name this host's skills directory under HOME.
+# A record for this HOME must name this host's skills directory. The same
+# HOME directory can be spelled differently over time (a trailing slash, a
+# renamed home folder), so the record is rebound to the current spelling.
 # Another HOME's records keep only the structural check and pass through.
-_is_bound_fact() {
+_is_bind_fact() {
   local want
   case "$UF_HOST" in
     claude) want=/.claude/skills ;;
@@ -944,17 +972,22 @@ _is_bound_fact() {
     *) return 1 ;;
   esac
   _is_norm_path "$UF_LOGICAL"
-  [ "$IS_NORM" = "$IS_HOME_NORM$want" ]
+  case "$IS_NORM" in
+    *"$want") ;;
+    *) return 1 ;;
+  esac
+  UF_LOGICAL="$IS_HOME_NORM$want"
+  _is_set_path
 }
 _is_check_fact() {
   _is_valid_fact || return 1
   if [ "$UF_HOME" = "$INSTALL_STATUS_HOME_ID" ]; then
-    _is_bound_fact || return 1
+    _is_bind_fact || return 1
   fi
   return 0
 }
 _is_load_prev() {
-  local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n
+  local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n nrec=0
   IS_PREV_F=()
   IS_PREV_KEY=()
   IS_READ=absent
@@ -966,16 +999,16 @@ _is_load_prev() {
   if [ -p "$file" ]; then IS_READ=fifo; return 0; fi
   if [ ! -f "$file" ]; then IS_READ=not_regular; return 0; fi
   if [ ! -r "$file" ]; then IS_READ=not_readable; return 0; fi
-  bytes=$(stat -c '%s' "$file" 2>/dev/null || stat -f '%z' "$file" 2>/dev/null || echo "")
+  bytes=$(_is_stat_size "$file" || true)
   case "$bytes" in
     ""|*[!${IS_DIGIT}]*) IS_READ=not_readable; return 0 ;;
   esac
-  if [ "$bytes" -gt 1048576 ]; then IS_READ=oversized; return 0; fi
+  if [ "$bytes" -gt "$IS_MAX_BYTES" ]; then IS_READ=oversized; return 0; fi
   fields=()
   while IFS= read -r -d '' _is_field || [ -n "${_is_field:-}" ]; do
     fields[${#fields[@]}]="$_is_field"
     _is_field=""
-    if [ "${#fields[@]}" -gt $((2 + 4096 * IS_FIELDS + 2)) ]; then
+    if [ "${#fields[@]}" -gt $((2 + IS_MAX_FACTS * IS_FIELDS + 2)) ]; then
       IS_READ=oversized
       return 0
     fi
@@ -991,12 +1024,12 @@ _is_load_prev() {
       case "${fields[$((i + 1))]}" in
         ""|*[!${IS_DIGIT}]*) IS_READ=count_mismatch; return 0 ;;
       esac
-      [ "${fields[$((i + 1))]}" -eq "${#IS_PREV_KEY[@]}" ] || { IS_READ=count_mismatch; return 0; }
+      [ "${fields[$((i + 1))]}" -eq "$nrec" ] || { IS_READ=count_mismatch; return 0; }
       IS_READ=ok
       return 0
     fi
     if [ $((i + IS_FIELDS)) -gt "$n" ]; then IS_READ=truncated; return 0; fi
-    if [ "${#IS_PREV_KEY[@]}" -ge 4096 ]; then IS_READ=oversized; return 0; fi
+    if [ "$nrec" -ge "$IS_MAX_FACTS" ]; then IS_READ=oversized; return 0; fi
     _is_set_uf "${fields[$i]}" "${fields[$((i + 1))]}" "${fields[$((i + 2))]}" \
       "${fields[$((i + 3))]}" "${fields[$((i + 4))]}" "${fields[$((i + 5))]}" \
       "${fields[$((i + 6))]}" "${fields[$((i + 7))]}" "${fields[$((i + 8))]}" \
@@ -1005,29 +1038,29 @@ _is_load_prev() {
       "${fields[$((i + 15))]}"
     if [ "$UF_KIND" != "fact" ]; then IS_READ=unknown_record; return 0; fi
     _is_check_fact || { IS_READ=malformed; return 0; }
-    _is_store IS_PREV_F
     _is_key "$UF_HOME" "$UF_HOST" "$UF_PATH" "$UF_REASON"
-    IS_PREV_KEY[${#IS_PREV_KEY[@]}]=$IS_KEY
+    # Rebinding can make two spellings of one fact identical; keep the later.
+    if _is_key_index IS_PREV_KEY "$IS_KEY"; then
+      _is_store IS_PREV_F "$IS_IDX"
+    else
+      _is_store IS_PREV_F
+      IS_PREV_KEY[${#IS_PREV_KEY[@]}]=$IS_KEY
+    fi
+    nrec=$((nrec + 1))
     i=$((i + IS_FIELDS))
   done
   IS_READ=truncated
 }
-_is_prev_has() {
-  local key="$1" i=0
-  [ -n "$key" ] || return 1
-  while [ "$i" -lt "${#IS_PREV_KEY[@]}" ]; do
-    [ "${IS_PREV_KEY[$i]}" = "$key" ] && return 0
-    i=$((i + 1))
-  done
-  return 1
-}
-# _is_out_index <key> sets IS_IDX to the matching output record.
-_is_out_index() {
-  local key="$1" i=0
+# _is_key_index <key array> <key> sets IS_IDX to the matching record. The
+# array name is always a literal from this file.
+_is_key_index() {
+  local __is_n __is_k i=0
   IS_IDX=""
-  [ -n "$key" ] || return 1
-  while [ "$i" -lt "${#IS_OUT_KEY[@]}" ]; do
-    if [ "${IS_OUT_KEY[$i]}" = "$key" ]; then
+  [ -n "$2" ] || return 1
+  eval "__is_n=\${#$1[@]}"
+  while [ "$i" -lt "$__is_n" ]; do
+    eval "__is_k=\${$1[$i]}"
+    if [ "$__is_k" = "$2" ]; then
       IS_IDX=$i
       return 0
     fi
@@ -1036,18 +1069,11 @@ _is_out_index() {
   return 1
 }
 _is_backup_matches() {
-  local dir="$1" want="$2" got="" f
+  local dir="$1" want="$2" got=""
   [ -n "$want" ] || return 1
-  if [ -f "$dir/SKILL.md.backup" ] && [ ! -L "$dir/SKILL.md.backup" ]; then
-    got=$(_is_sha "$dir/SKILL.md.backup" || true)
-    [ "$got" = "$want" ] && return 0
-  fi
-  for f in "$dir"/backup-before-migration.*/SKILL.md; do
-    [ -f "$f" ] && [ ! -L "$f" ] || continue
-    got=$(_is_sha "$f" || true)
-    [ "$got" = "$want" ] && return 0
-  done
-  return 1
+  [ -f "$dir/SKILL.md.backup" ] && [ ! -L "$dir/SKILL.md.backup" ] || return 1
+  got=$(_is_sha "$dir/SKILL.md.backup" || true)
+  [ "$got" = "$want" ]
 }
 _is_legacy_skill() {
   local s="$1" x
@@ -1073,16 +1099,18 @@ _is_reverify() {
   case "$UF_REASON" in
     shared_directory|unsafe_directory)
       _is_host_done "$UF_HOST" || return 1
-      [ "$UF_LOGICAL" = "$(host_skills_dir "$UF_HOST")" ] || return 1
+      _is_host_dir "$UF_HOST"
+      [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
       if [ "$UF_REASON" = shared_directory ]; then
         _is_separated "$UF_HOST" || return 1
       fi
-      is_safe_install_path "$UF_LOGICAL" >/dev/null 2>&1 || return 1
+      is_safe_install_path "$(host_skills_dir "$UF_HOST")" >/dev/null 2>&1 || return 1
       return 0
       ;;
     cursor_unserved)
       dir=$(host_skills_dir cursor)
-      [ "$UF_LOGICAL" = "$dir" ] || return 1
+      _is_host_dir cursor
+      [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
       if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
         return 0
       fi
@@ -1095,7 +1123,8 @@ _is_reverify() {
       ;;
     preserved_regular)
       [ "$UF_HOST" = "claude" ] || return 1
-      [ "$UF_LOGICAL" = "$(host_skills_dir claude)" ] || return 1
+      _is_host_dir claude
+      [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
       dir="$UF_PATH"
       [ -n "$UF_INODE" ] || return 1
       _is_dir_id "$dir"
@@ -1130,12 +1159,12 @@ _is_merge() {
   n=${#IS_NEW_KEY[@]}
   while [ "$i" -lt "$n" ]; do
     key=${IS_NEW_KEY[$i]}
-    if [ "${IS_NEW_QUAL[$i]}" = "prior_qualified" ] && ! _is_prev_has "$key"; then
+    if [ "${IS_NEW_QUAL[$i]}" = "prior_qualified" ] && ! _is_key_index IS_PREV_KEY "$key"; then
       i=$((i + 1))
       continue
     fi
     _is_load IS_NEW_F "$i"
-    if _is_out_index "$key"; then
+    if _is_key_index IS_OUT_KEY "$key"; then
       _is_store IS_OUT_F "$IS_IDX"
     else
       _is_store IS_OUT_F
@@ -1164,7 +1193,7 @@ _is_reconcile() {
 # Never publish a frame the readers would reject.
 _is_out_valid() {
   local i=0 n=${#IS_OUT_KEY[@]}
-  [ "$n" -le 4096 ] || return 1
+  [ "$n" -le "$IS_MAX_FACTS" ] || return 1
   while [ "$i" -lt "$n" ]; do
     _is_load IS_OUT_F "$i"
     _is_check_fact || return 1
@@ -1204,11 +1233,11 @@ _is_publish_file() {
     _is_warn write_failed
     return 0
   fi
-  bytes=$(stat -c '%s' "$tmp" 2>/dev/null || stat -f '%z' "$tmp" 2>/dev/null || echo "")
+  bytes=$(_is_stat_size "$tmp" || true)
   case "$bytes" in
     ""|*[!${IS_DIGIT}]*) bytes=0 ;;
   esac
-  if [ "$bytes" -gt 1048576 ]; then
+  if [ "$bytes" -gt "$IS_MAX_BYTES" ]; then
     rm -f "$tmp" || true
     INSTALL_STATUS_TMP=""
     _is_warn oversized

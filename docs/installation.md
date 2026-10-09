@@ -152,9 +152,15 @@ Setup records associated regular Claude `SKILL.md` files and skipped-host
 facts under `${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/install-status`.
 A successful setup stays quiet on stdout. The checker prints the facts. A fact
 line names the host, the skill (`-` for a whole host directory), the path, the
-reason and cause, the checkout that recorded it, and a Fix link in this
-checkout's `docs/installation.md`. A status line (`reason=status_*`) names the
-state path and its cause instead. Paths are shell-quoted when needed. Treat the
+reason and cause, the checkout the record names, and a Fix link in this
+checkout's `docs/installation.md`. For a preserved copy, `checkout=` is the
+checkout its `.extend-root` names; for a host fact, it is the checkout whose
+setup saw it. `origin=` says how that checkout was qualified: `this_checkout`
+(the checkout that recorded the fact), `verified_checkout` (another existing
+gstack-extend checkout) or `prior_qualified` (one that has since moved or been
+deleted). Recover with a verified checkout, normally the one in the Fix link,
+whatever `checkout=` shows. A status line (`reason=status_*`) names the state
+path and its cause instead. Paths are shell-quoted when needed. Treat the
 text after `INSTALL_WARN` as a human-readable diagnostic: rely on that token and
 the `reason=` and `cause=` values, not on field order.
 `reason=preserved_regular` means the file was left in place. `compare=` and `observed=` describe that file against
@@ -230,11 +236,13 @@ The per-file example needs the reviewed `SKILL.md` to be a regular file, not
 a symlink. It runs setup once so the recorded bytes match the file, keeps the
 file as `SKILL.md.backup` with `ln` (which refuses to replace an existing
 backup), and removes the original name only after both names point at the
-same file. `RECOVERY_SETUP_FAILED` (exit 5) means setup failed and
+same file. `RECOVERY_SETUP_FAILED` (exit 5) means setup failed,
 `RECOVERY_NOT_LINKED` (exit 6) means setup finished without linking the
-skill; the backup stays in place either way. Fix the cause and run the
+skill, and `RECOVERY_STATUS_UNSAVED` (exit 7) means setup could not save its
+record (see **State recovery**). The backup, if one was made, stays in place. Fix the cause and run the
 example again: it resumes from the backup without moving it. A second run
-after the symlink exists does nothing to that symlink. A retired name whose
+after the symlink exists does nothing to that symlink; it only reruns setup so
+an unsaved record can catch up. A retired name whose
 source file is gone is not moved by this example. A foreign symlink is left
 alone. Repairing one skill does not repair the others.
 
@@ -258,10 +266,15 @@ linked() {
   [ "$target" = "$source" ]
 }
 run_setup() {
-  if ! "$checkout/setup" --host claude --quiet; then
+  if ! out=$("$checkout/setup" --host claude --quiet); then
+    [ -z "$out" ] || printf '%s\n' "$out"
     echo RECOVERY_SETUP_FAILED
     exit 5
   fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+  case "$out" in
+    *"INSTALL_WARN reason=status_unsaved"*) echo RECOVERY_STATUS_UNSAVED; exit 7 ;;
+  esac
 }
 if [ ! -f "$source" ] || [ -L "$source" ]; then
   echo RECOVERY_RETIRED_MANUAL
@@ -269,6 +282,8 @@ if [ ! -f "$source" ] || [ -L "$source" ]; then
 fi
 if [ -L "$file" ]; then
   if linked; then
+    # Setup reconciles the record in case an earlier run could not save it.
+    run_setup
     echo RECOVERY_ALREADY_REPAIRED
     exit 0
   fi
@@ -331,10 +346,15 @@ dir="$HOME/.claude/skills/$skill"
 file="$dir/SKILL.md"
 backup="$dir/SKILL.md.backup"
 run_setup() {
-  if ! "$checkout/setup" --host claude --quiet; then
+  if ! out=$("$checkout/setup" --host claude --quiet); then
+    [ -z "$out" ] || printf '%s\n' "$out"
     echo RECOVERY_SETUP_FAILED
     exit 5
   fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+  case "$out" in
+    *"INSTALL_WARN reason=status_unsaved"*) echo RECOVERY_STATUS_UNSAVED; exit 7 ;;
+  esac
 }
 if [ -f "$checkout/skills/$skill.md" ]; then
   echo RECOVERY_NOT_RETIRED
@@ -473,7 +493,9 @@ warning clears when that run installs the host into the corrected directory.
 
 `install-status` is a private data file in
 `${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}`. Setup publishes a complete
-replacement only after it can read the previous file. A reader that finds a
+replacement only after it can read the previous file. When it cannot save, it
+prints `INSTALL_WARN reason=status_unsaved` on stdout, even with `--quiet`,
+and keeps its own exit status; `bin/update-run` forwards that line. A reader that finds a
 problem prints `INSTALL_WARN` with `reason=status_unreadable`,
 `reason=status_unverified`, or `reason=status_pending`, names the cause, and
 points here. It does not treat that file as a clean install.
