@@ -61,6 +61,38 @@
 - **Priority:** P3
 - **Revisit when:** The next change to `bin/lib/install-safety.sh` messages.
 
+### [review] Keep install-status digests current through interrupted and concurrent recovery
+
+- **Description:** Two narrow paths can leave a recorded digest stale, so a correctly recovered copy keeps warning forever. (1) The per-file and retired examples' hard-link resume branch (`docs/installation.md`) skips the pre-move `run_setup`; an in-place edit during the interruption changes both names, and the backup no longer matches. (2) A setup that observed a copy before taking the lock can overwrite a newer record with older bytes when it lands between the example's pre-move setup and its `rm` (`setup:_is_merge` checks only that `SKILL.md` is still regular).
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Context:** Raised by five reviewers (including both Codex passes) in the scoped review of Track 23C's pass-3 delta on 2026-10-09 and backlogged under the owner's stop rule. Fixes: call `run_setup` in both hard-link resume branches before `rm`; in `_is_merge`, skip a `preserved_regular` observation whose current digest differs from the observed one. Add a retired-example resume test and a W7 variant where the late merge lands before the move.
+- **Priority:** P2
+- **Revisit when:** The next change to the recovery examples or `setup:_is_merge`, or a report of a warning that survives a completed recovery.
+
+### [review] Align host-fact clearing docs and diagnostics with Track 23C's final rules
+
+- **Description:** After the last review batch, the docs lag the code in small ways. Preserved installs and Unsafe skills directory still say a host fact clears only through that host's own setup, but a Cursor pointed at a served host's directory clears through that host's run (`--host auto` or `--host claude`, not `--host cursor`), and copy hosts ignore Cursor when checking separation. `setup` reports an unsearchable state directory as `lock_failed`, while `bin/update-check` says `not_searchable`, and `update-check --force` exits before diagnosing it because `rm -f` of the cache fails. The separate-host example's exit 7 takes precedence over exit 6 without saying so. The `mark_resolutions` header comment and an unused `host` local in `_is_reverify` are stale.
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Context:** Raised by the maintainability, API-contract and simplification passes in the scoped review of Track 23C's pass-3 delta on 2026-10-09; backlogged under the owner's stop rule.
+- **Priority:** P3
+- **Revisit when:** The next edit to `docs/installation.md` install recovery sections, or Track 27A qualification of Cursor recovery.
+
+### [review] Strengthen Track 23C writer regressions the scoped review flagged
+
+- **Description:** Some tests pass for the wrong reason or leave a branch uncovered: the trailing-slash test never produces a different normalized HOME spelling, so it cannot catch a regression in the rebind dedup; the retired example's hard-link resume and the merge drop for a removed legacy `SKILL.md` have no test; the stale-writer W7 test can orphan its blocked child if an earlier assertion fails.
+- **Effort:** S (human: ~2h / CC: ~20min)
+- **Context:** Raised by the testing pass in the scoped review of Track 23C's pass-3 delta on 2026-10-09. Use a symlinked alias of the fixture HOME for a real rebind, add a retired resume row, and wrap the W7 child in try/finally.
+- **Priority:** P3
+- **Revisit when:** The next change to `setup`'s install-status writer or `tests/setup-hosts.test.ts`'s Track 23C block.
+
+### [review] Decide how far install-status should trust unusual inputs
+
+- **Description:** Three low-likelihood inputs remain open. An all-skipped auto run scans a Claude directory the same run rejected as unsafe, so another account that can write there could get a pointer recorded as `verified_checkout` (the `--host` path already did this). A hand-edited file with exact duplicate keys keeps both copies because setup now dedups only after a rebind. A state directory under an unsearchable parent still looks absent to the checker.
+- **Effort:** S (human: ~1h / CC: ~15min)
+- **Context:** Raised by the security, adversarial and red-team passes in the scoped review of Track 23C's pass-3 delta on 2026-10-09. Each needs another account's write access or a hand-made file on the target profile.
+- **Priority:** P3
+- **Revisit when:** Together with the state-directory trust item above, or a report involving a shared or hand-edited state directory.
+
 ## Completed
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
