@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.2.0] - 2026-10-08
+
+### Fixed
+
+- **Conductor Cursor runs now record the model and effort they used.** The telemetry finish step reads the store shape Conductor writes (epoch-millisecond run times and a list of `{id, value}` model parameters), picks the one run that overlaps the stage, and records its model and effort. Before, both stayed null for every Conductor run because the reader only understood ISO timestamps and dict parameters. A model or effort the store does not name stays unknown. Fixtures prove the reader; the native Conductor check on an installed release is still pending, so O4 acceptance is not awarded.
+- **Unclear store evidence now reports `unknown` instead of a guessed route.** Conductor Cursor provenance now accepts epoch-ms and list metadata and requires valid, unambiguous run bounds. Rows previously attributed from invalid or ambiguous store evidence may report `unknown`: no run with usable times, two runs that both fit the stage, an oversized or unreadable shard, or a last line still being written. In those cases model and effort stay null and a fixed reason prints under `GSTACK_EXTEND_TELEMETRY_DEBUG=1`. A malformed run beside exactly one valid run does not block it, and a debug reason names the neighbor. Old rows are not rewritten, and a `conductor` route from 0.36.1.0 or earlier is not proof of a correct window. This release is the bound for the repaired reader; earlier or unknown producer rows stay uncertified.
+- **An explicit `cursor-agent` entrypoint no longer takes model or effort from a matching store record.** Those fields stay null unless finish flags supply them, so a CLI row cannot borrow a Conductor run. The row schema, field order, source labels and finish flags are unchanged.
+
+### Added
+
+- **A copyable recipe prints the provenance of one known session.** `docs/telemetry.md` shows how to list a session's stage, start time, agent, route, model, effort, schema and producer version with their source labels from the local ledger, without printing raw SDK records or other sessions' rows.
+
 ## [0.36.1.0] - 2026-10-08
 
 ### Fixed
