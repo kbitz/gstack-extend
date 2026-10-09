@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.3.0] - 2026-10-09
+
+### Fixed
+
+- **`/roadmap` stops scheduling defects nobody has observed in real use.** On every substantive run it prunes unobserved defect claims from incoming items, leftover plan work and Future, unless their worst realistic outcome is both irreversible and consequential: unrecoverable data loss, exposed secrets or private content, or an outward action that cannot be retracted. A constructed repro alone does not count as manifestation; a normal supported path that always triggers the defect does. Killed claims get no Future entry, revisit trigger or reproduction assignment. Source tags, including KEEP, do not bypass the gate; capability work, acceptance obligations and approved scope retain their existing rules. Before pruning Future, it reads the complete relevant bullet and evidence so an abbreviated index cannot hide an observed defect.
+
 ## [0.36.2.0] - 2026-10-08
 
 ### Fixed
