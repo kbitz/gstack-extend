@@ -356,6 +356,11 @@ never a configured default:
   not a single file leaves model and effort null. With no session id, only one
   events log changed since the stage began is attributable; zero or several
   leave model and effort null.
+- **Cursor** exports `CURSOR_AGENT` or `CURSOR_CONVERSATION_ID`. Conductor store
+  metadata and the native route use one captured observation, described in
+  [Cursor and quota](#cursor-and-quota). An explicit `CURSOR_INVOKED_AS` stays
+  CLI and does not read that store. Transcript mtime still breaks ties when the
+  store does not supply a usable model or effort.
 
 Logs are read from their last 8 MiB. The model/effort pair behind the most turns
 in the window wins, ties going to the later pair, so a mid-stage fallback shows
@@ -824,6 +829,9 @@ Run the doctor first. A manual `start` replaces that slot's handoff, and a manua
 diagnosed. To debug a real run, export `GSTACK_EXTEND_TELEMETRY_DEBUG=1` before
 launching the harness. Run synthetic smoke checks in a scratch repository.
 The adoption reasons are defined in [Handoff adoption](#handoff-adoption).
+Conductor Cursor model and route diagnosis is in [Cursor and quota](#cursor-and-quota).
+Doctor pairing is not model coverage. For that harness, prefix the first normal
+finish in the same tool shell; a terminal export does not reach the GUI.
 
 | Reason | Meaning | Fix |
 |---|---|---|
@@ -906,15 +914,320 @@ marker/crash detection subsystem.
 ## Cursor and quota
 
 Cursor is an execution harness (`agent: cursor`), independently of the vendor of
-the selected model. The Conductor SDK store shape described in the linked evidence uses
-numeric timestamps and list-valued model parameters that the current reader
-cannot parse, so model and effort remain null even when the store names a model.
-See [review-independence evidence](designs/review-independence.md#8-provenance-feasibility).
-The dated capture below did not cross-tabulate nulls by agent, so it does not
-establish which captured rows encountered this limitation. Cursor transcript activity supports nested-harness
-detection. Billed model and consumption belong to the separate
-[quota ledger](quota-ledger.md). Telemetry start and finish never start a quota
-sampler or write quota records. Only explicit quota commands read vendor usage.
+the selected model. A model and effort taken from the Conductor SDK store are
+requested configuration for one stage window. They support operator diagnosis
+and an external handoff. They are not served or billed proof, and they do not
+authorize quota routing or independence certification. Billed model and
+consumption stay in the [quota ledger](quota-ledger.md). Telemetry start and
+finish never start a quota sampler or write quota records. Only explicit quota
+commands read vendor usage. The quota runs CLI is not this ledger: it fills
+stage, agent, model, effort, and route from provenance and does not print
+source labels. A quota row can name a model while the stage-runs source is
+`unknown`. That is not a substitute for this row and not permission to sample.
+
+The repair does not change supported Paseo behavior or Cursor CLI behavior,
+except that a Cursor transcript read failure now prints the fixed
+`transcript-unreadable` reason instead of exception text, and that a CLI row no
+longer takes model or effort from a matching store (next sentences).
+`CURSOR_INVOKED_AS` is CLI. Finish does not copy model or effort from a matching
+store on that path; an explicit `--model` or `--effort` stays `flag`. A row
+whose only Cursor signal is `--agent cursor` has `agent_source` `flag` and
+cannot become `route` `conductor` from a store that happens to be nearby.
+Inherited `CLAUDECODE` or `CODEX_THREAD_ID` keep the existing order: a unique
+valid native match is `conductor`, otherwise those nested markers are `cli`,
+otherwise `unknown`. `detect()` has to have selected Cursor before any
+`--agent` override. Changing another harness, or an unverifiable agent, to
+`cursor` does not certify a native route. An inherited `CONDUCTOR_SESSION_ID`
+never certifies Cursor by itself.
+
+<a id="cursor-sdk-shape"></a>
+
+### Supported store shape
+
+The store is `~/Library/Application Support/com.conductor.app/cursor-sdk-store/<shard>/`.
+Each shard has `agents.ndjson` and `runs.ndjson`. The reader takes one bounded
+pass over those two regular files, then samples the stage end. A file larger
+than 8 MiB is not parsed; it marks the capture incomplete.
+Metadata and the native route share that captured selection. A later write is
+invisible to both. There is no clock tolerance: `updatedAt` later than the
+captured end is rejected.
+
+Numeric `startedAt`, `endedAt`, and `updatedAt` are epoch milliseconds. The
+Conductor call site opts in (`numeric_unit="milliseconds"`). The same parser
+still accepts ISO-8601 strings, including a timezone and 3 to 9 fractional
+digits, so an older dict-shaped record remains readable. Calls with no unit,
+including Claude, Codex, and Grok logs, stay ISO-only and reject numbers.
+Booleans, numeric strings, non-finite values, and values outside the UTC
+datetime range are unknown. Zero and negative finite values inside that range
+are real bounds. Missing is unknown, never a zero sentinel. An unsupported unit
+argument raises `ValueError` at the call site.
+
+`model` is read only when it is a dict. `model.id` is a printable string of at
+most 200 characters, independent of `params`. `params` may be a dict with
+`effort` and `reasoning_effort`, or a list of `{id, value}` entries. A valid
+`effort` wins over a valid `reasoning_effort`. An invalid `effort` falls back.
+Identical list duplicates keep that value. Conflicting values for one
+recognized key make that key unknown and do not fall back. A null effort is
+missing, not malformed, like a null model id. Entries such as
+`fast`, malformed entries, and unsupported containers are ignored. Empty or
+missing params do not erase a usable model id. A non-dict `model` yields
+unknown fields and does not raise.
+
+Identity is exact. `agents.ndjson` `cwd` must equal the process cwd, and when
+`CURSOR_CONVERSATION_ID` is set it must equal `agentId`. Identity is per shard:
+a run counts only when its own shard's `agents.ndjson` places that agent in the
+process cwd. An unknown process cwd, such as a deleted directory, matches no
+agent; the store match never raises on it. Finish itself still needs a
+resolvable working directory to find its handoff. Within one shard, a
+cleaned `agentId` plus a cleaned `runId` is one run; snapshots of that run are
+not extra runs. A record with no usable `runId` stays its own candidate.
+Duplicate equivalent snapshots collapse. The newest `updatedAt` snapshot is
+kept whole, with no field merging, and only when `startedAt` is consistent.
+A snapshot is valid when its own bounds meet the contract below. A run counts
+toward uniqueness when any of its snapshots is valid and overlaps the stage. If
+that run then cannot be resolved to one valid newest snapshot (an invalid or
+unreadable snapshot, an inconsistent start, or an equal-timestamp conflict), it
+blocks certification even beside one eligible run. The newest invalid or future
+snapshot is never replaced by an older one. Distinct run ids stay ambiguous
+even when the model and effort agree. A malformed neighbor, a run with no valid
+snapshot, does not erase a well-formed record; the certification then carries
+the `malformed-neighbor` reason, unless the neighbor's readable bounds place it
+wholly before or after the stage. Unhashable ids are skipped.
+
+The stage window is inclusive `[begin, end]`; an inverted stage window
+certifies nothing. The run window is inclusive
+`[startedAt, endedAt]`. Only an absent or null `endedAt` is an open run, treated
+as open through the stage end. `startedAt` and `updatedAt` are required, with
+`startedAt <= updatedAt <= end`. A non-null `endedAt` that does not parse, an
+inverted interval, `updatedAt` before `startedAt`, or `updatedAt` after the
+captured end rejects that run. A run that ended before the stage does not
+supply metadata. An open run that began earlier can. One eligible run can
+certify `route` `conductor` and supply whatever model and effort survived
+cleaning. Zero eligible runs, or more than one, leave model and effort null and
+do not certify the route. A still-open stale run can overlap a later stage and
+make the result honestly ambiguous. There is no freshness TTL.
+
+A file over 8 MiB, a file that grew past that cap or shrank while being read,
+a file that ends in a torn, unparseable line and changed size since the read
+or was modified in the last 10 seconds (a writer mid-append, even a paused
+one), an unreadable, unsearchable, or
+non-regular sibling, a missing `agents.ndjson` next to runs, or a missing
+`runs.ndjson` next to agents cannot prove uniqueness, including when the session id is absent and a readable
+sibling looks unique. This applies to every shard in the store, not only the
+one for this cwd. Because these files only grow, one file past 8 MiB in any
+shard, including an archived workspace's, keeps every capture incomplete; there
+is no in-repo repair, and that is a revisit trigger below. A shard directory
+with neither file is skipped. A malformed line, including one nested too deeply
+to decode, is skipped like any other bad line, and so is a torn last line on a
+file that kept its size and has been untouched for 10 seconds (stale crash
+residue). The row still records.
+Transcript mtime remains the activity fallback when no store was captured, the
+candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
+use, or both model and effort are null. A usable model with unknown effort, or
+a usable effort with an unknown model id, stays a store result. Fallback does
+not erase the field that survived, and a failed store match does not invent a
+timestamp to beat another harness. A usable store result carries its chosen
+snapshot's `updatedAt`, never the observation end, so a nested harness with
+later activity still wins when process ancestry is unavailable.
+
+<a id="cursor-sdk-historical-route"></a>
+
+### Historical route caveat
+
+Inspected producer `0.36.0.1` contains the pre-repair defect: numeric or
+malformed SDK bounds could yield an overbroad `conductor` route. That route
+alone is not proof of a correct run window. The reader is unchanged through
+`0.36.1.0`. The statement in
+[review-independence evidence](designs/review-independence.md#8-provenance-feasibility)
+that integer dates and list params fail `cursor_turns()` is a dated pre-repair
+observation, not a current claim that those shapes stay unreadable. Its
+offline reproduction calls `cursor_turns()` without a captured selection and
+`parse_ts()` without a unit, so it still prints no turn and no integer
+timestamp after the repair. That output is expected; use the debug reasons
+from the next planned run instead. Do not
+rewrite old rows, the dated capture below, or Track 22A receipts. Schema
+version and source labels are satisfied independently of native-route
+correctness. A row with no `producer_version` keeps unknown producer status.
+This change does not lexically compare four-part versions. Release `0.36.2.0`
+ships the repair and is the bound for the fixed implementation; earlier or
+unknown producer rows stay uncertified without their own implementation
+evidence. Invalid or ambiguous store evidence may now yield `route` `unknown`,
+and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
+from a matching store record of any shape; those stay null unless finish flags
+supply them. The row schema, field order, source labels and finish flags are
+unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
+treats this as a fix. A consumer that relied on the old overbroad label or
+those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
+
+Reconsider this private reader if a supported host publishes an official
+run-metadata contract, a qualified native shape changes, store-wide
+completeness or exact-cwd identity proves too strict on a real install, or the
+quota reader's
+millisecond heuristic (magnitude above `100000000000`, plus numeric strings)
+diverges from this explicit-unit contract. That is a revisit trigger, not a
+second reader and not a quota change.
+
+<a id="cursor-sdk-sources"></a>
+
+### Sources, nulls, and native acceptance
+
+`detected` means this reader or the transcript supplied the value. `flag` means
+an accepted finish flag supplied it. `unknown` means the value is null. A null
+is always `unknown`. None of those labels, and no schema-valid row, proves the
+served model or that the window was right. Installed Conductor acceptance is
+pending. Fixture output is not that acceptance. The next already-planned
+Conductor Cursor run is the check: installed revision, host, harness, and
+upstream versions, the known conversation and stage bounds, the expected model
+and effort, sanitized booleans for process-cwd versus store-cwd equality and
+for live conversation id versus store `agentId`, the observed snapshot shape,
+and the fixed debug reasons. Unknown or absent identity stays unknown. No extra
+launch is part of this repair. Logical and physical paths can disagree; compare
+`pwd -P` with the store cwd privately and do not paste either path into a
+receipt.
+
+<a id="cursor-sdk-diagnosis"></a>
+
+### Diagnosis
+
+Doctor reports skill-usage pairing, not model coverage. Classify a known row in
+three steps: locate it, read the whitelisted fields and source labels, then
+follow the reason below. The 2-5 minute target is an unmeasured human
+classification from an already-installed known row. It is not fresh-install
+time, not an agent run, and it cannot recover why a null was written. Default
+telemetry stays quiet. On the next already-planned run, prefix the first normal
+finish in that tool shell with `GSTACK_EXTEND_TELEMETRY_DEBUG=1` and the
+caller's existing arguments. Do not export it only in a terminal the GUI will
+not inherit, and do not add a second start or finish. Whether the host UI keeps
+that stderr is unverified. The `cursor-sdk` reason lines are fixed tokens plus
+the anchor. They omit store fields, cwd, identity, exception text, and values.
+The same debug output also carries other lines, such as the sink line with
+the ledger path, the logger and config paths, skipped-output reasons, other
+harnesses' detection errors, and the `provenance agent=… model=… effort=…`
+line with the values the row records. Copy only lines that begin
+`telemetry: cursor-sdk` into a receipt.
+
+| Reason | Problem | Cause | Safe action |
+|---|---|---|---|
+| <a id="cursor-sdk-store-absent"></a>`store-absent` | No store metadata | The SDK directory is not there | Confirm Conductor wrote a store for this host. Do not invent a model |
+| <a id="cursor-sdk-store-unreadable"></a>`store-unreadable` | No store metadata | The store directory cannot be listed | Restore the directory's permissions privately. The reason line is the whole diagnostic |
+| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | In any shard: a file over 8 MiB, a file that grew, shrank, or tore while being read, or a missing, non-regular, unreadable, or unsearchable sibling could hide a run | Do not treat a readable shard as unique. The row stays unknown. A transient mid-append read clears on the next finish; a file past 8 MiB stays until the store changes |
+| <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd, including a finish run from a subdirectory of the workspace | Compare `pwd -P` with the store privately. Exact match is required; run finish from the workspace root. Do not paste paths |
+| <a id="cursor-sdk-no-session-match"></a>`no-session-match` | No store metadata | The conversation id matches no agent or run | Record identity as unknown or absent. Do not copy the id into a receipt |
+| <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the run or stage interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
+| <a id="cursor-sdk-no-eligible-window"></a>`no-eligible-window` | No store metadata | Runs were readable and none overlap the stage | Confirm the stage begin and end. A completed earlier run is not this stage |
+| <a id="cursor-sdk-ambiguous-candidates"></a>`ambiguous-candidates` | No certified route | More than one run overlaps, or a run with a valid overlapping snapshot cannot be resolved | Leave model, effort, and route unknown. A stage that spans more than one Conductor prompt in one conversation does this, since each prompt is its own run; so can a stale open run |
+| <a id="cursor-sdk-malformed-metadata"></a>`malformed-metadata` | A field is null | The model or a recognized effort value failed cleaning, or effort values conflicted | Keep a usable sibling field. Do not guess the dropped one |
+| <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no valid snapshot (a missing or unreadable bound, an inverted interval, or an `updatedAt` after the captured end), and its readable bounds did not place it outside the stage | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
+| <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read, with no store observed (explicit CLI) or no usable store result | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
+
+<a id="cursor-ledger-recipe"></a>
+
+### Read a known row
+
+The projections below are synthetic. They are not native evidence.
+
+| Projection | What the whitelisted fields show |
+|---|---|
+| detected | `model_source` and `effort_source` are `detected`, and a unique in-window store match can set `route` to `conductor` |
+| flag | `model_source` or `effort_source` is `flag` because finish passed `--model` or `--effort`. CLI stays `route` `cli` |
+| unknown | `model` and `effort` are null and those sources are `unknown`. The route is certified only when one store run matched; such a run can still carry no usable model or effort |
+
+Several stage-runs lines for one session are a ledger choice: narrow with
+`stage` and `started_at`. Do not keep the last line because it is last.
+Several SDK runs are a different event: model and effort stay null and the
+route is not certified. The recipe never reads the SDK store, never prints an
+unlisted key, and never writes.
+
+```python
+# gstack-extend-cursor-ledger-recipe
+import json
+import os
+import sys
+from pathlib import Path
+
+FIELDS = (
+    "stage", "session_id", "started_at", "agent", "route", "model", "effort",
+    "schema_version", "producer_version", "agent_source", "model_source",
+    "effort_source", "outcome", "entrypoint_raw",
+)
+
+def state_root():
+    override = os.environ.get("GSTACK_EXTEND_STATE_DIR")
+    if override and os.path.isabs(override):
+        return Path(override)
+    return Path.home() / ".gstack-extend"
+
+def project(row):
+    projected = {}
+    for field in FIELDS:
+        value = row.get(field) if isinstance(row, dict) else None
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            projected[field] = value
+        else:
+            projected[field] = None
+    return projected
+
+def main():
+    session = sys.argv[1] if len(sys.argv) > 1 else ""
+    stage = sys.argv[2] if len(sys.argv) > 2 else None
+    started = sys.argv[3] if len(sys.argv) > 3 else None
+    ledger = state_root() / "analytics" / "stage-runs.jsonl"
+    try:
+        if not ledger.is_file():
+            print("missing-file")
+            return
+        stream = ledger.open("rb")
+    except OSError:
+        print("missing-file")
+        return
+    matches = []
+    malformed = 0
+    with stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except (ValueError, RecursionError):
+                malformed += 1
+                continue
+            if not isinstance(row, dict) or row.get("session_id") != session:
+                continue
+            if stage is not None and row.get("stage") != stage:
+                continue
+            if started is not None and row.get("started_at") != started:
+                continue
+            matches.append(project(row))
+    if malformed:
+        print("malformed-lines: " + str(malformed))
+    if not matches:
+        print("no-match")
+        return
+    if len(matches) > 1:
+        print("multiple-match")
+    for match in matches:
+        print(json.dumps(match, ensure_ascii=True, separators=(",", ":")))
+
+main()
+```
+
+Run it with the session you already know, under `python3 -I` so a module in
+the current directory is never imported. Optional later arguments are the
+exact `stage` and exact `started_at`. A relative `GSTACK_EXTEND_STATE_DIR` is
+ignored. An absolute one is the state root. The default is `~/.gstack-extend`.
+
+```sh
+python3 -I - 'known-session' 'implement' '2026-10-08T18:00:00Z' <<'PY'
+# gstack-extend-cursor-ledger-recipe
+# paste the fenced program above, including its main() call
+PY
+```
+
+`missing-file` means the ledger path is not a regular file. `no-match` means
+the session, and any stage or start you passed, hit nothing. `multiple-match`
+means more than one ledger line still qualifies; read those projections and
+narrow the selectors. `malformed-lines: N` counts skipped lines, including
+lines that are not UTF-8, and does not print them. None of these results is a native Conductor receipt.
 
 ## Evidence
 

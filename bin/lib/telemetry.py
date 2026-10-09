@@ -8,6 +8,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 import stat
 from collections import Counter
@@ -46,6 +47,22 @@ VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
 RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
+TORN_QUIET_S = 10  # a torn last line counts as crash residue only on a Conductor store file this long untouched
+# Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
+# Debug prints only these tokens: never a store path, id, cwd, exception, or field value.
+CURSOR_SDK_REASONS = (
+    ("store-absent", "cursor-sdk-store-absent"),
+    ("store-unreadable", "cursor-sdk-store-unreadable"),
+    ("incomplete-evidence", "cursor-sdk-incomplete-evidence"),
+    ("no-cwd-agent", "cursor-sdk-no-cwd-agent"),
+    ("no-session-match", "cursor-sdk-no-session-match"),
+    ("malformed-bounds", "cursor-sdk-malformed-bounds"),
+    ("no-eligible-window", "cursor-sdk-no-eligible-window"),
+    ("ambiguous-candidates", "cursor-sdk-ambiguous-candidates"),
+    ("malformed-metadata", "cursor-sdk-malformed-metadata"),
+    ("malformed-neighbor", "cursor-sdk-malformed-neighbor"),
+    ("transcript-unreadable", "cursor-sdk-transcript-unreadable"),
+)
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
@@ -488,7 +505,31 @@ def delegate(logger, skill, sid, duration, values):
 # ─── Execution provenance: which harness, model and effort ran a stage ───
 
 
-def parse_ts(value):
+def _from_epoch_ms(value):
+    # Explicit milliseconds only. Bool is an int subclass; a numeric string is not a number.
+    # Huge integers overflow at the division, before any datetime conversion.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    try:
+        seconds = value / 1000
+    except OverflowError:
+        return None
+    try:
+        datetime.fromtimestamp(seconds, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return seconds
+
+
+def parse_ts(value, numeric_unit=None):
+    # Conductor SDK call sites pass numeric_unit="milliseconds". Every other harness keeps the
+    # no-unit ISO path, which rejects numbers instead of guessing a unit.
+    if numeric_unit not in (None, "milliseconds"):
+        raise ValueError("unsupported numeric_unit")
+    if numeric_unit == "milliseconds" and not isinstance(value, str):
+        return _from_epoch_ms(value)
     # Harness logs write ISO-8601 UTC with 3 to 9 fractional digits; datetime.fromisoformat before 3.11 takes only 3 or 6.
     match = isinstance(value, str) and re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)?", value)
     if not match:
@@ -688,28 +729,404 @@ def cursor_logs(session_id, projects=None):
     return list(root.glob(f"*/agent-transcripts/{session_id}.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.jsonl")) + list(root.glob(f"*/agent-transcripts/{session_id}/*.txt"))
 
 
+def _cursor_store_root(store=None):
+    if store is not None:
+        return Path(store)
+    return Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store"
+
+
+def _path_kind(path):
+    # os.stat, not Path.exists/is_dir/is_file: Python 3.14 pathlib answers False on a permission error, which would
+    # make an unsearchable shard look missing. Only ENOENT/ENOTDIR mean missing.
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    return "dir" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "other"
+
+
+def _read_bounded(path):
+    # Same cap as tail_records. Status is how complete the read was. A file over the cap, or an unreadable one,
+    # cannot prove that an older row is absent, so it is not parsed: that evidence would only be discarded.
+    # A writer mid-append is the same: growth past the cap or a shrink during the read is clipped, and so is a torn
+    # final line on a file that changed size or was modified recently. A torn line on a quiet file is stale residue.
+    kind = _path_kind(path)
+    if kind in ("missing", "unreadable"):
+        return [], kind
+    if kind != "file":
+        return [], "nonregular"
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            if size > LOG_TAIL_BYTES:
+                return [], "clipped"
+            stream.seek(0)
+            blob = stream.read(LOG_TAIL_BYTES + 1)
+    except OSError:
+        return [], "unreadable"
+    if len(blob) > LOG_TAIL_BYTES or len(blob) < size:
+        return [], "clipped"
+    records = []
+    lines = blob.split(b"\n")
+    for index, line in enumerate(lines):
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            # A malformed or too-deeply-nested line is skipped. An unterminated, unparseable last line is skipped as
+            # crash residue only when the file still has the size that was read and has been quiet for TORN_QUIET_S;
+            # a writer paused mid-line looks the same except for its recent modification time.
+            if index == len(lines) - 1 and line.strip():
+                try:
+                    info = os.stat(path)
+                except OSError:
+                    return [], "unreadable"
+                if info.st_size != len(blob) or time.time() - info.st_mtime < TORN_QUIET_S:
+                    return [], "clipped"
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records, "complete"
+
+
+def _shard_hides_rows(agents_status, runs_status, agents):
+    if agents_status == "missing" and runs_status == "missing":
+        return False
+    if agents_status in ("unreadable", "nonregular", "clipped") or runs_status in ("unreadable", "nonregular", "clipped"):
+        return True
+    if agents_status == "missing":
+        return True
+    return runs_status == "missing" and bool(agents)
+
+
+class CursorCapture:
+    """One bounded read of the Conductor SDK store. status is absent, unreadable, or read."""
+
+    def __init__(self, status, shards, complete):
+        self.status = status
+        self.shards = shards
+        self.complete = complete
+
+
+class CursorSelection:
+    """Window result shared by metadata and native route. None model/effort stay unknown.
+    updated is the chosen snapshot's updatedAt: the store's own activity time, never the observation end."""
+
+    def __init__(self, certify, model, effort, usable, reasons, updated=None):
+        self.certify = certify
+        self.model = model
+        self.effort = effort
+        self.usable = usable
+        self.reasons = reasons
+        self.updated = updated
+
+
+def capture_cursor_store(store=None):
+    # One traversal. Callers select from this object; they do not read the store again.
+    try:
+        root = _cursor_store_root(store)
+        kind = _path_kind(root)
+        if kind == "missing":
+            return CursorCapture("absent", [], False)
+        if kind != "dir":
+            return CursorCapture("unreadable", [], False)
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            return CursorCapture("unreadable", [], False)
+        shards, complete = [], True
+        for child in children:
+            kind = _path_kind(child)
+            if kind == "unreadable":
+                complete = False
+                continue
+            if kind != "dir":
+                continue
+            agents, agents_status = _read_bounded(child / "agents.ndjson")
+            runs, runs_status = _read_bounded(child / "runs.ndjson")
+            if _shard_hides_rows(agents_status, runs_status, agents):
+                complete = False
+            if agents_status == "missing" and runs_status == "missing":
+                continue
+            shards.append({"agents": agents, "runs": runs})
+        return CursorCapture("read", shards, complete)
+    except Exception:
+        # A store failure must not escape with a path or record attached.
+        return CursorCapture("unreadable", [], False)
+
+
+def _effort_status(cleaned_values):
+    # missing: key never appeared, or only as null. invalid: appeared but nothing survived clean().
+    # conflict: two different cleaned values. ok: one cleaned value, duplicates allowed.
+    if not cleaned_values:
+        return "missing", None
+    distinct = {value for value in cleaned_values if value is not None}
+    # A recognized non-null value that fails clean() beside a clean one is still a conflicting value.
+    if len(distinct) > 1 or (distinct and None in cleaned_values):
+        return "conflict", None
+    if len(distinct) == 1:
+        return "ok", next(iter(distinct))
+    return "invalid", None
+
+
+def _effort_from_params(params):
+    if isinstance(params, dict):
+        found = {}
+        for key in ("effort", "reasoning_effort"):
+            if params.get(key) is not None:
+                found[key] = [clean(params.get(key))]
+        effort_state, effort = _effort_status(found.get("effort", []))
+        reason_state, reason = _effort_status(found.get("reasoning_effort", []))
+    elif isinstance(params, list):
+        found = {"effort": [], "reasoning_effort": []}
+        for entry in params:
+            if not isinstance(entry, dict):
+                continue
+            key = entry.get("id")
+            # A list or dict id is malformed, not a lookup error that could discard the whole run. A null value
+            # is missing, like a null model id, not malformed.
+            if isinstance(key, str) and key in found and entry.get("value") is not None:
+                found[key].append(clean(entry.get("value")))
+        effort_state, effort = _effort_status(found["effort"])
+        reason_state, reason = _effort_status(found["reasoning_effort"])
+    else:
+        return None, False
+    if effort_state == "ok":
+        return effort, False
+    if effort_state == "conflict":
+        return None, True
+    if effort_state == "invalid":
+        if reason_state == "ok":
+            return reason, False
+        # A recognized effort value that failed cleaning stays malformed when nothing valid replaces it.
+        return None, True
+    if reason_state == "ok":
+        return reason, False
+    if reason_state in ("conflict", "invalid"):
+        return None, True
+    return None, False
+
+
+def cursor_metadata(model):
+    # model id and effort are independent. A bad params container must not drop a usable id, and a bad id must not drop effort.
+    if model is None:
+        return None, None, False
+    if not isinstance(model, dict):
+        return None, None, True
+    model_id, id_bad = None, False
+    if "id" in model:
+        raw = model.get("id")
+        model_id = clean(raw)
+        blank = isinstance(raw, str) and not raw.strip()
+        id_bad = model_id is None and raw is not None and not blank
+    if "params" in model:
+        effort, effort_bad = _effort_from_params(model.get("params"))
+    else:
+        effort, effort_bad = None, False
+    return model_id, effort, id_bad or effort_bad
+
+
+def _run_view(record):
+    started = parse_ts(record.get("startedAt"), numeric_unit="milliseconds") if "startedAt" in record else None
+    updated = parse_ts(record.get("updatedAt"), numeric_unit="milliseconds") if "updatedAt" in record else None
+    if "endedAt" not in record or record.get("endedAt") is None:
+        ended = ("open", None)
+    else:
+        parsed = parse_ts(record.get("endedAt"), numeric_unit="milliseconds")
+        ended = ("ok", parsed) if parsed is not None else ("bad", None)
+    return {"record": record, "started": started, "updated": updated, "ended": ended,
+            "meta": cursor_metadata(record.get("model") if "model" in record else None)}
+
+
+def _equivalent(left, right):
+    return (left["started"], left["updated"], left["ended"], left["meta"]) == (
+        right["started"], right["updated"], right["ended"], right["meta"])
+
+
+def _valid(view, end):
+    # A snapshot whose own bounds meet the contract: readable start and update, startedAt <= updatedAt <= the
+    # captured end, and a missing/null or readable endedAt no earlier than startedAt.
+    kind, ended = view["ended"]
+    if view["started"] is None or view["updated"] is None or kind == "bad":
+        return False
+    return view["started"] <= view["updated"] <= end and (kind == "open" or ended >= view["started"])
+
+
+def _overlaps(view, begin, end):
+    # For a valid snapshot: the inclusive run window meets the inclusive stage window.
+    kind, ended = view["ended"]
+    return view["started"] <= end and (end if kind == "open" else ended) >= begin
+
+
+def _placed_outside(view, begin, end):
+    # Readable bounds that put a snapshot wholly after or before the stage, whatever else is wrong with it.
+    started, (kind, ended) = view["started"], view["ended"]
+    if started is not None and started > end:
+        return True
+    return kind == "ok" and ended < begin and (started is None or started < begin)
+
+
+def _classify_group(records, begin, end):
+    # One run identity. A run counts toward uniqueness when any snapshot has valid bounds and overlaps the stage;
+    # if its state then cannot be resolved to one valid newest snapshot, it blocks certification. A run with no
+    # valid snapshot is a malformed neighbor: it never blocks, unless its readable bounds place it outside the stage,
+    # in which case it is simply outside. The group never falls back to an older snapshot.
+    views = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            views.append(_run_view(record))
+        except Exception:
+            return "malformed-bounds", None
+    if not views:
+        return "malformed-bounds", None
+    valid = [_valid(view, end) for view in views]
+    overlapping = any(ok and _overlaps(view, begin, end) for ok, view in zip(valid, views))
+    if not all(valid):
+        # An invalid snapshot hides the run's newest state ("partial" when a valid one still places it in the window).
+        if overlapping:
+            return "partial", None
+        if all(ok or _placed_outside(view, begin, end) for ok, view in zip(valid, views)):
+            return "outside", None
+        return "malformed-bounds", None
+    starts = {view["started"] for view in views}
+    latest = max(view["updated"] for view in views)
+    tops = [view for view in views if view["updated"] == latest]
+    if len(starts) != 1 or any(not _equivalent(tops[0], view) for view in tops[1:]):
+        # Inconsistent starts or an equal-timestamp conflict: unverifiable, blocking only if it could overlap.
+        return ("unresolved" if overlapping else "outside"), None
+    chosen = tops[0]
+    return ("eligible", chosen) if _overlaps(chosen, begin, end) else ("outside", None)
+
+
+def _finite_bound(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def select_cursor(capture, cwd, session, begin, end):
+    if capture.status == "absent":
+        return CursorSelection(False, None, None, False, ["store-absent"])
+    if capture.status != "read":
+        return CursorSelection(False, None, None, False, ["store-unreadable"])
+    if not capture.complete:
+        return CursorSelection(False, None, None, False, ["incomplete-evidence"])
+    if not _finite_bound(begin) or not _finite_bound(end) or begin > end:
+        return CursorSelection(False, None, None, False, ["malformed-bounds"])
+    if not isinstance(cwd, str):
+        # An unknown process cwd (deleted directory) never matches, including a record with no cwd field.
+        return CursorSelection(False, None, None, False, ["no-cwd-agent"])
+    if not isinstance(session, str) or session == "":
+        session = None
+    # Identity is per shard: a run counts only when its own shard's agents file places that agent in this cwd.
+    cwd_agents = []
+    for index, shard in enumerate(capture.shards):
+        for record in shard.get("agents") or ():
+            if not isinstance(record, dict):
+                continue
+            agent_id = clean(record.get("agentId"))
+            if agent_id is not None and record.get("cwd") == cwd:
+                cwd_agents.append((index, agent_id))
+    if not cwd_agents:
+        return CursorSelection(False, None, None, False, ["no-cwd-agent"])
+    if session is not None:
+        allowed = {pair for pair in cwd_agents if pair[1] == session}
+        if not allowed:
+            return CursorSelection(False, None, None, False, ["no-session-match"])
+    else:
+        allowed = set(cwd_agents)
+    groups, distinct = {}, 0
+    for index, shard in enumerate(capture.shards):
+        for record in shard.get("runs") or ():
+            if not isinstance(record, dict):
+                continue
+            agent_id = clean(record.get("agentId"))
+            if (index, agent_id) not in allowed:
+                continue
+            run_id = clean(record.get("runId"))
+            if run_id is None:
+                distinct += 1
+                key = (index, agent_id, None, distinct)
+            else:
+                key = (index, agent_id, run_id)
+            groups.setdefault(key, []).append(record)
+    if session is not None and not groups:
+        return CursorSelection(False, None, None, False, ["no-session-match"])
+    eligible, reasons = [], []
+    saw_malformed = saw_unresolved = saw_partial = False
+    for records in groups.values():
+        try:
+            status, chosen = _classify_group(records, begin, end)
+        except Exception:
+            saw_malformed = True
+            continue
+        if status == "eligible":
+            eligible.append(chosen)
+        elif status == "malformed-bounds":
+            saw_malformed = True
+        elif status == "partial":
+            saw_malformed = saw_partial = True
+        elif status == "unresolved":
+            saw_unresolved = True
+    # An unverifiable run that could overlap the stage leaves uniqueness unproven, even beside one eligible run.
+    if len(eligible) > 1 or saw_unresolved or (eligible and saw_partial):
+        return CursorSelection(False, None, None, False, ["ambiguous-candidates"])
+    if len(eligible) == 1:
+        model, effort, bad = eligible[0]["meta"]
+        if bad:
+            reasons.append("malformed-metadata")
+        if saw_malformed:
+            # A malformed neighbor does not block the well-formed run; the reason makes that visible.
+            reasons.append("malformed-neighbor")
+        return CursorSelection(True, model, effort, model is not None or effort is not None, reasons,
+                               eligible[0]["updated"])
+    if saw_malformed:
+        return CursorSelection(False, None, None, False, ["malformed-bounds"])
+    return CursorSelection(False, None, None, False, ["no-eligible-window"])
+
+
 def cursor_sdk_runs(cwd=None, store=None):
-    root = Path(store or Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store")
-    for agents in root.glob("*/agents.ndjson"):
-        candidates = {r.get("agentId") for r in tail_records(agents) if not cwd or r.get("cwd") == cwd}
-        runs = agents.with_name("runs.ndjson")
-        for record in tail_records(runs) if runs.exists() else ():
-            if record.get("agentId") in candidates:
+    # Inspection helper. Provenance does not use it; certification goes through one capture plus select_cursor.
+    capture = capture_cursor_store(store)
+    for shard in capture.shards:
+        allowed = set()
+        for record in shard.get("agents") or ():
+            if not isinstance(record, dict):
+                continue
+            agent_id = clean(record.get("agentId"))
+            if agent_id is None:
+                continue
+            if cwd and record.get("cwd") != cwd:
+                continue
+            allowed.add(agent_id)
+        for record in shard.get("runs") or ():
+            if isinstance(record, dict) and clean(record.get("agentId")) in allowed:
                 yield record
 
 
-def cursor_turns(root, begin):
-    session = os.environ.get("CURSOR_CONVERSATION_ID")
-    matched = [r for r in cursor_sdk_runs(os.getcwd()) if (not session or r.get("agentId") == session)]
+def _cursor_debug(reasons):
+    for code, anchor in CURSOR_SDK_REASONS:
+        if code in reasons:
+            trace(f"cursor-sdk {code}. See docs/telemetry.md#{anchor}.")
+
+
+def _observe_cursor_store():
+    # A flag or an explicit CLI entrypoint is not native execution. Inherited Conductor markers are not either.
+    if os.environ.get("CURSOR_INVOKED_AS"):
+        return False
+    return bool(os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"))
+
+
+def cursor_turns(root, begin, selection=None):
+    # selection None means the store was not captured. An object, even an empty one, must not cause another read.
+    # A usable store result carries its snapshot's updatedAt, so a nested harness with later activity still wins
+    # when process ancestry is unavailable.
     turns = []
-    for record in matched:
-        model = record.get("model") or {}
-        stamp = parse_ts(record.get("updatedAt"))
-        params = model.get("params") or {}
-        if stamp and isinstance(params, dict):
-            turns.append((stamp, clean(model.get("id")), clean(params.get("effort") or params.get("reasoning_effort"))))
+    if selection is not None and selection.usable and selection.updated is not None:
+        turns.append((selection.updated, selection.model, selection.effort))
     if not turns:
-        log = newest(cursor_logs(session))
+        log = newest(cursor_logs(os.environ.get("CURSOR_CONVERSATION_ID")))
         if log:
             turns.append((log.stat().st_mtime, None, None))
     return turns
@@ -730,11 +1147,21 @@ def route_for(agent, conductor_match=False):
     return route, clean(entry)
 
 
-def detect(begin, end, root):
+def _trace_detection_error(agent, error):
+    # cursor_turns reads no store (a captured selection is passed in, or none on the CLI path), so a Cursor reader
+    # failure can only come from its transcript fallback. It gets a fixed reason without the exception text.
+    # Other harnesses keep the existing exception text.
+    if agent == "cursor":
+        _cursor_debug(["transcript-unreadable"])
+        return
+    trace(f"provenance detection failed ({type(error).__name__}: {error})")
+
+
+def detect(begin, end, root, cursor_selection=None):
     """(agent, model, effort) for the harness running this command, from its own session log; None when unverifiable."""
     readers = []
     if os.environ.get("CURSOR_AGENT") or os.environ.get("CURSOR_CONVERSATION_ID"):
-        readers.append(("cursor", True, lambda: cursor_turns(root, begin)))
+        readers.append(("cursor", True, lambda: cursor_turns(root, begin, cursor_selection)))
     if os.environ.get("CODEX_THREAD_ID"):
         readers.append(("codex", True, lambda: codex_turns(os.environ["CODEX_THREAD_ID"])))
     if os.environ.get("GROK_AGENT") == "1":  # Grok's shell forces this; a user-set profile name is not a marker
@@ -754,7 +1181,7 @@ def detect(begin, end, root):
         try:
             logged = turns(read)
         except Exception as error:
-            trace(f"provenance detection failed ({type(error).__name__}: {error})")
+            _trace_detection_error(agent, error)
             if len(readers) == 1:
                 return agent, None, None
             logged = []
@@ -779,7 +1206,7 @@ def detect(begin, end, root):
     except Exception as error:
         # Intentional boundary: these logs belong to other tools and change without notice. An unreadable log costs
         # only the log-derived values (and the agent when nested markers need the logs to decide), never the row.
-        trace(f"provenance detection failed ({type(error).__name__}: {error})")
+        _trace_detection_error(readers[0][0] if len(readers) == 1 else None, error)
         return (readers[0][0] if len(readers) == 1 else None), None, None
     return agent, model, effort
 
@@ -809,9 +1236,18 @@ def repo_slug(url):
 
 
 def provenance_row(stage, sid, start, duration, values, root):
+    # Read the mutable store before sampling the observation end, then share that one selection.
+    captured = capture_cursor_store() if _observe_cursor_store() else None
     now = time.time()
     begin = start if start is not None else int(now) - duration
-    agent, model, effort = detect(begin, now, root)
+    session = os.environ.get("CURSOR_CONVERSATION_ID") or None
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = None  # a deleted working directory costs the store match, never the row
+    cursor_selection = select_cursor(captured, cwd, session, begin, now) if captured is not None else None
+    agent, model, effort = detect(begin, now, root, cursor_selection)
+    detected_agent = agent
     # A source labels the value finally written, so a rejected flag leaves the detected value's source in place.
     flagged = set()
     explicit = values.get("--agent")
@@ -842,16 +1278,13 @@ def provenance_row(stage, sid, start, duration, values, root):
             # A stuck git must not skip the skill-usage completion that follows this row.
             repo = branch = None
     outcome = values.get("--outcome")
-    conductor_match=False
-    if agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS"):
-        try:
-            native=[record for record in cursor_sdk_runs(os.getcwd()) if
-                    (not os.environ.get("CURSOR_CONVERSATION_ID") or record.get("agentId")==os.environ["CURSOR_CONVERSATION_ID"]) and
-                    (parse_ts(record.get("startedAt")) or 0)<=now and (parse_ts(record.get("endedAt")) or now)>=begin]
-            conductor_match=len(native)==1
-        except (OSError,ValueError):
-            pass
-    route, entrypoint = route_for(agent,conductor_match)
+    # Route certification uses the agent detect() selected before --agent rewrote it.
+    conductor_match = bool(
+        detected_agent == "cursor" and agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS")
+        and cursor_selection is not None and cursor_selection.certify)
+    route, entrypoint = route_for(agent, conductor_match)
+    if cursor_selection is not None:
+        _cursor_debug(cursor_selection.reasons)
     # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
     return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,
