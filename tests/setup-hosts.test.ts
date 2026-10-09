@@ -1809,13 +1809,20 @@ describe('track 23C preserved skill copies', () => {
     const before = checkFacts(home).stdout;
     expect(before.split('\n').filter((l) => l.includes('skill=implement'))).toHaveLength(1);
     expect(before).toContain('reason=shared_directory');
+    // A Claude scan under the other spelling still names one fact.
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout.split('\n').filter((l) => l.includes('skill=implement'))).toHaveLength(1);
     rmSync(hostDir(home, 'codex'));
     mkdirSync(hostDir(home, 'codex'));
-    expect(runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(runSetup(['--host', 'codex', '--quiet'], `${home}/`, isolatedPath(), true).exitCode).toBe(0);
     const after = checkFacts(home).stdout;
     expect(after).not.toContain('reason=shared_directory');
     expect(after.split('\n').filter((l) => l.includes('skill=implement'))).toHaveLength(1);
-  }, 30000);
+    const repaired = runRecovery('per-file', `${home}/`, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(repaired.exitCode).toBe(0);
+    expect(repaired.stdout).toContain('RECOVERY_MIGRATED');
+    expect(checkFacts(home).stdout).not.toContain('skill=implement');
+  }, 90000);
 
   test('W2 setup and update-check agree on HOME identity with GNU-style stat first', () => {
     const home = join(baseTmp, 'w2-gnu-shim');
@@ -1840,9 +1847,12 @@ done
 exec /usr/bin/stat "\${out[@]}"
 `);
     chmodSync(join(bins, 'stat'), 0o755);
-    const r = runSetup(['--host', 'claude', '--quiet'], home, `${bins}:${isolatedPath()}`, true);
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout).not.toContain('INSTALL_WARN');
+    // The second run reads the first run's snapshot through the same stat.
+    for (let i = 0; i < 2; i++) {
+      const r = runSetup(['--host', 'claude', '--quiet'], home, `${bins}:${isolatedPath()}`, true);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).not.toContain('INSTALL_WARN');
+    }
     const seen = spawnSync(join(ROOT, 'bin', 'update-check'), [], {
       encoding: 'utf8',
       env: {
@@ -1858,6 +1868,107 @@ exec /usr/bin/stat "\${out[@]}"
     expect(seen.stdout).not.toContain('status_unreadable');
     expect(seen.stdout).not.toContain('status_unverified');
     expect(checkFacts(home).stdout).toContain('skill=implement');
+  }, 30000);
+
+  test('O8 an auto run that skips every host still records preserved Claude copies', () => {
+    const home = join(baseTmp, 'o8-all-skipped');
+    plantRegularSkill(home, 'implement', 'FIRST RUN\n');
+    mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
+    rmSync(join(hostDir(home, 'claude'), 'pair-review'), { recursive: true, force: true });
+    const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['codex']), true);
+    expect(r.exitCode).toBe(1);
+    const warned = checkFacts(home).stdout;
+    expect(warned).toContain('reason=shared_directory');
+    expect(warned).toContain('skill=implement');
+  }, 30000);
+
+  test('W7 a writer that observed before the lock does not bring back a recovered copy', async () => {
+    const home = join(baseTmp, 'w7-stale');
+    const dir = plantRegularSkill(home, 'implement', 'OBSERVED FIRST\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
+    const coord = join(baseTmp, 'w7-stale-coord');
+    const bins = join(baseTmp, 'w7-stale-bins');
+    mkdirSync(coord, { recursive: true });
+    mkdirSync(bins, { recursive: true });
+    const release = join(coord, 'release');
+    const waiting = join(coord, 'waiting');
+    spawnSync('mkfifo', [release]);
+    writeFileSync(join(bins, 'sleep'), `#!/bin/bash
+if [ ! -f ${JSON.stringify(waiting)} ]; then
+  : > ${JSON.stringify(waiting)}
+  cat ${JSON.stringify(release)} >/dev/null
+fi
+exec /bin/sleep "$@"
+`);
+    chmodSync(join(bins, 'sleep'), 0o755);
+    const lock = join(home, '.gstack-extend', 'install-status.lock');
+    mkdirSync(lock);
+    writeFileSync(join(lock, 'owner'), '999999 heldnonce\n');
+    // The late writer scans the copy, then waits on the lock inside its sleep.
+    const late = spawn(SETUP, ['--host', 'codex', '--quiet'], {
+      env: { PATH: `${bins}:${isolatedPath()}`, HOME: home, TMPDIR: process.env.TMPDIR ?? '/tmp' },
+    });
+    expect(waitUntil(() => existsSync(waiting), 15000)).toBe(true);
+    rmSync(lock, { recursive: true });
+    // Meanwhile the user edits the copy and recovers it with the documented example.
+    writeFileSync(join(dir, 'SKILL.md'), 'EDITED THEN RECOVERED\n');
+    const recovered = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(recovered.stdout).toContain('RECOVERY_MIGRATED');
+    expect(checkFacts(home).stdout).not.toContain('skill=implement');
+    const releaser = spawn('/bin/sh', ['-c', `printf go > ${JSON.stringify(release)}`]);
+    const done = await waitChild(late, 20000);
+    releaser.kill();
+    expect(done.code).toBe(0);
+    const out = checkFacts(home).stdout;
+    expect(out).toContain('reason=shared_directory');
+    expect(out).not.toContain('skill=implement');
+  }, 60000);
+
+  test('O3 a Cursor unsafe fact clears once Cursor reads a served host directory', () => {
+    const home = join(baseTmp, 'o3-cursor-unsafe');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    mkdirSync(hostDir(home, 'cursor'), { recursive: true });
+    chmodSync(hostDir(home, 'cursor'), 0o777);
+    runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true);
+    expect(checkFacts(home).stdout).toContain('host=cursor');
+    chmodSync(hostDir(home, 'cursor'), 0o755);
+    rmSync(hostDir(home, 'cursor'), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'cursor'));
+    expect(runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(['claude', 'cursor']), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).not.toContain('host=cursor');
+  }, 30000);
+
+  test('O1 a separated Codex clears its shared fact while Cursor reads its directory', () => {
+    const home = join(baseTmp, 'o1-cursor-reads-codex');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    mkdirSync(dirnameOf(hostDir(home, 'codex')), { recursive: true });
+    symlinkSync(hostDir(home, 'claude'), hostDir(home, 'codex'));
+    runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true);
+    expect(checkFacts(home).stdout).toContain('reason=shared_directory');
+    rmSync(hostDir(home, 'codex'));
+    mkdirSync(hostDir(home, 'codex'));
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    symlinkSync(hostDir(home, 'codex'), hostDir(home, 'cursor'));
+    expect(runSetup(['--host', 'codex', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    expect(checkFacts(home).stdout).not.toContain('reason=shared_directory');
+  }, 30000);
+
+  test('O2 the lone-Cursor Claude fallback also records detection=not_applicable', () => {
+    const home = join(baseTmp, 'o2-fallback-cursor');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    mkdirSync(hostDir(home, 'cursor'), { recursive: true });
+    chmodSync(hostDir(home, 'claude'), 0o777);
+    chmodSync(hostDir(home, 'cursor'), 0o777);
+    const r = runSetup(['--host', 'auto', '--quiet'], home, isolatedPath(), true);
+    chmodSync(hostDir(home, 'claude'), 0o755);
+    chmodSync(hostDir(home, 'cursor'), 0o755);
+    expect(r.exitCode).toBe(1);
+    const claude = checkFacts(home).stdout.split('\n').find((l) => l.includes('host=claude') && l.includes('reason=unsafe_directory'));
+    expect(claude).toBeDefined();
+    expect(claude).toContain('detection=not_applicable');
   }, 30000);
 
   test('O2 an auto-mode Claude fallback records detection=not_applicable', () => {
@@ -2309,6 +2420,66 @@ exit $status
     expect(migrated.stdout).toContain('RECOVERY_MIGRATED');
     expect(checkFacts(home).stdout).not.toContain('skill=implement');
   }, 60000);
+
+  test('M6 an interruption between ln and rm resumes instead of colliding', () => {
+    const home = join(baseTmp, 'm6-hardlink');
+    const dir = plantRegularSkill(home, 'implement', 'LINKED TWICE\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    linkSync(join(dir, 'SKILL.md'), join(dir, 'SKILL.md.backup'));
+    const r = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('RECOVERY_RESUME');
+    expect(r.stdout).toContain('RECOVERY_MIGRATED');
+    expect(readFileSync(join(dir, 'SKILL.md.backup'), 'utf8')).toBe('LINKED TWICE\n');
+    expect(checkFacts(home).stdout).not.toContain('skill=implement');
+  }, 60000);
+
+  test('M6 an unsaved record after the move stops with exit 7 and the rerun catches up', () => {
+    const home = join(baseTmp, 'm6-unsaved-after');
+    const dir = plantRegularSkill(home, 'implement', 'MOVE THEN HOLD\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
+    const lock = join(home, '.gstack-extend', 'install-status.lock');
+    // Hold the lock as soon as the original name is removed, so the setup after
+    // the move cannot save.
+    const bins = join(baseTmp, 'm6-unsaved-bins');
+    mkdirSync(bins, { recursive: true });
+    writeFileSync(join(bins, 'rm'), `#!/bin/bash
+/bin/rm "$@"
+status=$?
+for a in "$@"; do
+  if [ "$a" = ${JSON.stringify(join(dir, 'SKILL.md'))} ]; then
+    /bin/mkdir ${JSON.stringify(lock)} && printf '999999 heldnonce\\n' > ${JSON.stringify(join(lock, 'owner'))}
+  fi
+done
+exit $status
+`);
+    chmodSync(join(bins, 'rm'), 0o755);
+    const held = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' }, `${bins}:${dirnameOf(process.execPath)}`);
+    expect(held.exitCode).toBe(7);
+    expect(held.stdout).toContain('RECOVERY_STATUS_UNSAVED');
+    expect(lstatSync(join(dir, 'SKILL.md')).isSymbolicLink()).toBe(true);
+    expect(checkFacts(home).stdout).toContain('skill=implement');
+    rmSync(lock, { recursive: true });
+    const again = runRecovery('per-file', home, { GSTACK_EXTEND_RECOVERY_SKILL: 'implement' });
+    expect(again.exitCode).toBe(0);
+    expect(again.stdout).toContain('RECOVERY_ALREADY_REPAIRED');
+    expect(checkFacts(home).stdout).not.toContain('skill=implement');
+  }, 60000);
+
+  test('separate-host example stops with exit 7 when setup cannot save', () => {
+    const home = join(baseTmp, 'm7-separate-unsaved');
+    mkdirSync(hostDir(home, 'claude'), { recursive: true });
+    mkdirSync(hostDir(home, 'codex'), { recursive: true });
+    const lock = join(home, '.gstack-extend', 'install-status.lock');
+    mkdirSync(lock, { recursive: true });
+    writeFileSync(join(lock, 'owner'), '999999 heldnonce\n');
+    const r = runRecovery('separate-host', home, { GSTACK_EXTEND_RECOVERY_HOST: 'codex' });
+    rmSync(lock, { recursive: true });
+    expect(r.exitCode).toBe(7);
+    expect(r.stdout).toContain('cause=lock_timeout');
+    expect(r.stdout).toContain('RECOVERY_STATUS_UNSAVED');
+    expect(r.stdout).not.toContain('RECOVERY_HOST_SETUP');
+  }, 30000);
 
   test('M5 a repeat through a symlinked checkout path still reports already repaired', () => {
     const home = join(baseTmp, 'm5-alias');

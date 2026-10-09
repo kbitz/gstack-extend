@@ -93,6 +93,10 @@ Shell variables do not survive between commands. Every later command that uses `
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" — you're already current, nothing to do.
 
+Whatever the version result, `INSTALL_WARN` lines in the update-check output
+are not a version result and do not change the answers below. Relay each one
+with its Fix link; see **After upgrading**.
+
 If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.
 
 If an `EXTEND_ROOT:` line was printed but no `UPGRADE_AVAILABLE` or `JUST_UPGRADED` line followed, do not assume "up to date": a silent update check also covers disabled checks, a missing `VERSION` file, and network failure. Disambiguate first:
@@ -121,10 +125,6 @@ fi
 - `offline`: tell user "Couldn't reach GitHub to check for updates (offline?). You're on v{local}."
 - `up-to-date`: tell user "You're on the latest version (v{local})."
 - `remote ... differs`: compare the two versions. If the remote is newer (rare; the periodic check should have caught it), follow the **Inline upgrade flow** below, treating the remote version as `{new}`. If the local version is newer, this is a development checkout ahead of the published release: tell the user "You're on v{local}, ahead of the published v{remote}." and do not upgrade.
-
-`INSTALL_WARN` lines in the update-check output are not a version result and do
-not change any answer above. Relay each one with its Fix link; see
-**After upgrading**.
 
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
@@ -243,8 +243,9 @@ upgrade is `"$_EXTEND_ROOT/setup" --host auto`. After
 `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`.
 
 Status warnings (`status_unsaved`, `status_unreadable`, `status_unverified`,
-`status_pending`) use `docs/installation.md#state-recovery`. Keep the previous
-file, including when its format is not one this checkout reconciles. An
+`status_pending`) use `docs/installation.md#state-recovery`. Never delete the
+status file. Keep a newer-schema file in place; move a damaged one aside under
+a dated name as that table shows, then rerun setup. An
 abandoned `install-status.lock` is moved aside only after the user confirms
 the owner is gone, then setup is rerun. Setup does not steal a lock.
 

@@ -31,7 +31,7 @@
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
 
-- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C switched its own stat calls to try `-c` first; this pre-existing helper sits outside that track's files.
+- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C's own stat calls try BSD `-f` first and keep the output only when it has the expected shape, otherwise use `-c` (`setup:_is_stat_id`, `_is_stat_size`); reuse that pattern here. This pre-existing helper sits outside that track's files.
 - **Effort:** S (human: ~30min / CC: ~10min)
 - **Context:** Found during Track 23C review and prep on 2026-10-09 while confirming the same ordering bug in the new install-status code. A probe with `/opt/homebrew/bin/gstat` first in PATH showed the multi-line capture.
 - **Priority:** P2
@@ -41,7 +41,7 @@
 
 - **Description:** Both readers accept up to 1 MiB and 4096 records, the bounds the Track 23C plan set. Under `/bin/bash` 3.2, reading near those bounds takes seconds to minutes, and `bin/update-check` runs on every skill invocation. Setup itself writes about 25 records per HOME, so only a damaged, foreign or long-accumulated file gets near the cap.
 - **Effort:** S (human: ~2h / CC: ~20min)
-- **Context:** Measured by the performance specialist during Track 23C review and prep on 2026-10-09: 1,000 records for this HOME took about 10 s in the checker. Lower the caps, stream records instead of indexing one large array, and cap emitted lines with one summary line.
+- **Context:** Measured by the performance specialist during Track 23C review and prep on 2026-10-09: 1,000 records for this HOME took about 10 s in the checker. Setup's load also checks every record for a duplicate key after a HOME-spelling rebind, which is quadratic and runs under the lock. Lower the caps, stream records instead of indexing one large array, and cap emitted lines with one summary line.
 - **Priority:** P3
 - **Revisit when:** A real install-status file passes a few hundred records, or a skill preamble is reported slow because of update-check.
 

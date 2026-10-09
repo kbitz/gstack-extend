@@ -155,10 +155,13 @@ line names the host, the skill (`-` for a whole host directory), the path, the
 reason and cause, the checkout the record names, and a Fix link in this
 checkout's `docs/installation.md`. For a preserved copy, `checkout=` is the
 checkout its `.extend-root` names; for a host fact, it is the checkout whose
-setup saw it. `origin=` says how that checkout was qualified: `this_checkout`
-(the checkout that recorded the fact), `verified_checkout` (another existing
-gstack-extend checkout) or `prior_qualified` (one that has since moved or been
-deleted). Recover with a verified checkout, normally the one in the Fix link,
+setup saw it. On a preserved-copy line, `origin=` says how that checkout was
+qualified: `this_checkout` (the checkout that recorded the fact),
+`verified_checkout` (another existing gstack-extend checkout) or
+`prior_qualified` (one that has since moved or been deleted). A host line shows
+`detection=` instead: how setup selected that host (`binary`,
+`existing_skill`, `cursor_home`, `explicit_host`, or `not_applicable` for the
+Claude fallback). Recover with a verified checkout, normally the one in the Fix link,
 whatever `checkout=` shows. A status line (`reason=status_*`) names the state
 path and its cause instead. Paths are shell-quoted when needed. Treat the
 text after `INSTALL_WARN` as a human-readable diagnostic: rely on that token and
@@ -240,7 +243,9 @@ same file. `RECOVERY_SETUP_FAILED` (exit 5) means setup failed,
 `RECOVERY_NOT_LINKED` (exit 6) means setup finished without linking the
 skill, and `RECOVERY_STATUS_UNSAVED` (exit 7) means setup could not save its
 record (see **State recovery**). The backup, if one was made, stays in place. Fix the cause and run the
-example again: it resumes from the backup without moving it. A second run
+example again: it resumes from the backup without moving it, including after
+an interruption that left `SKILL.md.backup` and `SKILL.md` as two names for one
+file. A second run
 after the symlink exists does nothing to that symlink; it only reruns setup so
 an unsaved record can catch up. A retired name whose
 source file is gone is not moved by this example. A foreign symlink is left
@@ -306,14 +311,18 @@ else
   else
     echo RECOVERY_COMPARE_DIFFERS
   fi
-  if [ -e "$backup" ] || [ -L "$backup" ]; then
+  if [ -f "$backup" ] && [ ! -L "$backup" ] && [ "$file" -ef "$backup" ]; then
+    # An earlier run linked the backup but stopped before removing the original.
+    echo RECOVERY_RESUME
+  elif [ -e "$backup" ] || [ -L "$backup" ]; then
     echo RECOVERY_COLLISION
     exit 3
-  fi
-  run_setup
-  if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
-    echo RECOVERY_MOVE_FAILED
-    exit 4
+  else
+    run_setup
+    if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
+      echo RECOVERY_MOVE_FAILED
+      exit 4
+    fi
   fi
   rm -f "$file"
   if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ]; then
@@ -371,14 +380,18 @@ else
     echo RECOVERY_NOT_REGULAR
     exit 2
   fi
-  if [ -e "$backup" ] || [ -L "$backup" ]; then
+  if [ -f "$backup" ] && [ ! -L "$backup" ] && [ "$file" -ef "$backup" ]; then
+    # An earlier run linked the backup but stopped before removing the original.
+    echo RECOVERY_RESUME
+  elif [ -e "$backup" ] || [ -L "$backup" ]; then
     echo RECOVERY_COLLISION
     exit 3
-  fi
-  run_setup
-  if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
-    echo RECOVERY_MOVE_FAILED
-    exit 4
+  else
+    run_setup
+    if ! ln "$file" "$backup" 2>/dev/null || [ -L "$backup" ] || [ ! "$file" -ef "$backup" ]; then
+      echo RECOVERY_MOVE_FAILED
+      exit 4
+    fi
   fi
   rm -f "$file"
   if [ -e "$file" ] || [ -L "$file" ] || [ ! -f "$backup" ]; then
@@ -420,7 +433,8 @@ echo "RECOVERY_UPDATE_CHECK_$value"
 Codex, OpenCode, or Cursor already using its own skills directory is refreshed
 with that host's setup. This does not rewrite Claude's preserved files. Set
 `GSTACK_EXTEND_RECOVERY_HOST` to the host. `RECOVERY_HOST_SKIPPED` (exit 6)
-means setup still skipped that host, usually because its directory is shared.
+means setup still skipped that host, usually because its directory is shared,
+and `RECOVERY_STATUS_UNSAVED` (exit 7) means setup could not save its record.
 
 <!-- recovery-example:separate-host -->
 ```bash
@@ -438,6 +452,7 @@ if ! out=$("$checkout/setup" --host "$host" --quiet); then
 fi
 [ -z "$out" ] || printf '%s\n' "$out"
 case "$out" in
+  *"INSTALL_WARN reason=status_unsaved"*) echo RECOVERY_STATUS_UNSAVED; exit 7 ;;
   *SETUP_SKIPPED_HOSTS*) echo RECOVERY_HOST_SKIPPED; exit 6 ;;
 esac
 echo RECOVERY_HOST_SETUP
@@ -504,8 +519,8 @@ points here. It does not treat that file as a clean install.
 |---|---|---|
 | `status_unsaved` / `temp_failed`, `write_failed`, `chmod_failed`, `rename_failed`, `mkdir_failed`, `lock_failed` | This run could not create its lock or publish a new snapshot, for example on a full disk or a read-only state directory | The previous file, if any, is still there. Fix the named cause and rerun setup from the verified checkout. |
 | `status_unsaved` / `invalid_record` or `oversized` | This run's own observations would not pass the reader's checks, so setup kept the previous file | Check HOME and the host directories, then rerun setup from a verified checkout. If it repeats, report the warning line. |
-| `lock_timeout` or `status_pending` / `lock_held` | Another setup holds `install-status.lock`, or a setup was interrupted and left it | Do not delete `install-status`. See whether the owner process is still running. If you have confirmed it is gone, move the lock directory aside and rerun setup. Setup does not take over a lock by itself. |
-| `not_readable` (from setup, `predecessor_not_readable`) | The status file exists but cannot be read | Restore read access or ownership. Keep the file. |
+| `lock_timeout` or `status_pending` / `lock_held` | Another setup holds `install-status.lock`, or a setup was interrupted and left it | Do not delete `install-status`. The owner is recorded as `<pid> <nonce>` in `install-status.lock/owner`; see whether that process is still running (`ps -p <pid>`). If it is gone, or there is no owner file and no setup is running, move the lock directory aside and rerun setup. Setup does not take over a lock by itself. |
+| `not_readable` (from setup, `predecessor_not_readable`), or `not_searchable` | The status file, or the state directory holding it, cannot be read | Restore read access (and search access on the directory) or ownership. Keep the file. |
 | `symlink`, `directory`, `fifo`, `not_regular` (from setup, with `predecessor_`), or `unsafe_target` | The status path is not a regular file | Leave the unexpected object in place, move it aside only if you know it is not something you need, and rerun setup. Do not follow a link or replace a directory to force a clean result. |
 | `unknown_schema` (from setup, `predecessor_unknown_schema`) | A newer gstack-extend wrote the file | Run setup and checks from that newer checkout, or upgrade this one. Keep the file. |
 | `malformed`, `unknown_record`, `truncated`, `extra_data`, `count_mismatch`, `oversized` (from setup, with `predecessor_`) | The file is damaged, or is not a snapshot this checkout reads | Move it aside under a dated name so the bytes are kept, for example `mv "$state/install-status" "$state/install-status.damaged-$(date +%Y%m%d%H%M%S)"` where `$state` is the directory above, then rerun setup from a verified checkout. Setup records again what it can see now. A copy whose pointer names a deleted checkout is not recorded again. |

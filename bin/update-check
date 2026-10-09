@@ -264,6 +264,11 @@ _uc_read_status() {
 }
 _uc_collect() {
   local status="$STATE_DIR/install-status" lock="$STATE_DIR/install-status.lock" home_id=""
+  # Without search permission the status file looks absent; say so instead.
+  if [ -d "$STATE_DIR" ] && [ ! -x "$STATE_DIR" ]; then
+    _uc_status_line status_unreadable not_searchable "$STATE_DIR"
+    return 0
+  fi
   if [ -d "$lock" ]; then
     _uc_status_line status_pending lock_held "$lock"
   fi

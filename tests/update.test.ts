@@ -2367,6 +2367,16 @@ exec /bin/mv "$@"
     expect(warned.stdout).toContain('cause=home_unreadable');
   });
 
+  test('W4 a state directory without search permission is diagnosed, not silent', () => {
+    const fx = warnedFixture('w4-nosearch');
+    chmodSync(fx.state, 0o600);
+    const seen = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    chmodSync(fx.state, 0o755);
+    expect(seen.stdout).toContain('reason=status_unreadable');
+    expect(seen.stdout).toContain('cause=not_searchable');
+    expect(readFileSync(join(fx.state, 'install-status'))).toEqual(fx.frame);
+  });
+
   test('U1 a git failure leaves install status untouched', () => {
     const repo = createFixtureRepo('u1-diverged');
     writeFileSync(join(repo, 'local-only.txt'), 'local-only change\n');

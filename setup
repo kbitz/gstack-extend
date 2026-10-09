@@ -808,11 +808,14 @@ _is_host_done() {
     *) return 1 ;;
   esac
 }
+# Cursor may read another host's directory, so it does not make a copy host
+# shared, matching the skip loop; Cursor's own facts still compare everything.
 _is_separated() {
   local host="$1" dir other
   dir=$(host_skills_dir "$host")
   for other in claude codex opencode cursor; do
     [ "$other" = "$host" ] && continue
+    [ "$host" != cursor ] && [ "$other" = cursor ] && continue
     if same_skills_dir "$dir" "$(host_skills_dir "$other")"; then
       return 1
     fi
@@ -822,6 +825,18 @@ _is_separated() {
 _is_mark() {
   _is_key "$1" "$2" "$3" "$4"
   IS_RESOLVE[${#IS_RESOLVE[@]}]=$IS_KEY
+}
+# A yielding Cursor is served when the host whose directory it reads was
+# installed this run.
+_is_cursor_yield_served() {
+  local dir host
+  dir=$(host_skills_dir cursor)
+  for host in claude codex opencode; do
+    if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
+      return 0
+    fi
+  done
+  return 1
 }
 # Candidate resolutions. Each one is reverified under the lock before a fact
 # clears. An unsafe directory needs only to pass safety now; a shared one must
@@ -842,13 +857,11 @@ install_status_mark_resolutions() {
   _is_host_dir cursor
   if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
     _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
-  else
-    for host in claude codex opencode; do
-      if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
-        _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
-        break
-      fi
-    done
+  elif _is_cursor_yield_served; then
+    _is_mark "$home" cursor "$IS_HOST_DIR" cursor_unserved
+    if is_safe_install_path "$dir" >/dev/null 2>&1; then
+      _is_mark "$home" cursor "$IS_HOST_DIR" unsafe_directory
+    fi
   fi
   if [ "$HOST_DONE_claude" -eq 1 ] || [ "$INSTALL_STATUS_SCAN_CLAUDE" -eq 1 ]; then
     _is_host_dir claude
@@ -976,6 +989,7 @@ _is_bind_fact() {
     *"$want") ;;
     *) return 1 ;;
   esac
+  [ "$UF_LOGICAL" = "$IS_HOME_NORM$want" ] || IS_REBOUND=1
   UF_LOGICAL="$IS_HOME_NORM$want"
   _is_set_path
 }
@@ -988,6 +1002,7 @@ _is_check_fact() {
 }
 _is_load_prev() {
   local file="$INSTALL_STATUS_DIR/install-status" bytes fields i n nrec=0
+  IS_REBOUND=0
   IS_PREV_F=()
   IS_PREV_KEY=()
   IS_READ=absent
@@ -1040,7 +1055,8 @@ _is_load_prev() {
     _is_check_fact || { IS_READ=malformed; return 0; }
     _is_key "$UF_HOME" "$UF_HOST" "$UF_PATH" "$UF_REASON"
     # Rebinding can make two spellings of one fact identical; keep the later.
-    if _is_key_index IS_PREV_KEY "$IS_KEY"; then
+    # Without a rebind the writer never stores duplicates, so skip the scan.
+    if [ "$IS_REBOUND" = 1 ] && _is_key_index IS_PREV_KEY "$IS_KEY"; then
       _is_store IS_PREV_F "$IS_IDX"
     else
       _is_store IS_PREV_F
@@ -1098,13 +1114,17 @@ _is_reverify() {
   local dir current_inode host
   case "$UF_REASON" in
     shared_directory|unsafe_directory)
-      _is_host_done "$UF_HOST" || return 1
       _is_host_dir "$UF_HOST"
       [ "$UF_LOGICAL" = "$IS_HOST_DIR" ] || return 1
+      is_safe_install_path "$(host_skills_dir "$UF_HOST")" >/dev/null 2>&1 || return 1
+      # A Cursor directory repaired by pointing it at a served host's directory.
+      if [ "$UF_REASON" = unsafe_directory ] && [ "$UF_HOST" = cursor ] && _is_cursor_yield_served; then
+        return 0
+      fi
+      _is_host_done "$UF_HOST" || return 1
       if [ "$UF_REASON" = shared_directory ]; then
         _is_separated "$UF_HOST" || return 1
       fi
-      is_safe_install_path "$(host_skills_dir "$UF_HOST")" >/dev/null 2>&1 || return 1
       return 0
       ;;
     cursor_unserved)
@@ -1114,12 +1134,7 @@ _is_reverify() {
       if _is_host_done cursor && _is_separated cursor && is_safe_install_path "$dir" >/dev/null 2>&1; then
         return 0
       fi
-      for host in claude codex opencode; do
-        if _is_host_done "$host" && same_skills_dir "$dir" "$(host_skills_dir "$host")"; then
-          return 0
-        fi
-      done
-      return 1
+      _is_cursor_yield_served
       ;;
     preserved_regular)
       [ "$UF_HOST" = "claude" ] || return 1
@@ -1164,6 +1179,12 @@ _is_merge() {
       continue
     fi
     _is_load IS_NEW_F "$i"
+    # The observation was taken before the lock. If the copy has since been
+    # set aside (another setup may already have cleared it), do not bring it back.
+    if [ "$UF_REASON" = preserved_regular ] && { [ ! -f "$UF_PATH/SKILL.md" ] || [ -L "$UF_PATH/SKILL.md" ]; }; then
+      i=$((i + 1))
+      continue
+    fi
     if _is_key_index IS_OUT_KEY "$key"; then
       _is_store IS_OUT_F "$IS_IDX"
     else
@@ -1466,6 +1487,8 @@ if [ "$HOST" = "auto" ] && ! any_host_selected; then
   if [ "$SKIPPED_NON_CURSOR" -eq 1 ]; then
     echo "Error: no detected host has a usable skills directory (unsafe, or shared with another host); nothing installed." >&2
     echo "$USAGE" >&2
+    # Record preserved copies a shared host pointed at before failing.
+    install_status_scan || true
     finish_setup 1
   fi
   INSTALL_CLAUDE=1
