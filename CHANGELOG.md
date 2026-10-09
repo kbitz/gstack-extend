@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.4.0] - 2026-10-09
+
+### Added
+
+- **An upgrade says when a skill copy was left in place.** After setup skips a host or keeps a regular Claude skill file instead of replacing it, `update-check` prints one `INSTALL_WARN` line for that fact on later runs. The line stays on stdout after the version result, including when the version check is cached, snoozed, or offline. Setting `update_check=false` stays quiet and keeps the record. The install guide now shows how to repair a preserved copy, a retired copy, a file you customized, or a separate host directory, and what to do when that record cannot be saved. The upgrade skill repeats the warning outside the shared upgrade flow. The install protocol is unchanged, and no acceptance checkpoint is awarded.
+
 ## [0.36.3.1] - 2026-10-09
 
 ### Changed

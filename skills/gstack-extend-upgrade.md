@@ -93,6 +93,10 @@ Shell variables do not survive between commands. Every later command that uses `
 If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" — you're already current, nothing to do.
 
+Whatever the version result, `INSTALL_WARN` lines in the update-check output
+are not a version result and do not change the answers below. Relay each one
+with its Fix link; see **After upgrading**.
+
 If no `EXTEND_ROOT:` line was printed, tell the user no verified gstack-extend install was found, and to run `./setup --host auto` from their gstack-extend checkout. Run Telemetry finish with `--outcome error`. Then stop.
 
 If an `EXTEND_ROOT:` line was printed but no `UPGRADE_AVAILABLE` or `JUST_UPGRADED` line followed, do not assume "up to date": a silent update check also covers disabled checks, a missing `VERSION` file, and network failure. Disambiguate first:
@@ -212,6 +216,45 @@ upgrade succeeded but a one-shot install migration failed. Name the script.
 Tell the user to retry with `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` —
 re-running this skill after `UPGRADE_OK` will see `JUST_UPGRADED` / up-to-date
 and will not invoke the runner. Do **not** treat `MIGRATION_WARN` as `UPGRADE_FAILED`.
+
+`INSTALL_WARN` lines are local install facts, not version results. Warning-only
+stdout does not mean a release is available and does not mean the install is
+clean. Facts appear after a setup from this checkout has published them; an
+older setup never wrote this file. Cache, snooze, and an offline version check
+do not consume the warnings. `update_check=false` hides warnings and ordinary
+version notifications together; `"$_EXTEND_ROOT/bin/config" set update_check true`
+brings both back. That is not a per-copy acknowledgement. Do not tell the user
+to delete `.extend-root` or `install-status` to get silence.
+
+Say that `UPGRADE_OK` upgraded the checkout. Preserved regular copies, shared
+directories, unsafe directories, and an unserved Cursor install still need the
+repair in `$_EXTEND_ROOT/docs/installation.md`. A partial repair leaves a
+warning for every remaining entry. A preserved-copy warning clears only when
+setup finds `SKILL.md.backup` holding the recorded bytes in the same skill
+directory, plus the canonical link (for a retired name, no `SKILL.md`). The
+per-file and retired examples there produce exactly that; deleting the copy
+instead leaves the warning. `reason=unsafe_directory` uses
+`docs/installation.md#unsafe-skills-directory`. Customized files and retired copies whose
+source is gone stay until the user moves those specific files aside; do not
+treat a pointer as permission to replace them. A moved or deleted checkout
+pointer does not clear a fact. The same-version command after a successful
+upgrade is `"$_EXTEND_ROOT/setup" --host auto`. After
+`UPGRADE_FAILED stage=setup`, the retry is
+`"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`.
+
+Status warnings (`status_unsaved`, `status_unreadable`, `status_unverified`,
+`status_pending`) use `docs/installation.md#state-recovery`. Never delete the
+status file. Keep a newer-schema file in place; move a damaged one aside under
+a dated name as that table shows, then rerun setup. An
+abandoned `install-status.lock` is moved aside only after the user confirms
+the owner is gone, then setup is rerun. Setup does not steal a lock.
+
+Repairing files on disk does not change instructions this session already
+loaded. After the repeat check matches the repair, the user reloads the skill
+or starts a new session. The next invocation is not a fresh install while
+preserved copies remain or this session is still on the old text. How long a
+person needs for one known recovery is unmeasured. Checking that recovery on
+real host installs is Tracks 27A and 27B, not this skill's result line.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish

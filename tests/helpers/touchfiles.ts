@@ -130,10 +130,15 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/update.test.ts': [
     'bin/update-check',
     'bin/update-run',
+    'bin/config',
     'bin/lib/run-migrations.sh',
     'bin/lib/semver.sh',
     'migrations/**',
     'skills/gstack-extend-upgrade.md',
+    // Track 23C R6 checks the frozen preamble text in these skills.
+    'skills/roadmap.md',
+    'skills/pair-review.md',
+    'skills/full-review.md',
     'setup',
   ],
   // Track 12A — gstack-extend init <project>. The bin sources the registry
@@ -170,6 +175,12 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     'skills/**',
     'bin/lib/install-safety.sh',
+    // Track 23C: the checker reads setup's snapshot, and the recovery
+    // examples in the installation guide run as tests.
+    'bin/update-check',
+    'bin/config',
+    'bin/lib/semver.sh',
+    'docs/installation.md',
   ],
   'tests/setup-init-wire.test.ts': [
     'setup',
