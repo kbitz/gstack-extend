@@ -927,7 +927,8 @@ source labels. A quota row can name a model while the stage-runs source is
 
 The repair does not change supported Paseo behavior or Cursor CLI behavior,
 except that a Cursor transcript read failure now prints the fixed
-`transcript-unreadable` reason instead of exception text.
+`transcript-unreadable` reason instead of exception text, and that a CLI row no
+longer takes model or effort from a matching store (next sentences).
 `CURSOR_INVOKED_AS` is CLI. Finish does not copy model or effort from a matching
 store on that path; an explicit `--model` or `--effort` stays `flag`. A row
 whose only Cursor signal is `--agent cursor` has `agent_source` `flag` and
@@ -1035,7 +1036,8 @@ later activity still wins when process ancestry is unavailable.
 
 Inspected producer `0.36.0.1` contains the pre-repair defect: numeric or
 malformed SDK bounds could yield an overbroad `conductor` route. That route
-alone is not proof of a correct run window. The statement in
+alone is not proof of a correct run window. The reader is unchanged through
+`0.36.1.0`. The statement in
 [review-independence evidence](designs/review-independence.md#8-provenance-feasibility)
 that integer dates and list params fail `cursor_turns()` is a dated pre-repair
 observation, not a current claim that those shapes stay unreadable. Its
@@ -1046,15 +1048,16 @@ from the next planned run instead. Do not
 rewrite old rows, the dated capture below, or Track 22A receipts. Schema
 version and source labels are satisfied independently of native-route
 correctness. A row with no `producer_version` keeps unknown producer status.
-This change does not lexically compare four-part versions. The release that
-ships the repair is the bound for the fixed implementation; earlier or unknown
-producer rows stay uncertified without their own implementation evidence.
-Invalid or ambiguous store evidence may now yield `route` `unknown`, and an
-explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort from a
-matching store record of any shape; those stay null unless finish flags supply
-them. If a consumer relied on the old overbroad label or those CLI values, the release that ships this repair
-has to apply the spec's compatibility policy. No release is authorized by the
-reader change itself.
+This change does not lexically compare four-part versions. Release `0.36.2.0`
+ships the repair and is the bound for the fixed implementation; earlier or
+unknown producer rows stay uncertified without their own implementation
+evidence. Invalid or ambiguous store evidence may now yield `route` `unknown`,
+and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
+from a matching store record of any shape; those stay null unless finish flags
+supply them. The row schema, field order, source labels and finish flags are
+unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
+treats this as a fix. A consumer that relied on the old overbroad label or
+those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
 
 Reconsider this private reader if a supported host publishes an official
 run-metadata contract, a qualified native shape changes, store-wide
