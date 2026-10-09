@@ -2062,6 +2062,21 @@ describe('track 23C update visibility', () => {
     expect(seen.stdout).toContain('reason=status_unreadable');
     expect(seen.stdout).toContain('cause=symlink');
     expect(readFileSync(victim, 'utf8')).toBe('VICTIM\n');
+
+    // Value: protects=a mode-000 install-status is reported not_readable and left unchanged;
+    //   fails_when=the checker stays silent or rewrites that file;
+    //   why_new=the reader W4 case covers a symlink, and the writer covers predecessor_not_readable; seam=none
+    rmSync(status);
+    const unreadBody = Buffer.from('KEEP-UNREADABLE\n');
+    writeFileSync(status, unreadBody);
+    chmodSync(status, 0o000);
+    const unread = checkInstall(fx.repo, fx.home, fx.state, [], fx.remote);
+    chmodSync(status, 0o600);
+    expect(unread.exitCode).toBe(0);
+    expect(unread.stdout).toContain('reason=status_unreadable');
+    expect(unread.stdout).toContain('cause=not_readable');
+    expect(unread.stderr).not.toContain('INSTALL_WARN');
+    expect(readFileSync(status)).toEqual(unreadBody);
   });
 
   test('W6 readers see the predecessor, then the successor', async () => {

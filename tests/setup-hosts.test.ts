@@ -1417,7 +1417,37 @@ describe('track 23C preserved skill copies', () => {
     expect(explicit.stderr).toContain('world-writable');
     expect(readFileSync(join(codex, 'keep.txt'), 'utf8')).toBe('explicit\n');
     expect(checkFacts(explicitHome).stdout).toContain('cause=world_writable');
-  }, 30000);
+
+    // Value: protects=not_owned and unresolvable skills directories are recorded with those causes and not written;
+    //   fails_when=those safety messages fall through to cause=unsafe_directory or setup creates skills there;
+    //   why_new=the O2 cases pin world_writable and outside_home only; seam=none
+    const ownedHome = join(baseTmp, 'o2-not-owned');
+    mkdirSync(join(ownedHome, '.codex'), { recursive: true });
+    symlinkSync('/usr', hostDir(ownedHome, 'codex'));
+    const owned = runSetup(['--host', 'codex', '--quiet'], ownedHome, isolatedPath(), true);
+    expect(owned.exitCode).toBe(1);
+    expect(owned.stderr).toContain('owned by uid');
+    const ownedWarn = checkFacts(ownedHome).stdout;
+    expect(ownedWarn).toContain('host=codex');
+    expect(ownedWarn).toContain('reason=unsafe_directory');
+    expect(ownedWarn).toContain('cause=not_owned');
+    expect(ownedWarn).not.toContain('cause=unsafe_directory');
+    expect(readlinkSync(hostDir(ownedHome, 'codex'))).toBe('/usr');
+    expect(existsSync('/usr/pair-review')).toBe(false);
+
+    const brokenHome = join(baseTmp, 'o2-unresolvable');
+    const missingTarget = join(brokenHome, 'missing-skills-target');
+    mkdirSync(join(brokenHome, '.codex'), { recursive: true });
+    symlinkSync(missingTarget, hostDir(brokenHome, 'codex'));
+    const broken = runSetup(['--host', 'codex', '--quiet'], brokenHome, isolatedPath(), true);
+    expect(broken.exitCode).toBe(1);
+    expect(broken.stderr).toContain('cannot resolve');
+    const brokenWarn = checkFacts(brokenHome).stdout;
+    expect(brokenWarn).toContain('host=codex');
+    expect(brokenWarn).toContain('cause=unresolvable');
+    expect(brokenWarn).not.toContain('cause=unsafe_directory');
+    expect(existsSync(missingTarget)).toBe(false);
+  }, 45000);
 
   test('O2 an unsafe Claude directory clears after repair even while Cursor reads it', () => {
     const home = join(baseTmp, 'o2-cursor-shares');
@@ -1492,7 +1522,8 @@ describe('track 23C preserved skill copies', () => {
     expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('STILL HERE\n');
   });
 
-  test('O4 raw-equal and stripped-variant copies stay observations', () => {
+  test('O4 raw-equal, stripped-variant and differing copies stay observations', () => {
+    // Value: protects=a preserved copy that matches neither canonical nor stripped text is recorded differs_stripped and left unchanged; fails_when=that branch is dropped or labeled matches_stripped; why_new=this test covered raw-equal and stripped-match only; seam=none
     const home = join(baseTmp, 'o4-compare');
     const raw = readFileSync(join(ROOT, 'skills', 'roadmap.md'));
     plantRegularSkill(home, 'roadmap', raw.toString());
@@ -1523,9 +1554,51 @@ describe('track 23C preserved skill copies', () => {
     expect(rawWarn).not.toContain('disposable');
     expect(variantWarn).toContain('compare=differs_canonical');
     expect(variantWarn).toContain('variant=matches_stripped');
+    const differentBody = 'CUSTOM ROADMAP COPY\n';
+    const differentHome = join(baseTmp, 'o4-different');
+    plantRegularSkill(differentHome, 'roadmap', differentBody);
+    runSetup(['--host', 'claude', '--quiet'], differentHome, isolatedPath(), true);
+    const differentWarn = checkFacts(differentHome).stdout;
+    expect(differentWarn).toContain('skill=roadmap');
+    expect(differentWarn).toContain('compare=differs_canonical');
+    expect(differentWarn).toContain('variant=differs_stripped');
+    expect(differentWarn).not.toContain('customized');
+    expect(differentWarn).not.toContain('disposable');
     expect(readFileSync(join(hostDir(home, 'claude'), 'roadmap', 'SKILL.md'))).toEqual(raw);
     expect(readFileSync(join(hostDir(variantHome, 'claude'), 'roadmap', 'SKILL.md'), 'utf8')).toBe(strippedRun.stdout);
-  });
+    expect(readFileSync(join(hostDir(differentHome, 'claude'), 'roadmap', 'SKILL.md'), 'utf8')).toBe(differentBody);
+
+    // Value: protects=a preserved copy is still recorded variant=unavailable when the stripped compare cannot create its temp file;
+    //   fails_when=that mktemp failure aborts setup or labels the copy matches_stripped or differs_stripped;
+    //   why_new=O4 only compares copies when mktemp succeeds; seam=none
+    const unavailableHome = join(baseTmp, 'o4-variant-unavailable');
+    const unavailableBody = 'CUSTOM ROADMAP COPY\n';
+    plantRegularSkill(unavailableHome, 'roadmap', unavailableBody);
+    const variantBins = join(baseTmp, 'o4-variant-bins');
+    mkdirSync(variantBins, { recursive: true });
+    writeFileSync(join(variantBins, 'mktemp'), `#!/bin/bash
+for a in "$@"; do
+  case "$a" in
+    *gstack-extend-variant*) echo no >&2; exit 1 ;;
+  esac
+done
+exec /usr/bin/mktemp "$@"
+`);
+    chmodSync(join(variantBins, 'mktemp'), 0o755);
+    const unavailableRun = runSetup(
+      ['--host', 'claude', '--quiet'],
+      unavailableHome,
+      `${variantBins}:${isolatedPath()}`,
+      true,
+    );
+    expect(unavailableRun.exitCode).toBe(0);
+    expect(unavailableRun.stdout).not.toContain('INSTALL_WARN');
+    const unavailableWarn = checkFacts(unavailableHome).stdout;
+    expect(unavailableWarn).toContain('skill=roadmap');
+    expect(unavailableWarn).toContain('compare=differs_canonical');
+    expect(unavailableWarn).toContain('variant=unavailable');
+    expect(readFileSync(join(hostDir(unavailableHome, 'claude'), 'roadmap', 'SKILL.md'), 'utf8')).toBe(unavailableBody);
+  }, 20000);
 
   test('O5 a retired regular copy is kept and reported source-unavailable', () => {
     const home = join(baseTmp, 'o5-retired');
@@ -2023,7 +2096,32 @@ exec /bin/mv "$@"
       expect(readFileSync(join(hostDir(home, 'claude'), 'implement', 'SKILL.md'), 'utf8')).toBe('PRIOR BYTE\n');
       rmSync(join(bins, bin));
     }
-  }, 30000);
+
+    // Value: protects=a state path that is a regular file stays byte for byte and setup reports mkdir_failed after installing skills;
+    //   fails_when=setup replaces that file, omits the warning, or skips the install;
+    //   why_new=W5 publish failures all start from an existing state directory; seam=none
+    const blockedHome = join(baseTmp, 'w5-mkdir');
+    mkdirSync(blockedHome, { recursive: true });
+    const stateFile = join(baseTmp, 'w5-mkdir-state');
+    writeFileSync(stateFile, 'NOT A DIRECTORY\n');
+    const blocked = spawnSync(SETUP, ['--host', 'claude', '--quiet'], {
+      encoding: 'utf8',
+      env: {
+        PATH: isolatedPath(),
+        HOME: blockedHome,
+        GSTACK_EXTEND_STATE_DIR: stateFile,
+        ...(process.env.TMPDIR !== undefined ? { TMPDIR: process.env.TMPDIR } : {}),
+      },
+    });
+    expect(blocked.stderr ?? '').not.toContain('unbound variable');
+    expect(blocked.status).toBe(0);
+    expect(blocked.stdout ?? '').toContain('reason=status_unsaved');
+    expect(blocked.stdout ?? '').toContain('cause=mkdir_failed');
+    expect(blocked.stdout ?? '').toContain('saved=no');
+    expect(readFileSync(stateFile, 'utf8')).toBe('NOT A DIRECTORY\n');
+    expect(lstatSync(stateFile).isFile()).toBe(true);
+    expect(lstatSync(join(hostDir(blockedHome, 'claude'), 'pair-review', 'SKILL.md')).isSymbolicLink()).toBe(true);
+  }, 45000);
 
   test('W7 two writers keep a disjoint add and a resolve-plus-add', async () => {
     // The holder blocks in its rename while it owns the lock. The second writer
