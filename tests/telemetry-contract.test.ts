@@ -6,7 +6,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
@@ -890,5 +890,212 @@ describe('real upstream join (gated)', () => {
     expect(detachedStage.branch).toBeNull();
     expect(detachedRun._branch).toBe('HEAD');
     expect(Object.prototype.hasOwnProperty.call(detachedRun, '_repo_slug')).toBe(true);
+  });
+});
+
+const CURSOR_RECIPE_MARK = '# gstack-extend-cursor-ledger-recipe';
+const CURSOR_LEDGER_SENTINEL = 'cursor-ledger-secret-sentinel-23b';
+
+function cursorLedgerRecipe() {
+  const doc = readFileSync(DOC, 'utf8');
+  const python = [...doc.matchAll(/```python\n([\s\S]*?)```/g)].map(match => match[1]);
+  const marked = python.filter(body => body.startsWith(CURSOR_RECIPE_MARK + '\n'));
+  expect(marked).toHaveLength(1);
+  expect(marked[0]).not.toContain('import telemetry');
+  expect(marked[0]).toContain('def main():');
+  return marked[0];
+}
+
+function writeStageRuns(root: string, rows: Array<Record<string, unknown>>) {
+  const dir = join(root, 'analytics');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'stage-runs.jsonl');
+  writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  return file;
+}
+
+function runCursorRecipe(env: Record<string, string>, args: string[], cwd: string) {
+  return spawnSync('python3', ['-I', '-', ...args], {
+    input: cursorLedgerRecipe(),
+    encoding: 'utf8',
+    env,
+    cwd,
+  });
+}
+
+describe('Conductor Cursor ledger recipe', () => {
+  const known = {
+    stage: 'implement',
+    session_id: 'known-session',
+    started_at: '2026-10-08T18:00:00Z',
+    agent: 'cursor',
+    route: 'conductor',
+    model: 'grok-4.7',
+    effort: 'high',
+    schema_version: 1,
+    producer_version: '0.0.0.0',
+    agent_source: 'detected',
+    model_source: 'detected',
+    effort_source: 'detected',
+    outcome: 'success',
+    entrypoint_raw: 'finish',
+  };
+
+  test('T39 reads only the whitelisted fields from the selected state root', () => {
+    const recipe = cursorLedgerRecipe();
+    const fix = makeTelemetryFixture('off');
+    const homeLedger = writeStageRuns(join(fix.home, '.gstack-extend'), [known]);
+    const before = readFileSync(homeLedger);
+    const beforeMtime = statSync(homeLedger).mtimeMs;
+    // Fixture env only: an exported state override from the developer's shell must not reach the recipe.
+    const base = { ...fix.env };
+    const def = runCursorRecipe(base, ['known-session'], fix.home);
+    expect(def.status).toBe(0);
+    expect(def.stdout.trim()).toBe(JSON.stringify(known));
+    expect(readFileSync(homeLedger).equals(before)).toBe(true);
+    expect(statSync(homeLedger).mtimeMs).toBe(beforeMtime);
+
+    const absRoot = join(fix.home, 'abs-state');
+    writeStageRuns(absRoot, [{ ...known, model: 'from-absolute' }]);
+    writeStageRuns(join(fix.home, '.gstack-extend'), [{ ...known, model: CURSOR_LEDGER_SENTINEL }]);
+    const absolute = runCursorRecipe({ ...base, GSTACK_EXTEND_STATE_DIR: absRoot }, ['known-session'], fix.home);
+    expect(absolute.status).toBe(0);
+    expect(absolute.stdout).toContain('"model":"from-absolute"');
+    expect(absolute.stdout).not.toContain(CURSOR_LEDGER_SENTINEL);
+
+    const decoy = join(fix.home, 'rel-decoy');
+    writeStageRuns(decoy, [{ ...known, model: CURSOR_LEDGER_SENTINEL, secret: CURSOR_LEDGER_SENTINEL }]);
+    writeStageRuns(join(fix.home, '.gstack-extend'), [known]);
+    const relative = runCursorRecipe({ ...base, GSTACK_EXTEND_STATE_DIR: 'rel-decoy' }, ['known-session'], fix.home);
+    expect(relative.status).toBe(0);
+    expect(relative.stdout).toContain('"model":"grok-4.7"');
+    expect(relative.stdout).not.toContain(CURSOR_LEDGER_SENTINEL);
+
+    const missing = makeTelemetryFixture('off');
+    const absent = runCursorRecipe({ ...missing.env }, ['known-session'], missing.home);
+    expect(absent.status).toBe(0);
+    expect(absent.stdout.trim()).toBe('missing-file');
+
+    const unmatched = makeTelemetryFixture('off');
+    writeStageRuns(join(unmatched.home, '.gstack-extend'), [{ ...known, session_id: 'other-session' }]);
+    const none = runCursorRecipe({ ...unmatched.env }, ['known-session', 'implement', known.started_at], unmatched.home);
+    expect(none.status).toBe(0);
+    expect(none.stdout.trim()).toBe('no-match');
+
+    const several = makeTelemetryFixture('off');
+    const second = { ...known, stage: 'review', started_at: '2026-10-08T18:05:00Z', model: 'other-model' };
+    writeStageRuns(join(several.home, '.gstack-extend'), [known, second]);
+    const many = runCursorRecipe({ ...several.env }, ['known-session'], several.home);
+    expect(many.status).toBe(0);
+    expect(many.stdout.split('\n')[0]).toBe('multiple-match');
+    expect(many.stdout).toContain('"model":"grok-4.7"');
+    expect(many.stdout).toContain('"model":"other-model"');
+    const narrowed = runCursorRecipe({ ...several.env }, ['known-session', 'implement', known.started_at], several.home);
+    expect(narrowed.status).toBe(0);
+    expect(narrowed.stdout).not.toContain('multiple-match');
+    expect(narrowed.stdout.trim()).toBe(JSON.stringify(known));
+
+    const dirty = makeTelemetryFixture('off');
+    const dirtyFile = writeStageRuns(join(dirty.home, '.gstack-extend'), [known]);
+    writeFileSync(dirtyFile, `{not-json ${CURSOR_LEDGER_SENTINEL}\n` + JSON.stringify({
+      ...known,
+      model: { id: CURSOR_LEDGER_SENTINEL },
+      secret: CURSOR_LEDGER_SENTINEL,
+    }) + '\n' + JSON.stringify({ ...known, session_id: 'other-session', model: CURSOR_LEDGER_SENTINEL }) + '\n');
+    const dirtyBefore = readFileSync(dirtyFile);
+    const dirtyMtime = statSync(dirtyFile).mtimeMs;
+    const projected = runCursorRecipe({ ...dirty.env }, ['known-session'], dirty.home);
+    expect(projected.status).toBe(0);
+    expect(projected.stdout).toContain('malformed-lines: 1');
+    expect(projected.stdout).toContain('"model":null');
+    expect(projected.stdout).not.toContain(CURSOR_LEDGER_SENTINEL);
+    expect(projected.stdout).not.toContain('not-json');
+    expect(readFileSync(dirtyFile).equals(dirtyBefore)).toBe(true);
+    expect(statSync(dirtyFile).mtimeMs).toBe(dirtyMtime);
+    expect(recipe).toContain('main()');
+
+    // Another writer's non-UTF-8 line is a skipped malformed line, not a traceback.
+    const binary = makeTelemetryFixture('off');
+    const binaryFile = writeStageRuns(join(binary.home, '.gstack-extend'), [known]);
+    writeFileSync(binaryFile, Buffer.concat([Buffer.from([0xff, 0xfe, 0x0a]), readFileSync(binaryFile)]));
+    const decoded = runCursorRecipe({ ...binary.env }, ['known-session'], binary.home);
+    expect([decoded.status, decoded.stderr]).toEqual([0, '']);
+    expect(decoded.stdout).toContain('malformed-lines: 1');
+    expect(decoded.stdout).toContain(JSON.stringify(known));
+
+    // The documented invocation is isolated: a module planted in the operator's cwd is never imported.
+    const invocation = readFileSync(DOC, 'utf8').split('\n').find(line => line.startsWith('python3 ') && line.includes("'known-session'"));
+    expect(invocation?.startsWith('python3 -I - ')).toBe(true);
+    const planted = makeTelemetryFixture('off');
+    writeStageRuns(join(planted.home, '.gstack-extend'), [known]);
+    writeFileSync(join(planted.home, 'json.py'), `raise SystemExit("${CURSOR_LEDGER_SENTINEL}")\n`);
+    const isolated = runCursorRecipe({ ...planted.env }, ['known-session'], planted.home);
+    expect(isolated.status).toBe(0);
+    expect(isolated.stdout.trim()).toBe(JSON.stringify(known));
+    expect(isolated.stdout + isolated.stderr).not.toContain(CURSOR_LEDGER_SENTINEL);
+
+    // Value: protects=the recipe's stage selector and its started_at selector each narrow a session's rows, and a blank ledger line is not malformed; fails_when=either selector is dropped from the recipe; why_new=the earlier narrowing row differs in both fields so one filter hides the other; seam=none
+    const selectors = makeTelemetryFixture('off');
+    const later = { ...known, started_at: '2026-10-08T18:05:00Z', model: 'later-run' };
+    const elsewhere = { ...known, stage: 'review', model: 'other-stage' };
+    const selectorFile = writeStageRuns(join(selectors.home, '.gstack-extend'), [known, later, elsewhere]);
+    writeFileSync(selectorFile, readFileSync(selectorFile, 'utf8').replace('\n', '\n\n'));
+    const byStage = runCursorRecipe({ ...selectors.env }, ['known-session', 'implement'], selectors.home);
+    expect(byStage.status).toBe(0);
+    expect(byStage.stdout.split('\n')[0]).toBe('multiple-match');
+    expect(byStage.stdout).toContain('"model":"grok-4.7"');
+    expect(byStage.stdout).toContain('"model":"later-run"');
+    expect(byStage.stdout).not.toContain('other-stage');
+    expect(byStage.stdout).not.toContain('malformed-lines');
+    const byStart = runCursorRecipe({ ...selectors.env }, ['known-session', 'implement', known.started_at], selectors.home);
+    expect(byStart.status).toBe(0);
+    expect(byStart.stdout.trim()).toBe(JSON.stringify(known));
+  });
+
+  test('every Cursor reader reason in the registry has its documented anchor row', () => {
+    const result = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
+      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    const registry = JSON.parse(result.stdout) as Array<[string, string]>;
+    for (const [code, anchor] of registry) expect(anchor).toBe(`cursor-sdk-${code}`);
+    const doc = readFileSync(DOC, 'utf8');
+    const documented = [...doc.matchAll(/<a id="(cursor-sdk-[a-z-]+)"><\/a>`([a-z-]+)`/g)].map(match => [match[2], match[1]]);
+    expect(documented).toEqual(registry);
+  });
+
+  test('T40 documents the store contract, the reason rows, and the pending native check', () => {
+    const doc = readFileSync(DOC, 'utf8');
+    const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
+    expect(cursor.startsWith('## Cursor and quota')).toBe(true);
+    expect(cursor).toContain('numeric_unit="milliseconds"');
+    expect(cursor).toContain('epoch milliseconds');
+    expect(cursor).toContain('list of `{id, value}`');
+    expect(cursor).toContain('`params` may be a dict');
+    expect(cursor).toContain('not served or billed proof');
+    expect(cursor).toContain('0.36.0.1');
+    expect(cursor).toContain('dated pre-repair');
+    expect(cursor).toContain('designs/review-independence.md#8-provenance-feasibility');
+    expect(cursor).toContain('Doctor reports skill-usage pairing, not model coverage');
+    expect(cursor).toContain('GSTACK_EXTEND_TELEMETRY_DEBUG=1');
+    expect(cursor).toContain('`pwd -P`');
+    expect(cursor).toContain('stale open run');
+    expect(cursor).toContain('2-5 minute target is an unmeasured');
+    expect(cursor).toContain('not native evidence');
+    expect(cursor.replace(/\s+/g, ' ')).toContain('Do not rewrite old rows');
+    expect(cursor).toContain('100000000000');
+    expect(cursor).toContain('does not change supported Paseo behavior');
+    expect(doc).toContain('Captured 2026-09-25T12:28:18Z');
+    // Anchors come from the registry; the registry-to-docs lock test above owns their order and spelling.
+    const registry = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_REASONS))',
+      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
+    expect(registry.status).toBe(0);
+    for (const [, anchor] of JSON.parse(registry.stdout) as Array<[string, string]>) {
+      expect(cursor).toContain(`id="${anchor}"`);
+    }
+    // Debug privacy is promised only for the fixed reason lines; the provenance trace prints recorded values.
+    expect(cursor.replace(/\s+/g, ' ')).toContain('provenance agent=… model=… effort=…');
+    expect(cursor.replace(/\s+/g, ' ')).toContain('Copy only lines that begin `telemetry: cursor-sdk` into a receipt');
   });
 });
