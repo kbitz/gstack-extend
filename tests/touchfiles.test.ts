@@ -366,6 +366,17 @@ describe('structural invariants', () => {
     }
     expect(orphaned).toEqual([]);
   });
+
+  // Value: protects=an install-safety.sh edit selects both suites that run it under diff selection;
+  //   fails_when=either suite's 'bin/lib/install-safety.sh' manual entry is dropped;
+  //   why_new=I1-I3 pass without either entry because both suites stay reachable another way;
+  //   seam=none
+  test('a bin/lib/install-safety.sh change selects its direct and update suites', () => {
+    const sel = computeTestSelection(['bin/lib/install-safety.sh'], listTestFiles(REPO_ROOT));
+    expect(sel.reason).toBe('diff');
+    expect(sel.selected).toContain('tests/lib-install-safety.test.ts');
+    expect(sel.selected).toContain('tests/update.test.ts');
+  });
 });
 
 // ─── Wrapper E2E (planWrapperAction in fixture repos) ───────────────────
