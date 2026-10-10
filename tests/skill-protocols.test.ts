@@ -3918,6 +3918,10 @@ describe('Track 23D jq projection', () => {
     { name: 'CRLF body', json: prJson({ body: '## Review and prep\r\n**Status: PAUSED — manual testing required**\r\n## Next\r\n' }), expected: prLines('OPEN', false, true) },
     ...['## Review and prep\n**Status: prepared.**', '## Review and prep\nready\n## Other\nPAUSED — manual testing required', '## Review and prep\n**Status:** unrelated', '## Other\nPAUSED — manual testing required'].map((body, n) => ({ name: `no body pause ${n}`, json: prJson({ body }), expected: prLines() })),
     { name: 'other viewer pause only', json: prJson({ comments: [pauseComment(undefined, false)] }), expected: prLines() },
+    // Value: protects=an ordinary draft PR with no viewer pause marker is not paused, so /ship routing stays;
+    // fails_when=the `$pause != null` guard on the draft rule is dropped or inverted;
+    // why_new=every existing draft row carries a viewer pause marker; seam=none
+    { name: 'draft without pause marker', json: prJson({ isDraft: true }), expected: prLines('OPEN', true) },
   ];
   for (const c of cases) test.skipIf(!jqBin)(c.name, () => {
     const fx = initFixture(`23d-jq-${c.name.replace(/[^a-z0-9]/gi, '-')}`);
