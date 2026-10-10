@@ -944,23 +944,42 @@ never certifies Cursor by itself.
 
 ### Supported store shape
 
+Certification needs exactly one Conductor prompt (one run) overlapping the
+stage. A stage that spans several prompts in one conversation stays unknown
+(`ambiguous-candidates`) by design, so most interactive stages record no model
+or effort. The values are the model and effort Conductor requested for the
+run, not served-model proof; OpenTelemetry's GenAI conventions draw the same
+line between `gen_ai.request.model` and `gen_ai.response.model`.
+
 The store is `~/Library/Application Support/com.conductor.app/cursor-sdk-store/<shard>/`.
-Each shard has `agents.ndjson` and `runs.ndjson`. The reader takes one bounded
-pass over those two regular files, then samples the stage end. A file larger
-than 8 MiB is not parsed; it marks the capture incomplete.
+The reader recognizes two Conductor-internal layouts and reads them best
+effort; anything else stays unknown. An NDJSON shard has `agents.ndjson` and
+`runs.ndjson`. A SQLite shard has `index.db`. A shard with both, a shard with
+neither (an empty directory, or only an `agents/` directory), and an `index.db`
+that is not a regular file each make the capture incomplete
+(`incomplete-evidence`, route `unknown`): neither layout can be shown to be the
+whole truth, so the reader never picks one. The `0.36.2.0` repair applied to
+NDJSON shards only. Current Conductor builds write SQLite shards, which are
+read from the release that adds them (its CHANGELOG entry names the layouts).
+
+An NDJSON shard is read in one bounded pass over its two regular files, then
+the stage end is sampled. A file larger than 8 MiB is not parsed; it marks the
+capture incomplete.
 Metadata and the native route share that captured selection. A later write is
 invisible to both. There is no clock tolerance: `updatedAt` later than the
 captured end is rejected.
 
-Numeric `startedAt`, `endedAt`, and `updatedAt` are epoch milliseconds. The
-Conductor call site opts in (`numeric_unit="milliseconds"`). The same parser
-still accepts ISO-8601 strings, including a timezone and 3 to 9 fractional
-digits, so an older dict-shaped record remains readable. Calls with no unit,
-including Claude, Codex, and Grok logs, stay ISO-only and reject numbers.
+In NDJSON shards, numeric `startedAt`, `endedAt`, and `updatedAt` are
+epoch milliseconds. The NDJSON call site opts in (`numeric_unit="milliseconds"`).
+The same parser still accepts ISO-8601 strings, including a timezone and 3 to 9
+fractional digits, so an older dict-shaped record remains readable. Calls with
+no unit, including Claude, Codex, and Grok logs, stay ISO-only and reject
+numbers.
 Booleans, numeric strings, non-finite values, and values outside the UTC
 datetime range are unknown. Zero and negative finite values inside that range
 are real bounds. Missing is unknown, never a zero sentinel. An unsupported unit
-argument raises `ValueError` at the call site.
+argument raises `ValueError` at the call site. SQLite timestamps are text and
+take the ISO-only path.
 
 `model` is read only when it is a dict. `model.id` is a printable string of at
 most 200 characters, independent of `params`. `params` may be a dict with
@@ -973,10 +992,11 @@ missing, not malformed, like a null model id. Entries such as
 missing params do not erase a usable model id. A non-dict `model` yields
 unknown fields and does not raise.
 
-Identity is exact. `agents.ndjson` `cwd` must equal the process cwd, and when
-`CURSOR_CONVERSATION_ID` is set it must equal `agentId`. Identity is per shard:
-a run counts only when its own shard's `agents.ndjson` places that agent in the
-process cwd. An unknown process cwd, such as a deleted directory, matches no
+Identity is exact. The agent's cwd (`agents.ndjson` `cwd`, or `workspace_ref`
+in a SQLite shard) must equal the process cwd, and when
+`CURSOR_CONVERSATION_ID` is set it must equal `agentId` (`agent_id` in SQLite).
+Identity is per shard: a run counts only when its own shard's agent record
+places that agent in the process cwd. An unknown process cwd, such as a deleted directory, matches no
 agent; the store match never raises on it. Finish itself still needs a
 resolvable working directory to find its handoff. Within one shard, a
 cleaned `agentId` plus a cleaned `runId` is one run; snapshots of that run are
@@ -1007,7 +1027,7 @@ cleaning. Zero eligible runs, or more than one, leave model and effort null and
 do not certify the route. A still-open stale run can overlap a later stage and
 make the result honestly ambiguous. There is no freshness TTL.
 
-A file over 8 MiB, a file that grew past that cap or shrank while being read,
+In an NDJSON shard, a file over 8 MiB, a file that grew past that cap or shrank while being read,
 a file that ends in a torn, unparseable line and changed size since the read
 or was modified in the last 10 seconds (a writer mid-append, even a paused
 one), an unreadable, unsearchable, or
@@ -1017,10 +1037,65 @@ sibling looks unique. This applies to every shard in the store, not only the
 one for this cwd. Because these files only grow, one file past 8 MiB in any
 shard, including an archived workspace's, keeps every capture incomplete; there
 is no in-repo repair, and that is a revisit trigger below. A shard directory
-with neither file is skipped. A malformed line, including one nested too deeply
+with neither layout, with both, or with only an `agents/` directory is not
+skipped: it makes the capture incomplete, because a stray or half-created
+directory cannot be shown to hold no run. Earlier releases skipped such a
+directory. A malformed line, including one nested too deeply
 to decode, is skipped like any other bad line, and so is a torn last line on a
 file that kept its size and has been untouched for 10 seconds (stale crash
 residue). The row still records.
+A SQLite shard is `<shard>/index.db`, opened read-only. A closed shard is read
+without creating any file. A shard whose sidecar files are in transition (a
+lone `-wal` or `-shm`, a rollback journal) is incomplete, never guessed.
+The read is one read transaction over named, byte-capped columns. Values are
+kept whole and never truncated into validity, and `metadata_json`, the agent's
+key column, is never read, nor are usage, result, event, checkpoint or
+`agents/` data. Columns map onto the contract above like this:
+
+| SQLite column | Contract field | Rule |
+|---|---|---|
+| `agents.agent_id` | `agentId` | Exact; the session match when `CURSOR_CONVERSATION_ID` is set |
+| `agents.workspace_ref` | `cwd` | Exact string equality with the process cwd |
+| `runs.run_id`, `runs.agent_id` | Run identity | One row is one run. An unreadable or invalid id makes the shard `sqlite-schema` |
+| `runs.started_at`, `runs.updated_at` | `startedAt`, `updatedAt` | Text timestamps. A NULL start leaves the snapshot invalid |
+| `runs.finished_at`, `cancelled_at`, `expired_at`, `status` | `endedAt` | Terminal-column rule below |
+| `runs.model` | `model.id` | Printable string of at most 200 characters |
+| `runs.model_params_json` | `model.params` | A decodable list or dict; anything else is ignored |
+
+Timestamps are text only. A number, a BLOB or text over its cap in a
+timestamp column is rejected, never read as milliseconds; a column whose
+declared type changed makes the shard `sqlite-schema`. A NULL `started_at`, for
+example on a queued run, is an invalid snapshot: a malformed neighbor beside a
+valid run, `malformed-bounds` alone. A terminal time (`finished_at`,
+`cancelled_at` or `expired_at`) always wins over `status`. One distinct terminal
+time is the run's end. Two or more distinct times mean the store does not say
+which is real, so the run is unresolved: it blocks certification when any
+candidate end overlaps the stage, is never certified itself, and is never
+dropped. With no terminal time, a `RUNNING` row is open, and any other status
+(including NULL) stopped no later than its last update. The store showed
+`RUNNING`, `FINISHED` and `CANCELLED`; a new status is a revisit trigger. A
+model id or params value that fails its rule behaves as in NDJSON: a bad id
+gives `malformed-metadata`, and params that do not decode to a list or dict are
+ignored, so the model id survives and effort stays unknown with no extra reason.
+
+Limits: one row is one run, not a series of snapshots; a locked shard is waited
+on for at most 0.5 s; a table past 5000 rows makes the capture incomplete
+(`sqlite-row-cap`); and each value has a byte cap (1 KiB for ids, status,
+model and timestamps, 16 KiB for `workspace_ref` and params). A value over its
+cap is rejected whole, never shortened.
+
+Side effects: the reader creates no file in the store and never changes
+`index.db` or its write-ahead log. On a shard that has sidecar files, SQLite's
+read protocol may rewrite `index.db-shm`, its shared WAL index, even when no
+writer is present. The rare exception is a writer closing during the read on
+upstream SQLite builds, which leaves empty sidecar files that Conductor reuses;
+data is unaffected.
+
+The whole capture has a 5 second budget (`capture-timeout`). It is cooperative:
+it is checked between a shard's two NDJSON files, between shards and inside
+SQLite work, so one NDJSON file read (up to 8 MiB) or one filesystem call can
+overrun it. NDJSON-only stores inherit this failure mode.
+
 Transcript mtime remains the activity fallback when no store was captured, the
 candidate set is empty, ambiguous, or incomplete, the explicit CLI path is in
 use, or both model and effort are null. A usable model with unknown effort, or
@@ -1049,9 +1124,12 @@ rewrite old rows, the dated capture below, or Track 22A receipts. Schema
 version and source labels are satisfied independently of native-route
 correctness. A row with no `producer_version` keeps unknown producer status.
 This change does not lexically compare four-part versions. Release `0.36.2.0`
-ships the repair and is the bound for the fixed implementation; earlier or
-unknown producer rows stay uncertified without their own implementation
-evidence. Invalid or ambiguous store evidence may now yield `route` `unknown`,
+ships the repair and is the bound for the fixed implementation, for NDJSON
+shards only; earlier or unknown producer rows stay uncertified without their
+own implementation evidence. A Conductor Cursor row written on a SQLite-layout
+build, whose `producer_version` predates the release that reads SQLite shards,
+shows a reader gap, not run evidence: its null model, null effort and
+`unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
 from a matching store record of any shape; those stay null unless finish flags
 supply them. The row schema, field order, source labels and finish flags are
@@ -1060,11 +1138,16 @@ treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
 
 Reconsider this private reader if a supported host publishes an official
-run-metadata contract, a qualified native shape changes, store-wide
-completeness or exact-cwd identity proves too strict on a real install, or the
-quota reader's
+run-metadata contract, a qualified native shape changes, the SQLite schema or
+file layout changes, store-wide completeness or exact-cwd identity proves too
+strict on a real install, or the quota reader's
 millisecond heuristic (magnitude above `100000000000`, plus numeric strings)
-diverges from this explicit-unit contract. That is a revisit trigger, not a
+diverges from this explicit-unit contract. Also reconsider it if
+`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt)
+Conductor stages in receipt 2 or Track 27A evidence, a SQLite shard reaches the
+row cap, a run status other than RUNNING, FINISHED or CANCELLED appears, or
+`malformed-bounds` shows on every SQLite run, which suggests the timestamp
+format changed without a schema change. That is a revisit trigger, not a
 second reader and not a quota change.
 
 <a id="cursor-sdk-sources"></a>
@@ -1073,7 +1156,7 @@ second reader and not a quota change.
 
 `detected` means this reader or the transcript supplied the value. `flag` means
 an accepted finish flag supplied it. `unknown` means the value is null. A null
-is always `unknown`. None of those labels, and no schema-valid row, proves the
+is always `unknown`. Effort is the effort Conductor requested for the run. None of those labels, and no schema-valid row, proves the
 served model or that the window was right. Installed Conductor acceptance is
 pending. Fixture output is not that acceptance. The next already-planned
 Conductor Cursor run is the check: installed revision, host, harness, and
@@ -1083,11 +1166,30 @@ for live conversation id versus store `agentId`, the observed snapshot shape,
 and the fixed debug reasons. Unknown or absent identity stays unknown. No extra
 launch is part of this repair. Logical and physical paths can disagree; compare
 `pwd -P` with the store cwd privately and do not paste either path into a
-receipt.
+receipt. Receipt 2 checks a SQLite-shard row. Take its expected effort from
+the Conductor picker at stage start: Cursor offers low, medium, high and
+xhigh, so `none` is not a valid expectation. Run it on a deliberately
+single-prompt stage so it can meet the Done-when. Record a multi-prompt stage
+separately, noting that it spanned more than one prompt, and copy the cause
+tokens. The procedure is otherwise unchanged.
 
 <a id="cursor-sdk-diagnosis"></a>
 
 ### Diagnosis
+
+Start here:
+
+1. Read the row's model, effort, route and sources with the
+   [ledger recipe](#cursor-ledger-recipe).
+2. Values with source `detected` are the requested configuration. Stop.
+3. If they are unknown, the row itself cannot say why. Unless debug lines were
+   captured for that finish, report "historical cause unavailable".
+4. To classify the next occurrence, capture debug on the next normal finish
+   with the procedure below, keeping only `telemetry: cursor-sdk` lines.
+5. Look up the reason in the first table, then any cause in the second.
+
+The 2-5 minute target covers this classification, not the recovery of a past
+cause.
 
 Doctor reports skill-usage pairing, not model coverage. Classify a known row in
 three steps: locate it, read the whitelisted fields and source labels, then
@@ -1110,7 +1212,7 @@ line with the values the row records. Copy only lines that begin
 |---|---|---|---|
 | <a id="cursor-sdk-store-absent"></a>`store-absent` | No store metadata | The SDK directory is not there | Confirm Conductor wrote a store for this host. Do not invent a model |
 | <a id="cursor-sdk-store-unreadable"></a>`store-unreadable` | No store metadata | The store directory cannot be listed | Restore the directory's permissions privately. The reason line is the whole diagnostic |
-| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | In any shard: a file over 8 MiB, a file that grew, shrank, or tore while being read, or a missing, non-regular, unreadable, or unsearchable sibling could hide a run | Do not treat a readable shard as unique. The row stays unknown. A transient mid-append read clears on the next finish; a file past 8 MiB stays until the store changes |
+| <a id="cursor-sdk-incomplete-evidence"></a>`incomplete-evidence` | No certified route | In any shard, something could hide a run: an unrecognized, mixed or unreadable layout, a locked or changed SQLite shard, an NDJSON file over 8 MiB or one that grew, shrank or tore while being read, or an exceeded capture budget. The debug line adds `(causes: …)` | Do not treat a readable shard as unique. The row stays unknown. Look each cause up in [Incomplete-evidence causes](#cursor-causes) |
 | <a id="cursor-sdk-no-cwd-agent"></a>`no-cwd-agent` | No store metadata | No agent cwd equals the process cwd, including a finish run from a subdirectory of the workspace | Compare `pwd -P` with the store privately. Exact match is required; run finish from the workspace root. Do not paste paths |
 | <a id="cursor-sdk-no-session-match"></a>`no-session-match` | No store metadata | The conversation id matches no agent or run | Record identity as unknown or absent. Do not copy the id into a receipt |
 | <a id="cursor-sdk-malformed-bounds"></a>`malformed-bounds` | No certified route | A required bound is missing or unreadable, the run or stage interval is inverted, or `updatedAt` is in the future | Keep the null. Do not widen the window or fall back to an older snapshot |
@@ -1119,6 +1221,40 @@ line with the values the row records. Copy only lines that begin
 | <a id="cursor-sdk-malformed-metadata"></a>`malformed-metadata` | A field is null | The model or a recognized effort value failed cleaning, or effort values conflicted | Keep a usable sibling field. Do not guess the dropped one |
 | <a id="cursor-sdk-malformed-neighbor"></a>`malformed-neighbor` | Route certified beside a dropped run | Another run for this identity had no valid snapshot (a missing or unreadable bound, an inverted interval, or an `updatedAt` after the captured end), and its readable bounds did not place it outside the stage | Treat the certification as provisional. Record the reason in the receipt so the native check can judge that rule |
 | <a id="cursor-sdk-transcript-unreadable"></a>`transcript-unreadable` | No transcript activity | The Cursor transcript could not be listed or read, with no store observed (explicit CLI) or no usable store result | Restore read access to the Cursor transcript directory privately. Model and effort stay null; with nested markers another harness may still win |
+
+<a id="cursor-causes"></a>
+
+#### Incomplete-evidence causes
+
+Only the `incomplete-evidence` debug line carries causes:
+`telemetry: cursor-sdk incomplete-evidence (causes: a, b). See …`. Tokens are
+fixed, listed in the order below, and carry no path, id, value or exception
+text; they are not row fields. A class is a first guess. *Transient* may clear
+on a subsequent normal finish. *Store-changed* means Conductor changed its
+store. *Persistent* stays until the store or environment changes. *Reader-bug*
+is ours. Escalate a transient or store-changed cause that repeats across
+finishes: a crash-left `-wal`, an abandoned empty directory or a mid-creation
+shard can each persist. In every case, never delete or edit store files. The
+only way to record values while the store stays incomplete is the existing
+`--model` and `--effort` flags, which are labeled `flag` and never certify the
+route.
+
+| Token | Meaning | Class | Safe action |
+|---|---|---|---|
+| <a id="cursor-cause-shard-unreadable"></a>`shard-unreadable` | A store child cannot be stat'ed, or every probe inside a shard is unreadable (an unsearchable directory) | transient | May clear on a subsequent normal finish. Restore directory permissions privately; record the token if it repeats |
+| <a id="cursor-cause-ndjson-incomplete"></a>`ndjson-incomplete` | An NDJSON file is over 8 MiB, grew, shrank or tore while being read, is non-regular, or is missing its sibling | transient | May clear on a subsequent normal finish (a mid-append read). A file past 8 MiB stays until the store changes; record the token if it repeats |
+| <a id="cursor-cause-ndjson-vanished"></a>`ndjson-vanished` | An NDJSON shard was seen, then both its files were gone at read | transient | May clear on a subsequent normal finish; record the token if it repeats |
+| <a id="cursor-cause-mixed-layout"></a>`mixed-layout` | NDJSON files beside `index.db` in one shard | store-changed | Conductor changed its store. Record the reason and cause, then follow the revisit trigger |
+| <a id="cursor-cause-unrecognized-layout"></a>`unrecognized-layout` | Neither NDJSON files nor a regular `index.db`, including an empty or `agents/`-only directory | store-changed | Conductor changed its store, or left an abandoned shard. Record the reason and cause, then follow the revisit trigger; do not delete the directory |
+| <a id="cursor-cause-sqlite-sidecars"></a>`sqlite-sidecars` | `index.db` has a sidecar state other than live or closed (a lone `-wal`, a `-journal`) | transient | May clear on a subsequent normal finish. A crash-left `-wal` stays until Conductor next opens the shard; record the token if it repeats |
+| <a id="cursor-cause-sqlite-changed"></a>`sqlite-changed` | A closed shard changed while it was read | transient | May clear on a subsequent normal finish |
+| <a id="cursor-cause-sqlite-open"></a>`sqlite-open` | The database stayed locked past 0.5 s, or could not be opened (permission, I/O) | transient | May clear on a subsequent normal finish. If it repeats, check privately that the shard file is readable |
+| <a id="cursor-cause-sqlite-schema"></a>`sqlite-schema` | A needed table or column is missing, is not a table, or has another declared type; the file is empty or not a database; or a run's identity is unreadable | store-changed | Conductor changed its store. Record the reason and cause, then follow the revisit trigger |
+| <a id="cursor-cause-sqlite-error"></a>`sqlite-error` | Another SQLite error after the schema check | transient | May clear on a subsequent normal finish; record the token if it repeats |
+| <a id="cursor-cause-reader-error"></a>`reader-error` | A bug in this reader, not a Conductor change | reader-bug | File an issue with the cause token only |
+| <a id="cursor-cause-sqlite-row-cap"></a>`sqlite-row-cap` | A table has more than 5000 rows | persistent | Stays until the store changes, like a file past 8 MiB. There is no in-repo repair; it is a revisit trigger |
+| <a id="cursor-cause-sqlite-module-missing"></a>`sqlite-module-missing` | This Python has no `sqlite3` module | persistent | Check privately in the same tool shell with `python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`, then run finish under a Python that has the module |
+| <a id="cursor-cause-capture-timeout"></a>`capture-timeout` | The 5 second capture budget passed | transient | May clear on a subsequent normal finish; a very large store or a stuck volume can repeat it |
 
 <a id="cursor-ledger-recipe"></a>
 
@@ -1228,6 +1364,109 @@ the session, and any stage or start you passed, hit nothing. `multiple-match`
 means more than one ledger line still qualifies; read those projections and
 narrow the selectors. `malformed-lines: N` counts skipped lines, including
 lines that are not UTF-8, and does not print them. None of these results is a native Conductor receipt.
+
+<a id="cursor-smoke-recipe"></a>
+
+### Live smoke before shipping a reader change
+
+A fixture is not the store. Before shipping a change to this reader, run the
+program below once on a machine with a current Conductor build, from a
+Conductor tool shell, using the `python3` that `command -v python3` resolves
+there. Its argument is the checkout's `bin/lib`, so it tests that branch's
+reader and not an installed one. It takes one capture, never opens `index.db`
+itself, and prints only fixed tokens, integers, booleans and the SQLite
+version. This is a smoke check, not acceptance and not O4 evidence.
+
+```python
+# gstack-extend-cursor-smoke-recipe
+import os
+import sys
+import time
+
+sys.path.insert(0, sys.argv[1])
+import telemetry
+
+try:
+    import sqlite3
+    SQLITE_VERSION = sqlite3.sqlite_version
+except ImportError:
+    SQLITE_VERSION = "none"
+
+
+def words(tokens):
+    return ",".join(tokens) if tokens else "none"
+
+
+def flag(value):
+    return str(bool(value)).lower()
+
+
+def newest_start(shard, agent_id):
+    starts = [telemetry.parse_ts(run.get("startedAt")) for run in shard["runs"] if run.get("agentId") == agent_id]
+    starts = [start for start in starts if start is not None]
+    return max(starts) if starts else None
+
+
+def judge(capture, cwd, session, begin, end):
+    # (certified with a model, printable summary). Only booleans and fixed reason tokens leave this function.
+    if begin is None:
+        return False, "certify=false reasons=malformed-bounds model=false effort=false"
+    found = telemetry.select_cursor(capture, cwd, session, begin, end)
+    text = "certify=%s reasons=%s model=%s effort=%s" % (
+        flag(found.certify), words(found.reasons), flag(found.model), flag(found.effort))
+    return bool(found.certify and found.model), text
+
+
+capture = telemetry.capture_cursor_store()
+end = time.time()  # sampled after the capture, as finish does
+causes = [token for token, _ in telemetry.CURSOR_SDK_CAUSES if token in capture.causes]
+sqlite_shards = [shard for shard in capture.shards if shard.get("layout") == "sqlite"]
+print("sqlite_version", SQLITE_VERSION)
+print("status", capture.status)
+print("layouts", " ".join("%s=%d" % (name, capture.layouts[name])
+                          for name in ("ndjson", "sqlite", "mixed", "unrecognized", "unreadable")))
+print("complete", flag(capture.complete))
+print("causes", words(causes))
+ok = capture.status == "read" and capture.complete and capture.layouts["sqlite"] > 0
+for index, shard in enumerate(sqlite_shards, 1):
+    # Identity comes from the shard's own agent record, and the window opens at its newest run.
+    record = next((item for item in shard["agents"]
+                   if isinstance(item.get("agentId"), str) and isinstance(item.get("cwd"), str)), {})
+    good, result = judge(capture, record.get("cwd"), record.get("agentId"), newest_start(shard, record.get("agentId")), end)
+    low, high, count = ["none" if value is None else value for value in (shard.get("turns") or (None, None, 0))]
+    print("shard %d %s turns=%s,%s,%s" % (index, result, low, high, count))
+    ok = ok and good
+# The join identity of a real finish: the process cwd and CURSOR_CONVERSATION_ID, which the shard identity above skips.
+session = os.environ.get("CURSOR_CONVERSATION_ID") or None
+try:
+    where = os.getcwd()
+except OSError:
+    where = None
+ours = [(newest_start(shard, item.get("agentId")), item.get("agentId")) for shard in sqlite_shards for item in shard["agents"]
+        if item.get("cwd") == where and (session is None or item.get("agentId") == session)]
+ours = [pair for pair in ours if pair[0] is not None]
+if ours:
+    print("real-identity", judge(capture, where, session, max(ours)[0], end)[1])
+else:
+    print("real-identity no-match")
+print("result", "ok" if ok else "blocked")
+sys.exit(0 if ok else 1)
+```
+
+```sh
+python3 -I - "<checkout>/bin/lib" <<'PY'
+# gstack-extend-cursor-smoke-recipe
+# paste the fenced program above
+PY
+```
+
+Every SQLite shard must certify with a model present, and the capture must be
+complete with at least one SQLite shard; the last line says `ok` or `blocked`
+and sets the exit status. Anything else blocks the release until it is
+explained. A turn gap (`count` different from `max - min + 1`) is reported, not
+judged. `real-identity` repeats the join with this shell's cwd and
+`CURSOR_CONVERSATION_ID`; `no-match` is expected when run from elsewhere.
+Paste nothing else.
 
 ## Evidence
 
