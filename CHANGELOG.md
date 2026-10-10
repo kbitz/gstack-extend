@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.5.0] - 2026-10-09
+
+### Fixed
+
+- **Setup installs skills on Linux again.** Since 0.18.14.0, `./setup` refused every skills directory on machines whose `stat` is GNU coreutils, which includes stock Linux distributions. The ownership check captured file-system details along with the owner uid, so the value never matched yours: auto mode skipped every host and exited 1, and `--host` stopped with an "owned by uid" error. The check now asks GNU `stat -c` first and falls back to BSD `stat -f`, so macOS behaves as before. Directories owned by someone else, world-writable ones and ones outside your home are still refused. If setup skipped your hosts, run `./setup --host auto` again.
+- **The test suite runs on Linux.** Tests that isolate PATH no longer detect a host CLI installed in `/usr/bin`, the GNU-stat identity test uses the system `stat` when it is already GNU, the bash 3.2 check runs only where `/bin/bash` is 3.2, and the precomposed-Unicode layout test no longer depends on a normalization-insensitive disk. A change to the install-safety helper now selects its own unit tests.
+
 ## [0.36.4.0] - 2026-10-09
 
 ### Added
