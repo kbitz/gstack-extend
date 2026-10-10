@@ -21,14 +21,6 @@ _(none)_
 - **Priority:** P3
 - **Revisit when:** A supported setup or documented recipe places `GSTACK_EXTEND_STATE_DIR` in a shared location, or a report shows install-status written by another account.
 
-### [review] install-safety.sh reads ownership through GNU stat's -f output
-
-- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C's own stat calls try BSD `-f` first and keep the output only when it has the expected shape, otherwise use `-c` (`setup:_is_stat_id`, `_is_stat_size`); reuse that pattern here. This pre-existing helper sits outside that track's files.
-- **Effort:** S (human: ~30min / CC: ~10min)
-- **Context:** Found during Track 23C review and prep on 2026-10-09 while confirming the same ordering bug in the new install-status code. A probe with `/opt/homebrew/bin/gstat` first in PATH showed the multi-line capture.
-- **Priority:** P2
-- **Revisit when:** The next change to `bin/lib/install-safety.sh`, or a report of setup skipping every host on a machine with GNU coreutils on PATH.
-
 ### [review] Tune install-status read bounds against bash 3.2 parse time
 
 - **Description:** Both readers accept up to 1 MiB and 4096 records, the bounds the Track 23C plan set. Under `/bin/bash` 3.2, reading near those bounds takes seconds to minutes, and `bin/update-check` runs on every skill invocation. Setup itself writes about 25 records per HOME, so only a damaged, foreign or long-accumulated file gets near the cap.
@@ -85,7 +77,24 @@ _(none)_
 - **Priority:** P3
 - **Revisit when:** Together with the state-directory trust item above, or a report involving a shared or hand-edited state directory.
 
+### [review] Check that install-safety's owner uid is numeric before comparing it
+
+- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` returns whatever `stat -c '%u'` prints, or the `stat -f '%u'` fallback when that fails. If GNU `stat -c` fails on a directory `cd -P` just resolved (a dropped FUSE mount, an LSM denying getattr, the directory vanishing), the GNU `-f` fallback prints file-system details, which pass the empty check. The guard still refuses, but `setup:install_status_note_unsafe` records `cause=not_owned` instead of `stat_failed`, and the message shows a multi-line "uid".
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Raised by the adversarial pass in v0.36.5.0 ship review on 2026-10-09; the owner chose to backlog it. Fix: keep each probe's output only when it is all digits, as `setup:_is_stat_size` and `bin/update-check:_uc_size` do, otherwise treat the uid as unreadable. Add a shim test where `stat -c` fails and `stat -f` prints text with exit 0.
+- **Priority:** P3
+- **Revisit when:** The next change to `bin/lib/install-safety.sh`, or a report of an unsafe-directory warning with cause `not_owned` on a directory the user owns.
+
 ## Completed
+
+### [review] install-safety.sh reads ownership through GNU stat's -f output
+
+- **Description:** `bin/lib/install-safety.sh:_path_owner_uid` runs `stat -f '%u' path || stat -c '%u' path`. With GNU coreutils ahead of `/usr/bin` in PATH, GNU `stat -f` prints file-system details and fails, the fallback appends the uid, and the captured value no longer equals `id -u`. Every host directory then fails the ownership check, so setup skips all hosts. Track 23C's own stat calls try BSD `-f` first and keep the output only when it has the expected shape, otherwise use `-c` (`setup:_is_stat_id`, `_is_stat_size`); reuse that pattern here. This pre-existing helper sits outside that track's files.
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** Found during Track 23C review and prep on 2026-10-09 while confirming the same ordering bug in the new install-status code. A probe with `/opt/homebrew/bin/gstat` first in PATH showed the multi-line capture.
+- **Priority:** P2
+- **Revisit when:** The next change to `bin/lib/install-safety.sh`, or a report of setup skipping every host on a machine with GNU coreutils on PATH.
+- **Completed:** v0.36.5.0 (2026-10-09). The impact was wider than described: every stock GNU/Linux host has refused every skills directory since v0.18.14.0. `_path_owner_uid` now asks GNU `stat -c` first and falls back to BSD `stat -f`. That needs no shape check, because BSD `stat -c` fails with empty stdout. Stat-shim unit tests cover both flavors, foreign-uid refusal and unreadable ownership.
 
 ### [investigate] The Cursor and quota sentence overstates what the store reader can read
 
