@@ -789,7 +789,8 @@ test('precomposeUnicode also accepts NFC-equal index source spelling', () => {
   gitRepo(); canonical(); file('cafe\u0301.md', DESIGN); git(['config', 'core.precomposeUnicode', 'true']);
   const physical = join(root, 'cafe\u0301.md');
   const fs = withFs({ lstatSync: path => defaultFs.lstatSync(path === join(root, 'café.md') ? physical : path),
-    statSync: path => defaultFs.statSync(path === join(root, 'café.md') ? physical : path) });
+    statSync: path => defaultFs.statSync(path === join(root, 'café.md') ? physical : path),
+    realpathSync: path => defaultFs.realpathSync(path === join(root, 'café.md') ? physical : path) });
   const spawn: GitSpawn = (args, opts) => args.includes('ls-files')
     ? { status: 0, stdout: `H 100644 ${'a'.repeat(40)} 0\tcafe\u0301.md\0`, stderr: '' } : defaultGitSpawn(args, opts);
   const result = plan([], { fs, git: spawn, audit: () => snapshot(record('café.md', 'docs/designs/café.md')) });

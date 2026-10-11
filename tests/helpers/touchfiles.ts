@@ -140,6 +140,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'skills/pair-review.md',
     'skills/full-review.md',
     'setup',
+    'bin/lib/install-safety.sh',
   ],
   // Track 12A — gstack-extend init <project>. The bin sources the registry
   // helper, reads templates from scripts/init-templates/, and shells out to
@@ -182,6 +183,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/semver.sh',
     'docs/installation.md',
   ],
+  'tests/lib-install-safety.test.ts': ['bin/lib/install-safety.sh'],
   'tests/setup-init-wire.test.ts': [
     'setup',
     'bin/gstack-extend',

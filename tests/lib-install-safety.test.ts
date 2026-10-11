@@ -11,10 +11,12 @@
  *     resolution, slash-delimited prefix (kb2 vs kb).
  *   - is_safe_target_path: directory (safe), symlink (refused), regular
  *     file (refused), nonexistent (safe — mkdir -p will create).
+ *   - stat flavor: GNU- and BSD-style stat shims on PATH, so both owner-uid
+ *     probe orders run on either OS, accepting the caller's uid and
+ *     refusing a foreign one.
  *
- * Foreign-uid is the only case skipped — needs sudo chown. Covered by
- * the bash helper's logic; expanded integration covers the end-to-end
- * setup invocation path.
+ * A real foreign-owned directory needs sudo chown, so foreign-uid refusal
+ * runs through the stat shims; setup-hosts O2 covers it end to end.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -137,6 +139,81 @@ describe('is_safe_install_path', () => {
     const r = runFn('is_safe_install_path', '');
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('empty path argument');
+  });
+});
+
+// Each shim answers its own flavor's owner-uid form with this user's uid and
+// fails the other flavor's form the way the real tool does. GNU `-f` means
+// --file-system: it prints file-system details on stdout, then fails on the
+// '%u' operand. BSD `-c` is an illegal option with nothing on stdout.
+const STAT_SHIMS = {
+  GNU: `#!/bin/sh
+case "$1" in
+  -c) [ "$2" = '%u' ] && { id -u; exit 0; } ;;
+  -f) printf '  File: "%s"\\n    ID: 0 Namelen: 255 Type: btrfs\\n' "$3"
+      echo "stat: cannot read file system information for '%u'" >&2; exit 1 ;;
+esac
+exit 2
+`,
+  BSD: `#!/bin/sh
+case "$1" in
+  -f) [ "$2" = '%u' ] && { id -u; exit 0; } ;;
+  -c) echo 'stat: illegal option -- c' >&2; exit 1 ;;
+esac
+exit 2
+`,
+};
+
+// Check a fresh in-home skills dir with `shim` installed as `stat` ahead of PATH.
+function runWithStat(name: string, shim: string) {
+  const bins = join(baseTmp, `${name}-bins`);
+  mkdirSync(bins, { recursive: true });
+  writeFileSync(join(bins, 'stat'), shim);
+  chmodSync(join(bins, 'stat'), 0o755);
+  const fakeHome = join(baseTmp, `${name}-home`);
+  mkdirSync(join(fakeHome, '.claude', 'skills'), { recursive: true });
+  return runFn('is_safe_install_path', join(fakeHome, '.claude', 'skills'), {
+    HOME: fakeHome,
+    PATH: `${bins}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+  });
+}
+
+describe('is_safe_install_path stat flavor', () => {
+  for (const [flavor, shim] of Object.entries(STAT_SHIMS)) {
+    // Value: protects=a user-owned install root is accepted whichever stat flavor answers;
+    //   fails_when=a failing probe's stdout reaches the uid (GNU `-f` probed first) or the BSD fallback is dropped;
+    //   why_new=the real-stat tests above exercise only the host's own flavor; seam=none
+    test(`accepts a user-owned in-home directory with ${flavor}-style stat`, () => {
+      const r = runWithStat(`stat-${flavor}`, shim);
+      expect(r.stderr).toBe('');
+      expect(r.exitCode).toBe(0);
+    });
+
+    // Value: protects=the uid each stat flavor reports decides ownership, so a foreign-owned root is refused;
+    //   fails_when=a probe's answer is ignored or replaced (e.g. by `id -u`) or reaches the check with extra stdout;
+    //   why_new=the accept shims report the caller's own uid, so a probe that ignored stat still passes them;
+    //   seam=none
+    test(`refuses a directory that ${flavor}-style stat reports as foreign-owned`, () => {
+      const mine = process.getuid!();
+      const foreign = mine + 1;
+      const foreignShim = shim.replace('id -u', `echo ${foreign}`);
+      expect(foreignShim).not.toBe(shim);
+      const r = runWithStat(`stat-${flavor}-foreign`, foreignShim);
+      expect(r.stderr).toContain(`(owned by uid ${foreign}, expected ${mine})`);
+      expect(r.exitCode).toBe(1);
+    });
+  }
+
+  // Value: protects=an install root whose owner no stat flavor can read is refused, not trusted;
+  //   fails_when=an empty owner uid is treated as safe or falls through to the uid-mismatch message;
+  //   why_new=every other test gets a uid from stat, so the empty-uid refusal never runs; seam=none
+  test('refuses when neither stat flavor can read the owner uid', () => {
+    const r = runWithStat('stat-none', `#!/bin/sh
+echo 'stat: unsupported' >&2
+exit 1
+`);
+    expect(r.stderr).toContain('stat could not read ownership');
+    expect(r.exitCode).toBe(1);
   });
 });
 

@@ -57,8 +57,11 @@ _nearest_existing_ancestor() {
 
 # Get numeric owner uid, BSD/GNU portable.
 # Stdout: numeric uid, or empty on failure.
+# GNU first: GNU `stat -f` means --file-system and prints file-system details
+# (then fails on the '%u' operand), which would precede the fallback's uid.
+# BSD `stat -c` fails with nothing on stdout, so the fallback stays clean.
 _path_owner_uid() {
-  stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
 }
 
 # Check if path is world-writable (mode bit `o+w`).

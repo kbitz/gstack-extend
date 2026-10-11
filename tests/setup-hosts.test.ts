@@ -27,6 +27,7 @@ import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
 import { extractCanonicalSpan, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
 import { assertSkillDescriptionWithinLimit } from './helpers/skill-description.ts';
+import { systemPath } from './helpers/system-path.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
@@ -72,7 +73,7 @@ function isolatedPath(names: string[] = []): string {
   const bins = join(baseTmp, `isolated-bins-${names.join('-') || 'none'}`);
   plantFakeBins(bins, names);
   if (!existsSync(join(bins, 'bun'))) symlinkSync(process.execPath, join(bins, 'bun'));
-  return `${bins}:/bin:/usr/bin`;
+  return `${bins}:${systemPath(baseTmp)}`;
 }
 
 function hostDir(home: string, host: 'claude' | 'codex' | 'opencode' | 'cursor'): string {
@@ -1903,8 +1904,11 @@ exec /usr/bin/mktemp "$@"
     const bins = join(baseTmp, 'w2-gnu-shim-bins');
     mkdirSync(bins, { recursive: true });
     // GNU stat ahead of /usr/bin: -f prints file-system details instead of the
-    // requested format, and -c is the working form.
-    writeFileSync(join(bins, 'stat'), `#!/bin/bash
+    // requested format, and -c is the working form. The shim translates for a
+    // BSD /usr/bin/stat; where that stat is already GNU, it is used directly.
+    const gnuStat = spawnSync('/usr/bin/stat', ['--version'], { encoding: 'utf8' }).status === 0;
+    if (!gnuStat) {
+      writeFileSync(join(bins, 'stat'), `#!/bin/bash
 case "$*" in
   *'-f %d:%i'*) printf '  File: x\\n    ID: 7fa3\\n'; exit 0 ;;
   *'-f %z'*) printf 'Blocks: 7fa3\\n'; exit 0 ;;
@@ -1919,7 +1923,8 @@ for a in "$@"; do
 done
 exec /usr/bin/stat "\${out[@]}"
 `);
-    chmodSync(join(bins, 'stat'), 0o755);
+      chmodSync(join(bins, 'stat'), 0o755);
+    }
     // The second run reads the first run's snapshot through the same stat.
     for (let i = 0; i < 2; i++) {
       const r = runSetup(['--host', 'claude', '--quiet'], home, `${bins}:${isolatedPath()}`, true);
@@ -2628,11 +2633,13 @@ exit $status
     expect(refused.stdout).toContain('RECOVERY_HOST_REFUSED');
   }, 30000);
 
-  test('F1 strict bash 3.2 records a preserved copy without an unbound variable', () => {
+  // Only meaningful where /bin/bash is 3.2 (the macOS default); runSetup
+  // rejects unbound variables under every other bash.
+  const bash32 = spawnSync('/bin/bash', ['-c', 'printf %s "$BASH_VERSION"'], { encoding: 'utf8' })
+    .stdout.startsWith('3.2');
+  test.skipIf(!bash32)('F1 strict bash 3.2 records a preserved copy without an unbound variable', () => {
     const home = join(baseTmp, 'f1-bash');
     plantRegularSkill(home, 'implement', 'BASH32\n');
-    const version = spawnSync('/bin/bash', ['-c', 'printf %s "$BASH_VERSION"'], { encoding: 'utf8' });
-    expect(version.stdout.startsWith('3.2')).toBe(true);
     const r = runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
     expect(r.exitCode).toBe(0);
     expect(r.stderr).not.toContain('unbound variable');
