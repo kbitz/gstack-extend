@@ -959,8 +959,8 @@ neither (an empty directory, or only an `agents/` directory), and an `index.db`
 that is not a regular file each make the capture incomplete
 (`incomplete-evidence`, route `unknown`): neither layout can be shown to be the
 whole truth, so the reader never picks one. The `0.36.2.0` repair applied to
-NDJSON shards only. Current Conductor builds write SQLite shards, which are
-read from the release that adds them (its CHANGELOG entry names the layouts).
+NDJSON shards only. Current Conductor builds write SQLite shards, which
+`0.36.7.0` is the first release to read (its CHANGELOG entry names the layouts).
 
 An NDJSON shard is read in one bounded pass over its two regular files, then
 the stage end is sampled. A file larger than 8 MiB is not parsed; it marks the
@@ -1127,8 +1127,8 @@ This change does not lexically compare four-part versions. Release `0.36.2.0`
 ships the repair and is the bound for the fixed implementation, for NDJSON
 shards only; earlier or unknown producer rows stay uncertified without their
 own implementation evidence. A Conductor Cursor row written on a SQLite-layout
-build, whose `producer_version` predates the release that reads SQLite shards,
-shows a reader gap, not run evidence: its null model, null effort and
+build, whose `producer_version` predates `0.36.7.0`, the first release that
+reads SQLite shards, shows a reader gap, not run evidence: its null model, null effort and
 `unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
 from a matching store record of any shape; those stay null unless finish flags
