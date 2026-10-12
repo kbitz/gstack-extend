@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.8.0] - 2026-10-12
+
+### Added
+
+- **A prepared code PR no longer re-runs what review already proved.** `/review-and-prep` now runs `/ship`'s pregate (repairing a missing test-lane mapping while it is still preparing), its test coverage audit and its documentation audit on the head it hands off, and records each result in the receipt. When `/ship-and-land` then sees a code PR whose prepared head is still the PR head, with an unmoved base and fresh evidence, it takes a release-only path: no test suite, coverage audit or documentation audit runs again, only the version, the CHANGELOG entry and the PR receipt change, and the receipt names every reused record. Anything else (a moved base, a commit after the prepared head, missing or mismatched evidence, or a request for a fresh review) keeps the full path unchanged.
+- **A finding that needs any other change goes back to `/review-and-prep`.** On the release-only path, `/ship-and-land` never edits code, tests or docs. It stops before pushing, names the finding, restores only the unpushed release commits it made, and tells you how to continue. After a push it keeps the published history and names the release commits that remain.
+- **`/ship-and-land --no-land` stops at the merge gate.** It reports the readiness state and waits; it never merges, enqueues or enables auto-merge. The receipt records the path taken and the wall time from the start of the run to the push and to the merge gate.
+
+### Fixed
+
+- **Commits made while shipping no longer carry co-author trailers.** After each step that commits, and before every push, `/ship-and-land` checks the commits this run created and re-hashes any that carry a `Co-authored-by` line, keeping each tree, author, committer and second parent. Published base history is never rewritten, signed commits are never re-signed (the check stops instead), and the branch moves only if it has not changed since the check began.
+
+The roughly 15-minute target for a prepared no-CI code PR is not measured yet; the first eligible release on an installed copy records its real time to the merge gate. No acceptance checkpoint is awarded.
+
 ## [0.36.7.0] - 2026-10-12
 
 ### Fixed

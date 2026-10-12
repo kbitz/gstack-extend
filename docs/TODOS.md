@@ -133,6 +133,14 @@ _(none)_
 - **Priority:** P3
 - **Revisit when:** The next change to `bin/lib/install-safety.sh`, or a report of an unsafe-directory warning with cause `not_owned` on a directory the user owns.
 
+### [ship] Measure the release-only path's wall time on the first eligible installed PR
+
+- **Description:** The release-only path in `/ship-and-land` was meant to reach the merge gate in about 15 minutes of wall time or less for a prepared code PR in a repository with no CI. The checks shipped with 0.36.8.0 are static protocol contracts and executed Git fixtures; no real installed-agent run was timed. The owner deferred the measurement ("measure after installation").
+- **Effort:** S (human: ~30min / CC: ~10min)
+- **Context:** The release-only path writes `Ship and land` receipt fields for the wall time from the invocation start to the push and to the merge gate. After a release containing it is installed, run `/review-and-prep` then `/ship-and-land --no-land` on a prepared no-CI code PR and compare the recorded times with the 15-minute target. Source: the 0.36.8.0 release-only shipping change (PR #143) and its CHANGELOG entry, which records the target as unmeasured.
+- **Priority:** P2
+- **Revisit when:** The first code PR whose preparation and `/ship-and-land` both run on an installed 0.36.8.0 or later release in a repository with no CI.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
