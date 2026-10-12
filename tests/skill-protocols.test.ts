@@ -2224,6 +2224,11 @@ describe('release-only ship path', () => {
     ]) expect(releaseOnlyN).toContain(clause);
     expect(prepN).toContain("its documentation section's exact text, durable path and SHA-256");
     expect(prepN).toContain('Bind each audit or decision to the final HEAD, Git tree and reviewed base.');
+    // Value: protects=preparation's Ship gates names the pregate and coverage evidence release-only consumes; fails_when=a producer bullet is dropped or reworded so release-only never qualifies; why_new=the assertions above pin the documentation bullet and the binding only; seam=none; no_claim=agent behavior (static prose lock that also freezes producer wording)
+    for (const clause of [
+      "pregate: verdict, policy source, the record's tree, its durable copy's path and SHA-256, the lanes it ran with counts, and requires-remote obligations with their receipts;",
+      'coverage audit: `coverage_pct`, `coverage_pct_value`, gaps, weak gaps, tests added, extended and rejected, `regression_proof` and the threshold decision, or its waiver and reason;',
+    ]) expect(prepN).toContain(clause);
   });
 
   test('a finding that needs a non-release change hands back instead of being fixed in ship', () => {
@@ -2256,6 +2261,13 @@ describe('release-only ship path', () => {
     expect(shipN).toContain('the wall time from the invocation start to the merge gate');
     expect(shipN).toContain('and the wall time from the invocation start to the push.');
     expect(shipN).toContain("On every path, when land reaches its readiness report and merge-approval gate, record the measured wall time from invocation start in the PR's `Ship and land` receipt");
+  });
+
+  // Value: protects=the receipt and finish line name the path taken, so readiness can tell release-only reuse from a full ship; fails_when=the path clause is dropped from the receipt or the finish line; why_new=the other tests lock gates and recovery, not the path record; seam=none; no_claim=agent behavior (static prose lock)
+  test('the receipt and finish line record the path taken', () => {
+    expect(releaseOnlyN).toContain('The receipt records `path: release-only`, each reused record with its source, and every check-only run.');
+    expect(shipN).toContain('scope hash, profile and path (release-only or why not)');
+    expect(shipN).toContain('a brief reused-versus-run summary, the path taken, the wall time from the invocation start to the merge gate');
   });
 
   describe('co-author trailer check', () => {
@@ -2442,6 +2454,43 @@ describe('release-only ship path', () => {
         expect(r.status).not.toBe(0);
         expect(r.stdout).toContain(`TRAILERS: BLOCKED — HEAD does not descend from ${sibling}`);
         expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(tip);
+      });
+
+      // Value: protects=a detached HEAD or an unresolvable base stops the check with no CLEAN or STRIPPED verdict and leaves history untouched; fails_when=the symbolic-ref guard is dropped or the check rewrites on a bad base; why_new=every other case runs on a branch with a valid base; seam=none; no_claim=the base half pins the outcome, not the individual base guard
+      test(`${shell.shell}: stops on an unresolvable base or a detached HEAD`, () => {
+        const { cwd, since } = repo();
+        const tip = commit(cwd, 'CHANGELOG.md', `chore: bump${TRAILERS}`);
+        const unresolvable = run(cwd, since, shell, '0'.repeat(40));
+        expect(unresolvable.status).not.toBe(0);
+        expect(unresolvable.stdout).not.toMatch(/^TRAILERS: (CLEAN|STRIPPED)/m);
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(tip);
+        git(cwd, ['checkout', '--quiet', '--detach']);
+        const detached = run(cwd, since, shell);
+        expect(detached.status).not.toBe(0);
+        expect(detached.stdout).toContain('TRAILERS: BLOCKED — detached HEAD');
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(tip);
+        expect(message(cwd, 'HEAD')).toContain('Co-Authored-By:');
+      });
+
+      // Value: protects=an empty range reports CLEAN and never rewrites the prepared commit at the start point; fails_when=a range guard misfires and rewrites or blocks prepared history; why_new=every other case has at least one commit in range; seam=none; no_claim=none beyond protects
+      test(`${shell.shell}: leaves an empty range and the prepared commit alone`, () => {
+        const { cwd, since: base } = repo();
+        const prepared = commit(cwd, 'a.txt', `feat: prepared${TRAILERS}`);
+        const r = run(cwd, prepared, shell, base);
+        expect(r.status).toBe(0);
+        expect(r.stdout.trim()).toBe('TRAILERS: CLEAN');
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(prepared);
+        expect(message(cwd, 'HEAD')).toContain('Co-Authored-By:');
+      });
+
+      // Value: protects=a commit whose whole message is a co-author trailer is blocked instead of rewritten to an empty message; fails_when=the empty-message guard is removed and an empty-message commit is written; why_new=no fixture has a trailer-only message; seam=none; no_claim=none beyond protects
+      test(`${shell.shell}: blocks a commit whose whole message is a co-author trailer`, () => {
+        const { cwd, since } = repo();
+        const only = commit(cwd, 'CHANGELOG.md', 'Co-authored-by: Cursor <cursoragent@cursor.com>');
+        const r = run(cwd, since, shell);
+        expect(r.status).not.toBe(0);
+        expect(r.stdout).toContain(`TRAILERS: BLOCKED — ${only} would have an empty message`);
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(only);
       });
     }
   });
