@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.7.0] - 2026-10-12
+
+### Fixed
+
+- **Conductor Cursor runs stored in the SQLite layout now record their model and effort.** Current Conductor builds write some shards as an `index.db` SQLite file instead of the NDJSON files the 0.36.2.0 reader understood, so a native run could still finish with both fields null. The telemetry finish step now reads both recognized layouts, which are Conductor-internal and read best effort: NDJSON `agents.ndjson` and `runs.ndjson` shards, and SQLite `index.db` shards. Anything else stays unknown. The 0.36.2.0 note that Conductor runs record their model and effort held only for NDJSON shards. Rows written from a SQLite shard before this release keep their null values and are not rewritten. The SQLite read opens the file read-only, bounds every row count and value, and never reads session payloads, usage or results, so no private value reaches a row, the debug line or the sink. Fixtures and one user-run smoke against a live Conductor store prove the reader; the native Conductor check on an installed release is still pending, so no acceptance checkpoint is awarded.
+- **A mixed, unrecognized or empty shard now reports `incomplete-evidence` instead of being skipped.** Its route is `unknown`, and the model and effort stay null. An empty or `agents/`-only directory used to be ignored; a store with one now counts as incomplete evidence. Under `GSTACK_EXTEND_TELEMETRY_DEBUG=1` the line names the cause (a changed layout, a locked or changed SQLite file, a table over the row cap, a missing `sqlite3` module or the five second capture budget), and `docs/telemetry.md` lists each cause with its safe action and a copyable smoke recipe for checking a live store before shipping a reader change.
+- **A run certifies only when exactly one Conductor prompt overlaps the stage.** A stage that spans several prompts stays unknown (`ambiguous-candidates`) by design, so most interactive stages will still show null model and effort until that rule changes. The row schema, field order, source labels, reason tokens and finish flags are unchanged, and the Paseo, CLI and quota paths are untouched.
+
 ## [0.36.6.0] - 2026-10-11
 
 ### Fixed

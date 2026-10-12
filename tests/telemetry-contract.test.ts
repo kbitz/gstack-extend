@@ -6,7 +6,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
@@ -1097,5 +1097,189 @@ describe('Conductor Cursor ledger recipe', () => {
     // Debug privacy is promised only for the fixed reason lines; the provenance trace prints recorded values.
     expect(cursor.replace(/\s+/g, ' ')).toContain('provenance agent=… model=… effort=…');
     expect(cursor.replace(/\s+/g, ' ')).toContain('Copy only lines that begin `telemetry: cursor-sdk` into a receipt');
+  });
+
+  /** The cause registry as the reader exports it: [token, class] in print order. */
+  function causeRegistry() {
+    const result = spawnSync('python3', ['-B', '-I', '-c',
+      'import json, sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(json.dumps(telemetry.CURSOR_SDK_CAUSES))',
+      join(ROOT, 'bin/lib')], { encoding: 'utf8' });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    return JSON.parse(result.stdout) as Array<[string, string]>;
+  }
+
+  test('every incomplete-evidence cause has its documented row, in order, with its class', () => {
+    const doc = readFileSync(DOC, 'utf8');
+    // A separate anchor namespace, so the reason-anchor lock above keeps matching only cursor-sdk-* rows.
+    const rows = [...doc.matchAll(/<a id="cursor-cause-([a-z-]+)"><\/a>`([a-z-]+)` \| [^|]*\| ([a-z-]+) \|/g)];
+    for (const row of rows) expect(row[1]).toBe(row[2]);
+    expect(rows.map(row => [row[2], row[3]])).toEqual(causeRegistry());
+    expect(new Set(causeRegistry().map(([, kind]) => kind))).toEqual(new Set(['transient', 'store-changed', 'persistent', 'reader-bug']));
+  });
+
+  test('T40 documents both layouts, the fail-closed rule, the privacy and no-write guarantees, and the revisit triggers', () => {
+    const doc = readFileSync(DOC, 'utf8');
+    const cursor = doc.slice(doc.indexOf('## Cursor and quota'));
+    const flat = cursor.replace(/\s+/g, ' ');
+    // Guarantees only: the open mode, URI flags and sidecar table live in code comments and are not locked here.
+    expect(cursor).toContain('`index.db`');
+    expect(flat).toContain('two Conductor-internal layouts');
+    expect(flat).toContain('best effort');
+    expect(flat).toContain('creates no file in the store');
+    expect(flat).toContain('`metadata_json`, the agent\'s key column, is never read');
+    expect(flat).toMatch(/shard with both, a shard with neither .* each make the capture incomplete \(`incomplete-evidence`, route `unknown`\)/);
+    expect(flat).toContain('The `0.36.2.0` repair applied to NDJSON shards only');
+    expect(flat).toContain('Certification needs exactly one Conductor prompt');
+    expect(flat).toContain('A stage that spans several prompts in one conversation stays unknown (`ambiguous-candidates`) by design');
+    expect(flat).toContain('the SQLite schema or file layout changes');
+    expect(flat).toContain('`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt) Conductor stages in receipt 2 or Track 27A evidence');
+    expect(flat).toContain('a SQLite shard reaches the row cap, a run status other than RUNNING, FINISHED or CANCELLED appears');
+    expect(flat).toContain('`malformed-bounds` shows on every SQLite run');
+    expect(flat).toContain('Cursor offers low, medium, high and xhigh, so `none` is not a valid expectation');
+    expect(flat).toContain('The 2-5 minute target covers this classification, not the recovery of a past cause');
+    expect(flat).toContain('never delete or edit store files');
+    // The row explains the cause list instead of repeating it.
+    expect(cursor).toContain('[Incomplete-evidence causes](#cursor-causes)');
+    expect(cursor).toContain('id="cursor-causes"');
+  });
+});
+
+const SMOKE_RECIPE_MARK = '# gstack-extend-cursor-smoke-recipe';
+const SMOKE_SENTINEL = 'SENTINEL-SMOKE-STORE';
+const SQLITE_STORE_DDL = [
+  'CREATE TABLE agents(agent_id TEXT PRIMARY KEY, workspace_ref TEXT NOT NULL, status TEXT NOT NULL, active_run_id TEXT, latest_checkpoint_ref_json TEXT, name TEXT, metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+  'CREATE TABLE runs(run_id TEXT PRIMARY KEY, request_id TEXT, agent_id TEXT NOT NULL, turn_number INTEGER NOT NULL, status TEXT NOT NULL, model TEXT, model_params_json TEXT, start_checkpoint_ref_json TEXT, latest_checkpoint_ref_json TEXT, error_code TEXT, usage_ref TEXT, usage_json TEXT, result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, finished_at TEXT, cancelled_at TEXT, expired_at TEXT)',
+];
+// Fixed tokens, integers, booleans and a version: nothing else may reach a pasted receipt.
+const SMOKE_TOKEN = '[a-z]+(?:-[a-z]+)*';
+const SMOKE_LIST = `(?:none|${SMOKE_TOKEN}(?:,${SMOKE_TOKEN})*)`;
+const SMOKE_BOOL = '(?:true|false)';
+const SMOKE_LINE = new RegExp('^(?:' + [
+  'sqlite_version (?:none|\\d+(?:\\.\\d+)+)',
+  'status (?:read|absent|unreadable)',
+  'layouts ndjson=\\d+ sqlite=\\d+ mixed=\\d+ unrecognized=\\d+ unreadable=\\d+',
+  `complete ${SMOKE_BOOL}`,
+  `causes ${SMOKE_LIST}`,
+  `shard \\d+ certify=${SMOKE_BOOL} reasons=${SMOKE_LIST} model=${SMOKE_BOOL} effort=${SMOKE_BOOL} turns=(?:none|\\d+),(?:none|\\d+),\\d+`,
+  `real-identity (?:no-match|certify=${SMOKE_BOOL} reasons=${SMOKE_LIST} model=${SMOKE_BOOL} effort=${SMOKE_BOOL})`,
+  'result (?:ok|blocked)',
+].join('|') + ')$');
+
+function cursorSmokeRecipe() {
+  const doc = readFileSync(DOC, 'utf8');
+  const python = [...doc.matchAll(/```python\n([\s\S]*?)```/g)].map(match => match[1]);
+  const marked = python.filter(body => body.startsWith(SMOKE_RECIPE_MARK + '\n'));
+  expect(marked).toHaveLength(1);
+  return marked[0];
+}
+
+function storeListing(root: string): string[] {
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { withFileTypes: true, recursive: true }).map(entry => join(entry.parentPath ?? entry.path, entry.name)).sort();
+}
+
+describe('Conductor Cursor live-smoke recipe', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+
+  /** Plants stores with the stdlib only, so the recipe is exercised without the test harness. */
+  function plant(fixture: ReturnType<typeof makeTelemetryFixture>, work: string, kind: 'certifying' | 'failed' | 'zero-sqlite') {
+    const store = join(fixture.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store');
+    mkdirSync(store, { recursive: true });
+    const script = [
+      'import json, os, sqlite3, sys',
+      'store, work, kind, now, sentinel = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]',
+      'def iso(seconds):',
+      '    import datetime',
+      '    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")',
+      'if kind == "zero-sqlite":',
+      '    os.makedirs(store + "/0000000000000001")',
+      '    open(store + "/0000000000000001/agents.ndjson", "w").write(json.dumps({"agentId": "conv-1", "cwd": work}) + "\\n")',
+      '    open(store + "/0000000000000001/runs.ndjson", "w").write("")',
+      'else:',
+      '    shard = store + "/0123456789abcdef"',
+      '    os.makedirs(shard + "/agents")',
+      '    conn = sqlite3.connect(shard + "/index.db", isolation_level=None)',
+      '    conn.execute("PRAGMA journal_mode=WAL")',
+      ...SQLITE_STORE_DDL.map(statement => `    conn.execute(${JSON.stringify(statement)})`),
+      '    conn.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", ("conv-1", work, "IDLE", None, None, None, sentinel, iso(now - 900), iso(now - 900)))',
+      '    for turn, (run_id, started, updated, finished, status) in enumerate([("old", now - 300, now - 200, now - 100, "FINISHED"), ("cur", now - 60, now - 10, None, "RUNNING")], 1):',
+      '        conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (run_id, None, "conv-1", turn, status, "grok-4.7",',
+      '            json.dumps([{"id": "reasoning_effort", "value": "xhigh"}]), None, None, None, None, sentinel, sentinel, iso(started), iso(updated),',
+      '            iso(started), None if finished is None else iso(finished), None, None))',
+      '    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")',
+      '    conn.close()',
+      '    for suffix in ("-wal", "-shm"):',
+      '        if os.path.lexists(shard + "/index.db" + suffix): os.unlink(shard + "/index.db" + suffix)',
+      '    if kind == "failed":',
+      '        os.makedirs(store + "/fedcba9876543210")',
+    ].join('\n');
+    const planted = spawnSync('python3', ['-I', '-c', script, store, work, kind, String(now), SMOKE_SENTINEL], { env: fixture.env, encoding: 'utf8' });
+    expect([planted.status, planted.stderr]).toEqual([0, '']);
+    return store;
+  }
+
+  function smoke(fixture: ReturnType<typeof makeTelemetryFixture>, cwd: string, env: Record<string, string> = {}) {
+    return spawnSync('python3', ['-I', '-', join(ROOT, 'bin/lib')], { input: cursorSmokeRecipe(), env: { ...fixture.env, ...env }, cwd, encoding: 'utf8', timeout: 30_000 });
+  }
+
+  function workspace(fixture: ReturnType<typeof makeTelemetryFixture>) {
+    const work = join(fixture.home, 'smoke-work');
+    mkdirSync(work, { recursive: true });
+    return realpathSync(work);
+  }
+
+  function expectQuiet(run: ReturnType<typeof smoke>, fixture: ReturnType<typeof makeTelemetryFixture>) {
+    expect(run.stderr).toBe('');
+    const lines = run.stdout.trimEnd().split('\n');
+    for (const line of lines) expect([line, SMOKE_LINE.test(line)]).toEqual([line, true]);
+    // Not even the fixture's path or a column that holds a secret may be echoed.
+    expect(run.stdout).not.toContain(SMOKE_SENTINEL);
+    expect(run.stdout).not.toContain(fixture.home);
+    expect(lines.at(-1)).toMatch(/^result (ok|blocked)$/);
+    return lines;
+  }
+
+  test('a certifying SQLite store prints sanitized tokens, exits 0, and writes nothing', () => {
+    const fixture = makeTelemetryFixture('off');
+    const work = workspace(fixture);
+    const store = plant(fixture, work, 'certifying');
+    const before = storeListing(store);
+    const found = smoke(fixture, work, { CURSOR_CONVERSATION_ID: 'conv-1' });
+    expect(found.status).toBe(0);
+    const lines = expectQuiet(found, fixture);
+    expect(lines).toContain('layouts ndjson=0 sqlite=1 mixed=0 unrecognized=0 unreadable=0');
+    expect(lines).toContain('complete true');
+    expect(lines).toContain('causes none');
+    expect(lines).toContain('shard 1 certify=true reasons=none model=true effort=true turns=1,2,2');
+    // The join a real finish performs: this shell's cwd and the conversation id.
+    expect(lines).toContain('real-identity certify=true reasons=none model=true effort=true');
+    expect(lines.at(-1)).toBe('result ok');
+    expect(storeListing(store)).toEqual(before);
+    // Run from elsewhere, the same store has no matching shard for this cwd.
+    const elsewhere = smoke(fixture, fixture.home, { CURSOR_CONVERSATION_ID: 'conv-1' });
+    expect(elsewhere.status).toBe(0);
+    expect(expectQuiet(elsewhere, fixture)).toContain('real-identity no-match');
+  });
+
+  test('an incomplete store and a store with no SQLite shard both block with a non-zero exit', () => {
+    const failing = makeTelemetryFixture('off');
+    const failedWork = workspace(failing);
+    plant(failing, failedWork, 'failed');
+    const failed = smoke(failing, failedWork);
+    expect(failed.status).not.toBe(0);
+    const failedLines = expectQuiet(failed, failing);
+    expect(failedLines).toContain('complete false');
+    expect(failedLines).toContain('causes unrecognized-layout');
+    expect(failedLines.at(-1)).toBe('result blocked');
+
+    const plain = makeTelemetryFixture('off');
+    const plainWork = workspace(plain);
+    plant(plain, plainWork, 'zero-sqlite');
+    const none = smoke(plain, plainWork);
+    expect(none.status).not.toBe(0);
+    const noneLines = expectQuiet(none, plain);
+    expect(noneLines).toContain('layouts ndjson=1 sqlite=0 mixed=0 unrecognized=0 unreadable=0');
+    expect(noneLines.at(-1)).toBe('result blocked');
   });
 });
