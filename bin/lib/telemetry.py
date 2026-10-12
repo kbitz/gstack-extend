@@ -63,6 +63,32 @@ CURSOR_SDK_REASONS = (
     ("malformed-neighbor", "cursor-sdk-malformed-neighbor"),
     ("transcript-unreadable", "cursor-sdk-transcript-unreadable"),
 )
+# Debug-only causes behind an incomplete-evidence reason, paired with a first-guess class: transient (may clear on a
+# later finish), store-changed (Conductor changed its store), persistent (stays until the store or environment
+# changes) or reader-bug. Printed in this order; never a row field, a path, an id, or an exception.
+CURSOR_SDK_CAUSES = (
+    ("shard-unreadable", "transient"),
+    ("ndjson-incomplete", "transient"),
+    ("ndjson-vanished", "transient"),
+    ("mixed-layout", "store-changed"),
+    ("unrecognized-layout", "store-changed"),
+    ("sqlite-sidecars", "transient"),
+    ("sqlite-changed", "transient"),
+    ("sqlite-open", "transient"),
+    ("sqlite-schema", "store-changed"),
+    ("sqlite-error", "transient"),
+    ("reader-error", "reader-bug"),
+    ("sqlite-row-cap", "persistent"),
+    ("sqlite-module-missing", "persistent"),
+    ("capture-timeout", "transient"),
+)
+CURSOR_CAPTURE_BUDGET_S = 5.0  # cooperative: checked between files and shards and inside SQLite work, not mid-read
+SQLITE_BUSY_S = 0.5  # longest wait on a locked shard
+SQLITE_ROW_CAP = 5000  # per table, per shard; more rows than this cannot prove uniqueness
+SQLITE_VALUE_BYTES = 1024  # ids, status, model and timestamps
+SQLITE_PATH_BYTES = 16384  # workspace_ref
+SQLITE_PARAMS_BYTES = 16384  # model_params_json
+SQLITE_PROGRESS_STEPS = 1000  # SQLite VM steps between deadline checks
 # Bare skill names. Finish strips the extend: prefix before consulting this set.
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
@@ -801,29 +827,310 @@ def _shard_hides_rows(agents_status, runs_status, agents):
 
 
 class CursorCapture:
-    """One bounded read of the Conductor SDK store. status is absent, unreadable, or read."""
+    """One bounded read of the Conductor SDK store. status is absent, unreadable, or read.
 
-    def __init__(self, status, shards, complete):
+    causes (fixed CURSOR_SDK_CAUSES tokens) say why a read capture is incomplete, and layouts counts how each shard
+    directory was dispatched. Both are private diagnostics: selection ignores layouts and prints causes only in debug."""
+
+    def __init__(self, status, shards, complete, causes=(), layouts=None):
         self.status = status
         self.shards = shards
         self.complete = complete
+        self.causes = set(causes)
+        self.layouts = Counter(layouts or ())
+
+    def fail(self, cause):
+        # How a read capture becomes incomplete, so an incomplete read capture always names a cause.
+        self.complete = False
+        self.causes.add(cause)
 
 
 class CursorSelection:
     """Window result shared by metadata and native route. None model/effort stay unknown.
-    updated is the chosen snapshot's updatedAt: the store's own activity time, never the observation end."""
+    updated is the chosen snapshot's updatedAt: the store's own activity time, never the observation end.
+    causes is an incomplete capture's cause set, for debug output only."""
 
-    def __init__(self, certify, model, effort, usable, reasons, updated=None):
+    def __init__(self, certify, model, effort, usable, reasons, updated=None, causes=()):
         self.certify = certify
         self.model = model
         self.effort = effort
         self.usable = usable
         self.reasons = reasons
         self.updated = updated
+        self.causes = frozenset(causes)
+
+
+def _gated_select(table, columns):
+    # Each column is read as its storage class plus a text value that exists only for text within its byte cap. Never
+    # substr(): on both SQLite builds it cuts text at an embedded NUL, so "/work\0/x" would become "/work".
+    # Named columns only, never SELECT *: agents.metadata_json holds a key and is never selected.
+    gated = ", ".join(
+        f"typeof({name}), CASE WHEN typeof({name}) = 'text' AND length(CAST({name} AS BLOB)) <= {cap} THEN {name} END"
+        for name, cap in columns)
+    return f"SELECT {gated} FROM {table} LIMIT ?"
+
+
+_SQLITE_AGENT_COLUMNS = (("agent_id", SQLITE_VALUE_BYTES), ("workspace_ref", SQLITE_PATH_BYTES))
+_SQLITE_RUN_COLUMNS = (
+    ("run_id", SQLITE_VALUE_BYTES), ("agent_id", SQLITE_VALUE_BYTES), ("status", SQLITE_VALUE_BYTES),
+    ("model", SQLITE_VALUE_BYTES), ("model_params_json", SQLITE_PARAMS_BYTES),
+    ("started_at", SQLITE_VALUE_BYTES), ("updated_at", SQLITE_VALUE_BYTES), ("finished_at", SQLITE_VALUE_BYTES),
+    ("cancelled_at", SQLITE_VALUE_BYTES), ("expired_at", SQLITE_VALUE_BYTES))
+SQLITE_AGENTS_SQL = _gated_select("agents", _SQLITE_AGENT_COLUMNS)
+SQLITE_RUNS_SQL = _gated_select("runs", _SQLITE_RUN_COLUMNS)
+# INTEGER affinity permits text and BLOBs. Keep even optional diagnostics bounded before Python materializes them.
+SQLITE_TURNS_SQL = (
+    "SELECT min(CASE WHEN typeof(turn_number) = 'integer' THEN turn_number END), "
+    "max(CASE WHEN typeof(turn_number) = 'integer' THEN turn_number END), count(*) FROM runs")
+# The declared types seen on a current Conductor build. A table or column that differs is a changed store.
+_SQLITE_SCHEMA = {
+    "agents": {name: "TEXT" for name, _ in _SQLITE_AGENT_COLUMNS},
+    "runs": {**{name: "TEXT" for name, _ in _SQLITE_RUN_COLUMNS}, "turn_number": "INTEGER"},
+}
+
+
+def _sqlite_value(value_type, text):
+    # NULL is None. Text within its cap is kept whole, NUL included. Everything else (a number, a BLOB, text over
+    # its cap) is b"": every validator downstream rejects bytes, so no number is ever read as a timestamp and no
+    # over-long value is shortened into a valid one.
+    if value_type == "null":
+        return None
+    if value_type == "text" and isinstance(text, str):
+        return text
+    return b""
+
+
+def _sqlite_row(row):
+    return [_sqlite_value(row[index], row[index + 1]) for index in range(0, len(row), 2)]
+
+
+def _sqlite_uri(db, immutable):
+    # "file://" plus an absolute path has an empty authority, so a path that starts with // is never a host.
+    return "file://" + quote(os.path.abspath(db)) + ("?mode=ro&immutable=1" if immutable else "?mode=ro")
+
+
+def _sqlite_open_mode(db):
+    # live: Conductor's -wal and -shm are both there, so another connection may be writing. Open mode=ro and let
+    # SQLite's own WAL protocol find commits that exist only in the -wal. Apple's SQLite keeps both files after the
+    # last writer closes; upstream SQLite deletes them.
+    # quiescent: no sidecar at all, so there is no WAL to miss. A plain mode=ro open fails on Apple's SQLite and
+    # creates empty sidecars in the shard on upstream SQLite, so open immutable and re-check afterwards.
+    # Any other combination (a lone -wal or -shm, a hot -journal) is a shard in transition and is not opened.
+    # Never nolock=1, and never immutable=1 on a shard with sidecars, where it would miss WAL-only commits.
+    wal, shm, journal = (_path_kind(str(db) + suffix) for suffix in ("-wal", "-shm", "-journal"))
+    if journal == "missing" and wal == "file" and shm == "file":
+        return "live"
+    if wal == shm == journal == "missing":
+        return "quiescent"
+    return None
+
+
+def _sqlite_stat_key(db):
+    info = os.stat(db)
+    return info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _sqlite_unchanged(db, before):
+    # A write to a quiescent shard creates -wal (WAL mode) or changes index.db (a checkpoint, rollback mode).
+    try:
+        return _sqlite_open_mode(db) == "quiescent" and _sqlite_stat_key(db) == before
+    except OSError:
+        return False
+
+
+def _sqlite_schema_ok(conn):
+    # Control flow, not exception text: both are real tables, and every selected column has the declared type seen
+    # on a current build. A view, a missing column or an untyped column is a changed store.
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('agents', 'runs')")}
+    for table, expected in _SQLITE_SCHEMA.items():
+        if table not in tables:
+            return False
+        declared = {name: str(kind).upper()
+                    for name, kind in conn.execute("SELECT name, type FROM pragma_table_info(?)", (table,))}
+        if any(declared.get(name) != kind for name, kind in expected.items()):
+            return False
+    return True
+
+
+def _sqlite_cause(sqlite3, error, deadline, probed):
+    # Past the deadline any sqlite error is the progress handler's interrupt. Before the schema probe completes, an
+    # OperationalError is a lock, permission or I/O problem and any other DatabaseError ("file is not a database")
+    # means this is not the store we read. After it, anything else is a transient read error.
+    if time.monotonic() >= deadline:
+        return "capture-timeout"
+    if not probed and isinstance(error, sqlite3.OperationalError):
+        return "sqlite-open"
+    if not probed and isinstance(error, sqlite3.DatabaseError):
+        return "sqlite-schema"
+    return "sqlite-error"
+
+
+def _sqlite_query(sqlite3, db, mode, deadline):
+    # One read transaction, so the probe, both SELECTs and the turns aggregate come from one snapshot.
+    # Returns ((agent rows, run rows, turns), None), or (None, cause).
+    conn, probed = None, False
+    try:
+        timeout = max(0.0, min(SQLITE_BUSY_S, deadline - time.monotonic()))
+        conn = sqlite3.connect(_sqlite_uri(db, mode == "quiescent"), uri=True, timeout=timeout, isolation_level=None)
+        conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), SQLITE_PROGRESS_STEPS)
+        conn.execute("BEGIN")
+        if not _sqlite_schema_ok(conn):
+            return None, "sqlite-schema"
+        probed = True
+        agent_rows = conn.execute(SQLITE_AGENTS_SQL, (SQLITE_ROW_CAP + 1,)).fetchall()
+        run_rows = conn.execute(SQLITE_RUNS_SQL, (SQLITE_ROW_CAP + 1,)).fetchall()
+        if len(agent_rows) > SQLITE_ROW_CAP or len(run_rows) > SQLITE_ROW_CAP:
+            return None, "sqlite-row-cap"  # Do not scan an over-cap archive just for optional diagnostics.
+        turns = conn.execute(SQLITE_TURNS_SQL).fetchone()
+        conn.execute("ROLLBACK")
+        return (agent_rows, run_rows, turns), None
+    except sqlite3.Error as error:
+        return None, _sqlite_cause(sqlite3, error, deadline, probed)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _sqlite_params(raw):
+    # Text that decodes is the list or dict the NDJSON path reads. Anything else (undecodable text, b"") passes
+    # through as an unsupported container: the model id survives and effort stays unknown, with no extra reason.
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        return raw
+
+
+def _sqlite_ends(status, updated, terminal):
+    # A terminal time always wins over status. One distinct value is the end. Several distinct values mean the store
+    # does not say which is real: the caller emits one snapshot per value, and 23B's equal-timestamp rule blocks the
+    # run when any of them could overlap the stage. With no terminal time, RUNNING is open and any other status
+    # (including NULL) stopped no later than its last update.
+    distinct = []
+    for value in terminal:
+        if value is not None and value not in distinct:
+            distinct.append(value)
+    if distinct:
+        return distinct
+    return [None] if status == "RUNNING" else [updated]
+
+
+def _sqlite_records(agent_rows, run_rows):
+    # Rows become the NDJSON record vocabulary that select_cursor already reads. None means a run identity this
+    # reader cannot trust. It must not become several unrelated candidates, so the whole shard is a schema failure.
+    agents = []
+    for row in agent_rows:
+        agent_id, workspace_ref = _sqlite_row(row)
+        agents.append({"agentId": agent_id, "cwd": workspace_ref})
+    runs = []
+    for row in run_rows:
+        run_id, agent_id, status, model, params, started, updated, *terminal = _sqlite_row(row)
+        if clean(run_id) is None or clean(agent_id) is None:
+            return None
+        meta = {"id": model}
+        if params is not None:
+            meta["params"] = _sqlite_params(params)
+        for ended in _sqlite_ends(status, updated, terminal):
+            runs.append({"agentId": agent_id, "runId": run_id, "startedAt": started, "updatedAt": updated,
+                         "endedAt": ended, "model": meta})
+    return agents, runs
+
+
+def _sqlite_turns(row):
+    return tuple(value if isinstance(value, int) and not isinstance(value, bool) else None for value in row)
+
+
+def _read_sqlite_shard(shard_dir, deadline, diagnostics=None):
+    """(agents, runs, cause) for one index.db shard. cause is None when complete, else one CURSOR_SDK_CAUSES token and
+    no records. The read creates no file in the store and never changes index.db or its -wal; SQLite may rewrite
+    -shm, its shared WAL index, on any shard that has sidecars. diagnostics, when given, receives turns: the
+    (min, max, count) of runs.turn_number from the same transaction."""
+    try:
+        import sqlite3
+    except ImportError:
+        return [], [], "sqlite-module-missing"
+    db = Path(shard_dir) / "index.db"
+    mode = _sqlite_open_mode(db)
+    if mode is None:
+        return [], [], "sqlite-sidecars"
+    try:
+        before = _sqlite_stat_key(db) if mode == "quiescent" else None
+    except OSError:
+        return [], [], "sqlite-changed"
+    try:
+        found, cause = _sqlite_query(sqlite3, db, mode, deadline)
+        if cause:
+            return [], [], cause
+        agent_rows, run_rows, turns = found
+        if mode == "quiescent" and not _sqlite_unchanged(db, before):
+            return [], [], "sqlite-changed"
+        records = _sqlite_records(agent_rows, run_rows)
+        if records is None:
+            return [], [], "sqlite-schema"
+        if diagnostics is not None:
+            diagnostics["turns"] = _sqlite_turns(turns)
+        return records[0], records[1], None
+    except Exception:
+        # A bug in this code must never look like a Conductor change.
+        return [], [], "reader-error"
+
+
+def _capture_ndjson(child, deadline, capture):
+    agents, agents_status = _read_bounded(child / "agents.ndjson")
+    if time.monotonic() >= deadline:
+        capture.fail("capture-timeout")
+        return
+    runs, runs_status = _read_bounded(child / "runs.ndjson")
+    if agents_status == "missing" and runs_status == "missing":
+        capture.fail("ndjson-vanished")  # dispatch saw a file, so a shard that now has none changed mid-capture
+        return
+    if _shard_hides_rows(agents_status, runs_status, agents):
+        capture.fail("ndjson-incomplete")
+    capture.shards.append({"agents": agents, "runs": runs, "layout": "ndjson"})
+
+
+def _capture_shard(child, deadline, capture):
+    kind = _path_kind(child)
+    if kind == "unreadable":
+        capture.layouts["unreadable"] += 1
+        capture.fail("shard-unreadable")
+        return
+    if kind != "dir":
+        return
+    # "Present" is anything but missing, so an unreadable or non-regular file counts. index.db is classified before any
+    # NDJSON content is read, so a mixed shard never contributes NDJSON records.
+    agents_kind, runs_kind, db_kind = (_path_kind(child / name) for name in ("agents.ndjson", "runs.ndjson", "index.db"))
+    ndjson = agents_kind != "missing" or runs_kind != "missing"
+    if agents_kind == runs_kind == db_kind == "unreadable":
+        capture.layouts["unreadable"] += 1
+        capture.fail("shard-unreadable")
+    elif ndjson and db_kind != "missing":
+        capture.layouts["mixed"] += 1
+        capture.fail("mixed-layout")
+    elif ndjson:
+        capture.layouts["ndjson"] += 1
+        _capture_ndjson(child, deadline, capture)
+    elif db_kind == "file":
+        capture.layouts["sqlite"] += 1
+        diagnostics = {}
+        agents, runs, cause = _read_sqlite_shard(child, deadline, diagnostics)
+        if cause:
+            capture.fail(cause)
+        else:
+            capture.shards.append({"agents": agents, "runs": runs, "layout": "sqlite", "turns": diagnostics.get("turns")})
+    else:
+        # Neither layout, including an empty directory or an index.db that is not a regular file.
+        capture.layouts["unrecognized"] += 1
+        capture.fail("unrecognized-layout")
 
 
 def capture_cursor_store(store=None):
     # One traversal. Callers select from this object; they do not read the store again.
+    # The deadline is cooperative: checked before and after each shard, between a shard's two NDJSON reads, and inside
+    # SQLite work. One NDJSON read (at most 8 MiB) or one filesystem call can overrun it.
+    deadline = time.monotonic() + CURSOR_CAPTURE_BUDGET_S
     try:
         root = _cursor_store_root(store)
         kind = _path_kind(root)
@@ -835,22 +1142,19 @@ def capture_cursor_store(store=None):
             children = list(root.iterdir())
         except OSError:
             return CursorCapture("unreadable", [], False)
-        shards, complete = [], True
+        capture = CursorCapture("read", [], True)
         for child in children:
-            kind = _path_kind(child)
-            if kind == "unreadable":
-                complete = False
-                continue
-            if kind != "dir":
-                continue
-            agents, agents_status = _read_bounded(child / "agents.ndjson")
-            runs, runs_status = _read_bounded(child / "runs.ndjson")
-            if _shard_hides_rows(agents_status, runs_status, agents):
-                complete = False
-            if agents_status == "missing" and runs_status == "missing":
-                continue
-            shards.append({"agents": agents, "runs": runs})
-        return CursorCapture("read", shards, complete)
+            if time.monotonic() >= deadline:
+                capture.fail("capture-timeout")
+                break
+            try:
+                _capture_shard(child, deadline, capture)
+            except Exception:
+                capture.fail("reader-error")
+            if time.monotonic() >= deadline:
+                capture.fail("capture-timeout")
+                break
+        return capture
     except Exception:
         # A store failure must not escape with a path or record attached.
         return CursorCapture("unreadable", [], False)
@@ -1011,7 +1315,7 @@ def select_cursor(capture, cwd, session, begin, end):
     if capture.status != "read":
         return CursorSelection(False, None, None, False, ["store-unreadable"])
     if not capture.complete:
-        return CursorSelection(False, None, None, False, ["incomplete-evidence"])
+        return CursorSelection(False, None, None, False, ["incomplete-evidence"], causes=capture.causes)
     if not _finite_bound(begin) or not _finite_bound(end) or begin > end:
         return CursorSelection(False, None, None, False, ["malformed-bounds"])
     if not isinstance(cwd, str):
@@ -1105,10 +1409,12 @@ def cursor_sdk_runs(cwd=None, store=None):
                 yield record
 
 
-def _cursor_debug(reasons):
+def _cursor_debug(reasons, causes=()):
     for code, anchor in CURSOR_SDK_REASONS:
         if code in reasons:
-            trace(f"cursor-sdk {code}. See docs/telemetry.md#{anchor}.")
+            tokens = [token for token, _ in CURSOR_SDK_CAUSES if token in causes] if code == "incomplete-evidence" else []
+            detail = f" (causes: {', '.join(tokens)})" if tokens else ""
+            trace(f"cursor-sdk {code}{detail}. See docs/telemetry.md#{anchor}.")
 
 
 def _observe_cursor_store():
@@ -1284,7 +1590,7 @@ def provenance_row(stage, sid, start, duration, values, root):
         and cursor_selection is not None and cursor_selection.certify)
     route, entrypoint = route_for(agent, conductor_match)
     if cursor_selection is not None:
-        _cursor_debug(cursor_selection.reasons)
+        _cursor_debug(cursor_selection.reasons, cursor_selection.causes)
     # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
     return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,

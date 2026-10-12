@@ -3,7 +3,8 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
@@ -1852,6 +1853,503 @@ describe('execution provenance', () => {
 });
 
 const CURSOR_SENTINEL = 'SENTINEL-PRIVATE-STORE';
+// SQLite-layout half of the Cursor harness: builders, a planter, named hooks and the scenario ops. Python source,
+// kept raw so its escapes reach the interpreter unchanged.
+const CURSOR_SQLITE_PY = String.raw`import contextlib, io, sqlite3, subprocess, tempfile
+from datetime import datetime, timezone
+WRITERS, PATCHES, UNDO, TURN = [], [], [], [0]
+SQLITE_DDL = {
+    "agents": ["agent_id TEXT PRIMARY KEY", "workspace_ref TEXT NOT NULL", "status TEXT NOT NULL", "active_run_id TEXT",
+               "latest_checkpoint_ref_json TEXT", "name TEXT", "metadata_json TEXT NOT NULL", "created_at TEXT NOT NULL",
+               "updated_at TEXT NOT NULL"],
+    "runs": ["run_id TEXT PRIMARY KEY", "request_id TEXT", "agent_id TEXT NOT NULL", "turn_number INTEGER NOT NULL",
+             "status TEXT NOT NULL", "model TEXT", "model_params_json TEXT", "start_checkpoint_ref_json TEXT",
+             "latest_checkpoint_ref_json TEXT", "error_code TEXT", "usage_ref TEXT", "usage_json TEXT", "result TEXT",
+             "created_at TEXT NOT NULL", "updated_at TEXT NOT NULL", "started_at TEXT", "finished_at TEXT",
+             "cancelled_at TEXT", "expired_at TEXT"],
+    "run_events": ["run_id TEXT NOT NULL", "seq INTEGER NOT NULL", '"offset" TEXT NOT NULL', "event_type TEXT NOT NULL",
+                   "payload_json TEXT", "payload_ref TEXT", "idempotency_key TEXT", "created_at TEXT NOT NULL",
+                   "PRIMARY KEY(run_id, seq)"],
+}
+HASH_SRC = (
+    "import hashlib, json, os, sys\n"
+    "root, out = sys.argv[1], {}\n"
+    "for base, dirs, files in os.walk(root):\n"
+    "    for name in dirs: out[os.path.relpath(os.path.join(base, name), root)] = 'dir'\n"
+    "    for name in files:\n"
+    "        path = os.path.join(base, name)\n"
+    "        with open(path, 'rb') as stream: out[os.path.relpath(path, root)] = hashlib.sha256(stream.read()).hexdigest()\n"
+    "print(json.dumps(out))\n")
+WRITER_SRC = (
+    "import json, os, sqlite3, sys, time\n"
+    "db, ready, release, row = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])\n"
+    "conn = sqlite3.connect(db, isolation_level=None)\n"
+    "conn.execute('PRAGMA wal_autocheckpoint=0')\n"
+    "names = ', '.join('\"' + col + '\"' for col in row)\n"
+    "conn.execute('INSERT INTO runs(' + names + ') VALUES(' + ', '.join('?' * len(row)) + ')', list(row.values()))\n"
+    "open(ready, 'w').close()\n"
+    "end = time.time() + 120\n"
+    "while not os.path.exists(release) and time.time() < end: time.sleep(0.02)\n"
+    "conn.close()\n")
+
+def sqlite_iso(seconds):
+    millis = int(round(seconds * 1000))
+    return datetime.fromtimestamp(millis // 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + ".%03dZ" % (millis % 1000)
+
+def conv(value):
+    # JSON cannot carry bytes or epoch-to-ISO conversion, so a case spells them as small markers.
+    if isinstance(value, dict):
+        if "$ts" in value: return sqlite_iso(value["$ts"])
+        if "$blob" in value: return bytes.fromhex(value["$blob"])
+        if "$repeat" in value: return value["$repeat"][0] * value["$repeat"][1]
+        if "$concat" in value: return "".join(conv(part) for part in value["$concat"])
+        return {key: conv(item) for key, item in value.items()}
+    if isinstance(value, list): return [conv(item) for item in value]
+    return value
+
+def sqlite_agent(agent_id, cwd, **overrides):
+    row = {"agent_id": agent_id, "workspace_ref": cwd, "status": "IDLE", "active_run_id": None,
+           "latest_checkpoint_ref_json": None, "name": None, "metadata_json": SENTINEL,
+           "created_at": sqlite_iso(1699990000), "updated_at": sqlite_iso(1699990000)}
+    row.update(overrides)
+    return row
+
+def sqlite_run(agent_id, run_id, model, params, started, updated, ended=None, status=None, **overrides):
+    TURN[0] += 1
+    row = {"run_id": run_id, "request_id": None, "agent_id": agent_id, "turn_number": TURN[0],
+           "status": status or ("RUNNING" if ended is None else "FINISHED"), "model": model,
+           "model_params_json": None if params is None else json.dumps(params),
+           "start_checkpoint_ref_json": None, "latest_checkpoint_ref_json": None, "error_code": None, "usage_ref": None,
+           "usage_json": SENTINEL, "result": SENTINEL, "created_at": sqlite_iso(started if started is not None else updated),
+           "updated_at": sqlite_iso(updated), "started_at": None if started is None else sqlite_iso(started),
+           "finished_at": None if ended is None else sqlite_iso(ended), "cancelled_at": None, "expired_at": None}
+    row.update(overrides)
+    return row
+
+def ddl_for(table, spec):
+    # The default DDL reproduces the types, NOT NULL flags and primary keys probed on a current Conductor build.
+    overrides = spec.get("ddl_overrides") or {}
+    if table in overrides:
+        return overrides[table]
+    dropped = set((spec.get("drop_columns") or {}).get(table, ()))
+    untyped = set((spec.get("untyped_columns") or {}).get(table, ()))
+    parts = []
+    for fragment in SQLITE_DDL[table]:
+        if fragment.startswith("PRIMARY KEY("):
+            parts.append(fragment)
+            continue
+        tokens = fragment.split()
+        name = tokens[0].strip('"')
+        if name in dropped: continue
+        parts.append(" ".join(tokens[:1] + tokens[2:]) if name in untyped else fragment)
+    return "CREATE TABLE " + table + "(" + ", ".join(parts) + ")"
+
+def insert_rows(conn, table, rows):
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(" + table + ")")]
+    if not columns: return
+    for row in rows:
+        use = [col for col in columns if col in row]
+        conn.execute("INSERT INTO " + table + "(" + ", ".join('"' + col + '"' for col in use) + ") VALUES(" + ", ".join("?" * len(use)) + ")",
+                     [row[col] for col in use])
+
+def event_rows(runs):
+    return [{"run_id": run["run_id"], "seq": 1, "offset": "0", "event_type": "log", "payload_json": SENTINEL,
+             "created_at": sqlite_iso(1699990000)} for run in runs if isinstance(run.get("run_id"), str)]
+
+def build_agents(entries):
+    return [sqlite_agent(conv(entry["agent_id"]), conv(entry["cwd"]), **conv(entry.get("overrides") or {})) for entry in entries or ()]
+
+def build_runs(entries):
+    return [sqlite_run(conv(entry["agent_id"]), conv(entry["run_id"]), conv(entry.get("model")), conv(entry.get("params")),
+                       entry.get("started"), entry["updated"], entry.get("ended"), entry.get("status"),
+                       **conv(entry.get("overrides") or {}))
+            for entry in entries or ()]
+
+def close_writers():
+    while WRITERS:
+        try: WRITERS.pop().close()
+        except Exception: pass
+
+def plant_sqlite(spec, root=None):
+    journal = spec.get("journal", "wal")
+    modes = [bool(spec.get("keep_writer")), bool(spec.get("strip_sidecars")), journal == "delete"]
+    if sum(modes) != 1:
+        # Apple's SQLite keeps -wal/-shm after the last writer closes and upstream deletes them; a case must pick the
+        # state explicitly so it means the same thing on both.
+        raise ValueError("a SQLite case sets exactly one of keep_writer, strip_sidecars or journal=delete")
+    if spec.get("writer_process") and not spec.get("strip_sidecars"):
+        raise ValueError("writer_process starts from a stripped shard")
+    TURN[0] = 0
+    shard = Path(root or store_root()) / spec.get("shard", "0123456789abcdef")
+    (shard / "agents").mkdir(parents=True, exist_ok=True)
+    db = shard / "index.db"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    conn.execute("PRAGMA journal_mode=" + ("DELETE" if journal == "delete" else "WAL"))
+    if journal != "delete": conn.execute("PRAGMA wal_autocheckpoint=0")
+    view = (spec.get("ddl_overrides") or {}).get("runs") == "$view"
+    for table in ("agents", "runs", "run_events"):
+        if table == "runs" and view:
+            conn.execute(ddl_for("runs", {}).replace("CREATE TABLE runs(", "CREATE TABLE runs_t("))
+            conn.execute("CREATE VIEW runs AS SELECT * FROM runs_t")
+            continue
+        ddl = ddl_for(table, spec)
+        if ddl: conn.execute(ddl)
+    runs = build_runs(spec.get("runs"))
+    insert_rows(conn, "agents", build_agents(spec.get("agents")))
+    if not view:
+        insert_rows(conn, "runs", runs)
+        insert_rows(conn, "run_events", event_rows(runs))
+    late = build_runs(spec.get("wal_only_runs"))
+    if late:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        insert_rows(conn, "runs", late)
+        insert_rows(conn, "run_events", event_rows(late))
+    if spec.get("keep_writer"):
+        WRITERS.append(conn)
+    else:
+        if journal != "delete": conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        for suffix in ("-wal", "-shm"):
+            if os.path.lexists(str(db) + suffix): os.unlink(str(db) + suffix)
+    for name, content in (spec.get("extra_files") or {}).items():
+        (shard / name).write_text(content)
+    proc = None
+    if spec.get("writer_process"):
+        proc = start_writer(db, build_runs([spec["writer_process"]])[0], shard.name)
+    return {"shard": shard, "db": db, "proc": proc}
+
+def start_writer(db, row, name):
+    marks = store_root().parent
+    ready, release = marks / (name + ".ready"), marks / (name + ".release")
+    for mark in (ready, release):
+        if mark.exists(): mark.unlink()
+    proc = subprocess.Popen([sys.executable, "-I", "-c", WRITER_SRC, str(db), str(ready), str(release), json.dumps(row)],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+    deadline = time.time() + 20
+    while not ready.exists():
+        if proc.poll() is not None or time.time() > deadline:
+            raise RuntimeError("writer process did not become ready: " + proc.stderr.read().decode()[:300])
+        time.sleep(0.02)
+    return {"proc": proc, "release": release}
+
+def stop_writer(handle):
+    handle["release"].write_text("")
+    handle["proc"].wait(timeout=20)
+
+def snapshot(root, hashed):
+    # Hashing opens every file, so it runs in a child: closing a descriptor in a writer's own process would drop that
+    # writer's POSIX locks on the database.
+    if hashed:
+        out = subprocess.run([sys.executable, "-I", "-c", HASH_SRC, str(root)], capture_output=True, text=True, check=True)
+        return json.loads(out.stdout)
+    return {os.path.relpath(os.path.join(base, name), root): "" for base, dirs, files in os.walk(root) for name in dirs + files}
+
+def patch(obj, name, value):
+    PATCHES.append((obj, name, getattr(obj, name)))
+    setattr(obj, name, value)
+
+def unpatch():
+    while PATCHES:
+        obj, name, old = PATCHES.pop()
+        setattr(obj, name, old)
+    while UNDO:
+        UNDO.pop()()
+
+def ordered(causes):
+    return [token for token, _ in telemetry.CURSOR_SDK_CAUSES if token in causes]
+
+def debug_text(selection):
+    stream, saved = io.StringIO(), os.environ.get("GSTACK_EXTEND_TELEMETRY_DEBUG")
+    os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = "1"
+    try:
+        with contextlib.redirect_stderr(stream):
+            telemetry._cursor_debug(selection.reasons, selection.causes)
+    finally:
+        if saved is None: os.environ.pop("GSTACK_EXTEND_TELEMETRY_DEBUG", None)
+        else: os.environ["GSTACK_EXTEND_TELEMETRY_DEBUG"] = saved
+    return stream.getvalue()
+
+def hook_busy(stage):
+    def install(case, ctx):
+        timeouts = ctx["data"].setdefault("timeouts", [])
+        real = sqlite3.connect
+        class Flaky(sqlite3.Connection):
+            def execute(self, sql, *args):
+                text = sql.strip().upper()
+                if ((stage == "begin" and text.startswith("BEGIN")) or (stage == "probe" and "SQLITE_MASTER" in text)
+                        or (stage == "query" and sql == telemetry.SQLITE_RUNS_SQL)):
+                    raise sqlite3.OperationalError("database is locked " + SENTINEL)
+                return super().execute(sql, *args)
+        def wrapped(*args, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+            if stage == "connect": raise sqlite3.OperationalError("database is locked " + SENTINEL)
+            return real(*args, factory=Flaky, **kwargs)
+        patch(sqlite3, "connect", wrapped)
+    return install
+
+def hook_row_cap(case, ctx):
+    patch(telemetry, "SQLITE_ROW_CAP", 2)
+    ctx["data"]["turn_reads"] = 0
+    real = sqlite3.connect
+    class Traced(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql == telemetry.SQLITE_TURNS_SQL: ctx["data"]["turn_reads"] += 1
+            return super().execute(sql, *args)
+    patch(sqlite3, "connect", lambda *args, **kwargs: real(*args, factory=Traced, **kwargs))
+
+def hook_after_connect(action):
+    def install(case, ctx):
+        real = sqlite3.connect
+        def wrapped(*args, **kwargs):
+            conn = real(*args, **kwargs)
+            action(ctx["dbs"][0])
+            return conn
+        patch(sqlite3, "connect", wrapped)
+    return install
+
+def bump_mtime(db):
+    info = os.stat(db)
+    os.utime(db, ns=(info.st_atime_ns, info.st_mtime_ns + 5_000_000_000))
+
+def create_wal(db):
+    open(str(db) + "-wal", "wb").close()
+
+def hook_authorizer(case, ctx):
+    reads = ctx["data"].setdefault("reads", [])
+    real = sqlite3.connect
+    def callback(action, arg1, arg2, dbname, source):
+        if action == sqlite3.SQLITE_READ: reads.append(str(arg1) + "." + str(arg2))
+        return sqlite3.SQLITE_OK
+    def wrapped(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.set_authorizer(callback)
+        return conn
+    patch(sqlite3, "connect", wrapped)
+
+def hook_no_sqlite(case, ctx):
+    saved = sys.modules.get("sqlite3")
+    sys.modules["sqlite3"] = None
+    UNDO.append(lambda: sys.modules.__setitem__("sqlite3", saved))
+
+def hook_chmod_db(case, ctx):
+    if os.geteuid() == 0:
+        ctx["skipped"] = True
+        return
+    db = ctx["dbs"][0]
+    os.chmod(db, 0)
+    UNDO.append(lambda: os.chmod(db, 0o644))
+
+def hook_readonly_dir(case, ctx):
+    if os.geteuid() == 0:
+        ctx["skipped"] = True
+        return
+    shard = ctx["dbs"][0].parent
+    os.chmod(shard, 0o555)
+    UNDO.append(lambda: os.chmod(shard, 0o755))
+
+def raiser(name, message):
+    def install(case, ctx):
+        def boom(*args, **kwargs): raise RuntimeError(message)
+        patch(telemetry, name, boom)
+    return install
+
+HOOKS = {
+    "row-cap": hook_row_cap,
+    "budget-zero": lambda case, ctx: patch(telemetry, "CURSOR_CAPTURE_BUDGET_S", 0),
+    "no-sqlite": hook_no_sqlite,
+    "ndjson-vanished": lambda case, ctx: patch(telemetry, "_read_bounded", lambda path: ([], "missing")),
+    "ndjson-raises": raiser("_read_bounded", SENTINEL),
+    "normalize-raises": raiser("_sqlite_records", SENTINEL),
+    "busy-connect": hook_busy("connect"), "busy-begin": hook_busy("begin"), "busy-probe": hook_busy("probe"),
+    "query-error": hook_busy("query"),
+    "bump-mtime": hook_after_connect(bump_mtime), "create-wal": hook_after_connect(create_wal),
+    "authorizer": hook_authorizer, "chmod-db": hook_chmod_db, "readonly-dir": hook_readonly_dir,
+}
+
+def build_shards(shards, root, ctx):
+    for entry in shards:
+        kind = entry["kind"]
+        if kind == "sqlite":
+            planted = plant_sqlite(entry, root)
+            ctx["dbs"].append(planted["db"])
+            if planted["proc"]: ctx["writers"].append(planted["proc"])
+        elif kind == "ndjson":
+            base = Path(root or store_root()) / entry["shard"]
+            write_jsonl(base / "agents.ndjson", entry.get("agents", []))
+            write_jsonl(base / "runs.ndjson", entry.get("runs", []))
+        elif kind == "tree":
+            base = Path(root or store_root()) / entry["shard"]
+            base.mkdir(parents=True, exist_ok=True)
+            for name in entry.get("dirs", ()): (base / name).mkdir(parents=True, exist_ok=True)
+            for name, content in (entry.get("files") or {}).items(): (base / name).write_text(content)
+        else:
+            raise ValueError("unknown shard kind")
+
+def run_case(case):
+    close_writers()
+    reset_store()
+    ctx = {"dbs": [], "writers": [], "data": {}, "skipped": False}
+    root = None
+    if case.get("store") == "uri":
+        root = Path(tempfile.mkdtemp()) / "st ore?#%x"
+    try:
+        build_shards(case["shards"], root, ctx)
+        scan = root or store_root()
+        before = snapshot(scan, case.get("hash", False)) if scan.exists() else {}
+        if case.get("hook"): HOOKS[case["hook"]](case, ctx)
+        try:
+            capture = telemetry.capture_cursor_store(root)
+            selection = telemetry.select_cursor(capture, case.get("cwd", "/work"), case.get("session", "conv-1"),
+                                                case.get("begin", 1700000000), case.get("end", 1700000100))
+        finally:
+            unpatch()
+        after = snapshot(scan, case.get("hash", False)) if scan.exists() else {}
+        stable = lambda snap: {key: value for key, value in snap.items() if not key.endswith("-shm")}
+        result = {
+            "certify": selection.certify, "model": selection.model, "effort": selection.effort, "usable": selection.usable,
+            "reasons": selection.reasons, "causes": ordered(selection.causes), "complete": capture.complete,
+            "status": capture.status, "layouts": dict(capture.layouts),
+            "shard_layouts": [shard.get("layout") for shard in capture.shards],
+            "turns": [shard.get("turns") for shard in capture.shards],
+            "invariant": capture.status != "read" or capture.complete or bool(capture.causes),
+            "debug": debug_text(selection), "skipped": ctx["skipped"], "data": ctx["data"],
+            "tree_equal": set(before) == set(after), "bytes_equal": stable(before) == stable(after) if case.get("hash") else None,
+        }
+        return result
+    finally:
+        for handle in ctx["writers"]: stop_writer(handle)
+        unpatch()
+        close_writers()
+        if root is not None: shutil.rmtree(root.parent, ignore_errors=True)
+
+def do_sqlite(cases):
+    return {case["name"]: run_case(case) for case in cases}
+
+def do_budget():
+    out, cwd, reads, clock = {}, "/work", [], [1000.0]
+    real_reader = telemetry._read_bounded
+    def plant_ndjson(name):
+        write_jsonl(store_root() / name / "agents.ndjson", [agent("conv-1", cwd)])
+        write_jsonl(store_root() / name / "runs.ndjson", [])
+    def counting(advance_after=None):
+        # Counts NDJSON file reads. The fake clock jumps past any deadline right after the Nth read.
+        def wrapped(path):
+            reads.append(path.name)
+            result = real_reader(path)
+            if len(reads) == advance_after: clock[0] += 100
+            return result
+        return wrapped
+    def shape(capture):
+        return {"complete": capture.complete, "causes": ordered(capture.causes), "shards": len(capture.shards), "reads": len(reads)}
+    def fresh():
+        close_writers(); reset_store(); reads.clear(); clock[0] = 1000.0
+    try:
+        fresh(); plant_ndjson("a")
+        plant_sqlite({"shard": "b", "strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}], "runs": []})
+        patch(telemetry, "CURSOR_CAPTURE_BUDGET_S", 0); patch(telemetry, "_read_bounded", counting())
+        out["zero"] = shape(telemetry.capture_cursor_store())
+        unpatch()
+        fresh(); plant_ndjson("a")
+        patch(telemetry.time, "monotonic", lambda: clock[0]); patch(telemetry, "_read_bounded", counting(1))
+        out["between"] = shape(telemetry.capture_cursor_store())
+        out["between"]["read_names"] = list(reads)
+        unpatch()
+        fresh(); plant_ndjson("a"); plant_ndjson("b")
+        patch(telemetry.time, "monotonic", lambda: clock[0]); patch(telemetry, "_read_bounded", counting(2))
+        out["final"] = shape(telemetry.capture_cursor_store())
+        unpatch()
+        fresh()
+        planted = plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}],
+                                "runs": [{"agent_id": "conv-1", "run_id": "r1", "model": "m", "started": 1, "updated": 2}]})
+        patch(telemetry, "SQLITE_PROGRESS_STEPS", 1)
+        past = telemetry._read_sqlite_shard(planted["shard"], time.monotonic() - 1)
+        future = telemetry._read_sqlite_shard(planted["shard"], time.monotonic() + 60)
+        out["interrupt"] = {"past": [len(past[0]), len(past[1]), past[2]], "future": [len(future[0]), len(future[1]), future[2]]}
+    finally:
+        unpatch()
+        close_writers()
+    return out
+
+def do_extract():
+    value = telemetry._sqlite_value
+    return {"integer": value("integer", None) == b"", "real": value("real", None) == b"", "blob": value("blob", b"x") == b"",
+            "over_cap": value("text", None) == b"", "null": value("null", None) is None, "text": value("text", "a") == "a",
+            "nul": value("text", "a\x00b") == "a\x00b"}
+
+def do_kept_wal():
+    # A snapshot copy of a live shard: sidecars present, no writer. This is the state after a crash, a persistent WAL,
+    # or Conductor quitting.
+    close_writers(); reset_store()
+    spec = {"keep_writer": True, "agents": [{"agent_id": "conv-1", "cwd": "/work"}], "runs": [{"agent_id": "conv-1", "run_id": "old", "model": "grok-4.0", "started": 1699999700, "updated": 1699999800, "ended": 1699999900}],
+            "wal_only_runs": [{"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": 1699999980, "updated": 1700000050}]}
+    planted = plant_sqlite(spec)
+    scratch = Path(tempfile.mkdtemp())
+    for suffix in ("", "-wal", "-shm"): shutil.copyfile(str(planted["db"]) + suffix, scratch / ("index.db" + suffix))
+    close_writers(); reset_store()
+    shard = store_root() / "0123456789abcdef"
+    shard.mkdir(parents=True)
+    for suffix in ("", "-wal", "-shm"): shutil.copyfile(scratch / ("index.db" + suffix), shard / ("index.db" + suffix))
+    shutil.rmtree(scratch)
+    before = snapshot(store_root(), True)
+    capture = telemetry.capture_cursor_store()
+    selection = telemetry.select_cursor(capture, "/work", "conv-1", 1700000000, 1700000100)
+    after = snapshot(store_root(), True)
+    return {"certify": selection.certify, "model": selection.model, "effort": selection.effort, "causes": ordered(capture.causes),
+            "tree_equal": set(before) == set(after), "db_equal": before["0123456789abcdef/index.db"] == after["0123456789abcdef/index.db"],
+            "wal_equal": before["0123456789abcdef/index.db-wal"] == after["0123456789abcdef/index.db-wal"]}
+
+def do_xproc():
+    # The writer is a separate process, as Conductor is: -shm is shared across processes, and a commit that sits only
+    # in the -wal must be visible without the reader changing index.db or the -wal.
+    close_writers(); reset_store()
+    handle = None
+    try:
+        planted = plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": "/work"}],
+                                "runs": [{"agent_id": "conv-1", "run_id": "old", "model": "grok-4.0", "started": 1699999700, "updated": 1699999800, "ended": 1699999900}],
+                                "writer_process": {"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": 1699999980, "updated": 1700000050}})
+        handle = planted["proc"]
+        before = snapshot(store_root(), True)
+        capture = telemetry.capture_cursor_store()
+        selection = telemetry.select_cursor(capture, "/work", "conv-1", 1700000000, 1700000100)
+        after = snapshot(store_root(), True)
+        stable = lambda snap: {key: value for key, value in snap.items() if not key.endswith("-shm")}
+        return {"certify": selection.certify, "model": selection.model, "effort": selection.effort, "causes": ordered(capture.causes),
+                "tree_equal": set(before) == set(after), "bytes_equal": stable(before) == stable(after),
+                "had_wal": any(key.endswith("index.db-wal") for key in before)}
+    finally:
+        if handle: stop_writer(handle)
+
+def do_plant_sqlite(specs):
+    # Plants into the fixture HOME for an end-to-end finish. A held writer outlives this process; the caller releases it.
+    if any(spec.get("keep_writer") for spec in specs):
+        raise ValueError("keep_writer is only supported by in-process cases")
+    out = {"holds": []}
+    for spec in specs:
+        planted = plant_sqlite(spec)
+        out["db"] = str(planted["db"])
+        if planted["proc"]:
+            out["holds"].append({"pid": planted["proc"]["proc"].pid, "release": str(planted["proc"]["release"])})
+    return out
+
+def do_privacy(broken):
+    # A real provenance_row with debug on. The canary lives in every column that must never be read. A broken sibling
+    # shard (an empty directory) makes the capture incomplete, so the cause line prints.
+    close_writers(); reset_store()
+    cwd, now = os.getcwd(), int(time.time())
+    plant_sqlite({"strip_sidecars": True, "agents": [{"agent_id": "conv-1", "cwd": cwd}],
+                  "runs": [{"agent_id": "conv-1", "run_id": "cur", "model": "grok-4.7", "params": [{"id": "reasoning_effort", "value": "xhigh"}], "started": now - 60, "updated": now - 10}]})
+    if broken: (store_root() / "fedcba9876543210").mkdir()
+    os.environ.update({"CURSOR_AGENT": "1", "CURSOR_CONVERSATION_ID": "conv-1", "GSTACK_EXTEND_TELEMETRY_DEBUG": "1"})
+    for name in ("CURSOR_INVOKED_AS", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"):
+        os.environ.pop(name, None)
+    stream = io.StringIO()
+    with contextlib.redirect_stderr(stream):
+        row = telemetry.provenance_row("roadmap", "sid-sqlite-privacy", now - 30, 5, {}, None)
+    text = stream.getvalue()
+    lines = [line for line in text.splitlines() if line.startswith("telemetry: cursor-sdk")]
+    return {"row": {key: row[key] for key in ("agent", "model", "effort", "route")}, "lines": lines,
+            "leaked": SENTINEL in text + json.dumps(row), "path_in_lines": any("Library" in line or "/" in line.split("See docs/")[0] for line in lines)}
+`;
 const CURSOR_HARNESS = [
   'import json, os, shutil, sys, time',
   'from pathlib import Path',
@@ -1889,7 +2387,7 @@ const CURSOR_HARNESS = [
   '        capture = telemetry.CursorCapture(case.get("status") or "read", shards, case.get("complete", True))',
   '        selection = telemetry.select_cursor(capture, case.get("cwd"), case.get("session"), case.get("begin"), case.get("end"))',
   '        out.append({"certify": selection.certify, "model": selection.model, "effort": selection.effort,',
-  '                    "usable": selection.usable, "reasons": selection.reasons})',
+  '                    "usable": selection.usable, "reasons": selection.reasons, "causes": ordered(selection.causes)})',
   '    return out',
   'def store_root():',
   '    return Path.home() / "Library/Application Support/com.conductor.app/cursor-sdk-store"',
@@ -1920,6 +2418,9 @@ const CURSOR_HARNESS = [
   '    return row',
   'def do_files():',
   '    reset_store()',
+  '    # Every capture this scenario takes is recorded, so an incomplete read capture with no cause cannot hide.',
+  '    captures, plain_capture = [], telemetry.capture_cursor_store',
+  '    telemetry.capture_cursor_store = lambda *args, **kwargs: captures.append(plain_capture(*args, **kwargs)) or captures[-1]',
   '    cwd = os.getcwd()',
   '    begin, end = 1700000000, 1700000100',
   '    old = agent("old-agent", cwd)',
@@ -1946,7 +2447,7 @@ const CURSOR_HARNESS = [
   '        reset_store()',
   '        setup()',
   '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
-  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
+  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
   '    def missing_agents():',
   '        write_jsonl(store_root() / "gap" / "runs.ndjson", [run("only-agent", "run-1", {"id": "model-hidden", "params": {"effort": "high"}})])',
   '    def nonregular():',
@@ -2029,7 +2530,7 @@ const CURSOR_HARNESS = [
   '            found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
   '        finally:',
   '            telemetry.Path.open = restore',
-  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
+  '        return {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
   '    kept = (good_line + "\\n").encode()',
   '    shrunk_result = stub_result("shrink", len(kept) * 2, kept)',
   '    torn_growing_result = stub_result("tear", len(kept) + 20, kept + good_line.replace("run-1", "run-2").encode()[:20])',
@@ -2056,7 +2557,7 @@ const CURSOR_HARNESS = [
   '        for name, method in saved.items():',
   '            setattr(Path, name, method)',
   '        os.chmod(store_root() / "locked", 0o755)',
-  '    locked_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
+  '    locked_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
   '    fifo_result = isolated(fifo_runs)',
   '    empty_result = isolated(empty_shard)',
   '    torn_result = isolated(torn_tail)',
@@ -2069,7 +2570,7 @@ const CURSOR_HARNESS = [
   '        found = telemetry.select_cursor(telemetry.capture_cursor_store(), cwd, None, begin, end)',
   '    finally:',
   '        telemetry.Path.open = restore',
-  '    grown_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons}',
+  '    grown_result = {"certify": found.certify, "model": found.model, "reasons": found.reasons, "causes": ordered(found.causes)}',
   '    os.environ["CURSOR_AGENT"] = "1"',
   '    os.environ.pop("CURSOR_CONVERSATION_ID", None)',
   '    reset_store()',
@@ -2095,8 +2596,8 @@ const CURSOR_HARNESS = [
   '    reset_store()',
   '    file_root()',
   '    recorded = telemetry.provenance_row("roadmap", "sid-shape", begin, 5, {}, None)',
-  '    return {"agents_tail": {"certify": clipped.certify, "model": clipped.model, "reasons": clipped.reasons},',
-  '            "runs_tail": {"certify": runs_clipped.certify, "model": runs_clipped.model, "reasons": runs_clipped.reasons},',
+  '    return {"agents_tail": {"certify": clipped.certify, "model": clipped.model, "reasons": clipped.reasons, "causes": ordered(clipped.causes)},',
+  '            "runs_tail": {"certify": runs_clipped.certify, "model": runs_clipped.model, "reasons": runs_clipped.reasons, "causes": ordered(runs_clipped.causes)},',
   '            "missing_agents": isolated(missing_agents), "nonregular": isolated(nonregular),',
   '            "missing_runs": isolated(missing_runs), "fifo_runs": fifo_result, "empty_shard": empty_result,',
   '            "torn_tail": torn_result, "unterminated_tail": whole_result, "deep_line": deep_result, "grown": grown_result,',
@@ -2104,7 +2605,8 @@ const CURSOR_HARNESS = [
   '            "file_root": isolated(file_root), "bad_json": isolated(bad_json),',
   '            "big": {"complete": big_capture.complete, "parsed": parsed[0]},',
   '            "inspected": inspected, "inspected_all": inspected_all,',
-  '            "recorded": {"stage": recorded["stage"], "model": recorded["model"], "route": recorded["route"], "keys": list(recorded)}}',
+  '            "recorded": {"stage": recorded["stage"], "model": recorded["model"], "route": recorded["route"], "keys": list(recorded)},',
+  '            "captured": len(captures), "invariant": all(item.status != "read" or item.complete or bool(item.causes) for item in captures)}',
   'def do_observe(mode):',
   '    reset_store()',
   '    cwd = os.getcwd()',
@@ -2251,6 +2753,7 @@ const CURSOR_HARNESS = [
   '                return {"raised": type(error).__name__}',
   '        return {"raised": None, "agent": row["agent"], "model": row["model"], "route": row["route"], "keys": list(row), "stderr": stderr.getvalue()}',
   '    raise SystemExit("unknown mode")',
+  CURSOR_SQLITE_PY,
   'payload = json.load(sys.stdin)',
   'op = payload["op"]',
   'if op == "registry":',
@@ -2263,12 +2766,28 @@ const CURSOR_HARNESS = [
   '    print(json.dumps(do_files()))',
   'elif op == "observe":',
   '    print(json.dumps(do_observe(payload["mode"])))',
+  'elif op == "causes":',
+  '    print(json.dumps([list(pair) for pair in telemetry.CURSOR_SDK_CAUSES]))',
+  'elif op == "sqlite":',
+  '    print(json.dumps(do_sqlite(payload["cases"])))',
+  'elif op == "budget":',
+  '    print(json.dumps(do_budget()))',
+  'elif op == "extract":',
+  '    print(json.dumps(do_extract()))',
+  'elif op == "kept-wal":',
+  '    print(json.dumps(do_kept_wal()))',
+  'elif op == "xproc":',
+  '    print(json.dumps(do_xproc()))',
+  'elif op == "plant-sqlite":',
+  '    print(json.dumps(do_plant_sqlite(payload["specs"])))',
+  'elif op == "privacy":',
+  '    print(json.dumps(do_privacy(payload.get("broken", False))))',
   'else:',
   '    raise SystemExit("unknown op")',
 ].join('\n');
 
-function cursorPy(fix: TelemetryFixture, payload: object, cwd?: string) {
-  const result = spawnSync('python3', ['-B', '-I', '-c', CURSOR_HARNESS, join(ROOT, 'bin/lib')], {
+function cursorPy(fix: TelemetryFixture, payload: object, cwd?: string, python = 'python3') {
+  const result = spawnSync(python, ['-B', '-I', '-c', CURSOR_HARNESS, join(ROOT, 'bin/lib')], {
     env: fix.env, cwd, input: JSON.stringify(payload), encoding: 'utf8', timeout: 20_000,
   });
   expect([result.status, result.stderr]).toEqual([0, '']);
@@ -2543,24 +3062,29 @@ describe('Conductor Cursor store', () => {
     const fix = makeTelemetryFixture('off');
     const cwd = cursorWork(fix);
     const clipped = cursorPy(fix, { op: 'files' }, cwd);
-    expect(clipped.agents_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.runs_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.missing_agents.reasons).toEqual(['incomplete-evidence']);
-    expect(clipped.nonregular.reasons).toEqual(['incomplete-evidence']);
-    expect(clipped.missing_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    // A FIFO must not block open(); a stray empty shard directory must not darken the store.
-    expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.empty_shard).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
+    const NDJSON_INCOMPLETE = ['ndjson-incomplete'];
+    expect(clipped.agents_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.runs_tail).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.missing_agents).toMatchObject({ reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.nonregular).toMatchObject({ reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.missing_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    // A FIFO must not block open().
+    expect(clipped.fifo_runs).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    // Value: protects=an empty shard directory is an unrecognized layout, never skipped; fails_when=the old "neither file is skipped" rule returns; why_new=this expectation used to certify the good sibling shard; seam=none
+    expect(clipped.empty_shard).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['unrecognized-layout'] });
     // A writer mid-append can hide a competing run: growth past the cap, a shrink, or a torn final line on a file
     // that changed size or was modified recently is incomplete. A torn line on a quiet file is stale residue, skipped.
     expect(clipped.torn_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
-    expect(clipped.torn_growing).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.torn_paused).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
-    expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    expect(clipped.shrunk).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
-    // A shard that cannot be searched is unreadable, never "missing", whatever pathlib answers.
-    expect(clipped.locked).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'] });
+    expect(clipped.torn_growing).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.torn_paused).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.unterminated_tail).toMatchObject({ certify: true, model: 'model-kept', reasons: [], causes: [] });
+    expect(clipped.grown).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    expect(clipped.shrunk).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: NDJSON_INCOMPLETE });
+    // A shard that cannot be searched is unreadable, never "missing", whatever pathlib answers, and never a mixed layout.
+    expect(clipped.locked).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['shard-unreadable'] });
+    // Value: protects=no incomplete read capture is ever causeless, so a debug line never prints an empty cause list; fails_when=a new incomplete branch forgets its cause; why_new=causes are a new field; seam=none
+    expect(clipped.captured).toBeGreaterThan(10);
+    expect(clipped.invariant).toBe(true);
     expect(clipped.deep_line).toMatchObject({ certify: true, model: 'model-kept', reasons: [] });
     expect(clipped.big.complete).toBe(false);
     expect(clipped.big.parsed).toBeLessThan(10);
@@ -2777,6 +3301,428 @@ describe('Conductor Cursor store', () => {
     expect(skillFix.readLedger().filter(row => row.stage === 'full-review')).toHaveLength(1);
     expect(handoffs(skillFix)).toHaveLength(0);
   }, 30_000);
+
+  // ─── SQLite shard layout (Track 23G): index.db shards in the same selection contract ───
+  const XHIGH = [{ id: 'fast', value: 'false' }, { id: 'reasoning_effort', value: 'xhigh' }];
+  const sqlAgent = (agentId: string, where: string = cwd, overrides: Record<string, unknown> = {}) => ({ agent_id: agentId, cwd: where, overrides });
+  const sqlRun = (agentId: string, runId: unknown, id: unknown, params: unknown, started: number | null, updated: number,
+    ended: number | null = null, extra: Record<string, unknown> = {}) => ({ agent_id: agentId, run_id: runId, model: id, params, started, updated, ended, ...extra });
+  const priorRun = sqlRun('conv-1', 'old', 'grok-4.0', [{ id: 'reasoning_effort', value: 'low' }], begin - 300, begin - 200, begin - 100);
+  const currentRun = sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50, begin + 80);
+  const openRun = sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50);
+  const sqlLive = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', keep_writer: true, agents: [sqlAgent('conv-1')], runs, ...extra });
+  const sqlQuiet = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', strip_sidecars: true, agents: [sqlAgent('conv-1')], runs, ...extra });
+  const sqlDelete = (runs: unknown[], extra: Record<string, unknown> = {}) => ({ kind: 'sqlite', journal: 'delete', agents: [sqlAgent('conv-1')], runs, ...extra });
+  const goodNdjson = (shard = 'good') => ({
+    kind: 'ndjson', shard, agents: [{ agentId: 'conv-1', cwd }],
+    runs: [closed('conv-1', 'nd-run', model('grok-nd', XHIGH), begin - 20, begin + 50, begin + 80)],
+  });
+  type Case = { name: string; shards: unknown[]; hook?: string; hash?: boolean; session?: string | null; store?: string };
+  type Result = {
+    certify: boolean; model: string | null; effort: string | null; reasons: string[]; causes: string[]; complete: boolean;
+    layouts: Record<string, number>; shard_layouts: string[]; turns: Array<number[] | null>; invariant: boolean; debug: string;
+    skipped: boolean; data: { timeouts?: number[]; reads?: string[]; turn_reads?: number }; tree_equal: boolean; bytes_equal: boolean | null;
+  };
+  const sqliteCases = (fix: TelemetryFixture, cases: Case[], python = 'python3') =>
+    cursorPy(fix, { op: 'sqlite', cases }, undefined, python) as Record<string, Result>;
+  const CERTIFIED = { certify: true, model: 'grok-4.7', effort: 'xhigh', reasons: [], causes: [], complete: true, invariant: true };
+
+  /** Live, WAL-only and closed shards: the cases the runtime matrix repeats under the runner's own interpreter. */
+  const matrixCases = (): Case[] => [
+    { name: 'happy-live', hash: true, shards: [sqlLive([priorRun, currentRun])] },
+    { name: 'happy-quiet', hash: true, shards: [sqlQuiet([priorRun, currentRun])] },
+    { name: 'wal-only', hash: true, shards: [sqlLive([priorRun], { wal_only_runs: [openRun] })] },
+    { name: 'quiet-delete', hash: true, shards: [sqlDelete([priorRun, currentRun])] },
+  ];
+  const expectMatrix = (found: Record<string, Result>) => {
+    for (const name of ['happy-live', 'happy-quiet', 'wal-only', 'quiet-delete']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining({ ...CERTIFIED, layouts: { sqlite: 1 }, shard_layouts: ['sqlite'] })]);
+      // The reader creates no file and never changes index.db or the -wal; only the shared-memory index may move.
+      expect([name, found[name].tree_equal, found[name].bytes_equal]).toEqual([name, true, true]);
+    }
+  };
+
+  test('G-happy G-open G-wal: live, WAL-only, closed and rollback-journal shards certify without writing', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [
+      ...matrixCases(),
+      { name: 'open', shards: [sqlLive([openRun])] },
+    ]);
+    // Value: protects=a current build's single-prompt run records model and effort end to end; fails_when=the adapter, dispatch or open rule regresses; why_new=no SQLite reader existed; seam=none
+    expectMatrix(found);
+    expect(found['happy-live'].turns).toEqual([[1, 2, 2]]);
+    // Value: protects=a RUNNING run (all terminal columns null) is open and certifies; fails_when=status is read as ended; why_new=the NDJSON path has no status column; seam=none
+    expect(found.open).toMatchObject({ ...CERTIFIED });
+    // Value: protects=a commit that exists only in the -wal is visible on a live shard; fails_when=immutable=1 is used when sidecars exist; why_new=immutable misses WAL-only commits; seam=none
+    expect(found['wal-only']).toMatchObject({ ...CERTIFIED, model: 'grok-4.7' });
+    expect(found['wal-only'].turns).toEqual([[1, 2, 2]]);
+  });
+
+  test('G-turn-diagnostics: INTEGER affinity cannot send text or BLOB turn values through the aggregate', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [{ name: 'malformed-turns', shards: [sqlQuiet([
+      priorRun, currentRun,
+      { ...priorRun, run_id: 'text-turn', overrides: { turn_number: { $repeat: ['x', 1024 * 1024] } } },
+      { ...priorRun, run_id: 'blob-turn', overrides: { turn_number: { $blob: '78'.repeat(1024 * 1024) } } },
+    ])] }]);
+    // Value: protects=optional diagnostics return only bounded integers from SQL; fails_when=raw min/max materialize arbitrary text/BLOB values; why_new=INTEGER affinity permits non-integer storage; seam=none
+    expect(found['malformed-turns']).toMatchObject({ ...CERTIFIED, turns: [[1, 2, 4]] });
+  });
+
+  test('G-plant-op: standalone planting rejects keep_writer before creating any shard', () => {
+    const fix = makeTelemetryFixture('off');
+    const result = spawnSync('python3', ['-B', '-I', '-c', CURSOR_HARNESS, join(ROOT, 'bin/lib')], {
+      env: fix.env, input: JSON.stringify({ op: 'plant-sqlite', specs: [sqlQuiet([currentRun]), sqlLive([currentRun], { shard: 'second' })] }),
+      encoding: 'utf8', timeout: 20_000,
+    });
+    // Value: protects=the fixture cannot pretend a writer survives its planting subprocess; fails_when=the op accepts keep_writer or partially plants before validating all specs; why_new=approved plan requires the op guard; seam=none
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('keep_writer is only supported by in-process cases');
+    expect(existsSync(join(fix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store'))).toBe(false);
+  });
+
+  test('G-xproc G-kept-wal: a separate writer process and a crash-left WAL are read without writing', () => {
+    const fix = makeTelemetryFixture('off');
+    // Value: protects=live-run visibility across processes; fails_when=immutable=1 is used on a live shard, or the -shm path breaks across processes; why_new=in-process tests share one shm node; seam=none
+    const across = cursorPy(fix, { op: 'xproc' }) as Record<string, unknown>;
+    expect(across).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'xhigh', causes: [], tree_equal: true, bytes_equal: true, had_wal: true });
+    // Value: protects=the crash or persistent-WAL state (sidecars present, no writer) reads its WAL-only row and creates no file; fails_when=kept sidecars are treated as unknown or opened immutable; why_new=close on upstream SQLite cannot plant this state; seam=none
+    const kept = cursorPy(fix, { op: 'kept-wal' }) as Record<string, unknown>;
+    expect(kept).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'xhigh', causes: [], tree_equal: true, db_equal: true, wal_equal: true });
+  }, 60_000);
+
+  test('G-null-start G-cancelled G-terminal-conflict G-status G-ambiguous G-identity: the run lifecycle rules', () => {
+    const fix = makeTelemetryFixture('off');
+    const queued = sqlRun('conv-1', 'queued', 'm-queued', null, null, begin + 10, null, { status: 'QUEUED' });
+    const cancelled = (id: string, updated: number, at: number) =>
+      sqlRun('conv-1', id, 'grok-c', XHIGH, begin - 300, updated, null, { status: 'CANCELLED', overrides: { cancelled_at: { $ts: at } } });
+    const conflict = (cancelledAt: unknown, expiredAt: unknown, extra: Record<string, unknown> = {}) =>
+      sqlRun('conv-1', 'tc', 'grok-t', XHIGH, begin - 300, begin - 200, null, { status: 'CANCELLED', overrides: { cancelled_at: cancelledAt, expired_at: expiredAt }, ...extra });
+    const stopped = (status: string, started: number, updated: number, ended: number | null = null) =>
+      sqlRun('conv-1', 'stopped', 'm-stopped', null, started, updated, ended, { status });
+    const found = sqliteCases(fix, [
+      { name: 'null-start-beside', shards: [sqlQuiet([currentRun, queued])] },
+      { name: 'null-start-alone', shards: [sqlQuiet([queued])] },
+      { name: 'cancelled-before', shards: [sqlQuiet([currentRun, cancelled('c1', begin - 250, begin - 200)])] },
+      { name: 'cancelled-inside', shards: [sqlQuiet([cancelled('c2', begin - 200, begin + 40)])] },
+      { name: 'tc-alone', shards: [sqlQuiet([conflict({ $ts: begin - 100 }, { $ts: begin + 40 })])] },
+      { name: 'tc-beside', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 })])] },
+      { name: 'tc-both-before', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin - 90 })])] },
+      { name: 'tc-duplicate', shards: [sqlQuiet([conflict({ $ts: begin + 40 }, { $ts: begin + 40 })])] },
+      { name: 'tc-unparseable', shards: [sqlQuiet([conflict('not-a-time', null)])] },
+      { name: 'tc-null-run-id', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 }, { run_id: null })])] },
+      { name: 'tc-long-run-id', shards: [sqlQuiet([currentRun, conflict({ $ts: begin - 100 }, { $ts: begin + 40 }, { run_id: { $repeat: ['x', 2000] } })])] },
+      { name: 'status-before', shards: [sqlQuiet([currentRun, stopped('ERROR', begin - 300, begin - 200)])] },
+      { name: 'status-inside-beside', shards: [sqlQuiet([currentRun, stopped('ERROR', begin - 10, begin + 20)])] },
+      { name: 'status-inside-alone', shards: [sqlQuiet([stopped('ERROR', begin - 10, begin + 20)])] },
+      { name: 'running-with-end', shards: [sqlQuiet([currentRun, stopped('RUNNING', begin - 300, begin - 200, begin - 100)])] },
+      { name: 'ambiguous', shards: [sqlQuiet([currentRun, sqlRun('conv-1', 'other', 'grok-4.8', XHIGH, begin - 5, begin + 60, begin + 90)])] },
+      { name: 'cwd-mismatch', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1', '/elsewhere')] })] },
+      { name: 'session-mismatch', session: 'conv-2', shards: [sqlQuiet([currentRun])] },
+    ]);
+    // A NULL start is an invalid snapshot, exactly as an NDJSON record with no startedAt: a malformed neighbor beside a valid run.
+    expect(found['null-start-beside']).toMatchObject({ ...CERTIFIED, reasons: ['malformed-neighbor'] });
+    expect(found['null-start-alone']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
+    // Value: protects=cancelled_at ends a run when finished_at is null; fails_when=only finished_at is read, or the end falls back to updated_at; why_new=cancelled runs leave finished_at null; seam=none
+    expect(found['cancelled-before']).toMatchObject({ ...CERTIFIED });
+    expect(found['cancelled-inside']).toMatchObject({ certify: true, model: 'grok-c', reasons: [] });
+    // Value: protects=contradictory terminal times never certify and never vanish; fails_when=the latest end widens the run or one snapshot is silently picked; why_new=CEO and Codex counterexamples; seam=none
+    for (const name of ['tc-alone', 'tc-beside']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: false, model: null, effort: null, reasons: ['ambiguous-candidates'] })]);
+    }
+    expect(found['tc-both-before']).toMatchObject({ ...CERTIFIED });
+    expect(found['tc-duplicate']).toMatchObject({ certify: true, model: 'grok-t', reasons: [] });
+    expect(found['tc-unparseable']).toMatchObject({ certify: false, model: null, reasons: ['malformed-bounds'] });
+    // Value: protects=an untrusted run identity never becomes several unrelated candidates; fails_when=a NULL or over-long run_id splits the conflict into separate runs; why_new=Codex reproduced split-candidate certification; seam=none
+    for (const name of ['tc-null-run-id', 'tc-long-run-id']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['sqlite-schema'] })]);
+    }
+    // Value: protects=a stopped row with no end closes at updated_at, so an old errored row cannot overlap every later stage; fails_when=status is ignored (open forever) or the row is a malformed neighbor; why_new=new lifecycle rule; seam=none
+    expect(found['status-before']).toMatchObject({ ...CERTIFIED });
+    expect(found['status-inside-beside']).toMatchObject({ certify: false, reasons: ['ambiguous-candidates'] });
+    expect(found['status-inside-alone']).toMatchObject({ certify: true, model: 'm-stopped', reasons: [] });
+    expect(found['running-with-end']).toMatchObject({ ...CERTIFIED });
+    expect(found.ambiguous).toMatchObject({ certify: false, model: null, effort: null, reasons: ['ambiguous-candidates'] });
+    expect(found['cwd-mismatch']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
+    expect(found['session-mismatch']).toMatchObject({ certify: false, reasons: ['no-session-match'] });
+  });
+
+  test('G-nul G-numeric-ts G-params: values are kept whole, numbers are rejected, containers are ignored', () => {
+    const fix = makeTelemetryFixture('off');
+    const withOverrides = (overrides: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+      sqlRun('conv-1', 'cur', 'grok-4.7', XHIGH, begin - 20, begin + 50, begin + 80, { overrides, ...extra });
+    const withParams = (raw: unknown) => sqlQuiet([withOverrides({ model_params_json: raw })]);
+    const found = sqliteCases(fix, [
+      { name: 'nul-cwd', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1', '/work\u0000/x')] })] },
+      { name: 'nul-agent', shards: [sqlQuiet([currentRun], { agents: [sqlAgent('conv-1\u0000junk')] })] },
+      { name: 'nul-timestamp', shards: [sqlQuiet([withOverrides({ started_at: { $concat: [{ $ts: begin - 20 }, '\u0000junk'] } })])] },
+      { name: 'nul-model', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok\u00004.7', XHIGH, begin - 20, begin + 50, begin + 80)])] },
+      { name: 'nul-params', shards: [withParams('[{"id":"reasoning_effort","value":"xhigh"}]\u0000')] },
+      { name: 'numeric-ts', shards: [sqlQuiet([withOverrides({ started_at: (begin - 20) * 1000, updated_at: (begin + 50) * 1000 })],
+        { untyped_columns: { runs: ['started_at', 'updated_at'] } })] },
+      { name: 'params-invalid', shards: [withParams('not json')] },
+      { name: 'params-over-cap', shards: [withParams({ $repeat: ['x', 17000] })] },
+      { name: 'params-blob', shards: [withParams({ $blob: '5b5d' })] },
+      { name: 'params-null', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok-4.7', null, begin - 20, begin + 50, begin + 80)])] },
+      { name: 'params-precedence', shards: [sqlQuiet([sqlRun('conv-1', 'cur', 'grok-4.7', [{ id: 'effort', value: 'low' }, { id: 'reasoning_effort', value: 'xhigh' }], begin - 20, begin + 50, begin + 80)])] },
+      { name: 'model-300', shards: [sqlQuiet([sqlRun('conv-1', 'cur', { $repeat: ['m', 300] }, XHIGH, begin - 20, begin + 50, begin + 80)])] },
+      { name: 'model-over-cap', shards: [sqlQuiet([sqlRun('conv-1', 'cur', { $repeat: ['m', 2000] }, XHIGH, begin - 20, begin + 50, begin + 80)])] },
+    ]);
+    // Value: protects=identity and validation integrity; fails_when=substr() or other truncating extraction cuts text at the NUL; why_new=Codex reproduced substr truncation on both SQLite builds; seam=none
+    expect(found['nul-cwd']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
+    expect(found['nul-agent']).toMatchObject({ certify: false, reasons: ['no-cwd-agent'] });
+    expect(found['nul-timestamp']).toMatchObject({ certify: false, reasons: ['malformed-bounds'] });
+    expect(found['nul-model']).toMatchObject({ certify: true, model: null, effort: 'xhigh', reasons: ['malformed-metadata'] });
+    expect(found['nul-params']).toMatchObject({ certify: true, model: 'grok-4.7', effort: null, reasons: [] });
+    // Value: protects=no unit guessing: an integer timestamp is a changed column, never milliseconds; fails_when=the declared-type probe or gated extraction is bypassed; why_new=TEXT affinity hides this in the default DDL; seam=none
+    expect(found['numeric-ts']).toMatchObject({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: ['sqlite-schema'] });
+    const kept = { certify: true, model: 'grok-4.7', effort: null, reasons: [] };
+    for (const name of ['params-invalid', 'params-over-cap', 'params-blob', 'params-null']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining(kept)]);
+    }
+    expect(found['params-precedence']).toMatchObject({ certify: true, model: 'grok-4.7', effort: 'low', reasons: [] });
+    for (const name of ['model-300', 'model-over-cap']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining({ certify: true, model: null, effort: 'xhigh', reasons: ['malformed-metadata'] })]);
+    }
+    const extracted = cursorPy(fix, { op: 'extract' }) as Record<string, boolean>;
+    // Value: protects=a number, a BLOB or an over-cap text never reaches _run_view as a timestamp; fails_when=gated extraction passes a number through; why_new=this pins D3 even when the schema probe would catch the column first; seam=none
+    expect(extracted).toEqual({ integer: true, real: true, blob: true, over_cap: true, null: true, text: true, nul: true });
+  });
+
+  test('G-mixed-store: NDJSON and SQLite shards select together, identity stays per shard', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [
+      { name: 'mixed-store', shards: [{ kind: 'ndjson', shard: 'nd', agents: [{ agentId: 'conv-9', cwd: '/other' }], runs: [closed('conv-9', 'r9', model('m9', XHIGH))] },
+        sqlQuiet([currentRun])] },
+      { name: 'both-eligible', shards: [goodNdjson(), sqlQuiet([currentRun])] },
+      { name: 'ndjson-only', shards: [goodNdjson()] },
+    ]);
+    expect(found['mixed-store']).toMatchObject({ ...CERTIFIED, layouts: { ndjson: 1, sqlite: 1 } });
+    expect(found['both-eligible']).toMatchObject({ certify: false, reasons: ['ambiguous-candidates'], layouts: { ndjson: 1, sqlite: 1 } });
+    expect(found['ndjson-only']).toMatchObject({ certify: true, model: 'grok-nd', effort: 'xhigh', layouts: { ndjson: 1 }, shard_layouts: ['ndjson'] });
+  });
+
+  test('G-empty G-agents-dir-only G-mixed-layout G-not-db G-schema G-nonregular: an unrecognized layout fails closed', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [
+      { name: 'empty', shards: [goodNdjson(), { kind: 'tree', shard: 'empty' }] },
+      { name: 'agents-dir-only', shards: [{ kind: 'tree', shard: 'agents-only', dirs: ['agents'] }] },
+      { name: 'mixed-layout', shards: [sqlQuiet([currentRun], { extra_files: { 'agents.ndjson': '{"agentId":"conv-1","cwd":"/work"}\n', 'runs.ndjson': '' } })] },
+      { name: 'not-db', shards: [{ kind: 'tree', shard: 'bad', files: { 'index.db': 'x'.repeat(4096) } }] },
+      { name: 'zero-byte', shards: [{ kind: 'tree', shard: 'zero', files: { 'index.db': '' } }] },
+      { name: 'schema-no-runs', shards: [sqlQuiet([currentRun], { ddl_overrides: { runs: null } })] },
+      { name: 'schema-dropped-column', shards: [sqlQuiet([currentRun], { drop_columns: { runs: ['expired_at'] } })] },
+      { name: 'schema-view', shards: [sqlQuiet([], { ddl_overrides: { runs: '$view' } })] },
+      { name: 'schema-untyped-agents', shards: [sqlQuiet([currentRun], { untyped_columns: { agents: ['workspace_ref'] } })] },
+      { name: 'nonregular', shards: [{ kind: 'tree', shard: 'dir-db', dirs: ['index.db'] }] },
+    ]);
+    const incomplete = (cause: string) => ({ certify: false, model: null, effort: null, usable: false, reasons: ['incomplete-evidence'], causes: [cause], complete: false, invariant: true });
+    // Value: protects=fail-closed layout recognition with the accurate cause; fails_when=an empty shard is skipped (the old rule) or causes are misattributed; why_new=the empty_shard expectation flipped; seam=none
+    expect(found.empty).toMatchObject({ ...incomplete('unrecognized-layout'), layouts: { ndjson: 1, unrecognized: 1 } });
+    expect(found.empty.debug).toContain('(causes: unrecognized-layout)');
+    expect(found['agents-dir-only']).toMatchObject(incomplete('unrecognized-layout'));
+    expect(found.nonregular).toMatchObject(incomplete('unrecognized-layout'));
+    // A mixed shard contributes no records from either layout.
+    expect(found['mixed-layout']).toMatchObject({ ...incomplete('mixed-layout'), shard_layouts: [] });
+    for (const name of ['not-db', 'zero-byte', 'schema-no-runs', 'schema-dropped-column', 'schema-view', 'schema-untyped-agents']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining(incomplete('sqlite-schema'))]);
+    }
+    for (const result of Object.values(found)) {
+      expect(result.invariant).toBe(true);
+      expect(result.debug).toContain('#cursor-sdk-incomplete-evidence');
+      expect(result.debug).not.toContain(fix.home);
+    }
+  });
+
+  test('G-unreadable G-busy G-row-cap G-no-sqlite-module G-ndjson-vanished: one cause token per failure', () => {
+    const fix = makeTelemetryFixture('off');
+    const busy = (name: string) => ({ name, hook: name, shards: [sqlQuiet([currentRun])] });
+    const found = sqliteCases(fix, [
+      { name: 'chmod-db', hook: 'chmod-db', shards: [sqlQuiet([currentRun])] },
+      busy('busy-connect'), busy('busy-begin'), busy('busy-probe'), busy('query-error'),
+      { name: 'row-cap', hook: 'row-cap', shards: [sqlQuiet([currentRun, priorRun, sqlRun('conv-1', 'third', 'm3', null, begin - 400, begin - 350, begin - 340)])] },
+      { name: 'row-cap-at-limit', hook: 'row-cap', shards: [sqlQuiet([currentRun, priorRun])] },
+      { name: 'no-sqlite', hook: 'no-sqlite', shards: [sqlQuiet([currentRun])] },
+      { name: 'no-sqlite-ndjson', hook: 'no-sqlite', shards: [goodNdjson()] },
+      { name: 'ndjson-vanished', hook: 'ndjson-vanished', shards: [goodNdjson()] },
+      { name: 'ndjson-raises', hook: 'ndjson-raises', shards: [goodNdjson()] },
+      { name: 'normalize-raises', hook: 'normalize-raises', shards: [sqlQuiet([currentRun])] },
+    ]);
+    const incomplete = (cause: string) => ({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: [cause], complete: false, invariant: true });
+    if (!found['chmod-db'].skipped) expect(found['chmod-db']).toMatchObject(incomplete('sqlite-open'));
+    // Value: protects=transient (lock) versus changed-store classification by control flow, not exception text; fails_when=one catch-all token, or the busy timeout exceeds SQLITE_BUSY_S; why_new=DX both-voice finding; seam=none
+    for (const name of ['busy-connect', 'busy-begin', 'busy-probe']) {
+      expect([name, found[name]]).toEqual([name, expect.objectContaining(incomplete('sqlite-open'))]);
+      expect(found[name].data.timeouts!.length).toBeGreaterThan(0);
+      for (const timeout of found[name].data.timeouts!) expect(timeout).toBeLessThanOrEqual(0.5);
+      expect(found[name].debug).not.toContain('locked');
+      expect(found[name].debug).not.toContain(CURSOR_SENTINEL);
+    }
+    expect(found['row-cap']).toMatchObject(incomplete('sqlite-row-cap'));
+    // Value: protects=excess rows are rejected before optional diagnostic work; fails_when=the aggregate scans an already over-cap archive; why_new=the old reader scanned it before checking the cap; seam=row cap and query trace
+    expect(found['row-cap'].data.turn_reads).toBe(0);
+    expect(found['row-cap-at-limit']).toMatchObject({ ...CERTIFIED });
+    expect(found['row-cap-at-limit'].data.turn_reads).toBe(1);
+    // Value: protects=post-probe errors remain transient sqlite-error and never leak exception text; fails_when=all OperationalError paths are called sqlite-open; why_new=the probe marks a distinct recovery boundary; seam=query error injection
+    expect(found['query-error']).toMatchObject({ ...incomplete('sqlite-error'), effort: null });
+    expect(found['query-error'].debug).toContain('(causes: sqlite-error)');
+    expect(found['query-error'].debug).not.toContain('locked');
+    expect(found['query-error'].debug).not.toContain(CURSOR_SENTINEL);
+    expect(found['no-sqlite']).toMatchObject(incomplete('sqlite-module-missing'));
+    // An NDJSON-only store never needs the module.
+    expect(found['no-sqlite-ndjson']).toMatchObject({ certify: true, model: 'grok-nd', causes: [] });
+    expect(found['ndjson-vanished']).toMatchObject(incomplete('ndjson-vanished'));
+    // A bug in dispatch or normalization is a reader bug, never a Conductor change.
+    expect(found['ndjson-raises']).toMatchObject(incomplete('reader-error'));
+    expect(found['normalize-raises']).toMatchObject(incomplete('reader-error'));
+    for (const name of ['ndjson-raises', 'normalize-raises']) expect(found[name].debug).not.toContain(CURSOR_SENTINEL);
+  });
+
+  /** G-readonly (b)-(e): closed shards, sidecar transitions and writer races. (a) is the live shard in the matrix cases. */
+  const readonlyCases = (): Case[] => [
+    { name: 'quiet-dir-0555', hook: 'readonly-dir', hash: true, shards: [sqlQuiet([currentRun])] },
+    { name: 'delete-dir-0555', hook: 'readonly-dir', hash: true, shards: [sqlDelete([currentRun])] },
+    { name: 'wal-without-shm', shards: [sqlQuiet([currentRun], { extra_files: { 'index.db-wal': '' } })] },
+    { name: 'journal-present', shards: [sqlDelete([currentRun], { extra_files: { 'index.db-journal': '' } })] },
+    { name: 'race-mtime', hook: 'bump-mtime', shards: [sqlQuiet([currentRun])] },
+    { name: 'race-wal', hook: 'create-wal', shards: [sqlQuiet([currentRun])] },
+  ];
+  const expectReadonly = (found: Record<string, Result>) => {
+    for (const name of ['quiet-dir-0555', 'delete-dir-0555']) {
+      // Skipped when running as root, matching the other chmod cases.
+      if (!found[name].skipped) expect([name, found[name]]).toEqual([name, expect.objectContaining({ ...CERTIFIED, tree_equal: true, bytes_equal: true })]);
+    }
+    const incomplete = (cause: string) => ({ certify: false, model: null, reasons: ['incomplete-evidence'], causes: [cause], invariant: true });
+    // Value: protects=a shard in transition is never opened, so no sidecar is created; fails_when=a half-present sidecar set is opened; why_new=Apple fails and upstream creates files on a plain mode=ro open; seam=none
+    expect(found['wal-without-shm']).toMatchObject({ ...incomplete('sqlite-sidecars'), tree_equal: true });
+    expect(found['journal-present']).toMatchObject({ ...incomplete('sqlite-sidecars'), tree_equal: true });
+    // Value: protects=a read that a writer could have raced is discarded; fails_when=the post-read re-check of the sidecars or index.db stat key is dropped; why_new=immutable=1 does not detect change; seam=none
+    expect(found['race-mtime']).toMatchObject(incomplete('sqlite-changed'));
+    expect(found['race-wal']).toMatchObject(incomplete('sqlite-changed'));
+  };
+
+  test('G-readonly G-uri: closed shards, sidecar transitions and writer races never write', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [
+      ...readonlyCases(),
+      { name: 'uri', store: 'uri', shards: [sqlQuiet([currentRun])] },
+    ]);
+    expectReadonly(found);
+    // A store root containing ?, #, % and a space is a path, never a URI component.
+    expect(found.uri).toMatchObject({ ...CERTIFIED });
+  });
+
+  test('G-budget: the capture deadline stops reads between files, between shards and inside a query', () => {
+    const fix = makeTelemetryFixture('off');
+    const budget = cursorPy(fix, { op: 'budget' }) as Record<string, { complete: boolean; causes: string[]; shards: number; reads: number; read_names?: string[] }
+      | { past: unknown[]; future: unknown[] }>;
+    const stopped = { complete: false, causes: ['capture-timeout'] };
+    // Value: protects=bounded finish latency; fails_when=the deadline is only checked at shard edges; why_new=Codex and native budget findings; seam=none
+    expect(budget.zero).toMatchObject({ ...stopped, shards: 0, reads: 0 });
+    expect(budget.between).toMatchObject({ ...stopped, shards: 0, reads: 1, read_names: ['agents.ndjson'] });
+    expect(budget.final).toMatchObject({ ...stopped, shards: 1, reads: 2 });
+    // Value: protects=an interrupted query is a timeout, not a lock or a read error; fails_when=failures are classified without the deadline-first rule; why_new=progress-handler interrupt is an OperationalError; seam=SQLITE_PROGRESS_STEPS constant (monkeypatched)
+    expect(budget.interrupt).toEqual({ past: [0, 0, 'capture-timeout'], future: [1, 1, null] });
+  });
+
+  test('G-privacy: the key column and every unread column never leave the store', () => {
+    const fix = makeTelemetryFixture('off');
+    const found = sqliteCases(fix, [{ name: 'reads', hook: 'authorizer', shards: [sqlLive([priorRun, currentRun])] }]);
+    expect(found.reads).toMatchObject({ ...CERTIFIED });
+    const columns = (found.reads.data.reads ?? []).filter(item => /^(agents|runs|run_events)\./.test(item));
+    const allowed = new Set([
+      'agents.agent_id', 'agents.workspace_ref',
+      ...['run_id', 'agent_id', 'status', 'model', 'model_params_json', 'started_at', 'updated_at', 'finished_at', 'cancelled_at', 'expired_at', 'turn_number'].map(name => 'runs.' + name),
+    ]);
+    // Value: protects=the encryption-key column, usage, result and event payloads are never selected; fails_when=SELECT * or an extra column creeps in; why_new=the store has a secret column; seam=none
+    expect(columns.length).toBeGreaterThan(10);
+    expect(columns.filter(item => !allowed.has(item))).toEqual([]);
+    const python = spawnSync('python3', ['-B', '-I', '-c',
+      'import sys\nsys.path.insert(0, sys.argv[1])\nimport telemetry\nprint(telemetry.SQLITE_AGENTS_SQL + "\\n" + telemetry.SQLITE_RUNS_SQL)',
+      join(ROOT, 'bin/lib')], { encoding: 'utf8', env: fix.env });
+    expect(python.status).toBe(0);
+    expect(python.stdout).not.toContain('*');
+    expect(python.stdout).not.toContain('metadata_json');
+    for (const broken of [false, true]) {
+      const trace = cursorPy(fix, { op: 'privacy', broken }, cursorWork(fix)) as { row: Record<string, unknown>; lines: string[]; leaked: boolean; path_in_lines: boolean };
+      expect(trace.leaked).toBe(false);
+      expect(trace.path_in_lines).toBe(false);
+      expect(trace.row).toMatchObject(broken ? { model: null, route: 'unknown' } : { model: 'grok-4.7', effort: 'xhigh', route: 'conductor' });
+      if (broken) expect(trace.lines).toEqual(['telemetry: cursor-sdk incomplete-evidence (causes: unrecognized-layout). See docs/telemetry.md#cursor-sdk-incomplete-evidence.']);
+    }
+  }, 30_000);
+
+  test('G-e2e: a real finish records the requested model and effort from a SQLite shard', () => {
+    const native = { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' };
+    const fix = makeTelemetryFixture('off');
+    // HOME is reached through a path with a space, as a real home can be; the fixture HOME has none. G-uri owns the quoting of ?, # and %.
+    const spaced = mkdtempSync(join(tmpdir(), 'sp ace-'));
+    symlinkSync(fix.home, join(spaced, 'home'));
+    try {
+      const finished = cursorFinish(fix, { ...native, HOME: join(spaced, 'home') }, (start, where) => {
+        cursorPy(fix, { op: 'plant-sqlite', specs: [{
+          strip_sidecars: true, agents: [sqlAgent('conv-1', where)],
+          runs: [sqlRun('conv-1', 'run-1', 'grok-4.7', XHIGH, start - 30, start)],
+        }] }, where);
+      });
+      // Value: protects=the Track outcome end to end through the real wrapper, from a store path that contains a space; fails_when=the wrapper, dispatch or adapter regresses; why_new=no SQLite end-to-end test exists; seam=none
+      expect([finished.finish.status, finished.finish.stdout]).toEqual([0, '']);
+      expect(Object.keys(finished.row)).toEqual(SCHEMA);
+      expect(finished.row).toMatchObject({
+        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', schema_version: 1,
+        agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
+      });
+      expect(validRow(finished.row)).toBe(true);
+      expect(JSON.stringify(finished.row) + finished.finish.stderr).not.toContain(CURSOR_SENTINEL);
+      // The sink is the ledger file itself.
+      expect(JSON.stringify(fix.readLedger())).not.toContain(CURSOR_SENTINEL);
+    } finally {
+      rmSync(spaced, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('G-e2e-live: a real finish reads a shard while another process holds the writer open', () => {
+    const fix = makeTelemetryFixture('off');
+    let holds: Array<{ pid: number; release: string }> = [];
+    try {
+      const finished = cursorFinish(fix, { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1' }, (start, where) => {
+        const planted = cursorPy(fix, { op: 'plant-sqlite', specs: [{
+          strip_sidecars: true, agents: [sqlAgent('conv-1', where)],
+          runs: [sqlRun('conv-1', 'old', 'grok-4.0', null, start - 300, start - 200, start - 100)],
+          writer_process: sqlRun('conv-1', 'live', 'grok-4.7', XHIGH, start - 20, start),
+        }] }, where) as { holds: Array<{ pid: number; release: string }> };
+        holds = planted.holds;
+      });
+      expect(holds).toHaveLength(1);
+      // Value: protects=the production state through the real wrapper: a live shard whose newest run exists only in the -wal; fails_when=the live open rule or cross-process -shm access breaks; why_new=in-process tests cannot show it; seam=none
+      expect(finished.row).toMatchObject({ agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', model_source: 'detected' });
+      expect(validRow(finished.row)).toBe(true);
+    } finally {
+      for (const hold of holds) {
+        try { writeFileSync(hold.release, ''); } catch { /* the harness already removed its HOME */ }
+        try { process.kill(hold.pid, 'SIGTERM'); } catch { /* already exited */ }
+      }
+    }
+  }, 30_000);
+
+  // The fixture PATH resolves one interpreter; production often runs another SQLite build. Both are exercised when they differ.
+  const pythonBuild = (env: Record<string, string | undefined>) => {
+    const probed = spawnSync('python3', ['-c', 'import sys, sqlite3; print(sys.executable); print(sqlite3.sqlite_version)'], { env, encoding: 'utf8' });
+    const [exe, version] = probed.status === 0 ? probed.stdout.trim().split('\n') : [null, null];
+    return { exe, version };
+  };
+  const fixtureBuild = pythonBuild({ PATH: '/usr/bin:/bin' });
+  const runnerBuild = pythonBuild(process.env);
+  const sameBuild = !fixtureBuild.exe || !runnerBuild.exe || fixtureBuild.version === runnerBuild.version;
+  test.skipIf(sameBuild)(
+    sameBuild ? `runtime matrix: skipped, runner SQLite ${runnerBuild.version} matches fixture SQLite ${fixtureBuild.version}` : 'runtime matrix: live, WAL-only and closed shards under the runner interpreter',
+    () => {
+      const fix = makeTelemetryFixture('off');
+      // Value: protects=upstream-SQLite behavior that the fixture PATH never exercises; fails_when=the open rule regresses on one build only; why_new=the harness resolves one interpreter; seam=none
+      const found = sqliteCases(fix, [...matrixCases(), ...readonlyCases()], runnerBuild.exe!);
+      expectMatrix(found);
+      expectReadonly(found);
+    }, 60_000);
 });
 
 /** A disposable copy of the wrapper and module with its own VERSION; the real VERSION is never written. */
