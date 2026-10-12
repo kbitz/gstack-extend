@@ -23,7 +23,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 | [`/project-spec`](skills/project-spec.md) | Establishes users, MVP outcomes, audience limits and release policy for a new or existing project, then runs roadmap. | New |
 | [`/roadmap`](skills/roadmap.md) | Admits work against the selected product target and produces an execution plan with visible outcomes, audits and dependency-aware grouping. | Stable |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
-| [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
+| [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
 | [`/ship-and-land`](skills/ship-and-land.md) | Reuses verified preparation, runs remaining release checks, then merges and verifies deployment through gstack. | New |
 | [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents and turns approved findings into backlog items. | Stable |
@@ -89,6 +89,13 @@ required.
 in its final prompt. Paste that prompt to run `/ship-and-land`; it trusts those
 completed reviews across sessions/models after one receipt lookup and checks
 subsequent changes.
+Preparation also runs `/ship`'s pregate, coverage audit and documentation audit
+on the head it hands off. For a code PR (not the prose-only profile) whose
+prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes
+a release-only path: it reuses the fresh test
+evidence and those audits, writes only the version, CHANGELOG entry and PR
+receipt, and hands a finding that needs any other change back to
+`/review-and-prep`. `/ship-and-land --no-land` stops at the merge gate.
 Prose-only docs use one repo fact-check, the documentation audit and plan/scope
 checks, with or without preparation.
 Both code and docs use severity filtering and delta rechecks; code specialists
