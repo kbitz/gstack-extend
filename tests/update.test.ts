@@ -39,6 +39,7 @@ import { dirname, join } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { runBin } from './helpers/run-bin.ts';
+import { systemPath } from './helpers/system-path.ts';
 import {
   MARKER_LINE,
   extractPreambleFence,
@@ -1864,7 +1865,7 @@ function isolatedTools(tag: string): string {
   if (!existsSync(join(dir, 'bun'))) symlinkSync(process.execPath, join(dir, 'bun'));
   const git = spawnSync('/bin/bash', ['-lc', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
   if (git && !existsSync(join(dir, 'git'))) symlinkSync(git, join(dir, 'git'));
-  return `${dir}:/bin:/usr/bin`;
+  return `${dir}:${systemPath(baseTmp)}`;
 }
 
 function checkInstall(repo: string, home: string, state: string, args: string[] = [], remote = ''): ReturnType<typeof runBin> {

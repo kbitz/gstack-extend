@@ -1242,7 +1242,7 @@ Behavior for each option:
 - **Send to TODOS.md** — cross-branch bug, fix on another branch later.
   Append the bug to the `## Unprocessed` section of TODOS.md (root or docs/,
   whichever exists). If no `## Unprocessed` section exists, create it at the
-  end of the file. Use the rich format per `docs/source-tag-contract.md`:
+  end of the file. Use this rich format:
 
   ```markdown
   ## Unprocessed
@@ -1255,12 +1255,15 @@ Behavior for each option:
   - **Effort:** ? (user triages in /roadmap)
   ```
 
-  Where `<group-slug>` is the slug of the group the user is currently testing
-  (from session.yaml's `active_groups`). This origin tag lets /roadmap route
-  the bug back to the Group that surfaced it (closure bias). For bugs parked
-  BEFORE testing started (where there's no active group yet), use
-  `group=pre-test` — /roadmap interprets this as "route to PRIMARY in-flight
-  Group's Pre-flight."
+  Take `group=` and `item=` values from the bug's own parked-bugs.md
+  `Noticed during:` field. No value may contain `[`, `]`, `,`, `;`, `|`, a backtick or `$(`.
+  For bugs parked before testing, use `### [pair-review:group=pre-test] <Bug title>`
+  with no `item=` key. For an unsafe group slug, use
+  `### [pair-review:item=<item-index>] <Bug title>` and keep the group name in
+  **Noticed during:**. Use only a safe item index in `item=`.
+  Tags carry no `files=` key; file paths stay in the entry body.
+  `group=` names the test group that surfaced the bug; `pre-test` records that
+  it was parked before testing. Neither promises Roadmap Group routing.
 
   If the section already exists with other items, append the new item to it
   (new `###` heading block at the end). Do NOT attempt to classify or organize
@@ -1301,7 +1304,7 @@ triage):
 Behavior for each option:
 - **Fix now** — checkpoint, agent implements fix, commit, rebuild, user verifies, mark FIXED
 - **Send to TODOS.md** — cross-branch, append to `## Unprocessed` section of TODOS.md
-  using the rich format per `docs/source-tag-contract.md`:
+  using this rich format:
   ```markdown
   ### [pair-review:group=<group-slug>,item=<item-index>] <Bug title>
   - **Symptom:** <Symptom field from parked-bugs.md>
@@ -1310,7 +1313,13 @@ Behavior for each option:
   - **Context:** Found on branch <branch> (<date>). Parked during /pair-review Phase 2.5. Re-verify the bug per the repro steps before implementing a fix; if it no longer reproduces, close as resolved instead of guessing at a fix.
   - **Effort:** ? (user triages in /roadmap)
   ```
-  Use `group=pre-test` for bugs parked before any group started.
+  Take `group=` and `item=` values from the bug's own parked-bugs.md
+  `Noticed during:` field. No value may contain `[`, `]`, `,`, `;`, `|`, a backtick or `$(`.
+  For bugs parked before testing, use `### [pair-review:group=pre-test] <Bug title>`
+  with no `item=` key. For an unsafe group slug, use
+  `### [pair-review:item=<item-index>] <Bug title>` and keep the group name in
+  **Noticed during:**. Use only a safe item index in `item=`.
+  Tags carry no `files=` key; file paths stay in the entry body.
   Create the section if it doesn't exist. Commit separately, mark DEFERRED_TO_TODOS.
 - **Skip** — not worth fixing now, mark SKIPPED
 
@@ -1403,6 +1412,8 @@ If this was `/pair-review resume`, present via AskUserQuestion:
 - Options: ["Continue testing", "Start fresh"]
 
 If continue, enter Phase 2 at the next untested item.
+If "Start fresh", run the **Archive block** under the Active Session Guard's
+stop-and-relay and `ARCHIVED=` receipt rules before Init.
 
 ---
 
@@ -1474,6 +1485,120 @@ Write report to `<SESSION_DIR>/report.md`.
 
 ### Step 3: Offer next steps
 
+First run this read-only paused-preparation check. It reads only the branch PR's
+status and pause signals; it never prints bodies or comment text. Track 24B owns
+the future canonical hold/resume detector and may replace this check.
+
+```bash
+PR_CLASS=lookup-failure
+PR_REASON=
+if [ -z "$(git remote)" ]; then
+  PR_CLASS=no-github
+elif ! command -v gh >/dev/null 2>&1; then
+  PR_REASON=gh-missing
+elif [ -z "$(git branch --show-current)" ]; then
+  PR_REASON=detached
+else
+  _PR_ERR=$(mktemp) || { printf 'PR_CLASS=lookup-failure\nPR_REASON=api\n'; exit 0; }
+  trap 'rm -f "$_PR_ERR" "${_PR_OUT:-}"' EXIT
+  _PR_OUT=$(mktemp) || { printf 'PR_CLASS=lookup-failure\nPR_REASON=api\n'; exit 0; }
+  gh pr view --json state,isDraft,url,body,comments --jq '
+(.comments // [] | map(select(.viewerDidAuthor == true and
+  (.body | contains("<!-- review-and-prep:paused:") or contains("<!-- review-and-prep:receipt:"))))
+  | sort_by(.createdAt)) as $markers
+| ($markers | map(select(.body | contains("<!-- review-and-prep:paused:"))) | last) as $pause
+| (($markers | last | .body // "" | contains("<!-- review-and-prep:paused:"))
+   or (.isDraft == true and $pause != null)) as $comment_paused
+| (.body // "" | split("\n") | map(rtrimstr("\r"))
+   | reduce .[] as $line ({active: false, paused: false};
+     if $line == "## Review and prep" then .active = true
+     else if ($line | startswith("## ")) then .active = false
+     else if .active and ($line | contains("PAUSED") and contains("manual testing required"))
+       then .paused = true else . end end end)) as $section
+| ($pause.body // "" | split("<!-- review-and-prep:paused:")[1] // ""
+   | split(" ")[0] // "" | split("\n")[0] // "" | split("-->")[0] // "") as $candidate
+| (if ($candidate | length) == 40 and
+       ($candidate | explode | all((. >= 48 and . <= 57) or (. >= 97 and . <= 102)))
+   then $candidate else "" end) as $sha
+| "PR_STATE=\(.state)", "PR_DRAFT=\(.isDraft == true)", "PR_URL=\(.url)",
+  "BODY_PAUSED=\($section.paused == true)", "COMMENT_PAUSED=\($comment_paused == true)", "PAUSE_SHA=\($sha)"
+' >"$_PR_OUT" 2>"$_PR_ERR"
+  PR_VIEW_RC=$?
+  cat "$_PR_ERR" >&2
+  printf 'PR_VIEW_RC=%s\n' "$PR_VIEW_RC"
+  if [ "$PR_VIEW_RC" -ne 0 ]; then
+    _PR_ERROR=$(LC_ALL=C tr '[:upper:]' '[:lower:]' < "$_PR_ERR")
+    case "$_PR_ERROR" in
+      *'of the git remotes configured for this repository point to a known github host'*|*'no git remotes found'*) PR_CLASS=no-github ;;
+      *'no pull requests found for branch'*) PR_CLASS=no-pr ;;
+      *) if [ "$PR_VIEW_RC" -eq 4 ] || case "$_PR_ERROR" in *'gh auth login'*) true ;; *) false ;; esac; then PR_REASON=auth; else PR_REASON=api; fi ;;
+    esac
+  elif LC_ALL=C awk '
+    NR == 1 && /^PR_STATE=(OPEN|CLOSED|MERGED)$/ {next}
+    NR == 2 && /^PR_DRAFT=(true|false)$/ {next}
+    NR == 3 && /^PR_URL=https?:\/\/[^[:space:]]+$/ {next}
+    NR == 4 && /^BODY_PAUSED=(true|false)$/ {next}
+    NR == 5 && /^COMMENT_PAUSED=(true|false)$/ {next}
+    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($0) == 50)) {next}
+    {bad = 1}
+    END {exit (bad || NR != 6)}' "$_PR_OUT"; then
+    awk '{print}' "$_PR_OUT"
+    if grep -Eq '^(BODY_PAUSED|COMMENT_PAUSED)=true$' "$_PR_OUT"; then
+      if grep -qx 'PR_STATE=OPEN' "$_PR_OUT"; then PR_CLASS=paused; else PR_CLASS=closed-paused; fi
+    else
+      PR_CLASS=no-pause
+    fi
+  else
+    PR_REASON=unreadable
+  fi
+fi
+printf 'PR_CLASS=%s\n' "$PR_CLASS"
+if [ -n "$PR_REASON" ]; then printf 'PR_REASON=%s\n' "$PR_REASON"; fi
+```
+
+Route by `PR_CLASS`; a failed lookup is never no pause:
+
+- **`paused`:** the open PR has a body or viewer-comment pause signal. Before
+  asking, print this copyable handoff for a fresh session. Omit `Paused at:` when
+  `PAUSE_SHA` is empty; include `Keep the PR draft.` only when `PR_DRAFT=true`.
+  Read the current full HEAD with `git rev-parse HEAD` and derive the results
+  and not-passed titles from the saved group files and parked-bugs.md.
+
+  ```text
+  Run /review-and-prep resume for PR <URL> on <owner/repo>, branch <branch>.
+  Paused at: <PAUSE_SHA>
+  Keep the PR draft.
+  Session started at build <build_commit>; current HEAD <full git rev-parse HEAD>.
+  Results: <N> items, <P> passed (<C> by coverage), <F> fixed, <S> skipped, <K> parked bugs.
+  Not passed: <titles of FAILED-unfixed and SKIPPED items and PARKED/DEFERRED bugs, or none>.
+  Local report (this machine only): <SESSION_DIR>/report.md. On another machine, paste its contents into the resumed session.
+  Do not run /ship on this PR.
+  ```
+
+  Present via AskUserQuestion:
+  - Question: "Test report saved. PR <URL> is paused for /review-and-prep. Continue to /review-and-prep resume runs it in this session; the fenced handoff is for a fresh session. Do not run /ship on this PR."
+  - Options: ["Continue to /review-and-prep resume" (recommended), "Commit the report to the repo", "Done for now"]
+- **`closed-paused`:** present via AskUserQuestion:
+  - Question: "PR <URL> is <state> while its /review-and-prep preparation was paused. Do not run /ship; a replacement PR needs a new /review-and-prep decision."
+  - Options: ["Commit the report to the repo", "Done for now" (recommended)]
+- **`lookup-failure`:** present via AskUserQuestion:
+  - Question: "Could not check this branch's PR for a paused /review-and-prep (<reason>). <fix>. The test report is saved at <SESSION_DIR>/report.md. If /review-and-prep sent you here, return to it and do not run /ship until this check passes."
+  - Options: ["Retry the check", "Continue to /review-and-prep resume", "Commit the report to the repo", "Done for now"]
+
+  Choose the fix and recommendation from `PR_REASON`:
+
+  | Reason | Fix | Recommended |
+  |---|---|---|
+  | `gh-missing` | install the GitHub CLI and run `gh auth login` | Done for now |
+  | `auth` | run `gh auth status`, then `gh auth login` | Done for now |
+  | `detached` | check out the PR's branch | Done for now |
+  | `api` | retry | Retry the check |
+  | `unreadable` | retry, and report `PR_VIEW_RC` | Retry the check |
+
+  "Retry the check" reruns the fence. These three routes offer no /ship or
+  /review option and do not run the ordinary routing below.
+- **`no-github`, `no-pr`, `no-pause`:** use the ordinary routing below unchanged.
+
 Before presenting options, determine the recommended next step:
 
 1. Run `gstack-review-read` and check its output.
@@ -1510,12 +1635,44 @@ If an active session exists, read it and present via AskUserQuestion:
 - Question: "You have an active test session on this branch (started [date], [N]/[M] items tested). What would you like to do?"
 - Options: ["Resume the existing session", "Start a new session (archives the old one)"]
 
-If the user chooses "Start a new session (archives the old one)", move this branch's
-session to a per-branch archive (re-source the helper if this is a fresh bash block):
+If the user chooses "Start a new session (archives the old one)", run the
+**Archive block** before Phase 0. When `<SESSION_DIR>` has files but no
+`session.yaml`, run the **Archive block** before Phase 0, with no question.
+
+On any non-zero exit or `ERROR:` line from the Archive block, stop and relay
+the output. Never write session state over an unarchived session.
+Whenever the block prints `ARCHIVED=<path>`, tell the user "Archived the previous
+test session to <path>." and name that path in the next question's action receipt.
+`/review-and-prep resume` reads only the current session, so give it this archive
+path if those results are still needed.
+
+**Archive block**
+
 ```bash
+# Start with the _EXTEND_ROOT=… line the preamble printed.
+case "${_EXTEND_ROOT:-}" in /*) grep -qx '# extend-root-protocol: v1' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill's preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }
+source "$_EXTEND_ROOT/bin/lib/session-paths.sh"
+BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+[ -n "$BRANCH" ] || { echo "ERROR: this checkout is on a detached HEAD, so the session branch is unknown. Check out the session's branch, then run /pair-review again. Nothing was moved." >&2; exit 1; }
+SESSION_DIR=$(session_dir pair-review "$BRANCH")
+[ -n "$SESSION_DIR" ] || { echo "ERROR: could not resolve the /pair-review session directory. Re-run setup --host auto from your gstack-extend checkout. Nothing was moved." >&2; exit 1; }
+[ -e "$SESSION_DIR" ] || exit 0
+_ENTRIES=$(command ls -A "$SESSION_DIR") || { echo "ERROR: cannot list $SESSION_DIR; check its permissions. Nothing was moved." >&2; exit 1; }
+[ -n "$_ENTRIES" ] || exit 0
+_SESSION_ID=$(command ls -di "$SESSION_DIR" | awk '{print $1}')
+[ -n "$_SESSION_ID" ] || { echo "ERROR: cannot list $SESSION_DIR; check its permissions. Nothing was moved." >&2; exit 1; }
+PROJECT_DIR=$(session_dir pair-review)
 TS=$(date -u +%Y%m%d-%H%M%S)
 ARCHIVE_DIR=$(session_archive_dir pair-review "$TS" "$BRANCH")
-mv "$SESSION_DIR" "$ARCHIVE_DIR"
+_ARCHIVE_PARENT=$(dirname "$ARCHIVE_DIR")
+mkdir -p "$_ARCHIVE_PARENT" || { echo "ERROR: could not create $_ARCHIVE_PARENT; check permissions on $PROJECT_DIR. The old session is unchanged." >&2; exit 1; }
+if [ -L "$ARCHIVE_DIR" ]; then echo "ERROR: $ARCHIVE_DIR is a symlink; inspect or remove it. The old session is unchanged." >&2; exit 1; fi
+if [ -e "$ARCHIVE_DIR" ]; then echo "ERROR: $ARCHIVE_DIR already exists; run /pair-review again in a few seconds. The old session is unchanged." >&2; exit 1; fi
+mv "$SESSION_DIR" "$ARCHIVE_DIR" || { echo "ERROR: could not move $SESSION_DIR to $ARCHIVE_DIR; check permissions on its parent directory. The old session is unchanged." >&2; exit 1; }
+# A rename keeps the inode, so finding the session one level down means mv nested it.
+_NESTED="$ARCHIVE_DIR/$(basename "$SESSION_DIR")"
+if [ -e "$_NESTED" ] && [ "$(command ls -di "$_NESTED" | awk '{print $1}')" = "$_SESSION_ID" ]; then echo "ERROR: $ARCHIVE_DIR appeared during the move; the old session is now at $_NESTED." >&2; exit 1; fi
+echo "ARCHIVED=$ARCHIVE_DIR"
 ```
 
 ---
@@ -1532,6 +1689,8 @@ Present via AskUserQuestion:
 - Question: "Session state appears corrupted (YAML parsing failed)."
 - Options: ["Start fresh", "Try to recover from group files"]
 
+On "Start fresh", run the **Archive block** under the Active Session Guard's
+stop-and-relay and `ARCHIVED=` receipt rules before Init.
 On recover, attempt to read individual group files (they're independent
 markdown, more resilient than YAML).
 

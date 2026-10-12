@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.6.0] - 2026-10-11
+
+### Fixed
+
+- **`/pair-review done` no longer offers `/ship` on a draft that `/review-and-prep` paused for manual testing.** Before routing, it reads the PR once through `gh` and looks only for the running account's own review-and-prep markers. The newest marker decides, and a receipt does not clear an earlier pause while the PR is still a draft. A paused PR gets a copyable `/review-and-prep resume` handoff with no `/ship` or `/review` option. A closed paused PR asks what to do. A failed lookup names its reason and offers a retry instead of counting as "no pause". With no GitHub remote, no PR or no pause marker, the routing is unchanged. Pause/resume acceptance on the installed agents is still pending, so no acceptance checkpoint is awarded.
+- **Starting a new `/pair-review` session now archives the old one safely.** The archive step resolves its own paths in a fresh shell, creates `archives/`, prints `ARCHIVED=<path>` on success, and refuses to run on a detached HEAD, over an existing or symlinked destination, or after a failed listing, `mkdir` or move. Before, it never created `archives/`, and on a detached HEAD it would have moved the whole project directory. Both "Start fresh" prompts and leftover files without a `session.yaml` use it.
+- **Bugs that `/pair-review` parks for the roadmap carry valid source tags.** Both templates now spell out the seven characters a tag value must not contain instead of pointing to `docs/source-tag-contract.md`, which consumer repos don't have. Values come from the bug's `Noticed during:` field, the `pre-test` and item-only forms are included, and two false claims about Roadmap Group routing are gone.
+
+## [0.36.5.0] - 2026-10-09
+
+### Fixed
+
+- **Setup installs skills on Linux again.** Since 0.18.14.0, `./setup` refused every skills directory on machines whose `stat` is GNU coreutils, which includes stock Linux distributions. The ownership check captured file-system details along with the owner uid, so the value never matched yours: auto mode skipped every host and exited 1, and `--host` stopped with an "owned by uid" error. The check now asks GNU `stat -c` first and falls back to BSD `stat -f`, so macOS behaves as before. Directories owned by someone else, world-writable ones and ones outside your home are still refused. If setup skipped your hosts, run `./setup --host auto` again.
+- **The test suite runs on Linux.** Tests that isolate PATH no longer detect a host CLI installed in `/usr/bin`, the GNU-stat identity test uses the system `stat` when it is already GNU, the bash 3.2 check runs only where `/bin/bash` is 3.2, and the precomposed-Unicode layout test no longer depends on a normalization-insensitive disk. A change to the install-safety helper now selects its own unit tests.
+
 ## [0.36.4.0] - 2026-10-09
 
 ### Added
