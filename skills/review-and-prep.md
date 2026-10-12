@@ -2,7 +2,8 @@
 name: review-and-prep
 description: |
   Merge the latest base, verify plan or task completion, review implementation,
-  run local tests, and commit/push to a draft GitHub PR. Pause for /pair-review
+  run /ship's pregate, coverage and documentation audits and local tests, and
+  commit/push to a draft GitHub PR. Pause for /pair-review
   when required user testing is pending; resume this workflow afterward. Run Greptile at
   most once per PR when the Step 1 repository-policy gate applies, and fix
   sensible findings before marking ready. Produces a copyable /ship-and-land
@@ -53,7 +54,7 @@ true
 
 Own the interval between implementation and `/ship-and-land`:
 
-`merge latest base → /review → local tests → commit/push → draft PR → pause for /pair-review if user testing is pending → resume → Greptile once when applicable → fixes/local review/tests/push → ready → /ship-and-land`
+`merge latest base → /review → ship's release gates and local tests → commit/push → draft PR → pause for /pair-review if user testing is pending → resume → Greptile once when applicable → fixes/local review/tests/push → ready → /ship-and-land`
 
 **Draft-once rule: The PR stays draft throughout the work. Mark it ready exactly
 once, as the last mutation of a successful run. Never convert a ready PR back
@@ -91,6 +92,8 @@ protocol tests keep these memberships separate.
   CHANGELOG entries, tags, and release bookkeeping. Do not run `/ship`, reserve
   a version slot, bump manifests/lockfiles for a release, or mark work shipped.
   Preserve pre-existing version changes and report them; never silently undo them.
+  Step 2 runs `/ship`'s pregate, coverage audit and documentation audit from its
+  installed sections so `/ship-and-land` can reuse them; that is not a `/ship` run.
 - Stay on the current feature branch. Never commit/push to the base branch,
   force-push, merge the PR, or enable auto-merge. In a host-managed workspace
   (a Conductor workspace, or a Paseo worktree: `PASEO_AGENT_ID` is set and the
@@ -258,6 +261,12 @@ sections from the same installation. Do not mistake a missing section or a
 dangling step reference for a scope-based skip. If required instructions cannot
 be recovered, preparation is blocked; do not label a core-checklist-only pass
 as a complete `/review`.
+
+Locate `/ship` from the same installation the same way, but read it only for
+the gates Step 2 runs: its tests section's `gstack-pregate` command, its Test
+Coverage Audit section and its Documentation audit section. Read each when its
+gate starts. A gate whose section or command this installation lacks is
+recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.
 
 ### Establish the approved implementation scope
 
@@ -450,6 +459,52 @@ resulting tree. If a fix changes code after verification, rerun affected checks
 before pushing. Failures keep the workflow incomplete. Missing required user
 verification takes the Step 3 pause after the draft push; it blocks Greptile
 and readiness, not that checkpoint commit/push.
+
+### Prove /ship's release gates on this head
+
+`/ship-and-land` skips its own pregate lanes, coverage audit and documentation
+audit only when preparation ran them on the head it hands off, so a gap is
+found and fixed here instead of during shipping. After review fixes and the
+completion matrix settle, run these in order on the integrated candidate,
+reading each `/ship` section in full when its gate starts. Each step can change
+files an earlier record covers, so the documentation audit and the final records
+come last. They fingerprint untracked and unstaged files too: ask the user to
+move unrelated changes out of the checkout first, or record that ship cannot
+reuse these records.
+
+1. **Lane map.** Pregate reads its pin files from the base branch, so when this
+   PR adds or changes `.gstack/pregate.json` or `.gstack/generated.json`, pass
+   `--policy-from head` to every full pregate run and record that policy source.
+   Find lane gaps before the long suite with `gstack-pregate --stage tests
+   --explain` without `--allow-repo-commands` (base policy only; that record is
+   `incomplete` and never counts), and check a changed pin file with
+   `gstack-pregate validate`. A touched file with no test lane or a refused
+   runner is preparation work: repair the map here and review it like any fix.
+2. **Coverage audit.** Run `/ship`'s Test Coverage Audit section, including its
+   test generation, regression rule and threshold decision. Generated or
+   strengthened tests belong to this PR: review and test them like any fix. A
+   testing specialist pass or green tests alone does not satisfy it. Only the
+   section's own skips (no code paths, a test-only diff) or the user's explicit
+   decision waive it; record the reason.
+3. **Documentation audit.** Run `/ship`'s Documentation audit section with its
+   candidate snapshot, subagent dispatch, validation, attempt bound and blocked
+   recovery. Review its doc edits like any fix. Keep its accepted status, files,
+   base and documentation section. It covers every changed path, so a later edit
+   spends its one re-audit.
+4. **Pregate and test lanes.** Run the installed `gstack-pregate` command the
+   tests section names, with `--allow-repo-commands`, and the main test lanes,
+   on the same final content, so the pregate record and the ledger entries
+   describe the head you push. Fix a failure like any other and rerun the
+   gates whose inputs the fix touched.
+
+A later change, such as a Greptile fix or a base merge, reruns each gate whose
+inputs it touched under that gate's own freshness rule before Step 6. Copy the
+final pregate record, the audit's post-child snapshot and its documentation
+section to an existing `~/.gstack/projects/<slug>/review-and-prep/`, otherwise
+`~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
+receipt. Never record a gate as passed from memory or a partial run.
+
+### Capture evidence and commit
 
 Capture evidence as the work runs so a new session can reuse it:
 
@@ -1060,6 +1115,10 @@ the relevant base/head refs. Require all of the following:
   adaptive-gate-based skip with its recorded reason, including individual
   specialists and adversarial passes. A core-only review
   cannot satisfy missing stages in another host's fuller review workflow.
+- Step 2's `/ship` gates are current for the final content: pregate passed,
+  the coverage audit completed or was waived with a recorded reason, and the
+  documentation audit was accepted or carries the user's named-risk decision.
+  A gate recorded `unavailable` keeps its reason; none is recorded from memory.
 - No blocking human review is pending, whether or not Greptile applies.
 - Recheck the Step 1 applicability decision against both tips and the full PR.
   Apply any changed decision before
@@ -1105,10 +1164,26 @@ fix/retest evidence, or `manual testing: not required` with the scope rationale.
 Keep Git tree IDs and gstack `wtree` fingerprints distinctly
 labeled. Add the implementation summary, settled decisions/rationale, linked
 plan/spec, and finding dispositions/fix commits. List checks that were not run
-or not applicable. When Greptile applies, include its
-single run/review links, original trigger time, reviewed SHA/base, and local
-verification covering any later delta, or the Step 4 unverified outcome with
-its trigger-comment link and monitoring evidence. Otherwise record the skip
+or not applicable. Record each `/ship` gate under `Ship gates`, bound to the
+final HEAD, Git tree, `wtree` and base, with the `/ship` section path and content
+hash it followed:
+
+- pregate: verdict, policy source, the record's tree, its durable copy's path
+  and SHA-256, the lanes it ran with counts, and requires-remote obligations
+  with their receipts;
+- coverage audit: `coverage_pct`, `coverage_pct_value`, gaps, weak gaps, tests
+  added, extended and rejected, `regression_proof` and the threshold decision,
+  or its waiver and reason;
+- documentation audit: audit id, status, files reviewed and updated, its
+  post-child snapshot's path and SHA-256, and its documentation section's
+  exact text, durable path and SHA-256, or the user's named-risk decision with
+  the same section evidence. Bind each audit or decision to the final HEAD,
+  Git tree and reviewed base.
+
+When Greptile applies, include its single run/review links, original trigger
+time, reviewed SHA/base, and local verification covering any later delta, or
+the Step 4 unverified outcome with its trigger-comment link and monitoring
+evidence. Otherwise record the skip
 reason from Step 1.
 Use this receipt for resumption across workspaces/machines, but verify its
 claims against live state.

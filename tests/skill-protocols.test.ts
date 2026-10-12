@@ -2137,6 +2137,316 @@ describe('ship-and-land drift-locks', () => {
   });
 });
 
+// Release-only ship path: preparation proves /ship's gates on the head it hands
+// off, so ship-and-land writes only release metadata and hands back findings.
+describe('release-only ship path', () => {
+  const ship = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const shipN = ship.replace(/\s+/g, ' ');
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const prepN = prep.replace(/\s+/g, ' ');
+  const releaseOnly = skillSection(ship, '### Release-only path');
+  const releaseOnlyN = releaseOnly.replace(/\s+/g, ' ');
+  const gatesN = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+
+  test('review-and-prep runs pregate, the coverage audit and the docs audit on the handed-off head', () => {
+    expect(gatesN.length).toBeGreaterThan(0);
+    for (const clause of [
+      "Run `/ship`'s Test Coverage Audit section, including its test generation, regression rule and threshold decision.",
+      'A testing specialist pass or green tests alone does not satisfy it.',
+      "Only the section's own skips (no code paths, a test-only diff) or the user's explicit decision waive it; record the reason.",
+      "Run `/ship`'s Documentation audit section with its candidate snapshot, subagent dispatch, validation, attempt bound and blocked recovery.",
+      'pass `--policy-from head` to every full pregate run and record that policy source.',
+      'is preparation work: repair the map here and review it like any fix.',
+      'that record is `incomplete` and never counts',
+      'so the documentation audit and the final records come last.',
+      'ask the user to move unrelated changes out of the checkout first, or record that ship cannot reuse these records.',
+      'and the main test lanes, on the same final content, so the pregate record and the ledger entries describe the head you push.',
+      'reruns each gate whose inputs it touched under that gate\'s own freshness rule before Step 6.',
+      'record each copy\'s path and SHA-256 in the receipt.',
+      'Never record a gate as passed from memory or a partial run.',
+    ]) expect(gatesN).toContain(clause);
+    for (const clause of [
+      'A gate whose section or command this installation lacks is recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.',
+      "Step 2's `/ship` gates are current for the final content: pregate passed, the coverage audit completed or was waived with a recorded reason, and the documentation audit was accepted or carries the user's named-risk decision.",
+      'Record each `/ship` gate under `Ship gates`, bound to the final HEAD, Git tree, `wtree` and base',
+      'that is not a `/ship` run.',
+    ]) expect(prepN).toContain(clause);
+    const order = ['1. **Lane map.**', '2. **Coverage audit.**', '3. **Documentation audit.**', '4. **Pregate and test lanes.**'].map((h) => gatesN.indexOf(h));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // The consumer names the receipt section the producer writes.
+    expect(prepN).toContain('`Ship gates`');
+    expect(releaseOnlyN).toContain("the receipt's `Ship gates` coverage and documentation audits");
+  });
+
+  test('the path applies only to a bound, unchanged FULL head and otherwise leaves today\'s path alone', () => {
+    for (const clause of [
+      'Take the path only when all of these hold:',
+      'The profile is `FULL` and the user has not asked for a fresh or full review. `DOCS` keeps its own coverage.',
+      'its prepared HEAD equals the bound PR head and local HEAD: no commit follows it and no intended work is uncommitted.',
+      "The fetched base tip is the handoff's reviewed base, so ship's base merge changes nothing.",
+      'Otherwise continue with the rest of this file unchanged.',
+      '| Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |',
+    ]) expect(releaseOnlyN).toContain(clause);
+  });
+
+  test('ship runs no suite or audit again and changes only release metadata', () => {
+    for (const clause of [
+      '| Run tests / Eval Suites (5–6) | No suite runs.',
+      "Every required test lane has FRESH ledger evidence under the test gate below, and required evals have reusable recorded results for the prepared tree.",
+      "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, including cleared requires-remote obligations.",
+      "Missing evidence selects the existing FULL path before release writes.",
+      "| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |",
+      '| TODOs (14) | Edit nothing.',
+      '`git diff --name-only <prepared tree> <current tree>` lists only release metadata',
+      "Alternatively reuse the user's recorded named-risk decision for that same content; only that case keeps `Documentation: blocked` with its reason and scope.",
+      'For Steps 18–19 this replaces the upstream rule against reusing another invocation\'s audit.',
+      'Any legacy documentation-sync stage is read-only on this path; drift uses the same hand-back.',
+      '| Commit (15) | Commit release metadata only, then run Step 3\'s trailer check. |',
+      'pass `--allow-paths` naming only the release-metadata files this run changed.',
+      "Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record.",
+      "cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record.",
+    ]) expect(releaseOnlyN).toContain(clause);
+    expect(shipN).toContain(
+      "Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree;",
+    );
+  });
+
+  test('missing or mismatched gate evidence cannot enter release-only', () => {
+    for (const clause of [
+      "The user has not explicitly asked for the full ship path. That request disables release-only without discarding otherwise valid review reuse.",
+      "each bound to the prepared HEAD, Git tree and reviewed base. Reject missing, unavailable or mismatched records.",
+      "Preserve this verified full record as an immutable copy distinct from the final preflight record.",
+      "The documentation section's bytes match its receipt SHA-256.",
+      "reconstruct it from authenticated receipt text only when the resulting bytes match that hash; otherwise its evidence is unavailable.",
+      "the author and every editor in all pages of `userContentEdits` must be the running account.",
+      "the marked handoff's review-only shortcut does not authenticate these audits.",
+    ]) expect(releaseOnlyN).toContain(clause);
+    expect(prepN).toContain("its documentation section's exact text, durable path and SHA-256");
+    expect(prepN).toContain('Bind each audit or decision to the final HEAD, Git tree and reviewed base.');
+  });
+
+  test('a finding that needs a non-release change hands back instead of being fixed in ship', () => {
+    for (const clause of [
+      'Settle every reuse decision and check-only run before Step 12, so no release write precedes a finding.',
+      'Ship never edits code, tests or docs on this path. Stop and hand back, naming the finding:',
+      'A post-write failure, such as a build or the final preflight, stops before the push.',
+      "verify the intervening commits are only this invocation's unpushed release commits, then use `git reset --keep <prepared HEAD>`.",
+      "Check its exit status, HEAD equality and the complete working-tree status before claiming restoration.",
+      "After a push, preserve published history and name the retained release commits and current local/remote heads in the hand-back.",
+      "This routing also applies to new feedback and non-release findings during later ship or land readiness checks.",
+      "use `git restore --source=<prepared HEAD> --staged --worktree -- <owned paths>`.",
+      "If ownership is uncertain, preserve the changes and report them.",
+    ]) expect(releaseOnlyN).toContain(clause);
+    const handBack =
+      Array.from(releaseOnly.matchAll(/```text\n([\s\S]*?)\n```/g), (m) => m[1] ?? '').find((b) => b.includes('Finding:')) ?? '';
+    const flat = handBack.replace(/\s+/g, ' ');
+    expect(flat).toContain('Finding: <gate>: <file, item or comment> — <evidence>.');
+    expect(flat).toContain('/review-and-prep needs this PR as a draft: convert it to draft yourself, run /review-and-prep on it to fix the finding');
+    expect(flat).toContain('Greptile stays once per PR.');
+    expect(flat).toContain('Release state: <verified restoration to prepared HEAD with a clean checkout, or retained published release commits and current local/remote heads, or failed recovery with the remaining commits/paths and error>.');
+    expect(shipN).toContain("the release-only path's hand-back, for a finding that needs a non-release change, is the one exception.");
+  });
+
+  test('the caller can stop at the merge gate and the run reports its wall time', () => {
+    expect(shipN).toContain('`--no-land` (stop at the merge gate, Step 4)');
+    expect(shipN).toContain('Do not merge, enqueue, or enable auto-merge.');
+    expect(shipN).toContain('`stopped at merge gate (caller request)`');
+    expect(shipN).toContain('Record the invocation\'s UTC start time.');
+    expect(shipN).toContain('the wall time from the invocation start to the merge gate');
+    expect(shipN).toContain('and the wall time from the invocation start to the push.');
+    expect(shipN).toContain("On every path, when land reaches its readiness report and merge-approval gate, record the measured wall time from invocation start in the PR's `Ship and land` receipt");
+  });
+
+  describe('co-author trailer check', () => {
+    const PLACEHOLDER = '<full SHA: local HEAD bound in Step 1, or the last tip this invocation pushed>';
+    const section = skillSection(ship, '### Commit without co-author trailers');
+    const fences = extractFences(section).filter((f) => f.body.includes('TRAILERS:'));
+    const block = fences[0]?.body ?? '';
+    const tmp = makeBaseTmp('skill-protocols-trailers-');
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    const home = join(tmp, 'home');
+    mkdirSync(home, { recursive: true });
+    const gitEnv = scopedEnv(home, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' });
+    const git = (cwd: string, args: string[], input?: string) => {
+      const r = spawnSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args], {
+        cwd, env: gitEnv, encoding: 'utf8', input, timeout: 15_000,
+      });
+      if (r.status !== 0) throw new Error(`fixture git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const TRAILERS = '\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nCo-authored-by: Cursor <cursoragent@cursor.com>\n';
+    let n = 0;
+    function repo() {
+      const cwd = join(tmp, `repo-${++n}`);
+      mkdirSync(cwd, { recursive: true });
+      git(cwd, ['init', '--quiet', '--initial-branch=feature/release']);
+      writeFileSync(join(cwd, 'VERSION'), '1.0.0.0\n');
+      git(cwd, ['add', 'VERSION']);
+      git(cwd, ['commit', '--quiet', '-m', 'feat: base']);
+      return { cwd, since: git(cwd, ['rev-parse', 'HEAD']) };
+    }
+    function commit(cwd: string, file: string, message: string) {
+      writeFileSync(join(cwd, file), `${file}\n`);
+      git(cwd, ['add', file]);
+      git(cwd, ['commit', '--quiet', '-m', message]);
+      return git(cwd, ['rev-parse', 'HEAD']);
+    }
+    function sign(cwd: string, sha: string) {
+      const raw = git(cwd, ['cat-file', 'commit', sha]);
+      const split = raw.indexOf('\n\n');
+      const signed = git(cwd, ['hash-object', '-t', 'commit', '-w', '--stdin'],
+        `${raw.slice(0, split)}\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n fixture\n -----END PGP SIGNATURE-----${raw.slice(split)}\n`);
+      git(cwd, ['update-ref', 'refs/heads/feature/release', signed]);
+      return signed;
+    }
+    const header = (cwd: string, sha: string) => git(cwd, ['cat-file', 'commit', sha]).split('\n\n')[0];
+    const message = (cwd: string, rev: string) => git(cwd, ['log', '-1', '--format=%B', rev]);
+    const parents = (cwd: string, rev: string) => git(cwd, ['rev-list', '--parents', '-n', '1', rev]).split(' ').slice(1);
+    const tree = (cwd: string, rev: string) => git(cwd, ['rev-parse', `${rev}^{tree}`]);
+    const run = (cwd: string, since: string, shell: ReturnType<typeof agentShells>[number], base = since) =>
+      runShell(shell.shell, shell.args, block.replace(PLACEHOLDER, since).replace('<full SHA: fetched base tip>', base), gitEnv, cwd);
+
+    test('the block has exactly one start-point placeholder and a first-parent range', () => {
+      expect(fences.length).toBe(1);
+      expect(block.split(PLACEHOLDER).length - 1).toBe(1);
+      expect(block).toContain('--first-parent');
+      const flat = section.replace(/\s+/g, ' ');
+      expect(flat).toContain("Drop the `Co-Authored-By` line from ship's commit template.");
+      expect(flat).toContain('Run this check after each ship step that commits and before every push.');
+      expect(flat).toContain('so the check covers only commits this invocation created;');
+    });
+
+    for (const shell of agentShells()) {
+      test(`${shell.shell}: preserves published base commits after a fast-forward`, () => {
+        const { cwd, since } = repo();
+        git(cwd, ['checkout', '--quiet', '-b', 'main']);
+        const publishedBase = commit(cwd, 'base.txt', `feat: published base${TRAILERS}`);
+        git(cwd, ['checkout', '--quiet', 'feature/release']);
+        git(cwd, ['merge', '--quiet', '--ff-only', 'main']);
+        const clean = run(cwd, since, shell, publishedBase);
+        expect(clean.status).toBe(0);
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(publishedBase);
+        const release = commit(cwd, 'CHANGELOG.md', `chore: release${TRAILERS}`);
+        const result = run(cwd, since, shell, publishedBase);
+        expect(result.status).toBe(0);
+        expect(parents(cwd, 'HEAD')).toEqual([publishedBase]);
+        expect(message(cwd, publishedBase)).toContain('Co-Authored-By:');
+        expect(message(cwd, 'HEAD')).not.toMatch(/co-authored-by:/i);
+        expect(tree(cwd, 'HEAD')).toBe(tree(cwd, release));
+      });
+
+      test(`${shell.shell}: blocks a starting point outside the first-parent chain`, () => {
+        const { cwd, since: root } = repo();
+        git(cwd, ['branch', 'main']);
+        const since = commit(cwd, 'feature.txt', 'feat: prepared work');
+        git(cwd, ['checkout', '--quiet', 'main']);
+        const publishedBase = commit(cwd, 'base.txt', `feat: published base${TRAILERS}`);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', 'Merge feature', 'feature/release']);
+        const reverseMerge = git(cwd, ['rev-parse', 'HEAD']);
+        git(cwd, ['checkout', '--quiet', 'feature/release']);
+        git(cwd, ['merge', '--quiet', '--ff-only', reverseMerge]);
+        const originalHead = commit(cwd, 'CHANGELOG.md', `chore: release${TRAILERS}`);
+        expect(parents(cwd, reverseMerge)).toEqual([publishedBase, since]);
+        expect(parents(cwd, publishedBase)).toEqual([root]);
+        expect(run(cwd, since, shell, publishedBase).status).not.toBe(0);
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(originalHead);
+      });
+
+      test(`${shell.shell}: strips trailers from the new HEAD and keeps its object header`, () => {
+        const { cwd, since } = repo();
+        const old = commit(cwd, 'CHANGELOG.md', `chore: bump version and changelog (v1.2.3.4)\n\nBody line.${TRAILERS}`);
+        const r = run(cwd, since, shell);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain(`TRAILERS: STRIPPED ${old} -> `);
+        const head = git(cwd, ['rev-parse', 'HEAD']);
+        expect(head).not.toBe(old);
+        expect(message(cwd, 'HEAD')).toBe('chore: bump version and changelog (v1.2.3.4)\n\nBody line.');
+        expect(header(cwd, head)).toBe(header(cwd, old));
+        expect(git(cwd, ['status', '--porcelain'])).toBe('');
+        const again = run(cwd, since, shell);
+        expect(again.status).toBe(0);
+        expect(again.stdout.trim()).toBe('TRAILERS: CLEAN');
+      });
+
+      test(`${shell.shell}: leaves a clean range untouched`, () => {
+        const { cwd, since } = repo();
+        const clean = commit(cwd, 'CHANGELOG.md', 'chore: bump version and changelog (v1.2.3.4)');
+        const r = run(cwd, since, shell);
+        expect(r.status).toBe(0);
+        expect(r.stdout.trim()).toBe('TRAILERS: CLEAN');
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(clean);
+      });
+
+      test(`${shell.shell}: rewrites an earlier commit and re-parents its descendants`, () => {
+        const { cwd, since } = repo();
+        const earlier = commit(cwd, 'a.txt', `fix: earlier${TRAILERS}`);
+        const tip = commit(cwd, 'CHANGELOG.md', 'chore: bump version and changelog (v1.2.3.4)');
+        const r = run(cwd, since, shell);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain(`TRAILERS: STRIPPED ${tip} -> `);
+        expect(message(cwd, 'HEAD~1')).toBe('fix: earlier');
+        expect(message(cwd, 'HEAD')).toBe('chore: bump version and changelog (v1.2.3.4)');
+        expect(parents(cwd, 'HEAD~1')).toEqual([since]);
+        expect(tree(cwd, 'HEAD~1')).toBe(tree(cwd, earlier));
+        expect(tree(cwd, 'HEAD')).toBe(tree(cwd, tip));
+      });
+
+      test(`${shell.shell}: ignores co-authored base commits a merge brings in`, () => {
+        const { cwd, since } = repo();
+        git(cwd, ['branch', 'main']);
+        git(cwd, ['checkout', '--quiet', 'main']);
+        const upstream = commit(cwd, 'b.txt', 'feat: b (#12)\n\nCo-authored-by: Alice <alice@example.invalid>\n');
+        git(cwd, ['checkout', '--quiet', 'feature/release']);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', "Merge branch 'main'", 'main']);
+        const merge = git(cwd, ['rev-parse', 'HEAD']);
+        const clean = run(cwd, since, shell);
+        expect(clean.status).toBe(0);
+        expect(clean.stdout.trim()).toBe('TRAILERS: CLEAN');
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(merge);
+        // A host wrapper's trailer on the merge itself is stripped; the base side is untouched.
+        git(cwd, ['reset', '--quiet', '--keep', since]);
+        git(cwd, ['merge', '--quiet', '--no-ff', '-m', `Merge branch 'main'${TRAILERS}`, 'main']);
+        const r = run(cwd, since, shell);
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('TRAILERS: STRIPPED');
+        expect(message(cwd, 'HEAD')).toBe("Merge branch 'main'");
+        expect(parents(cwd, 'HEAD')).toEqual([since, upstream]);
+        expect(message(cwd, upstream)).toContain('Co-authored-by: Alice');
+      });
+
+      test(`${shell.shell}: never rewrites a signed commit but passes one it need not change`, () => {
+        const blocked = repo();
+        const signed = sign(blocked.cwd, commit(blocked.cwd, 'CHANGELOG.md', `chore: bump${TRAILERS}`));
+        const r = run(blocked.cwd, blocked.since, shell);
+        expect(r.status).not.toBe(0);
+        expect(r.stdout).toContain(`TRAILERS: BLOCKED — ${signed} is signed`);
+        expect(git(blocked.cwd, ['rev-parse', 'HEAD'])).toBe(signed);
+
+        const kept = repo();
+        const signedClean = sign(kept.cwd, commit(kept.cwd, 'a.txt', 'fix: signed and clean'));
+        commit(kept.cwd, 'CHANGELOG.md', `chore: bump${TRAILERS}`);
+        const ok = run(kept.cwd, kept.since, shell);
+        expect(ok.status).toBe(0);
+        expect(ok.stdout).toContain('TRAILERS: STRIPPED');
+        expect(parents(kept.cwd, 'HEAD')).toEqual([signedClean]);
+      });
+
+      test(`${shell.shell}: blocks when HEAD does not descend from the start point`, () => {
+        const { cwd } = repo();
+        git(cwd, ['checkout', '--quiet', '-b', 'other']);
+        const sibling = commit(cwd, 'b.txt', 'chore: sibling');
+        git(cwd, ['checkout', '--quiet', 'feature/release']);
+        const tip = commit(cwd, 'CHANGELOG.md', `chore: bump${TRAILERS}`);
+        const r = run(cwd, sibling, shell);
+        expect(r.status).not.toBe(0);
+        expect(r.stdout).toContain(`TRAILERS: BLOCKED — HEAD does not descend from ${sibling}`);
+        expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(tip);
+      });
+    }
+  });
+});
+
 describe('non-preamble setup skills carry only telemetry SHARED blocks', () => {
   const setupSkills = parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8'));
   const outside = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));

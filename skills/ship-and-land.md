@@ -2,7 +2,8 @@
 name: ship-and-land
 description: |
   Ship and land a GitHub PR using installed gstack /ship and /land-and-deploy.
-  Reuse verified review-and-prep evidence across sessions; use a compact review
+  Reuse verified review-and-prep evidence across sessions; when preparation
+  already proved the head, write only release metadata. Use a compact review
   profile for prose-only docs, run missing checks, then finish release work and
   deployment verification. Use when asked to "ship and land" or to finish a prepared PR.
   Preparing a draft still belongs to /review-and-prep.
@@ -49,9 +50,12 @@ true
 <!-- /SHARED:telemetry-start -->
 
 Run `validate evidence → /ship with the overrides below → /land-and-deploy`.
-Stay in this invocation when reviews are missing or stale: perform the missing
-work using the installed skill's methodology, then continue. Do not redirect
-to a new review session just because evidence cannot be reused.
+When preparation already proved the current head, Step 2's release-only path
+limits ship to release metadata. Stay in this invocation when reviews are missing
+or stale: perform the missing work using the installed skill's methodology, then
+continue. Do not redirect to a new review session just because evidence cannot
+be reused; the release-only path's hand-back, for a finding that needs a
+non-release change, is the one exception.
 
 Invoking this skill authorizes the routine feature-branch commits, pushes,
 PR creation/updates, the single applicable Greptile request, and review replies
@@ -86,8 +90,9 @@ subagents. Run each child's own initialization and telemetry once when entered;
 the wrapper's telemetry measures the combined workflow separately. Do not run
 `/autoplan` as part of shipping.
 
-Accept an optional PR number/URL, deployment verification URL, and `--reviewed`
-(the explicit prior-review choice below), or discover
+Record the invocation's UTC start time. Accept an optional PR number/URL,
+deployment verification URL, `--reviewed` (the explicit prior-review choice
+below) and `--no-land` (stop at the merge gate, Step 4), or discover
 the PR for the current feature branch. Confirm the hosting platform before
 release mutations: the combined workflow requires GitHub because the installed
 land-and-deploy does not support GitLab. Bind the base repository, PR number,
@@ -123,6 +128,7 @@ leave cleanup to the host. Never force-push or merge old published history into 
 history to recover a rejected push. Diagnose divergence and stop with the
 local/remote tips. Stage named intended files, preserve unrelated work, never
 modify credentials without authorization, and omit co-authorship trailers.
+Step 3's trailer check enforces that last rule on every host.
 Unrelated uncommitted changes, including paths a handoff lists to save before
 shipping, block release work: ship would fold them into its commits and
 diffs, and land requires a clean checkout. Ask the user to save them elsewhere
@@ -271,6 +277,100 @@ merge approval retain their own requirements.
 The landing report must distinguish `trusted preparation + verified deltas` from
 independently verified review evidence.
 
+### Release-only path
+
+When preparation already proved the current head, the remaining ship work is
+release metadata: VERSION, the CHANGELOG entry and the files `/ship`'s version
+tool writes with them, such as manifest and lockfile version fields. Decide this
+after ship's base fetch and before any release write, and announce the decision
+with its reason. Take the path only when all of these hold:
+
+- The profile is `FULL` and the user has not asked for a fresh or full review.
+  `DOCS` keeps its own coverage.
+- The user has not explicitly asked for the full ship path. That request disables
+  release-only without discarding otherwise valid review reuse.
+- A marked handoff validated under Trust prepared reviews, and its prepared HEAD
+  equals the bound PR head and local HEAD: no commit follows it and no intended
+  work is uncommitted.
+- The fetched base tip is the handoff's reviewed base, so ship's base merge
+  changes nothing.
+- The receipt's `Ship gates` contains complete coverage and documentation audits
+  (or their allowed decisions), each bound to the prepared HEAD, Git tree and
+  reviewed base. Reject missing, unavailable or mismatched records.
+  For these gate records, require Independently verified reuse's provenance:
+  the author and every editor in all pages of `userContentEdits` must be the
+  running account. A missing or unreadable edit history makes them unavailable;
+  the marked handoff's review-only shortcut does not authenticate these audits.
+- Every required test lane has FRESH ledger evidence under the test gate below,
+  and required evals have reusable recorded results for the prepared tree.
+- Preparation's full pregate record matches its recorded SHA-256 and policy
+  source, and `gstack-pregate verify --out <that copy>` passes before any release
+  write, including cleared requires-remote obligations. Preserve this verified
+  full record as an immutable copy distinct from the final preflight record.
+- The documentation section's bytes match its receipt SHA-256. If its durable
+  file is absent, reconstruct it from authenticated receipt text only when the
+  resulting bytes match that hash; otherwise its evidence is unavailable.
+
+Otherwise continue with the rest of this file unchanged. A moved base, commits
+after the prepared head, incomplete or stale gate evidence, or a handoff that
+does not bind decide reuse by the existing rules, and the `FULL` path runs
+whatever those rules leave invalid.
+
+On this path reuse the receipt's `Ship gates` coverage and documentation audits
+only after the provenance and binding checks above; pregate and test lanes keep
+their own evidence rules. These rows replace the matching stage-table rows below.
+Other rows keep their wrapper behavior:
+
+| Installed ship stage | Release-only behavior |
+|---|---|
+| Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |
+| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. |
+| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |
+| TODOs (14) | Edit nothing. List detected completions and follow-ups in the PR body, as ship does when a TODO write is skipped. |
+| Documentation audit (14.5) | When `git diff --name-only <prepared tree> <current tree>` lists only release metadata, reuse preparation's accepted audit for the reviewed base with its accepted status. Alternatively reuse the user's recorded named-risk decision for that same content; only that case keeps `Documentation: blocked` with its reason and scope. Use the hash-verified documentation section, unchanged, as ship's section file, with `Reused from /review-and-prep at <prepared tree>` beside it, not inside it. For Steps 18–19 this replaces the upstream rule against reusing another invocation's audit. Any legacy documentation-sync stage is read-only on this path; drift uses the same hand-back. |
+| Commit (15) | Commit release metadata only, then run Step 3's trailer check. |
+| Verification Gate (16) | Run declared builds. Check the release-metadata delta directly in place of stages 2–3. In stage 4, pass `--allow-paths` naming only the release-metadata files this run changed. Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record. That record has no lanes; cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record. |
+
+Settle every reuse decision and check-only run before Step 12, so no release
+write precedes a finding. A finding that needs any other change is preparation
+work: documentation drift, a coverage gap the threshold decision does not accept,
+a pregate or test failure, a missing plan item, or actionable review feedback.
+Ship never edits code, tests or docs on this path. Stop and hand back, naming the
+finding:
+
+```text
+/ship-and-land stopped on the release-only path; it made no change for this finding.
+PR: <URL>; head: <full SHA>.
+Finding: <gate>: <file, item or comment> — <evidence>.
+Release state: <verified restoration to prepared HEAD with a clean checkout,
+or retained published release commits and current local/remote heads,
+or failed recovery with the remaining commits/paths and error>.
+/review-and-prep needs this PR as a draft: convert it to draft yourself, run
+/review-and-prep on it to fix the finding, then paste its new /ship-and-land handoff.
+Greptile stays once per PR. To repair during shipping instead, rerun
+/ship-and-land and ask for the full path.
+```
+
+A post-write failure, such as a build or the final preflight, stops before the
+push. Fix it when the fix stays within release metadata. Otherwise, before any
+push, identify any uncommitted release writes this invocation owns. Restore only
+those named paths from the prepared HEAD after verifying their entire diff is
+this invocation's release metadata and no intervening writer changed them;
+use `git restore --source=<prepared HEAD> --staged --worktree -- <owned paths>`.
+If ownership is uncertain, preserve the changes and report them. Then
+verify the intervening commits are only this invocation's unpushed release
+commits, then use `git reset --keep <prepared HEAD>`. Check its exit status,
+HEAD equality and the complete working-tree status before claiming restoration.
+Preserve unexpected local changes; if recovery fails or leaves changes, report
+the remaining commits/paths and error without claiming a clean branch.
+After a push, preserve published history and name the retained release commits
+and current local/remote heads in the hand-back. This routing also applies to
+new feedback and non-release findings during later ship or land readiness
+checks. Never reset published release commits to make the hand-back look clean.
+The receipt records
+`path: release-only`, each reused record with its source, and every check-only
+run.
+
 ### Independently verified reuse
 
 For other reuse claims, apply the following rules:
@@ -376,7 +476,7 @@ specified here; retain every other substantive gate.
 | Pre-flight / Review Readiness Dashboard (1) | Refresh live state. Show native grades accurately alongside verified portable evidence; historical warnings alone do not force duplicate reviews. |
 | Distribution Pipeline Check / Merge base (2–3) | Run normally. Never reuse the old base fetch or assume it is integrated. |
 | Test Framework Bootstrap (4) | Discover current commands/config. In DOCS, discover docs checks without bootstrapping a code test framework. Otherwise reuse a verified existing setup/explicit opt-out; bootstrap only if needed. |
-| Run tests / Eval Suites (5–6) | Apply the docs test policy below for DOCS; behavioral evals are N/A there. Otherwise reuse passing runs only for the exact required command, lane, working directory, tier, inputs and permitted age. Missing or stale required lanes run normally. |
+| Run tests / Eval Suites (5–6) | Apply the docs test policy below for DOCS; behavioral evals are N/A there. Otherwise reuse passing runs only for the exact required command, lane, working directory, tier, inputs and permitted age. Missing or stale required lanes run normally. Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree; the base policy would ignore the reviewed map repair. |
 | Test Coverage Audit (7) | DOCS: N/A, with prose-only classification evidence; do not generate tests for prose. FULL: reuse only an equivalent path-level audit with its coverage/gaps, test-generation outcome, and threshold decision, or the direct user's prior-review choice. A testing specialist pass or green tests alone does not satisfy this audit. Otherwise run it. |
 | Plan Completion Audit (8) | Use the verified full completion matrix and unchanged approved scope fingerprint. Retain each deferral and its user decision; no 50-item truncation. Otherwise audit the complete approved scope. A plan review is not implementation verification. |
 | Plan Verification (8.1) | Reuse current item-level QA/user results and tested builds. Run missing automated verification; required manual checks still require evidence or explicit user deferral. |
@@ -591,6 +691,54 @@ Markdown change behavior and return through affected tests/reviews. Apply the
 DOCS test policy when that classification still holds; otherwise retain ship's
 ordinary test invalidation (including docs/TODO inputs consumed by the lane).
 
+### Commit without co-author trailers
+
+Drop the `Co-Authored-By` line from ship's commit template. Some hosts' commit
+wrappers append a trailer anyway; Cursor adds `Co-authored-by: Cursor`, even on
+`--amend`. Run this check after each ship step that commits and before every
+push. Set `_SINCE` to local HEAD as bound in Step 1, then to each tip this
+invocation pushes, so the check covers only commits this invocation created;
+set `_BASE` to the fetched base tip. Exclude published base ancestry even when
+base integration fast-forwards, and require a first-parent starting point.
+It re-hashes
+those unpushed commits without co-author lines, keeping each tree, author,
+committer and second parent, and moves the branch only if HEAD has not moved
+since the check began:
+
+```bash
+_SINCE="<full SHA: local HEAD bound in Step 1, or the last tip this invocation pushed>"
+_BASE="<full SHA: fetched base tip>"
+_BASE=$(git rev-parse --verify "$_BASE^{commit}") || exit 1
+_HEAD=$(git rev-parse --verify HEAD) || exit 1
+_BRANCH=$(git symbolic-ref --quiet --short HEAD) || { echo "TRAILERS: BLOCKED — detached HEAD"; exit 1; }
+git merge-base --is-ancestor "$_SINCE" "$_HEAD" || { echo "TRAILERS: BLOCKED — HEAD does not descend from $_SINCE"; exit 1; }
+_COMMITS=$(git rev-list --reverse --first-parent "$_SINCE..$_HEAD") || exit 1
+if [ -n "$_COMMITS" ]; then
+  _FIRST=$(printf '%s\n' "$_COMMITS" | sed -n '1p')
+  [ "$(git rev-parse --verify "$_FIRST^1")" = "$_SINCE" ] || { echo "TRAILERS: BLOCKED — starting point is not on the first-parent chain"; exit 1; }
+fi
+_BAD=$(git log --no-show-signature --first-parent --format=%H --regexp-ignore-case --grep='^co-authored-by:' "$_SINCE..$_HEAD" "^$_BASE") || exit 1
+if [ -z "$_BAD" ]; then echo "TRAILERS: CLEAN"; exit 0; fi
+_TIP=$_SINCE
+for _C in $(printf '%s\n' "$_COMMITS"); do
+  git merge-base --is-ancestor "$_C" "$_BASE"
+  _ANCESTOR=$?
+  if [ "$_ANCESTOR" -eq 0 ]; then _TIP=$_C; continue; fi
+  [ "$_ANCESTOR" -eq 1 ] || exit 1
+  _OLD=$(git rev-parse --verify "$_C^1") || exit 1
+  _NEW=$(git cat-file commit "$_C" | awk -v op="parent $_OLD" -v np="parent $_TIP" 'BEGIN { h = 1 } h { if (!d && $0 == op) { $0 = np; d = 1 } print; if ($0 == "") h = 0; next } tolower($0) ~ /^co-authored-by:/ { next } { l[++n] = $0 } END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' | git hash-object -t commit -w --stdin) || exit 1
+  if [ "$_NEW" != "$_C" ] && git cat-file commit "$_C" | sed '/^$/q' | grep -q '^gpgsig'; then echo "TRAILERS: BLOCKED — $_C is signed; a rewrite would invalidate its signature"; exit 1; fi
+  [ -n "$(git log -1 --no-show-signature --format=%s "$_NEW")" ] || { echo "TRAILERS: BLOCKED — $_C would have an empty message"; exit 1; }
+  _TIP=$_NEW
+done
+[ "$(git rev-parse "$_TIP^{tree}")" = "$(git rev-parse "$_HEAD^{tree}")" ] || { echo "TRAILERS: BLOCKED — the rewrite changed the tree"; exit 1; }
+git update-ref -m "ship-and-land: drop co-author trailers" "refs/heads/$_BRANCH" "$_TIP" "$_HEAD" || { echo "TRAILERS: BLOCKED — $_BRANCH moved during the check"; exit 1; }
+echo "TRAILERS: STRIPPED $_HEAD -> $_TIP"
+```
+
+`BLOCKED` stops the push. Report it with the named commit; never rewrite
+pushed history or invalidate a signature to clear it.
+
 Before leaving ship, re-fetch and reconcile head, base, new feedback and local
 state. A retargeted base branch, or a base advance that makes the PR conflict,
 goes through integration and invalidation above before any landing approval.
@@ -604,10 +752,12 @@ reported limitation, and do not land with local commits or dirty work left by it
 
 Write a compact `## Ship and land` receipt in the PR body, retaining/linking the
 original preparation receipt. Include the bound identity, final head/tree/base,
-scope hash, profile, handoff marker/snapshot, per-stage reused/new/attested evidence
+scope hash, profile and path (release-only or why not), handoff marker/snapshot,
+per-stage reused/new/attested evidence
 and original dates when known, informational dispositions, delta/regression checks,
 unavailable optional passes, exact test commands,
-release-change verification, Greptile status/allowance, version, and limitations.
+release-change verification, Greptile status/allowance, version, limitations,
+and the wall time from the invocation start to the push.
 Use a fresh body read, scan exact outgoing bytes through ship's redaction step,
 write via a body file, and read back. Never edit the preparation comment to
 make old evidence look current. Persist sufficient sanitized excerpts and links
@@ -668,6 +818,18 @@ Where upstream STOP guidance sends the user to standalone `/ship`, `/review`,
 or `/land-and-deploy`, direct them to rerun `/ship-and-land` instead. When this
 invocation validated a marked handoff, tell them to paste the same handoff again.
 
+On every path, when land reaches its readiness report and merge-approval gate,
+record the measured wall time from invocation start in the PR's `Ship and land`
+receipt, using Step 3's fresh-read and redaction procedure. This records time
+to the gate whether the caller continues to approval or requested a stop.
+
+**Stop at the merge gate on request.** When the caller passed `--no-land`, or
+directly asked to stop before landing, run land-and-deploy with these adapters
+through its readiness report, then stop where it would ask for merge approval.
+Do not merge, enqueue, or enable auto-merge. Finish with the readiness report,
+`stopped at merge gate (caller request)` and any blocker. A later
+`/ship-and-land` run resumes at land with fresh evidence and its own approval.
+
 Continue to the installed land-and-deploy procedure on the exact shipped PR and
 verification URL. Retain CI/protection checks, version-drift detection, first-run
 setup validation, concrete merge approval, merge/queue state handling, deployment
@@ -687,7 +849,8 @@ replay ship or merge: follow land's already-merged guidance and report
 deployment as unverified unless this invocation verifies it.
 
 Finish with PR URL, version, merged/deploy verdict, a brief reused-versus-run
-summary, and any blocker or unverified deployment. CI pending, deployment
+summary, the path taken, the wall time from the invocation start to the merge
+gate, and any blocker or unverified deployment. CI pending, deployment
 unconfirmed, or canary unavailable must not read as deployed and verified.
 This skill has no deliberate pause: every exit, including blockers and
 preparation handoffs, completes the invocation, so run telemetry finish with
