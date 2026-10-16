@@ -136,3 +136,27 @@ _tombstone: 22_
 ### Track 23B: Read the Conductor store shape in `cursor_turns()` ✓ Shipped (v0.36.2.0)
 - 2026-10-09: merged [PR #136](https://github.com/kbitz/gstack-extend/pull/136) (commit `faa17ac`); verified land-time Track 23B, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
 - 56/56 approved plan items verified (T01–T42, R01–R14). Fixtures cover epoch-millisecond times and list-valued params in the NDJSON store shape. T42's in-PR obligation (handoff and procedure) was met; its native receipt was a separate post-install gate. Receipt 1 (2026-10-09) was negative: current Conductor builds write SQLite shards this reader does not read. The follow-up is the SQLite store-reader Track (Track 23G as of 2026-10-09). O4 is not awarded.
+
+## Individual Track history
+
+### Track 23C: Make preserved skill copies visible to older upgrade sessions ✓ Shipped (v0.36.4.0)
+- 2026-10-09: merged [PR #138](https://github.com/kbitz/gstack-extend/pull/138) (commit `d5dbf98`); verified land-time Track 23C, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
+- Plan completion: 56 of 57 approved items done at review; the remaining partial item closed in `5d130df`. Tests cover an upgrade followed by an older preamble, and retired copies. Real-host upgrade and recovery acceptance stays with the host qualification Tracks (28A and 28B as of 2026-10-16).
+
+## Individual Track history
+
+### Track 23D: `/pair-review` resume routing, safe archive and tag values ✓ Shipped (v0.36.6.0)
+- 2026-10-11: merged [PR #141](https://github.com/kbitz/gstack-extend/pull/141) (commit `7773b3f`); verified land-time Track 23D, original Group 23. Labeled Track 23A on 2026-09-30 (`756e566`) and relabeled 23D on 2026-10-08 (`5b6e516`).
+- 58 of 58 approved items verified, none deferred. On 2026-10-09 the user approved one reworded task: pair-review tags carry no `files=` key, instead of joining safe paths with pipes. Installed-agent acceptance stays with the host qualification Tracks.
+
+## Individual Track history
+
+### Track 23G: Read the SQLite Conductor store shape in `cursor_turns()` ✓ Shipped (v0.36.7.0)
+- 2026-10-12: merged [PR #140](https://github.com/kbitz/gstack-extend/pull/140) (commit `07412e5`); verified land-time Track 23G, original Group 23. Introduced under this ID on 2026-10-09 in `1c75186`; no later relabel before landing.
+- 68 of 68 approved items verified, none deferred; the 0.36.7.0 CHANGELOG names both supported layouts (NDJSON and SQLite `index.db`). `active_run_id` is not used as a tiebreaker (plan decision D6). Coverage was 77% against an 80% target, a risk the user accepted. The owner-side gate that was never part of Done when stays open: T42 native receipt 2 and the row-interpretation check, now carried by the Conductor qualification Track (28A as of 2026-10-16). O4 is not awarded.
+
+## Individual Track history
+
+### Track 23F: Allow the first roadmap audit in an untagged project ✓ Shipped (v0.36.9.0)
+- 2026-10-16: merged [PR #144](https://github.com/kbitz/gstack-extend/pull/144) (commit `73188a4`); verified land-time Track 23F, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
+- 25 of 25 in-scope items verified, including a fresh-init audit assertion; invalid versions and mismatched existing tags still fail. User-approved edits to `skills/roadmap.md` and `tests/skill-protocols.test.ts` fell outside the declared footprint. The installed `/roadmap` check stays with the planning qualification Track (25B).
