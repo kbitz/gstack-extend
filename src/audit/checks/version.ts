@@ -45,13 +45,15 @@ export function runCheckVersion(ctx: AuditCtx): CheckResult {
     };
   }
 
-  const findings: string[] = [];
+  const failFindings: string[] = [];
+  const warnFindings: string[] = [];
   const preamble: string[] = [];
   preamble.push(`CURRENT: ${ctx.version.current}`);
   preamble.push(`SOURCE: ${ctx.version.source}`);
 
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/.test(ctx.version.current)) {
-    findings.push(
+  const formatValid = /^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/.test(ctx.version.current);
+  if (!formatValid) {
+    failFindings.push(
       `- version "${ctx.version.current}" (from ${ctx.version.source}) is not valid (expected X.Y.Z or X.Y.Z.W)`,
     );
   }
@@ -60,13 +62,14 @@ export function runCheckVersion(ctx: AuditCtx): CheckResult {
     preamble.push(`LATEST_TAG: ${ctx.version.latestTag}`);
     const tagVer = ctx.version.latestTag.replace(/^v/, '');
     if (ctx.version.current !== tagVer) {
-      findings.push(
+      failFindings.push(
         `- ${ctx.version.source} version (${ctx.version.current}) does not match latest tag (${ctx.version.latestTag})`,
       );
     }
   } else {
     preamble.push('LATEST_TAG: (none)');
-    findings.push('- No git tags found — consider tagging releases (git tag vX.Y.Z)');
+    const tagVersion = formatValid ? ctx.version.current : 'X.Y.Z';
+    warnFindings.push(`- No local git tags found — consider tagging releases (git tag v${tagVersion})`);
   }
 
   if (ctx.version.progressLatest !== null) {
@@ -88,7 +91,7 @@ export function runCheckVersion(ctx: AuditCtx): CheckResult {
   }
   preamble.push(`RECOMMEND: ${recommend}`);
 
-  if (findings.length === 0) {
+  if (failFindings.length === 0 && warnFindings.length === 0) {
     return {
       section: 'VERSION',
       preamble,
@@ -99,7 +102,7 @@ export function runCheckVersion(ctx: AuditCtx): CheckResult {
   return {
     section: 'VERSION',
     preamble,
-    status: 'fail',
-    body: ['FINDINGS:', ...findings, ''],
+    status: failFindings.length > 0 ? 'fail' : 'warn',
+    body: ['FINDINGS:', ...failFindings, ...warnFindings, ''],
   };
 }
