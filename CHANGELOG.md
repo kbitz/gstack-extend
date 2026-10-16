@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.9.0] - 2026-10-16
+
+### Fixed
+
+- **A repository with no git tags can complete its first roadmap audit.** The VERSION check used to fail when no local tag existed, so a new project was blocked before any planning work. It now warns, says no local git tags were found, and suggests `git tag v<current version>` when that version is valid. An invalid version still fails, and a tag that does not match the current version still fails. `/roadmap` counts the warning as an advisory, so an untagged project can finish with that concern listed instead of stopping on a failed VERSION section. The warning stays until the repository is tagged.
+
 ## [0.36.8.0] - 2026-10-12
 
 ### Added
