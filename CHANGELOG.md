@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.10.0] - 2026-10-16
+
+### Changed
+
+- **A task title counts as finished only with a checkmark or a whole uppercase completion word.** `SHIPPED`, `RETIRED`, `CUT`, and `DISCHARGED` count when the word is entirely uppercase and is not attached to a letter, digit, underscore, or backtick. Those characters do not separate a token. A checkmark counts anywhere in the title. Title case such as "Shipped", a fragment such as `_CUT_`, and the same letters inside backticks stay ordinary text, so they no longer drop the task out of the size count. An untagged title that still looks finished, such as "— Shipped", now fails SIZE because the tag is missing: add a checkmark, or rewrite the stamp as prose.
+- **A tagged task that still contains one of those markers is not weighted, and the note says why.** The note names the first marker and the tier tag. To count the task, rewrite the marker as prose, or remove the token or wrap it in backticks and keep the tag. For a checkmark, remove the checkmark.
+- **The Future index now says how many deferred items have no revisit trigger.** Select rows with `^- `, not by line position, because a count line was inserted. On this repository the index looks like this:
+
+  Before:
+
+  ```text
+  FUTURE_INDEX: 42
+  - ...
+  ```
+
+  After:
+
+  ```text
+  FUTURE_INDEX: 42
+  FUTURE_TRIGGERS_MISSING: 25
+  - ... — revisit: MISSING
+  ```
+
+  In that after output, 25 rows end with `revisit: MISSING`. Rows that already have a trigger keep it. `/roadmap` can append those missing triggers in a separate owner-selected batch. The batch only adds the trigger text; it does not promote, rewrite, or reorder an entry, and this release does not migrate the existing Future list.
+
 ## [0.36.9.0] - 2026-10-16
 
 ### Fixed
