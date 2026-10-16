@@ -36,7 +36,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 
 import { renderCheckResult } from '../src/audit/cli.ts';
-import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS, SECTION_HEADING_RE } from '../src/audit/sections.ts';
+import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS, SECTION_HEADING_RE, parseAuditSections } from '../src/audit/sections.ts';
 import initSkill from '../skills/gstack-extend-init.md' with { type: 'text' };
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { mkScope } from './helpers/init-scope.ts';
@@ -152,8 +152,10 @@ describe('init argument validation', () => {
 });
 
 describe('init flag matrix', () => {
-  test('empty dir + default: renders, registers, audit clean, exit 0', () => {
+  test('empty untagged repo + default: renders, registers, audit warns without blocking, exit 0', () => {
     const s = scope('empty-default');
+    const init = spawnSync('git', ['init', '--quiet', '--initial-branch=main', s.target], { encoding: 'utf8' });
+    expect(init.status).toBe(0);
     const r = run(['init', s.target, '--no-prompt'], s);
     expect(r.exitCode).toBe(0);
     const written = r.stdout.split('\n').filter((line) => line.startsWith('  + wrote '))
@@ -169,6 +171,15 @@ describe('init flag matrix', () => {
     expect(r.stdout).toContain('+ wrote docs/roadmap-shipped.md');
     expect(r.stdout).toContain('+ registered');
     expect(r.stdout).toContain('SUCCESS');
+
+    // This uses the real post-render auditor, including fresh-init output filtering.
+    const sections = parseAuditSections(r.stdout);
+    const version = sections.find((section) => section.name === 'VERSION');
+    expect(version?.body).toContain('STATUS: warn');
+    expect(version?.body).toContain('LATEST_TAG: (none)');
+    expect(version?.body).toContain('RECOMMEND: none');
+    expect(version?.body).toContain('- No local git tags found — consider tagging releases (git tag v0.0.0.0)');
+    expect(sections.filter((section) => section.body.includes('STATUS: fail')).map((section) => section.name)).toEqual([]);
 
     expect(existsSync(join(s.target, 'CLAUDE.md'))).toBe(true);
     expect(existsSync(join(s.target, 'CHANGELOG.md'))).toBe(true);

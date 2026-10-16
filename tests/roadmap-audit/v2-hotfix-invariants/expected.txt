@@ -37,9 +37,9 @@ CURRENT: 0.5.0
 SOURCE: VERSION
 LATEST_TAG: (none)
 RECOMMEND: none
-STATUS: fail
+STATUS: warn
 FINDINGS:
-- No git tags found — consider tagging releases (git tag vX.Y.Z)
+- No local git tags found — consider tagging releases (git tag v0.5.0)
 
 
 ## TAXONOMY

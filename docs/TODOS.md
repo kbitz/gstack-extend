@@ -2,7 +2,29 @@
 
 ## Unprocessed
 
-_(none)_
+### [plan-ceo-review:track=23F,defer=true] Split the causes of a null latest tag (UC1)
+
+- **Description:** `VersionInfo.latestTag === null` conflates zero local tags, shallow/tagless clones, git unavailable and non-repository targets. Track 23F intentionally warns for all of them; it cannot detect upstream version drift without local tags. A separate gateway signal could distinguish first-release guidance from git recovery or fetching tags.
+- **Effort:** M
+- **Context:** UC1 from Track 23F's approved autoplan on 2026-10-15. Both CEO review voices recommended the split; the owner approved the narrow advisory rule and deferred changes to `VersionInfo` and `GitGateway`. This needs a separate contract decision and fixture pass.
+- **Priority:** P2
+- **Revisit when:** O2/Track 25B onboarding qualification reproduces misleading no-tag guidance in a shallow clone or unhealthy git environment, or a supported workflow loses drift detection because tags were not fetched.
+
+### [plan-eng-review:track=23F,defer=true] Filter non-version tags before selecting the latest version tag
+
+- **Description:** `GitGateway.tagsLatest()` takes the head of `git tag --list --sort=-v:refname` without filtering version formats. A non-version tag can sort ahead of release tags and cause a false VERSION mismatch. Evaluate filtering to the supported X.Y.Z / X.Y.Z.W formats while preserving tagged-project drift checks.
+- **Effort:** S
+- **Context:** Pre-existing behavior raised by the outside engineering review of Track 23F's approved autoplan on 2026-10-15. Deferred because this Track changes only the no-tag advisory; tag selection and version formats stay unchanged.
+- **Priority:** P3
+- **Revisit when:** A supported repository with mixed release and non-version tags reproduces a false VERSION failure, or the tag-selection contract is next changed.
+
+### [review:track=23F,defer=true] Consider a config key for persistent untagged-project warnings
+
+- **Description:** A valid untagged project, including an initial 0.0.0.0 project, now keeps a visible VERSION warning and may finish `/roadmap` as DONE_WITH_CONCERNS until it is tagged. Consider an explicit configuration key for projects that intentionally remain untagged without suppressing invalid-format or tag-mismatch failures.
+- **Effort:** S
+- **Context:** Warn-fatigue concern from the DX review of Track 23F's approved autoplan on 2026-10-15. The owner retained one advisory rule for all valid untagged versions and deferred a new config surface.
+- **Priority:** P3
+- **Revisit when:** O2/Track 25B onboarding or user feedback shows that repeated no-tag advisories obscure actionable findings in intentionally untagged projects.
 
 ### [plan-ceo-review:track=23C,defer=true] Investigate ownership receipts for customized generated copies
 
