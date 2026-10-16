@@ -474,6 +474,56 @@ describe('parseRoadmap — task lines', () => {
     expect(r.value.effortTagFindings.some((f) => f.includes('looks done'))).toBe(true);
   });
 
+  // Value: protects=a task whose title merely contains a marker substring (Executable) is counted and weighted;
+  //   fails_when=isDoneMarkerTitle matches substrings again; why_new=only the checkmark fixture existed;
+  //   seam=none; no_claim=none beyond protects
+  test('ordinary title containing a marker substring is counted and weighted', () => {
+    const md = [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      '- **Executable overlay validator** -- body (M)',
+      '- **Real work** -- body (S)',
+      '',
+    ].join('\n');
+    const r = parseRoadmap(md, deps());
+    expect(r.value.tracks[0]!.tasksCount).toBe(2);
+    expect(r.value.tracks[0]!.sessionWeight).toBe(3);
+    expect(r.value.effortTagFindings.some((f) => f.includes('looks done'))).toBe(false);
+  });
+
+  // Value: protects=a tagged marker title is excluded with a visible note, and each remedy restores weight;
+  //   fails_when=the exclusion turns silent again or a remedy no longer counts the task; why_new=new note;
+  //   seam=none; no_claim=none beyond protects
+  test('tagged marker title is excluded with a not-weighted note; remedies restore weight', () => {
+    const track = (title: string) => [
+      '## Group 1: A',
+      '### Track 1A: Foo',
+      `- **${title}** -- body (S)`,
+      '',
+    ].join('\n');
+
+    const bare = parseRoadmap(track('Validate SHIPPED receipts'), deps());
+    expect(bare.value.tracks[0]!.tasksCount).toBe(0);
+    expect(bare.value.tracks[0]!.sessionWeight).toBe(0);
+    expect(bare.value.effortTagFindings).toHaveLength(1);
+    expect(bare.value.effortTagFindings[0]).toContain('has (S) but marker SHIPPED marks it done — not weighted');
+    expect(bare.value.effortTagFindings[0]).toContain('remove or backtick SHIPPED');
+
+    const backticked = parseRoadmap(track('Validate `SHIPPED` receipts'), deps());
+    expect(backticked.value.tracks[0]!.tasksCount).toBe(1);
+    expect(backticked.value.tracks[0]!.sessionWeight).toBe(1);
+    expect(backticked.value.effortTagFindings).toEqual([]);
+
+    const stamped = parseRoadmap(track('Old reader ✓'), deps());
+    expect(stamped.value.tracks[0]!.tasksCount).toBe(0);
+    expect(stamped.value.effortTagFindings[0]).toContain('remove ✓');
+
+    const cleared = parseRoadmap(track('Old reader'), deps());
+    expect(cleared.value.tracks[0]!.tasksCount).toBe(1);
+    expect(cleared.value.tracks[0]!.sessionWeight).toBe(1);
+    expect(cleared.value.effortTagFindings).toEqual([]);
+  });
+
   test('declared 0 lines does not trigger /0 (matches bash guard)', () => {
     const md = [
       '## Group 1: A',
@@ -883,8 +933,7 @@ describe('future pointer + mergeFutureArchive', () => {
     expect(out).toContain('FUTURE_INDEX: 2');
     expect(out).toContain('- **Bare title** — first sentence.');
     expect(out).not.toContain('Rest.');
-    expect(out).toContain('- **Title only**');
-    expect(out).not.toMatch(/Title only.*—/);
+    expect(out.split('\n')).toContain('- **Title only** — revisit: MISSING');
   });
 
   test('future index carries each bullet\'s complete revisit trigger', () => {
@@ -904,7 +953,7 @@ describe('future pointer + mergeFutureArchive', () => {
       '- **Old item** — No trigger here. More detail.',
     ]);
     expect(out).toContain('- **Bump parser** — Handle v2. — revisit: docs/SPEC.md selects MVP-2 or v1.2.0 ships');
-    expect(out).toContain('- **Old item** — No trigger here.\n');
+    expect(out).toContain('- **Old item** — No trigger here. — revisit: MISSING\n');
   });
 
   test('the bullet-ending marker wins over a quoted mention of it', () => {
@@ -913,5 +962,65 @@ describe('future pointer + mergeFutureArchive', () => {
     ]);
     expect(row!.revisit).toBe('the next regeneration');
     expect(row!.first).toBe('Index reads only inline `**Revisit when:**` markers.');
+  });
+
+  // Value: protects=an empty or placeholder trigger cannot hide a gap; fails_when=revisit returns "" or "MISSING";
+  //   why_new=only bullet-ending marker parsing was tested; seam=none; no_claim=none beyond protects
+  test('an empty marker or the literal MISSING counts as a missing trigger', () => {
+    const rows = futureIndexRows([
+      '- **Empty** — Body. **Revisit when:**',
+      '- **Period only** — Body. **Revisit when:** .',
+      '- **Placeholder** — Body. **Revisit when:** MISSING.',
+      '- **Absent** — Body.',
+    ]);
+    expect(rows.map((r) => r.revisit)).toEqual([null, null, null, null]);
+    const out = formatFutureIndex([
+      '- **Empty** — Body. **Revisit when:**',
+      '- **Period only** — Body. **Revisit when:** .',
+    ]);
+    expect(out.split('\n')).toContain('- **Empty** — Body. — revisit: MISSING');
+    expect(out.split('\n')).toContain('- **Period only** — Body. — revisit: MISSING');
+  });
+
+  // Value: protects=migration output is readable by the index; fails_when=the separator or trailing-space
+  //   handling regresses; why_new=no migration-format cases existed; seam=none;
+  //   no_claim=agent compliance with the migration prose
+  test('forms the trigger migration writes are read back as the trigger', () => {
+    const rows = futureIndexRows([
+      '- **Filled** — Body. **Revisit when:** X.',
+      '- **Spaced period** — Body. **Revisit when:** X .',
+      '- **Title only** — **Revisit when:** X.',
+      '- **Double dash** -- Body. **Revisit when:** X.',
+      '- **Legacy** — A long first sentence about the deferral. Second sentence with detail and more detail.'
+        + ' _Deferred because: not enough usage yet. Effort M, P3._ **Revisit when:** four weeks of cohort usage exist.',
+    ]);
+    expect(rows.map((r) => r.revisit)).toEqual([
+      'X',
+      'X',
+      'X',
+      'X',
+      'four weeks of cohort usage exist',
+    ]);
+    expect(rows[2]!.title).toBe('Title only');
+    expect(rows[3]!.title).toBe('Double dash');
+    expect(rows[4]!.first).toBe('A long first sentence about the deferral.');
+  });
+
+  // Value: protects=the skill's index read states how many entries lack a trigger; fails_when=the count line is
+  //   dropped, miscounts, or the empty index returns one line; why_new=the count line is new; seam=none;
+  //   no_claim=none beyond protects
+  test('formatFutureIndex prints the missing-trigger count on line 2', () => {
+    const out = formatFutureIndex([
+      '- **Has trigger** — Body. **Revisit when:** a second tenant is admitted.',
+      '- **No trigger** — Body.',
+      '- **Empty marker** — Body. **Revisit when:**',
+    ]);
+    expect(out.split('\n').slice(0, 2)).toEqual(['FUTURE_INDEX: 3', 'FUTURE_TRIGGERS_MISSING: 2']);
+    expect(formatFutureIndex(['- **Has trigger** — Body. **Revisit when:** later.']).split('\n').slice(0, 2))
+      .toEqual(['FUTURE_INDEX: 1', 'FUTURE_TRIGGERS_MISSING: 0']);
+  });
+
+  test('formatFutureIndex of an empty Future prints both header lines', () => {
+    expect(formatFutureIndex([])).toBe('FUTURE_INDEX: 0\nFUTURE_TRIGGERS_MISSING: 0\n');
   });
 });

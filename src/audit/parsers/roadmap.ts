@@ -830,7 +830,7 @@ export type FutureIndexRow = {
   title: string;
   source: string | null;
   first: string;
-  /** Text after an inline `**Revisit when:**`, which ends its bullet. */
+  /** Text after an inline `**Revisit when:**`, which ends its bullet; null when absent, empty or `MISSING`. */
   revisit: string | null;
 };
 
@@ -865,7 +865,13 @@ export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
     let revisit: string | null = null;
     const marker = body.lastIndexOf(REVISIT_MARKER);
     if (marker !== -1) {
-      revisit = body.slice(marker + REVISIT_MARKER.length).trim().replace(/\.$/, '');
+      const trigger = body
+        .slice(marker + REVISIT_MARKER.length)
+        .trim()
+        .replace(/\.$/, '')
+        .trim();
+      // An empty marker or the literal placeholder is a missing trigger, not a filled one.
+      revisit = trigger === '' || trigger === 'MISSING' ? null : trigger;
       body = body.slice(0, marker).trim();
     }
     const first = body.split(/(?<=\.)\s/)[0] ?? body;
@@ -875,12 +881,12 @@ export function futureIndexRows(bullets: string[]): FutureIndexRow[] {
 
 export function formatFutureIndex(bullets: string[]): string {
   const rows = futureIndexRows(bullets);
-  if (rows.length === 0) return 'FUTURE_INDEX: 0\n';
-  const lines = [`FUTURE_INDEX: ${rows.length}`];
+  const missing = rows.filter((r) => r.revisit === null).length;
+  const lines = [`FUTURE_INDEX: ${rows.length}`, `FUTURE_TRIGGERS_MISSING: ${missing}`];
   for (const r of rows) {
     const src = r.source !== null ? ` ${r.source}` : '';
     const tail = r.first !== '' ? ` — ${r.first}` : '';
-    const trigger = r.revisit !== null ? ` — revisit: ${r.revisit}` : '';
+    const trigger = ` — revisit: ${r.revisit ?? 'MISSING'}`;
     lines.push(`- **${r.title}**${src}${tail}${trigger}`);
   }
   return lines.join('\n') + '\n';
