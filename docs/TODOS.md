@@ -141,6 +141,14 @@ _(none)_
 - **Priority:** P2
 - **Revisit when:** The first code PR whose preparation and `/ship-and-land` both run on an installed 0.36.8.0 or later release in a repository with no CI.
 
+### [plan-ceo-review:track=23E] Add trigger-migration scenarios to the attended planning matrix
+
+- **Description:** Track 23E adds a legacy trigger migration to `/roadmap` (`skills/roadmap.md`, Deferred work). Its string locks prove the instruction exists, not that an agent follows it. Add scenarios to the attended planning matrix: preservation of every existing character, Approve, Revise and Hold behavior, duplicate or missing titles (`not located`), a title-only bullet, a repeat run, a realistically sized backlog, and the owner's review effort for a batch.
+- **Effort:** M (human: ~1 day / CC: ~1 hour)
+- **Context:** Raised by Track 23E's /autoplan (CEO and DX voices). The Track's executable proof is the `--future-index` unit and CLI tests plus a test that runs the Validate snippet from the skill; the migration's agent behavior is prose only. Placement belongs in Track 25B (installed-skill planning acceptance), so the next `/roadmap` run decides it.
+- **Priority:** P3
+- **Revisit when:** `/roadmap` plans Track 25B, or the first trigger-migration batch is run against a real Future file.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output

@@ -351,6 +351,7 @@ It reads real Git/version/cap/scaffold metadata, overlays raw docs, reparses
 phases, merges shipped/Future history and replaces markdown snapshots; it never
 writes live files. This closure-only recipe requires every other artifact to remain byte-unchanged,
 including TODOS and the Future satellite even when its pointer count is unchanged.
+A selected trigger migration validates its Future draft with the snippet in Deferred work.
 It preserves Future/scaffold declarations.
 For wider regeneration overlay **every** changed artifact and rebuild all its
 derived context (inbox, Future, design docs, existence/scaffold maps, etc.), or
@@ -563,7 +564,7 @@ Each separate call must paste both printed root assignments; a missing root stop
 "$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" > /tmp/roadmap-audit.txt
 ```
 
-Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence + revisit trigger). Do **not** Read `docs/roadmap-future.md` unless promoting an item or reconciling a shipped source Track. The index also prints each entry's inline `revisit:` trigger; check triggers there. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
+Read in addition: `ROADMAP.md` **active sections only** (`## In Progress`, `## Current Plan` — not Future essays, not Shipped essays). Run `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and Read that output (title + source + first sentence + revisit trigger). Do **not** Read `docs/roadmap-future.md` unless promoting an item, reconciling a shipped source Track or reading flagged bullets for a selected trigger migration (see Deferred work). The index also prints each entry's inline `revisit:` trigger; check triggers there. A row without one ends `revisit: MISSING`, and the `FUTURE_TRIGGERS_MISSING:` line counts those rows. If `docs/roadmap-shipped.md` exists, load an ID+title/lineage index first, inspect raw parser diagnostics, then read candidate receipt bodies for exact identity/merge comparison; do not re-review unrelated shipped essays. Read the full `TODOS.md ## Unprocessed`, and recent git log scoped to ROADMAP-referenced files. Notice user-prompt cues (closure / split / Track-ID references / minimal-cue phrasings like "just triage" / "no rework") and let them bias the regeneration; if you call out a detected intent, give the user one chance to correct it before locking it in.
 
 **Default split.** If `## Shipped` still has Group/Phase/Track headings rather than just the pointer, include their archive migration in the complete candidate — no extra scope question. Independently reconcile inline shipped Tracks under the policy above. If `## Future` still has bullets and `docs/roadmap-future.md` is missing **or has no `- ` bullets** (header-only stub from init `--migrate`), move the live bullets verbatim into that file (keep a `## Future` H2 at the top) and leave the pointer. Do not rewrite those essays on the migration hop. Never delete live Future bullets to "finish" a split against an empty satellite.
 
@@ -735,10 +736,82 @@ wait and a concrete trigger written inline as `**Revisit when:** <trigger>.` at
 the end of its single-line bullet (the index reads it from there), for example
 before unattended operation, or an observed workload beyond the supported
 envelope. Existing deferred text stays intact; add a missing trigger when
-deliberately reassessing that item. Never promote an item merely because it
+deliberately reassessing that item or through the legacy trigger migration below.
+Never promote an item merely because it
 reappears in the index or is old. Reassess only when its trigger is met, the
 target changes, or the user explicitly asks. The manifestation gate's prune is
 not a reassessment and runs every time.
+
+**Legacy trigger migration.** When `FUTURE_TRIGGERS_MISSING` is non-zero, the
+proposal Summary reports it and offers a trigger migration as a separate batch.
+Run the batch only when the owner selects it, in this run's Revise answer or by
+asking for it when invoking `/roadmap`, and never on a run that moves Future
+bullets into `docs/roadmap-future.md` (Default split or Migration shortcut). The
+migration only appends; every existing character stays. The migration is not a
+reassessment: it never promotes, kills, rewrites or reorders an entry.
+
+1. **Scope.** Take the flagged entries that survive this run's manifestation
+   gate and are not otherwise resolved in this run.
+2. **Locate.** Never put a title in shell source. Write all selected titles with
+   the file-writing tool into one file in a private `mktemp -d` directory, one
+   title per line and no blank lines (a blank pattern matches every line),
+   replace `$DIR` below with that literal path, and run one search:
+
+   ```bash
+   # First paste both resolved root assignments from Common path.
+   grep -nF -f "$DIR/titles" -- "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}/docs/roadmap-future.md"
+   rm -rf "$DIR"
+   ```
+
+   For each title, keep only a line that starts `- **`, optionally followed by a
+   `[tag] `, then the exact title and its closing `**`. Read that bullet in full;
+   this is an exception to Step 1b's index-only default. If no line or several
+   lines qualify, or the bullet's title is not bold, mark the entry `not located`
+   and leave it unchanged.
+3. **Classify.** Give each located entry one status:
+   - `lifted`: the text states a revisit condition. Quote it, keep any
+     qualification that would change the decision, and name the observable
+     evidence.
+   - `already met`: a lifted condition that already appears met. Still propose
+     the append; promotion waits for a later deliberate reassessment.
+   - `needs owner trigger`: the text states no condition, or the condition is too
+     ambiguous to observe. Quote the closest phrase and leave the entry
+     unchanged; never invent a trigger. Offer the owner `the selected target
+     changes` (the reassessment point this section already names) or an
+     owner-written trigger.
+   - `not located`: from step 2.
+4. **Propose.** Append ` **Revisit when:** <condition>.` to the end of the
+   bullet. If no dash separator (`—`, `–` or `-`) directly follows the bullet's
+   closing `**`, append ` — **Revisit when:** <condition>.` instead, so the index
+   can read it. If the bullet already ends with an empty `**Revisit when:**`,
+   keep every existing character and add only what is missing so it reads
+   `**Revisit when:** <condition>.`: insert the condition after the marker's
+   space and before an existing final period. List one row per entry under the
+   Summary's `Future triggers` line, and show each migrated bullet with its
+   appended trigger in the proposal's `## Future (proposed)` block:
+
+   ```text
+   <title> | <lifted | already met | owner | needs owner trigger | not located> | "<quoted phrase>" or owner | <proposed trigger or none>
+   ```
+
+5. **Approve.** Approve applies every proposed append. Revise drops or edits rows;
+   a selected or owner-written trigger becomes a row with source `owner`, and one
+   Revise line may apply `the selected target changes` to every `needs owner
+   trigger` row. Hold applies none. Under `/project-spec` composition the rows
+   ride the combined approval, and the batch is selected through the wrapper's
+   revision or by asking for it when invoking `/roadmap`. Unapplied entries stay
+   flagged and counted; the batch runs again only when the owner selects it.
+6. **Validate.** Before the first write, save the candidate Future file in the
+   proposal directory and print its index:
+
+   ```bash
+   # First paste both resolved root assignments from Common path.
+   bun -e 'const [extendDir, draftPath] = process.argv.slice(1); const { parseRoadmap, formatFutureIndex } = await import(extendDir + "/src/audit/parsers/roadmap.ts"); process.stdout.write(formatFutureIndex(parseRoadmap(await Bun.file(draftPath).text()).value.futureBullets));' -- "$_EXTEND_ROOT" '/absolute/proposal/future-draft.md'
+   ```
+
+   Every approved row's bullet must show its proposed trigger, and the
+   `FUTURE_TRIGGERS_MISSING:` line is the predicted count printed on the Summary
+   line. A failure blocks before the first write.
 
 For a user-selected GitHub backlog, the approval artifact names the destination
 `owner/repo` (matching `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`), its visibility from
@@ -986,6 +1059,7 @@ Format:
 - New receipts / inactive no-ops / interrupted resumes / deferred closures: counts and IDs
 - Identity/evidence/dated-lineage rows: active ID → canonical land-time ID, original/current labels, merged PR/commit, approved scope/acceptance proof, historical version or unknown
 - Declared pin rows: Track ID | owning Group | named branch/session or PR; none declared or uncertain associations stated explicitly; release/retry conditions
+- Future triggers: <n> missing; migration offered (select it in Revise), run or skipped (Future moved this run); when run: <n> lifted, <n> already met, <n> owner (<n> of them `the selected target changes`), <n> needs owner trigger, <n> not located; predicted missing after apply: <n>
 - Candidate gate: final bins/dependencies, every blocking STATUS, raw history/collision checks, context completeness and feasible labels
 - Approved input fingerprints: active/archive and other affected raw bytes, evidence HEAD and declared pin inventory
 
@@ -1008,6 +1082,9 @@ into `proposal-{ts}.md`, then return the combined candidate for the wrapper's
 single approval.
 
 > AskUserQuestion: "Regenerated plan ready (see proposal-{ts}.md). Apply?"
+>
+> When `FUTURE_TRIGGERS_MISSING` is non-zero and this run does not move Future
+> bullets, add one line: `<n> Future entries lack a revisit trigger; choose Revise and say "run the trigger migration" to add that batch.`
 >
 > A) Approve — apply the full proposal
 > B) Revise — specify what to change
@@ -1044,7 +1121,7 @@ active is resume: reuse the receipt, propose only remaining removal/repack and
 recheck all gates. Inactive identical work is no-op; contradictory/unrelated ID
 reuse is refusal under Exceptions and recovery.
 
-- **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete bullets whose titles were killed, discharged, or promoted; append every newly deferred item (full richness), including leftover Current Plan work deferred by admission, or the one-line issue pointer for a successfully filed GitHub deferral; leave every other line in `docs/roadmap-future.md` untouched, except adding a missing inline trigger to an entry the approved proposal reassessed. Write satellite files first, then ROADMAP.
+- **Whole-block replacement** of `## In Progress` and `## Current Plan`. Future is **surgical**: delete bullets whose titles were killed, discharged, or promoted; append every newly deferred item (full richness), including leftover Current Plan work deferred by admission, or the one-line issue pointer for a successfully filed GitHub deferral; leave every other line in `docs/roadmap-future.md` untouched, except adding a missing inline trigger to an entry the approved proposal reassessed or migrated. A migration appends only ` **Revisit when:** <trigger>.` (or ` — **Revisit when:** <trigger>.` for a bullet without a separator) to the end of its bullet, or fills an existing empty marker. Write satellite files first, then ROADMAP.
   Under Hold, apply only the approved validated closure-only candidate; retain
   all other plan/inbox/Future content and the unfinished partition/dependencies.
 - **Always write both pointers** in ROADMAP, including `(0 items)` when Future is empty:
@@ -1076,6 +1153,8 @@ Run the audit immediately after writing edits:
 This is a drift safety net after complete pre-write validation. COLLISIONS and
 PACKING should already pass the candidate gate; any failure stops Apply with
 the explicit partial-state summary and diff intact. Revalidate before recovery.
+
+After applying a trigger migration, rerun `"$_EXTEND_ROOT/bin/roadmap-audit" "${_ROADMAP_ROOT:?Paste the resolved project-root assignment}" --future-index` and confirm `FUTURE_TRIGGERS_MISSING` equals the count the approved proposal predicted and that every migrated bullet now ends with its approved trigger; otherwise stop and report the mismatch with the affected titles.
 
 The other blockers (SIZE, STRUCTURE, STATE_SECTIONS, VERSION, GROUP_DEPS, PACKING, PARALLELISM_BUDGET) work the same way — fail with diff intact, do not paper over.
 
