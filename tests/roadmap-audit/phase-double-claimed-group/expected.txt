@@ -39,9 +39,9 @@ LATEST_TAG: (none)
 PROGRESS_LATEST: 0.1.0
 CHANGELOG_LATEST: 0.1.0
 RECOMMEND: none
-STATUS: fail
+STATUS: warn
 FINDINGS:
-- No git tags found — consider tagging releases (git tag vX.Y.Z)
+- No local git tags found — consider tagging releases (git tag v0.1.0)
 
 
 ## TAXONOMY
