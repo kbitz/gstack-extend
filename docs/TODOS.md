@@ -2,6 +2,22 @@
 
 ## Unprocessed
 
+### [plan-ceo-review:track=23H,defer=true] Doctor visibility into open handoffs, completion markers and unconfirmed deliveries
+
+- **Description:** `gstack-extend doctor telemetry` reads the JSONL sinks only. It never reads `telemetry/<hash>/*.json` handoffs, `telemetry-completed/` markers or `usage_uncertain` flags, so an abandoned start, a held unconfirmed delivery or a suppressed retry shows only in debug mode or through the interim listing snippet in `docs/telemetry.md` ("Work item and launcher quick-start"). Report open handoffs per root and skill (count, age, work item, whether a logger run is unconfirmed) and marker counts, then retire the snippet. This overlaps the Future card "Doctor coverage report over stage-runs and leftover handoffs"; fold it into that card if it is still open.
+- **Effort:** M
+- **Context:** CEO cherry-pick E1 from Track 23H's approved autoplan on 2026-10-16. Deferred because `bin/lib/telemetry-doctor.py` and its tests sit outside the Track's `_touches:` and a doctor-coverage item already exists.
+- **Priority:** P2
+- **Revisit when:** The doctor coverage report is next planned, or a reported missing or wrong row cannot be diagnosed from the ledger and debug lines alone.
+
+### [plan-ceo-review:track=23H,defer=true] Retention for abandoned open handoffs
+
+- **Description:** Every start that never finishes leaves a handoff in `telemetry/<hash>/`, and nothing removes it (25 leftovers measured locally on 2026-10-16, 6 of them `review-and-prep`). Enumeration is linear in the open handoffs of one root and skill, and a stale resumable start no longer captures pairing because resumable finishes pair newest first, but the files accumulate. Decide a retention policy (age, a root that no longer exists, a cap) that keeps old handoffs usable for explicit recovery and does not delete the evidence a doctor report would show first.
+- **Effort:** S
+- **Context:** CEO cherry-pick E3 from Track 23H's approved autoplan on 2026-10-16. Deleting user state needs its own policy. Related Future card: "Bounded handoff cleanup and a tier-independent marker trigger".
+- **Priority:** P3
+- **Revisit when:** Any root and skill exceeds about 100 open handoffs, or the doctor report in the previous item shows accumulation.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output

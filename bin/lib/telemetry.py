@@ -94,6 +94,9 @@ RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
 REFUSAL_CAP = 10
 HANDOFF_NAME_RE = re.compile(r"[0-9a-f]{64}\.json")  # a per-invocation handoff: sha256(session id) + ".json"
+MARKER_RETENTION_S = 30 * 86400  # a completion marker outlives its handoff this long, for explicit retries
+MARKER_OUTPUTS = ("provenance", "usage")
+WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
 # GROK_SESSION_ID counts only when GROK_AGENT=1, matching detect().
 SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
@@ -460,6 +463,35 @@ def adopt_candidate(store, legacy_file, skill, slot_root, current):
     return None
 
 
+def remove_handoff(handoff):
+    """Unlink a consumed handoff and any legacy duplicate of its session, which could otherwise return as a sole candidate."""
+    handoff.path.unlink(missing_ok=True)
+    if handoff.twin:
+        handoff.twin.unlink(missing_ok=True)
+
+
+def persist_handoff(handoff, done, saved, uncertain):
+    """Record retry progress at the handoff's own path, so a crash mid-finish leaves accurate metadata.
+
+    Each save stands alone: a failed one is noted and the finish carries on, so it never skips a delegate."""
+    if not handoff:
+        return
+    payload = dict(handoff.state, done=list(done))
+    if saved:
+        payload["row"] = saved
+    else:
+        payload.pop("row", None)
+    if uncertain:
+        payload["usage_uncertain"] = True
+    else:
+        payload.pop("usage_uncertain", None)
+    try:
+        save_state(handoff.path, payload)
+        handoff.state = payload
+    except OSError as error:
+        debug(f"could not update the handoff: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
+
+
 def remember_refusal(state_file, state, reason):
     # A refused handoff stays, with a capped record, so a later finish can still adopt or be diagnosed.
     prior = state.get("refusals")
@@ -473,6 +505,90 @@ def remember_refusal(state_file, state, reason):
         save_state(state_file, payload)
     except OSError:
         pass
+
+
+def work_item_problem(value):
+    if not isinstance(value, str):
+        return "not a string"
+    if not value.strip():
+        return "blank"
+    if len(value) > 200:
+        return "over 200 characters"
+    return "contains non-printable characters"
+
+
+def accepted_work_item(value, source):
+    """clean(value), saying why a value that was present but unusable is ignored (debug mode only)."""
+    cleaned = clean(value)
+    if cleaned is None and value is not None:
+        trace(f"ignored {source} work item ({work_item_problem(value)}; expected 1 to 200 printable characters)")
+    return cleaned
+
+
+def resolve_work_item(flag, saved):
+    """The launcher's key for this run: a valid --work-item, else the value saved at start, else the finish
+    environment's GSTACK_EXTEND_WORK_ITEM, else None. A rejected value counts as absent, so it changes nothing."""
+    for value, source in ((flag, "--work-item flag"), (saved, "saved start")):
+        cleaned = accepted_work_item(value, source)
+        if cleaned is not None:
+            return cleaned
+    return accepted_work_item(os.environ.get(WORK_ITEM_ENV), "finish environment")
+
+
+def validate_marker(data, sid, skill, root):
+    """True only for a completion marker that describes exactly this finish: a damaged or foreign marker must never
+    suppress rows."""
+    if not isinstance(data, dict) or data.get("session_id") != sid or data.get("skill") != skill:
+        return False
+    if data.get("root") != root or integer(data.get("completed_at")) is None:
+        return False
+    done = data.get("done")
+    return isinstance(done, list) and all(item in MARKER_OUTPUTS for item in done)
+
+
+def read_marker(path, sid, skill, root):
+    """The validated marker at path, or None. A marker that exists but does not validate is ignored, with one line."""
+    if not os.path.lexists(path):
+        return None
+    data = read_json(path)
+    if validate_marker(data, sid, skill, root):
+        return data
+    debug(f"completion marker at {path} is malformed or describes another run, so it is ignored",
+          "delete the marker file, or leave it; the explicit finish proceeds without it")
+    return None
+
+
+def skip_completed(path, marker, provenance, logger):
+    # A valid marker makes an explicit retry a pure no-op, even for an output enabled only after the first finish:
+    # the marker holds no row, outcome or work item to complete one truthfully.
+    skipped = [name for name, enabled in (("provenance", provenance), ("usage", bool(logger)))
+               if enabled and name not in marker["done"]]
+    extra = ("; enabled now but never recorded as done, so not written: " + ", ".join(skipped)) if skipped else ""
+    debug(f"this run already finished (completion marker at {path}){extra}",
+          "delete the marker file to re-arm an explicit finish for this session")
+
+
+def prune_markers(directory, now):
+    """Delete this key's completion markers older than MARKER_RETENTION_S. Errors are ignored.
+
+    Stat-gated: only a marker whose mtime is near the bound is read in full (completed_at, else mtime, decides). A
+    recent mtime with an older completed_at only extends retention. Unreadable evidence keeps the marker."""
+    try:
+        names = [name for name in os.listdir(directory) if HANDOFF_NAME_RE.fullmatch(name)]
+    except OSError:
+        return
+    for name in names:
+        path = directory / name
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode) or now - info.st_mtime < MARKER_RETENTION_S - 86400:
+                continue
+            completed = integer(read_json(path).get("completed_at"))
+            stamp = completed if completed is not None and completed <= now else info.st_mtime
+            if now - stamp > MARKER_RETENTION_S:
+                path.unlink()
+        except OSError:
+            continue
 
 
 def compatible_wrapper(path):
@@ -663,16 +779,21 @@ def usage_logger():
 
 
 def delegate(logger, skill, sid, duration, values):
+    """'done', 'failed' or 'uncertain'.
+
+    failed: provably before the logger ran (missing --no-sweep, sink checks, exec never happened). done: exit 0.
+    uncertain: the logger may have started, so a row may exist: a timeout, a nonzero exit, any other subprocess error.
+    Both callers compare against "done" explicitly: the strings are all truthy."""
     if not supports_no_sweep(logger):
         # Delegating anyway would let an old logger finalize other sessions' markers as phantom rows.
         debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP})",
               "run gstack-upgrade")
-        return False
+        return "failed"
     try:
         sink = sink_path(logger)
     except (OSError, subprocess.SubprocessError) as error:
         debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
-        return False
+        return "failed"
     try:
         sink.parent.mkdir(parents=True, exist_ok=True)
         # Same private-file rules as the ledger, without writing. A blocking open here holds the repo+skill lock.
@@ -681,10 +802,10 @@ def delegate(logger, skill, sid, duration, values):
         os.close(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             debug(f"sink is not a private regular file at {sink}", "remove the symlink, FIFO, or extra link and retry")
-            return False
+            return "failed"
     except OSError as error:
         debug(f"sink unwritable at {sink}: {error.strerror}", "repair permissions on the telemetry state directory")
-        return False
+        return "failed"
     delegated = [logger, "--source", "gstack-extend", "--no-sweep", "--skill", skill,
                  "--session-id", sid, "--duration", str(duration)]
     for flag in ("--outcome", "--used-browse", "--error-class", "--error-message", "--failed-step"):
@@ -695,19 +816,86 @@ def delegate(logger, skill, sid, duration, values):
         # the output here would make finish wait on that sync until the timeout.
         # An unset GSTACK_DIR would make a runtime-root logger report its own directory as the checkout.
         # Point it at the real gstack root (the logger's grandparent) unless the caller already set one.
-        env = None
-        if not os.environ.get("GSTACK_DIR"):
-            env = os.environ.copy()
+        # The work item is local: the launcher's variable must not reach upstream by inheritance either.
+        env = os.environ.copy()
+        env.pop(WORK_ITEM_ENV, None)
+        if not env.get("GSTACK_DIR"):
             env["GSTACK_DIR"] = str(Path(os.path.realpath(logger)).parent.parent)
         result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 timeout=LOGGER_TIMEOUT_S, env=env)
-    except (OSError, subprocess.SubprocessError) as error:
+    except OSError as error:
+        # exec never happened (missing or non-executable logger): nothing was written.
         debug(f"gstack-telemetry-log failed ({type(error).__name__}: {error})", "run gstack-extend doctor telemetry")
-        return False
+        return "failed"
+    except subprocess.SubprocessError as error:
+        # Timeout included: the logger may have appended before it was killed.
+        debug(f"gstack-telemetry-log failed ({type(error).__name__}: {error})", "run gstack-extend doctor telemetry")
+        return "uncertain"
     if result.returncode:
         debug("gstack-telemetry-log failed", "run gstack-extend doctor telemetry and check your gstack install")
+        return "uncertain"
+    return "done"
+
+
+def scan_sink_tail(sink, skill, sid):
+    """True when the sink's last LOG_TAIL_BYTES hold a skill_run for this skill and session, False when not, None when
+    the sink cannot be read safely.
+
+    delegate's private-file rules (no symlink, regular, one link), a seek-bounded read, and the torn first line dropped:
+    not read_capped, which refuses oversized files, and not tail_records, which follows symlinks. A skill_start row
+    never matches. A missing sink is empty."""
+    try:
+        descriptor = os.open(sink, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
         return False
-    return True
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            return None
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            stream.seek(max(0, info.st_size - LOG_TAIL_BYTES))
+            lines = stream.read(LOG_TAIL_BYTES).split(b"\n")
+    except OSError:
+        return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    for line in lines[1:] if info.st_size > LOG_TAIL_BYTES else lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(record, dict) and record.get("event_type") == "skill_run"
+                and record.get("skill") == skill and record.get("session_id") == sid):
+            return True
+    return False
+
+
+def deliver_usage(logger, skill, sid, duration, values, uncertain):
+    """(result, uncertain): result is done, failed, uncertain or hold. Hold writes nothing and keeps the flag.
+
+    After an uncertain delegate the row may already exist, so a retry looks in the sink first and delegates only when
+    it is absent. A sink that cannot be read or resolved holds: an unverifiable retry must not risk a duplicate."""
+    if uncertain:
+        try:
+            found = scan_sink_tail(sink_path(logger), skill, sid)
+        except (OSError, subprocess.SubprocessError) as error:
+            debug(f"gstack state-root resolver failed ({error})", "reinstall gstack with ./setup or run gstack-upgrade")
+            return "hold", True
+        if found is None:
+            debug("skill-usage sink is unreadable, so an earlier unconfirmed completion cannot be checked",
+                  "repair the sink's permissions or links and finish again, or finish explicitly with "
+                  "--session-id and --start from the GE_TELEMETRY: line")
+            return "hold", True
+        if found:
+            return "done", False
+    outcome = delegate(logger, skill, sid, duration, values)
+    if outcome == "done":
+        return "done", False
+    return outcome, uncertain or outcome == "uncertain"
 
 
 # ─── Execution provenance: which harness, model and effort ran a stage ───
@@ -1723,7 +1911,7 @@ def repo_slug(url):
     return clean(slug)
 
 
-def provenance_row(stage, sid, start, duration, values, root):
+def provenance_row(stage, sid, start, duration, values, root, work_item=None):
     # Read the mutable store before sampling the observation end, then share that one selection.
     captured = capture_cursor_store() if _observe_cursor_store() else None
     now = time.time()
@@ -1777,7 +1965,8 @@ def provenance_row(stage, sid, start, duration, values, root):
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
     return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,
                 outcome=outcome if outcome in OUTCOMES else "unknown", started_at=iso(begin), duration_s=duration,
-                session_id=sid, repo=repo, branch=branch, work_item=clean(values.get("--work-item")),
+                session_id=sid, repo=repo, branch=branch,
+                work_item=work_item if work_item is not None else clean(values.get("--work-item")),
                 source="gstack-extend", route=route, entrypoint_raw=entrypoint,
                 schema_version=SCHEMA_VERSION, producer_version=producer_version(),
                 agent_source=source("agent", agent), model_source=source("model", model),
@@ -1790,11 +1979,15 @@ def main(args):
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
+        print("  at most 200 printable characters, otherwise null.")
         print("  Missing/malformed start and session values fall back to this repository root's skill handoff.")
         print("  Adoption: resumable skills (pair-review, review-and-prep, full-review) adopt at any age;")
         print("  a non-resumable skill adopts the same harness session at any age, refuses a different known session,")
         print("  and adopts an unknown fingerprint only within 24 hours. A finish never reads another root's handoff.")
+        print("  Several open starts in one root pair oldest first (resumable skills: newest first); see docs/telemetry.md.")
         print("  Explicit --session-id is never age-bounded; --start alone does not bypass adoption.")
+        print("  An explicit finish repeated after the run completed writes nothing (until its marker ages out).")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
         return
@@ -1840,7 +2033,11 @@ def main(args):
     # single-slot telemetry/<key>.json from before per-invocation handoffs is still read, never written.
     handoff_dir = extend_state / "telemetry" / key
     legacy_file = extend_state / "telemetry" / (key + ".json")
-    # One lock per repository+skill so concurrent finishes serialize and enumeration is atomic.
+    # A finish that completed every output leaves a marker here, so an explicit retry with the original ids is a no-op.
+    marker_dir = extend_state / "telemetry-completed" / key
+    # One lock per repository+skill so concurrent finishes serialize and enumeration is atomic. It is held to process
+    # exit and spans selection, marker checks, both appends, the sink scan, the marker write and the unlink: a second
+    # same-key finish waits (for at most one delegate plus one scan) and then sees the first one's marker.
     try:
         lock_dir = extend_state / "telemetry-locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
@@ -1855,11 +2052,18 @@ def main(args):
             explicit_start = integer(values.get("--start"))
             explicit_duration = integer(values.get("--duration")) if legacy else None
             if valid_session(explicit) and (explicit_start is not None or explicit_duration is not None):
+                # Marker reads need no lock: a completed run is not delegated again.
+                marker_file = marker_dir / invocation_name(explicit)
+                marker = read_marker(marker_file, explicit, skill, slot_root)
+                if marker:
+                    skip_completed(marker_file, marker, provenance, logger)
+                    return
                 if explicit_start is not None:
                     explicit_duration = max(0, int(time.time()) - explicit_start)
                 delegate(logger, skill, explicit, explicit_duration, values)
         return
     if command == "start":
+        prune_markers(marker_dir, time.time())
         now = int(time.time())
         sid = f"extend-{uuid.uuid4()}"
         row = dict(v=1, event_type="skill_start", skill=skill, session_id=sid,
@@ -1877,18 +2081,24 @@ def main(args):
             return
         fingerprint, marker_names = harness_fingerprint()
         trace("harness markers: " + (", ".join(marker_names) if marker_names else "none"))
+        # The launcher's key for this run, saved so a finish in a later session keeps it.
+        work_item = accepted_work_item(os.environ.get(WORK_ITEM_ENV), "start environment")
         try:
             if store_shape(handoff_dir) == "bad":
                 raise OSError(errno.ENOTDIR, "the handoff store is not a directory")
             seq = next_seq(enumerate_candidates(handoff_dir, legacy_file)[0])
             # harness is a session-fingerprint hash, not a harness name.
-            save_state(handoff_dir / invocation_name(sid), dict(session_id=sid, start=str(now), seq=str(seq),
-                                                               usage=wrote_usage, skill=skill, root=slot_root,
-                                                               harness=fingerprint))
+            saved_state = dict(session_id=sid, start=str(now), seq=str(seq), usage=wrote_usage,
+                               skill=skill, root=slot_root, harness=fingerprint)
+            if work_item is not None:
+                saved_state["work_item"] = work_item
+            save_state(handoff_dir / invocation_name(sid), saved_state)
         except OSError as error:
             debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
                   "repair GSTACK_EXTEND_STATE_DIR permissions or supply explicit --start and --session-id")
-        print(f"GE_TELEMETRY: session={sid} start={now}")
+        # quoted_path: clean() admits spaces, "=", quotes and backslashes, so recovery parses the value as JSON.
+        print(f"GE_TELEMETRY: session={sid} start={now}"
+              + (f" work_item={quoted_path(work_item)}" if work_item is not None else ""))
         return
     explicit_sid = values.get("--session-id")
     explicit_start = integer(values.get("--start"))
@@ -1899,6 +2109,17 @@ def main(args):
         sid = explicit_sid
         # Only this session's own handoff: other invocations' handoffs are never read or touched.
         handoff = explicit_candidate(handoff_dir, legacy_file, sid)
+        # Checked with or without a handoff, before the missing-start return: no explicit path bypasses the bound.
+        marker_file = marker_dir / invocation_name(sid)
+        marker = read_marker(marker_file, sid, skill, slot_root)
+        if marker:
+            skip_completed(marker_file, marker, provenance, logger)
+            if handoff:  # a crash between the marker write and the unlink left it: the marker wins
+                try:
+                    remove_handoff(handoff)
+                except OSError as error:
+                    debug(f"could not remove the handoff: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
+            return
         state = handoff.state if handoff else {}
         start = explicit_start
         if start is None and duration is None and handoff:
@@ -1928,42 +2149,51 @@ def main(args):
         duration = max(0, int(time.time()) - start)
     # The handoff records which outputs a partial finish already wrote, so a retry never duplicates either row.
     done = state.get("done") if isinstance(state.get("done"), list) else []
-    done = [output for output in done if output in ("provenance", "usage")]
+    done = [output for output in done if output in MARKER_OUTPUTS]
     # Handoffs from before the usage flag still complete. A false flag means the start append never landed.
     usage_ok = state.get("usage") if "usage" in state else True
     saved = state.get("row") if isinstance(state.get("row"), dict) else None
+    # A delegate that timed out or exited nonzero may already have written: retries check the sink before delegating.
+    uncertain = state.get("usage_uncertain") is True
     if provenance and "provenance" not in done:
         # Reuse the first attempt's row so a retry does not re-detect the model or stretch duration_s. A saved row is
         # appended as saved, even by a later release: its version, producer and sources describe its construction.
-        row = saved or provenance_row(skill.removeprefix("extend:"), sid, start, duration, values, root)
+        row = saved or provenance_row(skill.removeprefix("extend:"), sid, start, duration, values, root,
+                                      resolve_work_item(values.get("--work-item"), state.get("work_item")))
         trace(f"provenance agent={row['agent']} model={row['model']} effort={row['effort']}")
         if append_row(ledger, row, "provenance sink"):
             done.append("provenance")
             saved = None
+            persist_handoff(handoff, done, saved, uncertain)
         else:
             saved = row
-    if logger and usage_ok and "usage" not in done and delegate(logger, skill, sid, duration, values):
-        done.append("usage")
-    # Consume only the matching handoff: other invocations' files are never touched.
-    # Explicit retries can still supply their original session/start pair.
-    if not handoff:
-        return
-    try:
-        # A transient gstack-config failure is not "usage is off". Keep the handoff so a retry can delegate.
-        usage_done = not (retry_usage and usage_ok) and ((not logger) or (not usage_ok) or ("usage" in done))
-        if (not provenance or "provenance" in done) and usage_done and not saved:
-            handoff.path.unlink()
-            if handoff.twin:
-                handoff.twin.unlink(missing_ok=True)  # a legacy duplicate must not resurrect this session
-        elif done or saved:
-            payload = dict(handoff.state, done=done)
-            if saved:
-                payload["row"] = saved
-            else:
-                payload.pop("row", None)
-            save_state(handoff.path, payload)
-    except OSError as error:
-        debug(f"could not update the handoff: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
+    if logger and usage_ok and "usage" not in done:
+        result, uncertain_now = deliver_usage(logger, skill, sid, duration, values, uncertain)
+        if result == "done":
+            done.append("usage")
+        if result in ("done", "uncertain"):
+            persist_handoff(handoff, done, saved, uncertain_now)
+        uncertain = uncertain_now
+    # A transient gstack-config failure is not "usage is off". Keep the handoff so a retry can delegate.
+    usage_done = not (retry_usage and usage_ok) and ((not logger) or (not usage_ok) or ("usage" in done))
+    if (not provenance or "provenance" in done) and usage_done and not saved:
+        # Every output that was owed is recorded: leave the marker an explicit retry will find, then consume only
+        # this handoff (other invocations' files are never touched). A marker that cannot be written keeps the handoff
+        # with its progress saved, so the retry completes without duplicating.
+        try:
+            save_state(marker_dir / invocation_name(sid), dict(session_id=sid, skill=skill, root=slot_root,
+                                                              done=done, completed_at=int(time.time())))
+            marked = True
+        except OSError as error:
+            marked = False
+            debug(f"could not write the completion marker: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
+        if handoff and marked:
+            try:
+                remove_handoff(handoff)
+            except OSError as error:
+                debug(f"could not update the handoff: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
+    elif done or saved:
+        persist_handoff(handoff, done, saved, uncertain)
 
 
 if __name__ == "__main__":

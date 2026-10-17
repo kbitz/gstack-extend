@@ -3,7 +3,7 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
@@ -5128,5 +5128,657 @@ print(json.dumps([
       ['adopt', 0, 'resumable (exact)'],
       ['adopt', 1, 'resumable (newest)'],
     ]);
+  }, 30_000);
+});
+
+// ─── Track 23H: idempotent finishes, unconfirmed deliveries, and the launcher's work item ───
+
+const LIB_DIR = join(ROOT, 'bin/lib');
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function startFull(fix: TelemetryFixture, skill = 'extend:roadmap', env: Record<string, string> = {}, cwd?: string) {
+  const result = runHelper({ ...fix.env, ...env }, ['start', '--skill', skill], cwd);
+  expect(result.status).toBe(0);
+  return { sid: result.stdout.match(/session=(\S+)/)![1], epoch: result.stdout.match(/start=(\d+)/)![1], stdout: result.stdout, stderr: result.stderr };
+}
+
+const explicitArgs = (sid: string, epoch: string, outcome = 'success', skill = 'extend:roadmap') =>
+  ['finish', '--skill', skill, '--session-id', sid, '--start', epoch, '--outcome', outcome];
+
+/** Every completion marker as `<key>/<sha256(session)>.json`, with its parsed content. */
+function markers(fix: TelemetryFixture) {
+  const dir = join(fix.home, '.gstack-extend/telemetry-completed');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isDirectory()).flatMap(entry =>
+    readdirSync(join(dir, entry.name)).filter(name => /^[0-9a-f]{64}\.json$/.test(name)).map(name => {
+      const path = join(dir, entry.name, name);
+      let data: any = null;
+      try { data = JSON.parse(readFileSync(path, 'utf8')); } catch { /* damaged on purpose */ }
+      return { path, data };
+    }));
+}
+
+const markerFor = (fix: TelemetryFixture, sid: string) =>
+  markers(fix).find(item => item.path.endsWith(handoffName(sid)))!;
+
+const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+
+/**
+ * Runs the real wrapper in-process with the delegated logger call altered, so no 15-second wait is needed.
+ * write-then-* modes let the real logger append first: the case a timeout or crash leaves uncertain.
+ */
+function runPatched(fix: TelemetryFixture, mode: string, args: string[], extraEnv: Record<string, string> = {}) {
+  const script = `import sys, types
+sys.path.insert(0, ${JSON.stringify(LIB_DIR)})
+import telemetry
+mode = sys.argv[1]
+real = telemetry.subprocess.run
+def run(args, **kwargs):
+    if str(args[0]).endswith('gstack-telemetry-log'):
+        if mode == 'timeout-after-write':
+            real(args, **kwargs)
+            raise telemetry.subprocess.TimeoutExpired(args, 15)
+        if mode == 'timeout-no-write':
+            raise telemetry.subprocess.TimeoutExpired(args, 15)
+        if mode == 'nonzero-after-write':
+            real(args, **kwargs)
+            return types.SimpleNamespace(returncode=1)
+        if mode == 'subprocess-error':
+            raise telemetry.subprocess.SubprocessError('synthetic')
+        if mode == 'permission-error':
+            raise PermissionError('synthetic')
+    return real(args, **kwargs)
+telemetry.subprocess.run = run
+save = telemetry.save_state
+def guarded(path, state):
+    if mode == 'marker-write-fails' and 'telemetry-completed' in str(path):
+        raise OSError('synthetic marker write failure')
+    if mode == 'handoff-save-fails' and '/telemetry-completed/' not in str(path) and '/telemetry/' in str(path):
+        raise OSError('synthetic handoff save failure')
+    return save(path, state)
+telemetry.save_state = guarded
+telemetry.main(sys.argv[2:])
+`;
+  return spawnSync('python3', ['-I', '-c', script, mode, ...args], { env: { ...fix.env, ...extraEnv }, encoding: 'utf8', timeout: 20_000 });
+}
+
+describe('completion markers make explicit retries idempotent', () => {
+  test('an explicit retry appends nothing, whether the first finish was explicit or adopted, and the run leaves a valid marker', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    expect(markerFor(fix, sid).data).toMatchObject({ session_id: sid, skill: 'extend:roadmap', done: ['provenance', 'usage'] });
+    expect(Number.isInteger(markerFor(fix, sid).data.completed_at)).toBe(true);
+    expect(statSync(markerFor(fix, sid).path).mode & 0o777).toBe(0o600);
+    expect(handoffs(fix)).toHaveLength(0);
+    for (let attempt = 0; attempt < 2; attempt += 1) expect(runHelper(fix.env, explicitArgs(sid, epoch, 'error')).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(runSessions(fix)).toEqual([sid]);
+    // Adopted (start-less) first finish, explicit retry afterwards.
+    const second = startFull(fix);
+    expect(finishRun(fix).status).toBe(0);
+    expect(runHelper(fix.env, explicitArgs(second.sid, second.epoch)).status).toBe(0);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual([sid, second.sid]);
+    expect(runSessions(fix)).toEqual([sid, second.sid]);
+  }, 30_000);
+
+  test('N parallel explicit retries of one finish write exactly one row of each kind', async () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    const results = await Promise.all(Array.from({ length: 6 }, () => runAsync(fix.env, explicitArgs(sid, epoch))));
+    for (const result of results) {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+    }
+    expect(fix.readLedger().filter(row => row.session_id === sid)).toHaveLength(1);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('a second same-key finish waits on the lock held through the delegate, then sees the first one\'s marker', async () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    writeFileSync(logger, `#!/usr/bin/env python3
+# --no-sweep
+import json, os, sys, time
+from pathlib import Path
+home = Path.home()
+with (home / 'logger-calls.txt').open('a') as calls:
+    calls.write('call' + chr(10))
+if (home / 'block').exists():
+    (home / 'entered').write_text('1')
+    deadline = time.time() + 30
+    while not (home / 'release').exists() and time.time() < deadline:
+        time.sleep(0.05)
+args = sys.argv[1:]
+values = {args[i]: args[i + 1] for i in range(len(args) - 1) if args[i].startswith('--')}
+sink = home / '.gstack' / 'analytics'
+sink.mkdir(parents=True, exist_ok=True)
+with (sink / 'skill-usage.jsonl').open('a') as stream:
+    stream.write(json.dumps(dict(v=1, event_type='skill_run', skill=values.get('--skill'), session_id=values.get('--session-id'))) + chr(10))
+`);
+    chmodSync(logger, 0o755);
+    const { sid, epoch } = startFull(fix);
+    writeFileSync(join(fix.home, 'block'), '1');
+    const first = runAsync(fix.env, explicitArgs(sid, epoch));
+    for (let waited = 0; !existsSync(join(fix.home, 'entered')); waited += 50) {
+      expect(waited).toBeLessThan(20_000);
+      await sleep(50);
+    }
+    let secondDone = false;
+    const second = runAsync({ ...fix.env, ...DEBUG }, explicitArgs(sid, epoch)).then(result => { secondDone = true; return result; });
+    await sleep(600);
+    expect(secondDone).toBe(false); // queued behind the lock, not racing the first
+    expect(readFileSync(join(fix.home, 'logger-calls.txt'), 'utf8')).toBe('call\n');
+    writeFileSync(join(fix.home, 'release'), '1');
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.status).toBe(0);
+    expect(secondResult.status).toBe(0);
+    expect(secondResult.stderr).toContain('this run already finished');
+    expect(readFileSync(join(fix.home, 'logger-calls.txt'), 'utf8')).toBe('call\n');
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(runSessions(fix)).toEqual([sid]);
+  }, 40_000);
+
+  test('markers are pruned by the next same-key start, only for that key, and a post-prune retry writes again', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const [rootA, rootB] = ['root-a', 'root-b'].map(name => gitRepo(fix, name));
+    const runIn = (cwd: string) => {
+      const run = startFull(fix, 'extend:roadmap', {}, cwd);
+      expect(runHelper(fix.env, explicitArgs(run.sid, run.epoch), cwd).status).toBe(0);
+      return run;
+    };
+    const a = runIn(rootA);
+    const b = runIn(rootB);
+    const age = (sid: string, days: number, completedAt?: unknown) => {
+      const found = markerFor(fix, sid);
+      writeFileSync(found.path, completedAt === undefined ? JSON.stringify(found.data) : JSON.stringify({ ...found.data, completed_at: completedAt }));
+      utimesSync(found.path, ago(days * 86400), ago(days * 86400));
+      return found.path;
+    };
+    // Inside retention: a start keeps it.
+    age(a.sid, 29, epochNow() - 29 * 86400);
+    startFull(fix, 'extend:roadmap', {}, rootA);
+    expect(existsSync(markerFor(fix, a.sid).path)).toBe(true);
+    // Past retention in both keys: only the starting key is pruned.
+    const pathA = age(a.sid, 31, epochNow() - 31 * 86400);
+    const pathB = age(b.sid, 31, epochNow() - 31 * 86400);
+    startFull(fix, 'extend:roadmap', {}, rootA);
+    expect(existsSync(pathA)).toBe(false);
+    expect(existsSync(pathB)).toBe(true);
+    // The documented bound: an explicit retry after pruning writes again.
+    expect(runHelper(fix.env, explicitArgs(a.sid, a.epoch), rootA).status).toBe(0);
+    expect(fix.readLedger().filter(row => row.session_id === a.sid)).toHaveLength(2);
+    expect(runSessions(fix).filter(session => session === a.sid)).toHaveLength(2);
+    // A future or missing completed_at falls back to the file's mtime; a recent mtime keeps an old completed_at.
+    const futurePath = age(a.sid, 40, epochNow() + 10 * 86400);
+    startFull(fix, 'extend:roadmap', {}, rootA);
+    expect(existsSync(futurePath)).toBe(false);
+    expect(runHelper(fix.env, explicitArgs(a.sid, a.epoch), rootA).status).toBe(0);
+    const keptPath = markerFor(fix, a.sid).path;
+    writeFileSync(keptPath, JSON.stringify({ ...markerFor(fix, a.sid).data, completed_at: epochNow() - 90 * 86400 }));
+    startFull(fix, 'extend:roadmap', {}, rootA);
+    expect(existsSync(keptPath)).toBe(true);
+    writeFileSync(keptPath, 'garbage{{');
+    utimesSync(keptPath, ago(45 * 86400), ago(45 * 86400));
+    startFull(fix, 'extend:roadmap', {}, rootA);
+    expect(existsSync(keptPath)).toBe(false);
+  }, 60_000);
+
+  test('a marker that does not describe this finish is ignored and the explicit finish proceeds', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    const valid = markerFor(fix, sid);
+    const variants: Array<[string, string]> = [
+      ['unknown output name', JSON.stringify({ ...valid.data, done: ['bogus'] })],
+      ['done not a list', JSON.stringify({ ...valid.data, done: 'provenance' })],
+      ['another skill', JSON.stringify({ ...valid.data, skill: 'extend:qa' })],
+      ['another root', JSON.stringify({ ...valid.data, root: '/elsewhere' })],
+      ['another session', JSON.stringify({ ...valid.data, session_id: 'someone-else' })],
+      ['negative completed_at', JSON.stringify({ ...valid.data, completed_at: -5 })],
+      ['non-integer completed_at', JSON.stringify({ ...valid.data, completed_at: 'soon' })],
+      ['boolean completed_at', JSON.stringify({ ...valid.data, completed_at: true })],
+      ['not JSON', 'garbage{{'],
+      ['not an object', '[]'],
+    ];
+    let rows = 1;
+    for (const [label, content] of variants) {
+      writeFileSync(valid.path, content);
+      const retry = runHelper({ ...fix.env, ...DEBUG }, explicitArgs(sid, epoch));
+      expect(retry.status).toBe(0);
+      expect(retry.stderr).toContain('malformed or describes another run');
+      rows += 1;
+      expect([label, fix.readLedger().length]).toEqual([label, rows]); // proceeds: a damaged marker never suppresses rows
+    }
+  }, 60_000);
+
+  test('a valid marker is a pure no-op even for an output enabled only afterwards, and says so in debug mode', () => {
+    const fix = makeTelemetryFixture('off', 'stub');
+    const { sid, epoch } = startFull(fix);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(markerFor(fix, sid).data.done).toEqual(['provenance']);
+    writeFileSync(join(fix.home, '.gstack/config.yaml'), 'telemetry: community\n');
+    const retry = runHelper({ ...fix.env, ...DEBUG }, explicitArgs(sid, epoch));
+    expect(retry.status).toBe(0);
+    expect(retry.stderr).toContain('this run already finished');
+    expect(retry.stderr).toContain('not written: usage');
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(skillRuns(fix)).toHaveLength(0);
+    // Silent without debug.
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).stderr).toBe('');
+  }, 30_000);
+
+  test('an empty-done marker (nothing was owed) is valid and suppresses a retry', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    const [open] = openHandoffs(fix);
+    rmSync(open.path);
+    const dir = join(fix.home, '.gstack-extend/telemetry-completed', basename(dirname(open.path)));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, handoffName('planted-run')), JSON.stringify({
+      session_id: 'planted-run', skill: 'extend:roadmap', root: open.state.root, done: [], completed_at: epochNow(),
+    }));
+    expect(runHelper(fix.env, explicitArgs('planted-run', epoch)).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(sid).toBeTruthy();
+  }, 30_000);
+
+  test('a marker beside a surviving handoff wins: no rows, and the handoff is removed', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    const [open] = openHandoffs(fix);
+    const saved = readFileSync(open.path);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    writeFileSync(open.path, saved); // the crash window between the marker write and the unlink
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(existsSync(open.path)).toBe(false);
+  }, 30_000);
+
+  test('the no-handoff escape hatch completes once, leaves a marker, and its retry is a no-op', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const epoch = String(epochNow() - 30);
+    expect(runHelper(fix.env, explicitArgs('manual-1', epoch, 'success')).status).toBe(0);
+    expect(runHelper(fix.env, explicitArgs('manual-1', epoch, 'success')).status).toBe(0);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual(['manual-1']);
+    expect(runSessions(fix)).toEqual(['manual-1']);
+    expect(markers(fix)).toHaveLength(1);
+  }, 30_000);
+
+  test('when the lock cannot be taken, an explicit finish still consults the marker before delegating', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid, epoch } = startFull(fix);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    const locks = join(fix.home, '.gstack-extend/telemetry-locks');
+    rmSync(locks, { recursive: true });
+    writeFileSync(locks, 'not a directory');
+    const calls = () => fix.readStubArgs().length;
+    const before = calls();
+    const retry = runHelper({ ...fix.env, ...DEBUG }, explicitArgs(sid, epoch));
+    expect(retry.status).toBe(0);
+    expect(retry.stderr).toContain('state handoff unwritable');
+    expect(retry.stderr).toContain('this run already finished');
+    expect(calls()).toBe(before);
+    // Without the marker the same path delegates, as it did before markers existed.
+    rmSync(markerFor(fix, sid).path);
+    expect(runHelper(fix.env, explicitArgs(sid, epoch)).status).toBe(0);
+    expect(calls()).toBe(before + 1);
+  }, 30_000);
+
+  test('a marker that cannot be written keeps the handoff with its progress, and the retry completes without duplicating', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid } = startFull(fix);
+    const failed = runPatched(fix, 'marker-write-fails', ['finish', '--skill', 'extend:roadmap'], DEBUG);
+    expect(failed.status).toBe(0);
+    expect(failed.stderr).toContain('could not write the completion marker');
+    expect(markers(fix)).toHaveLength(0);
+    expect(openHandoffs(fix).map(item => [item.state.session_id, item.state.done])).toEqual([[sid, ['provenance', 'usage']]]);
+    expect(finishRun(fix).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(markers(fix)).toHaveLength(1);
+  }, 30_000);
+
+  test('a failing incremental save never skips the delegate for that attempt', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid } = startFull(fix);
+    const run = runPatched(fix, 'handoff-save-fails', ['finish', '--skill', 'extend:roadmap'], DEBUG);
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain('could not update the handoff');
+    expect(fix.readLedger().map(row => row.session_id)).toEqual([sid]);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(fix.readStubArgs()).toHaveLength(1);
+  }, 30_000);
+
+  test('done is saved as each output lands, so an interrupted finish leaves accurate retry metadata', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startFull(fix);
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    writeFileSync(logger, '#!/bin/bash\n' + NO_SWEEP_LINE + 'exit 1\n');
+    chmodSync(logger, 0o755);
+    expect(finishRun(fix).status).toBe(0);
+    expect(openHandoffs(fix)[0].state.done).toEqual(['provenance']);
+    expect(openHandoffs(fix)[0].state.usage_uncertain).toBe(true); // a nonzero exit is unconfirmed
+  }, 30_000);
+});
+
+describe('unconfirmed logger deliveries are verified before a retry delegates again', () => {
+  for (const mode of ['timeout-after-write', 'nonzero-after-write']) {
+    test(`${mode}: the retry finds the row in the sink and delegates nothing`, () => {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const { sid } = startFull(fix);
+      const first = runPatched(fix, mode, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+      expect(first.status).toBe(0);
+      expect(runSessions(fix)).toEqual([sid]);
+      expect(openHandoffs(fix)[0].state).toMatchObject({ usage_uncertain: true, done: ['provenance'] });
+      expect(finishRun(fix).status).toBe(0);
+      expect(runSessions(fix)).toEqual([sid]); // no second skill_run
+      expect(fix.readStubArgs()).toHaveLength(1);
+      expect(fix.readLedger().map(row => row.session_id)).toEqual([sid]);
+      expect(handoffs(fix)).toHaveLength(0);
+      expect(markers(fix)[0].data.done).toEqual(['provenance', 'usage']);
+    }, 30_000);
+  }
+
+  for (const mode of ['timeout-no-write', 'subprocess-error']) {
+    test(`${mode}: nothing was written, so the retry delegates and exactly one skill_run exists (a skill_start never satisfies the scan)`, () => {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const { sid } = startFull(fix);
+      const first = runPatched(fix, mode, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
+      expect(first.status).toBe(0);
+      expect(skillRuns(fix)).toHaveLength(0);
+      expect(fix.readJsonl().filter(row => row.event_type === 'skill_start' && row.session_id === sid)).toHaveLength(1);
+      expect(openHandoffs(fix)[0].state.usage_uncertain).toBe(true);
+      expect(finishRun(fix).status).toBe(0);
+      expect(runSessions(fix)).toEqual([sid]);
+      expect(fix.readLedger().map(row => row.session_id)).toEqual([sid]);
+      expect(handoffs(fix)).toHaveLength(0);
+    }, 30_000);
+  }
+
+  test('an exec failure happened before the logger ran: failed, no uncertain flag, the retry just delegates', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startFull(fix);
+    expect(runPatched(fix, 'permission-error', ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(openHandoffs(fix)[0].state).not.toHaveProperty('usage_uncertain');
+    expect(finishRun(fix).status).toBe(0);
+    expect(skillRuns(fix)).toHaveLength(1);
+  }, 30_000);
+
+  test('delegate classifies every branch: pre-launch failed, exit 0 done, anything after launch uncertain', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    const script = `import json, sys, types
+sys.path.insert(0, ${JSON.stringify(LIB_DIR)})
+import telemetry
+real = telemetry.subprocess.run
+outcomes = {}
+def attempt(name, behaviour):
+    def run(args, **kwargs):
+        if str(args[0]).endswith('gstack-telemetry-log'):
+            return behaviour()
+        return real(args, **kwargs)
+    telemetry.subprocess.run = run
+    outcomes[name] = telemetry.delegate(sys.argv[1], 'extend:roadmap', 'sid', 5, {})
+def raises(error):
+    def inner():
+        raise error
+    return inner
+attempt('exit0', lambda: types.SimpleNamespace(returncode=0))
+attempt('exit1', lambda: types.SimpleNamespace(returncode=1))
+attempt('timeout', raises(telemetry.subprocess.TimeoutExpired(['x'], 15)))
+attempt('called', raises(telemetry.subprocess.CalledProcessError(2, ['x'])))
+attempt('generic', raises(telemetry.subprocess.SubprocessError('x')))
+attempt('permission', raises(PermissionError('x')))
+attempt('missing', raises(FileNotFoundError('x')))
+print(json.dumps(outcomes))
+`;
+    const run = spawnSync('python3', ['-I', '-c', script, logger], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      exit0: 'done', exit1: 'uncertain', timeout: 'uncertain', called: 'uncertain', generic: 'uncertain',
+      permission: 'failed', missing: 'failed',
+    });
+  }, 30_000);
+
+  test('the sink scan matches only a skill_run for this skill and session, in the tail, and refuses unsafe sinks', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const script = `import json, os, sys, tempfile
+sys.path.insert(0, ${JSON.stringify(LIB_DIR)})
+import telemetry
+directory = tempfile.mkdtemp(dir=sys.argv[1])
+cap = telemetry.LOG_TAIL_BYTES
+def line(**fields):
+    base = dict(event_type='skill_run', skill='extend:roadmap', session_id='sid-1')
+    base.update(fields)
+    return (json.dumps(base) + chr(10)).encode()
+def pad(size):
+    return b'{"pad":"' + b'x' * (size - 11) + b'"}' + chr(10).encode()
+def write(name, data):
+    path = os.path.join(directory, name)
+    with open(path, 'wb') as stream:
+        stream.write(data)
+    return path
+def scan(path, skill='extend:roadmap', sid='sid-1'):
+    return telemetry.scan_sink_tail(path, skill, sid)
+results = {}
+results['match'] = scan(write('match', line()))
+results['start-only'] = scan(write('start', line(event_type='skill_start')))
+results['other-skill'] = scan(write('skill', line(skill='extend:qa')))
+results['other-session'] = scan(write('session', line(session_id='sid-2')))
+results['malformed-lines'] = scan(write('bad', b'garbage' + chr(10).encode() + b'[]' + chr(10).encode() + b'{' + chr(10).encode() + line()))
+results['absent'] = scan(os.path.join(directory, 'nothing'))
+results['symlink'] = scan((os.symlink(os.path.join(directory, 'match'), os.path.join(directory, 'link')), os.path.join(directory, 'link'))[1])
+os.mkfifo(os.path.join(directory, 'fifo'))
+results['fifo'] = scan(os.path.join(directory, 'fifo'))
+os.link(os.path.join(directory, 'match'), os.path.join(directory, 'second-link'))
+results['hardlink'] = scan(os.path.join(directory, 'match'))
+results['directory'] = scan(directory)
+early, late = line(session_id='sid-early'), line(session_id='sid-late')
+big = early + pad(1 << 20) * 8 + late
+results['big-size-over-cap'] = len(big) > cap
+big_path = write('big', big)
+results['beyond-tail'] = scan(big_path, sid='sid-early')
+results['in-tail'] = scan(big_path, sid='sid-late')
+# The seek lands inside the leading blanks of a line that would otherwise match: a torn first line is dropped.
+torn = b' ' * 300 + line(session_id='sid-torn').rstrip() + chr(10).encode()
+prefix = pad(1000)
+suffix_size = cap + 100 - len(torn)
+results['torn-first-line'] = scan(write('torn', prefix + torn + pad(suffix_size)), sid='sid-torn')
+print(json.dumps(results))
+`;
+    const run = spawnSync('python3', ['-I', '-c', script, fix.home], { env: fix.env, encoding: 'utf8', timeout: 30_000 });
+    expect(run.status).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      match: true, 'start-only': false, 'other-skill': false, 'other-session': false, 'malformed-lines': true,
+      absent: false, symlink: null, fifo: null, hardlink: null, directory: null,
+      'big-size-over-cap': true, 'beyond-tail': false, 'in-tail': true, 'torn-first-line': false,
+    });
+  }, 40_000);
+
+  test('an unreadable sink holds: nothing is delegated and the flag stays; a later no-logger attempt completes the handoff', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid } = startFull(fix);
+    expect(runPatched(fix, 'timeout-after-write', ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    const sink = join(fix.home, '.gstack/analytics/skill-usage.jsonl');
+    rmSync(sink);
+    symlinkSync(join(fix.home, 'elsewhere.jsonl'), sink); // O_NOFOLLOW makes it unreadable, as root or not
+    const held = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expect(held.status).toBe(0);
+    expect(held.stderr).toContain('skill-usage sink is unreadable');
+    expect(fix.readStubArgs()).toHaveLength(1); // no second delegate call
+    expect(openHandoffs(fix)[0].state).toMatchObject({ usage_uncertain: true, done: ['provenance'] });
+    expect(markers(fix)).toHaveLength(0);
+    // Gstack becomes unavailable (tier off): the scan is bypassed and today's completion logic ends the handoff.
+    writeFileSync(join(fix.home, '.gstack/config.yaml'), 'telemetry: off\n');
+    expect(finishRun(fix).status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual([sid]);
+    expect(markers(fix)[0].data.done).toEqual(['provenance']);
+  }, 30_000);
+
+  test('a transient gstack-config failure retains the handoff and the flag, writes no marker, and recovers', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const { sid } = startFull(fix);
+    expect(runPatched(fix, 'timeout-after-write', ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
+    const config = join(fix.home, '.claude/skills/gstack/bin/gstack-config');
+    const working = readFileSync(config);
+    writeFileSync(config, '#!/bin/sh\nexit 1\n');
+    chmodSync(config, 0o755);
+    expect(finishRun(fix).status).toBe(0);
+    expect(openHandoffs(fix)[0].state).toMatchObject({ usage_uncertain: true, done: ['provenance'] });
+    expect(markers(fix)).toHaveLength(0);
+    expect(fix.readStubArgs()).toHaveLength(1);
+    writeFileSync(config, working);
+    chmodSync(config, 0o755);
+    expect(finishRun(fix).status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(fix.readStubArgs()).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('the launcher\'s work item', () => {
+  const ITEM = 'GSTACK_EXTEND_WORK_ITEM';
+  const items = (fix: TelemetryFixture) => fix.readLedger().map(row => row.work_item);
+
+  test('GE_TELEMETRY is byte-identical without a work item and carries it as a JSON string with one', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(startFull(fix).stdout).toMatch(/^GE_TELEMETRY: session=extend-[0-9a-f-]+ start=\d+\n$/);
+    const cases: Array<[string, string]> = [
+      ['a b=c', '"a b=c"'],
+      ['a"b\\c', '"a\\"b\\\\c"'],
+      ['Ünï雪', '"\\u00dcn\\u00ef\\u96ea"'],
+      ['task 42', '"task 42"'],
+    ];
+    for (const [value, quoted] of cases) {
+      const run = startFull(fix, 'extend:roadmap', { [ITEM]: value });
+      expect(run.stdout).toBe(`GE_TELEMETRY: session=${run.sid} start=${run.epoch} work_item=${quoted}\n`);
+      expect(JSON.parse(run.stdout.split(' work_item=')[1])).toBe(value);
+    }
+  }, 30_000);
+
+  test('a start-time value survives a finish in a later session, explicit or resumable, and hand-run rows stay null', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const run = startFull(fix, 'extend:roadmap', { [ITEM]: 'wi-explicit' });
+    expect(runHelper(fix.env, explicitArgs(run.sid, run.epoch)).status).toBe(0);
+    const resumable = startFull(fix, 'extend:pair-review', { [ITEM]: 'wi-resume', CODEX_THREAD_ID: 'thread-a' });
+    expect(finishRun(fix, 'success', 'extend:pair-review', { CODEX_THREAD_ID: 'thread-b' }).status).toBe(0);
+    startFull(fix);
+    expect(finishRun(fix).status).toBe(0);
+    expect(items(fix)).toEqual(['wi-explicit', 'wi-resume', null]);
+    expect(fix.readLedger()[1].session_id).toBe(resumable.sid);
+  }, 30_000);
+
+  test('precedence: the flag, then the value saved at start, then the finish environment, else null', () => {
+    const run = (startEnv: Record<string, string>, finishEnv: Record<string, string>, flag?: string) => {
+      const fix = makeTelemetryFixture('community', 'stub');
+      startFull(fix, 'extend:roadmap', startEnv);
+      const args = ['finish', '--skill', 'extend:roadmap', ...(flag === undefined ? [] : ['--work-item', flag])];
+      expect(runHelper({ ...fix.env, ...finishEnv }, args).status).toBe(0);
+      return items(fix)[0];
+    };
+    expect(run({ [ITEM]: 'saved' }, { [ITEM]: 'finish-env' }, 'flag')).toBe('flag');
+    expect(run({ [ITEM]: 'saved' }, { [ITEM]: 'finish-env' })).toBe('saved');
+    expect(run({}, { [ITEM]: 'finish-env' })).toBe('finish-env');
+    expect(run({}, {})).toBeNull();
+    expect(run({ [ITEM]: 'saved' }, {}, 'x'.repeat(201))).toBe('saved'); // an invalid flag falls through
+    expect(run({ [ITEM]: 'saved' }, {}, '   ')).toBe('saved');
+    expect(run({}, {}, 'flag-only')).toBe('flag-only');
+  }, 60_000);
+
+  test('newline, blank and 201-character values are null, at start and at finish', () => {
+    for (const bad of ['line\nbreak', '   ', 'x'.repeat(201), '']) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const run = startFull(fix, 'extend:roadmap', { [ITEM]: bad });
+      expect(run.stdout).not.toContain('work_item');
+      expect(openHandoffs(fix)[0].state).not.toHaveProperty('work_item');
+      expect(finishRun(fix, 'success', 'extend:roadmap', { [ITEM]: bad }).status).toBe(0);
+      expect(items(fix)).toEqual([null]);
+    }
+    const fix = makeTelemetryFixture('community', 'stub');
+    startFull(fix, 'extend:roadmap', { [ITEM]: 'x'.repeat(200) });
+    expect(finishRun(fix).status).toBe(0);
+    expect(items(fix)).toEqual(['x'.repeat(200)]); // the bound is inclusive
+  }, 60_000);
+
+  test('a legacy handoff with no saved value takes the finish environment; an unclean saved value falls through to it', () => {
+    const legacy = makeTelemetryFixture('community', 'stub');
+    startFull(legacy);
+    plantLegacy(legacy, { session_id: 'legacy-wi', start: String(epochNow() - 20) });
+    expect(finishRun(legacy, 'success', 'extend:roadmap', { [ITEM]: 'finish-env' }).status).toBe(0);
+    expect(items(legacy)).toEqual(['finish-env']);
+    for (const unclean of [12, 'x'.repeat(201), ['list']]) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      startFull(fix, 'extend:roadmap', { [ITEM]: 'saved' });
+      rewriteHandoff(fix, { work_item: unclean });
+      const run = finishRun(fix, 'success', 'extend:roadmap', { ...DEBUG, [ITEM]: 'finish-env' });
+      expect(run.status).toBe(0);
+      expect(run.stderr).toContain('ignored saved start work item');
+      expect(items(fix)).toEqual(['finish-env']);
+    }
+  }, 60_000);
+
+  test('a saved retry row keeps its first construction\'s work item after the environment changes', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startFull(fix);
+    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    mkdirSync(ledger, { recursive: true }); // an unwritable ledger: the row is built, not appended
+    expect(finishRun(fix, 'success', 'extend:roadmap', { [ITEM]: 'first' }).status).toBe(0);
+    expect(openHandoffs(fix)[0].state.row.work_item).toBe('first');
+    rmSync(ledger, { recursive: true });
+    expect(finishRun(fix, 'success', 'extend:roadmap', { [ITEM]: 'second' }).status).toBe(0);
+    expect(items(fix)).toEqual(['first']);
+  }, 30_000);
+
+  test('a rejected value names its source and the bound in debug mode only', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const quiet = startFull(fix, 'extend:roadmap', { [ITEM]: 'x'.repeat(201) });
+    expect(quiet.stderr).toBe('');
+    const start = runHelper({ ...fix.env, ...DEBUG, [ITEM]: 'x'.repeat(201) }, ['start', '--skill', 'extend:roadmap']);
+    expect(start.stderr).toContain('ignored start environment work item (over 200 characters');
+    const flagged = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--work-item', 'a\nb']);
+    expect(flagged.stderr).toContain('ignored --work-item flag work item (contains non-printable characters');
+    const blank = makeTelemetryFixture('community', 'stub');
+    startFull(blank);
+    expect(runHelper({ ...blank.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap', '--work-item', '  ']).stderr)
+      .toContain('ignored --work-item flag work item (blank');
+    const finishEnv = makeTelemetryFixture('community', 'stub');
+    startFull(finishEnv);
+    expect(runHelper({ ...finishEnv.env, ...DEBUG, [ITEM]: 'x'.repeat(201) }, ['finish', '--skill', 'extend:roadmap']).stderr)
+      .toContain('ignored finish environment work item (over 200 characters');
+  }, 30_000);
+
+  test('the value reaches neither the delegated logger\'s arguments nor its environment', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    writeFileSync(logger, `#!/usr/bin/env python3
+# --no-sweep
+import json, os, sys
+from pathlib import Path
+Path.home().joinpath('logger-saw.json').write_text(json.dumps({'item': os.environ.get('GSTACK_EXTEND_WORK_ITEM'), 'args': sys.argv[1:]}))
+`);
+    chmodSync(logger, 0o755);
+    startFull(fix, 'extend:roadmap', { [ITEM]: 'private-key' });
+    expect(runHelper({ ...fix.env, [ITEM]: 'private-key' }, ['finish', '--skill', 'extend:roadmap', '--work-item', 'private-key']).status).toBe(0);
+    const saw = JSON.parse(readFileSync(join(fix.home, 'logger-saw.json'), 'utf8'));
+    expect(saw.item).toBeNull();
+    expect(JSON.stringify(saw.args)).not.toContain('private-key');
+    expect(saw.args).not.toContain('--work-item');
+    expect(items(fix)).toEqual(['private-key']);
+  }, 30_000);
+
+  test('--help carries the work_item contract at the flag', () => {
+    const help = runHelper(makeTelemetryFixture('off').env, ['--help']);
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('GSTACK_EXTEND_WORK_ITEM');
+    expect(help.stdout).toMatch(/--work-item, else the value start saved .* else that variable at finish/);
+    expect(help.stdout).toContain('at most 200 printable characters, otherwise null');
   }, 30_000);
 });

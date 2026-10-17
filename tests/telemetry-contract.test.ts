@@ -472,8 +472,7 @@ describe('docs/telemetry.md join contract', () => {
     expect(handoffFiles(fix.home)).toHaveLength(0);
   });
 
-  test('explicit retry appends a second stage-runs row and a second skill_run (current behavior)', () => {
-    // Known defect, characterized as current behavior; update this test when repaired.
+  test('an explicit retry with the original ids appends neither a second stage-runs row nor a second skill_run', () => {
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const start = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);
@@ -481,10 +480,94 @@ describe('docs/telemetry.md join contract', () => {
     const sid = start.stdout.match(/session=(\S+)/)?.[1] ?? '';
     const epoch = start.stdout.match(/start=(\d+)/)?.[1] ?? '';
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', '--session-id', sid, '--start', epoch]).status).toBe(0);
-    const stages = fix.readLedger().filter(row => row.session_id === sid);
-    const runs = fix.readJsonl().filter(row => row.event_type === 'skill_run' && row.session_id === sid);
-    if (stages.length !== 2 || runs.length !== 2) defect(`stage-runs=${stages.length} skill_run=${runs.length}`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success', '--session-id', sid, '--start', epoch]).status).toBe(0);
+    }
+    expect(fix.readLedger().filter(row => row.session_id === sid)).toHaveLength(1);
+    expect(fix.readJsonl().filter(row => row.event_type === 'skill_run' && row.session_id === sid)).toHaveLength(1);
+    expect(handoffFiles(fix.home)).toHaveLength(0);
+  });
+});
+
+/** The text under one `###` heading, up to the next heading of any level. Comment lines inside ~~~ fences are not headings. */
+function subsection(doc: string, heading: string) {
+  const lines = doc.split('\n');
+  const at = lines.findIndex(line => line.trimEnd() === heading);
+  if (at < 0) throw new Error(`docs/telemetry.md is missing the ${JSON.stringify(heading)} section`);
+  let fenced = false;
+  let end = lines.length;
+  for (let index = at + 1; index < lines.length; index += 1) {
+    if (lines[index].startsWith('~~~')) fenced = !fenced;
+    else if (!fenced && /^#{1,3} /.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(at, end).join('\n');
+}
+
+describe('docs/telemetry.md run identity and work item', () => {
+  test('the Collision limit table lists exactly the pairing reasons the writer emits', () => {
+    const script = `import json, sys
+sys.path.insert(0, ${JSON.stringify(LIB)})
+import telemetry
+now = 1_700_000_000
+labels = set()
+for skill in ("extend:roadmap", "extend:pair-review"):
+    for stored in (None, "h"):
+        for current in (None, "h"):
+            item = telemetry.Candidate({"session_id": "sid", "start": str(now - 10), "harness": stored}, "p", False)
+            telemetry.classify(item, skill, now, current)
+            if item.classification[3]:
+                labels.add(item.classification[3])
+print(json.dumps(sorted(labels)))
+`;
+    const run = spawnSync('python3', ['-I', '-c', script], { encoding: 'utf8', timeout: 10_000 });
+    expect(run.status).toBe(0);
+    const emitted = JSON.parse(run.stdout) as string[];
+    expect(emitted).toHaveLength(4);
+    const table = subsection(docText(), '### Collision limit');
+    const documented = [...table.matchAll(/^\| \d \|.*\| `([^`]+)` \|$/gm)].map(match => match[1]);
+    if (!same(documented, emitted)) mismatch('the Collision limit pairing table differs from the reasons classify() emits', documented, emitted);
+  });
+
+  test('the quick-start recipes run: join by work item, read the GE_TELEMETRY line, list open handoffs', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
+    const blocks = [...subsection(docText(), '### Work item and launcher quick-start').matchAll(/~~~sh\n([\s\S]*?)~~~/g)].map(match => match[1]);
+    const recipe = (marker: string) => {
+      const found = blocks.filter(block => block.includes(marker));
+      if (found.length !== 1) throw new Error(`docs/telemetry.md quick-start must contain exactly one ~~~sh block with ${JSON.stringify(marker)}`);
+      return found[0];
+    };
+    const exported = recipe('export GSTACK_EXTEND_WORK_ITEM=');
+    expect(exported).toContain('"issue-1234"');
+    const env = { ...fix.env, GSTACK_EXTEND_WORK_ITEM: 'issue-1234' };
+    const start = runTelemetry(env, repo, ['start', '--skill', 'extend:roadmap']);
+    expect(start.status).toBe(0);
+    const geLine = start.stdout.trim();
+    const sid = geLine.match(/session=(\S+)/)?.[1] ?? '';
+    const shell = (script: string, extra: Record<string, string> = {}) =>
+      spawnSync('bash', ['-c', script], { env: { ...fix.env, ...extra }, encoding: 'utf8', timeout: 15_000 });
+
+    const listing = shell(recipe('glob.glob'));
+    expect(listing.status).toBe(0);
+    expect(listing.stdout.trim().split('\n')).toHaveLength(1);
+    const [skill, root, listedSid, item, uncertain] = listing.stdout.trim().split('\t');
+    expect([skill, listedSid, item, uncertain]).toEqual(['extend:roadmap', sid, 'issue-1234', 'False']);
+    expect(root).toBe(realpathSync(repo));
+
+    const parsed = shell(recipe('GE_LINE'), { GE_LINE: geLine });
+    expect(parsed.status).toBe(0);
+    expect(parsed.stdout.trim()).toBe(`${sid} ${geLine.match(/start=(\d+)/)![1]} issue-1234`);
+    const quoted = shell(recipe('GE_LINE'), { GE_LINE: 'GE_TELEMETRY: session=extend-x start=5 work_item="a b=c\\"d\\\\e"' });
+    expect(quoted.stdout.trim()).toBe('extend-x 5 a b=c"d\\e');
+
+    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const joined = shell(recipe('row.get("work_item")'));
+    expect(joined.status).toBe(0);
+    expect(joined.stdout.trim().split(' ').slice(0, 3)).toEqual(['roadmap', sid, 'success']);
+    expect(fix.readLedger()[0].work_item).toBe('issue-1234');
   });
 });
 
