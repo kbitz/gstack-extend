@@ -12,7 +12,7 @@
 
 ### [plan-ceo-review:track=23H,defer=true] Retention for abandoned open handoffs
 
-- **Description:** Every start that never finishes leaves a handoff in `telemetry/<hash>/`, and nothing removes it (25 leftovers measured locally on 2026-10-16, 6 of them `review-and-prep`). Enumeration is linear in the open handoffs of one root and skill, and a stale resumable start no longer captures pairing because resumable finishes pair newest first, but the files accumulate. Decide a retention policy (age, a root that no longer exists, a cap) that keeps old handoffs usable for explicit recovery and does not delete the evidence a doctor report would show first.
+- **Description:** Every start that never finishes leaves a handoff in `telemetry/<hash>/`, and nothing removes it (25 leftovers measured locally on 2026-10-16, 6 of them `review-and-prep`). Enumeration is linear in the open handoffs of one root and skill. Resumable finishes pair newest first only outside an exact fingerprint match; exact matches pair oldest first, so an abandoned matching start can still capture a later finish. Decide a retention policy (age, a root that no longer exists, a cap) that keeps old handoffs usable for explicit recovery and does not delete the evidence a doctor report would show first.
 - **Effort:** S
 - **Context:** CEO cherry-pick E3 from Track 23H's approved autoplan on 2026-10-16. Deleting user state needs its own policy. Related Future card: "Bounded handoff cleanup and a tier-independent marker trigger".
 - **Priority:** P3

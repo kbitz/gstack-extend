@@ -531,6 +531,9 @@ print(json.dumps(sorted(labels)))
     if (!same(documented, emitted)) mismatch('the Collision limit pairing table differs from the reasons classify() emits', documented, emitted);
   });
 
+  // Value: protects=diagnostics tolerate damaged rows without following links or blocking on FIFOs;
+  // fails_when=listing opens unsafe files or join parsing aborts on malformed JSON; why_new=the recipe test used valid files; seam=none;
+  // no_claim=installed acceptance (owned fixture state and real documented recipe).
   test('the quick-start recipes run: join by work item, read the GE_TELEMETRY line, list open handoffs', () => {
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
@@ -556,18 +559,47 @@ print(json.dumps(sorted(labels)))
     const [skill, root, listedSid, item, uncertain] = listing.stdout.trim().split('\t');
     expect([skill, listedSid, item, uncertain]).toEqual(['extend:roadmap', sid, 'issue-1234', 'False']);
     expect(root).toBe(realpathSync(repo));
+    for (const content of ['[]', 'null']) {
+      writeFileSync(join(fix.home, '.gstack-extend/telemetry', '0'.repeat(64) + '.json'), content);
+      const damaged = shell(recipe('glob.glob'));
+      expect(damaged.status).toBe(0);
+      expect(damaged.stdout).toContain(sid);
+      expect(damaged.stdout.trim().split('\n')).toHaveLength(2);
+    }
+    const telemetry = join(fix.home, '.gstack-extend/telemetry');
+    symlinkSync(listing.stdout.trim().split('\t')[5], join(telemetry, '1'.repeat(64) + '.json'));
+    expect(spawnSync('mkfifo', [join(telemetry, '2'.repeat(64) + '.json')]).status).toBe(0);
+    const unsafe = spawnSync('bash', ['-c', recipe('glob.glob')], { env: fix.env, encoding: 'utf8', timeout: 1_000 });
+    expect(unsafe.status).toBe(0);
+    expect(unsafe.stdout.trim().split('\n')).toHaveLength(2);
+    expect(unsafe.stdout).toContain(sid);
 
     const parsed = shell(recipe('GE_LINE'), { GE_LINE: geLine });
     expect(parsed.status).toBe(0);
     expect(parsed.stdout.trim()).toBe(`${sid} ${geLine.match(/start=(\d+)/)![1]} issue-1234`);
     const quoted = shell(recipe('GE_LINE'), { GE_LINE: 'GE_TELEMETRY: session=extend-x start=5 work_item="a b=c\\"d\\\\e"' });
     expect(quoted.stdout.trim()).toBe('extend-x 5 a b=c"d\\e');
+    const copiedLine = shell(recipe('GE_LINE'), { GE_LINE: geLine + '\n' });
+    expect(copiedLine.status).toBe(0);
+    expect(copiedLine.stdout).toBe(parsed.stdout);
+    for (const line of ['not a telemetry line', 'GE_TELEMETRY: session=extend-x start=5 work_item="truncated']) {
+      const invalidLine = shell(recipe('GE_LINE'), { GE_LINE: line });
+      expect(invalidLine.status).toBe(1);
+      expect(invalidLine.stderr).toContain('Expected a GE_TELEMETRY line');
+      expect(invalidLine.stderr).not.toContain('Traceback');
+    }
 
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     const joined = shell(recipe('row.get("work_item")'));
     expect(joined.status).toBe(0);
     expect(joined.stdout.trim().split(' ').slice(0, 3)).toEqual(['roadmap', sid, 'success']);
     expect(fix.readLedger()[0].work_item).toBe('issue-1234');
+    const ledger = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+    writeFileSync(ledger, Buffer.concat([Buffer.from([0xff, 0x0a]),
+      Buffer.from('{torn\nnull\n[]\n{"work_item":"issue-1234"}\n'), readFileSync(ledger)]));
+    const damagedJoin = shell(recipe('row.get("work_item")'));
+    expect(damagedJoin.status).toBe(0);
+    expect(damagedJoin.stdout).toBe('None None None None\n' + joined.stdout);
   });
 });
 

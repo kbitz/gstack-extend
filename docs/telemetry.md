@@ -174,9 +174,10 @@ starts of one skill in one checkout no longer overwrite each other. **The guaran
 is bounded.** Attribution is exact whenever pairing is unambiguous: an explicit
 `--session-id` finish, a single adoptable handoff, or several handoffs that the
 fingerprint rule narrows to one. Among indistinguishable open starts (same class, same
-or unknown fingerprint) a start-less finish pairs deterministically, oldest first,
-which is exact only when the finishes arrive in start order; otherwise an outcome can
-land on the wrong one of two equal starts. The skill call shapes carry no identity
+or unknown fingerprint) a start-less finish pairs deterministically: oldest first,
+except that resumable starts outside an exact fingerprint match pair newest first.
+An outcome can land on the wrong start when finishes arrive in a different order from
+their class's pairing order. The skill call shapes carry no identity
 that could do better, so this limit is documented and test-locked, not repaired, and
 no planned change gives them one: the residual is unowned until one does. Resumable
 skills adopt across sessions by design, so a finish in another known session can still
@@ -217,16 +218,20 @@ session's marker file.
 |---|---|---|
 | Open handoff | until a finish consumes it | never automatically; a refused handoff stays, and an explicit finish can use it at any age |
 | Adoption window (start-less, non-resumable, unknown fingerprint) | 86400 seconds from `start` | nothing is removed; the handoff is refused, not deleted |
-| Completion marker | 30 days from `completed_at` (the file's mtime when that is missing or in the future) | by the next start for the same root+skill that takes the lock; other roots' markers are never touched |
+| Completion marker | at least 30 days from `completed_at` (the file's mtime when that is missing, invalid or in the future); only files with mtime at least 29 days old are examined, so copying or touching a marker can extend retention | by the next start for the same root+skill that takes the lock and finds it eligible; other roots' markers are never touched |
 
 Retries are duplicate-free in two separate ways. A retry of the same handoff is
 duplicate-free through its `done` list for as long as the handoff exists. An explicit
 retry after the run completed is duplicate-free until the next same-key start prunes the
 marker after 30 days; after that it writes again, and that is the documented bound.
+An explicit session id identifies one run: use a fresh id for a new run. Reusing
+an id after completion is a retry even with a different `--start` or legacy
+`--duration`. This changes the older behavior that appended on every explicit finish.
 
 **Lock stall.** A finish holds the root+skill lock for its whole run, so a second finish
-for the same root+skill waits: normally milliseconds, at most one logger run (15 seconds)
-plus one sink scan. That is intended. Telemetry still never fails a skill.
+for the same root+skill waits for all lock holders ahead of it. Each holder may run
+the logger (15-second timeout), scan the sink and collect provenance; the lock wait
+itself has no timeout. That serialization is intended. Telemetry still never fails a skill.
 
 **Unconfirmed logger runs.** A logger run that timed out, exited nonzero, or failed after
 it may have started is uncertain: the handoff keeps `usage_uncertain`, and the retry looks
@@ -238,20 +243,37 @@ before the logger ran (missing flag support, sink checks, exec) is not uncertain
 
 **Bounds that remain.** Each can produce a wrong pairing or a duplicate row:
 
-- Finishes arriving out of start order among equal starts (above).
+- Finishes arriving in a different order from their class's pairing order among equal starts (above).
+- An abandoned start in an oldest-first class can take the next run's finish;
+  later serial runs can stay one start behind until that unmatched handoff is resolved.
+- A completed handoff retained after marker-write or cleanup failure still participates
+  in pairing. It can take a later start-less finish, skipping outputs recorded in `done`.
+  An output enabled after the first finish can still be written using the later finish's
+  outcome. A persistent failure can keep taking finishes in that class. Repair the state
+  directory and retry the retained run with its explicit ids before finishing later runs.
 - An explicit retry after its marker was pruned (30 days).
 - A `skill_run` outside the last 8 MiB of the sink, written by upstream's background
-  sync after the scan, or rotated away. The scan matches only `skill_run` rows; a swept
+  sync after the scan, or rotated away. For an oversized sink the first tail fragment
+  is always discarded, even if the seek happens to land on a line boundary.
+  The scan matches only `skill_run` rows; a swept
   pending start (upstream turns `.pending-*` files into `skill_run` rows with outcome
   `unknown`) carrying the same session id can satisfy it falsely.
 - A crash between an effect (the append, or the logger returning) and the save that
   records it.
-- An explicit finish with no handoff cannot remember an uncertain logger run.
+- An explicit finish with no readable handoff cannot remember partial progress or a failed
+  completion-marker write. If either occurs, a retry can duplicate provenance and
+  rerun the logger, even when every output already landed. As before, malformed or
+  unreadable handoffs count as absent for explicit recovery; after repair, a retained
+  handoff can be adopted again by a start-less finish. Repair state before retrying.
+- After lock acquisition fails, an explicit finish can still delegate usage without
+  saving progress or a new marker. A later retry can duplicate that completion.
 - The scan relies on upstream writing `session_id` on `skill_run` rows. If it stops, an
   uncertain retry degrades to a possible duplicate.
 
 **If you need exactness today:** finish with explicit `--session-id` and `--start` from the
-`GE_TELEMETRY:` line, keep one open start per root+skill, or finish in start order.
+`GE_TELEMETRY:` line or keep one open start per root+skill. With several indistinguishable
+starts, start-order finishes are exact only in the oldest-first classes; resumable
+starts outside an exact match require reverse start order.
 Explicit `--session-id` and `--start` together also remain the escape hatch when no
 handoff exists. Different checkouts have different roots and separate stores. A finish
 never reads another root's handoffs. Handoffs are local: cross-machine resumes must carry
@@ -361,7 +383,8 @@ export GSTACK_EXTEND_WORK_ITEM="issue-1234"   # 1 to 200 printable characters
 ~~~
 
 Start saves the value in that run's handoff and prints it, JSON-quoted, on the
-`GE_TELEMETRY:` line it already prints. Without a value the line is unchanged:
+`GE_TELEMETRY:` line it already prints. Without a value, or if saving the handoff
+fails, the line has only the session and start fields:
 
 ~~~text
 GE_TELEMETRY: session=extend-0a1b2c3d-0000-4000-8000-000000000001 start=1790000000 work_item="issue-1234"
@@ -374,14 +397,17 @@ with explicit ids (the handoff carries it). The identifying fields of that row:
 {"stage":"roadmap","session_id":"extend-0a1b2c3d-0000-4000-8000-000000000001","work_item":"issue-1234",...}
 ~~~
 
-Join the launcher's key to its rows (the second argument is the default state directory):
+Join the launcher's key to its rows (the second argument is the default stage-runs file):
 
 ~~~sh
 python3 -c 'import json, sys
-for line in open(sys.argv[2]):
-    row = json.loads(line)
-    if row.get("work_item") == sys.argv[1]:
-        print(row["stage"], row["session_id"], row["outcome"], row["started_at"])' \
+for line in open(sys.argv[2], "rb"):
+    try:
+        row = json.loads(line)
+    except (ValueError, RecursionError):
+        continue
+    if isinstance(row, dict) and row.get("work_item") == sys.argv[1]:
+        print(row.get("stage"), row.get("session_id"), row.get("outcome"), row.get("started_at"))' \
   "issue-1234" "$HOME/.gstack-extend/analytics/stage-runs.jsonl"
 ~~~
 
@@ -390,8 +416,14 @@ is a JSON string, so read it with a JSON reader, not by splitting on spaces or q
 
 ~~~sh
 python3 -c 'import json, re, sys
-match = re.fullmatch(r"GE_TELEMETRY: session=(\S+) start=(\d+)(?: work_item=(.+))?", sys.argv[1])
-print(match[1], match[2], json.loads(match[3]) if match[3] else "")' "$GE_LINE"
+match = re.fullmatch(r"GE_TELEMETRY: session=(\S+) start=(\d+)(?: work_item=(.+))?", sys.argv[1].rstrip("\n"))
+if match is None:
+    sys.exit("Expected a GE_TELEMETRY line from start")
+try:
+    item = json.loads(match[3]) if match[3] else ""
+except (ValueError, RecursionError):
+    sys.exit("Expected a GE_TELEMETRY line from start")
+print(match[1], match[2], item)' "$GE_LINE"
 # then: gstack-extend-telemetry finish --skill "extend:<name>" --session-id SESSION --start START [--work-item ITEM]
 ~~~
 
@@ -399,24 +431,32 @@ List the open handoffs (skill, root, session id, work item, whether a logger run
 unconfirmed, file) while diagnosing a missing or wrong row:
 
 ~~~sh
-python3 -c 'import glob, json, os
+python3 -c 'import glob, json, os, stat
 base = os.environ.get("GSTACK_EXTEND_STATE_DIR", "")
 base = base if os.path.isabs(base) else os.path.expanduser("~/.gstack-extend")
 for path in sorted(glob.glob(base + "/telemetry/*/*.json") + glob.glob(base + "/telemetry/*.json")):
     try:
-        state = json.load(open(path))
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)) as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                continue
+            state = json.load(stream)
+    except OSError:
+        continue
     except Exception:
+        state = {}
+    if not isinstance(state, dict):
         state = {}
     print(state.get("skill"), state.get("root"), state.get("session_id"), state.get("work_item"),
           state.get("usage_uncertain", False), path, sep="\t")'
 ~~~
 
-A leftover handoff is a start whose finish has not run: a run still in progress, a
-paused resumable run, or an abandoned one. Nothing deletes it. It is safe to delete a
-file you know is abandoned: that run simply gets no row, and no ledger or skill-usage row
-is ever rewritten. A leftover marker (`telemetry-completed/`) only records that a session
-finished; deleting one re-arms an explicit finish for that session, which then writes
-again.
+A leftover handoff can be a run still in progress, a paused or abandoned run, or a
+partially completed finish awaiting retry. Inspect `done`, `row` and `usage_uncertain`
+before deleting a file you know is abandoned: deletion discards its remaining recovery
+and deduplication metadata. Existing ledger and skill-usage rows stay unchanged; an
+explicit finish without that metadata can write again. Open handoffs are not aged out.
+A leftover marker (`telemetry-completed/`) records completion; deleting one re-arms an
+explicit finish for that session, which can then write again.
 
 ## Execution provenance
 
@@ -822,13 +862,13 @@ the current wrapper's handling of a logger whose source lacks that flag.
 | Retry spans an upgrade | The retry appends the saved row unchanged: `producer_version` and the sources name the attempt that constructed it, and a row saved by a pre-version writer stays a legacy row | Do not read `producer_version` as the release that appended the row | `a retried row keeps its construction metadata across an upgrade; a saved legacy row stays legacy` in tests/telemetry.test.ts |
 | Start without `skill_start` | Tier off, gstack unavailable at start, a transient gstack-config failure, or a failed append: the handoff records `usage: false` when provenance is on, so finish sends no `skill_run` even if the tier is on by then. With provenance off, a start that wrote no `skill_start` saves no handoff | Expected when the tier is off, not a failure | `a failed skill-usage start does not invent a completion; provenance off writes no handoff` in tests/telemetry.test.ts |
 | Tier turned off before finish | Consumes the handoff and leaves that `skill_start` unpaired permanently. With provenance off, turning the tier off before finish leaves the handoff (`usage: true`) for a later start-less finish to adopt under the rule | Do not treat the unpaired start as a crash | `tier turned off before finish consumes the handoff and leaves that skill_start unpaired` in tests/telemetry.test.ts |
-| Same-root collision | Each start keeps its own handoff. Attribution is exact when pairing is unambiguous (explicit finishes, one adoptable handoff, fingerprints that narrow to one). Among indistinguishable open starts a start-less finish pairs oldest first (resumable skills outside an exact match: newest first), which lands an outcome on the wrong equal start when finishes arrive out of start order | A join is not proof of attribution; for exactness pass explicit ids, keep one open start per root+skill, or finish in start order | `same-root collision keeps each invocation: finishes pair first start with first finish, with their own identity` in tests/telemetry-contract.test.ts; `indistinguishable starts pair oldest first, and out-of-order finishes keep that documented limit`, `resumable skills pair exact fingerprints first, then everything else newest first` and `a fingerprinted same-root collision pairs each session with its own start; a third session is refused` in tests/telemetry.test.ts |
+| Same-root collision | Each start keeps its own handoff. Attribution is exact when pairing is unambiguous (explicit finishes, one adoptable handoff, fingerprints that narrow to one). Among indistinguishable open starts a start-less finish pairs oldest first (resumable skills outside an exact match: newest first), which can attach an outcome to the wrong start when finishes arrive in a different order from the selected class | A join is not proof of attribution; for exactness pass explicit ids or keep one open start per root+skill; start-order finishes work only in the oldest-first classes | `same-root collision keeps each invocation: finishes pair first start with first finish, with their own identity` in tests/telemetry-contract.test.ts; `indistinguishable starts pair oldest first, and out-of-order finishes keep that documented limit`, `resumable skills pair exact fingerprints first, then everything else newest first` and `a fingerprinted same-root collision pairs each session with its own start; a third session is refused` in tests/telemetry.test.ts |
 | Finish whose own start never ran | Adopts the same-root handoff only under [Handoff adoption](#handoff-adoption). An unknown fingerprint within 24 hours still joins while outcome and duration can belong to a different run | A join is not proof this finish's start wrote the handoff | `an unknown-fingerprint handoff within 24 hours is adopted and a join is not proof` in tests/telemetry.test.ts |
 | Finish from a different repository root | Writes nothing. Debug says `no handoff for this repository root`. The other root's handoff is untouched. A same-skill handoff already in the destination root is judged by the adoption rule | Do not search other roots to repair it | `a finish from a different repository root writes nothing` and `a cross-root finish into an occupied destination slot is judged by the rule` in tests/telemetry.test.ts |
 | Upstream logger exits 0 without writing | Its own tier read or a failed append: the wrapper records the completion as delivered and the `skill_start` stays unpaired | A delivered completion is not a `skill_run` row | untested |
 | Logger without `--no-sweep` | `skill_start` is written, but this finish writes no `skill_run`. The handoff remains; with provenance on, a successful provenance append adds `done: ["provenance"]`. With provenance off it remains untouched. After upgrading the logger, another finish adopts the retained handoff only under [Handoff adoption](#handoff-adoption) | Upgrade gstack and retry finish; do not infer a permanent missing completion | `a logger without --no-sweep support is not delegated to; the handoff is kept and debug explains the upgrade` in tests/telemetry.test.ts |
 | Run spans a gstack-extend upgrade | Notably `/gstack-extend-upgrade`: start and finish follow different wrapper versions and may leave no row | Do not infer a missing row is a skipped skill | untested |
-| Explicit retry after success | A second finish with the original IDs writes nothing: the first finish left a completion marker, kept 30 days. After the next same-key start prunes it, a retry writes again. Start-less finishes never read markers | Keep duplicates visible for rows outside this bound (other writers, pruned markers); delete the marker to re-arm a retry on purpose | `an explicit retry with the original ids appends neither a second stage-runs row nor a second skill_run` in tests/telemetry-contract.test.ts; `markers are pruned by the next same-key start, only for that key, and a post-prune retry writes again` in tests/telemetry.test.ts |
+| Explicit retry after success | A second finish with the original IDs, skill and repository root writes nothing: the first finish left a completion marker, kept 30 days. After the next same-key start prunes it, a retry writes again. Start-less finishes never read markers | Keep duplicates visible for rows outside this bound (other roots or writers, pruned markers); delete the marker to re-arm a retry on purpose | `an explicit retry with the original ids appends neither a second stage-runs row nor a second skill_run` in tests/telemetry-contract.test.ts; `markers are pruned by the next same-key start, only for that key, and a post-prune retry writes again` in tests/telemetry.test.ts |
 | Logger timeout after writing | A timeout, nonzero exit, or other failure after the logger may have started is recorded as uncertain (`usage_uncertain`), and the retry looks for this session's `skill_run` in the last 8 MiB of the sink before delegating again: found means no second row, not found means it delegates, an unreadable sink holds. The scan relies on upstream writing `session_id` on `skill_run` rows (gstack-telemetry-log line 274 when this was written); if upstream drops it, an uncertain retry degrades to a possible duplicate, and a swept pending start can satisfy the scan falsely | Treat a timeout as unknown until the retry; keep duplicates visible for rows outside the bound (beyond the tail, written after the scan, or an explicit finish with no handoff) | `timeout-after-write: the retry finds the row in the sink and delegates nothing`, `timeout-no-write: nothing was written, so the retry delegates and exactly one skill_run exists (a skill_start never satisfies the scan)` and `an unreadable sink holds: nothing is delegated and the flag stays; a later no-logger attempt completes the handoff` in tests/telemetry.test.ts |
 
 `repo` does not join across datasets. `skill_start.repo` is the checkout directory
@@ -1010,12 +1050,13 @@ finish in the same tool shell; a terminal export does not reach the GUI.
 | `no handoff for this repository root` | This finish's root+skill has no handoff file. Start never ran here, the handoff was already consumed, or start ran in another root | Finish from the repository root where start ran, or pass `--session-id` and `--start` from the `GE_TELEMETRY` line |
 | `handoff from another session` | A non-resumable skill found a handoff whose fingerprint is a different known session | Finish in the harness session that ran start, or pass those two values |
 | `handoff too old` | A non-resumable skill found an unknown fingerprint older than 86400 seconds. The line includes the age and the bound | Run start again for a new run, or pass those two values |
-| `adopted handoff session=<id> pairing=<reason> candidates=<n>` | Not a skip: a start-less finish paired this open start. `pairing` is one of the four reasons in the [Collision limit](#collision-limit) table; the count is the open handoffs it chose among | If the wrong start was paired, finish each run with its own `--session-id` and `--start` |
-| `this run already finished (completion marker …)` | An explicit finish found its marker and wrote nothing. The line also names any output enabled since that was never recorded as done | Delete the marker file to re-run it on purpose |
+| `adopted handoff session=<id> pairing=<reason> candidates=<n>` | Not a skip: a start-less finish paired this open start. `pairing` is one of the four reasons in the [Collision limit](#collision-limit) table; the count includes every open handoff with a valid session id, even one with an invalid start | If the wrong start was paired, finish each run with its own `--session-id` and `--start` |
+| `this run already finished (completion marker …)` | An explicit finish found its marker and wrote nothing. The line also names currently enabled outputs not recorded as done, including outputs that were never owed | Delete the marker file to re-run it on purpose |
 | `completion marker … is malformed or describes another run` | The marker was ignored and the explicit finish proceeded | None, or delete the marker |
-| `could not write the completion marker` | Every output landed but the marker did not; the handoff stays with its progress so a retry completes without duplicating | Repair the state directory's permissions |
+| `completion marker store is not a readable directory` | The marker store was ignored and the explicit finish proceeded without its retry protection | Repair the state directory's shape and permissions |
+| `could not write the completion marker` | Every output landed but the marker did not. An existing handoff retains progress for a duplicate-free retry; without a handoff, retrying can duplicate both outputs | Repair the state directory's permissions; recover a retained handoff with its explicit ids before finishing later runs |
 | `skill-usage sink is unreadable …` | An earlier logger run was unconfirmed and the sink cannot be checked, so nothing was delegated | Repair the sink path (no link, FIFO, or extra hard link), then finish again |
-| `handoff store is not a readable directory` | A file or link sits where the root+skill handoff directory belongs | Remove it; the next start recreates it |
+| `handoff store is not a readable directory` | The root+skill handoff directory cannot be read, or a file or link occupies its path | Repair the directory shape and permissions while preserving open handoffs, then retry finish |
 | `ignored <source> work item (<problem>)` | A work item was present but unusable (not a string, blank, over 200 characters, or non-printable), so that source counts as absent | Pass 1 to 200 printable characters |
 | `gstack helper unresolvable:` | `gstack-telemetry-log` or `gstack-config` was not found. The line names the missing helper(s) and the searched locations. Provenance may still record | Install gstack for this host (`./setup --host <host>` in the gstack checkout) or set `GSTACK_DIR`, then rerun `gstack-extend doctor telemetry` |
 | `gstack state resolver unavailable` | The selected modern logger's colocated resolver is missing or fails. Skill-usage stays unwritten; provenance may still record | Reinstall gstack, then rerun `gstack-extend doctor telemetry` |

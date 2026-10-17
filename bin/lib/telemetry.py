@@ -361,7 +361,11 @@ def enumerate_candidates(store, legacy_file):
 def explicit_candidate(store, legacy_file, sid):
     """The open handoff of exactly this session, or None: the computed per-invocation path first, then the legacy file."""
     candidate = None
-    if store_shape(store) == "ok":
+    shape = store_shape(store)
+    if shape == "bad":
+        debug(f"handoff store is not a readable directory at {store}",
+              "repair the state directory; per-invocation retry metadata is unavailable, so only legacy state can be used")
+    if shape == "ok":
         path = store / invocation_name(sid)
         state = read_json(path)
         if state.get("session_id") == sid:
@@ -379,7 +383,10 @@ def next_seq(candidates):
     """Arrival stamp for a new start, called under the root+skill lock: wall clock, but never at or below an open
     handoff's, so a stalled or backward clock cannot reorder starts."""
     newest = max((item.sort_key[1] for item in candidates if item.sort_key[0] == 0), default=-1)
-    return min(INT64_MAX, max(time.time_ns(), newest + 1))
+    seq = max(time.time_ns(), newest + 1)
+    if seq > INT64_MAX:
+        raise OSError(errno.ERANGE, "the handoff arrival sequence exceeds the int64 range")
+    return seq
 
 
 def classify(candidate, skill, now, current):
@@ -420,7 +427,7 @@ def adopt_candidate(store, legacy_file, skill, slot_root, current):
                  "run telemetry start first, or supply valid --start and --session-id")
     if broken:
         debug(f"handoff store is not a readable directory at {store}",
-              "remove the file or link at that path (open handoffs in it are lost) and run telemetry start again")
+              "repair the directory shape and permissions, preserving any open handoffs, then finish again")
         return None
     if not present:
         reason = "no handoff for this repository root"
@@ -465,9 +472,10 @@ def adopt_candidate(store, legacy_file, skill, slot_root, current):
 
 def remove_handoff(handoff):
     """Unlink a consumed handoff and any legacy duplicate of its session, which could otherwise return as a sole candidate."""
-    handoff.path.unlink(missing_ok=True)
+    # Keep authoritative progress until the stale twin is gone, including when unlink fails or this process stops.
     if handoff.twin:
         handoff.twin.unlink(missing_ok=True)
+    handoff.path.unlink(missing_ok=True)
 
 
 def persist_handoff(handoff, done, saved, uncertain):
@@ -548,7 +556,20 @@ def validate_marker(data, sid, skill, root):
 
 def read_marker(path, sid, skill, root):
     """The validated marker at path, or None. A marker that exists but does not validate is ignored, with one line."""
-    if not os.path.lexists(path):
+    shape = store_shape(path.parent)
+    if shape == "bad":
+        debug(f"completion marker store is not a readable directory at {path.parent}",
+              "repair the state directory; this finish proceeds without a completion marker")
+        return None
+    if shape != "ok":
+        return None
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        debug(f"completion marker store is not a readable directory at {path.parent}",
+              "repair the state directory; this finish proceeds without a completion marker")
         return None
     data = read_json(path)
     if validate_marker(data, sid, skill, root):
@@ -563,7 +584,7 @@ def skip_completed(path, marker, provenance, logger):
     # the marker holds no row, outcome or work item to complete one truthfully.
     skipped = [name for name, enabled in (("provenance", provenance), ("usage", bool(logger)))
                if enabled and name not in marker["done"]]
-    extra = ("; enabled now but never recorded as done, so not written: " + ", ".join(skipped)) if skipped else ""
+    extra = ("; currently enabled but not recorded as done, so not written: " + ", ".join(skipped)) if skipped else ""
     debug(f"this run already finished (completion marker at {path}){extra}",
           "delete the marker file to re-arm an explicit finish for this session")
 
@@ -573,6 +594,8 @@ def prune_markers(directory, now):
 
     Stat-gated: only a marker whose mtime is near the bound is read in full (completed_at, else mtime, decides). A
     recent mtime with an older completed_at only extends retention. Unreadable evidence keeps the marker."""
+    if store_shape(directory) != "ok":
+        return
     try:
         names = [name for name in os.listdir(directory) if HANDOFF_NAME_RE.fullmatch(name)]
     except OSError:
@@ -661,7 +684,7 @@ def read_capped(path, limit):
 def read_json(path):
     try:
         data = json.loads(read_capped(path, 1 << 20).decode("utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -783,7 +806,7 @@ def delegate(logger, skill, sid, duration, values):
 
     failed: provably before the logger ran (missing --no-sweep, sink checks, exec never happened). done: exit 0.
     uncertain: the logger may have started, so a row may exist: a timeout, a nonzero exit, any other subprocess error.
-    Both callers compare against "done" explicitly: the strings are all truthy."""
+    Callers that use the result compare against "done" explicitly: the strings are all truthy."""
     if not supports_no_sweep(logger):
         # Delegating anyway would let an old logger finalize other sessions' markers as phantom rows.
         debug(f"gstack-telemetry-log at {logger} lacks --no-sweep (gstack before {MIN_GSTACK_FOR_NO_SWEEP})",
@@ -866,7 +889,7 @@ def scan_sink_tail(sink, skill, sid):
     for line in lines[1:] if info.st_size > LOG_TAIL_BYTES else lines:
         try:
             record = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if (isinstance(record, dict) and record.get("event_type") == "skill_run"
                 and record.get("skill") == skill and record.get("session_id") == sid):
@@ -887,8 +910,8 @@ def deliver_usage(logger, skill, sid, duration, values, uncertain):
             return "hold", True
         if found is None:
             debug("skill-usage sink is unreadable, so an earlier unconfirmed completion cannot be checked",
-                  "repair the sink's permissions or links and finish again, or finish explicitly with "
-                  "--session-id and --start from the GE_TELEMETRY: line")
+                  "repair the sink's permissions or links and finish again; to select another invocation, use its "
+                  "--session-id and --start from its GE_TELEMETRY: line (this run still needs the sink check)")
             return "hold", True
         if found:
             return "done", False
@@ -1985,9 +2008,11 @@ def main(args):
         print("  Adoption: resumable skills (pair-review, review-and-prep, full-review) adopt at any age;")
         print("  a non-resumable skill adopts the same harness session at any age, refuses a different known session,")
         print("  and adopts an unknown fingerprint only within 24 hours. A finish never reads another root's handoff.")
-        print("  Several open starts in one root pair oldest first (resumable skills: newest first); see docs/telemetry.md.")
+        print("  Pairing: resumable exact matches oldest first, other resumable starts newest first;")
+        print("  non-resumable exact matches, then unknown fingerprints, each oldest first. See docs/telemetry.md.")
         print("  Explicit --session-id is never age-bounded; --start alone does not bypass adoption.")
-        print("  An explicit finish repeated after the run completed writes nothing (until its marker ages out).")
+        print("  An explicit finish repeated for the same skill and repository root writes nothing after completion")
+        print("  (until its marker is pruned).")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
         return
@@ -2030,14 +2055,14 @@ def main(args):
     slot_root = root or str(Path.cwd())
     key = hashlib.sha256(json.dumps([slot_root, skill]).encode()).hexdigest()
     # One handoff file per invocation under telemetry/<key>/, so a second start never replaces the first. The
-    # single-slot telemetry/<key>.json from before per-invocation handoffs is still read, never written.
+    # legacy telemetry/<key>.json is read and updated on retry/refusal; new starts never create or replace it.
     handoff_dir = extend_state / "telemetry" / key
     legacy_file = extend_state / "telemetry" / (key + ".json")
     # A finish that completed every output leaves a marker here, so an explicit retry with the original ids is a no-op.
     marker_dir = extend_state / "telemetry-completed" / key
     # One lock per repository+skill so concurrent finishes serialize and enumeration is atomic. It is held to process
     # exit and spans selection, marker checks, both appends, the sink scan, the marker write and the unlink: a second
-    # same-key finish waits (for at most one delegate plus one scan) and then sees the first one's marker.
+    # same-key finish waits for the holders ahead of it and then sees the first one's marker.
     try:
         lock_dir = extend_state / "telemetry-locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
@@ -2083,22 +2108,27 @@ def main(args):
         trace("harness markers: " + (", ".join(marker_names) if marker_names else "none"))
         # The launcher's key for this run, saved so a finish in a later session keeps it.
         work_item = accepted_work_item(os.environ.get(WORK_ITEM_ENV), "start environment")
+        handoff_saved = False
         try:
-            if store_shape(handoff_dir) == "bad":
-                raise OSError(errno.ENOTDIR, "the handoff store is not a directory")
-            seq = next_seq(enumerate_candidates(handoff_dir, legacy_file)[0])
+            candidates, _, broken = enumerate_candidates(handoff_dir, legacy_file)
+            if broken:
+                raise OSError(errno.ENOTDIR, "the handoff store is not a readable directory")
+            seq = next_seq(candidates)
             # harness is a session-fingerprint hash, not a harness name.
             saved_state = dict(session_id=sid, start=str(now), seq=str(seq), usage=wrote_usage,
                                skill=skill, root=slot_root, harness=fingerprint)
             if work_item is not None:
                 saved_state["work_item"] = work_item
             save_state(handoff_dir / invocation_name(sid), saved_state)
+            handoff_saved = True
         except OSError as error:
             debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
-                  "repair GSTACK_EXTEND_STATE_DIR permissions or supply explicit --start and --session-id")
+                  ("inspect handoff seq/start values and the system clock; supply explicit --start and --session-id"
+                   if error.errno == errno.ERANGE else
+                   "repair GSTACK_EXTEND_STATE_DIR permissions or supply explicit --start and --session-id"))
         # quoted_path: clean() admits spaces, "=", quotes and backslashes, so recovery parses the value as JSON.
         print(f"GE_TELEMETRY: session={sid} start={now}"
-              + (f" work_item={quoted_path(work_item)}" if work_item is not None else ""))
+              + (f" work_item={quoted_path(work_item)}" if handoff_saved and work_item is not None else ""))
         return
     explicit_sid = values.get("--session-id")
     explicit_start = integer(values.get("--start"))
@@ -2181,6 +2211,8 @@ def main(args):
         # this handoff (other invocations' files are never touched). A marker that cannot be written keeps the handoff
         # with its progress saved, so the retry completes without duplicating.
         try:
+            if store_shape(marker_dir) == "bad":
+                raise OSError(errno.ENOTDIR, "the completion marker store is not a directory")
             save_state(marker_dir / invocation_name(sid), dict(session_id=sid, skill=skill, root=slot_root,
                                                               done=done, completed_at=int(time.time())))
             marked = True
