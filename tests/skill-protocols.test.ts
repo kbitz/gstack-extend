@@ -33,9 +33,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// The Validate snippet imports this parser in a subprocess. Keep that runtime
+// dependency visible to diff-based test selection for parser-only changes.
+import '../src/audit/parsers/roadmap.ts';
 import { computeRenames, formatRenamesTable } from '../src/audit/lib/renames-diff.ts';
 import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts';
 import { countTodoPatterns } from '../src/audit/lib/todo-patterns.ts';
@@ -4008,6 +4011,78 @@ describe('project-spec composition drift-locks', () => {
     expect(roadmapN).toContain('deferred work with no inbox entry goes to Future with full richness');
     expect(roadmapN).toContain('Repeat the freshness check immediately before writing; if it fails, keep the filed-issue receipts and renew the proposal.');
     expect(roadmapN).toContain('Run the recipe under bash');
+  });
+
+  // Value: protects=the legacy trigger migration's safety rules stay in the skill (owner selection, append-only,
+  //   no invented trigger, literal-title locate, pre-write validation, post-apply count check);
+  //   fails_when=any of these rules is deleted or reworded; why_new=the migration prose is new; seam=none;
+  //   no_claim=agent behavior (static text only; behavioral acceptance is Track 25B)
+  test('roadmap legacy trigger migration keeps its rules', () => {
+    const locks = [
+      'A row without one ends `revisit: MISSING`',
+      'Run the batch only when the owner selects it',
+      'never on a run that moves Future bullets',
+      'grep -nF -f "$DIR/titles"',
+      'The migration only appends; every existing character stays.',
+      'never invent a trigger',
+      'The migration is not a reassessment: it never promotes, kills, rewrites or reorders an entry.',
+      'except adding a missing inline trigger to an entry the approved proposal reassessed or migrated',
+      'confirm `FUTURE_TRIGGERS_MISSING` equals the count the approved proposal predicted',
+      'so the index can read it',
+      'A failure blocks before the first write.',
+      'formatFutureIndex(parseRoadmap(await Bun.file(draftPath).text()).value.futureBullets)',
+      'validates its Future draft with the snippet in Deferred work',
+    ];
+    for (const lock of locks) expect(roadmapN).toContain(lock);
+  });
+
+  // Value: protects=the pre-write validation snippet runs and reports the candidate's missing-trigger count;
+  //   fails_when=the snippet's import path, export names or argument order drift;
+  //   why_new=no test executes skill validation code today; seam=none;
+  //   no_claim=agent compliance with the migration (prose; Track 25B)
+  test('roadmap trigger migration Validate snippet runs against a draft Future file', () => {
+    const deferred = roadmap.slice(
+      roadmap.indexOf('### Deferred work'),
+      roadmap.indexOf('\n### ', roadmap.indexOf('### Deferred work') + 1),
+    );
+    const blocks = [...deferred.matchAll(/```bash\n([\s\S]*?)```/g)]
+      .map((m) => m[1]!.replace(/^ {3}/gm, ''))
+      .filter((b) => b.includes('formatFutureIndex'));
+    expect(blocks).toHaveLength(1);
+    const placeholder = "'/absolute/proposal/future-draft.md'";
+    expect(blocks[0]).toContain(`-- "$_EXTEND_ROOT" ${placeholder}`);
+
+    const tmp = makeBaseTmp('skill-protocols-trigger-validate-');
+    try {
+      const draft = join(tmp, 'future-draft.md');
+      writeFileSync(
+        draft,
+        '# Future\n\n## Future\n\n'
+          + '- **Filled** — Body. **Revisit when:** a second tenant is admitted.\n'
+          + '- **Legacy** — Old body. _Deferred because: not enough usage yet._\n',
+      );
+      const r = spawnSync('bash', ['-c', blocks[0]!.replace(placeholder, `'${draft}'`)], {
+        cwd: tmp,
+        encoding: 'utf8',
+        timeout: 30_000,
+        env: {
+          PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
+          HOME: tmp,
+          _EXTEND_ROOT: ROOT,
+        },
+      });
+      expect(r.stderr).toBe('');
+      expect(r.status).toBe(0);
+      expect(r.stdout.split('\n')).toEqual([
+        'FUTURE_INDEX: 2',
+        'FUTURE_TRIGGERS_MISSING: 1',
+        '- **Filled** — Body. — revisit: a second tenant is admitted',
+        '- **Legacy** — Old body. — revisit: MISSING',
+        '',
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('workflow SPEC clauses keep their gates', () => {

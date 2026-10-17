@@ -14,7 +14,8 @@
  *       2. base branch missing
  *       3. global touchfile hit
  *       4. non-empty diff but zero tests selected
- *   - Spawns `bun test ${selected}`, propagates exit code, forwards
+ *   - Spawns `bun test --timeout 30000 ${selected}` unless argv already
+ *     sets `--timeout`. Propagates the exit code and forwards
  *     SIGINT/SIGTERM to the child.
  *
  * Run `bun run test:full` to skip the wrapper entirely.
@@ -97,8 +98,23 @@ function log(msg: string): void {
   process.stderr.write(`[select-tests] ${msg}\n`);
 }
 
+/**
+ * Bun's default deadline is 5000ms for a test and for before/after hooks.
+ * A synchronous hook cannot be interrupted, so a fixture delete that finishes
+ * in a few seconds alone and takes longer under the full suite is failed
+ * after it returns. Git-heavy tests cross the same line. 30s covers the
+ * slowest cleanup observed (about 15s) without turning a hang into a long
+ * wait. An explicit `--timeout` from the caller is left alone.
+ */
+export const TEST_TIMEOUT_MS = '30000';
+
+export function bunTestArgs(args: string[]): string[] {
+  if (args.some((arg) => arg === '--timeout' || arg.startsWith('--timeout='))) return args;
+  return ['--timeout', TEST_TIMEOUT_MS, ...args];
+}
+
 function runBunTest(args: string[], cwd: string): never {
-  const child = spawn('bun', ['test', ...args], { cwd, stdio: 'inherit' });
+  const child = spawn('bun', ['test', ...bunTestArgs(args)], { cwd, stdio: 'inherit' });
   const forward = (sig: NodeJS.Signals) => {
     if (!child.killed) child.kill(sig);
   };

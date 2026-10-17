@@ -14,7 +14,11 @@ export type EffortParse =
   | { kind: 'missing' };
 
 const TASK_PREFIX = /^- \*\*/;
-const DONE_TITLE_RE = /✓|SHIPPED|RETIRED|CUT|DISCHARGED/i;
+// `✓` anywhere, or an uppercase stamp as a whole token. Explicit lookarounds,
+// not `\b`: identifier characters (ASCII letters, digits, `_`, backtick) never
+// bound a token, so EXECUTABLE, RECOVERY_RETIRED_MANUAL and `SHIPPED` are not
+// markers while (CUT), CUT: and — SHIPPED are. A hyphen is a boundary.
+const DONE_TITLE_RE = /✓|(?<![A-Za-z0-9_\x60])(?:SHIPPED|RETIRED|CUT|DISCHARGED)(?![A-Za-z0-9_\x60])/;
 const TIER_RE = /\((S|M|L|XL)\)(?![\w-])/;
 const PAREN_TAG_RE = /\(([^)]+)\)/g;
 const KNOWN_TIERS = new Set(['S', 'M', 'L', 'XL']);
@@ -28,8 +32,14 @@ export function parseTaskTitle(line: string): string | null {
   return line.slice(start, close);
 }
 
+/** First completion marker in a title (`✓` or an uppercase token), or null. */
+function doneMarkerToken(title: string): string | null {
+  const m = DONE_TITLE_RE.exec(title);
+  return m === null ? null : m[0];
+}
+
 export function isDoneMarkerTitle(title: string): boolean {
-  return DONE_TITLE_RE.test(title);
+  return doneMarkerToken(title) !== null;
 }
 
 export function parseEffortTag(line: string): EffortParse {
@@ -57,10 +67,18 @@ export function effortFinding(trackId: string, title: string, parsed: EffortPars
   if (parsed.kind === 'bad') {
     return `${trackId}: found (${parsed.found}) — not a tier; use S or M`;
   }
+  const token = doneMarkerToken(title);
+  if (token !== null && (parsed.kind === 'ok' || parsed.kind === 'alias')) {
+    // The parser skips marker titles before weighting, so a valid tag here is
+    // silently ignored unless this note says so.
+    const tag = parsed.kind === 'ok' ? parsed.effort : parsed.found;
+    const remedy = token === '✓' ? 'remove ✓' : `remove or backtick ${token}`;
+    return `${trackId}: task "${title}" has (${tag}) but marker ${token} marks it done — not weighted; if done, convert the line to prose; if not, ${remedy} and keep the tag`;
+  }
   if (parsed.kind === 'alias') {
     return `${trackId}: found (${parsed.found}) — treated as ${parsed.effort}`;
   }
-  if (isDoneMarkerTitle(title) && parsed.kind === 'missing') {
+  if (token !== null && parsed.kind === 'missing') {
     return `${trackId}: task "${title}" looks done — convert to prose, not a weighted task`;
   }
   return null;

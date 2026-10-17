@@ -39,7 +39,7 @@ import {
   parseDiffNameStatus,
 } from './helpers/touchfiles.ts';
 import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
-import { planWrapperAction } from '../scripts/select-tests.ts';
+import { bunTestArgs, planWrapperAction, TEST_TIMEOUT_MS } from '../scripts/select-tests.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 
@@ -477,6 +477,17 @@ describe('wrapper E2E', () => {
  * Recursively enumerate files under `root`, returning paths relative to it.
  * Skips `.git`, `node_modules`, and `dist`/`build` artefact dirs.
  */
+describe('bun test deadline', () => {
+  test('the wrapper gives every run 30s unless the caller set a timeout', () => {
+    expect(TEST_TIMEOUT_MS).toBe('30000');
+    expect(bunTestArgs([])).toEqual(['--timeout', '30000']);
+    expect(bunTestArgs(['tests/'])).toEqual(['--timeout', '30000', 'tests/']);
+    expect(bunTestArgs(['--watch', 'foo'])).toEqual(['--timeout', '30000', '--watch', 'foo']);
+    expect(bunTestArgs(['--timeout', '1000', 'foo'])).toEqual(['--timeout', '1000', 'foo']);
+    expect(bunTestArgs(['--timeout=1000'])).toEqual(['--timeout=1000']);
+  });
+});
+
 function collectFiles(root: string): string[] {
   const out: string[] = [];
   const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.bun', '.cache']);

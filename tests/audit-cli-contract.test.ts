@@ -135,6 +135,7 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     const r = run(['--future-index', repo]);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('FUTURE_INDEX: 0');
+    expect(r.stdout).toContain('FUTURE_TRIGGERS_MISSING: 0');
   });
 
   // Value: protects=the roadmap skill's --future-index read surfaces each satellite bullet's inline Revisit-when
@@ -160,12 +161,33 @@ describe('audit CLI contract: graceful handling of bad input', () => {
     const r = run(['--future-index', repo]);
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain('FUTURE_INDEX: 2');
+    expect(r.stdout).toContain('FUTURE_TRIGGERS_MISSING: 1');
     expect(r.stdout).toContain('Keep the context');
     expect(r.stdout).toContain('filed from a review.');
     const lines = r.stdout.split('\n');
-    expect(lines.find((l) => l.includes('Keep the context'))).not.toContain('revisit:');
+    expect(lines.find((l) => l.includes('Keep the context')))
+      .toBe('- **Keep the context** — filed from a review. — revisit: MISSING');
     expect(lines.find((l) => l.includes('Parser v2')))
       .toBe('- **Parser v2** — Handle the new format. — revisit: a second tenant is admitted');
+  });
+
+  // Value: protects=the observed undercount cannot pass SIZE again: a card whose task title merely contains a
+  //   marker substring (Executable) is weighed through the real CLI and size-caps; fails_when=marker matching
+  //   reverts to substrings; why_new=unit tests do not cross the CLI and size-caps boundary; seam=none;
+  //   no_claim=installed-skill planning acceptance (Track 25B)
+  // The Track declares a non-empty _touches: line (without one SIZE treats it as legacy and skips it). runBin
+  // isolates the state directory, so the ceiling is the code default 4 regardless of the user's config.
+  test('SIZE weighs a task whose title contains a marker substring', () => {
+    const repo = makeEmptyRepo(baseTmp);
+    seedRoadmap(
+      repo,
+      '# Roadmap\n\n## Current Plan\n\n## Group 1: G\n\n### Track 1A: Heavy\n'
+        + '_2 tasks . high risk . [core/big.py]_\n_touches: core/big.py_\n\n'
+        + '- **Executable foo** -- . (L)\n- **Bar** -- . (L)\n\n## Unprocessed\n',
+    );
+    const r = run([repo]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('1A: session_weight=8 exceeds max_session_weight=4');
   });
 
   test('--scan-state always emits valid JSON', () => {
