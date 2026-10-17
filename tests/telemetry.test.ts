@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, utimesSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
 import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
@@ -20,7 +20,8 @@ const HAS_STATE_RESOLVER = (() => {
     return false;
   }
 })();
-afterAll(cleanupTelemetryFixtures);
+// Hundreds of fixture homes are removed here; the default 5 s hook limit is too tight on a loaded machine.
+afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
 // The running checkout's release, read only. Tests that need another release build a disposable copy.
 const RELEASE = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
@@ -446,14 +447,14 @@ PY
     expect(finish.stderr).toBe('');
     expect(fix.readJsonl()).toHaveLength(1);
     expect(fix.readLedger()).toHaveLength(1);
-    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
     writeFileSync(join(fix.home, '.claude/skills/gstack/bin/gstack-state-root.sh'), STATE_ROOT_FIXTURE);
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
     const rows = fix.readJsonl();
     expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
     expect(rows[1].session_id).toBe(rows[0].session_id);
     expect(fix.readLedger()).toHaveLength(1);
-    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
   });
   // Protect the interpreter boundary itself: existing relative-helper tests never execute this resolver.
   test('the modern resolver ignores a planted bash in a relative PATH entry', () => {
@@ -506,10 +507,10 @@ module.main([sys.argv[3], '--skill', 'extend:roadmap'])
         expect(result.stderr).toBe('');
         expect(fix.readJsonl()).toHaveLength(phase === 'start' ? 0 : 1);
         expect(fix.readLedger()).toHaveLength(phase === 'start' ? 0 : 1);
-        expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+        expect(handoffs(fix)).toHaveLength(1);
         expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
         expect(fix.readLedger()).toHaveLength(1);
-        expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
+        expect(handoffs(fix)).toHaveLength(0);
         const rows = fix.readJsonl();
         if (phase === 'finish') {
           expect(rows.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
@@ -623,8 +624,9 @@ module.main([sys.argv[3], '--skill', 'extend:roadmap'])
   }, 30_000);
   test('valid/leading-zero/future start values and session validation are safe', () => {
     const fix = makeTelemetryFixture('community');
-    for (const start of [String(Math.floor(Date.now() / 1000)), '0000000001', '9223372036854775807']) {
-      const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', start, '--session-id', 'explicit']);
+    // One session id per start value: a repeated explicit finish of one session is a no-op once it has completed.
+    for (const [index, start] of [String(Math.floor(Date.now() / 1000)), '0000000001', '9223372036854775807'].entries()) {
+      const r = runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--start', start, '--session-id', 'explicit-' + index]);
       expect(r.status).toBe(0);
       expect(r.stderr).toBe('');
     }
@@ -755,7 +757,7 @@ describe('repository + skill state handoff', () => {
     expect(rows.some(row => row.outcome === 'unknown')).toBe(false);
     expect(existsSync(marker)).toBe(true);
     expect(readdirSync(analytics).sort()).toEqual(['.pending-OTHER', 'skill-usage.jsonl']);
-    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(0);
     expect(fix.readStubArgs()[0]).toContain('--no-sweep');
   });
   test('malformed values recover from state; explicit valid values win', () => {
@@ -783,7 +785,7 @@ describe('repository + skill state handoff', () => {
     expect(quiet.stderr).toBe('');
     const debug = runHelper({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']);
     expect(debug.stderr).toContain('gstack-telemetry-log failed');
-    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
     expect(fix.readJsonl()).toHaveLength(1);
   });
   test('explicit finish of an older session does not consume a later same-skill handoff', () => {
@@ -795,7 +797,7 @@ describe('repository + skill state handoff', () => {
     expect(start).toBeTruthy();
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--session-id', sid!, '--start', start!, '--outcome', 'success']).status).toBe(0);
-    expect(readdirSync(join(fix.home, '.gstack-extend/telemetry'))).toHaveLength(1);
+    expect(handoffs(fix)).toHaveLength(1);
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     const rows = fix.readJsonl();
     expect(rows).toHaveLength(4);
@@ -825,9 +827,13 @@ describe('repository + skill state handoff', () => {
 
 const DEBUG = { GSTACK_EXTEND_TELEMETRY_DEBUG: '1' };
 
+/** Open handoffs, relative to the telemetry state dir: `<key>/<sha256(session)>.json` per invocation, or a legacy `<key>.json`. */
 function handoffs(fix: TelemetryFixture) {
   const dir = join(fix.home, '.gstack-extend/telemetry');
-  return existsSync(dir) ? readdirSync(dir).sort() : [];
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+    ? readdirSync(join(dir, entry.name)).filter(name => /^[0-9a-f]{64}\.json$/.test(name)).map(name => join(entry.name, name))
+    : entry.name.endsWith('.json') ? [entry.name] : []).sort();
 }
 
 function runAsync(env: Record<string, string>, args: string[], cwd?: string) {
@@ -997,7 +1003,7 @@ describe('completion argument contract', () => {
 });
 
 describe('handoff robustness', () => {
-  test('a corrupt or hostile handoff never crashes finish; an integer start is honoured; the next start replaces bad state', () => {
+  test('a corrupt or hostile handoff never crashes finish; an integer start is honoured; bad state never blocks the next start', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     const file = join(fix.home, '.gstack-extend/telemetry', handoffs(fix)[0]);
@@ -1011,19 +1017,22 @@ describe('handoff robustness', () => {
     }
     const debug = runHelper({ ...fix.env, ...DEBUG }, ['finish', '--skill', 'extend:roadmap']);
     expect(debug.stderr).toContain('missing or malformed start/session state');
-    // JSON integers (not just strings) are a valid start; the matching handoff is then consumed.
-    writeFileSync(file, JSON.stringify({ session_id: 'from-state', start: Math.floor(Date.now() / 1000) - 20 }));
+    // JSON integers (not just strings) are a valid start; the matching handoff is then consumed. The damaged file
+    // beside it is not a candidate and does not block it.
+    const legacy = join(dirname(dirname(file)), basename(dirname(file)) + '.json');
+    writeFileSync(legacy, JSON.stringify({ session_id: 'from-state', start: Math.floor(Date.now() / 1000) - 20 }));
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(fix.readJsonl()[1]).toMatchObject({ session_id: 'from-state', event_type: 'skill_run' });
     expect(fix.readJsonl()[1].duration_s).toBeGreaterThanOrEqual(20);
-    expect(existsSync(file)).toBe(false);
-    // Recovery: bad state left behind is overwritten by the next start and pairs normally.
+    expect(existsSync(legacy)).toBe(false);
+    // Recovery: bad state left behind stays put, and the next start still pairs normally.
     writeFileSync(file, 'garbage{{');
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     const rows = fix.readJsonl();
     expect(rows.at(-1)!.session_id).toBe(rows.at(-2)!.session_id);
-    expect(handoffs(fix)).toHaveLength(0);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(readFileSync(file, 'utf8')).toBe('garbage{{');
   }, 30_000);
 
   test('outside a repository the row says unknown and each directory keeps its own handoff', () => {
@@ -1200,7 +1209,8 @@ describe('binary resolution and invocation forms', () => {
     expect(blank.status).toBe(0);
     expect(blank.stderr).toBe('');
     expect(fix.readJsonl()).toHaveLength(rowsBefore + 1);
-    expect(handoffs(fix)).toHaveLength(1);
+    // Every start keeps its own handoff: the three logger lookups, the logger-less start and this one.
+    expect(handoffs(fix)).toHaveLength(5);
 
     // An empty GSTACK_DIR must never turn into "./bin": helpers planted in an untrusted cwd stay unexecuted.
     const untrusted = makeTelemetryFixture('community', 'absent');
@@ -1376,22 +1386,35 @@ describe('concurrent sessions', () => {
     expect(rows).toHaveLength(22);
     expect(new Set(rows.map(row => row.session_id)).size).toBe(22);
     expect(rows.every(row => row.event_type === 'skill_start')).toBe(true);
-    // 13 slots, all whole JSON, no leftover temporary files, each naming a session that was emitted.
+    // Every start keeps its own handoff: 22 open, all whole JSON, no leftover temporary files, each naming a
+    // session that was emitted, and the shared root's racers arrived in distinct seq order.
     const names = handoffs(fix);
-    expect(names).toHaveLength(13);
-    expect(names.every(name => /^[0-9a-f]{64}\.json$/.test(name))).toBe(true);
+    expect(names).toHaveLength(22);
+    expect(names.every(name => /^[0-9a-f]{64}\/[0-9a-f]{64}\.json$/.test(name))).toBe(true);
     const emitted = new Set(rows.map(row => row.session_id));
-    const winners = names.map(name => JSON.parse(readFileSync(join(fix.home, '.gstack-extend/telemetry', name), 'utf8')));
-    for (const winner of winners) {
-      expect(emitted.has(winner.session_id)).toBe(true);
-      expect(/^[0-9]+$/.test(winner.start)).toBe(true);
+    const opened = names.map(name => JSON.parse(readFileSync(join(fix.home, '.gstack-extend/telemetry', name), 'utf8')));
+    for (const handoff of opened) {
+      expect(emitted.has(handoff.session_id)).toBe(true);
+      expect(/^[0-9]+$/.test(handoff.start)).toBe(true);
+      expect(/^[0-9]+$/.test(handoff.seq)).toBe(true);
     }
-    // Finishing the raced slot pairs with whichever start won it, then consumes only that slot.
-    const finish = await runAsync(env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], shared);
-    expect(finish.status).toBe(0);
+    expect(new Set(opened.map(handoff => handoff.session_id)).size).toBe(22);
+    const racers = opened.filter(handoff => handoff.root === realpathSync(shared));
+    expect(racers).toHaveLength(10);
+    expect(new Set(racers.map(handoff => handoff.seq)).size).toBe(10);
+    // Ten parallel start-less finishes in the shared root: ten rows, ten distinct sessions, nothing lost,
+    // and the twelve separate roots' handoffs stay untouched.
+    const finishes = await Promise.all(Array.from({ length: 10 }, () =>
+      runAsync(env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], shared)));
+    for (const result of finishes) {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+    }
     const after = fix.readJsonl();
-    expect(after).toHaveLength(23);
-    expect(winners.map(winner => winner.session_id)).toContain(after[22].session_id);
+    expect(after).toHaveLength(32);
+    const racerSessions = racers.map(handoff => handoff.session_id).sort();
+    expect(after.slice(22).map(row => row.session_id).sort()).toEqual(racerSessions);
+    expect(fix.readLedger().map(row => row.session_id).sort()).toEqual(racerSessions);
     expect(handoffs(fix)).toHaveLength(12);
   }, 30_000);
 });
@@ -3975,10 +3998,31 @@ function readHandoff(fix: TelemetryFixture) {
   return JSON.parse(readFileSync(handoffPath(fix), 'utf8')) as Record<string, unknown>;
 }
 
+/** A per-invocation handoff lives under the name its own session id hashes to; any other name is not a candidate. */
+function handoffName(sessionId: string) {
+  return createHash('sha256').update(sessionId).digest('hex') + '.json';
+}
+
+function rewriteHandoffAt(file: string, patch: Record<string, unknown>) {
+  const next = { ...JSON.parse(readFileSync(file, 'utf8')), ...patch };
+  const perInvocation = /^[0-9a-f]{64}$/.test(basename(dirname(file)));
+  const target = perInvocation && typeof next.session_id === 'string' ? join(dirname(file), handoffName(next.session_id)) : file;
+  writeFileSync(target, JSON.stringify(next));
+  if (target !== file) rmSync(file);
+  return target;
+}
+
 function rewriteHandoff(fix: TelemetryFixture, patch: Record<string, unknown>) {
+  return rewriteHandoffAt(handoffPath(fix), patch);
+}
+
+/** Replace the one open handoff with a single-slot file as the previous release wrote it (no skill/root/harness needed). */
+function plantLegacy(fix: TelemetryFixture, state: Record<string, unknown>) {
   const file = handoffPath(fix);
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...patch }));
-  return file;
+  const legacy = join(dirname(dirname(file)), basename(dirname(file)) + '.json');
+  rmSync(file);
+  writeFileSync(legacy, JSON.stringify(state));
+  return legacy;
 }
 
 function skillRuns(fix: TelemetryFixture) {
@@ -4354,7 +4398,7 @@ describe('handoff adoption', () => {
     const destinationFile = handoffs(fix).map(name => join(fix.home, '.gstack-extend/telemetry', name))
       .find(file => !readFileSync(file).equals(originBytes))!;
     const destinationState = JSON.parse(readFileSync(destinationFile, 'utf8'));
-    writeFileSync(destinationFile, JSON.stringify({ ...destinationState, harness: null, start: String(insideBound()), session_id: 'dest-unknown' }));
+    rewriteHandoffAt(destinationFile, { ...destinationState, harness: null, start: String(insideBound()), session_id: 'dest-unknown' });
     const adopted = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
       env: { ...fix.env, CODEX_THREAD_ID: 'thread-origin' }, cwd: destination, encoding: 'utf8', timeout: 10_000,
     });
@@ -4391,7 +4435,7 @@ describe('handoff adoption', () => {
 
     const recent = makeTelemetryFixture('community', 'stub');
     expect(runHelper(recent.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
-    writeFileSync(handoffPath(recent), JSON.stringify({ session_id: 'pre-change', start: String(insideBound()) }));
+    plantLegacy(recent, { session_id: 'pre-change', start: String(insideBound()) });
     expect(runHelper({ ...recent.env, CODEX_THREAD_ID: 'thread-now' }, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(skillRuns(recent)[0].session_id).toBe('pre-change');
 
@@ -4503,7 +4547,7 @@ describe('handoff adoption', () => {
       expect(runHelper({ ...fix.env, CODEX_THREAD_ID: 'thread-b' }, ['finish', '--skill', 'extend:roadmap']).status).toBe(0);
     }
     expect((readHandoff(fix).refusals as unknown[])).toHaveLength(10);
-  });
+  }, 30_000); // thirteen sequential helper runs: slow on a loaded machine
 
   test('a failed refusal write preserves the handoff and still explains the refusal', () => {
     const fix = makeTelemetryFixture('community', 'stub');
@@ -4544,30 +4588,34 @@ describe('handoff adoption', () => {
     }
   });
 
-  test('a fingerprinted same-root collision refuses the earlier session and pairs the later one', () => {
+  test('a fingerprinted same-root collision pairs each session with its own start; a third session is refused', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const repo = gitRepo(fix, 'one-checkout');
-    const first = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
-      env: { ...fix.env, CODEX_THREAD_ID: 'thread-a' }, cwd: repo, encoding: 'utf8',
+    const as = (thread: string, args: string[], extra: Record<string, string> = {}) => spawnSync(HELPER_BIN, args, {
+      env: { ...fix.env, CODEX_THREAD_ID: thread, ...extra }, cwd: repo, encoding: 'utf8', timeout: 10_000,
     });
-    const second = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], {
-      env: { ...fix.env, CODEX_THREAD_ID: 'thread-b' }, cwd: repo, encoding: 'utf8',
-    });
+    const first = as('thread-a', ['start', '--skill', 'extend:roadmap']);
+    const second = as('thread-b', ['start', '--skill', 'extend:roadmap']);
+    const firstSid = first.stdout.match(/session=(\S+)/)?.[1];
     const secondSid = second.stdout.match(/session=(\S+)/)?.[1];
-    const early = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'error'], {
-      env: { ...fix.env, CODEX_THREAD_ID: 'thread-a' }, cwd: repo, encoding: 'utf8',
-    });
-    expect(early.status).toBe(0);
+    expect(firstSid).not.toBe(secondSid);
+    expect(handoffs(fix)).toHaveLength(2);
+    // The old single slot lost the earlier start; a third session's finish is refused and both handoffs stay.
+    const third = as('thread-c', ['finish', '--skill', 'extend:roadmap', '--outcome', 'error'], DEBUG);
+    expect(third.status).toBe(0);
+    expectRefusal(third.stderr, 'handoff from another session');
+    expect(third.stderr).toContain('candidates=2');
     expect(skillRuns(fix)).toHaveLength(0);
-    expect(handoffs(fix)).toHaveLength(1);
-    expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], {
-      env: { ...fix.env, CODEX_THREAD_ID: 'thread-b' }, cwd: repo, encoding: 'utf8',
-    }).status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(2);
+    // Each session's finish pairs its own start, whichever finishes first.
+    expect(as('thread-b', ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(skillRuns(fix).map(row => row.session_id)).toEqual([secondSid]);
-    expect(fix.readLedger().map(row => row.session_id)).toEqual([secondSid]);
+    expect(handoffs(fix)).toHaveLength(1);
+    expect(as('thread-a', ['finish', '--skill', 'extend:roadmap', '--outcome', 'error']).status).toBe(0);
+    expect(skillRuns(fix).map(row => [row.session_id, row.outcome])).toEqual([[secondSid, 'success'], [firstSid, 'error']]);
+    expect(fix.readLedger().map(row => [row.session_id, row.outcome])).toEqual([[secondSid, 'success'], [firstSid, 'error']]);
     expect(handoffs(fix)).toHaveLength(0);
-    expect(first.status).toBe(0);
-  });
+  }, 30_000);
 
   test('a root containing a newline keeps the refusal on one quoted line', () => {
     const fix = makeTelemetryFixture('community', 'stub');
@@ -4619,7 +4667,7 @@ describe('handoff adoption', () => {
   test('an unknown-fingerprint handoff within 24 hours is adopted and a join is not proof', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     expect(runHelper(fix.env, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
-    writeFileSync(handoffPath(fix), JSON.stringify({ session_id: 'pre-change', start: String(insideBound()) }));
+    plantLegacy(fix, { session_id: 'pre-change', start: String(insideBound()) });
     expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(skillRuns(fix)[0].session_id).toBe('pre-change');
     expect(fix.readLedger()[0].session_id).toBe('pre-change');
@@ -4754,4 +4802,331 @@ describe('handoff adoption', () => {
     expect(traced.stderr.includes('thread-ok')).toBe(false);
     expect(readHandoff(fix).harness).toBe(sessionFingerprint([['CURSOR_CONVERSATION_ID', 'thread-ok']]));
   });
+});
+
+// ─── Track 23H: one durable handoff per invocation, paired deterministically ───
+
+const telemetryDir = (fix: TelemetryFixture) => join(fix.home, '.gstack-extend/telemetry');
+const openHandoffs = (fix: TelemetryFixture) => handoffs(fix).map(name => ({
+  name,
+  path: join(telemetryDir(fix), name),
+  state: JSON.parse(readFileSync(join(telemetryDir(fix), name), 'utf8')) as Record<string, any>,
+}));
+const startRun = (fix: TelemetryFixture, skill = 'extend:roadmap', env: Record<string, string> = {}) => {
+  const result = runHelper({ ...fix.env, ...env }, ['start', '--skill', skill]);
+  expect(result.status).toBe(0);
+  return result.stdout.match(/session=(\S+)/)![1];
+};
+const finishRun = (fix: TelemetryFixture, outcome = 'success', skill = 'extend:roadmap', env: Record<string, string> = {}) =>
+  runHelper({ ...fix.env, ...env }, ['finish', '--skill', skill, '--outcome', outcome]);
+const keyDir = (fix: TelemetryFixture) => {
+  const dirs = readdirSync(telemetryDir(fix), { withFileTypes: true }).filter(entry => entry.isDirectory());
+  expect(dirs).toHaveLength(1);
+  return join(telemetryDir(fix), dirs[0].name);
+};
+/** Hand-built per-invocation handoff under the name its session id hashes to, beside an existing start's. */
+const plantInvocation = (fix: TelemetryFixture, state: Record<string, unknown>) => {
+  const file = join(keyDir(fix), handoffName(state.session_id as string));
+  writeFileSync(file, JSON.stringify(state));
+  return file;
+};
+const runSessions = (fix: TelemetryFixture) => skillRuns(fix).map(row => row.session_id);
+const adoptionLine = (stderr: string) => stderr.split('\n').find(line => line.includes('adopted handoff'));
+
+describe('per-invocation handoffs and pairing', () => {
+  test('indistinguishable starts pair oldest first, and out-of-order finishes keep that documented limit', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const first = startRun(fix);
+    const second = startRun(fix);
+    expect(first).not.toBe(second);
+    expect(handoffs(fix)).toHaveLength(2);
+    // The run that started second finished first, but nothing in the call identifies it: its outcome lands on the
+    // oldest open start. This is the bound docs/telemetry.md states; the order is deterministic.
+    expect(finishRun(fix, 'error').status).toBe(0);
+    expect(fix.readLedger().map(row => [row.session_id, row.outcome])).toEqual([[first, 'error']]);
+    expect(finishRun(fix, 'success').status).toBe(0);
+    expect(runSessions(fix)).toEqual([first, second]);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual([first, second]);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('starts that share an epoch second pair in arrival order via seq, never by session id', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix);
+    const [seed] = openHandoffs(fix);
+    rmSync(seed.path);
+    const start = String(epochNow() - 10);
+    // The arrival order is the reverse of the session ids' sort order, with identical start seconds.
+    const arrived = ['sid-z-arrived-first', 'sid-m-arrived-second', 'sid-a-arrived-third'];
+    arrived.forEach((session_id, index) => plantInvocation(fix, {
+      ...seed.state, session_id, start, seq: String(1_000_000 + index), harness: null,
+    }));
+    for (let index = 0; index < arrived.length; index += 1) expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual(arrived);
+  }, 30_000);
+
+  test('seq stays monotonic when the wall clock repeats or runs backward', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const script = `import sys
+sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})
+import telemetry
+telemetry.time.time_ns = lambda: int(sys.argv[1])
+telemetry.main(["start", "--skill", "extend:roadmap"])
+`;
+    const sessions = ['5000', '5000', '100'].map(tick => {
+      const run = spawnSync('python3', ['-I', '-c', script, tick], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+      expect(run.status).toBe(0);
+      return run.stdout.match(/session=(\S+)/)![1];
+    });
+    const seqs = new Map(openHandoffs(fix).map(item => [item.state.session_id as string, BigInt(item.state.seq)]));
+    expect(sessions.map(session => seqs.get(session))).toEqual([5000n, 5001n, 5002n]);
+    for (const session of sessions) expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual(sessions);
+  }, 30_000);
+
+  test('resumable skills pair exact fingerprints first, then everything else newest first', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const skill = 'extend:pair-review';
+    const old = startRun(fix, skill, { CODEX_THREAD_ID: 'thread-a' });
+    const middle = startRun(fix, skill);
+    const newest = startRun(fix, skill, { CODEX_THREAD_ID: 'thread-b' });
+    // A distinct known session and an unknown fingerprint share one pooled subclass: newest first.
+    const pooled = finishRun(fix, 'success', skill, { ...DEBUG, CODEX_THREAD_ID: 'thread-c' });
+    expect(adoptionLine(pooled.stderr)).toContain(`session=${newest}`);
+    expect(adoptionLine(pooled.stderr)).toContain('pairing=resumable (newest)');
+    expect(adoptionLine(pooled.stderr)).toContain('candidates=3');
+    // An exact fingerprint beats the newer pooled start even though the other start is older.
+    const exact = finishRun(fix, 'success', skill, { ...DEBUG, CODEX_THREAD_ID: 'thread-a' });
+    expect(adoptionLine(exact.stderr)).toContain(`session=${old}`);
+    expect(adoptionLine(exact.stderr)).toContain('pairing=resumable (exact)');
+    expect(adoptionLine(exact.stderr)).toContain('candidates=2');
+    expect(finishRun(fix, 'success', skill).status).toBe(0);
+    expect(runSessions(fix)).toEqual([newest, old, middle]);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('the adoption debug line names the session, subclass and count, and never a harness marker value', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const mine = startRun(fix, 'extend:roadmap', { CODEX_THREAD_ID: 'secret-thread-value' });
+    startRun(fix, 'extend:roadmap', { CODEX_THREAD_ID: 'other-thread-value' });
+    const exact = finishRun(fix, 'success', 'extend:roadmap', { ...DEBUG, CODEX_THREAD_ID: 'secret-thread-value' });
+    expect(adoptionLine(exact.stderr)).toContain(`session=${mine}`);
+    expect(adoptionLine(exact.stderr)).toContain('pairing=exact fingerprint');
+    expect(adoptionLine(exact.stderr)).toContain('candidates=2');
+    expect(exact.stderr).not.toContain('secret-thread-value');
+    expect(exact.stderr).not.toContain('other-thread-value');
+    startRun(fix);
+    const guess = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expect(adoptionLine(guess.stderr)).toContain('pairing=unknown fingerprint');
+  }, 30_000);
+
+  test('a too-old unknown-fingerprint candidate is refused while a younger one pairs, and the refusal lands on the newest', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const old = startRun(fix);
+    rewriteHandoff(fix, { start: String(outsideBound()), harness: null });
+    const young = startRun(fix);
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual([young]);
+    const refused = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expectRefusal(refused.stderr, 'handoff too old');
+    expect(refused.stderr).toContain('candidates=1');
+    expect(openHandoffs(fix).map(item => item.state.session_id)).toEqual([old]);
+    expect(openHandoffs(fix)[0].state.refusals).toEqual([expect.objectContaining({ reason: 'handoff too old' })]);
+  }, 30_000);
+
+  test('a refusal is recorded on the newest valid-start candidate and names that file', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const older = startRun(fix, 'extend:roadmap', { CODEX_THREAD_ID: 'thread-a' });
+    const newer = startRun(fix, 'extend:roadmap', { CODEX_THREAD_ID: 'thread-b' });
+    const refused = finishRun(fix, 'success', 'extend:roadmap', { ...DEBUG, CODEX_THREAD_ID: 'thread-c' });
+    expectRefusal(refused.stderr, 'handoff from another session');
+    const byId = new Map(openHandoffs(fix).map(item => [item.state.session_id as string, item]));
+    expect(refused.stderr).toContain(handoffName(newer));
+    expect(byId.get(newer)!.state.refusals).toHaveLength(1);
+    expect(byId.get(older)!.state).not.toHaveProperty('refusals');
+  }, 30_000);
+
+  test('an invalid-start candidate is never adopted and never the refusal target', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const valid = startRun(fix, 'extend:roadmap', { CODEX_THREAD_ID: 'thread-a' });
+    const [seed] = openHandoffs(fix);
+    // Newest by arrival, but without a usable start: it sorts last and cannot take the refusal.
+    plantInvocation(fix, { ...seed.state, session_id: 'sid-bad-start', start: 'bogus', seq: '9'.repeat(18) });
+    const refused = finishRun(fix, 'success', 'extend:roadmap', { ...DEBUG, CODEX_THREAD_ID: 'thread-c' });
+    expectRefusal(refused.stderr, 'handoff from another session');
+    expect(refused.stderr).toContain(handoffName(valid));
+    const byId = new Map(openHandoffs(fix).map(item => [item.state.session_id as string, item]));
+    expect(byId.get(valid)!.state.refusals).toHaveLength(1);
+    expect(byId.get('sid-bad-start')!.state).not.toHaveProperty('refusals');
+    // With only the invalid-start candidate left, the malformed path holds: no reason, no root, nothing recorded.
+    rmSync(byId.get(valid)!.path);
+    const malformed = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expect(malformed.stderr).toContain('missing or malformed start/session state');
+    expect(malformed.stderr).not.toContain('root=');
+    expect(skillRuns(fix)).toHaveLength(0);
+    expect(openHandoffs(fix)[0].state).not.toHaveProperty('refusals');
+  }, 30_000);
+
+  test('an explicit finish for the second start leaves the first handoff untouched and finishable', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix);
+    const second = runHelper(fix.env, ['start', '--skill', 'extend:roadmap']);
+    const secondSid = second.stdout.match(/session=(\S+)/)![1];
+    const secondStart = second.stdout.match(/start=(\S+)/)![1];
+    const [firstHandoff] = openHandoffs(fix).filter(item => item.state.session_id !== secondSid);
+    const before = readFileSync(firstHandoff.path);
+    expect(runHelper(fix.env, ['finish', '--skill', 'extend:roadmap', '--session-id', secondSid, '--start', secondStart,
+      '--outcome', 'error']).status).toBe(0);
+    expect(runSessions(fix)).toEqual([secondSid]);
+    expect(readFileSync(firstHandoff.path)).toEqual(before);
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual([secondSid, firstHandoff.state.session_id]);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('a legacy single-slot handoff, even one from before skill/root/harness, is adopted and consumed', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix);
+    const legacy = plantLegacy(fix, { session_id: 'legacy-slot', start: String(insideBound()) });
+    const dir = keyDir(fix);
+    // A malformed sibling and a leftover temp file beside it must not block the legacy candidate.
+    writeFileSync(join(dir, 'f'.repeat(64) + '.json'), 'garbage{{');
+    writeFileSync(join(dir, '.handoff-leftover'), '{}');
+    const result = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expect(result.status).toBe(0);
+    expect(runSessions(fix)).toEqual(['legacy-slot']);
+    expect(existsSync(legacy)).toBe(false);
+    expect(readFileSync(join(dir, 'f'.repeat(64) + '.json'), 'utf8')).toBe('garbage{{');
+    expect(adoptionLine(result.stderr)).toContain('session=legacy-slot');
+  }, 30_000);
+
+  test('a new start never replaces a legacy slot, and the older of the two pairs first', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix);
+    const legacy = plantLegacy(fix, { session_id: 'legacy-slot', start: String(epochNow() - 60) });
+    const fresh = startRun(fix);
+    expect(existsSync(legacy)).toBe(true);
+    expect(handoffs(fix)).toHaveLength(2);
+    expect(finishRun(fix).status).toBe(0);
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual(['legacy-slot', fresh]);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('a legacy candidate finishing partially is saved to its own file only, then completes without a duplicate', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix);
+    const legacy = plantLegacy(fix, { session_id: 'legacy-partial', start: String(epochNow() - 30), usage: true });
+    const logger = join(fix.home, '.claude/skills/gstack/bin/gstack-telemetry-log');
+    const working = readFileSync(logger, 'utf8');
+    writeFileSync(logger, '#!/bin/bash\n' + NO_SWEEP_LINE + 'exit 1\n');
+    chmodSync(logger, 0o755);
+    expect(finishRun(fix).status).toBe(0);
+    expect(fix.readLedger().map(row => row.session_id)).toEqual(['legacy-partial']);
+    expect(handoffs(fix)).toEqual([basename(legacy)]);
+    expect(JSON.parse(readFileSync(legacy, 'utf8')).done).toEqual(['provenance']);
+    expect(readdirSync(keyDir(fix))).toEqual([]);
+    writeFileSync(logger, working);
+    chmodSync(logger, 0o755);
+    expect(finishRun(fix).status).toBe(0);
+    expect(fix.readLedger()).toHaveLength(1);
+    expect(runSessions(fix)).toEqual(['legacy-partial']);
+    expect(handoffs(fix)).toHaveLength(0);
+  }, 30_000);
+
+  test('a legacy duplicate of a consumed session is unlinked with it and cannot resurrect the run', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const sid = startRun(fix);
+    const [open] = openHandoffs(fix);
+    const legacy = join(telemetryDir(fix), basename(dirname(open.path)) + '.json');
+    writeFileSync(legacy, JSON.stringify(open.state));
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(handoffs(fix)).toHaveLength(0);
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(fix.readLedger()).toHaveLength(1);
+  }, 30_000);
+
+  test('enumeration ignores temp files and foreign names, and a copied handoff under a wrong name is not a candidate', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const sid = startRun(fix);
+    const [open] = openHandoffs(fix);
+    const dir = dirname(open.path);
+    const copy = join(dir, 'a'.repeat(64) + '.json');
+    writeFileSync(copy, JSON.stringify({ ...open.state, session_id: 'copied-session' }));
+    writeFileSync(join(dir, 'notes.json'), JSON.stringify({ ...open.state, session_id: 'foreign-name' }));
+    writeFileSync(join(dir, '.handoff-temp'), JSON.stringify({ ...open.state, session_id: 'temp-file' }));
+    expect(finishRun(fix).status).toBe(0);
+    expect(runSessions(fix)).toEqual([sid]);
+    // Only the copy is handoff-shaped but unauthoritative: it stays, and with nothing else left it is malformed.
+    expect(existsSync(copy)).toBe(true);
+    const again = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+    expect(again.stderr).toContain('missing or malformed start/session state');
+    expect(again.stderr).not.toContain('root=');
+    expect(runSessions(fix)).toEqual([sid]);
+    expect(readdirSync(dir).sort()).toEqual([copy, join(dir, '.handoff-temp'), join(dir, 'notes.json')].map(file => basename(file)).sort());
+  }, 30_000);
+
+  test('a file or link in place of the per-key directory is a malformed store: finish explains, start still prints', () => {
+    for (const kind of ['file', 'link'] as const) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      startRun(fix);
+      const [open] = openHandoffs(fix);
+      const dir = dirname(open.path);
+      const elsewhere = join(fix.home, 'elsewhere');
+      mkdirSync(elsewhere);
+      writeFileSync(join(elsewhere, basename(open.path)), JSON.stringify(open.state));
+      rmSync(dir, { recursive: true });
+      if (kind === 'file') writeFileSync(dir, 'not a directory');
+      else symlinkSync(elsewhere, dir);
+      const finish = finishRun(fix, 'success', 'extend:roadmap', DEBUG);
+      expect(finish.status).toBe(0);
+      expect(finish.stderr).toContain('handoff store is not a readable directory');
+      expect(skillRuns(fix)).toHaveLength(0);
+      const restart = runHelper({ ...fix.env, ...DEBUG }, ['start', '--skill', 'extend:roadmap']);
+      expect(restart.status).toBe(0);
+      expect(restart.stdout).toMatch(/^GE_TELEMETRY: session=\S+ start=\d+/);
+      expect(restart.stderr).toContain('state handoff unwritable');
+    }
+  }, 30_000);
+
+  test('classification: None is never an exact fingerprint, in any class', () => {
+    const script = `import json, sys
+sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})
+import telemetry
+now = 1_700_000_000
+def judge(skill, harness, current, age):
+    item = telemetry.Candidate({"session_id": "sid", "start": str(now - age), "harness": harness}, "p", False)
+    telemetry.classify(item, skill, now, current)
+    return list(item.classification)
+print(json.dumps([
+    judge("extend:roadmap", None, None, 86401),
+    judge("extend:roadmap", None, None, 10),
+    judge("extend:roadmap", "h", None, 10),
+    judge("extend:roadmap", None, "h", 10),
+    judge("extend:roadmap", "h", "h", 10 * 86400),
+    judge("extend:roadmap", "h", "x", 10),
+    judge("extend:pair-review", None, None, 10 * 86400),
+    judge("extend:pair-review", "", "h", 10 * 86400),
+    judge("extend:pair-review", "h", "h", 10 * 86400),
+    judge("extend:pair-review", "h", "x", 10 * 86400),
+]))
+`;
+    const run = spawnSync('python3', ['-I', '-c', script], { encoding: 'utf8', timeout: 10_000 });
+    expect(run.status).toBe(0);
+    const verdicts = (JSON.parse(run.stdout) as unknown[][]).map(item => [item[0], item[2], item[3]]);
+    expect(verdicts).toEqual([
+      ['refuse', null, null],
+      ['adopt', 3, 'unknown fingerprint'],
+      ['adopt', 3, 'unknown fingerprint'],
+      ['adopt', 3, 'unknown fingerprint'],
+      ['adopt', 2, 'exact fingerprint'],
+      ['refuse', null, null],
+      ['adopt', 1, 'resumable (newest)'],
+      ['adopt', 1, 'resumable (newest)'],
+      ['adopt', 0, 'resumable (exact)'],
+      ['adopt', 1, 'resumable (newest)'],
+    ]);
+  }, 30_000);
 });

@@ -14,7 +14,8 @@ import { quotaFixture } from './helpers/quota-env';
 import { REAL_GSTACK_BIN, cleanupTelemetryFixtures, makeTelemetryFixture } from './helpers/telemetry-env';
 import { computeTestSelection, listTestFiles } from './helpers/touchfiles';
 
-afterAll(cleanupTelemetryFixtures);
+// Hundreds of fixture homes are removed here; the default 5 s hook limit is too tight on a loaded machine.
+afterAll(cleanupTelemetryFixtures, 60_000);
 
 const GSTACK_TELEMETRY_LOG = join(REAL_GSTACK_BIN, 'gstack-telemetry-log');
 const HAS_GSTACK = existsSync(GSTACK_TELEMETRY_LOG);
@@ -255,10 +256,13 @@ function isoEpoch(epoch: number) {
   return new Date(epoch * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+/** Open handoffs: `<key>/<sha256(session)>.json` per invocation, or a legacy `<key>.json`. */
 function handoffFiles(home: string) {
   const dir = join(home, '.gstack-extend/telemetry');
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter(name => name.endsWith('.json'));
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+    ? readdirSync(join(dir, entry.name)).filter(name => /^[0-9a-f]{64}\.json$/.test(name)).map(name => join(entry.name, name))
+    : entry.name.endsWith('.json') ? [entry.name] : []);
 }
 
 function allowedConstants(env: Record<string, string>) {
@@ -446,34 +450,26 @@ describe('docs/telemetry.md join contract', () => {
     if (detached.branch !== null) defect(`detached stage-runs branch=${detached.branch}`);
   });
 
-  test('same-root collision misattributes the earlier finish (current behavior)', () => {
-    // Known defect, characterized as current behavior; update this test when repaired.
+  test('same-root collision keeps each invocation: finishes pair first start with first finish, with their own identity', () => {
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
-    const first = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);
-    const second = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);
-    expect(first.status).toBe(0);
-    expect(second.status).toBe(0);
-    const secondSid = second.stdout.match(/session=(\S+)/)?.[1];
-    const secondEpoch = Number(second.stdout.match(/start=(\d+)/)?.[1]);
+    const started = ['first', 'second'].map(() => {
+      const result = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:roadmap']);
+      expect(result.status).toBe(0);
+      return { sid: result.stdout.match(/session=(\S+)/)?.[1] ?? '', epoch: Number(result.stdout.match(/start=(\d+)/)?.[1]) };
+    });
+    expect(started[0].sid).not.toBe(started[1].sid);
+    expect(handoffFiles(fix.home)).toHaveLength(2);
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
     expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'error']).status).toBe(0);
-    const ledger = fix.readLedger();
-    const starts = fix.readJsonl().filter(row => row.event_type === 'skill_start');
-    const runs = fix.readJsonl().filter(row => row.event_type === 'skill_run');
-    const row = ledger[0];
-    const ok = ledger.length === 1
-      && row.session_id === secondSid
-      && row.started_at === isoEpoch(secondEpoch)
-      && row.outcome === 'success'
-      && starts.length === 2
-      && starts.map(item => item.session_id).includes(first.stdout.match(/session=(\S+)/)?.[1] ?? '')
-      && starts.map(item => item.session_id).includes(secondSid ?? '')
-      && runs.length === 1
-      && runs[0].session_id === secondSid
-      && runs[0].outcome === 'success'
-      && handoffFiles(fix.home).length === 0;
-    if (!ok) defect(`ledger=${ledger.length} outcome=${row?.outcome} starts=${starts.length} runs=${runs.length} handoffs=${handoffFiles(fix.home).length}`);
+    const outcomes = ['success', 'error'];
+    expect(fix.readLedger().map(row => [row.session_id, row.started_at, row.outcome])).toEqual(
+      started.map((item, index) => [item.sid, isoEpoch(item.epoch), outcomes[index]]));
+    const usage = fix.readJsonl();
+    expect(usage.filter(row => row.event_type === 'skill_start').map(row => row.session_id)).toEqual(started.map(item => item.sid));
+    expect(usage.filter(row => row.event_type === 'skill_run').map(row => [row.session_id, row.outcome])).toEqual(
+      started.map((item, index) => [item.sid, outcomes[index]]));
+    expect(handoffFiles(fix.home)).toHaveLength(0);
   });
 
   test('explicit retry appends a second stage-runs row and a second skill_run (current behavior)', () => {

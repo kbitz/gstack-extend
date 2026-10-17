@@ -93,6 +93,7 @@ SQLITE_PROGRESS_STEPS = 1000  # SQLite VM steps between deadline checks
 RESUMABLE = {"pair-review", "review-and-prep", "full-review"}
 ADOPTION_BOUND_S = 86400  # same ceiling upstream uses when it nulls duration_s
 REFUSAL_CAP = 10
+HANDOFF_NAME_RE = re.compile(r"[0-9a-f]{64}\.json")  # a per-invocation handoff: sha256(session id) + ".json"
 # GROK_SESSION_ID counts only when GROK_AGENT=1, matching detect().
 SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
@@ -246,10 +247,11 @@ def quoted_path(value):
     return json.dumps(value, ensure_ascii=True)
 
 
-def adoption_problem(reason, slot_root, state_file):
+def adoption_problem(reason, slot_root, handoff, candidates):
     return ("missing or malformed start/session state (" + reason
+            + "; candidates=" + str(candidates)
             + "; root=" + quoted_path(slot_root)
-            + "; handoff=" + quoted_path(str(state_file)) + ")")
+            + "; handoff=" + quoted_path(str(handoff)) + ")")
 
 
 def consider_adoption(state, skill, now, current):
@@ -276,6 +278,186 @@ def consider_adoption(state, skill, now, current):
     if age <= ADOPTION_BOUND_S:
         return "adopt", start
     return "refuse", f"handoff too old; age={age}; bound={ADOPTION_BOUND_S}"
+
+
+def invocation_name(sid):
+    return hashlib.sha256(sid.encode()).hexdigest() + ".json"
+
+
+def sort_key(state):
+    """Arrival order of a handoff whose session id is valid. Ordering only: never a duration or an age.
+
+    start is whole epoch seconds, so concurrent starts share it; seq (nanoseconds, monotonic per root+skill) breaks
+    the tie. A handoff from before seq existed falls back to its start. A handoff without a valid start sorts last."""
+    sid = state["session_id"]
+    start = integer(state.get("start"))
+    if start is None:
+        return 1, 0, sid
+    seq = integer(state.get("seq"))
+    return 0, seq if seq is not None else start * 1_000_000_000, sid
+
+
+class Candidate:
+    """One open handoff. Every later save, refusal record and unlink acts on path, the file it was read from, so a
+    legacy single-slot file is never copied to a per-invocation twin. twin is a legacy file carrying the same session
+    id as a per-invocation candidate: excluded from selection, unlinked with the candidate so it cannot return."""
+
+    def __init__(self, state, path, is_legacy, twin=None):
+        self.state = state
+        self.path = path
+        self.is_legacy = is_legacy
+        self.twin = twin
+        self.sort_key = sort_key(state)
+        self.classification = None  # (kind, detail, rank, label) after classify()
+
+
+def store_shape(directory):
+    """'absent', 'ok' for a real directory, or 'bad' for a file, link or anything unreadable in its place."""
+    try:
+        info = os.lstat(directory)
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "bad"
+    return "ok" if stat.S_ISDIR(info.st_mode) else "bad"
+
+
+def enumerate_candidates(store, legacy_file):
+    """(candidates, present, broken) for one root+skill.
+
+    Only <sha256>.json names in the per-key directory count (that excludes save_state's temp files), plus the legacy
+    single-slot file. A per-invocation file is authoritative only under the name its own session id hashes to, so a
+    copied handoff is malformed-class, like an unreadable or unparseable one. present: some handoff-shaped file
+    exists, whether or not it parsed. broken: the per-key path is not a readable directory."""
+    shape = store_shape(store)
+    names = []
+    if shape == "ok":
+        try:
+            names = sorted(name for name in os.listdir(store) if HANDOFF_NAME_RE.fullmatch(name))
+        except OSError:
+            shape = "bad"
+    if shape == "bad":
+        return [], True, True
+    candidates = []
+    for name in names:
+        state = read_json(store / name)
+        sid = state.get("session_id")
+        if valid_session(sid) and name == invocation_name(sid):
+            candidates.append(Candidate(state, store / name, False))
+    legacy_present = os.path.lexists(legacy_file)
+    legacy = read_json(legacy_file) if legacy_present else {}
+    if valid_session(legacy.get("session_id")):
+        twin = next((item for item in candidates if item.state["session_id"] == legacy["session_id"]), None)
+        if twin:
+            twin.twin = legacy_file
+        else:
+            candidates.append(Candidate(legacy, legacy_file, True))
+    return candidates, bool(names) or legacy_present, False
+
+
+def explicit_candidate(store, legacy_file, sid):
+    """The open handoff of exactly this session, or None: the computed per-invocation path first, then the legacy file."""
+    candidate = None
+    if store_shape(store) == "ok":
+        path = store / invocation_name(sid)
+        state = read_json(path)
+        if state.get("session_id") == sid:
+            candidate = Candidate(state, path, False)
+    legacy = read_json(legacy_file) if os.path.lexists(legacy_file) else {}
+    if legacy.get("session_id") == sid:
+        if candidate:
+            candidate.twin = legacy_file
+        else:
+            candidate = Candidate(legacy, legacy_file, True)
+    return candidate
+
+
+def next_seq(candidates):
+    """Arrival stamp for a new start, called under the root+skill lock: wall clock, but never at or below an open
+    handoff's, so a stalled or backward clock cannot reorder starts."""
+    newest = max((item.sort_key[1] for item in candidates if item.sort_key[0] == 0), default=-1)
+    return min(INT64_MAX, max(time.time_ns(), newest + 1))
+
+
+def classify(candidate, skill, now, current):
+    """Fill candidate.classification with consider_adoption's verdict plus, when adoptable, a pairing rank and label.
+
+    Exact keeps consider_adoption's meaning: a stored non-empty fingerprint equal to a known current one. None is
+    never exact, so two unknown fingerprints stay unknown in every class."""
+    kind, detail = consider_adoption(candidate.state, skill, now, current)
+    rank = label = None
+    if kind == "adopt":
+        stored = candidate.state.get("harness")
+        exact = isinstance(stored, str) and bool(stored) and current is not None and stored == current
+        if skill.removeprefix("extend:") in RESUMABLE:
+            rank, label = (0, "resumable (exact)") if exact else (1, "resumable (newest)")
+        else:
+            rank, label = (2, "exact fingerprint") if exact else (3, "unknown fingerprint")
+    candidate.classification = (kind, detail, rank, label)
+
+
+def pick_adoption(candidates):
+    """The adoptable candidate that pairs first, or None.
+
+    Order: resumable-exact oldest first, resumable-other NEWEST first (a cross-session resume continues the latest
+    paused run; abandoned resumable starts accumulate and must not capture it), then exact and unknown-fingerprint
+    candidates oldest first. Ties break on arrival (sort_key), never on session id alone."""
+    adoptable = [item for item in candidates if item.classification[0] == "adopt"]
+    if not adoptable:
+        return None
+    rank = min(item.classification[2] for item in adoptable)
+    tier = [item for item in adoptable if item.classification[2] == rank]
+    return (max if rank == 1 else min)(tier, key=lambda item: item.sort_key)
+
+
+def adopt_candidate(store, legacy_file, skill, slot_root, current):
+    """The handoff a start-less finish adopts, or None after explaining why not (refusals are recorded)."""
+    candidates, present, broken = enumerate_candidates(store, legacy_file)
+    malformed = ("missing or malformed start/session state",
+                 "run telemetry start first, or supply valid --start and --session-id")
+    if broken:
+        debug(f"handoff store is not a readable directory at {store}",
+              "remove the file or link at that path (open handoffs in it are lost) and run telemetry start again")
+        return None
+    if not present:
+        reason = "no handoff for this repository root"
+    elif not candidates:
+        debug(*malformed)  # files exist but none parses with a valid session: they stay
+        return None
+    else:
+        now, valid = int(time.time()), []
+        for item in candidates:
+            classify(item, skill, now, current)
+            if item.classification[0] != "malformed":
+                valid.append(item)
+        if not valid:
+            debug(*malformed)  # a handoff without a valid start is never adopted and never the refusal target
+            return None
+        chosen = pick_adoption(valid)
+        if chosen:
+            trace(f"adopted handoff session={chosen.state['session_id']} pairing={chosen.classification[3]} "
+                  f"candidates={len(candidates)} handoff={quoted_path(str(chosen.path))}")
+            return chosen
+        newest = max(valid, key=lambda item: item.sort_key)
+        reason = newest.classification[1]
+        remember_refusal(newest.path, newest.state, reason)
+    fix = {
+        "no handoff for this repository root":
+            "start never ran in this root, the handoff was already consumed, or start ran in another root; finish "
+            "from the repository root where start ran, or pass --session-id and --start from the "
+            "GE_TELEMETRY: session=… start=… line",
+        "handoff from another session":
+            "finish in the harness session that ran start, or pass --session-id and --start from the "
+            "GE_TELEMETRY: session=… start=… line",
+    }.get(reason)
+    if fix is None and reason.startswith("handoff too old"):
+        fix = ("run start again for a new run, or pass --session-id and --start from the "
+               "GE_TELEMETRY: session=… start=… line")
+    if fix is None:
+        debug(*malformed)
+    else:
+        debug(adoption_problem(reason, slot_root, newest.path if present else store, len(candidates)), fix)
+    return None
 
 
 def remember_refusal(state_file, state, reason):
@@ -1654,15 +1836,18 @@ def main(args):
     # Outside git use cwd for isolation, while the row honestly says repo:unknown.
     slot_root = root or str(Path.cwd())
     key = hashlib.sha256(json.dumps([slot_root, skill]).encode()).hexdigest()
-    state_file = extend_state / "telemetry" / (key + ".json")
-    # One lock per repository+skill so a finish cannot append twice or replace a newer start.
+    # One handoff file per invocation under telemetry/<key>/, so a second start never replaces the first. The
+    # single-slot telemetry/<key>.json from before per-invocation handoffs is still read, never written.
+    handoff_dir = extend_state / "telemetry" / key
+    legacy_file = extend_state / "telemetry" / (key + ".json")
+    # One lock per repository+skill so concurrent finishes serialize and enumeration is atomic.
     try:
         lock_dir = extend_state / "telemetry-locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         held_lock = os.open(lock_dir / (key + ".lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         fcntl.flock(held_lock, fcntl.LOCK_EX)
     except OSError as error:
-        debug(f"state handoff unwritable at {state_file}: {error.strerror}",
+        debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
               "repair GSTACK_EXTEND_STATE_DIR permissions")
         # An explicit finish can still record skill-usage. The gstack sink is not this state directory.
         if command != "start" and logger:
@@ -1674,7 +1859,6 @@ def main(args):
                     explicit_duration = max(0, int(time.time()) - explicit_start)
                 delegate(logger, skill, explicit, explicit_duration, values)
         return
-    state = read_json(state_file)
     if command == "start":
         now = int(time.time())
         sid = f"extend-{uuid.uuid4()}"
@@ -1694,11 +1878,15 @@ def main(args):
         fingerprint, marker_names = harness_fingerprint()
         trace("harness markers: " + (", ".join(marker_names) if marker_names else "none"))
         try:
+            if store_shape(handoff_dir) == "bad":
+                raise OSError(errno.ENOTDIR, "the handoff store is not a directory")
+            seq = next_seq(enumerate_candidates(handoff_dir, legacy_file)[0])
             # harness is a session-fingerprint hash, not a harness name.
-            save_state(state_file, dict(session_id=sid, start=str(now), usage=wrote_usage,
-                                        skill=skill, root=slot_root, harness=fingerprint))
+            save_state(handoff_dir / invocation_name(sid), dict(session_id=sid, start=str(now), seq=str(seq),
+                                                               usage=wrote_usage, skill=skill, root=slot_root,
+                                                               harness=fingerprint))
         except OSError as error:
-            debug(f"state handoff unwritable at {state_file}: {error.strerror}",
+            debug(f"state handoff unwritable at {handoff_dir}: {error.strerror}",
                   "repair GSTACK_EXTEND_STATE_DIR permissions or supply explicit --start and --session-id")
         print(f"GE_TELEMETRY: session={sid} start={now}")
         return
@@ -1709,9 +1897,11 @@ def main(args):
     # --start alone does not bypass adoption: a refusable handoff is still refused.
     if valid_session(explicit_sid):
         sid = explicit_sid
+        # Only this session's own handoff: other invocations' handoffs are never read or touched.
+        handoff = explicit_candidate(handoff_dir, legacy_file, sid)
+        state = handoff.state if handoff else {}
         start = explicit_start
-        if start is None and duration is None and state.get("session_id") == sid:
-            # Only the handoff of the SAME session may supply the start; another session's would misdate this one.
+        if start is None and duration is None and handoff:
             start = integer(state.get("start"))
         if start is None and duration is None:
             debug("missing or malformed start/session state",
@@ -1719,41 +1909,15 @@ def main(args):
             return
     else:
         current, _names = harness_fingerprint()
-        if not state and os.path.lexists(state_file):
-            # read_json also returns {} for unreadable or malformed slots; only an absent slot gets the root hint.
-            kind, detail = "malformed", None
-        else:
-            kind, detail = consider_adoption(state, skill, int(time.time()), current)
-        if kind != "adopt":
-            if kind == "refuse" and state and detail != "no handoff for this repository root":
-                remember_refusal(state_file, state, detail)
-            if kind == "refuse":
-                fix = {
-                    "no handoff for this repository root":
-                        "start never ran in this root, the handoff was already consumed, this is the second finish "
-                        "of a same-root collision, or start ran in another root; finish from the repository root "
-                        "where start ran, or pass --session-id and --start from the GE_TELEMETRY: session=… start=… line",
-                    "handoff from another session":
-                        "finish in the harness session that ran start, or pass --session-id and --start from the "
-                        "GE_TELEMETRY: session=… start=… line",
-                }.get(detail)
-                if fix is None and isinstance(detail, str) and detail.startswith("handoff too old"):
-                    fix = ("run start again for a new run, or pass --session-id and --start from the "
-                           "GE_TELEMETRY: session=… start=… line")
-                if fix is None:
-                    debug("missing or malformed start/session state",
-                          "run telemetry start first, or supply valid --start and --session-id")
-                else:
-                    debug(adoption_problem(detail, slot_root, state_file), fix)
-            else:
-                debug("missing or malformed start/session state",
-                      "run telemetry start first, or supply valid --start and --session-id")
+        handoff = adopt_candidate(handoff_dir, legacy_file, skill, slot_root, current)
+        if not handoff:
             return
+        state = handoff.state
         sid = state.get("session_id")
         start = explicit_start
         # A legacy duration already supplies the time half; otherwise the adopted handoff's start does.
         if start is None and duration is None:
-            start = detail
+            start = handoff.classification[1]
         if not valid_session(sid) or (start is None and duration is None):
             debug("missing or malformed start/session state",
                   "run telemetry start first, or supply valid --start and --session-id")
@@ -1763,11 +1927,11 @@ def main(args):
         # Upstream nulls durations above 86400 seconds.
         duration = max(0, int(time.time()) - start)
     # The handoff records which outputs a partial finish already wrote, so a retry never duplicates either row.
-    done = state.get("done") if state.get("session_id") == sid and isinstance(state.get("done"), list) else []
+    done = state.get("done") if isinstance(state.get("done"), list) else []
     done = [output for output in done if output in ("provenance", "usage")]
     # Handoffs from before the usage flag still complete. A false flag means the start append never landed.
-    usage_ok = state.get("usage") if state.get("session_id") == sid and "usage" in state else True
-    saved = state.get("row") if state.get("session_id") == sid and isinstance(state.get("row"), dict) else None
+    usage_ok = state.get("usage") if "usage" in state else True
+    saved = state.get("row") if isinstance(state.get("row"), dict) else None
     if provenance and "provenance" not in done:
         # Reuse the first attempt's row so a retry does not re-detect the model or stretch duration_s. A saved row is
         # appended as saved, even by a later release: its version, producer and sources describe its construction.
@@ -1780,23 +1944,24 @@ def main(args):
             saved = row
     if logger and usage_ok and "usage" not in done and delegate(logger, skill, sid, duration, values):
         done.append("usage")
-    # Consume only the matching handoff, preserving a later same-skill start.
+    # Consume only the matching handoff: other invocations' files are never touched.
     # Explicit retries can still supply their original session/start pair.
-    current = read_json(state_file)
-    if current.get("session_id") != sid:
+    if not handoff:
         return
     try:
         # A transient gstack-config failure is not "usage is off". Keep the handoff so a retry can delegate.
         usage_done = not (retry_usage and usage_ok) and ((not logger) or (not usage_ok) or ("usage" in done))
         if (not provenance or "provenance" in done) and usage_done and not saved:
-            state_file.unlink()
+            handoff.path.unlink()
+            if handoff.twin:
+                handoff.twin.unlink(missing_ok=True)  # a legacy duplicate must not resurrect this session
         elif done or saved:
-            payload = dict(current, done=done)
+            payload = dict(handoff.state, done=done)
             if saved:
                 payload["row"] = saved
             else:
                 payload.pop("row", None)
-            save_state(state_file, payload)
+            save_state(handoff.path, payload)
     except OSError as error:
         debug(f"could not update the handoff: {error}", "repair GSTACK_EXTEND_STATE_DIR permissions")
 
