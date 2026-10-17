@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.11.0] - 2026-10-17
+
+### Changed
+
+- **Overlapping telemetry starts keep their own handoffs.** Concurrent starts of one skill in one checkout no longer overwrite each other. A finish without an explicit session id pairs by class: a resumable exact fingerprint match is oldest first, any other resumable start is newest first, then a non-resumable exact match, then an unknown fingerprint at most 24 hours old. An explicit `--session-id` still names that one run at any age and does not adopt a sibling. Legacy single-slot handoffs are still read; new starts do not replace them. Among indistinguishable starts, a finish can still land on the wrong one when completions arrive in a different order from that pairing. That residual stays unowned, and no acceptance checkpoint is awarded.
+
+- **A repeated explicit finish no longer appends another row.** After the owed outputs are written, the finish stores a private completion marker and removes the handoff. A later explicit finish for that session, skill and root does nothing, including when the handoff is already gone or the state lock cannot be taken. Markers are kept for 30 days, and only a later start of the same root and skill prunes them. Start-less finishes do not read markers. Delete that session's marker to run the explicit finish again on purpose.
+
+- **An uncertain logger completion checks the sink before it tries again.** If the logger times out, exits nonzero, or fails after it may have started, the retry reads at most the last 8 MiB of the skill-usage file. A matching `skill_run` for that session counts as done. If none is there, the logger runs again. A sink that cannot be read safely is left uncertain and is not delegated. A crash between the write and the save, a row outside that tail, or a swept pending row with the same session id can still duplicate or skip a completion.
+
+### Added
+
+- **A launcher can keep a local work-item key on the run.** Set `GSTACK_EXTEND_WORK_ITEM` before start to a value of 1 to 200 printable characters. Start saves it on that handoff and JSON-quotes it on the existing `GE_TELEMETRY:` line. A later explicit or resumable finish reuses the saved value: a valid flag wins, then the saved start value, then the finish environment. The key stays in local provenance and is not passed to the logger. The stage-runs row shape and schema version stay 1.
+
 ## [0.36.10.0] - 2026-10-16
 
 ### Changed
