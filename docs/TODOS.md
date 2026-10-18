@@ -26,6 +26,30 @@
 - **Priority:** P3
 - **Revisit when:** `/roadmap` plans Track 25B, or the first trigger-migration batch is run against a real Future file.
 
+### [ship] init guesses project identity from the slug and the exact path
+
+- **Description:** `registry_upsert` treats an entry with the same slug or the same exact path as the same project. That guess fails five ways. (1) A different project with the same basename slug and no remote silently replaces the other entry. (2) Projects nested inside one git repo all get the parent repo's remote slug (`detect_slug` reads the enclosing repo's `remote.origin.url`) and evict each other. (3) Path matching compares strings, so another spelling of the same directory on case-insensitive APFS, or a hand-edited trailing slash, adds a duplicate entry. (4) `--migrate` without `--name` resets a custom display name to the basename. (5) A different project cloned into a path whose old project was deleted is "already onboarded", so `--migrate` gives it the dead project's `created_at`. Decide a real identity key (for example the remote URL plus the path relative to the git toplevel) and preview every entry an upsert will drop.
+- **Effort:** M
+- **Context:** Found by the pre-landing and adversarial reviews of the `init --migrate` registry fix on 2026-10-18. All five predate that fix or follow from the slug-or-path contract the bug report specified; the owner chose to backlog them rather than widen the fix.
+- **Priority:** P3
+- **Revisit when:** `gstack-extend list` or `status` starts reading the registry, or a user reports a lost or merged registry entry.
+
+### [ship] A project onboarded next to a root ROADMAP.md stays partial
+
+- **Description:** When a ROADMAP already exists, init deliberately skips `docs/roadmap-future.md` and `docs/roadmap-shipped.md` so `/roadmap` can migrate the live tail. `detect_state` still requires both satellites, so plain init keeps reporting "partially onboarded" and `--migrate` cannot clear it. `/roadmap` writes `roadmap-future.md` only when Future has entries. Treat the satellites as optional when a ROADMAP exists, or name the missing files in the partial message.
+- **Effort:** S
+- **Context:** Red Team finding during the same 2026-10-18 review. The behavior predates that fix.
+- **Priority:** P3
+- **Revisit when:** The next change to `detect_state` or satellite handling, or a user reports a project stuck as partial.
+
+### [ship] Init skill preview sequencing around --name
+
+- **Description:** In `skills/gstack-extend-init.md`, the Step 2 "invalid characters" branch asks for a valid name but never re-runs the dry-run, so a `--migrate` decision can be skipped. Step 4's option B and the name-change re-preview are both described relative to a command whose final flags are only settled after the confirmation. Settle the final command (with `--migrate` and `--name`) and its preview before the single confirmation.
+- **Effort:** S
+- **Context:** Raised in the last review pass of the 2026-10-18 init fix, after the owner set a stop rule that routed remaining prose findings to the backlog.
+- **Priority:** P4
+- **Revisit when:** The init skill flow is next edited, or the optional eval for the skill's `--migrate` preview step is built.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
