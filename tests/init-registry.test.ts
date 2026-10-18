@@ -2,7 +2,8 @@
  * init-registry.test.ts — unit tests for bin/lib/projects-registry.sh.
  *
  * Exercises registry_path, registry_init, registry_validate,
- * registry_upsert, registry_has_slug, registry_get, registry_list.
+ * registry_upsert, registry_has_slug, registry_slugs_for_path,
+ * registry_get, registry_list.
  *
  * Atomic-write invariant: registry_upsert writes via temp+rename and
  * leaves valid JSON on the file at every observable moment. Last-write-
@@ -130,7 +131,7 @@ describe('registry_upsert', () => {
     expect(reg.projects[0].remote_url).toBeNull();
   });
 
-  test('upsert on existing slug replaces in place (idempotent)', () => {
+  test('upsert on existing slug replaces in place and keeps created_at', () => {
     const s = scope('upsert-replace');
     shell(s, `registry_upsert p1 N1 /p1 "" main 4-digit 2026-05-16T12:00:00Z`);
     shell(s, `registry_upsert p2 N2 /p2 "" main 4-digit 2026-05-16T12:00:00Z`);
@@ -140,7 +141,73 @@ describe('registry_upsert', () => {
     const p1 = reg.projects.find((p: { slug: string }) => p.slug === 'p1');
     expect(p1.name).toBe('N1-updated');
     expect(p1.path).toBe('/p1-new');
-    expect(p1.created_at).toBe('2026-05-17T12:00:00Z');
+    expect(p1.created_at).toBe('2026-05-16T12:00:00Z');
+  });
+
+  test('upsert with a new slug at the same path replaces that entry', () => {
+    const s = scope('upsert-slug-change');
+    shell(s, `registry_upsert demo demo /x/demo "" main 4-digit 2026-01-01T00:00:00Z`);
+    shell(s, `registry_upsert other other /x/other "" main 4-digit 2026-01-02T00:00:00Z`);
+    const r = shell(
+      s,
+      `registry_upsert owner-demo demo-renamed /x/demo https://example.com/owner/demo.git trunk 4-digit 2026-06-01T00:00:00Z`,
+    );
+    expect(r.exitCode).toBe(0);
+    const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));
+    expect(reg.projects.map((p: { slug: string }) => p.slug).sort()).toEqual(['other', 'owner-demo']);
+    expect(reg.projects.find((p: { slug: string }) => p.slug === 'owner-demo')).toEqual({
+      slug: 'owner-demo',
+      name: 'demo-renamed',
+      path: '/x/demo',
+      remote_url: 'https://example.com/owner/demo.git',
+      base_branch: 'trunk',
+      version_scheme: '4-digit',
+      created_at: '2026-01-01T00:00:00Z',
+    });
+  });
+
+  // Value (legacy-demo and demo-app rows): protects=the kept created_at is the earliest
+  //   of the replaced entries, and a nested project path is never replaced;
+  //   fails_when=created_at comes from the first or last match, or path matching becomes
+  //   prefix/regex and deletes /x/demo/app; why_new=the earliest match was also the first,
+  //   and no fixture path nested another; seam=none; no_claim=CLI wiring (unit, real jq).
+  test('upsert collapses duplicate entries for one path and keeps the earliest created_at', () => {
+    const s = scope('upsert-collapse');
+    const row = (slug: string, path: string, created_at: string) => ({
+      slug, name: slug, path, remote_url: null, base_branch: 'main', version_scheme: '4-digit', created_at,
+    });
+    writeFileSync(join(s, 'projects.json'), JSON.stringify({
+      projects: [
+        row('demo', '/x/demo', '2026-02-01T00:00:00Z'),
+        row('other', '/x/other', '2026-01-01T00:00:00Z'),
+        row('legacy-demo', '/x/demo', '2026-01-15T00:00:00Z'),
+        row('demo-app', '/x/demo/app', '2026-01-10T00:00:00Z'),
+        row('owner-demo', '/x/demo', '2026-03-01T00:00:00Z'),
+      ],
+    }));
+    const r = shell(s, `registry_upsert owner-demo demo /x/demo "" main 4-digit 2026-09-01T00:00:00Z`);
+    expect(r.exitCode).toBe(0);
+    const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));
+    expect(reg.projects.filter((p: { path: string }) => p.path === '/x/demo')).toEqual([
+      { ...row('owner-demo', '/x/demo', '2026-01-15T00:00:00Z'), name: 'demo' },
+    ]);
+    expect(reg.projects.map((p: { slug: string }) => p.slug)).toEqual(['other', 'demo-app', 'owner-demo']);
+    expect(reg.projects[1]).toEqual(row('demo-app', '/x/demo/app', '2026-01-10T00:00:00Z'));
+  });
+
+  test('fresh policy replaces matching entries but stamps the supplied created_at', () => {
+    const s = scope('upsert-fresh');
+    shell(s, `registry_upsert api api /a/api "" main 4-digit 2019-06-01T00:00:00Z`);
+    shell(s, `registry_upsert stale stale /b/api "" main 4-digit 2019-07-01T00:00:00Z`);
+    const r = shell(s, `registry_upsert api api /b/api "" main 4-digit 2026-10-18T00:00:00Z fresh`);
+    expect(r.exitCode).toBe(0);
+    const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));
+    expect(reg.projects).toHaveLength(1);
+    expect(reg.projects[0]).toMatchObject({ slug: 'api', path: '/b/api', created_at: '2026-10-18T00:00:00Z' });
+
+    const bad = shell(s, `registry_upsert api api /b/api "" main 4-digit 2026-10-18T00:00:00Z sometimes`);
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stderr).toContain('created_at policy must be keep or fresh');
   });
 
   test('missing required argument fails with stderr', () => {
@@ -180,6 +247,31 @@ describe('registry_has_slug / registry_get / registry_list', () => {
     expect(miss.exitCode).toBe(1);
   });
 
+  test('slugs_for_path prints every slug at a path; exits 1 for none, 2 for corrupt', () => {
+    const s = scope('slugs-for-path');
+    expect(shell(s, 'registry_slugs_for_path /x/demo').exitCode).toBe(1);
+    // Value (demo-app row and /x/dem probe): protects=lookup is an exact path match;
+    //   fails_when=matching becomes prefix or regex, so a nested project or a parent path
+    //   counts as registered; why_new=no fixture path nested or prefixed another;
+    //   seam=none; no_claim=CLI onboarded detection (unit, real jq).
+    writeFileSync(join(s, 'projects.json'), JSON.stringify({
+      projects: [
+        { slug: 'demo', path: '/x/demo' },
+        { slug: 'demo-app', path: '/x/demo/app' },
+        { slug: 'other', path: '/x/other' },
+        { slug: 'owner-demo', path: '/x/demo' },
+      ],
+    }));
+    expect(shell(s, 'registry_slugs_for_path /x/dem').exitCode).toBe(1);
+    const hit = shell(s, 'registry_slugs_for_path /x/demo');
+    expect(hit.exitCode).toBe(0);
+    expect(hit.stdout).toBe('demo\nowner-demo\n');
+    expect(shell(s, 'registry_slugs_for_path /x/none').exitCode).toBe(1);
+    expect(shell(s, 'registry_slugs_for_path ""').exitCode).toBe(2);
+    writeFileSync(join(s, 'projects.json'), '{not json');
+    expect(shell(s, 'registry_slugs_for_path /x/demo').exitCode).toBe(2);
+  });
+
   test('list prints all slugs sorted, one per line', () => {
     const s = scope('list');
     shell(s, `registry_upsert zeta z /z "" main 4-digit 2026-05-16T12:00:00Z`);
@@ -195,7 +287,8 @@ describe('atomic write invariant', () => {
   test('repeated upserts always leave valid JSON (no torn writes observable in sequential calls)', () => {
     const s = scope('atomic');
     for (let i = 0; i < 25; i++) {
-      shell(s, `registry_upsert proj${i} N /p "" main 4-digit 2026-05-16T12:00:00Z`);
+      // Distinct paths: one path is one project, so a shared path would replace.
+      shell(s, `registry_upsert proj${i} N /p${i} "" main 4-digit 2026-05-16T12:00:00Z`);
       // After each upsert, the file MUST be valid JSON. mv is the atomic
       // step; a partial write would surface as a JSON.parse exception here.
       const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));

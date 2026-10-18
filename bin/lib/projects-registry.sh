@@ -82,22 +82,61 @@ registry_has_slug() {
   jq -e --arg s "$slug" '.projects | map(.slug) | index($s) != null' "$path" >/dev/null 2>&1
 }
 
-# registry_upsert <slug> <name> <path> <remote_url> <base_branch> <version_scheme> <created_at>
-# Atomic upsert: removes any existing entry for <slug>, appends the new one.
-# Idempotent: re-running with the same slug refreshes the entry.
-# All seven args required; pass empty string for remote_url if none.
+# registry_slugs_for_path <path>
+# Print the slug of every entry registered at <path>, one per line, in
+# registry order. Exit 0 if any matched, 1 if none (or no registry yet),
+# 2 on a missing argument or corrupt registry.
+registry_slugs_for_path() {
+  local proj_path="$1"
+  if [ -z "$proj_path" ]; then
+    echo "registry_slugs_for_path: path argument required" >&2
+    return 2
+  fi
+  local path
+  path=$(registry_path)
+  if [ ! -f "$path" ]; then
+    return 1
+  fi
+  if ! registry_validate; then
+    return 2
+  fi
+  local result
+  if ! result=$(jq -r --arg p "$proj_path" '.projects[] | select(.path == $p) | .slug | strings' "$path" 2>/dev/null); then
+    return 2
+  fi
+  if [ -z "$result" ]; then
+    return 1
+  fi
+  printf '%s\n' "$result"
+}
+
+# registry_upsert <slug> <name> <path> <remote_url> <base_branch> <version_scheme> <created_at> [keep|fresh]
+# Atomic upsert: removes every entry with the same <slug> OR the same
+# <path>, then appends one entry. One project yields one entry even when
+# its slug changes (a remote added after init turns basename `demo` into
+# `owner-demo`). The optional eighth argument picks the new entry's
+# created_at: keep (default) takes the earliest created_at among removed
+# entries, falling back to <created_at>; fresh always uses <created_at>.
+# The first seven args are required; pass empty string for remote_url if none.
 #
 # Atomic write: jq emits to a sibling temp file (same dir = same filesystem
 # = atomic mv); rename moves it into place.
 registry_upsert() {
   local slug="$1" name="$2" proj_path="$3" remote_url="$4"
-  local base_branch="$5" version_scheme="$6" created_at="$7"
+  local base_branch="$5" version_scheme="$6" created_at="$7" created_policy="${8:-keep}"
 
   if [ -z "$slug" ] || [ -z "$name" ] || [ -z "$proj_path" ] \
        || [ -z "$base_branch" ] || [ -z "$version_scheme" ] || [ -z "$created_at" ]; then
     echo "registry_upsert: missing required argument (slug/name/path/base_branch/version_scheme/created_at)" >&2
     return 1
   fi
+  case "$created_policy" in
+    keep|fresh) ;;
+    *)
+      echo "registry_upsert: created_at policy must be keep or fresh (got: $created_policy)" >&2
+      return 1
+      ;;
+  esac
 
   registry_init || return 1
   registry_validate || return 1
@@ -134,14 +173,18 @@ registry_upsert() {
     --arg branch "$base_branch" \
     --arg scheme "$version_scheme" \
     --arg created "$created_at" \
-    '.projects |= map(select(.slug != $slug)) + [{
+    --arg policy "$created_policy" \
+    '(if $policy == "keep"
+      then [.projects[] | select(.slug == $slug or .path == $ppath) | .created_at | strings] | min
+      else null end) as $prev
+     | .projects |= map(select(.slug != $slug and .path != $ppath)) + [{
        slug: $slug,
        name: $name,
        path: $ppath,
        remote_url: $remote,
        base_branch: $branch,
        version_scheme: $scheme,
-       created_at: $created
+       created_at: ($prev // $created)
      }]' \
     "$path" > "$tmp" 2>/dev/null; then
     echo "registry_upsert: jq transform failed for $path" >&2

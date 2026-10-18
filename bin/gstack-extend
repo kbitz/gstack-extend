@@ -234,7 +234,9 @@ detect_base_branch() {
 
 # detect_state <dir>
 # Echoes one of: empty | partial | onboarded.
-#   onboarded: registered in projects.json AND all canonical files present
+#   onboarded: all canonical files present AND projects.json has the
+#              derived slug or an entry at <dir> (adding a remote after
+#              init changes the derived slug, not the registered path)
 #   partial:   any canonical file present
 #   empty:     no canonical files present
 # Caller-supplied <dir> need not exist (returns "empty" for non-existent).
@@ -257,7 +259,10 @@ detect_state() {
   for f in "${CANONICAL_FILES[@]}"; do
     if [ ! -e "$dir/$f" ]; then all_present=0; break; fi
   done
-  if [ "$all_present" = "1" ] && registry_has_slug "$slug" 2>/dev/null; then
+  if [ "$all_present" = "1" ] && {
+       registry_has_slug "$slug" 2>/dev/null \
+         || registry_slugs_for_path "$dir" >/dev/null 2>&1
+     }; then
     echo onboarded
   else
     echo partial
@@ -294,28 +299,41 @@ template_substitute() {
   printf '%s' "$content"
 }
 
-# render_diff <existing-path> <new-content>
-# Print a tiny diff-style preview of what `--dry-run` would write.
-# No external diff dependency; just "+ would write N lines" or
-# "would overwrite (--migrate required for existing file)".
-render_diff() {
-  local existing="$1" new_content="$2"
-  local n
-  n=$(printf '%s\n' "$new_content" | wc -l | tr -d ' ')
-  if [ -e "$existing" ]; then
-    printf '  ~ would overwrite %s (%s lines)\n' "$existing" "$n"
-  else
-    printf '  + would create   %s (%s lines)\n' "$existing" "$n"
+# render_action <target> <dest> <had_roadmap>
+# The one per-file decision behind both --dry-run and the real write, so
+# the preview can never describe a path the write does not take:
+#   skip-existing   <dest> exists. --migrate only backfills missing files;
+#                   nothing is ever overwritten.
+#   skip-satellite  Future/Shipped satellite next to a ROADMAP that existed
+#                   before this run. /roadmap copies the live tail on first
+#                   apply; an empty stub plus leftover inline bullets is how
+#                   deferred essays get deleted.
+#   create          everything else (greenfield writes both satellites
+#                   after the template ROADMAP).
+render_action() {
+  local target="$1" dest="$2" had_roadmap="$3"
+  if [ -e "$target/$dest" ]; then
+    echo skip-existing
+    return 0
   fi
+  if [ "$had_roadmap" = "1" ]; then
+    case "$dest" in
+      docs/roadmap-future.md|docs/roadmap-shipped.md)
+        echo skip-satellite
+        return 0
+        ;;
+    esac
+  fi
+  echo create
 }
 
 # render_all <target> <dry_run> <KV ARGS...>
 # Renders every CANONICAL_FILES entry. The template is that destination's
-# basename plus .tmpl (basenames are unique). Honors dry_run=1.
-# On real write, creates parent dirs as needed. Always skips existing
-# files (--migrate's "backfill missing only" contract). Default mode
-# never reaches the skip branch — scaffold_layout refuses on canonical-
-# file collision before render_all is called.
+# basename plus .tmpl (basenames are unique). Honors dry_run=1, printing
+# the same render_action decision the real write would apply.
+# On real write, creates parent dirs as needed. Default mode never reaches
+# skip-existing (scaffold_layout refuses on canonical-file collision
+# first) but can reach skip-satellite through a root ROADMAP.md.
 render_all() {
   local target="$1" dry_run="$2"
   shift 2
@@ -326,35 +344,31 @@ render_all() {
     had_roadmap=1
   fi
 
-  local dest tmpl content out parent
+  local dest tmpl content out parent action reason n
   for dest in "${CANONICAL_FILES[@]}"; do
     tmpl="${dest##*/}.tmpl"
     out="$target/$dest"
     if ! content=$(template_substitute "$TEMPLATES_DIR/$tmpl" "${vars[@]}"); then
       return 1
     fi
+    action=$(render_action "$target" "$dest" "$had_roadmap")
+    case "$action" in
+      skip-existing)  reason='already exists; --migrate only backfills missing files' ;;
+      skip-satellite) reason='ROADMAP already exists; /roadmap migrates the live tail' ;;
+      *)              reason='' ;;
+    esac
     if [ "$dry_run" = "1" ]; then
-      render_diff "$out" "$content"
-      continue
-    fi
-    if [ -e "$out" ]; then
-      # --migrate only ever backfills missing canonical files; default
-      # mode never reaches this branch (scaffold_layout refuses on
-      # canonical-file collision first). The skip message documents the
-      # behavior contract: user-edited files are always preserved.
-      echo "  ~ skipped $dest (already exists; --migrate only backfills missing files)"
-      continue
-    fi
-    # Do not plant an empty Future/Shipped satellite next to a ROADMAP
-    # that already existed before this run. /roadmap copies the live
-    # tail on first apply. An empty stub plus leftover inline bullets
-    # is how deferred essays get deleted. Greenfield (no ROADMAP at
-    # start) still writes both satellites after the template ROADMAP.
-    if [ "$had_roadmap" = "1" ]; then
-      if [ "$dest" = "docs/roadmap-future.md" ] || [ "$dest" = "docs/roadmap-shipped.md" ]; then
-        echo "  ~ skipped $dest (ROADMAP already exists; /roadmap migrates the live tail)"
-        continue
+      if [ "$action" = "create" ]; then
+        n=$(printf '%s\n' "$content" | wc -l | tr -d ' ')
+        printf '  + would create %s (%s lines)\n' "$out" "$n"
+      else
+        printf '  ~ would skip   %s (%s)\n' "$out" "$reason"
       fi
+      continue
+    fi
+    if [ "$action" != "create" ]; then
+      echo "  ~ skipped $dest ($reason)"
+      continue
     fi
     parent=$(dirname "$out")
     if ! init_mkdir "$parent"; then
@@ -535,13 +549,19 @@ Usage: gstack-extend init <project> [options]
 Options:
   --name <NAME>      Display name (defaults to basename of <project>).
                      Must match [a-zA-Z0-9._-]+.
-  --dry-run          Preview only. Does not write files, does not update
-                     the registry, and does not run the audit.
+  --dry-run          Preview only. Lists each file the real run would
+                     create or skip. Does not write files, does not
+                     update the registry, and does not run the audit.
   --no-prompt        Headless mode; never read from stdin. Errors exit
                      non-zero loudly.
   --migrate          Backfill missing canonical files on an existing
-                     partially-onboarded project. Never overwrites
-                     user-edited files. Re-registers the project.
+                     project. Never overwrites an existing file.
+                     Re-registers the project: replaces any entry with
+                     the same path or slug and keeps its created_at (a
+                     fresh init records the current time instead). A
+                     slug change (e.g. a remote added since init) shows
+                     as "slug: <new> (was: <old>)". Preview it first
+                     with --migrate --dry-run.
   -h, --help         Show this message.
 
 Exit codes:
@@ -645,7 +665,7 @@ cmd_init() {
     onboarded:0:*)
       echo "gstack-extend init: $target_abs is already onboarded." >&2
       echo "  Project drift checks are not implemented yet (coming in a future Group)." >&2
-      echo "  Use \`--migrate\` to re-register (refreshes path/remote)." >&2
+      echo "  Use \`--migrate\` to re-register (refreshes slug, path, remote and base branch)." >&2
       return 1
       ;;
     partial:0:*)
@@ -661,6 +681,21 @@ cmd_init() {
   slug=$(detect_slug "$target_abs")
   remote=$(detect_remote "$target_abs")
   base_branch=$(detect_base_branch "$target_abs")
+
+  # registry_upsert replaces every entry at this path. Name any other slug
+  # it drops in the summary, so `--migrate --dry-run` previews a slug change
+  # without writing anything. Dry-run without jq or with an invalid
+  # registry already warned; show no label.
+  local prev_slugs="" prev
+  while IFS= read -r prev; do
+    if [ -n "$prev" ] && [ "$prev" != "$slug" ]; then
+      prev_slugs="${prev_slugs:+$prev_slugs, }$prev"
+    fi
+  done < <(registry_slugs_for_path "$target_abs" 2>/dev/null || true)
+  local slug_label="$slug"
+  if [ -n "$prev_slugs" ]; then
+    slug_label="$slug (was: $prev_slugs)"
+  fi
 
   local created_at created_at_date
   created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -679,7 +714,7 @@ cmd_init() {
   cat <<EOF
 gstack-extend init: $target_abs
   name:           $name
-  slug:           $slug
+  slug:           $slug_label
   language:       $lang
   base_branch:    $base_branch
   remote_url:     ${remote:-(none)}
@@ -716,8 +751,12 @@ EOF
     return 0
   fi
 
-  # Register in projects.json.
-  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at"; then
+  # Register in projects.json. Only re-registration (--migrate) keeps an
+  # existing entry's created_at; a fresh init is a new project even when it
+  # replaces a stale entry at this path or one with a colliding slug.
+  local created_policy=fresh
+  [ "$migrate" = "1" ] && created_policy=keep
+  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at" "$created_policy"; then
     echo "gstack-extend init: registry write failed (files were rendered)" >&2
     return 1
   fi

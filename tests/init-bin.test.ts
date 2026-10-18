@@ -278,6 +278,12 @@ describe('init flag matrix', () => {
     // Registry still has exactly one entry for this slug.
     const reg = JSON.parse(readFileSync(join(s.state, 'projects.json'), 'utf8'));
     expect(reg.projects).toHaveLength(1);
+    // Value: protects=a re-migrate whose slug did not change prints no "(was: ...)" label;
+    //   fails_when=the slug-change label stops excluding the current slug (prints "x (was: x)");
+    //   why_new=only slug-change and unregistered runs assert the label; seam=none;
+    //   no_claim=registry contents beyond the one-entry count (real bin, real audit).
+    expect(r2.stdout).toContain(`slug:           ${reg.projects[0].slug}\n`);
+    expect(r2.stdout).not.toContain('(was:');
   });
 });
 
@@ -389,6 +395,8 @@ describe('init help and display names', () => {
     expect(r.stdout).toContain('does not promise');
     expect(r.stdout).toContain(`"${join(ROOT, 'bin', 'roadmap-audit')}" "<absolute-project-path>"`);
     expect(r.stdout).not.toContain('audit-clean');
+    expect(r.stdout).toContain('Never overwrites an existing file.');
+    expect(r.stdout).toContain('same path or slug');
   });
 
   test('explicit empty --name is usage exit 2, distinct from a missing project', () => {
@@ -527,6 +535,11 @@ describe('jq preflight and explicit write failures', () => {
     expect(r.stderr).toContain('detection is unavailable');
     expect(r.stderr).toContain('existing registry is invalid');
     expect(r.stderr).toContain(reg);
+    // Value: protects=dry-run on an invalid registry shows only init's own warning;
+    //   fails_when=the slug-change lookup stops silencing registry_validate, so its raw error
+    //   repeats the warning; why_new=no test asserted what else reached stderr; seam=none;
+    //   no_claim=the no-jq variant, which reaches the same silenced lookup (real bin).
+    expect(r.stderr).not.toContain('registry_validate');
     expect(r.stdout).toContain('would create');
     expect(readFileSync(reg, 'utf8')).toBe('{not json');
     expect(existsSync(s.target)).toBe(false);
@@ -1082,7 +1095,196 @@ describe('audit recovery, target, and presentation', () => {
     expect(initSkill).toContain('SUCCESS');
     expect(initSkill).toContain('Next 30 minutes');
     expect(initSkill).toContain('--migrate');
+    expect(initSkill).toContain('init "<target>" --migrate --dry-run');
     expect(initSkill.toLowerCase()).not.toContain('section count');
     expect(initSkill.toLowerCase()).not.toContain('merged stream');
+  });
+});
+
+const EXISTS = 'already exists; --migrate only backfills missing files';
+const SATELLITE = 'ROADMAP already exists; /roadmap migrates the live tail';
+
+// Per-file lines from a dry-run preview and from the real run, normalized to
+// one shape so a test can require that the preview matches the write.
+function previewPlan(stdout: string, root: string): string[] {
+  return stdout.split('\n').flatMap((line) => {
+    const m = line.match(/^ {2}[+~] would (create|skip)\s+(.+) \(([^()]*)\)$/);
+    if (!m) return [];
+    const rel = m[2]!.slice(root.length + 1);
+    return [m[1] === 'create' ? `create ${rel}` : `skip ${rel} (${m[3]})`];
+  });
+}
+
+function appliedPlan(stdout: string): string[] {
+  return stdout.split('\n').flatMap((line) => {
+    const wrote = line.match(/^ {2}\+ wrote (.+)$/);
+    if (wrote) return [`create ${wrote[1]}`];
+    const skipped = line.match(/^ {2}~ skipped (.+) \(([^()]*)\)$/);
+    return skipped ? [`skip ${skipped[1]} (${skipped[2]})`] : [];
+  });
+}
+
+describe('--migrate preview and re-registration', () => {
+  test('after a remote is added, dry-run previews skips and the real run keeps files and one entry', () => {
+    const inst = disposableInstall('remote-added');
+    const target = join(dirname(inst.target), 'demo');
+    expect(runInstalled(inst, ['init', target, '--no-prompt']).exitCode).toBe(0);
+    const regPath = join(inst.state, 'projects.json');
+    const registered = JSON.parse(readFileSync(regPath, 'utf8'));
+    expect(registered.projects.map((p: { slug: string }) => p.slug)).toEqual(['demo']);
+    // Backdate so a reset created_at cannot pass by landing in the same second.
+    registered.projects[0].created_at = '2020-01-01T00:00:00Z';
+    writeFileSync(regPath, `${JSON.stringify(registered)}\n`);
+
+    const remote = 'https://github.com/owner/demo.git';
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', remote]]) {
+      const git = spawnSync('git', ['-C', target, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    writeFileSync(join(target, 'CLAUDE.md'), `${readFileSync(join(target, 'CLAUDE.md'), 'utf8')}user edit\n`);
+    const before = new Map(EXPECTED_FILES.map((file) => [file, readFileSync(join(target, file))]));
+    const regBefore = readFileSync(regPath, 'utf8');
+    const root = realpathSync(target);
+
+    const refused = runInstalled(inst, ['init', target, '--no-prompt']);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain('already onboarded');
+
+    const preview = runInstalled(inst, ['init', target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          onboarded (--migrate)');
+    expect(preview.stdout).toContain('slug:           owner-demo (was: demo)');
+    expect(preview.stdout).not.toContain('would overwrite');
+    expect(preview.stdout).not.toContain('would create');
+    expect(previewPlan(preview.stdout, root)).toEqual(EXPECTED_FILES.map((file) => `skip ${file} (${EXISTS})`));
+    expect(readFileSync(regPath, 'utf8')).toBe(regBefore);
+
+    const applied = runInstalled(inst, ['init', target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.stdout).toContain('state:          onboarded (--migrate)');
+    expect(applied.stdout).toContain('slug:           owner-demo (was: demo)');
+    expect(appliedPlan(applied.stdout)).toEqual(previewPlan(preview.stdout, root));
+    for (const file of EXPECTED_FILES) expect(readFileSync(join(target, file))).toEqual(before.get(file)!);
+    const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+    expect(reg.projects).toHaveLength(1);
+    expect(reg.projects[0]).toMatchObject({
+      slug: 'owner-demo',
+      name: 'demo',
+      path: root,
+      remote_url: remote,
+      created_at: '2020-01-01T00:00:00Z',
+    });
+  });
+
+  // Value: protects=--migrate on a registry an older migrate split (one path, several slugs)
+  //   leaves one entry, keeps the earliest created_at and lists every dropped slug in order;
+  //   fails_when=the "(was: ...)" label keeps only one dropped slug or loses order, or the
+  //   collapse touches an unrelated entry; why_new=the remote-added test starts from one entry,
+  //   so it never reaches the multi-slug label or a pre-split registry; seam=none;
+  //   no_claim=audit output (stubbed roadmap-audit); real git remote, real registry and jq.
+  test('a registry split by an earlier migrate collapses to one entry and names every dropped slug', () => {
+    const inst = disposableInstall('split-registry');
+    const target = join(dirname(inst.target), 'demo');
+    expect(runInstalled(inst, ['init', target, '--no-prompt']).exitCode).toBe(0);
+    const root = realpathSync(target);
+    const remote = 'https://github.com/neworg/demo.git';
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', remote]]) {
+      const git = spawnSync('git', ['-C', target, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    const row = (slug: string, path: string, created_at: string) => ({
+      slug, name: 'demo', path, remote_url: null, base_branch: 'main', version_scheme: '4-digit', created_at,
+    });
+    // The unrelated entry is the oldest, so an unfiltered earliest-created_at pick would take it.
+    // Registry order is not alphabetical and the earliest match comes last, so a sorted label
+    // or a first-match created_at both fail.
+    const unrelated = { ...row('elsewhere', '/elsewhere/app', '2019-01-01T00:00:00Z'), name: 'elsewhere' };
+    const regPath = join(inst.state, 'projects.json');
+    writeFileSync(regPath, `${JSON.stringify({
+      projects: [
+        row('owner-demo', root, '2021-01-01T00:00:00Z'),
+        unrelated,
+        row('demo', root, '2020-01-01T00:00:00Z'),
+      ],
+    })}\n`);
+    const regBefore = readFileSync(regPath, 'utf8');
+    const label = 'slug:           neworg-demo (was: owner-demo, demo)\n';
+
+    const preview = runInstalled(inst, ['init', target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          onboarded (--migrate)');
+    expect(preview.stdout).toContain(label);
+    expect(readFileSync(regPath, 'utf8')).toBe(regBefore);
+
+    const applied = runInstalled(inst, ['init', target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.stdout).toContain(label);
+    expect(applied.stdout).toContain('+ registered neworg-demo');
+    expect(JSON.parse(readFileSync(regPath, 'utf8')).projects).toEqual([
+      unrelated,
+      { ...row('neworg-demo', root, '2020-01-01T00:00:00Z'), remote_url: remote },
+    ]);
+  });
+
+  test('a fresh init never inherits created_at from an entry it replaces; --migrate does', () => {
+    const inst = disposableInstall('fresh-created-at');
+    const regPath = join(inst.state, 'projects.json');
+    const backdate = (path: string) => {
+      const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+      for (const p of reg.projects) if (p.path === path) p.created_at = '2019-06-01T00:00:00Z';
+      writeFileSync(regPath, `${JSON.stringify(reg)}\n`);
+    };
+    const rowAt = (path: string) =>
+      JSON.parse(readFileSync(regPath, 'utf8')).projects.find((p: { path: string }) => p.path === path);
+    // Same basename, no remote: the slug collides across two different projects.
+    const first = join(dirname(inst.target), 'a', 'api');
+    const second = join(dirname(inst.target), 'b', 'api');
+    mkdirSync(dirname(first), { recursive: true });
+    mkdirSync(dirname(second), { recursive: true });
+    expect(runInstalled(inst, ['init', first, '--no-prompt']).exitCode).toBe(0);
+    backdate(realpathSync(first));
+
+    expect(runInstalled(inst, ['init', second, '--no-prompt']).exitCode).toBe(0);
+    const fresh = rowAt(realpathSync(second));
+    expect(fresh.slug).toBe('api');
+    expect(fresh.created_at).not.toBe('2019-06-01T00:00:00Z');
+    expect(fresh.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+
+    backdate(realpathSync(second));
+    expect(runInstalled(inst, ['init', second, '--migrate', '--no-prompt']).exitCode).toBe(0);
+    expect(rowAt(realpathSync(second)).created_at).toBe('2019-06-01T00:00:00Z');
+  });
+
+  test('partial dry-run creates only missing files and skips satellites next to an existing ROADMAP', () => {
+    const inst = disposableInstall('partial-preview');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    writeFileSync(join(inst.target, 'CLAUDE.md'), '# user content\n');
+    writeFileSync(join(inst.target, 'docs', 'ROADMAP.md'), '# Roadmap\n\n## Future\n\n- **Keep me** — live essay.\n');
+    const root = realpathSync(inst.target);
+    const expected = [
+      `skip CLAUDE.md (${EXISTS})`,
+      'create CHANGELOG.md',
+      'create VERSION',
+      `skip docs/ROADMAP.md (${EXISTS})`,
+      'create docs/TODOS.md',
+      'create docs/PROGRESS.md',
+      `skip docs/roadmap-future.md (${SATELLITE})`,
+      `skip docs/roadmap-shipped.md (${SATELLITE})`,
+    ];
+
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          partial (--migrate)');
+    expect(preview.stdout).not.toContain('would overwrite');
+    expect(preview.stdout).not.toContain('(was:');
+    expect(previewPlan(preview.stdout, root)).toEqual(expected);
+    expect(readdirSync(root).sort()).toEqual(['CLAUDE.md', 'docs']);
+    expect(readdirSync(join(root, 'docs'))).toEqual(['ROADMAP.md']);
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(expected);
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
   });
 });
