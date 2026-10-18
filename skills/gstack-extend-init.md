@@ -146,7 +146,7 @@ If yes, append `--name <user-name>` to the next invocation. Validate against `[a
 Show the user a one-line summary of what's about to happen ("Init `<target>` as `<name>`, register slug `<slug>`, audit") and use AskUserQuestion:
 
 - A) Yes, run it
-- B) Show me dry-run again
+- B) Show me dry-run again (the same flags as the command below, plus `--dry-run`)
 - C) Cancel
 
 If A:
@@ -155,7 +155,7 @@ If A:
 "$_EXTEND_ROOT/bin/gstack-extend" init "<target>" --name "<name>"
 ```
 
-If the user chose `--migrate` in Step 2, add `--migrate` to this command; the preview they confirmed came from the same flags plus `--dry-run`.
+If the user chose `--migrate` in Step 2, add `--migrate` to this command. If Step 3 changed the name after the Step 2 preview, re-run the preview with these exact flags plus `--dry-run` and confirm again before running it.
 
 Stream the output. Three outcomes:
 
