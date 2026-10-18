@@ -28,7 +28,7 @@
 
 ### [ship] init guesses project identity from the slug and the exact path
 
-- **Description:** `registry_upsert` treats an entry with the same slug or the same exact path as the same project. That guess fails five ways. (1) A different project with the same basename slug and no remote silently replaces the other entry. (2) Projects nested inside one git repo all get the parent repo's remote slug (`detect_slug` reads the enclosing repo's `remote.origin.url`) and evict each other. (3) Path matching compares strings, so another spelling of the same directory on case-insensitive APFS, or a hand-edited trailing slash, adds a duplicate entry. (4) `--migrate` without `--name` resets a custom display name to the basename. (5) A different project cloned into a path whose old project was deleted is "already onboarded", so `--migrate` gives it the dead project's `created_at`. Decide a real identity key (for example the remote URL plus the path relative to the git toplevel) and preview every entry an upsert will drop.
+- **Description:** `registry_upsert` treats an entry with the same slug or the same exact path as the same project. That guess fails five ways. (1) A different project with the same basename slug and no remote silently replaces the other entry. (2) Projects nested inside one git repo all get the parent repo's remote slug (`detect_slug` reads the enclosing repo's `remote.origin.url`) and evict each other. (3) Path matching compares strings, so a hand-edited trailing slash, or an entry an older version recorded in the typed case (paths now resolve to the on-disk case), adds a duplicate entry. (4) `--migrate` without `--name` resets a custom display name to the basename. (5) A different project cloned into a path whose old project was deleted is "already onboarded", so `--migrate` gives it the dead project's `created_at`. Decide a real identity key (for example the remote URL plus the path relative to the git toplevel) and preview every entry an upsert will drop.
 - **Effort:** M
 - **Context:** Found by the pre-landing and adversarial reviews of the `init --migrate` registry fix on 2026-10-18. All five predate that fix or follow from the slug-or-path contract the bug report specified; the owner chose to backlog them rather than widen the fix.
 - **Priority:** P3
@@ -49,6 +49,14 @@
 - **Context:** Raised in the last review pass of the 2026-10-18 init fix, after the owner set a stop rule that routed remaining prose findings to the backlog.
 - **Priority:** P4
 - **Revisit when:** The init skill flow is next edited, or the optional eval for the skill's `--migrate` preview step is built.
+
+### [ship] init containment polish
+
+- **Description:** Leftovers from the 0.36.12.0 review of init's write containment. None can be triggered by a repository's own content. (1) The refusal hint and the init skill say init never writes "through a link", but a link that stays inside the project is followed; say "outside the project or through a dangling link". (2) A project argument that ends in a newline loses it in `dirname`/`basename`, so a same-named symlink without the newline is followed; reject a newline in `<project>`. (3) A dangling canonical-file link is skipped, but `--migrate` still prints SUCCESS while plain init keeps calling the project partial; name the link in the summary or refuse it like a dangling directory link. (4) `layout_preflight` checks once, so another process that swaps `docs/` for an outside link before the writes can redirect them; re-check each parent right before its mkdir or write. (5) `problem=$(write_problem …)` treats a failed substitution as "no problem"; fail closed. (6) The keep policy checks the timestamp's punctuation but not its digits. (7) `setup` resolves its own directory with `cd` and does not unset `CDPATH`. (8) Tests: isolate `layout_preflight`'s per-file loop (an outside `docs/` that already has designs/ and archive/), and correct the dangling-link test's stated failure reason.
+- **Effort:** S
+- **Context:** Routed to the backlog by the owner's stop rule during the 0.36.12.0 /ship review, after three review passes. QA confirmed the per-file loop refuses correctly on the shipped tree.
+- **Priority:** P3
+- **Revisit when:** The next change to `bin/gstack-extend` init or `setup`, or a report of a misleading init refusal or SUCCESS.
 
 ## Completed
 
