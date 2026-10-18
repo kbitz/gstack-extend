@@ -544,6 +544,23 @@ describe('jq preflight and explicit write failures', () => {
     expect(r.stdout).toContain('would create');
     expect(readFileSync(reg, 'utf8')).toBe('{not json');
     expect(existsSync(s.target)).toBe(false);
+
+    // Value (every-file target): protects=the same single warning once every canonical file
+    //   exists and detect_state reaches its registry lookups; fails_when=detect_state's path
+    //   lookup stops silencing registry_validate; why_new=the absent target above is "empty"
+    //   before any registry lookup; seam=none; no_claim=the onboarded/partial verdict.
+    const full = join(dirname(s.target), 'full');
+    for (const file of EXPECTED_FILES) {
+      mkdirSync(dirname(join(full, file)), { recursive: true });
+      writeFileSync(join(full, file), 'user\n');
+    }
+    const fullRun = run(['init', full, '--migrate', '--dry-run', '--no-prompt'], s);
+    expect(fullRun.exitCode).toBe(0);
+    expect(fullRun.stderr).toContain('detection is unavailable');
+    expect(fullRun.stderr).not.toContain('registry_validate');
+    expect(fullRun.stdout).toContain('dry-run complete');
+    expect(readFileSync(reg, 'utf8')).toBe('{not json');
+    for (const file of EXPECTED_FILES) expect(readFileSync(join(full, file), 'utf8')).toBe('user\n');
   });
 
   test('dry-run with a valid registry does not warn and writes nothing', () => {
@@ -638,6 +655,55 @@ exec "$INIT_TEST_REAL_MKDIR" "$@"
       expect(existsSync(join(resolvedTarget, file))).toBe(false);
       expect(r.stdout).not.toContain(`+ wrote ${file}`);
     }
+    expect(r.stdout).not.toContain('SUCCESS');
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+    expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
+  });
+
+  // Value: protects=the real write never follows a link that appears after render_action chose
+  //   "create" (noclobber); fails_when=the `set -C` subshell is dropped, so the template lands
+  //   through the planted link outside the project; why_new=every link fixture exists before init
+  //   starts, where render_action alone refuses it; seam=none (PATH mkdir stub, as above);
+  //   no_claim=a regular file planted mid-run, links that exist before the check.
+  test('a link planted after the per-file check is refused, not written through', () => {
+    const inst = disposableInstall('noclobber-race');
+    const resolvedTarget = join(realpathSync(dirname(inst.target)), basename(inst.target));
+    const planted = join(resolvedTarget, 'CLAUDE.md');
+    const outside = join(baseTmp, 'noclobber-race', 'outside');
+    mkdirSync(outside, { recursive: true });
+    const seen = join(inst.record, 'mkdir-seen');
+    const stubDir = join(inst.record, 'path');
+    mkdirSync(stubDir);
+    const realMkdir = spawnSync('bash', ['-c', 'command -v mkdir'], { encoding: 'utf8' });
+    expect(realMkdir.status).toBe(0);
+    // scaffold_layout creates the target first. render_all asks again for CLAUDE.md's parent
+    // after render_action has already chosen "create"; the stub plants the link at that point.
+    const stub = join(stubDir, 'mkdir');
+    writeFileSync(stub, `#!/bin/bash
+dest="\${@: -1}"
+"$INIT_TEST_REAL_MKDIR" "$@" || exit $?
+if [ "$dest" = "$INIT_TEST_TARGET" ]; then
+  if [ ! -f "$INIT_TEST_MKDIR_SEEN" ]; then
+    : > "$INIT_TEST_MKDIR_SEEN"
+  elif [ ! -L "$INIT_TEST_TARGET/CLAUDE.md" ]; then
+    ln -s "$INIT_TEST_OUTSIDE/planted.md" "$INIT_TEST_TARGET/CLAUDE.md"
+  fi
+fi
+exit 0
+`);
+    chmodSync(stub, 0o755);
+    const r = runInstalled(inst, ['init', inst.target, '--no-prompt'], {
+      PATH: `${stubDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      INIT_TEST_REAL_MKDIR: realMkdir.stdout.trim(),
+      INIT_TEST_TARGET: resolvedTarget,
+      INIT_TEST_MKDIR_SEEN: seen,
+      INIT_TEST_OUTSIDE: outside,
+    });
+    expect(lstatSync(planted).isSymbolicLink()).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain(`cannot write ${planted}`);
+    expect(r.stdout).not.toContain('+ wrote');
     expect(r.stdout).not.toContain('SUCCESS');
     expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
     expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
@@ -1254,6 +1320,27 @@ describe('--migrate preview and re-registration', () => {
     backdate(realpathSync(second));
     expect(runInstalled(inst, ['init', second, '--migrate', '--no-prompt']).exitCode).toBe(0);
     expect(rowAt(realpathSync(second)).created_at).toBe('2019-06-01T00:00:00Z');
+
+    // Value (stale same-path entry): protects=a plain init that replaces a stale entry at its
+    //   path names the dropped slug and still stamps a fresh created_at; fails_when=the
+    //   "(was: ...)" lookup is limited to --migrate, or a path match passes keep; why_new=no
+    //   phase above re-inits a path whose entry has another slug; seam=none;
+    //   no_claim=what a stale entry with canonical files left on disk does (that is onboarded).
+    const secondRoot = realpathSync(second);
+    for (const file of EXPECTED_FILES) rmSync(join(secondRoot, file));
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', 'https://github.com/owner/api.git']]) {
+      const git = spawnSync('git', ['-C', secondRoot, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    const reinit = runInstalled(inst, ['init', second, '--no-prompt']);
+    expect(reinit.exitCode, reinit.stderr).toBe(0);
+    expect(reinit.stdout).toContain('state:          empty\n');
+    expect(reinit.stdout).toContain('slug:           owner-api (was: api)\n');
+    const rows = JSON.parse(readFileSync(regPath, 'utf8')).projects
+      .filter((p: { path: string }) => p.path === secondRoot);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].slug).toBe('owner-api');
+    expect(rows[0].created_at).not.toBe('2019-06-01T00:00:00Z');
   });
 
   test('partial dry-run creates only missing files and skips satellites next to an existing ROADMAP', () => {
@@ -1309,6 +1396,11 @@ describe('--migrate preview and re-registration', () => {
 
     const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
     expect(preview.exitCode).toBe(0);
+    // Value (state line): protects=a target holding only dangling canonical links is partial,
+    //   not empty; fails_when=detect_state alone goes back to `[ -e ]` (the refusal above still
+    //   passes through scaffold_layout's own check); why_new=nothing asserted the state here;
+    //   seam=none; no_claim=the plain-init refusal wording, which both checks share.
+    expect(preview.stdout).toContain('state:          partial (--migrate)\n');
     const plan = previewPlan(preview.stdout, root);
     expect(plan).toContain(`skip CLAUDE.md (${EXISTS})`);
     expect(plan).toContain(`skip docs/roadmap-future.md (${EXISTS})`);
