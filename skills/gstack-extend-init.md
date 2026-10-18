@@ -132,6 +132,7 @@ Print the output. If it ends in `dry-run complete`, you have a clean picture: ta
 - `already onboarded`: the target is already registered. Suggest the user re-run with `--migrate` if they want to refresh the registry entry (slug, path, remote), or treat as no-op. `--migrate` keeps one entry per project and its original `created_at`; a `slug: <new> (was: <old>)` line means the slug changed, usually because a git remote was added after init, and the old entry will be replaced.
 - If the user chooses `--migrate`, preview it before any write: run `"$_EXTEND_ROOT/bin/gstack-extend" init "<target>" --migrate --dry-run`, show its `slug:` line and its `would create` / `would skip` lines, and get confirmation before the real run in Step 4.
 - `invalid characters`: ask for a valid name (`[a-zA-Z0-9._-]+`).
+- `refusing to create …` (a file or folder init would create lands outside the project, sits behind a dangling link, or a path it needs is not a directory): show the message and explain that init never writes outside the project or through a link. Ask the user how to fix that path; never move, replace or delete their links or files yourself. In a headless run, stop and report BLOCKED with the message.
 
 ## Step 3 — Optional `--name` override
 

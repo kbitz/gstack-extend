@@ -119,8 +119,8 @@ registry_slugs_for_path() {
 # entries, falling back to <created_at>; fresh always uses <created_at>.
 # keep only considers UTC values in the YYYY-MM-DDTHH:MM:SSZ shape every
 # writer produces, so an empty or offset timestamp cannot win the pick.
-# The shape check avoids jq regex (test()), which builds without
-# Oniguruma lack.
+# The shape check avoids jq regex (test()): jq builds without Oniguruma
+# have no regex support.
 # The first seven args are required; pass empty string for remote_url if none.
 #
 # Atomic write: jq emits to a sibling temp file (same dir = same filesystem

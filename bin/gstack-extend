@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+# An exported CDPATH makes `cd <relative>` jump elsewhere and print the
+# match, which would corrupt every path this script resolves with cd.
+unset CDPATH
+
 # ─── Self-location (POSIX-portable readlink) ───────────────────────────
 #
 # bin/gstack-extend may be invoked through ~/.local/bin/gstack-extend, which
@@ -240,22 +244,56 @@ path_occupied() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
-# dir_escapes_target <target> <dir>
-# True when <dir> would lead a write outside <target>: a dangling link, or
-# a directory whose physical path is not <target> or below it (a link such
-# as docs -> ../elsewhere). <target> is already physical (cd -P). A missing
-# <dir> is fine; mkdir creates it inside <target>.
-dir_escapes_target() {
-  local target="$1" dir="$2" real
-  if [ -L "$dir" ] && [ ! -e "$dir" ]; then
+# physical_dir <dir>
+# Sets PHYSICAL_DIR to the physical path of existing directory <dir>;
+# returns 1 if it cannot be entered. External pwd -P asks the kernel, so on
+# case-insensitive APFS it gives the on-disk case where bash's builtin
+# keeps the typed case. The "." sentinel keeps a trailing newline in a
+# directory name, which command substitution would otherwise strip.
+physical_dir() {
+  local out
+  out=$(cd -P -- "$1" 2>/dev/null && { /bin/pwd -P 2>/dev/null || pwd -P; } && printf .) || return 1
+  out=${out%.}
+  PHYSICAL_DIR=${out%$'\n'}
+}
+
+# write_problem <target> <path>
+# For a file or directory init is about to create under <target>, echoes
+# why it must not be created, or nothing. Walks up to the nearest existing
+# ancestor: it must be a directory whose physical path is <target> or below
+# (a link such as docs -> ../elsewhere fails). Existing paths are never
+# checked here, so a linked docs/ that needs no writes is left alone.
+# <target> is already physical (physical_dir).
+write_problem() {
+  local target="$1" p="${2%/*}"
+  while [ "$p" != "$target" ] && [ ! -e "$p" ]; do
+    if [ -L "$p" ]; then
+      printf '%s is a dangling link' "${p#"$target"/}"
+      return 0
+    fi
+    p=${p%/*}
+  done
+  [ "$p" = "$target" ] && return 0
+  if [ ! -d "$p" ]; then
+    printf '%s is not a directory' "${p#"$target"/}"
     return 0
   fi
-  [ -d "$dir" ] || return 1
-  real=$(cd -P "$dir" 2>/dev/null && pwd) || return 0
-  case "$real/" in
-    "$target"/*) return 1 ;;
+  if ! physical_dir "$p"; then
+    printf 'cannot enter %s to check where it leads' "${p#"$target"/}"
+    return 0
+  fi
+  case "$PHYSICAL_DIR/" in
+    "$target"/*) return 0 ;;
   esac
-  return 0
+  printf '%s resolves outside the project (%s)' "${p#"$target"/}" "$PHYSICAL_DIR"
+}
+
+# roadmap_present <target>
+# True when a ROADMAP exists at docs/ or the root. path_occupied, not -f:
+# a dangling ROADMAP link still means a ROADMAP is expected there, so the
+# satellites stay skipped.
+roadmap_present() {
+  path_occupied "$1/docs/ROADMAP.md" || path_occupied "$1/ROADMAP.md"
 }
 
 # detect_state <dir>
@@ -331,9 +369,8 @@ template_substitute() {
 #   skip-link       <dest> is a dangling symlink. init never writes through
 #                   a link; the user fixes or removes it.
 #   skip-existing   <dest> exists. --migrate only backfills missing files;
-#                   nothing is ever overwritten. Together with
-#                   scaffold_layout's refusal of canonical directories that
-#                   resolve outside the project, no write leaves <target>.
+#                   nothing is ever overwritten. scaffold_layout's preflight
+#                   refuses any create that would land outside <target>.
 #   skip-satellite  Future/Shipped satellite next to a ROADMAP that existed
 #                   before this run. /roadmap copies the live tail on first
 #                   apply; an empty stub plus leftover inline bullets is how
@@ -373,10 +410,8 @@ render_all() {
   shift 2
   local vars=("$@")
 
-  # path_occupied, not -f: a dangling ROADMAP link still means a ROADMAP
-  # is expected there, so the satellites stay skipped.
   local had_roadmap=0
-  if path_occupied "$target/docs/ROADMAP.md" || path_occupied "$target/ROADMAP.md"; then
+  if roadmap_present "$target"; then
     had_roadmap=1
   fi
 
@@ -427,8 +462,9 @@ render_all() {
 
 # scaffold_layout <target> <dry_run> <migrate>
 # D2.B: mkdir canonical dirs; refuse if any canonical file already exists
-# unless --migrate. Idempotent in both modes (re-running on an empty dir =
-# same result).
+# unless --migrate. In every mode, refuse first if anything init would
+# create lands outside <target> (see layout_preflight). Idempotent in both
+# modes (re-running on an empty dir = same result).
 scaffold_layout() {
   local target="$1" dry_run="$2" migrate="$3"
   local f d
@@ -441,17 +477,8 @@ scaffold_layout() {
       fi
     done
   fi
-  # Every mode, dry-run included, so the preview refuses exactly when the
-  # real run would. Canonical files live in <target> and docs/, so checking
-  # the canonical directories keeps every write inside <target>.
-  if [ -d "$target" ]; then
-    for d in "${CANONICAL_DIRS[@]}"; do
-      if dir_escapes_target "$target" "$target/$d"; then
-        echo "gstack-extend init: refusing to follow $d: it resolves outside $target" >&2
-        echo "  Make $d a real directory, or a link that stays inside the project, then re-run." >&2
-        return 1
-      fi
-    done
+  if ! layout_preflight "$target"; then
+    return 1
   fi
   if [ "$dry_run" = "1" ]; then
     for d in "${CANONICAL_DIRS[@]}"; do
@@ -464,12 +491,57 @@ scaffold_layout() {
   if ! init_mkdir "$target"; then
     return 1
   fi
-  local d
   for d in "${CANONICAL_DIRS[@]}"; do
     if ! init_mkdir "$target/$d"; then
       return 1
     fi
   done
+}
+
+# layout_preflight <target>
+# Every mode, dry-run included, so the preview refuses exactly when the
+# real run would, before anything is written. Checks only what init would
+# create: a missing canonical directory, or a canonical file whose
+# render_action is create. Existing directories are left alone (mkdir -p
+# on them writes nothing), so a linked docs/ that already holds every file
+# still re-registers.
+layout_preflight() {
+  local target="$1" d f problem had_roadmap=0
+  if path_occupied "$target" && [ ! -d "$target" ]; then
+    echo "gstack-extend init: refusing: $target exists but is not a directory" >&2
+    return 1
+  fi
+  for d in "${CANONICAL_DIRS[@]}"; do
+    [ -d "$target/$d" ] && continue
+    if [ -L "$target/$d" ] && [ ! -e "$target/$d" ]; then
+      problem="$d is a dangling link"
+    elif path_occupied "$target/$d"; then
+      problem="$d is not a directory"
+    else
+      problem=$(write_problem "$target" "$target/$d")
+    fi
+    if [ -n "$problem" ]; then
+      layout_refusal "$target" "$d" "$problem"
+      return 1
+    fi
+  done
+  if roadmap_present "$target"; then
+    had_roadmap=1
+  fi
+  for f in "${CANONICAL_FILES[@]}"; do
+    [ "$(render_action "$target" "$f" "$had_roadmap")" = "create" ] || continue
+    problem=$(write_problem "$target" "$target/$f")
+    if [ -n "$problem" ]; then
+      layout_refusal "$target" "$f" "$problem"
+      return 1
+    fi
+  done
+}
+
+# layout_refusal <target> <what> <problem>
+layout_refusal() {
+  echo "gstack-extend init: refusing to create $2: $3" >&2
+  echo "  init writes only inside $1 and never through a link. Fix that path (ask before changing a link someone set up on purpose), then re-run." >&2
 }
 
 # run_audit <target>
@@ -675,10 +747,15 @@ cmd_init() {
     return 2
   fi
 
-  # Resolve target to an absolute path. Don't require it to exist yet.
+  # Resolve target to an absolute physical path (on-disk case, see
+  # physical_dir). Don't require it to exist yet.
   local target_abs
   if [ -d "$target" ]; then
-    target_abs=$(cd -P "$target" && pwd)
+    if ! physical_dir "$target"; then
+      echo "gstack-extend init: cannot enter $target" >&2
+      return 1
+    fi
+    target_abs=$PHYSICAL_DIR
   else
     local parent
     parent=$(dirname "$target")
@@ -686,7 +763,11 @@ cmd_init() {
       echo "gstack-extend init: parent dir of $target does not exist" >&2
       return 1
     fi
-    target_abs="$(cd -P "$parent" && pwd)/$(basename "$target")"
+    if ! physical_dir "$parent"; then
+      echo "gstack-extend init: cannot enter parent dir of $target" >&2
+      return 1
+    fi
+    target_abs="${PHYSICAL_DIR%/}/$(basename "$target")"
   fi
 
   # Derive display name from --name or basename. Validate either way.
@@ -783,7 +864,8 @@ EOF
     "test_cmd_block=$tcb"
   )
 
-  # Scaffold (D2.B): mkdir canonical dirs + refuse on canonical file collision.
+  # Scaffold (D2.B): refuse on canonical file collision or an outside write,
+  # then mkdir canonical dirs.
   if ! scaffold_layout "$target_abs" "$dry_run" "$migrate"; then
     return 1
   fi

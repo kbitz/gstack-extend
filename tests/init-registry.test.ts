@@ -245,6 +245,9 @@ describe('registry_upsert', () => {
         row('demo', '/x/demo', ''),
         row('legacy-demo', '/x/demo', '2026-01-01T05:00:00+05:00'),
         row('owner-demo', '/x/demo', '2026-03-01T00:00:00Z'),
+        // Right length, wrong shape: a space where the T goes. Pins the position checks,
+        // since "" and the offset value already fail on length alone.
+        row('legacy2-demo', '/x/demo', '2026-01-01 00:00:00Z'),
         row('app', '/y/app', ''),
       ],
     }));
@@ -260,6 +263,15 @@ describe('registry_upsert', () => {
       row('owner-demo', '/x/demo', '2026-03-01T00:00:00Z'),
       row('app', '/y/app', '2026-09-02T00:00:00Z'),
     ]);
+  });
+
+  // Value: protects=the registry's jq programs need no regex support, so --migrate and setup's
+  //   self-registration work on jq builds without Oniguruma; fails_when=a test()/match()/sub()
+  //   style builtin is reintroduced; why_new=CI's jq has regex, so a runtime test cannot catch it;
+  //   seam=none; no_claim=the jq programs in other bins.
+  test('registry jq programs use no regex builtins', () => {
+    const code = readFileSync(LIB, 'utf8').split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
+    expect(code).not.toMatch(/\b(test|match|capture|scan|splits|sub|gsub)\(/);
   });
 
   test('fresh policy replaces matching entries but stamps the supplied created_at', () => {

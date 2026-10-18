@@ -386,6 +386,12 @@ function pathWithout(names: string[]) {
   return dir;
 }
 
+// True when the temp filesystem ignores case (default APFS on macOS).
+function caseInsensitiveTmp(): boolean {
+  const probe = mkdtempSync(join(baseTmp, 'CaseProbe-'));
+  return existsSync(probe.toLowerCase());
+}
+
 describe('init help and display names', () => {
   test('help describes preview, pass filtering, and the full audit command', () => {
     const s = scope('help-claims');
@@ -1377,15 +1383,12 @@ describe('--migrate preview and re-registration', () => {
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
   });
 
-  // Value: protects=init never writes a template through a dangling link at a canonical path,
-  //   and the preview names it as a dangling link; fails_when=render_action or detect_state go
-  //   back to a bare `[ -e ]`, which follows the link (scaffold_layout's check is a race-only
-  //   backstop); why_new=no fixture had a symlink at a canonical path; seam=none;
-  //   no_claim=symlinked parent directories (covered by the escaping-docs test).
   // Value: protects=init never creates canonical files or dirs through a docs link that
-  //   resolves outside the project, and the dry-run refuses exactly when the real run does;
-  //   fails_when=scaffold_layout stops checking the canonical directories' physical paths;
-  //   why_new=only leaf links were covered; seam=none; no_claim=links swapped in mid-run.
+  //   resolves outside the project (prefix-sharing and newline-named siblings included), and the
+  //   dry-run refuses exactly when the real run does; fails_when=layout_preflight stops resolving
+  //   the nearest existing ancestor, compares paths without the trailing slash, or loses a
+  //   trailing newline; why_new=only leaf links were covered; seam=none;
+  //   no_claim=links swapped in mid-run.
   test('a docs link that resolves outside the project is refused; one inside is followed', () => {
     const inst = disposableInstall('escaping-docs');
     const outside = join(dirname(inst.target), 'outside-docs');
@@ -1395,7 +1398,7 @@ describe('--migrate preview and re-registration', () => {
     for (const args of [['--dry-run'], [], ['--migrate', '--dry-run'], ['--migrate']]) {
       const r = runInstalled(inst, ['init', inst.target, ...args, '--no-prompt']);
       expect(r.exitCode, args.join(' ')).toBe(1);
-      expect(r.stderr).toContain('refusing to follow docs: it resolves outside');
+      expect(r.stderr).toContain('refusing to create docs/designs: docs resolves outside the project');
       expect(r.stdout).not.toContain('+ wrote');
       expect(readdirSync(outside)).toEqual([]);
     }
@@ -1405,8 +1408,21 @@ describe('--migrate preview and re-registration', () => {
     symlinkSync(join(outside, 'missing'), join(inst.target, 'docs'));
     const dangling = runInstalled(inst, ['init', inst.target, '--no-prompt']);
     expect(dangling.exitCode).toBe(1);
-    expect(dangling.stderr).toContain('refusing to follow docs');
+    expect(dangling.stderr).toContain('docs is a dangling link');
     expect(readdirSync(outside)).toEqual([]);
+
+    // A sibling whose name extends the project's own, and one whose name adds a trailing
+    // newline, are still outside.
+    for (const sibling of [`${basename(inst.target)}-docs`, `${basename(inst.target)}\n`]) {
+      const dir = join(dirname(inst.target), sibling);
+      mkdirSync(dir, { recursive: true });
+      rmSync(join(inst.target, 'docs'));
+      symlinkSync(join('..', sibling), join(inst.target, 'docs'));
+      const r = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+      expect(r.exitCode, JSON.stringify(sibling)).toBe(1);
+      expect(r.stderr).toContain('docs resolves outside the project');
+      expect(readdirSync(dir)).toEqual([]);
+    }
 
     rmSync(join(inst.target, 'docs'));
     mkdirSync(join(inst.target, 'documentation'));
@@ -1415,6 +1431,111 @@ describe('--migrate preview and re-registration', () => {
     expect(inside.exitCode, inside.stderr).toBe(0);
     expect(existsSync(join(inst.target, 'documentation', 'ROADMAP.md'))).toBe(true);
     expect(readdirSync(outside)).toEqual([]);
+  });
+
+  // Value: protects=containment checks only what init would create, so linked docs that need
+  //   no writes still work and a linked canonical dir that already exists is left alone;
+  //   fails_when=layout_preflight refuses any canonical dir that resolves outside, even when
+  //   nothing is created there; why_new=the escaping-docs test only covers dirs that need
+  //   writes; seam=none; no_claim=the contents of the shared folder beyond its listing.
+  test('linked docs that need no writes still re-register; an existing linked subdir is left alone', () => {
+    const inst = disposableInstall('linked-docs-ok');
+    const shared = join(dirname(inst.target), 'shared-docs');
+    mkdirSync(join(shared, 'designs'), { recursive: true });
+    mkdirSync(join(shared, 'archive'), { recursive: true });
+    for (const f of ['ROADMAP.md', 'TODOS.md', 'PROGRESS.md', 'roadmap-future.md', 'roadmap-shipped.md']) {
+      writeFileSync(join(shared, f), 'shared\n');
+    }
+    mkdirSync(inst.target, { recursive: true });
+    for (const f of ['CLAUDE.md', 'CHANGELOG.md', 'VERSION']) writeFileSync(join(inst.target, f), 'user\n');
+    symlinkSync(shared, join(inst.target, 'docs'));
+    const before = readdirSync(shared).sort();
+    const migrated = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(migrated.exitCode, migrated.stderr).toBe(0);
+    expect(migrated.stdout).toContain('+ registered');
+    expect(migrated.stdout).not.toContain('+ wrote');
+    expect(readdirSync(shared).sort()).toEqual(before);
+
+    const other = disposableInstall('linked-designs-ok');
+    const outsideDesigns = join(dirname(other.target), 'outside-designs');
+    mkdirSync(outsideDesigns, { recursive: true });
+    mkdirSync(join(other.target, 'docs'), { recursive: true });
+    symlinkSync(outsideDesigns, join(other.target, 'docs', 'designs'));
+    const fresh = runInstalled(other, ['init', other.target, '--no-prompt']);
+    expect(fresh.exitCode, fresh.stderr).toBe(0);
+    expect(readdirSync(outsideDesigns)).toEqual([]);
+  });
+
+  // Value: protects=the dry-run's exit code matches the real run when a canonical dir path is
+  //   held by a regular file; fails_when=the preflight stops checking occupied non-directories,
+  //   so the dry-run says 'would mkdir' and exits 0 while the real run fails; why_new=no fixture
+  //   had a file at a canonical dir path; seam=none; no_claim=nothing beyond exit and message.
+  test('a file where a canonical dir goes is refused by the dry-run and the real run alike', () => {
+    const inst = disposableInstall('file-at-designs');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    writeFileSync(join(inst.target, 'docs', 'designs'), 'not a dir\n');
+    for (const args of [['--dry-run'], []]) {
+      const r = runInstalled(inst, ['init', inst.target, ...args, '--no-prompt']);
+      expect(r.exitCode, args.join(' ')).toBe(1);
+      expect(r.stderr).toContain('refusing to create docs/designs: docs/designs is not a directory');
+      expect(r.stdout).not.toContain('dry-run complete');
+    }
+    expect(existsSync(join(inst.target, 'CLAUDE.md'))).toBe(false);
+  });
+
+  // Value: protects=a live link at a canonical path (CLAUDE.md -> AGENTS.md) is an existing file,
+  //   not a dangling one; fails_when=render_action's link check drops `! -e` and calls every link
+  //   dangling; why_new=every file-level link fixture was dangling; seam=none;
+  //   no_claim=what the link target contains beyond staying unchanged.
+  test('a live link at a canonical path is skipped as existing, not as dangling', () => {
+    const inst = disposableInstall('live-link');
+    mkdirSync(inst.target, { recursive: true });
+    writeFileSync(join(inst.target, 'AGENTS.md'), '# agents\n');
+    symlinkSync('AGENTS.md', join(inst.target, 'CLAUDE.md'));
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip CLAUDE.md (${EXISTS})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(lstatSync(join(root, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe('# agents\n');
+  });
+
+  // Value: protects=an exported CDPATH cannot redirect a relative <project> or corrupt the
+  //   registered path; fails_when=`unset CDPATH` goes, so cd jumps to the CDPATH copy and prints
+  //   it into target_abs; why_new=no test set CDPATH; seam=none; no_claim=other cd-sensitive env.
+  test('an exported CDPATH does not redirect a relative project path', () => {
+    const inst = disposableInstall('cdpath');
+    const cwd = join(dirname(inst.target), 'cwd');
+    const cdp = join(dirname(inst.target), 'cdp');
+    mkdirSync(join(cwd, 'proj'), { recursive: true });
+    mkdirSync(join(cdp, 'proj'), { recursive: true });
+    const r = runShell(`cd "${cwd}" && "${inst.bin}" init proj --no-prompt`, inst, { CDPATH: cdp, AUDIT_RECORD: inst.record });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(cwd, 'proj', 'CLAUDE.md'))).toBe(true);
+    expect(readdirSync(join(cdp, 'proj'))).toEqual([]);
+    const reg = JSON.parse(readFileSync(join(inst.state, 'projects.json'), 'utf8'));
+    expect(reg.projects).toHaveLength(1);
+    expect(reg.projects[0].path).toBe(realpathSync(join(cwd, 'proj')));
+  });
+
+  // Value: protects=on a case-insensitive filesystem a typed path in another case resolves to the
+  //   on-disk spelling, so an in-project absolute docs link is not refused as outside;
+  //   fails_when=physical_dir goes back to bash's builtin pwd, which keeps the typed case;
+  //   why_new=no test typed a path in another case; seam=none; no_claim=case-sensitive filesystems.
+  test.skipIf(!caseInsensitiveTmp())('a path typed in another case resolves to the on-disk spelling', () => {
+    const inst = disposableInstall('case-spelling');
+    const onDisk = join(dirname(inst.target), 'CaseProj');
+    mkdirSync(join(onDisk, 'realdocs'), { recursive: true });
+    symlinkSync(join(realpathSync(onDisk), 'realdocs'), join(onDisk, 'docs'));
+    const typed = join(dirname(inst.target), 'caseproj');
+    const r = runInstalled(inst, ['init', typed, '--dry-run', '--no-prompt']);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`gstack-extend init: ${realpathSync(onDisk)}\n`);
+    expect(r.stderr).not.toContain('refusing');
   });
 
   // Value: protects=a dangling ROADMAP link still counts as an existing ROADMAP, so the
@@ -1439,6 +1560,12 @@ describe('--migrate preview and re-registration', () => {
     expect(existsSync(join(root, 'docs', 'roadmap-shipped.md'))).toBe(false);
   });
 
+  // Value: protects=init never writes a template through a dangling link at a canonical path,
+  //   and the preview names it as a dangling link; fails_when=the skip-link branch goes (the
+  //   reason turns into EXISTS), or it goes and path_occupied falls back to `[ -e ]` (the
+  //   template is written through the link), or detect_state falls back to `[ -e ]` (the state
+  //   reads empty); why_new=no fixture had a symlink at a canonical path; seam=none;
+  //   no_claim=symlinked parent directories (covered by the escaping-docs test).
   test('a dangling symlink at a canonical path is never written through', () => {
     const inst = disposableInstall('dangling-link');
     const outside = join(dirname(inst.target), 'outside');
