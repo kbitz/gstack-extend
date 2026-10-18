@@ -1170,6 +1170,7 @@ describe('audit recovery, target, and presentation', () => {
 
 const EXISTS = 'already exists; --migrate only backfills missing files';
 const SATELLITE = 'ROADMAP already exists; /roadmap migrates the live tail';
+const LINK = 'dangling symlink; init never writes through a link';
 
 // Per-file lines from a dry-run preview and from the real run, normalized to
 // one shape so a test can require that the preview matches the write.
@@ -1376,10 +1377,68 @@ describe('--migrate preview and re-registration', () => {
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
   });
 
-  // Value: protects=init never writes a template through a symlink at a canonical path, and the
-  //   preview says so; fails_when=render_action, scaffold_layout or detect_state go back to a
-  //   bare `[ -e ]`, which follows a dangling link; why_new=no fixture had a symlink at a
-  //   canonical path; seam=none; no_claim=symlinked parent directories (leaf links only).
+  // Value: protects=init never writes a template through a dangling link at a canonical path,
+  //   and the preview names it as a dangling link; fails_when=render_action or detect_state go
+  //   back to a bare `[ -e ]`, which follows the link (scaffold_layout's check is a race-only
+  //   backstop); why_new=no fixture had a symlink at a canonical path; seam=none;
+  //   no_claim=symlinked parent directories (covered by the escaping-docs test).
+  // Value: protects=init never creates canonical files or dirs through a docs link that
+  //   resolves outside the project, and the dry-run refuses exactly when the real run does;
+  //   fails_when=scaffold_layout stops checking the canonical directories' physical paths;
+  //   why_new=only leaf links were covered; seam=none; no_claim=links swapped in mid-run.
+  test('a docs link that resolves outside the project is refused; one inside is followed', () => {
+    const inst = disposableInstall('escaping-docs');
+    const outside = join(dirname(inst.target), 'outside-docs');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(inst.target, { recursive: true });
+    symlinkSync(outside, join(inst.target, 'docs'));
+    for (const args of [['--dry-run'], [], ['--migrate', '--dry-run'], ['--migrate']]) {
+      const r = runInstalled(inst, ['init', inst.target, ...args, '--no-prompt']);
+      expect(r.exitCode, args.join(' ')).toBe(1);
+      expect(r.stderr).toContain('refusing to follow docs: it resolves outside');
+      expect(r.stdout).not.toContain('+ wrote');
+      expect(readdirSync(outside)).toEqual([]);
+    }
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+
+    rmSync(join(inst.target, 'docs'));
+    symlinkSync(join(outside, 'missing'), join(inst.target, 'docs'));
+    const dangling = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(dangling.exitCode).toBe(1);
+    expect(dangling.stderr).toContain('refusing to follow docs');
+    expect(readdirSync(outside)).toEqual([]);
+
+    rmSync(join(inst.target, 'docs'));
+    mkdirSync(join(inst.target, 'documentation'));
+    symlinkSync('documentation', join(inst.target, 'docs'));
+    const inside = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(inside.exitCode, inside.stderr).toBe(0);
+    expect(existsSync(join(inst.target, 'documentation', 'ROADMAP.md'))).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  // Value: protects=a dangling ROADMAP link still counts as an existing ROADMAP, so the
+  //   satellites are not stubbed next to it; fails_when=had_roadmap goes back to `[ -f ]`,
+  //   which follows the link; why_new=satellite tests only used real ROADMAP files;
+  //   seam=none; no_claim=the satellite content /roadmap writes later.
+  test('a dangling ROADMAP link keeps both satellites skipped', () => {
+    const inst = disposableInstall('dangling-roadmap');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    symlinkSync(join(dirname(inst.target), 'shared-plans', 'ROADMAP.md'), join(inst.target, 'docs', 'ROADMAP.md'));
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip docs/ROADMAP.md (${LINK})`);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${SATELLITE})`);
+    expect(plan).toContain(`skip docs/roadmap-shipped.md (${SATELLITE})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(existsSync(join(root, 'docs', 'roadmap-future.md'))).toBe(false);
+    expect(existsSync(join(root, 'docs', 'roadmap-shipped.md'))).toBe(false);
+  });
+
   test('a dangling symlink at a canonical path is never written through', () => {
     const inst = disposableInstall('dangling-link');
     const outside = join(dirname(inst.target), 'outside');
@@ -1402,8 +1461,8 @@ describe('--migrate preview and re-registration', () => {
     //   seam=none; no_claim=the plain-init refusal wording, which both checks share.
     expect(preview.stdout).toContain('state:          partial (--migrate)\n');
     const plan = previewPlan(preview.stdout, root);
-    expect(plan).toContain(`skip CLAUDE.md (${EXISTS})`);
-    expect(plan).toContain(`skip docs/roadmap-future.md (${EXISTS})`);
+    expect(plan).toContain(`skip CLAUDE.md (${LINK})`);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${LINK})`);
 
     const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
     expect(applied.exitCode).toBe(0);

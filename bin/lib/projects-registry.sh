@@ -117,8 +117,10 @@ registry_slugs_for_path() {
 # `owner-demo`). The optional eighth argument picks the new entry's
 # created_at: keep (default) takes the earliest created_at among removed
 # entries, falling back to <created_at>; fresh always uses <created_at>.
-# keep only considers UTC values in the YYYY-MM-DDTHH:MM:SSZ form every
+# keep only considers UTC values in the YYYY-MM-DDTHH:MM:SSZ shape every
 # writer produces, so an empty or offset timestamp cannot win the pick.
+# The shape check avoids jq regex (test()), which builds without
+# Oniguruma lack.
 # The first seven args are required; pass empty string for remote_url if none.
 #
 # Atomic write: jq emits to a sibling temp file (same dir = same filesystem
@@ -178,7 +180,8 @@ registry_upsert() {
     --arg policy "$created_policy" \
     '(if $policy == "keep"
       then [.projects[] | select(.slug == $slug or .path == $ppath) | .created_at | strings
-            | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))] | min
+            | select(length == 20 and .[4:5] == "-" and .[7:8] == "-" and .[10:11] == "T"
+                     and .[13:14] == ":" and .[16:17] == ":" and .[19:20] == "Z")] | min
       else null end) as $prev
      | .projects |= map(select(.slug != $slug and .path != $ppath)) + [{
        slug: $slug,

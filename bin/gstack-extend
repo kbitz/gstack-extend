@@ -240,6 +240,24 @@ path_occupied() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
+# dir_escapes_target <target> <dir>
+# True when <dir> would lead a write outside <target>: a dangling link, or
+# a directory whose physical path is not <target> or below it (a link such
+# as docs -> ../elsewhere). <target> is already physical (cd -P). A missing
+# <dir> is fine; mkdir creates it inside <target>.
+dir_escapes_target() {
+  local target="$1" dir="$2" real
+  if [ -L "$dir" ] && [ ! -e "$dir" ]; then
+    return 0
+  fi
+  [ -d "$dir" ] || return 1
+  real=$(cd -P "$dir" 2>/dev/null && pwd) || return 0
+  case "$real/" in
+    "$target"/*) return 1 ;;
+  esac
+  return 0
+}
+
 # detect_state <dir>
 # Echoes one of: empty | partial | onboarded.
 #   onboarded: all canonical files present AND projects.json has the
@@ -310,9 +328,12 @@ template_substitute() {
 # render_action <target> <dest> <had_roadmap>
 # The one per-file decision behind both --dry-run and the real write, so
 # the preview can never describe a path the write does not take:
-#   skip-existing   <dest> exists or is a symlink (even a dangling one).
-#                   --migrate only backfills missing files; nothing is
-#                   ever overwritten or written through a link.
+#   skip-link       <dest> is a dangling symlink. init never writes through
+#                   a link; the user fixes or removes it.
+#   skip-existing   <dest> exists. --migrate only backfills missing files;
+#                   nothing is ever overwritten. Together with
+#                   scaffold_layout's refusal of canonical directories that
+#                   resolve outside the project, no write leaves <target>.
 #   skip-satellite  Future/Shipped satellite next to a ROADMAP that existed
 #                   before this run. /roadmap copies the live tail on first
 #                   apply; an empty stub plus leftover inline bullets is how
@@ -321,6 +342,10 @@ template_substitute() {
 #                   after the template ROADMAP).
 render_action() {
   local target="$1" dest="$2" had_roadmap="$3"
+  if [ -L "$target/$dest" ] && [ ! -e "$target/$dest" ]; then
+    echo skip-link
+    return 0
+  fi
   if path_occupied "$target/$dest"; then
     echo skip-existing
     return 0
@@ -341,15 +366,17 @@ render_action() {
 # basename plus .tmpl (basenames are unique). Honors dry_run=1, printing
 # the same render_action decision the real write would apply.
 # On real write, creates parent dirs as needed. Default mode never reaches
-# skip-existing (scaffold_layout refuses on canonical-file collision
-# first) but can reach skip-satellite through a root ROADMAP.md.
+# skip-existing or skip-link (an occupied canonical path is refused first)
+# but can reach skip-satellite through a root ROADMAP.md.
 render_all() {
   local target="$1" dry_run="$2"
   shift 2
   local vars=("$@")
 
+  # path_occupied, not -f: a dangling ROADMAP link still means a ROADMAP
+  # is expected there, so the satellites stay skipped.
   local had_roadmap=0
-  if [ -f "$target/docs/ROADMAP.md" ] || [ -f "$target/ROADMAP.md" ]; then
+  if path_occupied "$target/docs/ROADMAP.md" || path_occupied "$target/ROADMAP.md"; then
     had_roadmap=1
   fi
 
@@ -362,6 +389,7 @@ render_all() {
     fi
     action=$(render_action "$target" "$dest" "$had_roadmap")
     case "$action" in
+      skip-link)      reason='dangling symlink; init never writes through a link' ;;
       skip-existing)  reason='already exists; --migrate only backfills missing files' ;;
       skip-satellite) reason='ROADMAP already exists; /roadmap migrates the live tail' ;;
       *)              reason='' ;;
@@ -386,8 +414,9 @@ render_all() {
     # printf '%s\n' (not '%s') so VERSION and friends get a trailing
     # newline — POSIX text files must end with \n, and bash command
     # substitution in template_substitute strips the final newline.
-    # noclobber (set -C) refuses a file or link that appeared after
-    # render_action looked, so the write never lands on something else.
+    # noclobber (set -C) refuses a regular file or dangling link that
+    # appeared after render_action looked. It does not cover a FIFO or
+    # device swapped in during that window.
     if ! ( set -C; printf '%s\n' "$content" > "$out" ); then
       echo "gstack-extend init: cannot write $out" >&2
       return 1
@@ -402,8 +431,8 @@ render_all() {
 # same result).
 scaffold_layout() {
   local target="$1" dry_run="$2" migrate="$3"
+  local f d
   if [ "$migrate" != "1" ] && [ -d "$target" ]; then
-    local f
     for f in "${CANONICAL_FILES[@]}"; do
       if path_occupied "$target/$f"; then
         echo "gstack-extend init: refusing to scaffold over existing $f" >&2
@@ -412,8 +441,19 @@ scaffold_layout() {
       fi
     done
   fi
+  # Every mode, dry-run included, so the preview refuses exactly when the
+  # real run would. Canonical files live in <target> and docs/, so checking
+  # the canonical directories keeps every write inside <target>.
+  if [ -d "$target" ]; then
+    for d in "${CANONICAL_DIRS[@]}"; do
+      if dir_escapes_target "$target" "$target/$d"; then
+        echo "gstack-extend init: refusing to follow $d: it resolves outside $target" >&2
+        echo "  Make $d a real directory, or a link that stays inside the project, then re-run." >&2
+        return 1
+      fi
+    done
+  fi
   if [ "$dry_run" = "1" ]; then
-    local d
     for d in "${CANONICAL_DIRS[@]}"; do
       if [ ! -d "$target/$d" ]; then
         echo "  + would mkdir $target/$d"
