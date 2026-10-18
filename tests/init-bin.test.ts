@@ -23,6 +23,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1286,6 +1287,38 @@ describe('--migrate preview and re-registration', () => {
     expect(applied.exitCode).toBe(0);
     expect(appliedPlan(applied.stdout)).toEqual(expected);
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
+  });
+
+  // Value: protects=init never writes a template through a symlink at a canonical path, and the
+  //   preview says so; fails_when=render_action, scaffold_layout or detect_state go back to a
+  //   bare `[ -e ]`, which follows a dangling link; why_new=no fixture had a symlink at a
+  //   canonical path; seam=none; no_claim=symlinked parent directories (leaf links only).
+  test('a dangling symlink at a canonical path is never written through', () => {
+    const inst = disposableInstall('dangling-link');
+    const outside = join(dirname(inst.target), 'outside');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    symlinkSync(join(outside, 'planted.md'), join(inst.target, 'CLAUDE.md'));
+    symlinkSync(join(outside, 'planted-future.md'), join(inst.target, 'docs', 'roadmap-future.md'));
+    const root = realpathSync(inst.target);
+
+    const refused = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain('partially onboarded');
+    expect(readdirSync(outside)).toEqual([]);
+
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip CLAUDE.md (${EXISTS})`);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${EXISTS})`);
+
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(lstatSync(join(root, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(root, 'docs', 'roadmap-future.md')).isSymbolicLink()).toBe(true);
   });
 
   // Value: protects=a default init next to a root ROADMAP.md previews the satellite skips the

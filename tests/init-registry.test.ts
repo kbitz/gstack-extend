@@ -231,6 +231,37 @@ describe('registry_upsert', () => {
     ]);
   });
 
+  // Value: protects=keep ignores empty and non-UTC created_at strings, so a valid UTC date
+  //   wins and a lone empty value falls back to the supplied one; fails_when=the timestamp
+  //   format filter is dropped and "" (which sorts first) is kept forever; why_new=the
+  //   non-string test had no empty or offset strings; seam=none; no_claim=CLI wiring.
+  test('keep policy ignores empty and non-UTC created_at strings', () => {
+    const s = scope('upsert-keep-malformed');
+    const row = (slug: string, path: string, created_at: string) => ({
+      slug, name: slug, path, remote_url: null, base_branch: 'main', version_scheme: '4-digit', created_at,
+    });
+    writeFileSync(join(s, 'projects.json'), JSON.stringify({
+      projects: [
+        row('demo', '/x/demo', ''),
+        row('legacy-demo', '/x/demo', '2026-01-01T05:00:00+05:00'),
+        row('owner-demo', '/x/demo', '2026-03-01T00:00:00Z'),
+        row('app', '/y/app', ''),
+      ],
+    }));
+    for (const call of [
+      'registry_upsert owner-demo owner-demo /x/demo "" main 4-digit 2026-09-01T00:00:00Z keep',
+      'registry_upsert app app /y/app "" main 4-digit 2026-09-02T00:00:00Z keep',
+    ]) {
+      const r = shell(s, call);
+      expect(r.exitCode, r.stderr).toBe(0);
+    }
+    const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));
+    expect(reg.projects).toEqual([
+      row('owner-demo', '/x/demo', '2026-03-01T00:00:00Z'),
+      row('app', '/y/app', '2026-09-02T00:00:00Z'),
+    ]);
+  });
+
   test('fresh policy replaces matching entries but stamps the supplied created_at', () => {
     const s = scope('upsert-fresh');
     shell(s, `registry_upsert api api /a/api "" main 4-digit 2019-06-01T00:00:00Z`);

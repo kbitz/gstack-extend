@@ -232,6 +232,14 @@ detect_base_branch() {
   echo main
 }
 
+# path_occupied <path>
+# True when <path> exists or is a symlink, dangling or not. `[ -e ]` alone
+# follows links, so a dangling CLAUDE.md -> ../outside would read as free
+# and a write would land outside the project.
+path_occupied() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
 # detect_state <dir>
 # Echoes one of: empty | partial | onboarded.
 #   onboarded: all canonical files present AND projects.json has the
@@ -248,7 +256,7 @@ detect_state() {
   if [ -d "$dir" ]; then
     local f
     for f in "${CANONICAL_FILES[@]}"; do
-      if [ -e "$dir/$f" ]; then any_present=1; break; fi
+      if path_occupied "$dir/$f"; then any_present=1; break; fi
     done
   fi
   if [ "$any_present" = "0" ]; then
@@ -302,8 +310,9 @@ template_substitute() {
 # render_action <target> <dest> <had_roadmap>
 # The one per-file decision behind both --dry-run and the real write, so
 # the preview can never describe a path the write does not take:
-#   skip-existing   <dest> exists. --migrate only backfills missing files;
-#                   nothing is ever overwritten.
+#   skip-existing   <dest> exists or is a symlink (even a dangling one).
+#                   --migrate only backfills missing files; nothing is
+#                   ever overwritten or written through a link.
 #   skip-satellite  Future/Shipped satellite next to a ROADMAP that existed
 #                   before this run. /roadmap copies the live tail on first
 #                   apply; an empty stub plus leftover inline bullets is how
@@ -312,7 +321,7 @@ template_substitute() {
 #                   after the template ROADMAP).
 render_action() {
   local target="$1" dest="$2" had_roadmap="$3"
-  if [ -e "$target/$dest" ]; then
+  if path_occupied "$target/$dest"; then
     echo skip-existing
     return 0
   fi
@@ -377,7 +386,9 @@ render_all() {
     # printf '%s\n' (not '%s') so VERSION and friends get a trailing
     # newline — POSIX text files must end with \n, and bash command
     # substitution in template_substitute strips the final newline.
-    if ! printf '%s\n' "$content" > "$out"; then
+    # noclobber (set -C) refuses a file or link that appeared after
+    # render_action looked, so the write never lands on something else.
+    if ! ( set -C; printf '%s\n' "$content" > "$out" ); then
       echo "gstack-extend init: cannot write $out" >&2
       return 1
     fi
@@ -394,7 +405,7 @@ scaffold_layout() {
   if [ "$migrate" != "1" ] && [ -d "$target" ]; then
     local f
     for f in "${CANONICAL_FILES[@]}"; do
-      if [ -e "$target/$f" ]; then
+      if path_occupied "$target/$f"; then
         echo "gstack-extend init: refusing to scaffold over existing $f" >&2
         echo "  $target appears partially onboarded. Use --migrate to backfill only missing files." >&2
         return 1
