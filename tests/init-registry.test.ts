@@ -195,6 +195,42 @@ describe('registry_upsert', () => {
     expect(reg.projects[1]).toEqual(row('demo-app', '/x/demo/app', '2026-01-10T00:00:00Z'));
   });
 
+  // Value: protects=keep never discards a real created_at because another matched row lacks
+  //   one, and uses the supplied value when no matched row has a string created_at;
+  //   fails_when=`| strings` is dropped (jq min ranks null first, so null // $created replaces
+  //   the real date, and a lone numeric value is kept); why_new=every fixture row had a string
+  //   created_at; seam=none; no_claim=CLI wiring (unit, real jq).
+  test('keep policy skips missing, null and non-string created_at values', () => {
+    const s = scope('upsert-keep-nonstring');
+    const row = (slug: string, path: string) => ({
+      slug, name: slug, path, remote_url: null, base_branch: 'main', version_scheme: '4-digit',
+    });
+    writeFileSync(join(s, 'projects.json'), JSON.stringify({
+      projects: [
+        row('demo', '/x/demo'),
+        { ...row('legacy-demo', '/x/demo'), created_at: '2026-02-01T00:00:00Z' },
+        { ...row('owner-demo', '/x/demo'), created_at: null },
+        row('app', '/y/app'),
+        { ...row('legacy-app', '/y/app'), created_at: null },
+        { ...row('tool', '/z/tool'), created_at: 1700000000 },
+      ],
+    }));
+    for (const call of [
+      'registry_upsert owner-demo owner-demo /x/demo "" main 4-digit 2026-09-01T00:00:00Z',
+      'registry_upsert app app /y/app "" main 4-digit 2026-09-02T00:00:00Z keep',
+      'registry_upsert tool tool /z/tool "" main 4-digit 2026-09-03T00:00:00Z',
+    ]) {
+      const r = shell(s, call);
+      expect(r.exitCode, r.stderr).toBe(0);
+    }
+    const reg = JSON.parse(readFileSync(join(s, 'projects.json'), 'utf8'));
+    expect(reg.projects).toEqual([
+      { ...row('owner-demo', '/x/demo'), created_at: '2026-02-01T00:00:00Z' },
+      { ...row('app', '/y/app'), created_at: '2026-09-02T00:00:00Z' },
+      { ...row('tool', '/z/tool'), created_at: '2026-09-03T00:00:00Z' },
+    ]);
+  });
+
   test('fresh policy replaces matching entries but stamps the supplied created_at', () => {
     const s = scope('upsert-fresh');
     shell(s, `registry_upsert api api /a/api "" main 4-digit 2019-06-01T00:00:00Z`);
@@ -254,18 +290,27 @@ describe('registry_has_slug / registry_get / registry_list', () => {
     //   fails_when=matching becomes prefix or regex, so a nested project or a parent path
     //   counts as registered; why_new=no fixture path nested or prefixed another;
     //   seam=none; no_claim=CLI onboarded detection (unit, real jq).
+    // Value (null-slug rows): protects=the (was: ...) label and path-based onboarded
+    //   detection only see string slugs; fails_when=`| strings` is dropped and "null" is
+    //   printed; why_new=every fixture slug was a string; seam=none; no_claim=how upsert
+    //   handles non-string rows.
     writeFileSync(join(s, 'projects.json'), JSON.stringify({
       projects: [
         { slug: 'demo', path: '/x/demo' },
         { slug: 'demo-app', path: '/x/demo/app' },
+        { slug: null, path: '/x/demo' },
         { slug: 'other', path: '/x/other' },
         { slug: 'owner-demo', path: '/x/demo' },
+        { slug: null, path: '/x/unnamed' },
       ],
     }));
     expect(shell(s, 'registry_slugs_for_path /x/dem').exitCode).toBe(1);
     const hit = shell(s, 'registry_slugs_for_path /x/demo');
     expect(hit.exitCode).toBe(0);
     expect(hit.stdout).toBe('demo\nowner-demo\n');
+    const nullOnly = shell(s, 'registry_slugs_for_path /x/unnamed');
+    expect(nullOnly.exitCode).toBe(1);
+    expect(nullOnly.stdout).toBe('');
     expect(shell(s, 'registry_slugs_for_path /x/none').exitCode).toBe(1);
     expect(shell(s, 'registry_slugs_for_path ""').exitCode).toBe(2);
     writeFileSync(join(s, 'projects.json'), '{not json');

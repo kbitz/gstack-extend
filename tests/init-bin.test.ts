@@ -1287,4 +1287,69 @@ describe('--migrate preview and re-registration', () => {
     expect(appliedPlan(applied.stdout)).toEqual(expected);
     expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
   });
+
+  // Value: protects=a default init next to a root ROADMAP.md previews the satellite skips the
+  //   real run applies; fails_when=the dry-run branch stops sharing render_action and says
+  //   "would create" again; why_new=preview==write tests only cover --migrate with docs/ROADMAP.md;
+  //   seam=none; no_claim=audit output (stubbed roadmap-audit).
+  test('default init next to a root ROADMAP previews the satellite skips the real run applies', () => {
+    const inst = disposableInstall('root-roadmap-default');
+    mkdirSync(inst.target, { recursive: true });
+    const original = '# Roadmap\n\n## Future\n\n- **Root keep** — live.\n';
+    writeFileSync(join(inst.target, 'ROADMAP.md'), original);
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          empty');
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${SATELLITE})`);
+    expect(plan).toContain(`skip docs/roadmap-shipped.md (${SATELLITE})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(readFileSync(join(root, 'ROADMAP.md'), 'utf8')).toBe(original);
+  });
+
+  // Value: protects=onboarded requires every canonical file and a registry entry;
+  //   fails_when=the brace group in detect_state is dropped (A && B || C) or the registry
+  //   check is removed; why_new=every onboarded test had all files and an entry, and every
+  //   partial test had no registry; seam=none; no_claim=audit output (stubbed roadmap-audit).
+  test('onboarded needs every canonical file and a registry entry; either alone is partial', () => {
+    const inst = disposableInstall('onboarded-needs-both');
+    expect(runInstalled(inst, ['init', inst.target, '--no-prompt']).exitCode).toBe(0);
+    const root = realpathSync(inst.target);
+    const regPath = join(inst.state, 'projects.json');
+    const registered = readFileSync(regPath, 'utf8');
+    expect(JSON.parse(registered).projects.map((p: { path: string }) => p.path)).toEqual([root]);
+
+    // (a) Every canonical file present, no entry for this target (only an unrelated one).
+    const unrelated = {
+      slug: 'elsewhere', name: 'elsewhere', path: '/elsewhere/app', remote_url: null,
+      base_branch: 'main', version_scheme: '4-digit', created_at: '2019-01-01T00:00:00Z',
+    };
+    writeFileSync(regPath, `${JSON.stringify({ projects: [unrelated] })}\n`);
+    const regUnrelated = readFileSync(regPath, 'utf8');
+    const unregistered = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(unregistered.exitCode).toBe(1);
+    expect(unregistered.stderr).toContain('partially onboarded');
+    expect(unregistered.stderr).not.toContain('already onboarded');
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          partial (--migrate)');
+    expect(preview.stdout).not.toContain('(was:');
+    expect(readFileSync(regPath, 'utf8')).toBe(regUnrelated);
+
+    // (b) Path and slug registered again; the same target is onboarded until one file goes.
+    writeFileSync(regPath, registered);
+    const control = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(control.exitCode).toBe(1);
+    expect(control.stderr).toContain('already onboarded');
+    rmSync(join(root, 'docs', 'TODOS.md'));
+    const missingFile = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(missingFile.exitCode).toBe(1);
+    expect(missingFile.stderr).toContain('partially onboarded');
+    expect(missingFile.stderr).not.toContain('already onboarded');
+    expect(existsSync(join(root, 'docs', 'TODOS.md'))).toBe(false);
+    expect(readFileSync(regPath, 'utf8')).toBe(registered);
+  });
 });
