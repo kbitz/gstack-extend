@@ -126,11 +126,13 @@ Before any writes, run dry-run to show the user what would happen:
 "$_EXTEND_ROOT/bin/gstack-extend" init "<target>" --dry-run
 ```
 
-Print the output. If it ends in `dry-run complete`, you have a clean picture: target state, language detected, files that would be written, mkdir plan. If dry-run errors out:
+Print the output. If it ends in `dry-run complete`, you have a clean picture: target state, language detected, each file the real run would create or skip, mkdir plan. If dry-run errors out:
 
-- `partially onboarded`: the target already has some canonical files. Ask whether to `--migrate` (backfill missing files; leaves user-edited files alone) or pick a different target.
-- `already onboarded`: the target is already registered. Suggest the user re-run with `--migrate` if they want to refresh the registry entry (path/remote), or treat as no-op.
+- `partially onboarded`: the target already has some canonical files. Ask whether to `--migrate` (backfill missing files; never overwrites an existing file) or pick a different target.
+- `already onboarded`: the target is already registered. Suggest the user re-run with `--migrate` if they want to refresh the registry entry (slug, path, remote), or treat as no-op. `--migrate` keeps one entry per project and its original `created_at`; a `slug: <new> (was: <old>)` line means the slug changed, usually because a git remote was added after init, and the old entry will be replaced.
+- If the user chooses `--migrate`, preview it before any write: run `"$_EXTEND_ROOT/bin/gstack-extend" init "<target>" --migrate --dry-run`, show its `slug:` line and its `would create` / `would skip` lines, and get confirmation before the real run in Step 4.
 - `invalid characters`: ask for a valid name (`[a-zA-Z0-9._-]+`).
+- `refusing to create …` (a file or folder init would create lands outside the project, sits behind a dangling link, or a path it needs is not a directory): show the message and explain that init never writes outside the project or through a link. Ask the user how to fix that path; never move, replace or delete their links or files yourself. In a headless run, stop and report BLOCKED with the message.
 
 ## Step 3 — Optional `--name` override
 
@@ -145,7 +147,7 @@ If yes, append `--name <user-name>` to the next invocation. Validate against `[a
 Show the user a one-line summary of what's about to happen ("Init `<target>` as `<name>`, register slug `<slug>`, audit") and use AskUserQuestion:
 
 - A) Yes, run it
-- B) Show me dry-run again
+- B) Show me dry-run again (the same flags as the command below, plus `--dry-run`)
 - C) Cancel
 
 If A:
@@ -153,6 +155,8 @@ If A:
 ```bash
 "$_EXTEND_ROOT/bin/gstack-extend" init "<target>" --name "<name>"
 ```
+
+If the user chose `--migrate` in Step 2, add `--migrate` to this command. If Step 3 changed the name after the Step 2 preview, re-run the preview with these exact flags plus `--dry-run` and confirm again before running it.
 
 Stream the output. Three outcomes:
 

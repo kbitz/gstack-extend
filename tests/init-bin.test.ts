@@ -23,6 +23,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -278,6 +279,12 @@ describe('init flag matrix', () => {
     // Registry still has exactly one entry for this slug.
     const reg = JSON.parse(readFileSync(join(s.state, 'projects.json'), 'utf8'));
     expect(reg.projects).toHaveLength(1);
+    // Value: protects=a re-migrate whose slug did not change prints no "(was: ...)" label;
+    //   fails_when=the slug-change label stops excluding the current slug (prints "x (was: x)");
+    //   why_new=only slug-change and unregistered runs assert the label; seam=none;
+    //   no_claim=registry contents beyond the one-entry count (real bin, real audit).
+    expect(r2.stdout).toContain(`slug:           ${reg.projects[0].slug}\n`);
+    expect(r2.stdout).not.toContain('(was:');
   });
 });
 
@@ -379,6 +386,12 @@ function pathWithout(names: string[]) {
   return dir;
 }
 
+// True when the temp filesystem ignores case (default APFS on macOS).
+function caseInsensitiveTmp(): boolean {
+  const probe = mkdtempSync(join(baseTmp, 'CaseProbe-'));
+  return existsSync(probe.toLowerCase());
+}
+
 describe('init help and display names', () => {
   test('help describes preview, pass filtering, and the full audit command', () => {
     const s = scope('help-claims');
@@ -389,6 +402,8 @@ describe('init help and display names', () => {
     expect(r.stdout).toContain('does not promise');
     expect(r.stdout).toContain(`"${join(ROOT, 'bin', 'roadmap-audit')}" "<absolute-project-path>"`);
     expect(r.stdout).not.toContain('audit-clean');
+    expect(r.stdout).toContain('Never overwrites an existing file.');
+    expect(r.stdout).toContain('same path or slug');
   });
 
   test('explicit empty --name is usage exit 2, distinct from a missing project', () => {
@@ -527,9 +542,31 @@ describe('jq preflight and explicit write failures', () => {
     expect(r.stderr).toContain('detection is unavailable');
     expect(r.stderr).toContain('existing registry is invalid');
     expect(r.stderr).toContain(reg);
+    // Value: protects=dry-run on an invalid registry shows only init's own warning;
+    //   fails_when=the slug-change lookup stops silencing registry_validate, so its raw error
+    //   repeats the warning; why_new=no test asserted what else reached stderr; seam=none;
+    //   no_claim=the no-jq variant, which reaches the same silenced lookup (real bin).
+    expect(r.stderr).not.toContain('registry_validate');
     expect(r.stdout).toContain('would create');
     expect(readFileSync(reg, 'utf8')).toBe('{not json');
     expect(existsSync(s.target)).toBe(false);
+
+    // Value (every-file target): protects=the same single warning once every canonical file
+    //   exists and detect_state reaches its registry lookups; fails_when=detect_state's path
+    //   lookup stops silencing registry_validate; why_new=the absent target above is "empty"
+    //   before any registry lookup; seam=none; no_claim=the onboarded/partial verdict.
+    const full = join(dirname(s.target), 'full');
+    for (const file of EXPECTED_FILES) {
+      mkdirSync(dirname(join(full, file)), { recursive: true });
+      writeFileSync(join(full, file), 'user\n');
+    }
+    const fullRun = run(['init', full, '--migrate', '--dry-run', '--no-prompt'], s);
+    expect(fullRun.exitCode).toBe(0);
+    expect(fullRun.stderr).toContain('detection is unavailable');
+    expect(fullRun.stderr).not.toContain('registry_validate');
+    expect(fullRun.stdout).toContain('dry-run complete');
+    expect(readFileSync(reg, 'utf8')).toBe('{not json');
+    for (const file of EXPECTED_FILES) expect(readFileSync(join(full, file), 'utf8')).toBe('user\n');
   });
 
   test('dry-run with a valid registry does not warn and writes nothing', () => {
@@ -624,6 +661,55 @@ exec "$INIT_TEST_REAL_MKDIR" "$@"
       expect(existsSync(join(resolvedTarget, file))).toBe(false);
       expect(r.stdout).not.toContain(`+ wrote ${file}`);
     }
+    expect(r.stdout).not.toContain('SUCCESS');
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+    expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
+  });
+
+  // Value: protects=the real write never follows a link that appears after render_action chose
+  //   "create" (noclobber); fails_when=the `set -C` subshell is dropped, so the template lands
+  //   through the planted link outside the project; why_new=every link fixture exists before init
+  //   starts, where render_action alone refuses it; seam=none (PATH mkdir stub, as above);
+  //   no_claim=a regular file planted mid-run, links that exist before the check.
+  test('a link planted after the per-file check is refused, not written through', () => {
+    const inst = disposableInstall('noclobber-race');
+    const resolvedTarget = join(realpathSync(dirname(inst.target)), basename(inst.target));
+    const planted = join(resolvedTarget, 'CLAUDE.md');
+    const outside = join(baseTmp, 'noclobber-race', 'outside');
+    mkdirSync(outside, { recursive: true });
+    const seen = join(inst.record, 'mkdir-seen');
+    const stubDir = join(inst.record, 'path');
+    mkdirSync(stubDir);
+    const realMkdir = spawnSync('bash', ['-c', 'command -v mkdir'], { encoding: 'utf8' });
+    expect(realMkdir.status).toBe(0);
+    // scaffold_layout creates the target first. render_all asks again for CLAUDE.md's parent
+    // after render_action has already chosen "create"; the stub plants the link at that point.
+    const stub = join(stubDir, 'mkdir');
+    writeFileSync(stub, `#!/bin/bash
+dest="\${@: -1}"
+"$INIT_TEST_REAL_MKDIR" "$@" || exit $?
+if [ "$dest" = "$INIT_TEST_TARGET" ]; then
+  if [ ! -f "$INIT_TEST_MKDIR_SEEN" ]; then
+    : > "$INIT_TEST_MKDIR_SEEN"
+  elif [ ! -L "$INIT_TEST_TARGET/CLAUDE.md" ]; then
+    ln -s "$INIT_TEST_OUTSIDE/planted.md" "$INIT_TEST_TARGET/CLAUDE.md"
+  fi
+fi
+exit 0
+`);
+    chmodSync(stub, 0o755);
+    const r = runInstalled(inst, ['init', inst.target, '--no-prompt'], {
+      PATH: `${stubDir}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+      INIT_TEST_REAL_MKDIR: realMkdir.stdout.trim(),
+      INIT_TEST_TARGET: resolvedTarget,
+      INIT_TEST_MKDIR_SEEN: seen,
+      INIT_TEST_OUTSIDE: outside,
+    });
+    expect(lstatSync(planted).isSymbolicLink()).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain(`cannot write ${planted}`);
+    expect(r.stdout).not.toContain('+ wrote');
     expect(r.stdout).not.toContain('SUCCESS');
     expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
     expect(existsSync(join(inst.record, 'cwd'))).toBe(false);
@@ -1082,7 +1168,499 @@ describe('audit recovery, target, and presentation', () => {
     expect(initSkill).toContain('SUCCESS');
     expect(initSkill).toContain('Next 30 minutes');
     expect(initSkill).toContain('--migrate');
+    expect(initSkill).toContain('init "<target>" --migrate --dry-run');
     expect(initSkill.toLowerCase()).not.toContain('section count');
     expect(initSkill.toLowerCase()).not.toContain('merged stream');
+  });
+});
+
+const EXISTS = 'already exists; --migrate only backfills missing files';
+const SATELLITE = 'ROADMAP already exists; /roadmap migrates the live tail';
+const LINK = 'dangling symlink; init never writes through a link';
+
+// Per-file lines from a dry-run preview and from the real run, normalized to
+// one shape so a test can require that the preview matches the write.
+function previewPlan(stdout: string, root: string): string[] {
+  return stdout.split('\n').flatMap((line) => {
+    const m = line.match(/^ {2}[+~] would (create|skip)\s+(.+) \(([^()]*)\)$/);
+    if (!m) return [];
+    const rel = m[2]!.slice(root.length + 1);
+    return [m[1] === 'create' ? `create ${rel}` : `skip ${rel} (${m[3]})`];
+  });
+}
+
+function appliedPlan(stdout: string): string[] {
+  return stdout.split('\n').flatMap((line) => {
+    const wrote = line.match(/^ {2}\+ wrote (.+)$/);
+    if (wrote) return [`create ${wrote[1]}`];
+    const skipped = line.match(/^ {2}~ skipped (.+) \(([^()]*)\)$/);
+    return skipped ? [`skip ${skipped[1]} (${skipped[2]})`] : [];
+  });
+}
+
+describe('--migrate preview and re-registration', () => {
+  test('after a remote is added, dry-run previews skips and the real run keeps files and one entry', () => {
+    const inst = disposableInstall('remote-added');
+    const target = join(dirname(inst.target), 'demo');
+    expect(runInstalled(inst, ['init', target, '--no-prompt']).exitCode).toBe(0);
+    const regPath = join(inst.state, 'projects.json');
+    const registered = JSON.parse(readFileSync(regPath, 'utf8'));
+    expect(registered.projects.map((p: { slug: string }) => p.slug)).toEqual(['demo']);
+    // Backdate so a reset created_at cannot pass by landing in the same second.
+    registered.projects[0].created_at = '2020-01-01T00:00:00Z';
+    writeFileSync(regPath, `${JSON.stringify(registered)}\n`);
+
+    const remote = 'https://github.com/owner/demo.git';
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', remote]]) {
+      const git = spawnSync('git', ['-C', target, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    writeFileSync(join(target, 'CLAUDE.md'), `${readFileSync(join(target, 'CLAUDE.md'), 'utf8')}user edit\n`);
+    const before = new Map(EXPECTED_FILES.map((file) => [file, readFileSync(join(target, file))]));
+    const regBefore = readFileSync(regPath, 'utf8');
+    const root = realpathSync(target);
+
+    const refused = runInstalled(inst, ['init', target, '--no-prompt']);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain('already onboarded');
+
+    const preview = runInstalled(inst, ['init', target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          onboarded (--migrate)');
+    expect(preview.stdout).toContain('slug:           owner-demo (was: demo)');
+    expect(preview.stdout).not.toContain('would overwrite');
+    expect(preview.stdout).not.toContain('would create');
+    expect(previewPlan(preview.stdout, root)).toEqual(EXPECTED_FILES.map((file) => `skip ${file} (${EXISTS})`));
+    expect(readFileSync(regPath, 'utf8')).toBe(regBefore);
+
+    const applied = runInstalled(inst, ['init', target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.stdout).toContain('state:          onboarded (--migrate)');
+    expect(applied.stdout).toContain('slug:           owner-demo (was: demo)');
+    expect(appliedPlan(applied.stdout)).toEqual(previewPlan(preview.stdout, root));
+    for (const file of EXPECTED_FILES) expect(readFileSync(join(target, file))).toEqual(before.get(file)!);
+    const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+    expect(reg.projects).toHaveLength(1);
+    expect(reg.projects[0]).toMatchObject({
+      slug: 'owner-demo',
+      name: 'demo',
+      path: root,
+      remote_url: remote,
+      created_at: '2020-01-01T00:00:00Z',
+    });
+  });
+
+  // Value: protects=--migrate on a registry an older migrate split (one path, several slugs)
+  //   leaves one entry, keeps the earliest created_at and lists every dropped slug in order;
+  //   fails_when=the "(was: ...)" label keeps only one dropped slug or loses order, or the
+  //   collapse touches an unrelated entry; why_new=the remote-added test starts from one entry,
+  //   so it never reaches the multi-slug label or a pre-split registry; seam=none;
+  //   no_claim=audit output (stubbed roadmap-audit); real git remote, real registry and jq.
+  test('a registry split by an earlier migrate collapses to one entry and names every dropped slug', () => {
+    const inst = disposableInstall('split-registry');
+    const target = join(dirname(inst.target), 'demo');
+    expect(runInstalled(inst, ['init', target, '--no-prompt']).exitCode).toBe(0);
+    const root = realpathSync(target);
+    const remote = 'https://github.com/neworg/demo.git';
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', remote]]) {
+      const git = spawnSync('git', ['-C', target, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    const row = (slug: string, path: string, created_at: string) => ({
+      slug, name: 'demo', path, remote_url: null, base_branch: 'main', version_scheme: '4-digit', created_at,
+    });
+    // The unrelated entry is the oldest, so an unfiltered earliest-created_at pick would take it.
+    // Registry order is not alphabetical and the earliest match comes last, so a sorted label
+    // or a first-match created_at both fail.
+    const unrelated = { ...row('elsewhere', '/elsewhere/app', '2019-01-01T00:00:00Z'), name: 'elsewhere' };
+    const regPath = join(inst.state, 'projects.json');
+    writeFileSync(regPath, `${JSON.stringify({
+      projects: [
+        row('owner-demo', root, '2021-01-01T00:00:00Z'),
+        unrelated,
+        row('demo', root, '2020-01-01T00:00:00Z'),
+      ],
+    })}\n`);
+    const regBefore = readFileSync(regPath, 'utf8');
+    const label = 'slug:           neworg-demo (was: owner-demo, demo)\n';
+
+    const preview = runInstalled(inst, ['init', target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          onboarded (--migrate)');
+    expect(preview.stdout).toContain(label);
+    expect(readFileSync(regPath, 'utf8')).toBe(regBefore);
+
+    const applied = runInstalled(inst, ['init', target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(applied.stdout).toContain(label);
+    expect(applied.stdout).toContain('+ registered neworg-demo');
+    expect(JSON.parse(readFileSync(regPath, 'utf8')).projects).toEqual([
+      unrelated,
+      { ...row('neworg-demo', root, '2020-01-01T00:00:00Z'), remote_url: remote },
+    ]);
+  });
+
+  test('a fresh init never inherits created_at from an entry it replaces; --migrate does', () => {
+    const inst = disposableInstall('fresh-created-at');
+    const regPath = join(inst.state, 'projects.json');
+    const backdate = (path: string) => {
+      const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+      for (const p of reg.projects) if (p.path === path) p.created_at = '2019-06-01T00:00:00Z';
+      writeFileSync(regPath, `${JSON.stringify(reg)}\n`);
+    };
+    const rowAt = (path: string) =>
+      JSON.parse(readFileSync(regPath, 'utf8')).projects.find((p: { path: string }) => p.path === path);
+    // Same basename, no remote: the slug collides across two different projects.
+    const first = join(dirname(inst.target), 'a', 'api');
+    const second = join(dirname(inst.target), 'b', 'api');
+    mkdirSync(dirname(first), { recursive: true });
+    mkdirSync(dirname(second), { recursive: true });
+    expect(runInstalled(inst, ['init', first, '--no-prompt']).exitCode).toBe(0);
+    backdate(realpathSync(first));
+
+    expect(runInstalled(inst, ['init', second, '--no-prompt']).exitCode).toBe(0);
+    const fresh = rowAt(realpathSync(second));
+    expect(fresh.slug).toBe('api');
+    expect(fresh.created_at).not.toBe('2019-06-01T00:00:00Z');
+    expect(fresh.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+
+    backdate(realpathSync(second));
+    expect(runInstalled(inst, ['init', second, '--migrate', '--no-prompt']).exitCode).toBe(0);
+    expect(rowAt(realpathSync(second)).created_at).toBe('2019-06-01T00:00:00Z');
+
+    // Value (stale same-path entry): protects=a plain init that replaces a stale entry at its
+    //   path names the dropped slug and still stamps a fresh created_at; fails_when=the
+    //   "(was: ...)" lookup is limited to --migrate, or a path match passes keep; why_new=no
+    //   phase above re-inits a path whose entry has another slug; seam=none;
+    //   no_claim=what a stale entry with canonical files left on disk does (that is onboarded).
+    const secondRoot = realpathSync(second);
+    for (const file of EXPECTED_FILES) rmSync(join(secondRoot, file));
+    for (const args of [['init', '--quiet', '--initial-branch=main'], ['remote', 'add', 'origin', 'https://github.com/owner/api.git']]) {
+      const git = spawnSync('git', ['-C', secondRoot, ...args], { encoding: 'utf8' });
+      expect(git.status, git.stderr).toBe(0);
+    }
+    const reinit = runInstalled(inst, ['init', second, '--no-prompt']);
+    expect(reinit.exitCode, reinit.stderr).toBe(0);
+    expect(reinit.stdout).toContain('state:          empty\n');
+    expect(reinit.stdout).toContain('slug:           owner-api (was: api)\n');
+    const rows = JSON.parse(readFileSync(regPath, 'utf8')).projects
+      .filter((p: { path: string }) => p.path === secondRoot);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].slug).toBe('owner-api');
+    expect(rows[0].created_at).not.toBe('2019-06-01T00:00:00Z');
+  });
+
+  test('partial dry-run creates only missing files and skips satellites next to an existing ROADMAP', () => {
+    const inst = disposableInstall('partial-preview');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    writeFileSync(join(inst.target, 'CLAUDE.md'), '# user content\n');
+    writeFileSync(join(inst.target, 'docs', 'ROADMAP.md'), '# Roadmap\n\n## Future\n\n- **Keep me** — live essay.\n');
+    const root = realpathSync(inst.target);
+    const expected = [
+      `skip CLAUDE.md (${EXISTS})`,
+      'create CHANGELOG.md',
+      'create VERSION',
+      `skip docs/ROADMAP.md (${EXISTS})`,
+      'create docs/TODOS.md',
+      'create docs/PROGRESS.md',
+      `skip docs/roadmap-future.md (${SATELLITE})`,
+      `skip docs/roadmap-shipped.md (${SATELLITE})`,
+    ];
+
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          partial (--migrate)');
+    expect(preview.stdout).not.toContain('would overwrite');
+    expect(preview.stdout).not.toContain('(was:');
+    expect(previewPlan(preview.stdout, root)).toEqual(expected);
+    expect(readdirSync(root).sort()).toEqual(['CLAUDE.md', 'docs']);
+    expect(readdirSync(join(root, 'docs'))).toEqual(['ROADMAP.md']);
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(expected);
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# user content\n');
+  });
+
+  // Value: protects=init never creates canonical files or dirs through a docs link that
+  //   resolves outside the project (prefix-sharing and newline-named siblings included), and the
+  //   dry-run refuses exactly when the real run does; fails_when=layout_preflight stops resolving
+  //   the nearest existing ancestor, compares paths without the trailing slash, or loses a
+  //   trailing newline; why_new=only leaf links were covered; seam=none;
+  //   no_claim=links swapped in mid-run.
+  test('a docs link that resolves outside the project is refused; one inside is followed', () => {
+    const inst = disposableInstall('escaping-docs');
+    const outside = join(dirname(inst.target), 'outside-docs');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(inst.target, { recursive: true });
+    symlinkSync(outside, join(inst.target, 'docs'));
+    for (const args of [['--dry-run'], [], ['--migrate', '--dry-run'], ['--migrate']]) {
+      const r = runInstalled(inst, ['init', inst.target, ...args, '--no-prompt']);
+      expect(r.exitCode, args.join(' ')).toBe(1);
+      expect(r.stderr).toContain('refusing to create docs/designs: docs resolves outside the project');
+      expect(r.stdout).not.toContain('+ wrote');
+      expect(readdirSync(outside)).toEqual([]);
+    }
+    expect(existsSync(join(inst.state, 'projects.json'))).toBe(false);
+
+    rmSync(join(inst.target, 'docs'));
+    symlinkSync(join(outside, 'missing'), join(inst.target, 'docs'));
+    const dangling = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(dangling.exitCode).toBe(1);
+    expect(dangling.stderr).toContain('docs is a dangling link');
+    expect(readdirSync(outside)).toEqual([]);
+
+    // A sibling whose name extends the project's own, and one whose name adds a trailing
+    // newline, are still outside.
+    for (const sibling of [`${basename(inst.target)}-docs`, `${basename(inst.target)}\n`]) {
+      const dir = join(dirname(inst.target), sibling);
+      mkdirSync(dir, { recursive: true });
+      rmSync(join(inst.target, 'docs'));
+      symlinkSync(join('..', sibling), join(inst.target, 'docs'));
+      const r = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+      expect(r.exitCode, JSON.stringify(sibling)).toBe(1);
+      expect(r.stderr).toContain('docs resolves outside the project');
+      expect(readdirSync(dir)).toEqual([]);
+    }
+
+    rmSync(join(inst.target, 'docs'));
+    mkdirSync(join(inst.target, 'documentation'));
+    symlinkSync('documentation', join(inst.target, 'docs'));
+    const inside = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(inside.exitCode, inside.stderr).toBe(0);
+    expect(existsSync(join(inst.target, 'documentation', 'ROADMAP.md'))).toBe(true);
+    expect(readdirSync(outside)).toEqual([]);
+  });
+
+  // Value: protects=containment checks only what init would create, so linked docs that need
+  //   no writes still work and a linked canonical dir that already exists is left alone;
+  //   fails_when=layout_preflight refuses any canonical dir that resolves outside, even when
+  //   nothing is created there; why_new=the escaping-docs test only covers dirs that need
+  //   writes; seam=none; no_claim=the contents of the shared folder beyond its listing.
+  test('linked docs that need no writes still re-register; an existing linked subdir is left alone', () => {
+    const inst = disposableInstall('linked-docs-ok');
+    const shared = join(dirname(inst.target), 'shared-docs');
+    mkdirSync(join(shared, 'designs'), { recursive: true });
+    mkdirSync(join(shared, 'archive'), { recursive: true });
+    for (const f of ['ROADMAP.md', 'TODOS.md', 'PROGRESS.md', 'roadmap-future.md', 'roadmap-shipped.md']) {
+      writeFileSync(join(shared, f), 'shared\n');
+    }
+    mkdirSync(inst.target, { recursive: true });
+    for (const f of ['CLAUDE.md', 'CHANGELOG.md', 'VERSION']) writeFileSync(join(inst.target, f), 'user\n');
+    symlinkSync(shared, join(inst.target, 'docs'));
+    const before = readdirSync(shared).sort();
+    const migrated = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(migrated.exitCode, migrated.stderr).toBe(0);
+    expect(migrated.stdout).toContain('+ registered');
+    expect(migrated.stdout).not.toContain('+ wrote');
+    expect(readdirSync(shared).sort()).toEqual(before);
+
+    const other = disposableInstall('linked-designs-ok');
+    const outsideDesigns = join(dirname(other.target), 'outside-designs');
+    mkdirSync(outsideDesigns, { recursive: true });
+    mkdirSync(join(other.target, 'docs'), { recursive: true });
+    symlinkSync(outsideDesigns, join(other.target, 'docs', 'designs'));
+    const fresh = runInstalled(other, ['init', other.target, '--no-prompt']);
+    expect(fresh.exitCode, fresh.stderr).toBe(0);
+    expect(readdirSync(outsideDesigns)).toEqual([]);
+  });
+
+  // Value: protects=the dry-run's exit code matches the real run when a canonical dir path is
+  //   held by a regular file; fails_when=the preflight stops checking occupied non-directories,
+  //   so the dry-run says 'would mkdir' and exits 0 while the real run fails; why_new=no fixture
+  //   had a file at a canonical dir path; seam=none; no_claim=nothing beyond exit and message.
+  test('a file where a canonical dir goes is refused by the dry-run and the real run alike', () => {
+    const inst = disposableInstall('file-at-designs');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    writeFileSync(join(inst.target, 'docs', 'designs'), 'not a dir\n');
+    for (const args of [['--dry-run'], []]) {
+      const r = runInstalled(inst, ['init', inst.target, ...args, '--no-prompt']);
+      expect(r.exitCode, args.join(' ')).toBe(1);
+      expect(r.stderr).toContain('refusing to create docs/designs: docs/designs is not a directory');
+      expect(r.stdout).not.toContain('dry-run complete');
+    }
+    expect(existsSync(join(inst.target, 'CLAUDE.md'))).toBe(false);
+  });
+
+  // Value: protects=a live link at a canonical path (CLAUDE.md -> AGENTS.md) is an existing file,
+  //   not a dangling one; fails_when=render_action's link check drops `! -e` and calls every link
+  //   dangling; why_new=every file-level link fixture was dangling; seam=none;
+  //   no_claim=what the link target contains beyond staying unchanged.
+  test('a live link at a canonical path is skipped as existing, not as dangling', () => {
+    const inst = disposableInstall('live-link');
+    mkdirSync(inst.target, { recursive: true });
+    writeFileSync(join(inst.target, 'AGENTS.md'), '# agents\n');
+    symlinkSync('AGENTS.md', join(inst.target, 'CLAUDE.md'));
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip CLAUDE.md (${EXISTS})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(lstatSync(join(root, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe('# agents\n');
+  });
+
+  // Value: protects=an exported CDPATH cannot redirect a relative <project> or corrupt the
+  //   registered path; fails_when=`unset CDPATH` goes, so cd jumps to the CDPATH copy and prints
+  //   it into target_abs; why_new=no test set CDPATH; seam=none; no_claim=other cd-sensitive env.
+  test('an exported CDPATH does not redirect a relative project path', () => {
+    const inst = disposableInstall('cdpath');
+    const cwd = join(dirname(inst.target), 'cwd');
+    const cdp = join(dirname(inst.target), 'cdp');
+    mkdirSync(join(cwd, 'proj'), { recursive: true });
+    mkdirSync(join(cdp, 'proj'), { recursive: true });
+    const r = runShell(`cd "${cwd}" && "${inst.bin}" init proj --no-prompt`, inst, { CDPATH: cdp, AUDIT_RECORD: inst.record });
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(cwd, 'proj', 'CLAUDE.md'))).toBe(true);
+    expect(readdirSync(join(cdp, 'proj'))).toEqual([]);
+    const reg = JSON.parse(readFileSync(join(inst.state, 'projects.json'), 'utf8'));
+    expect(reg.projects).toHaveLength(1);
+    expect(reg.projects[0].path).toBe(realpathSync(join(cwd, 'proj')));
+  });
+
+  // Value: protects=on a case-insensitive filesystem a typed path in another case resolves to the
+  //   on-disk spelling, so an in-project absolute docs link is not refused as outside;
+  //   fails_when=physical_dir goes back to bash's builtin pwd, which keeps the typed case;
+  //   why_new=no test typed a path in another case; seam=none; no_claim=case-sensitive filesystems.
+  test.skipIf(!caseInsensitiveTmp())('a path typed in another case resolves to the on-disk spelling', () => {
+    const inst = disposableInstall('case-spelling');
+    const onDisk = join(dirname(inst.target), 'CaseProj');
+    mkdirSync(join(onDisk, 'realdocs'), { recursive: true });
+    symlinkSync(join(realpathSync(onDisk), 'realdocs'), join(onDisk, 'docs'));
+    const typed = join(dirname(inst.target), 'caseproj');
+    const r = runInstalled(inst, ['init', typed, '--dry-run', '--no-prompt']);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`gstack-extend init: ${realpathSync(onDisk)}\n`);
+    expect(r.stderr).not.toContain('refusing');
+  });
+
+  // Value: protects=a dangling ROADMAP link still counts as an existing ROADMAP, so the
+  //   satellites are not stubbed next to it; fails_when=had_roadmap goes back to `[ -f ]`,
+  //   which follows the link; why_new=satellite tests only used real ROADMAP files;
+  //   seam=none; no_claim=the satellite content /roadmap writes later.
+  test('a dangling ROADMAP link keeps both satellites skipped', () => {
+    const inst = disposableInstall('dangling-roadmap');
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    symlinkSync(join(dirname(inst.target), 'shared-plans', 'ROADMAP.md'), join(inst.target, 'docs', 'ROADMAP.md'));
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip docs/ROADMAP.md (${LINK})`);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${SATELLITE})`);
+    expect(plan).toContain(`skip docs/roadmap-shipped.md (${SATELLITE})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(existsSync(join(root, 'docs', 'roadmap-future.md'))).toBe(false);
+    expect(existsSync(join(root, 'docs', 'roadmap-shipped.md'))).toBe(false);
+  });
+
+  // Value: protects=init never writes a template through a dangling link at a canonical path,
+  //   and the preview names it as a dangling link; fails_when=the skip-link branch goes (the
+  //   reason turns into EXISTS), or it goes and path_occupied falls back to `[ -e ]` (the
+  //   template is written through the link), or detect_state falls back to `[ -e ]` (the state
+  //   reads empty); why_new=no fixture had a symlink at a canonical path; seam=none;
+  //   no_claim=symlinked parent directories (covered by the escaping-docs test).
+  test('a dangling symlink at a canonical path is never written through', () => {
+    const inst = disposableInstall('dangling-link');
+    const outside = join(dirname(inst.target), 'outside');
+    mkdirSync(outside, { recursive: true });
+    mkdirSync(join(inst.target, 'docs'), { recursive: true });
+    symlinkSync(join(outside, 'planted.md'), join(inst.target, 'CLAUDE.md'));
+    symlinkSync(join(outside, 'planted-future.md'), join(inst.target, 'docs', 'roadmap-future.md'));
+    const root = realpathSync(inst.target);
+
+    const refused = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain('partially onboarded');
+    expect(readdirSync(outside)).toEqual([]);
+
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    // Value (state line): protects=a target holding only dangling canonical links is partial,
+    //   not empty; fails_when=detect_state alone goes back to `[ -e ]` (the refusal above still
+    //   passes through scaffold_layout's own check); why_new=nothing asserted the state here;
+    //   seam=none; no_claim=the plain-init refusal wording, which both checks share.
+    expect(preview.stdout).toContain('state:          partial (--migrate)\n');
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip CLAUDE.md (${LINK})`);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${LINK})`);
+
+    const applied = runInstalled(inst, ['init', inst.target, '--migrate', '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(lstatSync(join(root, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(root, 'docs', 'roadmap-future.md')).isSymbolicLink()).toBe(true);
+  });
+
+  // Value: protects=a default init next to a root ROADMAP.md previews the satellite skips the
+  //   real run applies; fails_when=the dry-run branch stops sharing render_action and says
+  //   "would create" again; why_new=preview==write tests only cover --migrate with docs/ROADMAP.md;
+  //   seam=none; no_claim=audit output (stubbed roadmap-audit).
+  test('default init next to a root ROADMAP previews the satellite skips the real run applies', () => {
+    const inst = disposableInstall('root-roadmap-default');
+    mkdirSync(inst.target, { recursive: true });
+    const original = '# Roadmap\n\n## Future\n\n- **Root keep** — live.\n';
+    writeFileSync(join(inst.target, 'ROADMAP.md'), original);
+    const root = realpathSync(inst.target);
+    const preview = runInstalled(inst, ['init', inst.target, '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          empty');
+    const plan = previewPlan(preview.stdout, root);
+    expect(plan).toContain(`skip docs/roadmap-future.md (${SATELLITE})`);
+    expect(plan).toContain(`skip docs/roadmap-shipped.md (${SATELLITE})`);
+    const applied = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(applied.exitCode).toBe(0);
+    expect(appliedPlan(applied.stdout)).toEqual(plan);
+    expect(readFileSync(join(root, 'ROADMAP.md'), 'utf8')).toBe(original);
+  });
+
+  // Value: protects=onboarded requires every canonical file and a registry entry;
+  //   fails_when=the brace group in detect_state is dropped (A && B || C) or the registry
+  //   check is removed; why_new=every onboarded test had all files and an entry, and every
+  //   partial test had no registry; seam=none; no_claim=audit output (stubbed roadmap-audit).
+  test('onboarded needs every canonical file and a registry entry; either alone is partial', () => {
+    const inst = disposableInstall('onboarded-needs-both');
+    expect(runInstalled(inst, ['init', inst.target, '--no-prompt']).exitCode).toBe(0);
+    const root = realpathSync(inst.target);
+    const regPath = join(inst.state, 'projects.json');
+    const registered = readFileSync(regPath, 'utf8');
+    expect(JSON.parse(registered).projects.map((p: { path: string }) => p.path)).toEqual([root]);
+
+    // (a) Every canonical file present, no entry for this target (only an unrelated one).
+    const unrelated = {
+      slug: 'elsewhere', name: 'elsewhere', path: '/elsewhere/app', remote_url: null,
+      base_branch: 'main', version_scheme: '4-digit', created_at: '2019-01-01T00:00:00Z',
+    };
+    writeFileSync(regPath, `${JSON.stringify({ projects: [unrelated] })}\n`);
+    const regUnrelated = readFileSync(regPath, 'utf8');
+    const unregistered = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(unregistered.exitCode).toBe(1);
+    expect(unregistered.stderr).toContain('partially onboarded');
+    expect(unregistered.stderr).not.toContain('already onboarded');
+    const preview = runInstalled(inst, ['init', inst.target, '--migrate', '--dry-run', '--no-prompt']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('state:          partial (--migrate)');
+    expect(preview.stdout).not.toContain('(was:');
+    expect(readFileSync(regPath, 'utf8')).toBe(regUnrelated);
+
+    // (b) Path and slug registered again; the same target is onboarded until one file goes.
+    writeFileSync(regPath, registered);
+    const control = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(control.exitCode).toBe(1);
+    expect(control.stderr).toContain('already onboarded');
+    rmSync(join(root, 'docs', 'TODOS.md'));
+    const missingFile = runInstalled(inst, ['init', inst.target, '--no-prompt']);
+    expect(missingFile.exitCode).toBe(1);
+    expect(missingFile.stderr).toContain('partially onboarded');
+    expect(missingFile.stderr).not.toContain('already onboarded');
+    expect(existsSync(join(root, 'docs', 'TODOS.md'))).toBe(false);
+    expect(readFileSync(regPath, 'utf8')).toBe(registered);
   });
 });

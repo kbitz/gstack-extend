@@ -21,6 +21,10 @@
 
 set -euo pipefail
 
+# An exported CDPATH makes `cd <relative>` jump elsewhere and print the
+# match, which would corrupt every path this script resolves with cd.
+unset CDPATH
+
 # ─── Self-location (POSIX-portable readlink) ───────────────────────────
 #
 # bin/gstack-extend may be invoked through ~/.local/bin/gstack-extend, which
@@ -232,9 +236,71 @@ detect_base_branch() {
   echo main
 }
 
+# path_occupied <path>
+# True when <path> exists or is a symlink, dangling or not. `[ -e ]` alone
+# follows links, so a dangling CLAUDE.md -> ../outside would read as free
+# and a write would land outside the project.
+path_occupied() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+# physical_dir <dir>
+# Sets PHYSICAL_DIR to the physical path of existing directory <dir>;
+# returns 1 if it cannot be entered. External pwd -P asks the kernel, so on
+# case-insensitive APFS it gives the on-disk case where bash's builtin
+# keeps the typed case. The "." sentinel keeps a trailing newline in a
+# directory name, which command substitution would otherwise strip.
+physical_dir() {
+  local out
+  out=$(cd -P -- "$1" 2>/dev/null && { /bin/pwd -P 2>/dev/null || pwd -P; } && printf .) || return 1
+  out=${out%.}
+  PHYSICAL_DIR=${out%$'\n'}
+}
+
+# write_problem <target> <path>
+# For a file or directory init is about to create under <target>, echoes
+# why it must not be created, or nothing. Walks up to the nearest existing
+# ancestor: it must be a directory whose physical path is <target> or below
+# (a link such as docs -> ../elsewhere fails). Existing paths are never
+# checked here, so a linked docs/ that needs no writes is left alone.
+# <target> is already physical (physical_dir).
+write_problem() {
+  local target="$1" p="${2%/*}"
+  while [ "$p" != "$target" ] && [ ! -e "$p" ]; do
+    if [ -L "$p" ]; then
+      printf '%s is a dangling link' "${p#"$target"/}"
+      return 0
+    fi
+    p=${p%/*}
+  done
+  [ "$p" = "$target" ] && return 0
+  if [ ! -d "$p" ]; then
+    printf '%s is not a directory' "${p#"$target"/}"
+    return 0
+  fi
+  if ! physical_dir "$p"; then
+    printf 'cannot enter %s to check where it leads' "${p#"$target"/}"
+    return 0
+  fi
+  case "$PHYSICAL_DIR/" in
+    "$target"/*) return 0 ;;
+  esac
+  printf '%s resolves outside the project (%s)' "${p#"$target"/}" "$PHYSICAL_DIR"
+}
+
+# roadmap_present <target>
+# True when a ROADMAP exists at docs/ or the root. path_occupied, not -f:
+# a dangling ROADMAP link still means a ROADMAP is expected there, so the
+# satellites stay skipped.
+roadmap_present() {
+  path_occupied "$1/docs/ROADMAP.md" || path_occupied "$1/ROADMAP.md"
+}
+
 # detect_state <dir>
 # Echoes one of: empty | partial | onboarded.
-#   onboarded: registered in projects.json AND all canonical files present
+#   onboarded: all canonical files present AND projects.json has the
+#              derived slug or an entry at <dir> (adding a remote after
+#              init changes the derived slug, not the registered path)
 #   partial:   any canonical file present
 #   empty:     no canonical files present
 # Caller-supplied <dir> need not exist (returns "empty" for non-existent).
@@ -246,7 +312,7 @@ detect_state() {
   if [ -d "$dir" ]; then
     local f
     for f in "${CANONICAL_FILES[@]}"; do
-      if [ -e "$dir/$f" ]; then any_present=1; break; fi
+      if path_occupied "$dir/$f"; then any_present=1; break; fi
     done
   fi
   if [ "$any_present" = "0" ]; then
@@ -257,7 +323,10 @@ detect_state() {
   for f in "${CANONICAL_FILES[@]}"; do
     if [ ! -e "$dir/$f" ]; then all_present=0; break; fi
   done
-  if [ "$all_present" = "1" ] && registry_has_slug "$slug" 2>/dev/null; then
+  if [ "$all_present" = "1" ] && {
+       registry_has_slug "$slug" 2>/dev/null \
+         || registry_slugs_for_path "$dir" >/dev/null 2>&1
+     }; then
     echo onboarded
   else
     echo partial
@@ -294,67 +363,84 @@ template_substitute() {
   printf '%s' "$content"
 }
 
-# render_diff <existing-path> <new-content>
-# Print a tiny diff-style preview of what `--dry-run` would write.
-# No external diff dependency; just "+ would write N lines" or
-# "would overwrite (--migrate required for existing file)".
-render_diff() {
-  local existing="$1" new_content="$2"
-  local n
-  n=$(printf '%s\n' "$new_content" | wc -l | tr -d ' ')
-  if [ -e "$existing" ]; then
-    printf '  ~ would overwrite %s (%s lines)\n' "$existing" "$n"
-  else
-    printf '  + would create   %s (%s lines)\n' "$existing" "$n"
+# render_action <target> <dest> <had_roadmap>
+# The one per-file decision behind both --dry-run and the real write, so
+# the preview can never describe a path the write does not take:
+#   skip-link       <dest> is a dangling symlink. init never writes through
+#                   a link; the user fixes or removes it.
+#   skip-existing   <dest> exists. --migrate only backfills missing files;
+#                   nothing is ever overwritten. scaffold_layout's preflight
+#                   refuses any create that would land outside <target>.
+#   skip-satellite  Future/Shipped satellite next to a ROADMAP that existed
+#                   before this run. /roadmap copies the live tail on first
+#                   apply; an empty stub plus leftover inline bullets is how
+#                   deferred essays get deleted.
+#   create          everything else (greenfield writes both satellites
+#                   after the template ROADMAP).
+render_action() {
+  local target="$1" dest="$2" had_roadmap="$3"
+  if [ -L "$target/$dest" ] && [ ! -e "$target/$dest" ]; then
+    echo skip-link
+    return 0
   fi
+  if path_occupied "$target/$dest"; then
+    echo skip-existing
+    return 0
+  fi
+  if [ "$had_roadmap" = "1" ]; then
+    case "$dest" in
+      docs/roadmap-future.md|docs/roadmap-shipped.md)
+        echo skip-satellite
+        return 0
+        ;;
+    esac
+  fi
+  echo create
 }
 
 # render_all <target> <dry_run> <KV ARGS...>
 # Renders every CANONICAL_FILES entry. The template is that destination's
-# basename plus .tmpl (basenames are unique). Honors dry_run=1.
-# On real write, creates parent dirs as needed. Always skips existing
-# files (--migrate's "backfill missing only" contract). Default mode
-# never reaches the skip branch — scaffold_layout refuses on canonical-
-# file collision before render_all is called.
+# basename plus .tmpl (basenames are unique). Honors dry_run=1, printing
+# the same render_action decision the real write would apply.
+# On real write, creates parent dirs as needed. Default mode never reaches
+# skip-existing or skip-link (an occupied canonical path is refused first)
+# but can reach skip-satellite through a root ROADMAP.md.
 render_all() {
   local target="$1" dry_run="$2"
   shift 2
   local vars=("$@")
 
   local had_roadmap=0
-  if [ -f "$target/docs/ROADMAP.md" ] || [ -f "$target/ROADMAP.md" ]; then
+  if roadmap_present "$target"; then
     had_roadmap=1
   fi
 
-  local dest tmpl content out parent
+  local dest tmpl content out parent action reason n
   for dest in "${CANONICAL_FILES[@]}"; do
     tmpl="${dest##*/}.tmpl"
     out="$target/$dest"
     if ! content=$(template_substitute "$TEMPLATES_DIR/$tmpl" "${vars[@]}"); then
       return 1
     fi
+    action=$(render_action "$target" "$dest" "$had_roadmap")
+    case "$action" in
+      skip-link)      reason='dangling symlink; init never writes through a link' ;;
+      skip-existing)  reason='already exists; --migrate only backfills missing files' ;;
+      skip-satellite) reason='ROADMAP already exists; /roadmap migrates the live tail' ;;
+      *)              reason='' ;;
+    esac
     if [ "$dry_run" = "1" ]; then
-      render_diff "$out" "$content"
-      continue
-    fi
-    if [ -e "$out" ]; then
-      # --migrate only ever backfills missing canonical files; default
-      # mode never reaches this branch (scaffold_layout refuses on
-      # canonical-file collision first). The skip message documents the
-      # behavior contract: user-edited files are always preserved.
-      echo "  ~ skipped $dest (already exists; --migrate only backfills missing files)"
-      continue
-    fi
-    # Do not plant an empty Future/Shipped satellite next to a ROADMAP
-    # that already existed before this run. /roadmap copies the live
-    # tail on first apply. An empty stub plus leftover inline bullets
-    # is how deferred essays get deleted. Greenfield (no ROADMAP at
-    # start) still writes both satellites after the template ROADMAP.
-    if [ "$had_roadmap" = "1" ]; then
-      if [ "$dest" = "docs/roadmap-future.md" ] || [ "$dest" = "docs/roadmap-shipped.md" ]; then
-        echo "  ~ skipped $dest (ROADMAP already exists; /roadmap migrates the live tail)"
-        continue
+      if [ "$action" = "create" ]; then
+        n=$(printf '%s\n' "$content" | wc -l | tr -d ' ')
+        printf '  + would create %s (%s lines)\n' "$out" "$n"
+      else
+        printf '  ~ would skip   %s (%s)\n' "$out" "$reason"
       fi
+      continue
+    fi
+    if [ "$action" != "create" ]; then
+      echo "  ~ skipped $dest ($reason)"
+      continue
     fi
     parent=$(dirname "$out")
     if ! init_mkdir "$parent"; then
@@ -363,7 +449,10 @@ render_all() {
     # printf '%s\n' (not '%s') so VERSION and friends get a trailing
     # newline — POSIX text files must end with \n, and bash command
     # substitution in template_substitute strips the final newline.
-    if ! printf '%s\n' "$content" > "$out"; then
+    # noclobber (set -C) refuses a regular file or dangling link that
+    # appeared after render_action looked. It does not cover a FIFO or
+    # device swapped in during that window.
+    if ! ( set -C; printf '%s\n' "$content" > "$out" ); then
       echo "gstack-extend init: cannot write $out" >&2
       return 1
     fi
@@ -373,22 +462,25 @@ render_all() {
 
 # scaffold_layout <target> <dry_run> <migrate>
 # D2.B: mkdir canonical dirs; refuse if any canonical file already exists
-# unless --migrate. Idempotent in both modes (re-running on an empty dir =
-# same result).
+# unless --migrate. In every mode, refuse first if anything init would
+# create lands outside <target> (see layout_preflight). Idempotent in both
+# modes (re-running on an empty dir = same result).
 scaffold_layout() {
   local target="$1" dry_run="$2" migrate="$3"
+  local f d
   if [ "$migrate" != "1" ] && [ -d "$target" ]; then
-    local f
     for f in "${CANONICAL_FILES[@]}"; do
-      if [ -e "$target/$f" ]; then
+      if path_occupied "$target/$f"; then
         echo "gstack-extend init: refusing to scaffold over existing $f" >&2
         echo "  $target appears partially onboarded. Use --migrate to backfill only missing files." >&2
         return 1
       fi
     done
   fi
+  if ! layout_preflight "$target"; then
+    return 1
+  fi
   if [ "$dry_run" = "1" ]; then
-    local d
     for d in "${CANONICAL_DIRS[@]}"; do
       if [ ! -d "$target/$d" ]; then
         echo "  + would mkdir $target/$d"
@@ -399,12 +491,57 @@ scaffold_layout() {
   if ! init_mkdir "$target"; then
     return 1
   fi
-  local d
   for d in "${CANONICAL_DIRS[@]}"; do
     if ! init_mkdir "$target/$d"; then
       return 1
     fi
   done
+}
+
+# layout_preflight <target>
+# Every mode, dry-run included, so the preview refuses exactly when the
+# real run would, before anything is written. Checks only what init would
+# create: a missing canonical directory, or a canonical file whose
+# render_action is create. Existing directories are left alone (mkdir -p
+# on them writes nothing), so a linked docs/ that already holds every file
+# still re-registers.
+layout_preflight() {
+  local target="$1" d f problem had_roadmap=0
+  if path_occupied "$target" && [ ! -d "$target" ]; then
+    echo "gstack-extend init: refusing: $target exists but is not a directory" >&2
+    return 1
+  fi
+  for d in "${CANONICAL_DIRS[@]}"; do
+    [ -d "$target/$d" ] && continue
+    if [ -L "$target/$d" ] && [ ! -e "$target/$d" ]; then
+      problem="$d is a dangling link"
+    elif path_occupied "$target/$d"; then
+      problem="$d is not a directory"
+    else
+      problem=$(write_problem "$target" "$target/$d")
+    fi
+    if [ -n "$problem" ]; then
+      layout_refusal "$target" "$d" "$problem"
+      return 1
+    fi
+  done
+  if roadmap_present "$target"; then
+    had_roadmap=1
+  fi
+  for f in "${CANONICAL_FILES[@]}"; do
+    [ "$(render_action "$target" "$f" "$had_roadmap")" = "create" ] || continue
+    problem=$(write_problem "$target" "$target/$f")
+    if [ -n "$problem" ]; then
+      layout_refusal "$target" "$f" "$problem"
+      return 1
+    fi
+  done
+}
+
+# layout_refusal <target> <what> <problem>
+layout_refusal() {
+  echo "gstack-extend init: refusing to create $2: $3" >&2
+  echo "  init writes only inside $1 and never through a link. Fix that path (ask before changing a link someone set up on purpose), then re-run." >&2
 }
 
 # run_audit <target>
@@ -535,13 +672,19 @@ Usage: gstack-extend init <project> [options]
 Options:
   --name <NAME>      Display name (defaults to basename of <project>).
                      Must match [a-zA-Z0-9._-]+.
-  --dry-run          Preview only. Does not write files, does not update
-                     the registry, and does not run the audit.
+  --dry-run          Preview only. Lists each file the real run would
+                     create or skip. Does not write files, does not
+                     update the registry, and does not run the audit.
   --no-prompt        Headless mode; never read from stdin. Errors exit
                      non-zero loudly.
   --migrate          Backfill missing canonical files on an existing
-                     partially-onboarded project. Never overwrites
-                     user-edited files. Re-registers the project.
+                     project. Never overwrites an existing file.
+                     Re-registers the project: replaces any entry with
+                     the same path or slug and keeps its created_at (a
+                     fresh init records the current time instead). A
+                     slug change (e.g. a remote added since init) shows
+                     as "slug: <new> (was: <old>)". Preview it first
+                     with --migrate --dry-run.
   -h, --help         Show this message.
 
 Exit codes:
@@ -604,10 +747,15 @@ cmd_init() {
     return 2
   fi
 
-  # Resolve target to an absolute path. Don't require it to exist yet.
+  # Resolve target to an absolute physical path (on-disk case, see
+  # physical_dir). Don't require it to exist yet.
   local target_abs
   if [ -d "$target" ]; then
-    target_abs=$(cd -P "$target" && pwd)
+    if ! physical_dir "$target"; then
+      echo "gstack-extend init: cannot enter $target" >&2
+      return 1
+    fi
+    target_abs=$PHYSICAL_DIR
   else
     local parent
     parent=$(dirname "$target")
@@ -615,7 +763,11 @@ cmd_init() {
       echo "gstack-extend init: parent dir of $target does not exist" >&2
       return 1
     fi
-    target_abs="$(cd -P "$parent" && pwd)/$(basename "$target")"
+    if ! physical_dir "$parent"; then
+      echo "gstack-extend init: cannot enter parent dir of $target" >&2
+      return 1
+    fi
+    target_abs="${PHYSICAL_DIR%/}/$(basename "$target")"
   fi
 
   # Derive display name from --name or basename. Validate either way.
@@ -645,7 +797,7 @@ cmd_init() {
     onboarded:0:*)
       echo "gstack-extend init: $target_abs is already onboarded." >&2
       echo "  Project drift checks are not implemented yet (coming in a future Group)." >&2
-      echo "  Use \`--migrate\` to re-register (refreshes path/remote)." >&2
+      echo "  Use \`--migrate\` to re-register (refreshes slug, path, remote and base branch)." >&2
       return 1
       ;;
     partial:0:*)
@@ -661,6 +813,21 @@ cmd_init() {
   slug=$(detect_slug "$target_abs")
   remote=$(detect_remote "$target_abs")
   base_branch=$(detect_base_branch "$target_abs")
+
+  # registry_upsert replaces every entry at this path. Name any other slug
+  # it drops in the summary, so `--migrate --dry-run` previews a slug change
+  # without writing anything. Dry-run without jq or with an invalid
+  # registry already warned; show no label.
+  local prev_slugs="" prev
+  while IFS= read -r prev; do
+    if [ -n "$prev" ] && [ "$prev" != "$slug" ]; then
+      prev_slugs="${prev_slugs:+$prev_slugs, }$prev"
+    fi
+  done < <(registry_slugs_for_path "$target_abs" 2>/dev/null || true)
+  local slug_label="$slug"
+  if [ -n "$prev_slugs" ]; then
+    slug_label="$slug (was: $prev_slugs)"
+  fi
 
   local created_at created_at_date
   created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -679,7 +846,7 @@ cmd_init() {
   cat <<EOF
 gstack-extend init: $target_abs
   name:           $name
-  slug:           $slug
+  slug:           $slug_label
   language:       $lang
   base_branch:    $base_branch
   remote_url:     ${remote:-(none)}
@@ -697,7 +864,8 @@ EOF
     "test_cmd_block=$tcb"
   )
 
-  # Scaffold (D2.B): mkdir canonical dirs + refuse on canonical file collision.
+  # Scaffold (D2.B): refuse on canonical file collision or an outside write,
+  # then mkdir canonical dirs.
   if ! scaffold_layout "$target_abs" "$dry_run" "$migrate"; then
     return 1
   fi
@@ -716,8 +884,12 @@ EOF
     return 0
   fi
 
-  # Register in projects.json.
-  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at"; then
+  # Register in projects.json. Only re-registration (--migrate) keeps an
+  # existing entry's created_at; a fresh init is a new project even when it
+  # replaces a stale entry at this path or one with a colliding slug.
+  local created_policy=fresh
+  [ "$migrate" = "1" ] && created_policy=keep
+  if ! registry_upsert "$slug" "$name" "$target_abs" "$remote" "$base_branch" "4-digit" "$created_at" "$created_policy"; then
     echo "gstack-extend init: registry write failed (files were rendered)" >&2
     return 1
   fi

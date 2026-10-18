@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.12.0] - 2026-10-18
+
+### Fixed
+
+- **`init --migrate --dry-run` now shows exactly what the real run will do.** Each canonical file is listed as `+ would create` or `~ would skip`, with the same reason the real run prints: it already exists, it is a dangling link, or it is a roadmap satellite next to an existing ROADMAP. The preview no longer claims it "would overwrite" files that `--migrate` never touches. The create line lost its alignment padding: `+ would create <path> (N lines)`.
+- **Adding a git remote after init no longer splits a project in the registry.** Re-registration replaces any entry with the same path or the same slug, so one project keeps one entry. The summary shows a slug change as `slug: owner-demo (was: demo)`, in both the preview and the real run. A project that gained a remote still reads as onboarded, not partial.
+- **`created_at` survives re-registration, and only re-registration.** `--migrate` keeps the earliest well-formed creation date of the entries it replaces. A fresh init stamps the current time, even when it replaces a stale entry at the same path or one with a colliding slug.
+- **init never writes outside the project or through a broken link.** A dangling link at a canonical file is skipped and named as dangling. Anything init would create that lands outside the project, such as files under a `docs/` link to another folder, is refused before any write, in the preview and the real run alike. A `docs/` link that already holds every file still re-registers, and a link that stays inside the project is followed. A dangling ROADMAP link keeps the roadmap satellites skipped. Paths resolve to their on-disk spelling, and an exported `CDPATH` no longer redirects a relative project path. A directory that another process swaps for a link during the run is not covered.
+
+### Changed
+
+- **The init skill previews before it re-registers.** When you choose `--migrate`, the skill runs `--migrate --dry-run`, shows the slug line and the per-file plan, and asks before the real run. If init refuses to write outside the project, the skill explains why and asks you how to fix the path; it never moves or deletes your links, and a headless run stops as blocked.
+
 ## [0.36.11.0] - 2026-10-17
 
 ### Changed
