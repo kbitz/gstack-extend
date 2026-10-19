@@ -1,0 +1,8 @@
+Run /review-and-prep resume for PR https://github.com/example-org/example-repo/pull/42 on example-org/example-repo, branch feature/handoff-demo.
+Paused at: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+Keep the PR draft.
+Session started at build a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; current HEAD d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4.
+Results: 2 items, 2 passed (0 by coverage), 1 fixed, 0 skipped, 0 parked bugs.
+Not passed: none.
+Local report (this machine only): /home/example/.gstack/example/report.md. On another machine, paste its contents into the resumed session.
+Do not run /ship on this PR.

@@ -1,0 +1,8 @@
+/ship-and-land stopped on the release-only path; it made no change for this finding.
+PR: https://github.com/example-org/example-repo/pull/42; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1.
+Finding: documentation audit: docs/guide.md — a documented flag no longer exists.
+Release state: verified restoration to prepared HEAD with a clean checkout.
+/review-and-prep needs this PR as a draft: convert it to draft yourself, run
+/review-and-prep on it to fix the finding, then paste its new /ship-and-land handoff.
+Greptile stays once per PR. To repair during shipping instead, rerun
+/ship-and-land and ask for the full path.

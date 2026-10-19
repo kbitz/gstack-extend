@@ -1,0 +1,1 @@
+Could not check this branch's PR for a paused /review-and-prep (api). Retry. The test report is saved at /home/example/.gstack/example/report.md. If /review-and-prep sent you here, return to it and do not run /ship until this check passes.
