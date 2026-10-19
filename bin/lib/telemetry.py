@@ -1996,7 +1996,33 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
                 effort_source=source("effort", effort))
 
 
+def _metrics_dispatch(args):
+    """Track 24A: route `metrics ...` to the installation-adjacent workflow_metrics.py.
+
+    Runs before legacy flag parsing, logger resolution, model detection and the blocking
+    handoff lock, and loads only by a path derived from this file (never cwd/PYTHONPATH),
+    so it works under the launcher's `python3 -I`. A failed load or a crash with no
+    envelope means capture is unavailable; metrics never change a workflow outcome."""
+    try:
+        import importlib.util
+        target = Path(__file__).resolve().parent / "workflow_metrics.py"
+        spec = importlib.util.spec_from_file_location("workflow_metrics", target)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.main(args)
+    except Exception:
+        # Fixed text only: no exception, path or input reaches the caller. Callers that
+        # need capture state treat a missing/invalid envelope as unavailable, never success.
+        print('{"v":1,"status":"unavailable","reason":"io-error","session_id":null,'
+              '"event_id":null,"data":null,"diagnostics":null}')
+        print("workflow-metrics: unavailable (io-error). See docs/telemetry.md#workflow-metrics-io-error.",
+              file=sys.stderr)
+
+
 def main(args):
+    if args and args[0] == "metrics":
+        _metrics_dispatch(args[1:])
+        return
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
         print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
@@ -2015,6 +2041,8 @@ def main(args):
         print("  (until its marker is pruned).")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
+        print("  metrics: optional local step/pass capture for review-and-prep and ship-and-land;")
+        print("  run 'gstack-extend-telemetry metrics --help'. See docs/telemetry.md#workflow-metrics.")
         return
     legacy = not args or args[0] not in ("start", "finish")
     command = args.pop(0) if not legacy else "finish"

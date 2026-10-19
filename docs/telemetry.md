@@ -5,6 +5,8 @@ Operators: [Diagnose and interpret](#diagnose-and-interpret).
 Consumers validating stage-runs rows: [Schema validation](#schema-validation).
 Consumers joining the files: [Join contract](#join-contract).
 Anyone checking claims: [Evidence](#evidence).
+Step/pass timing for `/review-and-prep` and `/ship-and-land`:
+[Workflow metrics](#workflow-metrics).
 
 All nine installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
@@ -29,6 +31,11 @@ skill-usage rows.
   whose name is Skill, potentially gathered across machines. Instrumenting these skills does
   not change those counts. Fleet totals cannot be the denominator of a local
   telemetry ratio.
+- A fourth, local-only companion: **workflow-metrics ledgers** (one file per
+  invocation under `analytics/workflow-metrics/`) hold optional step/pass
+  events for `/review-and-prep` and `/ship-and-land` only. They are never
+  uploaded, never joined for you, and never change what the three datasets
+  above record. See [Workflow metrics](#workflow-metrics).
 
 Parse JSONL as JSON, never with grep: compact and spaced serialization are equally
 valid. Pairing gstack-extend's own stage-runs rows with skill-usage uses
@@ -457,6 +464,268 @@ and deduplication metadata. Existing ledger and skill-usage rows stay unchanged;
 explicit finish without that metadata can write again. Open handoffs are not aged out.
 A leftover marker (`telemetry-completed/`) records completion; deleting one re-arms an
 explicit finish for that session, which can then write again.
+
+## Workflow metrics
+
+Optional local step/pass measurement for `/review-and-prep` and
+`/ship-and-land` (Track 24A). It answers which phases ran, were reused, waited,
+retried or needed corrections within one invocation. It does not select
+models, change any review or release gate, trigger Greptile, or collect token
+usage (usage attribution and the efficiency study are later Tracks). Schema:
+[workflow-metrics.schema.json](workflow-metrics.schema.json). Target: from an
+installed checkout to a first understood summary in at most five minutes using
+the quickstart below (a target, not measured first-user evidence; rehearsed
+fixture timings are in [Overhead qualification](#workflow-metrics-overhead)).
+
+### What it can and cannot claim
+
+Three evidence grades stay separate. **Contract verified**: fixture tests
+exercise the real helper's validation, storage, replay and read algebra.
+**Installed capture observed**: an actual wrapper run on a named host produced
+readable records (the two-wrapper smoke below; until it is run, this grade is
+unverified). **Analysis usable**: a named run's summary answers observed
+phases, explicit reuse/repetition and unknown durations without guessing.
+Counts are recorded finding observations and known same-run links, never
+unique issues across workflows; cross-run semantic deduplication is
+unsupported. A clean pass is not quality evidence, and a successful capture
+does not prove every required voice ran unless the pass declares and closes it.
+
+Time is qualified, always. The helper stamps UTC wall milliseconds at capture;
+v1 derives only `observed_wall_duration_ms` and overlap unions, labelled
+`clock_basis=utc-wall` and `clock_quality=clock-sensitive`.
+`qualified_elapsed_ms` stays null with reason `unavailable-clock-domain`: a
+positive delta does not prove reliable elapsed time, forward/backward clock
+changes and sleep/suspend may be inside it, and elapsed time is never active
+model or inference time. Missing boundaries are unknown, never zero.
+Concurrent children overlap; summaries union their intervals instead of
+summing them. A candidate change keeps the observed wall delta and marks its
+attribution mixed; time is never split between candidates by inference.
+
+### Configuration, storage and privacy
+
+Detailed capture inherits the local provenance switch: `provenance=false` (or
+`off`) in the state config disables it, and
+`GSTACK_EXTEND_WORKFLOW_METRICS=off` disables only this companion. Disabled
+calls return before identity lookup, directory creation or any mutation, and
+no setting here can enable upstream upload — gstack's tier never uploads this
+ledger. Rollback is that opt-out for future invocations; history is retained,
+never migrated, backfilled, auto-deleted or silently repaired.
+
+Records for one invocation live at
+`$GSTACK_EXTEND_STATE_DIR/analytics/workflow-metrics/<sha256(session_id)>.jsonl`
+(default under `$HOME/.gstack-extend/`), mode 0600, with a per-run lock under
+`workflow-metrics-locks/`. Writes take the lock without blocking (contention
+is a dropped `lock-busy` capture, never a retry or a wait), refuse symlinks,
+FIFOs, extra hard links and unsafe directories without repairing them, check
+the written byte count, and confirm the file plus its directory entries with
+fsync before reporting `recorded`/`replayed`; anything less is `unconfirmed`,
+which the stable event ID can reconcile (below). That is a cooperative
+serialized append, not crash-atomic storage or a power-loss guarantee.
+Ceilings, all refusing with a fixed reason rather than truncating: 16 KiB per
+producer event on stdin (one EOF-terminated UTF-8 JSON object; depth 8; arrays
+256; a 250 ms healthy-local read deadline for pipes; terminal stdin is
+rejected — use a pipe, heredoc or redirected file), 4096 records and 8 MiB per
+run, a 16 KiB result envelope (diagnostics at most 4 KiB) and a 2 KiB receipt
+line. Local filesystem stalls have no hard wall-time guarantee.
+
+Only allowlisted, bounded fields are recorded: controlled enums, UUIDs and
+hashes. No free-form command output, prompts, finding bodies, exception
+messages, credential material or raw private paths enter the ledger or the
+receipt, and invalid input is never echoed back. Local records do not
+authenticate producer claims: any same-user process could write them, so treat
+them as observations from the producing session, not proof of work. Model and
+effort are recorded per voice attempt only when a tool result or launcher
+configuration actually supplied them (`requested_*` versus `reported_*` with
+their sources; anything else is null with a controlled reason). Nothing here
+scans transcripts, credentials, process tables or vendor usage services.
+
+### Caller identity
+
+Every producer call carries the exact `extend-<uuid>` session ID its own
+invocation's legacy start printed. Metrics never adopts a handoff by
+directory, time or order. The first `begin` with `kind:"run"` binds to that
+invocation's saved handoff by direct lookup (one bounded `git rev-parse`
+from the checkout) and stores the binding in the run record, so reads keep
+working after legacy finish consumes the handoff; a finish *before* any bind
+leaves capture unavailable. The wrapper keeps the ID for metrics only — the
+SHARED start/finish blocks are byte-identical and their no-copying rule still
+governs legacy calls. Resuming without the retained ID is capture-unavailable,
+never a fresh legacy start. Joining to a stage-runs row is by that ID; it does
+not retroactively prove an ambiguous implicit legacy finish was attributed
+correctly.
+
+### Operations
+
+`gstack-extend-telemetry metrics --help` and `metrics <operation> --help`
+print the field lists without touching stdin or state. Producers (`begin`,
+`end`, `decision`, `pass`, `correction`) take one JSON object on stdin with
+`v:1`, `stage`, `session_id` and a caller-stable UUID `event_id`, and print
+one envelope `{v, status, reason, session_id, event_id, data, diagnostics}`.
+Statuses: `recorded`, `replayed`, `disabled`, `unavailable`, `conflict`,
+`partial`, `unconfirmed`, and `ok` (a clean read). The launcher exits 0 in
+every case — inspect `status`; a missing or invalid envelope after a crash is
+unavailable/unknown, never success. Identical replay of an `event_id` returns
+the original persisted timestamp without appending; the same ID with changed
+content is `conflict`. For `unconfirmed` or a missing envelope, reconcile with
+`metrics read --session-id <id> --event-id <event_id>` and replay the exact
+same payload at most once (a visible record's durability is re-confirmed
+without appending); conflicting, partial or unreadable snapshots stop replay.
+
+- `begin`/`end`: one observed boundary of a `run|phase|voice|wait|fix` step.
+  `begin` carries a controlled phase (or a `wait_category`:
+  `human|external-review|checks|deploy|tool|other`); `end` carries
+  `outcome: completed|failed|paused|cancelled`. A pause records an open wait
+  or a `paused` end, never an invented finish.
+- `decision`: `RUN|REUSE|N/A` plus a controlled reason, one per visited phase.
+  Reuse is a decision with no new work interval.
+- `pass`: a review round (`scope: local|greptile`) over one candidate.
+  `started` declares the nonempty required-voice set; each `attempt` is a
+  distinct try (retries/fallback link their predecessor; a completed attempt
+  carries `findings`, where an empty array means zero and
+  failed/partial/missing attempts leave counts null); `voice-complete`
+  selects exactly one completed attempt or records an explicit
+  `not-applicable` (visible, zero findings — metrics cannot waive a voice a
+  policy requires); `completed` closes the round. Findings keep their source
+  severity plus a documented normalization (P0/critical→critical, P1/high→high,
+  P2/medium→medium, P3/low→low, info→info, unknown→unclassified; normalization
+  does not claim rubric equivalence), separate adjudication
+  (`accepted|rejected|deferred|duplicate|unclassified`) and resolution
+  (`open|fixed|unknown`) counts, and explicit same-run duplicate links.
+  Local passes, Greptile passes and fix cycles are three separate counts —
+  Greptile keeps its once-per-PR semantics and is never added to local passes
+  or upstream cycles, and metrics never triggers it.
+- `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
+  referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
+  acyclic and unambiguous, or the affected totals stay unknown — never
+  last-write-wins, never a rewrite of history.
+- `read --session-id <id> [--event-id <uuid>]`: the only reader, for one named
+  run. It creates nothing, takes no lock, and returns compact phase/wait/pass
+  summaries (never raw events), the clock qualification above, and a
+  `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
+  With `--event-id` it returns just that event's digest/timestamp as
+  match/absent/unknown for reconciliation; only a valid snapshot can report
+  absence. Malformed rows and torn tails make the read `partial` with the
+  affected totals null; nothing is silently dropped and then called complete,
+  and a snapshot can never prove complete capture of events a producer omitted.
+
+Every receipt the two wrappers produce carries the `receipt_text`, or the
+literal `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
+when no summary exists. It preserves every existing receipt/handoff label and
+cannot authorize readiness, landing or merge. Wrappers map their existing
+headings to stable phase IDs in their own "Workflow metrics" sections; the
+owner of a wrapper change updates that mapping in the same change.
+
+### Quickstart (isolated, copyable)
+
+Prerequisites: an installed gstack-extend checkout on PATH
+(`gstack-extend-telemetry`), `git`, `python3` 3.9+, and Bun only for this
+repo's tests. The exercise uses a temporary HOME and state root and no
+upstream tier, so nothing uploads and no real ledger is touched:
+
+~~~sh
+export WM_HOME="$(mktemp -d)" HOME="$WM_HOME"
+export GSTACK_EXTEND_STATE_DIR="$WM_HOME/.gstack-extend"
+mkdir "$WM_HOME/repo" && git init -q "$WM_HOME/repo" && cd "$WM_HOME/repo"
+SID="$(gstack-extend-telemetry start --skill 'extend:review-and-prep' \
+  | sed -n 's/.*session=\(extend-[0-9a-f-]*\).*/\1/p')"
+RUN_STEP="$(uuidgen | tr 'A-Z' 'a-z')"   # or: python3 -c 'import uuid;print(uuid.uuid4())'
+EV() { uuidgen | tr 'A-Z' 'a-z'; }
+gstack-extend-telemetry metrics begin <<JSON
+{"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$RUN_STEP","parent_step_id":null,"kind":"run","phase":"run","context":{"candidate_head":null,"candidate_tree":null,"candidate_base":null,"binding":"unknown","skill_sha256":null,"parent_session_id":null}}
+JSON
+PHASE_STEP="$(EV)"
+gstack-extend-telemetry metrics begin <<JSON
+{"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$PHASE_STEP","parent_step_id":"$RUN_STEP","kind":"phase","phase":"evidence"}
+JSON
+gstack-extend-telemetry metrics decision <<JSON
+{"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$(EV)","phase":"tests","decision":"REUSE","reason":"matching-evidence"}
+JSON
+gstack-extend-telemetry metrics end <<JSON
+{"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$PHASE_STEP","outcome":"completed"}
+JSON
+gstack-extend-telemetry metrics end <<JSON
+{"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$RUN_STEP","outcome":"completed"}
+JSON
+gstack-extend-telemetry metrics read --session-id "$SID"
+gstack-extend-telemetry finish --skill 'extend:review-and-prep' --outcome success
+~~~
+
+Expected reading: each producer prints `status:"recorded"`; the read prints
+`status:"ok"` with the `evidence` phase started/completed, a `REUSE` decision
+for `tests` with no work interval, `qualified_elapsed_ms:null` (wall time is
+clock-sensitive), and a `receipt_text` restating those counts. With
+`GSTACK_EXTEND_WORKFLOW_METRICS=off` every metrics call instead prints
+`status:"disabled"` and writes nothing; deleting the handoff first (or running
+`finish` before the first `begin`) prints `unavailable`/`identity-missing`.
+Missing data always reads as unknown — never as zero work.
+
+### Diagnostic reasons
+
+Each reason has one fixed action; messages contain no copied user text.
+
+| Reason | Action |
+|---|---|
+| <a id="workflow-metrics-capture-disabled"></a>`capture-disabled` | None needed; detailed capture is off. |
+| <a id="workflow-metrics-invalid-input"></a>`invalid-input` | Send one valid object (the diagnostic names the field/constraint and safe counts); see `metrics <operation> --help`. |
+| <a id="workflow-metrics-unsupported-version"></a>`unsupported-version` | Use `v:1`, or upgrade gstack-extend; unknown versions are never reinterpreted. |
+| <a id="workflow-metrics-identity-missing"></a>`identity-missing` | Provide the original start ID, or continue unavailable; never start or adopt another legacy run for metrics. |
+| <a id="workflow-metrics-identity-mismatch"></a>`identity-mismatch` | Use this invocation's ID in its own checkout/stage, or continue unavailable. |
+| <a id="workflow-metrics-ambiguous-binding"></a>`ambiguous-binding` | Run the first metrics call from the same git checkout as the legacy start, or continue unavailable. |
+| <a id="workflow-metrics-capture-missing"></a>`capture-missing` | No bound run exists for that ID; continue without capture. |
+| <a id="workflow-metrics-unsafe-path"></a>`unsafe-path` | Inspect the configured state root yourself; the helper never chmods, moves or deletes. |
+| <a id="workflow-metrics-io-error"></a>`io-error` | Inspect the configured state root; continue the workflow without this capture (an `unconfirmed` write reconciles by targeted read + one identical replay). |
+| <a id="workflow-metrics-lock-busy"></a>`lock-busy` | Drop this capture attempt; do not retry it. |
+| <a id="workflow-metrics-capacity"></a>`capacity` | Mark capture partial and continue; do not truncate the run file. |
+| <a id="workflow-metrics-malformed-record"></a>`malformed-record` | Mark capture partial and continue; do not repair the run file in place. |
+| <a id="workflow-metrics-partial-tail"></a>`partial-tail` | Mark capture partial and continue; never append behind torn bytes. |
+| <a id="workflow-metrics-event-conflict"></a>`event-conflict` | The original event stands; changed content is a new caller decision, never an overwrite. |
+| <a id="workflow-metrics-clock-invalid"></a>`clock-invalid` | Treat the affected duration as unknown; wall time is clock-sensitive. |
+| <a id="workflow-metrics-candidate-changed"></a>`candidate-changed` | Start a new pass for the new candidate; observed wall time stays labelled mixed. |
+
+<a id="workflow-metrics-overhead"></a>
+
+### Overhead qualification
+
+Helper runtime only — it excludes added model turns and host transport, which
+fixtures cannot establish; those are observed (or left explicitly unqualified)
+by the installed smoke below. Method: five warmups, then 30 interleaved
+samples per scenario on one named machine/revision, reporting raw values'
+nearest-rank p50/p95 and peak RSS. The healthy-local p95 target of 100 ms per
+invocation is a target, not a gate or a measured guarantee. Results from the
+Track 24A implementation exercise are recorded with the implementation
+handoff (machine, OS/Python/filesystem, revision, per-scenario p50/p95 and
+peak RSS, and unchanged legacy start/finish timings on base versus branch);
+rerun the exercise on your machine before quoting any number as yours.
+
+One measured run (macOS 27 arm64, Python 3.15.0, APFS, revision 6f94155 plus
+the uncommitted Track 24A change; real launcher subprocess per sample, so
+every figure includes Python and `telemetry.py` startup): disabled producer
+p50 163 ms / p95 194 ms; normal append 163/225 ms; near-cap append (4,000
+seeded records) 231/270 ms; contended append 163/239 ms; normal read
+163/250 ms; near-cap read 237/335 ms; peak RSS ≈28 MB (append) and ≈43 MB
+(near-cap read). Unchanged legacy paths on the same machine: start p50
+155→156 ms and finish 178→178 ms (base→branch), so the dispatch adds no
+measurable legacy cost. The 100 ms p95 target is **not met on this machine —
+the pre-existing launcher invocation alone exceeds it** (legacy start p95
+171–228 ms); the marginal metrics cost is ≈0 ms at normal run sizes and
+≈70 ms of record scanning near the 4,096-record cap. That is reported, not
+gated: no index, split or weakened guarantee follows from it.
+
+### Installed two-wrapper smoke (manual, separate from fixtures)
+
+Fixture success is not host acceptance. On a real host/harness combo, run
+each wrapper once on a throwaway branch/PR and record, per wrapper: the exact
+retained session ID and its bound run; one observed phase interval; one
+`REUSE` decision with no new interval; one wait (manual pause or external
+review); one retry/correction when the run naturally has one; the receipt
+metrics line; and a deliberate missing-capture case
+(`GSTACK_EXTEND_WORKFLOW_METRICS=off`, and resume without the retained ID)
+read as disabled/unknown rather than zero. Also record the added tool calls
+and agent turns versus the same workflow with capture disabled, noting which
+metrics calls shared an existing tool call; where a comparable enabled/disabled
+run is not practical, mark end-to-end overhead unqualified. File the result
+with host, harness and gstack-extend versions beside the workflow's other
+acceptance evidence; no part of this smoke is a release or 1.0 gate.
 
 ## Execution provenance
 
@@ -926,6 +1195,13 @@ A skill that pauses across harness sessions has to be listed in `RESUMABLE` in
 `full-review`. Other skills are refused when a later session finishes a start-less
 run. See [Handoff adoption](#handoff-adoption), including the upgrade note for
 handoffs written before that rule.
+
+Two wrappers also emit optional step/pass metrics (`/review-and-prep` and
+`/ship-and-land`). That is a metrics-only instruction outside the SHARED
+blocks below, keyed to the start ID printed here; the blocks themselves and
+their no-copying rule for legacy calls are unchanged. Authors changing those
+wrappers update their phase mapping in the same change. See
+[Workflow metrics](#workflow-metrics).
 
 ~~~sh
 gstack-extend-telemetry start --skill "extend:roadmap"

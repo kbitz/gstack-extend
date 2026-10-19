@@ -6,6 +6,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
@@ -1393,4 +1394,57 @@ describe('Conductor Cursor live-smoke recipe', () => {
     expect(noneLines).toContain('layouts ndjson=1 sqlite=0 mixed=0 unrecognized=0 unreadable=0');
     expect(noneLines.at(-1)).toBe('result blocked');
   });
+});
+
+// Track 24A: the metrics companion must not disturb the published contracts above.
+describe('workflow metrics contract (Track 24A)', () => {
+  const REASONS = ['capture-disabled', 'invalid-input', 'unsupported-version', 'identity-missing', 'identity-mismatch', 'unsafe-path', 'lock-busy', 'capacity', 'malformed-record', 'partial-tail', 'event-conflict', 'io-error', 'capture-missing', 'ambiguous-binding', 'clock-invalid', 'candidate-changed'];
+  test('docs carry the schema link, clock qualification and one anchored action per reason', () => {
+    const doc = docText();
+    const body = section(doc, '## Workflow metrics');
+    expect(body).toContain('workflow-metrics.schema.json');
+    expect(body).toContain('clock-sensitive');
+    expect(body).toContain('qualified_elapsed_ms');
+    for (const reason of REASONS) expect(body, reason).toContain(`<a id="workflow-metrics-${reason}"></a>`);
+    const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+    const local = new Ajv({ strict: true, allErrors: true });
+    local.addSchema(metricsSchema);
+    const envelope = local.getSchema('workflow-metrics#/definitions/envelope')!;
+    const steps = (metricsSchema.definitions.envelope.properties.reason.enum as string[]);
+    expect(REASONS.every(r => steps.includes(r))).toBe(true);
+    expect(envelope({ v: 1, status: 'ok', reason: null, session_id: 'x', event_id: null, data: {}, diagnostics: null })).toBe(true);
+  });
+  test('a metrics sequence leaves stage-runs v1 and skill-usage shapes unchanged', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
+    const started = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']);
+    const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)![1];
+    const begin = spawnSync(WRAPPER, ['metrics', 'begin'], {
+      cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000,
+      input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: randomUUID(), parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null, candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }),
+    });
+    expect(JSON.parse(begin.stdout).status).toBe('recorded');
+    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
+    const row = fix.readLedger()[0];
+    expect(verdict(row)).toEqual({ ok: true, errors: [] });
+    expect(row.session_id).toBe(sid);
+    expect(fix.readJsonl().map(r => r.event_type)).toEqual(['skill_start', 'skill_run']);
+    const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    expect(JSON.parse(read.stdout).status).toBe('ok');
+    const ledger = join(fix.home, '.gstack-extend/analytics/workflow-metrics', createHash('sha256').update(sid).digest('hex') + '.jsonl');
+    expect(existsSync(ledger)).toBe(true);
+    expect(fix.readJsonl()).toHaveLength(2); // metrics never append to the upstream sink
+  }, 30_000);
+  test('the documented quickstart runs verbatim to a receipt', () => {
+    const body = section(docText(), '## Workflow metrics');
+    const block = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
+    const fix = makeTelemetryFixture('off');
+    const script = join(fix.home, 'quickstart.sh');
+    writeFileSync(script, block);
+    const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home }, encoding: 'utf8', timeout: 30_000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('"status":"recorded"');
+    expect(r.stdout).toContain('"status":"ok"');
+    expect(r.stdout).toContain('capture=ok; clock=utc-wall clock-sensitive');
+  }, 60_000);
 });
