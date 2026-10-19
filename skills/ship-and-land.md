@@ -864,8 +864,10 @@ as installed in the discovered copy: the read-only comparison against the
   Stop with that blocker. Never guess a token or read a broken check as
   unconfirmed setup.
 
-The landing run finds no fingerprint from this path, meets the same token, and
-runs the full first-run confirmation before any merge, unchanged.
+This path leaves the fingerprint absent or unchanged. A later landing run
+detects setup again and runs the full first-run confirmation before any merge,
+unchanged. Once setup is confirmed, replace any earlier unconfirmed note in
+the readiness report and receipt with the actual confirmed status.
 
 ### Projects with no deploy target
 
@@ -885,11 +887,18 @@ if [ ! -f "$_DEPLOY_DOC" ]; then
 else
   awk '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-    /^## Deploy Configuration/ { insec = 1; seen = 1; next }
-    insec && /^## / { insec = 0 }
-    !insec { next }
     {
       line = trim($0)
+      if (match(line, /^(```+|~~~+)/)) {
+        delimiter = substr(line, 1, RLENGTH)
+        if (!fence) { fence = substr(delimiter, 1, 1); fence_len = length(delimiter) }
+        else if (substr(delimiter, 1, 1) == fence && length(delimiter) >= fence_len && trim(substr(line, RLENGTH + 1)) == "") fence = ""
+        next
+      }
+      if (fence) next
+      if ($0 ~ /^## Deploy Configuration([ \t]*$| \(configured by \/setup-deploy\)[ \t]*$)/) { insec = 1; seen = 1; next }
+      if ($0 ~ /^##? /) insec = 0
+      if (!insec) next
       sub(/^- /, "", line)
       i = index(line, ":")
       if (i == 0) next
@@ -913,19 +922,27 @@ a deploy target. A missing file or section, a missing `Platform`, an empty
 field value, or any other value — a production URL, a deploy workflow, a
 deploy trigger, a status command, a health check, or any unlisted field —
 prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.
+Only the exact section heading (optionally suffixed with
+`(configured by /setup-deploy)`) counts; fenced examples do not record setup.
 
 When the check prints `NO_DEPLOY`, apply this adapter on a landing run:
 
 - Deployment facts record no deploy target, from that configuration, not
-  "deployment unknown". Do not promise a post-merge URL question.
+  "deployment unknown". Still inspect current workflows and platform files
+  as land requires; the recorded configuration cannot override those facts.
+  Do not promise a post-merge URL question when no deployment is expected.
 - After the merge, still run land's post-merge deploy-run detection. A
-  matching triggered deploy, or an explicit verification URL from the caller,
-  takes precedence and restores land's steps as installed. A `none`
-  configuration cannot erase an observed deployment.
-- Otherwise skip land's production-route question, the staging offer, the
+  matching triggered deploy, an expected deployment whose run has not appeared,
+  or an explicit verification URL from the caller takes precedence and
+  restores land's steps as installed. Poll expected deployments under land's
+  existing deadline. Failed or unknown detection stays unknown and follows
+  land's installed handling; it cannot authorize `NOT_NEEDED`. A `none`
+  configuration cannot erase an observed or expected deployment.
+- Only after successful detection with no observed or expected deployment
+  and no explicit verification URL, skip land's production-route question, the staging offer, the
   deploy wait and canary verification. Finish at land's deploy report with
   verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`. That
-  verdict claims no deployment happened or was verified.
+  verdict does not claim any deployment happened or was verified.
 
 This adapter does not change first-run setup: a landing run on a no-deploy
 project still runs Step 1.5's full confirmation until the user confirms the

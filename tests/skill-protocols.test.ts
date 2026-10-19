@@ -2540,6 +2540,8 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
   test('a landing run keeps the full first-run confirmation and the wrapper never writes the fingerprint', () => {
     expect(shipN).toContain("only the user's own answer there writes the `land-deploy-confirmed` fingerprint, and this wrapper never writes it or answers for the user.");
     expect(firstRunN).toContain('runs the full first-run confirmation before any merge, unchanged.');
+    expect(firstRunN).toContain('This path leaves the fingerprint absent or unchanged.');
+    expect(firstRunN).toContain('Once setup is confirmed, replace any earlier unconfirmed note in the readiness report and receipt with the actual confirmed status.');
     expect(shipN).toContain('first-run setup validation (full confirmation on a landing run; read-only only when this invocation stops at the merge gate)');
     expect(noDeployN).toContain("a landing run on a no-deploy project still runs Step 1.5's full confirmation until the user confirms the recorded setup.");
     expect(ship).not.toMatch(/echo[^\n]*>[^\n]*land-deploy-confirmed/);
@@ -2554,9 +2556,12 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
       'Deployment facts record no deploy target, from that configuration, not "deployment unknown".',
       "skip land's production-route question, the staging offer, the deploy wait and canary verification.",
       'verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`.',
-      'That verdict claims no deployment happened or was verified.',
-      'A matching triggered deploy, or an explicit verification URL from the caller, takes precedence and restores land\'s steps as installed.',
-      'A `none` configuration cannot erase an observed deployment.',
+      'That verdict does not claim any deployment happened or was verified.',
+      'A matching triggered deploy, an expected deployment whose run has not appeared, or an explicit verification URL from the caller takes precedence and restores land\'s steps as installed.',
+      'Poll expected deployments under land\'s existing deadline.',
+      'Failed or unknown detection stays unknown and follows land\'s installed handling; it cannot authorize `NOT_NEEDED`.',
+      'Only after successful detection with no observed or expected deployment and no explicit verification URL',
+      'A `none` configuration cannot erase an observed or expected deployment.',
     ]) expect(noDeployN).toContain(clause);
     expect(shipN).toContain("`NO_DEPLOY` is the explicit no-deploy confirmation land's verdicts already accept. Anything else keeps land's steps exactly as installed.");
   });
@@ -2611,6 +2616,17 @@ describe('ship-and-land first-run and no-deploy landing adapters', () => {
       ['an all-none configured section', ALL_NONE, 'NO_DEPLOY'],
       ['platform-only none', '## Deploy Configuration\n- Platform: none\n', 'NO_DEPLOY'],
       ['case-insensitive none values', '## Deploy Configuration\n- Platform: None\n- Deploy trigger: NONE\n', 'NO_DEPLOY'],
+      // Value: protects=trimmed and emphasized config keys and values classify consistently; fails_when=key emphasis stripping or whitespace normalization is removed; why_new=existing fixtures use plain keys and unpadded values; seam=none; no_claim=agent execution
+      ['trimmed and emphasized fields', '## Deploy Configuration\n  - **Platform** : \t None \t\n  - **Deploy trigger** : \t NONE \t\n', 'NO_DEPLOY'],
+      // Value: protects=non-deploy merge hooks remain usable; fails_when=Pre-merge loses its exemption; why_new=ALL_NONE uses none for that hook; seam=none; no_claim=agent execution
+      ['a pre-merge command without a deploy target', ALL_NONE.replace('- Pre-merge: none', '- Pre-merge: bun run build'), 'NO_DEPLOY'],
+      // Value: protects=only active configuration authorizes no-deploy; fails_when=a fenced example is treated as configuration; why_new=existing cases are unfenced; seam=none; no_claim=agent execution
+      ['a fenced example without active configuration', '# Usage\n```markdown\n## Deploy Configuration\n- Platform: none\n```\n', 'NOT_NO_DEPLOY'],
+      ['a tilde-fenced example', '~~~markdown\n## Deploy Configuration\n- Platform: none\n~~~\n', 'NOT_NO_DEPLOY'],
+      ['a shorter inner fence does not close an example', '````markdown\n```\n## Deploy Configuration\n- Platform: none\n````\n', 'NOT_NO_DEPLOY'],
+      ['active configuration after an example', '```markdown\n## Deploy Configuration\n- Platform: fly\n```\n' + ALL_NONE, 'NO_DEPLOY'],
+      ['a fenced heading cannot hide a later deploy field', '## Deploy Configuration\n- Platform: none\n```markdown\n## Example\n```\n- Deploy trigger: automatic on push to main\n', 'NOT_NO_DEPLOY'],
+      ['a similarly named documentation section', '## Deploy Configuration Notes\n- Platform: none\n', 'NOT_NO_DEPLOY'],
       ['a real deploy configuration', ALL_NONE.replace('- Platform: none', '- Platform: fly').replace('- Production URL: none', '- Production URL: https://app.example.com'), 'NOT_NO_DEPLOY'],
       ['platform none but a production URL', '## Deploy Configuration\n- Platform: none\n- Production URL: https://x.example\n', 'NOT_NO_DEPLOY'],
       ['platform none but a deploy trigger', '## Deploy Configuration\n- Platform: none\n- Deploy trigger: automatic on push to main\n', 'NOT_NO_DEPLOY'],
