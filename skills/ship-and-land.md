@@ -795,8 +795,20 @@ in this file; execute every other landing step as installed:
   test gate allows, citing its actual source
   without claiming native FRESH for a CI check-run. Otherwise run live as land
   requires. Failing required tests block landing.
+- **First-run setup (Step 1.5):** the mode decides. On a landing run, execute
+  Step 1.5 exactly as installed, including the dry-run confirmation; only the
+  user's own answer there writes the `land-deploy-confirmed` fingerprint, and
+  this wrapper never writes it or answers for the user. When this invocation
+  stops at the merge gate, apply First-run setup when stopping at the merge
+  gate below instead: detection runs read-only and an unconfirmed setup is
+  recorded, not confirmed.
+- **No deploy target (deployment facts, deploy route and verdict):** classify
+  the bound checkout's `## Deploy Configuration` with the read-only check in
+  Projects with no deploy target below whenever deployment facts are gathered.
+  `NO_DEPLOY` is the explicit no-deploy confirmation land's verdicts already
+  accept. Anything else keeps land's steps exactly as installed.
 
-Neither adapter accepts a generic `prepared`/`ship succeeded` claim (the review
+None of these adapters accepts a generic `prepared`/`ship succeeded` claim (the review
 adapter also accepts a marked handoff or the explicit prior-review choice; the test
 adapter accepts only Step 2's test gate), missing required coverage under the
 selected profile, or implementation changes labeled as release bookkeeping.
@@ -818,22 +830,122 @@ Where upstream STOP guidance sends the user to standalone `/ship`, `/review`,
 or `/land-and-deploy`, direct them to rerun `/ship-and-land` instead. When this
 invocation validated a marked handoff, tell them to paste the same handoff again.
 
+### First-run setup when stopping at the merge gate
+
+This adapter replaces only Step 1.5's handling for an invocation that stops at
+the merge gate (`--no-land`, or a direct request to stop before landing). A
+session that cannot take the user's answer must still reach the readiness
+report; it must never manufacture the confirmation instead. The stop happens
+before any merge, so nothing can merge or deploy on an unconfirmed setup.
+
+When land-and-deploy reaches Step 1.5, run only its detection block, exactly
+as installed in the discovered copy: the read-only comparison against the
+`land-deploy-confirmed` fingerprint. Act on its printed token:
+
+- `CONFIRMED`: continue exactly as land directs; this adapter changes nothing.
+- `FIRST_RUN` or `CONFIG_CHANGED`: do not stop. Do not read or execute the
+  first-run validation section, do not present its dry-run confirmation, and do
+  not write, create or refresh the fingerprint. Record
+  `first-run setup unconfirmed (<token>): the landing run confirms it`, with
+  the actual token, in the readiness report and in the `Ship and land`
+  receipt. An unconfirmed setup is not a blocker on this path. Then continue
+  through land's CI gate, version-drift check and readiness report to the
+  merge gate, with the other adapters above. Other blockers keep their
+  installed behavior and are reported at the gate; only the first-run stop is
+  replaced.
+- No token, or the detection itself failed: unknown state, not `FIRST_RUN`.
+  Stop with that blocker. Never guess a token or read a broken check as
+  unconfirmed setup.
+
+The landing run finds no fingerprint from this path, meets the same token, and
+runs the full first-run confirmation before any merge, unchanged.
+
+### Projects with no deploy target
+
+A project can record that it does not deploy: a `## Deploy Configuration`
+section in the bound checkout's CLAUDE.md whose deploy fields are all `none`,
+as `/setup-deploy` writes for a project with no deploy target. That recorded
+configuration is the user's explicit no-deploy confirmation. Land must not
+re-ask it after merge as a production-URL question.
+
+Classify the configuration with this read-only check. Set `_DEPLOY_DOC` to the
+bound checkout's CLAUDE.md. It prints one token; act on the token:
+
+```bash
+_DEPLOY_DOC="<bound checkout CLAUDE.md>"
+if [ ! -f "$_DEPLOY_DOC" ]; then
+  echo "NOT_NO_DEPLOY"
+else
+  awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    /^## Deploy Configuration/ { insec = 1; seen = 1; next }
+    insec && /^## / { insec = 0 }
+    !insec { next }
+    {
+      line = trim($0)
+      sub(/^- /, "", line)
+      i = index(line, ":")
+      if (i == 0) next
+      key = trim(substr(line, 1, i - 1))
+      gsub(/\*/, "", key)
+      lk = tolower(trim(key))
+      if (lk == "") next
+      if (lk == "merge method" || lk == "project type" || lk == "pre-merge") next
+      if (lk == "platform") pseen = 1
+      if (tolower(trim(substr(line, i + 1))) != "none") fail = 1
+    }
+    END { print (seen && pseen && !fail) ? "NO_DEPLOY" : "NOT_NO_DEPLOY" }
+  ' "$_DEPLOY_DOC"
+fi
+```
+
+`NO_DEPLOY` requires all of: the section exists; a `Platform` field is present;
+and every field value is exactly `none` (trimmed, case-insensitive), except
+`Merge method`, `Project type` and `Pre-merge`, which describe the merge, not
+a deploy target. A missing file or section, a missing `Platform`, an empty
+field value, or any other value — a production URL, a deploy workflow, a
+deploy trigger, a status command, a health check, or any unlisted field —
+prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.
+
+When the check prints `NO_DEPLOY`, apply this adapter on a landing run:
+
+- Deployment facts record no deploy target, from that configuration, not
+  "deployment unknown". Do not promise a post-merge URL question.
+- After the merge, still run land's post-merge deploy-run detection. A
+  matching triggered deploy, or an explicit verification URL from the caller,
+  takes precedence and restores land's steps as installed. A `none`
+  configuration cannot erase an observed deployment.
+- Otherwise skip land's production-route question, the staging offer, the
+  deploy wait and canary verification. Finish at land's deploy report with
+  verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`. That
+  verdict claims no deployment happened or was verified.
+
+This adapter does not change first-run setup: a landing run on a no-deploy
+project still runs Step 1.5's full confirmation until the user confirms the
+recorded setup. Merge approval, merge/queue handling and every pre-merge gate
+also stay as installed.
+
 On every path, when land reaches its readiness report and merge-approval gate,
 record the measured wall time from invocation start in the PR's `Ship and land`
 receipt, using Step 3's fresh-read and redaction procedure. This records time
-to the gate whether the caller continues to approval or requested a stop.
+to the gate whether the caller continues to approval or requested a stop. When
+first-run setup is unconfirmed under the merge-gate adapter, record that note
+in the same receipt update.
 
 **Stop at the merge gate on request.** When the caller passed `--no-land`, or
 directly asked to stop before landing, run land-and-deploy with these adapters
-through its readiness report, then stop where it would ask for merge approval.
+— Step 1.5 read-only, never confirmed — through its readiness report, then
+stop where it would ask for merge approval.
 Do not merge, enqueue, or enable auto-merge. Finish with the readiness report,
 `stopped at merge gate (caller request)` and any blocker. A later
 `/ship-and-land` run resumes at land with fresh evidence and its own approval.
 
 Continue to the installed land-and-deploy procedure on the exact shipped PR and
 verification URL. Retain CI/protection checks, version-drift detection, first-run
-setup validation, concrete merge approval, merge/queue state handling, deployment
-revision checks, canary, rollback decisions and truthful final verdicts. Pass the
+setup validation (full confirmation on a landing run; read-only only when this
+invocation stops at the merge gate), concrete merge approval, merge/queue state
+handling, deployment revision checks, canary, rollback decisions and truthful
+final verdicts. Pass the
 same exact test command/lane facts so it can reuse fresh native test evidence.
 Do not interpret a ship success as permission to bypass a landing blocker.
 
