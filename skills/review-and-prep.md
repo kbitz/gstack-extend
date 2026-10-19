@@ -631,6 +631,13 @@ receipt as prepared. If posting the paused comment fails, keep the pause,
 report that the paused receipt lives only in the body, and retry the post on
 the next resume.
 
+The PAUSED receipt, its `review-and-prep:paused:` comment and the prompt below
+are the H-C hold of the published
+[stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`). A paused PR is never a prepared one, so keep the
+marker, the `Resume with` line and the prompt's first line byte-identical for
+callers.
+
 Finish with the draft PR URL, the pending checks, and a recommendation to run
 `/pair-review` (or `/pair-review resume` for an existing matching session).
 Do not automatically launch that interactive session. Provide a copyable
@@ -1197,6 +1204,12 @@ post the final receipt once as a PR comment carrying
 only when its author is the running account and its evidence fingerprints are
 corroborated against live state under Boundaries; the marker alone is not proof.
 
+The [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`) names which of these bindings a caller validates
+(prepared HEAD, Git tree, reviewed base, receipt author, Ship gates) and which it
+only reads (the `wtree` fingerprint, the matrix location and its fingerprint).
+Keep each present and distinctly labeled.
+
 Include the complete completion matrix and its source fingerprint in this
 receipt, with requirement/acceptance text, evidence links or excerpts, and
 explicit user deferrals. Keep rows compact (item ID, disposition, evidence
@@ -1239,6 +1252,13 @@ Emit the `review-and-prep/v1` review-handoff marker only after Step 6 confirms
 readiness and all applicable local implementation reviews/fix checks are complete.
 Bind it to the final prepared HEAD, Git tree and reviewed base; replace these
 values from the same verified snapshot used in the receipt.
+
+This prompt is the H-B handoff of the published
+[stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`). Keep the `Review handoff: review-and-prep/v1; ...`
+line and the receipt marker byte-identical: a breaking change to either needs a new
+marker version under the contract's rules. BLOCKED and PAUSED exits are not
+handoffs and never carry this marker.
 
 Keep it short. `/ship-and-land` owns evidence reuse and child-skill execution: do not
 restate its steps, override its reuse rules, list its remaining work,

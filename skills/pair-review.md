@@ -1556,6 +1556,12 @@ printf 'PR_CLASS=%s\n' "$PR_CLASS"
 if [ -n "$PR_REASON" ]; then printf 'PR_REASON=%s\n' "$PR_REASON"; fi
 ```
 
+These routes produce the hold and resume outputs of the published
+[stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`, H-C). Keep the `paused`, `closed-paused` and
+`lookup-failure` outcomes and the `Run /review-and-prep resume` prompt wording
+aligned with it, because external callers parse them.
+
 Route by `PR_CLASS`; a failed lookup is never no pause:
 
 - **`paused`:** the open PR has a body or viewer-comment pause signal. Before

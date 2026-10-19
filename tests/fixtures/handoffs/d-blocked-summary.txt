@@ -1,0 +1,2 @@
+PR https://github.com/example-org/example-repo/pull/42 — BLOCKED. Local review found an unresolved finding in src/export.ts.
+Resume summary: fix the finding, then rerun /review-and-prep resume. No /ship-and-land prompt was issued.

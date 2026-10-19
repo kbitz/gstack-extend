@@ -58,6 +58,22 @@
 - **Priority:** P3
 - **Revisit when:** The next change to `bin/gstack-extend` init or `setup`, or a report of a misleading init refusal or SUCCESS.
 
+### [plan-ceo-review:track=23I,defer=true] Machine-readable schema for the stage handoffs
+
+- **Description:** `docs/workflow-handoffs.md` publishes the stage handoffs as a prose grammar with a test-only classifier. A caller that wants to validate a handoff mechanically must write its own parser from the label tables. Add a schema (for example `docs/workflow-handoffs.schema.json`, versioned beside the contract) only for a named consumer, and keep the doc as the oracle so the two cannot drift.
+- **Effort:** M
+- **Context:** CEO deferral E3 from Track 23I's approved autoplan on 2026-10-18. Deferred because no in-repo consumer reads a schema, and the Track's gate decision (2026-10-19) chose a doc plus fixture-consumer tests with no parser binary.
+- **Priority:** P3
+- **Revisit when:** A named external consumer asks for a machine-readable schema, or the live external-handoff acceptance Tracks (28A/28B when written) show a consumer misparsing the prose grammar.
+
+### [review] Stage-handoff contract: residual parser gaps and pair-review pause-detector parity
+
+- **Description:** Track 23I's review left four items that need producer changes or live evidence. (1) BLOCKED rows that exist only in a Coverage checklist file are invisible to a caller that does not read the file; require the disposition counts line in `Coverage:` or define how a caller reads the file. (2) Parsers can still diverge on `Pending verification: none, except ...`, on branch names containing `;` or `,`, and on very long label qualifiers. (3) `/pair-review`'s pause detector reads only the viewer's comments, orders them by `createdAt` alone and treats any pause on a draft as active, while `docs/workflow-handoffs.md` orders by `created_at` then `id` and lets a later running-account receipt clear a pause; `skills/pair-review.md` also names a Track as owner of a future canonical hold/resume detector, which should be checked against the roadmap. (4) A resume prompt printed after `DONE_WITH_CONCERNS` holds by design; confirm that against real resumes. (5) Review cycle 3 added fail-safe or availability residuals: confine the plan fallback path to the bound checkout with the same regular-file and size rule; flag stray marker tokens in outside text; use a per-invocation base-tip ref and correct the "only write" wording; widen the token shapes toward `gstack-redact`'s set and stop echoing free text in diagnostics; token-scan H-D text; accept more zero-count spellings and the bare word `PAUSED` only in the documented phrase; read the indented `/pair-review` resume fence; route Greptile exit-question pauses to `/review-and-prep resume`; compare the receipt pointer's PR with the bound PR; align the B-TREE-ABSENT row with the missing-object rule; ask `/implement` to start each Coverage row with its ID and disposition.
+- **Effort:** M
+- **Context:** Deferred on 2026-10-19 under the stop rule the user set for Track 23I's review (cycle 2 of 3). None is a trust bypass or a contradiction with the contract's current producer text.
+- **Priority:** P3
+- **Revisit when:** The live external-handoff acceptance Tracks (28A/28B) record a real handoff, or the next change to `/pair-review`'s pause detector.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output

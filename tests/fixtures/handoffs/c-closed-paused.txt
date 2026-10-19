@@ -1,0 +1,1 @@
+PR https://github.com/example-org/example-repo/pull/42 is CLOSED while its /review-and-prep preparation was paused. Do not run /ship; a replacement PR needs a new /review-and-prep decision.

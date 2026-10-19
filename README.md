@@ -89,6 +89,7 @@ required.
 in its final prompt. Paste that prompt to run `/ship-and-land`; it trusts those
 completed reviews across sessions/models after one receipt lookup and checks
 subsequent changes.
+The [stage-handoff contract](docs/workflow-handoffs.md) specifies each handoff and how a caller should treat it.
 Preparation also runs `/ship`'s pregate, coverage audit and documentation audit
 on the head it hands off. For a code PR (not the prose-only profile) whose
 prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes

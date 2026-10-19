@@ -1,0 +1,9 @@
+Run /pair-review for draft PR https://github.com/example-org/example-repo/pull/42 on example-org/example-repo, feature/handoff-demo, checkpointed at
+a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; resume its existing matching session if present.
+Review and local checks are recorded in the PR's "Review and prep" receipt.
+Required user checks: M1 open the export page and confirm the report downloads; M2 run the CLI with the new flag and confirm exit 0.
+Keep this PR draft and leave Greptile postponed while testing and fixing.
+Save item-level results, tested build/commit, and fix/retest evidence.
+When these checks are complete, return to /review-and-prep resume for this
+same PR; its remaining preparation precedes /ship-and-land. Do not follow a
+generic /pair-review completion suggestion to go directly to /ship.
