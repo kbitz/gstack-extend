@@ -237,8 +237,8 @@ rule or the explicit `DOCS` override here; it is not missing coverage.
 The [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
 (`docs/workflow-handoffs.md`, H-B) tells external callers how to route this
 section's marked handoff. Its outcomes are caller-side: a caller that cannot vouch
-for a handoff relays it unchanged, and drops the marker line only when it cannot
-attest the text came from the user. This section stays normative for what a
+for a handoff relays it unchanged, and removes every line carrying the marker only
+when it cannot attest the text came from the user. This section stays normative for what a
 relayed marked handoff lets this skill reuse; the contract never overrides it.
 
 Enable this path only when the current user supplies a copyable preparation
