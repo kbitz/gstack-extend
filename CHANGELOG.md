@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.15.0] - 2026-10-19
+
+### Fixed
+
+- **`/ship-and-land --no-land` now tells you how to finish.** The run still stops before merging, but it no longer ends on a bare status line. Its last lines name the PR, the full head SHA and everything landing will ask you to accept on that head, such as `NO_CHECKS` when no CI ran, an unconfirmed first-run setup, readiness warnings and any deployment the merge triggers. Then it asks: land it, or leave the PR open. To land, it prints the exact `/ship-and-land <PR URL>` command. That landing run rechecks the head and asks for each acceptance and the merge approval itself. With a blocker, the run names the repair instead of offering to land.
+- **A reply to a stopped run is never a merge approval.** Replying "merge it" starts a new landing run, which asks its own questions on the head it finds. It does not carry over `--reviewed` or a prepared-review handoff unless you give them again. Any other request, such as fixing a blocker, starts a new run that still stops before landing. Merge approval now explicitly comes from the current run's own readiness report.
+
+## [0.36.14.0] - 2026-10-19
+
+### Fixed
+
+- **Stopping before landing no longer confirms first-run deploy setup.** `/ship-and-land --no-land`, or any direct request to stop at the merge gate, still checks whether setup was confirmed. When the check says this is a first run or the configuration changed, the readiness report and receipt record `first-run setup unconfirmed (<token>): the landing run confirms it`. The run does not ask you to confirm setup and does not write the confirmation. A later landing run asks, and only your own answer there writes it. If the check fails, the run stops instead of treating the failure as a first run.
+
+- **A documented "platform none" example no longer skips a real deploy.** Landing treats the project as having no deploy target only when the actual Deploy Configuration section sets Platform to `none` and every other deploy field to `none`. Text inside a fenced example does not count, and a missing or non-none target keeps the normal deploy questions. An observed deployment, one that is still expected, or a verification URL you supplied still takes the normal route.
+
 ## [0.36.13.0] - 2026-10-19
 
 ### Added

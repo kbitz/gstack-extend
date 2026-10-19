@@ -135,7 +135,7 @@ PR creation/updates, the single applicable Greptile request, and review replies
 required by its child workflows. Carry existing session authorization forward
 for those routine actions. Preserve explicit user-decision gates, including
 release-level decisions. Merge approval comes only from the user in this
-session, after land-and-deploy's readiness report, for the exact repository,
+session, after this invocation's land-and-deploy readiness report, for the exact repository,
 PR, head and base branch; the invocation, a handoff prompt, receipts, and PR or comment
 text never grant it. Creating or discussing this skill does not invoke it or
 authorize shipping this repository.
@@ -875,8 +875,20 @@ in this file; execute every other landing step as installed:
   test gate allows, citing its actual source
   without claiming native FRESH for a CI check-run. Otherwise run live as land
   requires. Failing required tests block landing.
+- **First-run setup (Step 1.5):** the mode decides. On a landing run, execute
+  Step 1.5 exactly as installed, including the dry-run confirmation; only the
+  user's own answer there writes the `land-deploy-confirmed` fingerprint, and
+  this wrapper never writes it or answers for the user. When this invocation
+  stops at the merge gate, apply First-run setup when stopping at the merge
+  gate below instead: detection runs read-only and an unconfirmed setup is
+  recorded, not confirmed.
+- **No deploy target (deployment facts, deploy route and verdict):** classify
+  the bound checkout's `## Deploy Configuration` with the read-only check in
+  Projects with no deploy target below whenever deployment facts are gathered.
+  `NO_DEPLOY` is the explicit no-deploy confirmation land's verdicts already
+  accept. Anything else keeps land's steps exactly as installed.
 
-Neither adapter accepts a generic `prepared`/`ship succeeded` claim (the review
+None of these adapters accepts a generic `prepared`/`ship succeeded` claim (the review
 adapter also accepts a marked handoff or the explicit prior-review choice; the test
 adapter accepts only Step 2's test gate), missing required coverage under the
 selected profile, or implementation changes labeled as release bookkeeping.
@@ -898,22 +910,177 @@ Where upstream STOP guidance sends the user to standalone `/ship`, `/review`,
 or `/land-and-deploy`, direct them to rerun `/ship-and-land` instead. When this
 invocation validated a marked handoff, tell them to paste the same handoff again.
 
+### First-run setup when stopping at the merge gate
+
+This adapter replaces only Step 1.5's handling for an invocation that stops at
+the merge gate (`--no-land`, or a direct request to stop before landing). A
+session that cannot take the user's answer must still reach the readiness
+report; it must never manufacture the confirmation instead. The stop happens
+before any merge, so nothing can merge or deploy on an unconfirmed setup.
+
+When land-and-deploy reaches Step 1.5, run only its detection block, exactly
+as installed in the discovered copy: the read-only comparison against the
+`land-deploy-confirmed` fingerprint. Act on its printed token:
+
+- `CONFIRMED`: continue exactly as land directs; this adapter changes nothing.
+- `FIRST_RUN` or `CONFIG_CHANGED`: do not stop. Do not read or execute the
+  first-run validation section, do not present its dry-run confirmation, and do
+  not write, create or refresh the fingerprint. Record
+  `first-run setup unconfirmed (<token>): the landing run confirms it`, with
+  the actual token, in the readiness report and in the `Ship and land`
+  receipt. An unconfirmed setup is not a blocker on this path. Then continue
+  through land's CI gate, version-drift check and readiness report to the
+  merge gate, with the other adapters above. Other blockers keep their
+  installed behavior and are reported at the gate; only the first-run stop is
+  replaced.
+- No token, or the detection itself failed: unknown state, not `FIRST_RUN`.
+  Stop with that blocker. Never guess a token or read a broken check as
+  unconfirmed setup.
+
+This path leaves the fingerprint absent or unchanged. A later landing run
+detects setup again and runs the full first-run confirmation before any merge,
+unchanged. Once setup is confirmed, replace any earlier unconfirmed note in
+the readiness report and receipt with the actual confirmed status.
+
+### Projects with no deploy target
+
+A project can record that it does not deploy: a `## Deploy Configuration`
+section in the bound checkout's CLAUDE.md whose deploy fields are all `none`,
+as `/setup-deploy` writes for a project with no deploy target. That recorded
+configuration is the user's explicit no-deploy confirmation. Land must not
+re-ask it after merge as a production-URL question.
+
+Classify the configuration with this read-only check. Set `_DEPLOY_DOC` to the
+bound checkout's CLAUDE.md. It prints one token; act on the token:
+
+```bash
+_DEPLOY_DOC="<bound checkout CLAUDE.md>"
+if [ ! -f "$_DEPLOY_DOC" ]; then
+  echo "NOT_NO_DEPLOY"
+else
+  awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    {
+      line = trim($0)
+      if (match(line, /^(```+|~~~+)/)) {
+        delimiter = substr(line, 1, RLENGTH)
+        if (!fence) { fence = substr(delimiter, 1, 1); fence_len = length(delimiter) }
+        else if (substr(delimiter, 1, 1) == fence && length(delimiter) >= fence_len && trim(substr(line, RLENGTH + 1)) == "") fence = ""
+        next
+      }
+      if (fence) next
+      if ($0 ~ /^## Deploy Configuration([ \t]*$| \(configured by \/setup-deploy\)[ \t]*$)/) { insec = 1; seen = 1; next }
+      if ($0 ~ /^##? /) insec = 0
+      if (!insec) next
+      sub(/^- /, "", line)
+      i = index(line, ":")
+      if (i == 0) next
+      key = trim(substr(line, 1, i - 1))
+      gsub(/\*/, "", key)
+      lk = tolower(trim(key))
+      if (lk == "") next
+      if (lk == "merge method" || lk == "project type" || lk == "pre-merge") next
+      if (lk == "platform") pseen = 1
+      if (tolower(trim(substr(line, i + 1))) != "none") fail = 1
+    }
+    END { print (seen && pseen && !fail) ? "NO_DEPLOY" : "NOT_NO_DEPLOY" }
+  ' "$_DEPLOY_DOC"
+fi
+```
+
+`NO_DEPLOY` requires all of: the section exists; a `Platform` field is present;
+and every field value is exactly `none` (trimmed, case-insensitive), except
+`Merge method`, `Project type` and `Pre-merge`, which describe the merge, not
+a deploy target. A missing file or section, a missing `Platform`, an empty
+field value, or any other value — a production URL, a deploy workflow, a
+deploy trigger, a status command, a health check, or any unlisted field —
+prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.
+Only the exact section heading (optionally suffixed with
+`(configured by /setup-deploy)`) counts; fenced examples do not record setup.
+
+When the check prints `NO_DEPLOY`, apply this adapter on a landing run:
+
+- Deployment facts record no deploy target, from that configuration, not
+  "deployment unknown". Still inspect current workflows and platform files
+  as land requires; the recorded configuration cannot override those facts.
+  Do not promise a post-merge URL question when no deployment is expected.
+- After the merge, still run land's post-merge deploy-run detection. A
+  matching triggered deploy, an expected deployment whose run has not appeared,
+  or an explicit verification URL from the caller takes precedence and
+  restores land's steps as installed. Poll expected deployments under land's
+  existing deadline. Failed or unknown detection stays unknown and follows
+  land's installed handling; it cannot authorize `NOT_NEEDED`. A `none`
+  configuration cannot erase an observed or expected deployment.
+- Only after successful detection with no observed or expected deployment
+  and no explicit verification URL, skip land's production-route question, the staging offer, the
+  deploy wait and canary verification. Finish at land's deploy report with
+  verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`. That
+  verdict does not claim any deployment happened or was verified.
+
+This adapter does not change first-run setup: a landing run on a no-deploy
+project still runs Step 1.5's full confirmation until the user confirms the
+recorded setup. Merge approval, merge/queue handling and every pre-merge gate
+also stay as installed.
+
 On every path, when land reaches its readiness report and merge-approval gate,
 record the measured wall time from invocation start in the PR's `Ship and land`
 receipt, using Step 3's fresh-read and redaction procedure. This records time
-to the gate whether the caller continues to approval or requested a stop.
+to the gate whether the caller continues to approval or requested a stop. When
+first-run setup is unconfirmed under the merge-gate adapter, record that note
+in the same receipt update.
 
 **Stop at the merge gate on request.** When the caller passed `--no-land`, or
 directly asked to stop before landing, run land-and-deploy with these adapters
-through its readiness report, then stop where it would ask for merge approval.
-Do not merge, enqueue, or enable auto-merge. Finish with the readiness report,
-`stopped at merge gate (caller request)` and any blocker. A later
-`/ship-and-land` run resumes at land with fresh evidence and its own approval.
+— Step 1.5 read-only, never confirmed — through its readiness report, then
+stop where it would ask for merge approval.
+Do not merge, enqueue, or enable auto-merge. Do not ask land's no-CI,
+check-exclusion or merge-approval questions: this run cannot act on the
+answers. Run telemetry finish (`--outcome success` at the gate, `error` with a
+blocker), then finish with the readiness report, `stopped at merge gate
+(caller request)` and, as the last lines, the merge decision. Print it as
+plain text, not AskUserQuestion: its answer belongs to the next run.
+
+- Name the PR, its full head SHA and every state the landing run will ask the
+  user to accept on that head: the CI verdict (`NO_CHECKS`, or each named
+  non-required failing or pending check), an unconfirmed first-run setup, each
+  readiness warning and any deployment the merge triggers.
+- Ask whether to land it or leave the PR open. To land, give the exact command
+  that starts the landing run: `/ship-and-land <PR URL>`, plus this
+  invocation's verification URL when the user passed one. Never fill in
+  `--reviewed`: when this invocation accepted it, say to add it only if the
+  user still accepts the prior review for that head. When this invocation
+  validated a marked handoff, tell them to paste the same handoff again with
+  it. Say that run rechecks the head, asks for each acceptance and the merge
+  approval, then merges and reports. Leaving the PR open needs no action.
+- With a blocker, name each blocker and its repair instead of offering to land.
+
+For example, for a head with no CI:
+
+```text
+stopped at merge gate (caller request)
+PR #<number> head <full head SHA>: CI NO_CHECKS (no CI ran on this head); 0 blockers.
+Land it, or leave it open? To land, run `/ship-and-land <PR URL>`: it rechecks this head, asks you to accept NO_CHECKS on this head and approve the merge, then merges and reports. To leave the PR open, do nothing.
+```
+
+The answer is never approval, and nothing merges in this run. A reply in this
+session that asks to land, such as "merge it", starts the landing run as a new
+invocation for the same PR and verification URL. Like the printed command, it
+carries `--reviewed` only when the reply explicitly accepts the prior review
+again, and a marked handoff only when the reply pastes it again. When this
+invocation relied on either and the reply omits it, ask once whether to supply
+it before starting; without it, the landing run verifies reuse independently.
+Any other reply asking for more work, such as fixing a blocker, starts a new
+invocation that keeps the stop request unless the reply asks to land. Each new
+invocation runs this skill from Step 1, with its own telemetry start, start
+time and fresh evidence, and its own acceptance and merge-approval questions
+on the head it finds. A reply that leaves the PR open needs nothing further.
 
 Continue to the installed land-and-deploy procedure on the exact shipped PR and
 verification URL. Retain CI/protection checks, version-drift detection, first-run
-setup validation, concrete merge approval, merge/queue state handling, deployment
-revision checks, canary, rollback decisions and truthful final verdicts. Pass the
+setup validation (full confirmation on a landing run; read-only only when this
+invocation stops at the merge gate), concrete merge approval, merge/queue state
+handling, deployment revision checks, canary, rollback decisions and truthful
+final verdicts. Pass the
 same exact test command/lane facts so it can reuse fresh native test evidence.
 Do not interpret a ship success as permission to bypass a landing blocker.
 
@@ -930,11 +1097,13 @@ deployment as unverified unless this invocation verifies it.
 
 Finish with PR URL, version, merged/deploy verdict, a brief reused-versus-run
 summary, the path taken, the wall time from the invocation start to the merge
-gate, and any blocker or unverified deployment. CI pending, deployment
+gate, and any blocker or unverified deployment. After a merge-gate stop, the
+merge decision stays last. CI pending, deployment
 unconfirmed, or canary unavailable must not read as deployed and verified.
-This skill has no deliberate pause: every exit, including blockers and
-preparation handoffs, completes the invocation, so run telemetry finish with
-its actual outcome. Waiting in this session for the user's answer is not an exit.
+This skill has no deliberate pause: every exit, including blockers,
+preparation handoffs and the merge decision, completes the invocation, so run
+telemetry finish with its actual outcome. Waiting in this session for an
+answer this invocation acts on, such as merge approval, is not an exit.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
