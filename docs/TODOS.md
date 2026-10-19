@@ -18,14 +18,6 @@
 - **Priority:** P3
 - **Revisit when:** Any root and skill exceeds about 100 open handoffs, or the doctor report in the previous item shows accumulation.
 
-### [plan-ceo-review:track=23E] Add trigger-migration scenarios to the attended planning matrix
-
-- **Description:** Track 23E adds a legacy trigger migration to `/roadmap` (`skills/roadmap.md`, Deferred work). Its string locks prove the instruction exists, not that an agent follows it. Add scenarios to the attended planning matrix: preservation of every existing character, Approve, Revise and Hold behavior, duplicate or missing titles (`not located`), a title-only bullet, a repeat run, a realistically sized backlog, and the owner's review effort for a batch.
-- **Effort:** M (human: ~1 day / CC: ~1 hour)
-- **Context:** Raised by Track 23E's /autoplan (CEO and DX voices). The Track's executable proof is the `--future-index` unit and CLI tests plus a test that runs the Validate snippet from the skill; the migration's agent behavior is prose only. Placement belongs in Track 25B (installed-skill planning acceptance), so the next `/roadmap` run decides it.
-- **Priority:** P3
-- **Revisit when:** `/roadmap` plans Track 25B, or the first trigger-migration batch is run against a real Future file.
-
 ### [ship] init guesses project identity from the slug and the exact path
 
 - **Description:** `registry_upsert` treats an entry with the same slug or the same exact path as the same project. That guess fails five ways. (1) A different project with the same basename slug and no remote silently replaces the other entry. (2) Projects nested inside one git repo all get the parent repo's remote slug (`detect_slug` reads the enclosing repo's `remote.origin.url`) and evict each other. (3) Path matching compares strings, so a hand-edited trailing slash, or an entry an older version recorded in the typed case (paths now resolve to the on-disk case), adds a duplicate entry. (4) `--migrate` without `--name` resets a custom display name to the basename. (5) A different project cloned into a path whose old project was deleted is "already onboarded", so `--migrate` gives it the dead project's `created_at`. Decide a real identity key (for example the remote URL plus the path relative to the git toplevel) and preview every entry an upsert will drop.
