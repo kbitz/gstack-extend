@@ -58,6 +58,14 @@
 - **Priority:** P3
 - **Revisit when:** The next change to `bin/gstack-extend` init or `setup`, or a report of a misleading init refusal or SUCCESS.
 
+### [plan-ceo-review:track=23I,defer=true] Machine-readable schema for the stage handoffs
+
+- **Description:** `docs/workflow-handoffs.md` publishes the stage handoffs as a prose grammar with a test-only classifier. A caller that wants to validate a handoff mechanically must write its own parser from the label tables. Add a schema (for example `docs/workflow-handoffs.schema.json`, versioned beside the contract) only for a named consumer, and keep the doc as the oracle so the two cannot drift.
+- **Effort:** M
+- **Context:** CEO deferral E3 from Track 23I's approved autoplan on 2026-10-18. Deferred because no in-repo consumer reads a schema, and the Track's gate decision (2026-10-19) chose a doc plus fixture-consumer tests with no parser binary.
+- **Priority:** P3
+- **Revisit when:** A named external consumer asks for a machine-readable schema, or the live external-handoff acceptance Tracks (28A/28B when written) show a consumer misparsing the prose grammar.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
