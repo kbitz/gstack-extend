@@ -1,0 +1,1 @@
+Draft PR https://github.com/example-org/example-repo/pull/42 is PAUSED — manual testing required. No /ship-and-land prompt was issued.

@@ -49,7 +49,7 @@ _1 task . ~360 LOC incl. tests . medium risk_
 **Outcome:** An external caller can transfer completed work or a named hold to the next skill without retyping context.
 **Supports:** [SPEC](SPEC.md) O3/O4 — consumers currently depend on a literal implement line and a separate review marker.
 **Done when:** The public versioned contract binds stage/status, plan, repository/PR, checked revision, artifacts and next action; all producers preserve current consumers, and negative examples refuse stale, blocked and partially verified work.
-_touches: docs/workflow-handoffs.md (new), skills/implement.md, skills/review-and-prep.md, skills/pair-review.md, skills/ship-and-land.md, tests/handoff-contract.test.ts (new), tests/helpers/touchfiles.ts_
+_touches: docs/workflow-handoffs.md (new), skills/implement.md, skills/review-and-prep.md, skills/pair-review.md, skills/ship-and-land.md, tests/handoff-contract.test.ts (new), tests/fixtures/handoffs/ (new), tests/helpers/touchfiles.ts, README.md_
 _blocked-by: Track 23D_
 - **Stabilize the existing handoff boundary** -- Specify the human-readable and machine-consumed fields together and update the four producers. Retain Run /review-and-prep and review-and-prep/v1 compatibility; support a caller stopping at the prepared PR. Execute fixture consumers against success, PAUSED/manual hold, missing artifact, changed revision and approved-deferred scope outputs. No orchestration engine or automatic merge. _~360 lines._ (L)
 

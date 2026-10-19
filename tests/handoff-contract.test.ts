@@ -76,8 +76,13 @@ const GRAMMAR_HEADINGS: Record<string, string> = {
   'H-C-pause': '### Grammar H-C pause',
   'H-C-resume': '### Grammar H-C resume',
 };
-function grammar(kind: string): Array<{ label: string; required: boolean }> {
-  return tableRows(section(GRAMMAR_HEADINGS[kind])).map(([label, req]) => ({ label: unTick(label), required: req === 'yes' }));
+type LineMode = 'single' | 'list' | 'prose';
+interface Spec { label: string; required: boolean; lines: LineMode }
+function grammar(kind: string): Spec[] {
+  return tableRows(section(GRAMMAR_HEADINGS[kind])).map(([label, req, lines]) => {
+    if (!['single', 'list', 'prose'].includes(lines)) throw new Error(`${kind} ${label}: Lines must be single, list or prose`);
+    return { label: unTick(label), required: req === 'yes', lines: lines as LineMode };
+  });
 }
 
 // ─── Fixtures ──────────────────────────────────────────────────────────
@@ -86,8 +91,11 @@ interface CaseDef {
   text: string;
   edits?: Array<[string, string]>;
   wrap?: 'crlf' | 'fence' | 'quote';
+  prefix?: string;
+  suffix?: string;
   provenance?: Provenance;
   live?: Live;
+  unset?: string[];
   expect?: {
     handoff?: Kind; mismatches?: string[]; deferrals?: number; pending?: number; notes?: string[];
     releaseOnlyEligible?: boolean; extensions?: string[]; unknown?: string[];
@@ -113,14 +121,33 @@ function fixtureText(def: CaseDef): string {
   if (def.wrap === 'crlf') text = text.replace(/\n/g, '\r\n');
   if (def.wrap === 'fence') text = `Here is the prompt I was given:\n\`\`\`text\n${text}\`\`\`\n`;
   if (def.wrap === 'quote') text = text.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n');
-  return text;
+  return withVars(def.prefix ?? '') + text + withVars(def.suffix ?? '');
 }
 
 // ─── The consumer under test ───────────────────────────────────────────
 
 type Provenance = { channel: string; attested: boolean; capturedBy?: string } | null;
-type Live = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Live = Record<string, any>;
 interface Mismatch { binding: string; cap: Outcome; expected?: unknown; actual?: unknown }
+
+const SHA40 = /^[0-9a-f]{40}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+const PR_URL = /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/;
+const LABEL_LINE = /^(X-[A-Za-z0-9-]+|[A-Z][A-Za-z/() -]{0,38}):(?: (.*))?$/;
+const QUALIFIED_LABEL = /^([A-Z][A-Za-z/ -]{0,38}?) \([^()\n]*\):(?: (.*))?$/;
+const DISPOSITION = 'BUILT|ADAPTED|DEFERRED BY USER|BLOCKED';
+const ROW_LABEL = new RegExp(`\\b(?:${DISPOSITION})$`);
+// One separator class on each side of the disposition keeps matching linear on long whitespace runs.
+const ROW = new RegExp(`^\\s*(?:[-*]\\s+|\\|\\s*)?([A-Za-z0-9._#/-]+)[\\s:|—–-]*(${DISPOSITION})\\b[\\s:|—–-]*(.*)$`);
+const TOKEN_SHAPES = [
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/, /\bgithub_pat_[A-Za-z0-9_]{20,}/, /\bsk-[A-Za-z0-9_-]{20,}/,
+  /\bAKIA[0-9A-Z]{16}\b/, /\bxox[abprs]-[A-Za-z0-9-]{10,}/, /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/,
+  /:\/\/[^\s/:@]+:[^\s/@]+@/,
+];
+const tokenShaped = (s: string): boolean => TOKEN_SHAPES.some((re) => re.test(s));
+const withheld = (x: unknown): unknown => (typeof x === 'string' && tokenShaped(x) ? '[token-shaped value withheld]' : x);
+const HANDOFF_START = /^Run \/(?:review-and-prep\b|pair-review for draft PR\b|ship-and-land for this prepared PR\b)/;
+const FENCE = /^\s*```/;
 
 class Verdict {
   deferrals: string[] = [];
@@ -131,61 +158,74 @@ class Verdict {
   releaseOnlyEligible = false;
   constructor(public handoff: Kind, public outcome: Outcome) {}
   flag(binding: string, cap: Outcome, expected?: unknown, actual?: unknown): void {
-    if (!this.mismatches.some((m) => m.binding === binding)) this.mismatches.push({ binding, cap, expected, actual });
+    if (!this.mismatches.some((m) => m.binding === binding)) {
+      this.mismatches.push({ binding, cap, expected: withheld(expected), actual: withheld(actual) });
+    }
     if (RANK[cap] > RANK[this.outcome]) this.outcome = cap;
   }
 }
-
-const SHA40 = /^[0-9a-f]{40}$/;
-const SHA256 = /^[0-9a-f]{64}$/;
-const PR_URL = /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/;
-const LABEL_LINE = /^(X-[A-Za-z0-9-]+|[A-Z][A-Za-z/() -]{0,38}): ?(.*)$/;
-const TOKEN_SHAPES = [
-  /\bgh[pousr]_[A-Za-z0-9]{20,}/, /\bgithub_pat_[A-Za-z0-9_]{20,}/, /\bsk-[A-Za-z0-9_-]{20,}/,
-  /\bAKIA[0-9A-Z]{16}\b/, /\bxox[abprs]-[A-Za-z0-9-]{10,}/, /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/,
-  /:\/\/[^\s/:@]+:[^\s/@]+@/,
-];
-const START = /^Run \/(review-and-prep|pair-review|ship-and-land)\b/;
 
 function normalize(text: string): string[] {
   let lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/\s+$/, ''));
   const body = lines.filter((l) => l.trim() !== '');
   if (body.length > 0 && body.every((l) => /^\s*>/.test(l))) lines = lines.map((l) => l.replace(/^\s*> ?/, ''));
-  const first = lines.findIndex((l) => START.test(l));
-  const opener = lines.findIndex((l) => /^\s*```/.test(l));
-  if (opener >= 0 && (first < 0 || opener < first)) {
-    const close = lines.findIndex((l, i) => i > opener && /^\s*```\s*$/.test(l));
-    lines = lines.slice(opener + 1, close < 0 ? undefined : close);
-  }
   return lines;
 }
 
-function detect(lines: string[]): { kind: Kind; start: number } {
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    if (/^Run \/review-and-prep resume\b/.test(l)) return { kind: 'H-C-resume', start: i };
-    if (/^Run \/pair-review for draft PR\b/.test(l)) return { kind: 'H-C-pause', start: i };
-    if (/^Run \/ship-and-land for this prepared PR\b/.test(l)) return { kind: 'H-B', start: i };
-    if (/^Run \/review-and-prep\b/.test(l)) return { kind: 'H-A', start: i };
-  }
-  return { kind: 'H-D', start: 0 };
+function kindOf(line: string): Kind {
+  if (/^Run \/review-and-prep resume\b/.test(line)) return 'H-C-resume';
+  if (/^Run \/pair-review for draft PR\b/.test(line)) return 'H-C-pause';
+  if (/^Run \/ship-and-land for this prepared PR\b/.test(line)) return 'H-B';
+  return 'H-A';
+}
+
+/** The handoff is the earliest first line onward, cut at the fence that encloses it. */
+function locate(lines: string[]): { kind: Kind; handoff: string[]; outside: string[]; count: number } {
+  const starts = lines.flatMap((l, i) => (HANDOFF_START.test(l) ? [i] : []));
+  if (starts.length === 0) return { kind: 'H-D', handoff: lines, outside: [], count: 0 };
+  const s = starts[0];
+  const fences = lines.slice(0, s).flatMap((l, i) => (FENCE.test(l) ? [i] : []));
+  if (fences.length % 2 === 0) return { kind: kindOf(lines[s]), handoff: lines.slice(s), outside: lines.slice(0, s), count: starts.length };
+  const open = fences[fences.length - 1];
+  const close = lines.findIndex((l, i) => i > s && /^\s*```\s*$/.test(l));
+  const end = close < 0 ? lines.length : close;
+  return {
+    kind: kindOf(lines[s]),
+    handoff: lines.slice(s, end),
+    outside: [...lines.slice(0, open), ...lines.slice(end + 1)],
+    count: starts.length,
+  };
 }
 
 interface Fields { fields: Map<string, string[][]>; unknown: string[]; extensions: string[] }
-function parseFields(lines: string[], known: string[]): Fields {
+function labelOf(line: string, known: string[]): { label: string; value: string; kind: 'known' | 'x' | 'unknown' } | null {
+  if (/^\s/.test(line)) return null;
+  const m = LABEL_LINE.exec(line);
+  const plain = m && !ROW_LABEL.test(m[1]) ? m : null;
+  if (plain?.[1].startsWith('X-')) return { label: plain[1], value: plain[2] ?? '', kind: 'x' };
+  if (plain && known.includes(plain[1])) return { label: plain[1], value: plain[2] ?? '', kind: 'known' };
+  const q = QUALIFIED_LABEL.exec(line);
+  if (q && known.includes(q[1])) return { label: q[1], value: q[2] ?? '', kind: 'known' };
+  return plain ? { label: plain[1], value: plain[2] ?? '', kind: 'unknown' } : null;
+}
+
+function parseFields(lines: string[], spec: Spec[]): Fields {
+  const known = spec.map((s) => s.label);
   const fields = new Map<string, string[][]>();
   const unknown: string[] = [];
   const extensions: string[] = [];
-  let cur: string[] | null = null;
+  let cur: { values: string[]; mode: LineMode } | null = null;
   for (const line of lines) {
     if (line.trim() === '') { cur = null; continue; }
-    const m = /^\s/.test(line) ? null : LABEL_LINE.exec(line);
-    if (m && m[1].startsWith('X-')) { extensions.push(m[1]); cur = []; }
-    else if (m && known.includes(m[1])) {
-      cur = [m[2]];
-      fields.set(m[1], [...(fields.get(m[1]) ?? []), cur]);
-    } else if (m) { unknown.push(m[1]); cur = []; }
-    else if (cur) cur.push(line);
+    const l = labelOf(line, known);
+    if (l?.kind === 'x') { extensions.push(l.label); cur = { values: [], mode: 'prose' }; }
+    else if (l?.kind === 'unknown') { unknown.push(l.label); cur = { values: [], mode: 'prose' }; }
+    else if (l) {
+      const values = [l.value];
+      fields.set(l.label, [...(fields.get(l.label) ?? []), values]);
+      cur = { values, mode: spec.find((s) => s.label === l.label)!.lines };
+    } else if (cur && (cur.mode === 'prose' || (cur.mode === 'list' && /^(\s+|[-*]\s)/.test(line)))) cur.values.push(line);
+    else cur = null;
   }
   return { fields, unknown, extensions };
 }
@@ -201,15 +241,33 @@ function one(f: Fields, v: Verdict, label: string, required: boolean): string[] 
   return occ[0];
 }
 
+/** Records are oldest first. A pause holds until a later receipt by the running account. */
 function pauseActive(live: Live): boolean {
-  const markers: Array<{ kind: string }> = live.markers ?? [];
-  return markers[markers.length - 1]?.kind === 'paused' || (live.isDraft === true && markers.some((m) => m.kind === 'paused'));
+  if (live.bodyPaused === true) return true;
+  const markers: Array<{ kind: string; authorIsRunningAccount?: boolean }> = live.markers ?? [];
+  const last = markers.findLastIndex((m) => m.kind === 'paused');
+  return last >= 0 && !markers.slice(last + 1).some((m) => m.kind === 'receipt' && m.authorIsRunningAccount === true);
 }
 
-function scanTokens(v: Verdict, fields: Record<string, string>): void {
-  for (const [name, value] of Object.entries(fields)) {
-    if (TOKEN_SHAPES.some((re) => re.test(value))) v.flag('redaction', HOLD, 'no token-shaped value', `field ${name}`);
+function scanTokens(v: Verdict, f: Fields, lines: string[]): void {
+  for (const [label, occ] of f.fields) {
+    if (tokenShaped(occ.flat().join('\n'))) { v.flag('redaction', HOLD, 'no token-shaped value', `field ${label}`); return; }
   }
+  if (tokenShaped(lines.join('\n'))) v.flag('redaction', HOLD, 'no token-shaped value', 'unlabeled text');
+}
+
+const STATUS_WORD = /(?<![A-Z_])(BLOCKED|NEEDS_CONTEXT|DONE_WITH_CONCERNS|PAUSED|DONE)(?![A-Z_])/g;
+const KNOWN_STATUS = ['BLOCKED', 'NEEDS_CONTEXT', 'DONE', 'DONE_WITH_CONCERNS'];
+
+/** H-D signals: every word in H-D text and in text around a handoff. */
+function statusSignals(v: Verdict, text: string): void {
+  const words = new Set([...text.matchAll(STATUS_WORD)].map((m) => m[1]));
+  const status = /^STATUS:\s*([A-Z_]+)/m.exec(text)?.[1];
+  if (status && !KNOWN_STATUS.includes(status)) v.flag('unknown-status', HOLD, 'a known status word', status);
+  if (words.has('BLOCKED')) v.flag('blocked', REFUSE, 'a copyable next-stage prompt', 'BLOCKED');
+  if (words.has('NEEDS_CONTEXT')) v.flag('needs-context', HOLD, 'no missing input', 'NEEDS_CONTEXT');
+  if (words.has('DONE_WITH_CONCERNS')) v.flag('done-with-concerns', HOLD, 'no open concerns', 'DONE_WITH_CONCERNS');
+  if (words.has('PAUSED')) v.flag('pause', HOLD, 'no pause in force', 'PAUSED');
 }
 
 function identity(v: Verdict, repo: string | undefined, pr: number | undefined, live: Live): void {
@@ -227,50 +285,60 @@ function unknownLive(v: Verdict, live: Live): boolean {
 function classifyA(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-A', FULL);
   const spec = grammar('H-A');
-  const f = parseFields(lines.slice(1), spec.map((s) => s.label));
+  const f = parseFields(lines.slice(1), spec);
   v.parsed = { unknown: f.unknown, extensions: f.extensions };
   const val: Record<string, string[] | null> = {};
   for (const s of spec) val[s.label] = one(f, v, s.label, s.required);
+  scanTokens(v, f, lines);
   if (unknownLive(v, live)) return v;
 
-  const ws = val['Workspace'] && /^(\/\S*)/.exec(val['Workspace'][0])?.[1];
+  const ws = val['Workspace'] && /^(\/.*?)(?:\s+—\s.*)?$/.exec(val['Workspace'][0])?.[1];
   if (val['Workspace'] && !ws) v.flag('malformed', FULL, 'absolute workspace path', val['Workspace'][0]);
   if (ws && live.workspace !== undefined && ws !== live.workspace) v.flag('workspace', FULL, live.workspace, ws);
 
+  const unremote = (ref: string): string => {
+    const remote = (live.remotes ?? []).find((r: string) => ref.startsWith(`${r}/`));
+    return remote ? ref.slice(remote.length + 1) : ref;
+  };
   const br = val['Branch'] && /^(.+?); target base: (.+?); HEAD: (\S+)$/.exec(val['Branch'][0]);
   if (val['Branch'] && !(br && SHA40.test(br[3]))) v.flag('malformed', FULL, 'branch; target base; 40-hex HEAD', val['Branch'][0]);
   if (br && SHA40.test(br[3])) {
     if (live.branch !== undefined && br[1] !== live.branch) v.flag('branch', REFUSE, live.branch, br[1]);
-    if (live.base !== undefined && br[2] !== live.base) v.flag('base', REFUSE, live.base, br[2]);
+    if (live.base !== undefined && unremote(br[2]) !== unremote(live.base)) v.flag('base', REFUSE, live.base, br[2]);
     if (live.headSha !== undefined && br[3] !== live.headSha) v.flag('head', FULL, live.headSha, br[3]);
   }
 
   const state = val['Work state']?.join(' ') ?? '';
-  if (/\b(uncommitted|unstaged|untracked)\b/i.test(state) && live.workState === 'clean') v.flag('work-state', FULL, 'dirty workspace', 'clean');
-  if (val['Plan'] && !/^(.+?); approved scope: (.+)$/.test(val['Plan'][0])) v.flag('malformed', FULL, 'path; approved scope', val['Plan'][0]);
+  const claimsDirty = /^uncommitted\b/i.test(state) || /\b[1-9]\d*\s+(?:modified|staged|unstaged|untracked)\b/i.test(state);
+  if (claimsDirty && live.workState === 'clean') v.flag('work-state', FULL, 'dirty workspace', 'clean');
+  if (val['Plan'] && !/^\S.*\bapproved scope:\s*\S/i.test(val['Plan'][0])) v.flag('malformed', FULL, '<path or link> ... approved scope: <source>', val['Plan'][0]);
 
-  const coverage = val['Coverage']?.join('\n') ?? '';
-  if (/\bBLOCKED\b/.test(coverage)) v.flag('blocked-row', REFUSE, 'no BLOCKED row in a handoff', 'BLOCKED row');
-  const row = /^\s*(?:[-*]\s+|\|\s*)?([A-Za-z0-9._#/-]+)\s*[:|—–-]*\s*\|?\s*(BUILT|ADAPTED|DEFERRED BY USER|BLOCKED)\b\s*[:|—–|-]*\s*(.*)$/;
-  for (const line of coverage.split('\n')) {
-    const m = row.exec(line);
+  // Rows count wherever they appear, so a duplicate or unindented Coverage cannot hide one.
+  for (const line of lines.slice(1)) {
+    const m = ROW.exec(line);
+    if (m?.[2] === 'BLOCKED') v.flag('blocked-row', REFUSE, 'no BLOCKED row in a handoff', `row ${m[1]}`);
     if (m?.[2] === 'DEFERRED BY USER') {
       v.deferrals.push(`${m[1]}: ${m[3]}`);
       if (m[3].trim() === '') v.flag('deferral-reference', FULL, 'a decision reference', 'none');
     }
   }
-  const pending = (val['Pending verification'] ?? []).map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean);
-  if (!(pending.length === 1 && /^none\.?$/i.test(pending[0]))) v.pending = pending;
+  const coverage = (f.fields.get('Coverage') ?? []).flat().join('\n');
+  if (/\b[1-9]\d*\s+BLOCKED\b/.test(coverage)) v.flag('blocked-row', REFUSE, 'no BLOCKED row in a handoff', 'a nonzero BLOCKED count');
 
-  scanTokens(v, Object.fromEntries(['Work state', 'Plan', 'Implementation', 'Coverage', 'Decisions/deviations', 'Checks run',
-    'Pending verification', 'Risks/context', 'Preserve'].map((l) => [l, (val[l] ?? []).join('\n')])));
+  const pending = (val['Pending verification'] ?? []).map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean);
+  if (!(pending.length === 1 && /^none\b/i.test(pending[0]))) v.pending = pending;
   return v;
 }
+
+/** Every validated H-B binding the caller must have read; `null` means read and absent. */
+const B_LIVE = ['repo', 'prNumber', 'prState', 'isDraft', 'headRef', 'baseRef', 'headSha', 'preparedTreeSha',
+  'preparedHeadContainsReviewedBase', 'reviewedBaseIsAncestorOfBaseTip', 'planSha256', 'receiptFound',
+  'receiptAuthorIsRunningAccount', 'receiptMarkerSha', 'markers', 'bodyPaused'];
 
 function classifyB(lines: string[], prov: Provenance, live: Live): Verdict {
   const v = new Verdict('H-B', TRUSTED);
   const spec = grammar('H-B');
-  const f = parseFields(lines.slice(1), spec.map((s) => s.label));
+  const f = parseFields(lines.slice(1), spec);
   v.parsed = { unknown: f.unknown, extensions: f.extensions };
   const val: Record<string, string[] | null> = {};
   for (const s of spec) val[s.label] = one(f, v, s.label, s.required);
@@ -302,10 +370,10 @@ function classifyB(lines: string[], prov: Provenance, live: Live): Verdict {
       const n = Number(mk[1]);
       if (n < CURRENT_MARKER_VERSION) {
         v.flag('marker-version', FULL, `v${CURRENT_MARKER_VERSION}`, `v${n}`);
-        v.notes.push(`deprecated: superseded marker saw review-and-prep/v${n}, current v${CURRENT_MARKER_VERSION}; removal: none scheduled`);
+        v.notes.push(`deprecated: saw review-and-prep/v${n}, current v${CURRENT_MARKER_VERSION}; removal: none scheduled`);
       } else if (n > CURRENT_MARKER_VERSION) {
         v.flag('marker-version', FULL, `v${CURRENT_MARKER_VERSION}`, `v${n}`);
-        v.notes.push(`newer marker saw review-and-prep/v${n}, current v${CURRENT_MARKER_VERSION}; update this consumer`);
+        v.notes.push(`newer: saw review-and-prep/v${n}, current v${CURRENT_MARKER_VERSION}; update this consumer`);
       }
     }
   }
@@ -313,16 +381,17 @@ function classifyB(lines: string[], prov: Provenance, live: Live): Verdict {
   // Plan.
   const pl = val['Plan'] && /^(.+); SHA-256: (\S+)$/.exec(val['Plan'][0]);
   if (val['Plan'] && !(pl && SHA256.test(pl[2]))) v.flag('malformed', FULL, '<ref>; SHA-256: <64 hex>', val['Plan'][0]);
+  const agreedTask = pl?.[1].replace(/"/g, '') === 'agreed task in the receipt';
 
   // Receipt pointer: an unlabeled paragraph.
   const rc = /receipt\s+comment\s+(https:\/\/\S+)\s+by\s+([^\s,]+),\s+marked\s+<!-- review-and-prep:receipt:(\S+) -->/.exec(lines.join(' '));
-  if (!rc || !SHA40.test(rc[3])) v.flag('malformed', FULL, 'receipt comment URL by <login>, marked <!-- review-and-prep:receipt:<40 hex> -->', rc?.[0]);
+  if (!rc || !SHA40.test(rc[3])) v.flag('malformed', FULL, 'receipt comment URL by <login>, marked <!-- review-and-prep:receipt:<40 hex> -->', rc?.[0] ?? 'missing');
   else if (head && rc[3] !== head) v.flag('receipt-marker', FULL, head, rc[3]);
 
   // Greptile.
   const gtext = squash((val['Greptile'] ?? []).join(' '));
+  const done = /^completed on (\S+?);/.exec(gtext);
   if (val['Greptile']) {
-    const done = /^completed on (\S+?);/.exec(gtext);
     const skip = /^skipped\s+—\s*([^;]*);/.exec(gtext);
     if (done && SHA40.test(done[1])) {
       if (live.greptileReviewedShaInHeadHistory === false) v.flag('greptile-sha', FULL, 'reviewed commit in head history', done[1]);
@@ -333,28 +402,35 @@ function classifyB(lines: string[], prov: Provenance, live: Live): Verdict {
     } else v.flag('malformed', FULL, 'completed on <SHA>, unverified, or skipped', gtext.slice(0, 60));
   }
 
+  scanTokens(v, f, lines);
   if (unknownLive(v, live)) return v;
 
-  // Live bindings.
+  // Live bindings. A binding the caller did not read is unknown, never a pass.
+  const missing = B_LIVE.filter((k) => live[k] === undefined && !(k === 'planSha256' && agreedTask));
+  if (done && live.greptileReviewedShaInHeadHistory === undefined) missing.push('greptileReviewedShaInHeadHistory');
+  if (missing.length > 0) v.flag('unknown', HOLD, 'every validated binding read', `not read: ${missing.join(', ')}`);
   if (live.prState === 'MERGED') { v.flag('pr-state', REFUSE, 'OPEN', 'MERGED'); v.notes.push('already-landed: nothing remains to ship'); }
   else if (live.prState !== undefined && live.prState !== 'OPEN') v.flag('pr-state', REFUSE, 'OPEN', live.prState);
   if (live.headSha === null) v.flag('head-deleted', REFUSE, 'an existing PR head', 'deleted');
-  else {
-    if (head && head !== live.headSha) v.flag('head', FULL, live.headSha, head);
-    if (tree && live.treeSha !== undefined && tree !== live.treeSha) v.flag('tree', FULL, live.treeSha, tree);
-    if (live.headContainsReviewedBase === false) v.flag('base-in-head', FULL, 'head contains the reviewed base', 'does not');
-    if (live.reviewedBaseIsAncestorOfBaseTip === false) v.flag('base', FULL, 'reviewed base ancestor of base tip', 'not an ancestor');
-  }
+  else if (head && live.headSha !== undefined && head !== live.headSha) v.flag('head', FULL, live.headSha, head);
+  if (tree && live.preparedTreeSha && tree !== live.preparedTreeSha) v.flag('tree', FULL, live.preparedTreeSha, tree);
+  if (live.preparedHeadContainsReviewedBase === false) v.flag('base-in-head', FULL, 'Prepared HEAD contains the reviewed base', 'does not');
+  if (live.reviewedBaseIsAncestorOfBaseTip === false) v.flag('base', FULL, 'reviewed base ancestor of base tip', 'not an ancestor');
   if (live.isDraft === true) v.flag('pr-draft', HOLD, 'a ready PR', 'draft');
-  if (pauseActive(live)) v.flag('pause', HOLD, 'no pause in force', 'newest record is a pause');
-  if (live.planSha256 === null) v.flag('plan-unreadable', HOLD, 'a readable scope source', 'unreadable');
-  else if (pl && live.planSha256 !== undefined && pl[2] !== live.planSha256) v.flag('plan-sha256', FULL, live.planSha256, pl[2]);
+  if (pauseActive(live)) v.flag('pause', HOLD, 'no pause in force', 'a pause no running-account receipt supersedes');
+  if (!agreedTask) {
+    if (live.planSha256 === null) v.flag('plan-unreadable', HOLD, 'a readable scope source', 'unreadable');
+    else if (pl && SHA256.test(pl[2]) && live.planSha256 !== undefined && pl[2] !== live.planSha256) v.flag('plan-sha256', FULL, live.planSha256, pl[2]);
+  }
   if (live.receiptFound === false) v.flag('receipt-missing', FULL, 'a receipt comment on the bound PR', 'none');
-  else if (live.receiptAuthorIsRunningAccount === false) v.flag('receipt-author', FULL, 'running account', rc?.[2]);
-  if (live.requiredCheckNotRun === true) v.flag('check-not-run', FULL, 'every required check run', 'recorded not run');
+  else {
+    if (live.receiptAuthorIsRunningAccount === false) v.flag('receipt-author', FULL, 'running account', rc?.[2]);
+    if (head && live.receiptMarkerSha && live.receiptMarkerSha !== head) v.flag('receipt-marker', FULL, head, live.receiptMarkerSha);
+  }
+  if (live.requiredCheckNotRun !== false) v.flag('check-not-run', FULL, 'every required check run', live.requiredCheckNotRun ? 'recorded not run' : 'not read');
   if (!(prov?.channel === 'user-prompt' && prov.attested === true)) v.flag('provenance', FULL, 'attested user-prompt', prov?.channel ?? 'none');
-  scanTokens(v, { Plan: val['Plan']?.[0] ?? '', Greptile: gtext });
 
+  // Necessary for /ship-and-land's release-only path, never sufficient.
   v.releaseOnlyEligible = v.outcome === TRUSTED && live.baseTipSha === base && live.headSha === head &&
     live.coverageBound === true && live.documentationBound === true && live.receiptEditorsAllRunningAccount === true;
   return v;
@@ -363,15 +439,20 @@ function classifyB(lines: string[], prov: Provenance, live: Live): Verdict {
 function classifyPause(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-C-pause', HOLD);
   const spec = grammar('H-C-pause');
-  const f = parseFields(lines.slice(1), spec.map((s) => s.label));
+  const f = parseFields(lines.slice(1), spec);
   const first = squash(lines.slice(0, 2).join(' '));
-  const m = /^Run \/pair-review for draft PR (\S+) on .+?, checkpointed at (\S+?);/.exec(first);
+  const m = /^Run \/pair-review for draft PR (\S+) on ([^,\s]+), (\S+), checkpointed at (\S+?);/.exec(first);
+  if (!m) v.flag('malformed', FULL, 'Run /pair-review for draft PR <URL> on <repository, head branch>, checkpointed at <full HEAD SHA>', first.slice(0, 80));
   const url = m && PR_URL.exec(m[1]);
-  if (url) identity(v, url[1], Number(url[2]), live);
-  if (m && SHA40.test(m[2]) && live.headSha !== undefined && m[2] !== live.headSha) v.flag('checkpoint', HOLD, live.headSha, m[2]);
+  if (url) {
+    identity(v, url[1], Number(url[2]), live);
+    if (m![2] !== url[1]) v.flag('repo', REFUSE, url[1], m![2]);
+  }
+  if (m && live.branch !== undefined && m[3] !== live.branch) v.flag('branch', REFUSE, live.branch, m[3]);
+  if (m && SHA40.test(m[4]) && live.headSha !== undefined && m[4] !== live.headSha) v.flag('checkpoint', HOLD, live.headSha, m[4]);
   const checks = one(f, v, 'Required user checks', true) ?? [];
-  const value = [checks[0] ?? '', ...checks.slice(1).filter((l) => /^(\s+|[-*]\s)/.test(l))].join(' ');
-  v.pending = value.split(';').map((s) => s.trim()).filter(Boolean);
+  v.pending = checks.join(' ').split(';').map((s) => s.trim()).filter(Boolean);
+  scanTokens(v, f, lines);
   unknownLive(v, live);
   return v;
 }
@@ -379,17 +460,20 @@ function classifyPause(lines: string[], live: Live): Verdict {
 function classifyResume(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-C-resume', FULL);
   const spec = grammar('H-C-resume');
-  const f = parseFields(lines.slice(1), spec.map((s) => s.label));
+  const f = parseFields(lines.slice(1), spec);
   const first = /^Run \/review-and-prep resume for PR (\S+) on (\S+), branch (.+)\.$/.exec(lines[0]);
   if (!first) v.flag('malformed', FULL, 'Run /review-and-prep resume for PR <URL> on <owner/repo>, branch <branch>.', lines[0]);
   else {
     const url = PR_URL.exec(first[1]);
-    if (url) identity(v, url[1], Number(url[2]), live);
+    if (url) {
+      identity(v, url[1], Number(url[2]), live);
+      if (first[2] !== url[1]) v.flag('repo', REFUSE, url[1], first[2]);
+    }
     if (live.branch !== undefined && first[3] !== live.branch) v.flag('branch', REFUSE, live.branch, first[3]);
   }
   const at = one(f, v, 'Paused at', false);
   const markers: Array<{ kind: string; sha: string; authorIsRunningAccount: boolean }> = live.markers ?? [];
-  const paused = [...markers].reverse().find((x) => x.kind === 'paused');
+  const paused = markers.findLast((x) => x.kind === 'paused');
   if (!at) v.flag('paused-sha-missing', FULL, 'Paused at: <40 hex>', 'absent');
   else if (!SHA40.test(at[0])) v.flag('malformed', FULL, '40-hex Paused at', at[0]);
   else {
@@ -399,11 +483,10 @@ function classifyResume(lines: string[], live: Live): Verdict {
   for (const s of spec.filter((x) => x.required)) one(f, v, s.label, true);
   if (paused && !paused.authorIsRunningAccount) v.flag('pause-author', HOLD, 'running account', 'another author');
   if (live.prState !== undefined && live.prState !== 'OPEN') v.flag('pr-state', HOLD, 'OPEN', live.prState);
+  scanTokens(v, f, lines);
   unknownLive(v, live);
   return v;
 }
-
-const STATUS_WORD = /(?<![A-Z_])(BLOCKED|NEEDS_CONTEXT|DONE_WITH_CONCERNS|PAUSED|DONE)(?![A-Z_])/g;
 
 function classifyD(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-D', FULL);
@@ -411,41 +494,41 @@ function classifyD(lines: string[], live: Live): Verdict {
   const pr = PR_URL.exec(text);
   if (pr) identity(v, pr[1], Number(pr[2]), live);
   if (v.mismatches.length > 0) return v;
+  if (unknownLive(v, live)) return v;
 
   if (/Could not check this branch's PR for a paused \/review-and-prep/.test(text)) { unknownLive(v, { lookupFailed: { operation: 'pause check', summary: 'lookup failed' } }); return v; }
   if (/^\/ship-and-land stopped on the release-only path/.test(text)) { v.flag('release-only-handback', HOLD, 'a ready, prepared PR', 'preparation work needed'); return v; }
   if (/is (CLOSED|MERGED) while its \/review-and-prep preparation was paused/.test(text)) { v.flag('closed-paused', HOLD, 'an open PR', 'closed while paused'); return v; }
 
-  const words = new Set([...text.matchAll(STATUS_WORD)].map((m) => m[1]));
-  const status = /^STATUS:\s*([A-Z_]+)/m.exec(text)?.[1];
-  if (status && !['BLOCKED', 'NEEDS_CONTEXT', 'DONE', 'DONE_WITH_CONCERNS'].includes(status)) v.flag('unknown-status', HOLD, 'a known status word', status);
-  if (words.has('BLOCKED')) v.flag('blocked', REFUSE, 'a copyable next-stage prompt', 'BLOCKED');
-  if (words.has('NEEDS_CONTEXT')) v.flag('needs-context', HOLD, 'no missing input', 'NEEDS_CONTEXT');
-  if (words.has('DONE_WITH_CONCERNS')) v.flag('done-with-concerns', HOLD, 'no open concerns', 'DONE_WITH_CONCERNS');
-  if (words.has('PAUSED')) v.flag('pause', HOLD, 'no pause in force', 'PAUSED');
-  if (words.has('DONE') && pauseActive(live)) v.flag('pause', HOLD, 'no pause in force', 'a pause is in force');
+  statusSignals(v, text);
+  if (pauseActive(live)) v.flag('pause', HOLD, 'no pause in force', 'a pause is in force');
   if (v.mismatches.length > 0) return v;
 
+  // A success summary never starts a stage (SPEC O4.2): a binding only makes it worth asking about.
   const bound = PR_URL.test(text) || /\b[0-9a-f]{40}\b/.test(text);
-  v.flag('bare-summary', bound ? FULL : REFUSE, 'a validated handoff', bound ? 'summary with a binding' : 'summary with no binding');
+  v.flag('bare-summary', bound ? HOLD : REFUSE, 'a validated handoff', bound ? 'summary with a binding' : 'summary with no binding');
   return v;
 }
 
 function classify(text: string, prov: Provenance, live: Live): Verdict {
   const lines = normalize(text);
-  const { kind, start } = detect(lines);
-  const body = lines.slice(start);
-  if (kind === 'H-A') return classifyA(body, live);
-  if (kind === 'H-B') return classifyB(body, prov, live);
-  if (kind === 'H-C-pause') return classifyPause(body, live);
-  if (kind === 'H-C-resume') return classifyResume(body, live);
-  return classifyD(body, live);
+  const { kind, handoff, outside, count } = locate(lines);
+  if (kind === 'H-D') return classifyD(lines, live);
+  const v = kind === 'H-A' ? classifyA(handoff, live)
+    : kind === 'H-B' ? classifyB(handoff, prov, live)
+    : kind === 'H-C-pause' ? classifyPause(handoff, live)
+    : classifyResume(handoff, live);
+  // Status words around the handoff, and any STATUS: line in it, cap the outcome as they would alone.
+  statusSignals(v, [...outside, ...handoff.filter((l) => /^STATUS:/.test(l))].join('\n'));
+  if (count > 1) v.flag('multiple-handoffs', HOLD, 'one handoff first line', `${count} first lines`);
+  return v;
 }
 
 function run(code: string, override?: Partial<CaseDef>): Verdict {
   const def = { ...FIX.cases[code], ...override } as CaseDef;
   const family = code[0];
   const live = withVars({ ...FIX.defaults.live[family], ...(def.live ?? {}) });
+  for (const k of def.unset ?? []) delete live[k];
   const prov = def.provenance === undefined ? FIX.defaults.provenance : def.provenance;
   return classify(fixtureText(def), prov, live);
 }
@@ -489,11 +572,11 @@ describe('(A) the doc is the oracle', () => {
     }
   });
 
-  test('each expected failing binding is named in its row', () => {
+  test('each row names exactly the failing bindings its fixture reports', () => {
     for (const [code, def] of Object.entries(FIX.cases)) {
-      for (const binding of def.expect?.mismatches ?? []) {
-        expect(DOC_CASES.get(code)?.failing, `${code}: ${binding}`).toContain(`\`${binding}\``);
-      }
+      const failing = DOC_CASES.get(code)!.failing;
+      const named = failing.startsWith('none') ? [] : [...failing.split(':')[0].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      expect(named.sort(), code).toEqual([...(def.expect?.mismatches ?? [])].sort());
     }
   });
 
@@ -518,8 +601,26 @@ describe('(A) the doc is the oracle', () => {
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
-  test('the doc names no personal tooling', () => {
-    expect(/mind-meld|mmm-factory/i.test(DOC)).toBe(false);
+  test('every detection prefix is a byte-frozen anchor in the Versions table', () => {
+    const frozen = tableRows(section('## Versions')).map((r) => r[4]).join(' ');
+    for (const p of ['Run /review-and-prep', 'Run /review-and-prep resume', 'Run /pair-review for draft PR', 'Run /ship-and-land for this prepared PR']) {
+      expect(frozen, p).toContain(`\`${p}`);
+    }
+  });
+
+  test('the version notes the classifier emits are the ones the doc publishes', () => {
+    const doc = squash(DOC);
+    const deprecated = /with this note: `([^`]+)`/.exec(doc)![1]
+      .replace('<seen>', '0').replace('<current>', '1').replace('<release, or "none scheduled">', 'none scheduled');
+    const newer = /and a newer one with `([^`]+)`/.exec(doc)![1].replace('<seen>', '2').replace('<current>', '1');
+    expect(run('B-SUPERSEDED-V0').notes).toContain(deprecated);
+    expect(run('B-NEWER-V2').notes).toContain(newer);
+  });
+
+  test('the doc lists every token shape the classifier withholds', () => {
+    for (const prefix of ['`ghp_`', '`gho_`', '`ghu_`', '`ghs_`', '`ghr_`', '`github_pat_`', '`sk-`', '`AKIA`', '`xoxb-`', '`Bearer`', '`scheme://user:secret@`']) {
+      expect(DOC, prefix).toContain(prefix);
+    }
   });
 });
 
@@ -587,11 +688,16 @@ describe('(B2) classifier rules beyond one fixture per case', () => {
     expect(m?.actual).toBe(FIX.vars.HEAD);
   });
 
-  test('a redaction flag names the field and never echoes the value', () => {
-    for (const code of ['A-TOKEN', 'B-TOKEN']) {
+  test('a redaction flag names the field', () => {
+    for (const code of ['A-TOKEN', 'B-TOKEN', 'B-TOKEN-MALFORMED', 'C-PAUSED-TOKEN', 'C-RESUME-TOKEN']) {
+      expect(run(code).mismatches.find((m) => m.binding === 'redaction')?.actual, code).toMatch(/^field /);
+    }
+  });
+
+  test('no diagnostic in any case echoes a token-shaped value', () => {
+    for (const code of Object.keys(FIX.cases)) {
       const v = run(code);
-      expect(JSON.stringify(v.mismatches), code).not.toContain(VARS.TOKEN);
-      expect(v.mismatches[0].actual).toMatch(/^field /);
+      expect(JSON.stringify([v.mismatches, v.notes]), code).not.toContain(VARS.TOKEN);
     }
   });
 
