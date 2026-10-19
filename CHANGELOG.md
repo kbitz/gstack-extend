@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.13.0] - 2026-10-19
+
+### Added
+
+- **A caller can check a stage handoff against a published contract.** `docs/workflow-handoffs.md` (contract version 1) states what `/implement`, `/review-and-prep`, `/pair-review`, and `/ship-and-land` print at each boundary, which fields a caller may trust, and the one result it must take: advance a checked prepared review, relay text it cannot vouch for, hold for a person, or refuse. A blocked report, a moved revision, a missing receipt, and a bare success summary do not start the next stage and do not authorize a merge. The existing `Run /review-and-prep` and `review-and-prep/v1` prompts stay byte for byte, and the README links the contract. This release does not add a parser command. No acceptance checkpoint is awarded.
+
 ## [0.36.12.0] - 2026-10-18
 
 ### Fixed
