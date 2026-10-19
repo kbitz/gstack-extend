@@ -76,7 +76,15 @@ VOICE_RE = re.compile(r"(?:[a-z][a-z0-9-]{0,63}|" + UUID_RE.pattern + r")")
 SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 HASH_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
-RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")
+RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # four-part today; three-part after the SPEC transition
+CANDIDATE_KEYS = ("candidate_head", "candidate_tree", "candidate_base", "binding")
+# Why a read summary left something unknown (data.unknown_reasons; docs/telemetry.md#workflow-metrics-unknown).
+UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end",
+                   "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass",
+                   "cross-candidate", "clock-invalid", "open-wait")
+# The subset that means the stored records contradict or orphan each other: the read is partial.
+INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
+                     "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
 
 
 class Fail(Exception):
@@ -155,7 +163,8 @@ def diagnostics_for(op, fail, config_sources=()):
         "config_source": list(config_sources), "cause": fail.cause, "trace": fail.trace,
     }
     if len(json.dumps(diag).encode()) > DIAGNOSTICS_LIMIT:
-        diag["fix"] = diag["fix"][:256]
+        # Fields are bounded by construction; drop the variable ones rather than exceed the cap.
+        diag.update(expected=None, actual=None, limit=None, cause=None, trace=None)
     return diag
 
 
@@ -177,7 +186,11 @@ def emit(status, reason, session_id, event_id, data, op, fail=None, config_sourc
 
 
 def read_stdin():
-    if sys.stdin.isatty():
+    # Python sets sys.stdin to None when fd 0 was closed at startup. Check that first: a file the
+    # interpreter opened since may now occupy fd 0 (seen on Python 3.9) and must never be read as input.
+    if sys.stdin is None:
+        raise Fail("unavailable", "invalid-input", field="stdin", cause="stdin-unavailable")
+    if os.isatty(0):
         raise Fail("unavailable", "invalid-input", field="stdin", expected="pipe-or-file",
                    cause="stdin-tty")
     try:
@@ -195,27 +208,32 @@ def read_stdin():
             if total > STDIN_LIMIT:
                 break
     else:
+        # O_NONBLOCK lives on the shared open file description, so restore it for any
+        # sibling process that inherited the same stdin.
+        was_blocking = os.get_blocking(0)
         os.set_blocking(0, False)
-        deadline = time.monotonic() + STDIN_DEADLINE_S
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise Fail("unavailable", "invalid-input", field="stdin", cause="input-timeout",
-                           limit=int(STDIN_DEADLINE_S * 1000))
-            ready, _, _ = select.select([0], [], [], remaining)
-            if not ready:
-                raise Fail("unavailable", "invalid-input", field="stdin", cause="input-timeout",
-                           limit=int(STDIN_DEADLINE_S * 1000))
+        try:
+            deadline = time.monotonic() + STDIN_DEADLINE_S
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([0], [], [], remaining)[0]:
+                    raise Fail("unavailable", "invalid-input", field="stdin", cause="input-timeout",
+                               limit=int(STDIN_DEADLINE_S * 1000))
+                try:
+                    chunk = os.read(0, min(8192, STDIN_LIMIT + 1 - total))
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > STDIN_LIMIT:
+                    break
+        finally:
             try:
-                chunk = os.read(0, min(8192, STDIN_LIMIT + 1 - total))
-            except BlockingIOError:
-                continue
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > STDIN_LIMIT:
-                break
+                os.set_blocking(0, was_blocking)
+            except OSError:
+                pass
     data = b"".join(chunks)
     if len(data) > STDIN_LIMIT:
         raise Fail("unavailable", "invalid-input", field="stdin", actual=len(data), limit=STDIN_LIMIT,
@@ -247,6 +265,9 @@ def parse_request(data):
         parsed = json.loads(text, object_pairs_hook=_no_dupes, parse_constant=_const)
     except ValueError:
         raise Fail("unavailable", "invalid-input", field="stdin", cause="invalid-json") from None
+    except RecursionError:
+        # Some interpreters' JSON decoders (e.g. Python 3.9) hit the recursion limit before depth 8 is checked.
+        raise Fail("unavailable", "invalid-input", field="stdin", cause="too-deep", limit=MAX_DEPTH) from None
     if not isinstance(parsed, dict):
         raise Fail("unavailable", "invalid-input", field="stdin", expected="object", cause="not-object")
     _check_bounds(parsed, 1)
@@ -372,7 +393,8 @@ def validate_request(op, req):
     if type(req.get("v")) is not int:
         raise _bad("v", "integer-1")
     if req["v"] != V:
-        raise Fail("unavailable", "unsupported-version", field="v", expected="1", actual=req["v"])
+        actual = req["v"] if -(1 << 31) <= req["v"] < (1 << 31) else None  # never echo an unbounded value
+        raise Fail("unavailable", "unsupported-version", field="v", expected="1", actual=actual)
     _enum(req, "stage", STAGES)
     _session(req.get("session_id"), "session_id")
     _uuid(req.get("event_id"), "event_id")
@@ -622,7 +644,8 @@ def parse_ledger(data, overflow=False):
         try:
             record = json.loads(line.decode("utf-8"), object_pairs_hook=_no_dupes, parse_constant=_const)
             _validate_record(record)
-        except (ValueError, UnicodeDecodeError, Fail, RecursionError):
+        except (ValueError, UnicodeDecodeError, Fail, RecursionError, TypeError, AttributeError, KeyError):
+            # Any structurally wrong stored line is malformed, never an unreadable run.
             malformed += 1
             continue
         records.append(record)
@@ -646,6 +669,8 @@ def _validate_record(record):
     version = record["producer_version"]
     if version is not None and not (isinstance(version, str) and RELEASE_RE.fullmatch(version)):
         raise ValueError("producer_version")
+    if not isinstance(record["request"], dict):
+        raise ValueError("request")
     validate_request(record["op"], record["request"])
     if record["request"]["event_id"] != record["event_id"]:
         raise ValueError("event-id-mismatch")
@@ -661,10 +686,9 @@ def _fsync_dir(path):
         os.close(fd)
 
 
-def _confirm(paths, file_fd=None):
+def _confirm(paths, file_fd):
     """File fsync plus the directory entries that make the file reachable. Any failure: unconfirmed."""
-    if file_fd is not None:
-        os.fsync(file_fd)
+    os.fsync(file_fd)
     _fsync_dir(paths["metrics_dir"])
     _fsync_dir(paths["analytics"])
     _fsync_dir(paths["root"])
@@ -724,26 +748,21 @@ def mutate(op, req):
             raise Fail("unavailable", "capture-missing", cause="no-bound-run")
     _ensure_dirs(paths)
     lock_fd = _acquire_lock(paths)
+    read_fd = None
     try:
         read_fd = _open_ledger_read(paths)
         data, overflow = (b"", False)
         if read_fd is not None:
-            try:
-                data, overflow = _read_snapshot(read_fd)
-            finally:
-                os.close(read_fd)
+            data, overflow = _read_snapshot(read_fd)
         records, malformed, partial_tail = parse_ledger(data, overflow)
         for record in records:
             if record["event_id"] == req["event_id"]:
                 if record["request_digest"] != digest:
                     raise Fail("conflict", "event-conflict", cause="digest-differs")
+                # Re-confirm the very file the record was read from: a replay acknowledgment
+                # needs the same file fsync plus directory chain as a fresh append.
                 try:
-                    replay_fd = _open_ledger_read(paths)
-                    try:
-                        _confirm(paths, replay_fd)
-                    finally:
-                        if replay_fd is not None:
-                            os.close(replay_fd)
+                    _confirm(paths, read_fd)
                 except OSError:
                     raise Fail("unconfirmed", "io-error", cause="replay-confirm",
                                side_effects="unknown") from None
@@ -792,6 +811,8 @@ def mutate(op, req):
             os.close(fd)
         return "recorded", {"captured_at_ms": captured, "request_digest": digest, "op": op}
     finally:
+        if read_fd is not None:
+            os.close(read_fd)
         os.close(lock_fd)
 
 
@@ -812,15 +833,18 @@ def _union_ms(intervals):
     return total + (end - start)
 
 
-def _candidate(run_context, req):
-    base = {"candidate_head": None, "candidate_tree": None, "candidate_base": None, "binding": "unknown"}
-    if run_context:
-        base.update({k: run_context[k] for k in base if k in run_context})
+def _candidate(run_context, req, inherited=None):
+    """Effective candidate: the entity's inherited candidate (else the run's), then this record's
+    explicit override. A record without context inherits; nothing is guessed."""
+    if inherited is not None:
+        base = dict(zip(CANDIDATE_KEYS, inherited))
+    else:
+        base = {"candidate_head": None, "candidate_tree": None, "candidate_base": None, "binding": "unknown"}
+        if run_context:
+            base.update({k: run_context[k] for k in CANDIDATE_KEYS if k in run_context})
     override = req.get("context") or {}
-    for key in base:
-        if key in override:
-            base[key] = override[key]
-    return tuple(base[k] for k in ("candidate_head", "candidate_tree", "candidate_base", "binding"))
+    base.update({k: override[k] for k in CANDIDATE_KEYS if k in override})
+    return tuple(base[k] for k in CANDIDATE_KEYS)
 
 
 def summarize(records, malformed, partial_tail, overflow):
@@ -850,22 +874,24 @@ def summarize(records, malformed, partial_tail, overflow):
     run = None
     if run_context is not None:
         run = {"bound": True,
-               "candidate": dict(zip(("candidate_head", "candidate_tree", "candidate_base", "binding"),
-                                     _candidate(run_context, {}))),
+               "candidate": dict(zip(CANDIDATE_KEYS, _candidate(run_context, {}))),
                "skill_sha256": run_context.get("skill_sha256"),
                "parent_session_id": run_context.get("parent_session_id"),
                "producer_version": run_begins[0]["producer_version"]}
     steps, phases, waits, union_intervals, fix_completed = _steps(effective, run_context, unknown)
+    # Phases with RUN decisions or executed steps: their work happened, so a missing pass or
+    # fix record makes that count unknown rather than zero.
+    ran = {p["phase"] for p in phases if p["decisions"]["RUN"] or p["steps_started"]}
     corrections = _correction_counts(effective)
-    passes = _passes(effective, by_event, run_context, unknown)
+    passes = _passes(effective, by_event, run_context, unknown, ran)
+    fix_unknown = "missing-begin" in unknown or ("fix" in ran and not steps["fix_started"])
     if any(c.get("fix_step_id") and c["fix_step_id"] not in steps["ids"]
            for c in (r["request"] for r in effective if r["op"] == "correction")):
         unknown.add("missing-reference")
-        fix_cycles = None
-    else:
-        fix_cycles = fix_completed
+        fix_unknown = True
+    integrity = any(reason in unknown for reason in INTEGRITY_REASONS)
     data = {
-        "capture": "partial" if (malformed or partial_tail or overflow) else "ok",
+        "capture": "partial" if integrity else "ok",
         "records": len(effective), "malformed_records": malformed, "partial_tail": partial_tail,
         "conflicting_event_ids": len(conflicts),
         "stage": stages.pop() if len(stages) == 1 else None,
@@ -878,7 +904,7 @@ def summarize(records, malformed, partial_tail, overflow):
         "local_passes": passes["local"]["completed"], "local_attempted": passes["local"]["attempted"],
         "greptile_passes": passes["greptile"]["completed"],
         "greptile_attempted": passes["greptile"]["attempted"],
-        "fix_cycles": fix_cycles, "findings": passes["local"]["findings"],
+        "fix_cycles": None if fix_unknown else fix_completed, "findings": passes["local"]["findings"],
         "greptile_findings": passes["greptile"]["findings"],
         "excluded_na_voices": passes["excluded_na"],
         "corrections": corrections,
@@ -886,6 +912,11 @@ def summarize(records, malformed, partial_tail, overflow):
     }
     data["receipt_text"] = receipt_text(data)
     return data
+
+
+def _phase_slot(phase_data, phase):
+    return phase_data.setdefault(phase, {"intervals": [], "started": 0, "completed": 0, "unknown": 0,
+                                         "decisions": {d: 0 for d in DECISIONS}})
 
 
 def _steps(effective, run_context, unknown):
@@ -899,7 +930,7 @@ def _steps(effective, run_context, unknown):
         elif record["op"] == "decision":
             decisions.append(record)
     phase_data, wait_data, union_intervals = {}, {}, []
-    unknown_parents = mixed = fix_completed = 0
+    unknown_parents = mixed = fix_completed = fix_started = 0
     for step_id in set(begins) | set(ends):
         starts = begins.get(step_id, [])
         finishes = ends.get(step_id, [])
@@ -907,14 +938,18 @@ def _steps(effective, run_context, unknown):
             unknown.add("missing-begin")
             continue
         first = starts[0]["request"]
+        begin_candidate = _candidate(run_context, first)
         sigs = {(r["request"].get("kind"), r["request"].get("phase"), r["request"].get("wait_category"),
                  r["request"].get("parent_step_id"), _candidate(run_context, r["request"])) for r in starts}
         outcomes = {r["request"]["outcome"] for r in finishes}
-        valid = (len(sigs) == 1 and len(outcomes) == 1 and len(starts) >= 1 and len(finishes) >= 1
+        valid = (len(sigs) == 1 and len(outcomes) == 1 and len(finishes) >= 1
                  and len({r["captured_at_ms"] for r in starts}) == 1
                  and len({r["captured_at_ms"] for r in finishes}) == 1)
         interval = None
-        if valid:
+        if valid and first.get("kind") == "wait" and outcomes == {"paused"}:
+            # The pause ended this invocation, not the wait: its real end was never observed.
+            unknown.add("open-wait")
+        elif valid:
             lo, hi = starts[0]["captured_at_ms"], finishes[0]["captured_at_ms"]
             if hi >= lo:
                 interval = (lo, hi)
@@ -922,40 +957,47 @@ def _steps(effective, run_context, unknown):
             else:
                 unknown.add("clock-invalid")
         elif finishes:
-            if len(sigs) > 1 or len(outcomes) > 1 or len(starts) > 1 or len(finishes) > 1:
-                unknown.add("conflicting-terminal")
+            unknown.add("conflicting-terminal")
         else:
             unknown.add("missing-end")
-        if finishes and _candidate(run_context, first) != _candidate(run_context, finishes[0]["request"]):
+        # An end without its own context inherits the begin's candidate; only an explicit
+        # override observed at the end can make the step's attribution mixed.
+        if finishes and _candidate(run_context, finishes[0]["request"], begin_candidate) != begin_candidate:
             mixed += 1
         parent = first.get("parent_step_id")
         if parent is not None and parent not in begins:
             unknown_parents += 1
             unknown.add("missing-reference")
-        if first.get("kind") == "fix" and outcomes == {"completed"}:
-            fix_completed += 1
+        if first.get("kind") == "fix":
+            fix_started += 1
+            if outcomes == {"completed"}:
+                fix_completed += 1
         if first.get("kind") == "wait":
             slot = wait_data.setdefault(first["wait_category"], {"intervals": [], "count": 0, "unknown": 0})
-        elif first.get("phase"):
-            slot = phase_data.setdefault(first["phase"], {"intervals": [], "started": 0, "completed": 0,
-                                                           "unknown": 0, "decisions": {d: 0 for d in DECISIONS}})
-        else:
-            continue
-        if first.get("kind") == "wait":
             slot["count"] += 1
-        else:
+        elif first.get("phase"):
+            slot = _phase_slot(phase_data, first["phase"])
             slot["started"] += 1
             if outcomes == {"completed"}:
                 slot["completed"] += 1
+        else:
+            continue
         if interval is not None:
             slot["intervals"].append(interval)
         else:
             slot["unknown"] += 1
+    # One decision per (step_id, phase): distinct-ID repeats of the same choice count once;
+    # differing choices for the same decision are a conflict and count as none.
+    choices = {}
     for record in decisions:
-        phase = record["request"]["phase"]
-        slot = phase_data.setdefault(phase, {"intervals": [], "started": 0, "completed": 0,
-                                              "unknown": 0, "decisions": {d: 0 for d in DECISIONS}})
-        slot["decisions"][record["request"]["decision"]] += 1
+        req = record["request"]
+        choices.setdefault((req["step_id"], req["phase"]), set()).add((req["decision"], req["reason"]))
+    for (_step_id, phase), made in choices.items():
+        slot = _phase_slot(phase_data, phase)
+        if len(made) != 1:
+            unknown.add("conflicting-terminal")
+            continue
+        slot["decisions"][next(iter(made))[0]] += 1
     phases = [{"phase": phase, "decisions": slot["decisions"], "steps_started": slot["started"],
                "steps_completed": slot["completed"],
                "observed_wall_duration_ms": None if slot["unknown"] else _union_ms(slot["intervals"]),
@@ -964,7 +1006,8 @@ def _steps(effective, run_context, unknown):
     waits = [{"wait_category": cat, "count": slot["count"],
               "observed_wall_duration_ms": None if slot["unknown"] else _union_ms(slot["intervals"]),
               "unknown_durations": slot["unknown"]} for cat, slot in sorted(wait_data.items())]
-    return ({"ids": set(begins) | set(ends), "unknown_parents": unknown_parents, "mixed_candidate": mixed},
+    return ({"ids": set(begins) | set(ends), "unknown_parents": unknown_parents, "mixed_candidate": mixed,
+             "fix_started": fix_started},
             phases, waits, union_intervals, fix_completed)
 
 
@@ -1013,68 +1056,82 @@ def _effective_selection(record, mapping, unknown):
     return selected
 
 
-def _finding_totals(selected, corrections, unknown):
-    """selected: [(pass_id, attempt_id, finding)] -> totals or None-fields when corrections are ambiguous."""
+def _finding_totals(selected, corrections, unknown, known_ids):
+    """selected: [(pass_id, voice_id, attempt_id, finding)] -> totals, or all-None when a correction
+    or duplicate link is ambiguous. A correction targets exactly one finding by its origin (finding_id
+    plus any pass/voice/attempt it names) and applies only as one linear supersession chain in append
+    order: each later correction supersedes its predecessor. Anything else is unknown, never last-write-wins."""
     totals = {"accepted": 0, "fixed": 0, "open": 0, "rejected": 0, "deferred": 0,
               "duplicate": 0, "unclassified": 0,
               "by_normalized_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0,
                                          "info": 0, "unclassified": 0}}
-    by_key = {}
-    for pass_id, attempt_id, finding in selected:
-        by_key.setdefault(finding["finding_id"], []).append((pass_id, attempt_id, dict(finding)))
-    ambiguous = False
-    groups = {}
+    findings = [(p, v, a, dict(f)) for p, v, a, f in selected]
+    competing = dangling = False
+    chains = {}
     for correction in corrections:
-        groups.setdefault(correction.get("finding_id"), []).append(correction)
-    for finding_id, items in groups.items():
-        targets = by_key.get(finding_id, [])
-        chained = len(items) == 1 or all(
-            items[i].get("supersedes_event_id") for i in range(1, len(items)))
-        if len(targets) != 1 or not chained:
-            ambiguous = True
+        targets = [i for i, (p, v, a, f) in enumerate(findings)
+                   if f["finding_id"] == correction.get("finding_id")
+                   and correction.get("pass_id") in (None, p)
+                   and correction.get("voice_id") in (None, v)
+                   and correction.get("attempt_id") in (None, a)]
+        # A duplicate claim needs its duplicate_of link, which only the finding record carries.
+        if len(targets) != 1 or correction.get("adjudication") == "duplicate":
+            competing = True
             continue
+        chains.setdefault(targets[0], []).append(correction)
+    for index, items in chains.items():
+        ids = {c["event_id"] for c in items}
+        linear = items[0].get("supersedes_event_id") not in ids and all(
+            items[k].get("supersedes_event_id") == items[k - 1]["event_id"] for k in range(1, len(items)))
+        if not linear:
+            competing = True
+            continue
+        target = findings[index][3]
         for correction in items:
-            target = targets[0][2]
-            if correction.get("pass_id") and correction["pass_id"] != targets[0][0]:
-                ambiguous = True
-            if correction.get("attempt_id") and correction["attempt_id"] != targets[0][1]:
-                ambiguous = True
             if correction.get("adjudication"):
                 target["adjudication"] = correction["adjudication"]
             if correction.get("resolution"):
                 target["resolution"] = correction["resolution"]
             if target["adjudication"] in ("rejected", "duplicate"):
                 target["resolution"] = "unknown"
-    if ambiguous:
+    if any(f["duplicate_of"] is not None and f["duplicate_of"] not in known_ids for _p, _v, _a, f in findings):
+        dangling = True
+    if competing:
         unknown.add("competing-correction")
+    if dangling:
+        unknown.add("missing-reference")
+    if competing or dangling:
         return {key: (None if key != "by_normalized_severity" else
                       {k: None for k in totals["by_normalized_severity"]}) for key in totals}
-    for items in by_key.values():
-        for _p, _a, finding in items:
-            adj, res = finding["adjudication"], finding["resolution"]
-            totals["by_normalized_severity"][NORMALIZED[finding["severity_source"]]] += 1
-            if adj == "accepted":
-                totals["accepted"] += 1
-                if res == "fixed":
-                    totals["fixed"] += 1
-                elif res == "open":
-                    totals["open"] += 1
-            elif adj in totals:
-                totals[adj] += 1
+    for _p, _v, _a, finding in findings:
+        adj, res = finding["adjudication"], finding["resolution"]
+        totals["by_normalized_severity"][NORMALIZED[finding["severity_source"]]] += 1
+        if adj == "accepted":
+            totals["accepted"] += 1
+            if res == "fixed":
+                totals["fixed"] += 1
+            elif res == "open":
+                totals["open"] += 1
+        elif adj in totals:
+            totals[adj] += 1
     return totals
 
 
-def _passes(effective, by_event, run_context, unknown):
+def _passes(effective, by_event, run_context, unknown, ran):
     mapping = _supersede_map(effective, by_event, unknown)
     finding_corrections = [r["request"] for r in effective
                            if r["op"] == "correction" and r["request"]["correction_kind"] == "finding"]
+    known_ids = {f["finding_id"] for r in effective
+                 if r["op"] == "pass" and r["request"]["state"] == "attempt"
+                 for f in r["request"].get("findings") or []}
     grouped = {}
     for record in effective:
         if record["op"] != "pass":
             continue
         slot = grouped.setdefault(record["request"]["pass_id"],
-                                  {"started": [], "attempts": {}, "voice": {}, "completed": []})
+                                  {"all": [], "started": [], "attempts": {}, "voice": {}, "completed": []})
         req = record["request"]
+        slot["all"].append(record)
         if req["state"] == "started":
             slot["started"].append(record)
         elif req["state"] == "attempt":
@@ -1088,24 +1145,30 @@ def _passes(effective, by_event, run_context, unknown):
     selected_by_scope = {"local": [], "greptile": []}
     scope_bad = {"local": False, "greptile": False}
     completed_unknown = {"local": False, "greptile": False}
+    scope_unknown = {"local": False, "greptile": False}
+    seen = set()
     pass_scope = {}
     for pass_id, slot in grouped.items():
+        scopes = {r["request"]["scope"] for r in slot["all"]}
+        seen |= scopes
         if not slot["started"]:
+            # Orphaned pass records: that scope's counts cannot be zero or complete.
             unknown.add("missing-reference")
+            for scope in scopes:
+                scope_unknown[scope] = True
+            continue
+        if len(scopes) != 1:
+            unknown.add("conflicting-terminal")
+            for scope in scopes:
+                scope_unknown[scope] = True
             continue
         starts = slot["started"]
-        scopes = {r["request"]["scope"] for r in starts}
         voice_sets = {tuple(r["request"]["required_voice_ids"]) for r in starts}
         candidates = {_candidate(run_context, r["request"]) for r in starts}
-        if len(scopes) != 1 or len(voice_sets) != 1 or len(candidates) != 1:
+        scope = next(iter(scopes))
+        if len(voice_sets) != 1 or len(candidates) != 1:
             unknown.add("conflicting-terminal")
-            continue
-        scope = scopes.pop()
-        if any(r["request"]["scope"] != scope
-               for group in (slot["attempts"].values(), slot["voice"].values())
-               for recs in group for r in recs) or any(
-               r["request"]["scope"] != scope for r in slot["completed"]):
-            unknown.add("conflicting-terminal")
+            scope_unknown[scope] = True
             continue
         pass_scope[pass_id] = scope
         required = list(voice_sets.pop())
@@ -1134,11 +1197,12 @@ def _passes(effective, by_event, run_context, unknown):
                 closed = False
                 unknown.add("incomplete-pass")
                 continue
-            if _candidate(run_context, attempt) != candidate:
+            # An attempt inherits its pass's candidate; only an explicit different override is cross-candidate.
+            if _candidate(run_context, attempt, candidate) != candidate:
                 closed = False
                 unknown.add("cross-candidate")
                 continue
-            selected.extend((pass_id, attempt_id, f) for f in attempt["findings"])
+            selected.extend((pass_id, voice, attempt_id, f) for f in attempt["findings"])
         completed = bool(slot["completed"])
         if completed and closed:
             out[scope]["completed"] += 1
@@ -1148,7 +1212,14 @@ def _passes(effective, by_event, run_context, unknown):
             unknown.add("incomplete-pass")
             if completed:
                 completed_unknown[scope] = True
+    # Review work recorded as a phase but with no pass records at all: unknown, not zero.
+    for scope, phase in (("local", "local-pass"), ("greptile", "external-review")):
+        if phase in ran and scope not in seen:
+            scope_unknown[scope] = True
     for scope in ("local", "greptile"):
+        if scope_unknown[scope]:
+            out[scope] = {"attempted": None, "completed": None, "findings": None}
+            continue
         if completed_unknown[scope]:
             out[scope]["completed"] = None
         if out[scope]["completed"] and not scope_bad[scope]:
@@ -1156,9 +1227,9 @@ def _passes(effective, by_event, run_context, unknown):
                       if pass_scope.get(c.get("pass_id")) == scope
                       or (not c.get("pass_id") and any(
                           f["finding_id"] == c.get("finding_id")
-                          for _p, _a, f in selected_by_scope[scope]))
+                          for _p, _v, _a, f in selected_by_scope[scope]))
                       or (c.get("pass_id") not in pass_scope and c.get("pass_id") and scope == "local")]
-            out[scope]["findings"] = _finding_totals(selected_by_scope[scope], scoped, unknown)
+            out[scope]["findings"] = _finding_totals(selected_by_scope[scope], scoped, unknown, known_ids)
     return {"local": out["local"], "greptile": out["greptile"], "excluded_na": excluded_na}
 
 
@@ -1168,9 +1239,9 @@ def _fmt(value):
 
 def receipt_text(data):
     findings = data.get("findings") or {}
+    # partial means stored records are broken or contradict each other; an in-progress run
+    # (open steps, unfinished passes) stays ok and names its unknowns below.
     status = data.get("capture", "unavailable")
-    if status == "ok" and data.get("unknown_reasons"):
-        status = "partial"
     text = ("Workflow metrics (local, optional): capture=" + status
             + "; clock=utc-wall clock-sensitive; qualified_elapsed=unknown (unavailable-clock-domain)"
             + "; local_passes=" + _fmt(data.get("local_passes"))
@@ -1251,8 +1322,15 @@ def read_op(args):
             summary["event"] = {"status": "absent", "request_digest": None, "captured_at_ms": None}
         else:
             summary["event"] = {"status": "unknown", "request_digest": None, "captured_at_ms": None}
-    status = "ok" if valid_snapshot else "partial"
-    reason = None if valid_snapshot else ("partial-tail" if partial_tail else "malformed-record")
+    # Broken references and event conflicts make the read partial too (S4), not only bad bytes.
+    if summary["capture"] == "ok":
+        status, reason = "ok", None
+    elif partial_tail:
+        status, reason = "partial", "partial-tail"
+    elif malformed or "event-conflict" not in summary["unknown_reasons"]:
+        status, reason = "partial", "malformed-record"
+    else:
+        status, reason = "partial", "event-conflict"
     summary["receipt_text"] = receipt_text(summary)
     return status, reason, summary
 
@@ -1308,9 +1386,3 @@ def main(args):
             fail.trace = {"file": Path(last.filename).name, "line": last.lineno,
                           "exception_class": type(error).__name__}
         emit(fail.status, fail.reason, session_id, event_id, None, op, fail, sources)
-
-
-
-
-
-

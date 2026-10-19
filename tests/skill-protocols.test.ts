@@ -4769,8 +4769,9 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
 // Track 24A: workflow-metrics prose lives outside the SHARED telemetry blocks in
 // exactly the two wrappers, maps their real headings, and cannot move a gate.
 describe('Track 24A workflow metrics drift-locks', () => {
-  const schemaPhases = (JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'))
-    .definitions.phase.enum) as string[];
+  const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+  const schemaPhases = metricsSchema.definitions.phase.enum as string[];
+  const waitCategories = metricsSchema.definitions.begin_request.properties.wait_category.enum as string[];
   const wrappers: Record<string, string[]> = {
     'review-and-prep': ['1. Establish the branch, PR, and review inputs', '2. Review and verify locally',
       'Merge the latest base before review', "Enforce completion, beyond /review's informational audit",
@@ -4804,12 +4805,32 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(flat).toContain('clock-sensitive');
       expect(flat).toContain('metrics never triggers');
       expect(flat).toContain(`stage:"${skill}"`);
-      for (const anchor of anchors) {
-        expect(content, anchor).toContain(anchor); // the real heading still exists
-        expect(content.split(anchor).length, anchor + ' (heading + metrics table)').toBeGreaterThanOrEqual(2);
+      expect(flat).toContain('Issue metrics calls one at a time from this session');
+      expect(flat).toContain('emit nothing further in this invocation');
+      expect(flat).toContain('lowercase UUID');
+      expect(flat).toContain('never guess an ID');
+      expect(flat).toContain('immediately before writing');
+      expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
+      // The mapping table: every left-hand anchor is a real heading (inline code stripped), every
+      // required anchor is mapped, and every right-hand token is a controlled phase, wait category
+      // or decision value, so a renamed heading or a misspelt phase fails here.
+      const headings = [...content.matchAll(/^#{2,4} (.+)$/gm)].map(m => m[1].replace(/`/g, '').trim());
+      const tableAt = content.indexOf('| Anchor in this skill | Metric phases |', at);
+      expect(tableAt).toBeGreaterThan(at);
+      const rows = content.slice(tableAt, content.indexOf('\n\n', tableAt)).split('\n').slice(2);
+      const mapped: string[] = [];
+      const allowed = [...schemaPhases, ...waitCategories, 'RUN', 'REUSE', 'N/A'];
+      for (const row of rows) {
+        const [, left, right] = row.split('|');
+        for (const [, anchor] of left.matchAll(/`([^`]+)`/g)) {
+          expect(headings, `${skill}: ${anchor}`).toContain(anchor);
+          mapped.push(anchor);
+        }
+        for (const [, token] of right.matchAll(/`([^`]+)`/g)) expect(allowed, `${skill}: ${row}`).toContain(token);
       }
-      const tablePhases = [...content.slice(at).matchAll(/`([a-z][a-z-]*)`/g)].map(m => m[1])
-        .filter((p): p is string => schemaPhases.includes(p as string));
+      for (const anchor of anchors) expect(mapped, `${skill} maps ${anchor}`).toContain(anchor);
+      const tablePhases = rows.flatMap(row => [...row.split('|')[2].matchAll(/`([a-z][a-z-]*)`/g)].map(m => m[1]))
+        .filter(p => schemaPhases.includes(p));
       expect(new Set(tablePhases).size).toBeGreaterThanOrEqual(5);
     });
   }

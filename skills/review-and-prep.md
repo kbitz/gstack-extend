@@ -67,7 +67,8 @@ Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/m
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
 with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
-`session_id`, a fresh UUID `event_id` you keep stable for that event) on stdin.
+`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
+event; `uuidgen | tr A-Z a-z`) on stdin. Every ID you mint is lowercase.
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
 state and preserve the wrapped work's own exit status separately. A
 disabled, unavailable, conflicting or unconfirmed capture is recorded as
@@ -80,6 +81,13 @@ replay that identical payload at most once when the read reports the event
 present or safely absent; on conflict/partial/unknown stop and leave capture
 unknown. Never mint a fresh `event_id` for a replay.
 
+Issue metrics calls one at a time from this session, never as parallel tool
+calls or from subagents: the run lock never waits, so concurrent calls drop
+as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
+nothing further in this invocation and use the literal status line below in
+its receipts. If context compaction loses the retained IDs or a pending
+payload, that capture stays unknown; never guess an ID.
+
 Emit, batched into existing tool calls where practical:
 
 - Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
@@ -87,34 +95,49 @@ Emit, batched into existing tool calls where practical:
   HEAD/tree/base you already observed (or null — never run `git write-tree` or
   create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
   the installed copy of this skill, and `parent_session_id:null` unless the
-  spawning stage handed you its exact ID.
+  spawning stage handed you its exact ID. When you first observe the candidate,
+  and after a base merge or fix commit changes it, put a `context` override
+  with the new HEAD/tree/base on the next step `begin` and pass `started`;
+  their ends, attempts and voice records inherit it.
 - One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
-  controlled reason); `begin`/`end` only around work actually executed, so a
-  reused phase has a decision and no new interval. Reached-but-inapplicable
-  phases are `N/A`; unreached phases emit nothing and stay unknown. Each
-  execution uses a fresh `step_id`; phase names are labels only. Parent review
-  intervals enclose their parallel voice intervals (`parent_step_id`).
+  controlled reason), recorded under the phase of the work decided about;
+  `begin`/`end` only around work actually executed, so a reused phase has a
+  decision and no new interval. Reached-but-inapplicable phases are `N/A`;
+  unreached phases emit nothing and stay unknown. Each execution uses a fresh
+  `step_id`; phase names are labels only. Parent review intervals enclose
+  their parallel voice intervals (`parent_step_id`); under parallel dispatch
+  those are parent-observed, not per-voice runtime.
 - Local review as `pass` records: one pass is one review round over one
   candidate, with its required voices declared at `state:"started"`, each
   attempt recorded separately (a completed attempt carries its findings —
   allowlisted IDs/severities/dispositions only, never finding bodies, prompts
   or command output; an empty array means zero), one selected attempt or an
-  explicit policy-authorized `N/A` per voice, then `state:"completed"`. A fix
+  explicit policy-authorized `N/A` per voice, then `state:"completed"`. Send an
+  attempt's `model_context` only when a tool result or launcher configuration
+  supplied it; an identifier outside the documented grammar is null with
+  `unknown_reason:"unsupported"`, never a reason to drop the attempt. A fix
   batch is a `kind:"fix"` step, counted separately from passes. Greptile is
   `scope:"greptile"` with its own count and its existing once-per-PR rule
   above unchanged; metrics never triggers, retries or waives it.
 - Waits as `kind:"wait"` steps with `wait_category` (`human` at the manual
   testing checkpoint, `external-review` while awaiting Greptile), ended
-  `paused` at a pause rather than inventing a finish. Unlabeled time stays
-  unclassified; elapsed wall time is never model/inference time, and every
-  duration is clock-sensitive (`clock_basis=utc-wall`).
-- At completion: `end` the run step, then `metrics read --session-id <id>` and
-  include its `receipt_text` (at most 2 KiB) in every receipt this workflow
-  produces — or, when the read is unavailable, the literal line
+  `paused` at a pause rather than inventing a finish (its duration then reads
+  unknown). Unlabeled time stays unclassified; elapsed wall time is never
+  model/inference time, and every duration is clock-sensitive
+  (`clock_basis=utc-wall`).
+- Receipts: immediately before writing each receipt this workflow already
+  produces (the PAUSED receipt, a blocked-exit receipt, the Step 6 body receipt
+  and its pre-ready receipt comment), run `metrics read --session-id <id>` and
+  include that snapshot's `receipt_text` (at most 2 KiB), or, when the read is
+  unavailable, the literal line
   `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-  with the actual status. Existing receipt and handoff labels, markers and the
-  manual-testing rules are unchanged; the metrics line cannot authorize
-  readiness. An interrupted run that produces no receipt needs none for metrics.
+  with the actual status. An open run reads as in progress; that is expected.
+  `end` the run step just before the legacy telemetry finish, and leave it
+  open at a pause. Never write or edit a PR body or comment only to refresh
+  metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
+  markers and the manual-testing rules are unchanged; the metrics line cannot
+  authorize readiness. An interrupted run that produces no receipt needs none
+  for metrics.
 
 Phase mapping (stable metric phase IDs, anchored to this file's headings —
 the owner of a wrapper change updates this mapping in the same change):

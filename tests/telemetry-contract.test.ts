@@ -1398,21 +1398,39 @@ describe('Conductor Cursor live-smoke recipe', () => {
 
 // Track 24A: the metrics companion must not disturb the published contracts above.
 describe('workflow metrics contract (Track 24A)', () => {
-  const REASONS = ['capture-disabled', 'invalid-input', 'unsupported-version', 'identity-missing', 'identity-mismatch', 'unsafe-path', 'lock-busy', 'capacity', 'malformed-record', 'partial-tail', 'event-conflict', 'io-error', 'capture-missing', 'ambiguous-binding', 'clock-invalid', 'candidate-changed'];
+  const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+  const helperSource = readFileSync(join(ROOT, 'bin/lib/workflow_metrics.py'), 'utf8');
+  const pyTuple = (name: string) => [...(new RegExp(`^${name} = \\(([^)]*)\\)`, 'm').exec(helperSource)![1]).matchAll(/"([^"]+)"/g)].map(m => m[1]);
+  // Every envelope reason the schema publishes has one fixed helper action and one docs anchor.
+  const REASONS = (metricsSchema.definitions.envelope.properties.reason.enum as (string | null)[]).filter((r): r is string => r !== null);
   test('docs carry the schema link, clock qualification and one anchored action per reason', () => {
     const doc = docText();
     const body = section(doc, '## Workflow metrics');
     expect(body).toContain('workflow-metrics.schema.json');
     expect(body).toContain('clock-sensitive');
     expect(body).toContain('qualified_elapsed_ms');
+    expect(REASONS.length).toBeGreaterThanOrEqual(16);
     for (const reason of REASONS) expect(body, reason).toContain(`<a id="workflow-metrics-${reason}"></a>`);
-    const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+    const fixText = /^FIX_TEXT = \{([\s\S]*?)^\}/m.exec(helperSource)![1];
+    expect([...fixText.matchAll(/^ {4}"([a-z-]+)":/gm)].map(m => m[1]).sort()).toEqual([...REASONS].sort());
     const local = new Ajv({ strict: true, allErrors: true });
     local.addSchema(metricsSchema);
     const envelope = local.getSchema('workflow-metrics#/definitions/envelope')!;
-    const steps = (metricsSchema.definitions.envelope.properties.reason.enum as string[]);
-    expect(REASONS.every(r => steps.includes(r))).toBe(true);
     expect(envelope({ v: 1, status: 'ok', reason: null, session_id: 'x', event_id: null, data: {}, diagnostics: null })).toBe(true);
+    expect(envelope({ v: 1, status: 'ok', reason: null, session_id: 'x', event_id: null, data: { unknown_reasons: ['not-a-reason'] }, diagnostics: null })).toBe(false);
+  });
+  test('the unknown-reason vocabulary matches across helper, schema and docs', () => {
+    const helper = pyTuple('UNKNOWN_REASONS');
+    const integrity = pyTuple('INTEGRITY_REASONS');
+    expect([...helper].sort()).toEqual([...(metricsSchema.definitions.unknown_reason.enum as string[])].sort());
+    const used = [...new Set([...helperSource.matchAll(/unknown\.add\("([a-z-]+)"\)/g)].map(m => m[1]))];
+    expect(used.every(r => helper.includes(r)), used.join(',')).toBe(true);
+    const body = section(docText(), '## Workflow metrics');
+    const table = body.slice(body.indexOf('#### Unknown reasons in a read'));
+    const rows = [...table.matchAll(/^\| `([a-z-]+)` \|/gm)].map(m => m[1]);
+    expect([...rows].sort()).toEqual([...helper].sort());
+    expect(rows.slice(0, integrity.length).sort()).toEqual([...integrity].sort()); // the first rows make a read partial
+    expect(body).toContain('<a id="workflow-metrics-unknown"></a>');
   });
   test('a metrics sequence leaves stage-runs v1 and skill-usage shapes unchanged', () => {
     const fix = makeTelemetryFixture('community');
@@ -1446,5 +1464,11 @@ describe('workflow metrics contract (Track 24A)', () => {
     expect(r.stdout).toContain('"status":"recorded"');
     expect(r.stdout).toContain('"status":"ok"');
     expect(r.stdout).toContain('capture=ok; clock=utc-wall clock-sensitive');
+    // The documented reading: evidence ran and completed; tests were reused with no work interval.
+    const summary = r.stdout.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l)).find(e => e.status === 'ok')!.data;
+    const phase = (name: string) => summary.phases.find((p: any) => p.phase === name);
+    expect(phase('evidence')).toMatchObject({ steps_started: 1, steps_completed: 1 });
+    expect(phase('tests')).toMatchObject({ decisions: { RUN: 0, REUSE: 1, 'N/A': 0 }, steps_started: 0, observed_wall_duration_ms: null });
+    expect(summary.qualified_elapsed_ms).toBeNull();
   }, 60_000);
 });

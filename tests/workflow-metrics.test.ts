@@ -79,7 +79,9 @@ function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at:
   mkdirSync(join(file, '..'), { recursive: true });
   const lines = rows.map(({ op, at, request }) => {
     const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
-    return JSON.stringify({ v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: '0.36.13.0', request });
+    const record = { v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: '0.36.13.0', request };
+    expect(validRecord(record), `${op} ${JSON.stringify(validRecord.errors)}`).toBe(true); // helper and schema agree
+    return JSON.stringify(record);
   });
   writeFileSync(file, lines.join('\n') + '\n');
   return file;
@@ -108,6 +110,19 @@ function passRows(sid: string, opts: { scope?: string; at?: number; voices?: Arr
   }
   rows.push({ op: 'pass', at: at + 40, request: { ...base(sid), pass_id: passId, scope: opts.scope ?? 'local', state: 'completed' } });
   return { passId, attempts, rows };
+}
+
+/** Run the real module in-process with test-only patches (fault injection without a production seam). */
+function patched(fix: TelemetryFixture, name: string, patchLines: string[], op: string, payload: unknown, cwd: string) {
+  const script = join(fix.home, name + '.py');
+  writeFileSync(script, [
+    'import importlib.util, os, sys',
+    `spec = importlib.util.spec_from_file_location("workflow_metrics", ${JSON.stringify(join(ROOT, 'bin/lib/workflow_metrics.py'))})`,
+    'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+    ...patchLines,
+    `m.main([${JSON.stringify(op)}])`,
+  ].join('\n'));
+  return spawnSync('python3', ['-B', '-I', script], { env: fix.env, cwd, input: JSON.stringify(payload), encoding: 'utf8', timeout: 15_000 });
 }
 
 describe('C1 discovery, disabled capture, no legacy side effects', () => {
@@ -208,7 +223,7 @@ describe('C2/E3 exact invocation binding', () => {
     const repo = gitRepo(fix);
     const sid = start(fix, repo);
     const wrongStage = metrics(fix.env, 'begin', { ...base(sid, 'ship-and-land'), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo).envelope;
-    expect(wrongStage.status).toBe('unavailable');
+    expect(wrongStage).toMatchObject({ status: 'unavailable', reason: 'identity-missing' });
     beginRun(fix, repo, sid);
     const second = metrics(fix.env, 'begin', { ...base(sid), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo).envelope;
     expect(second).toMatchObject({ status: 'conflict', reason: 'event-conflict' });
@@ -394,6 +409,7 @@ describe('E1/E14 invalid input never mutates and never echoes', () => {
       ['nonfinite', '{"v":NaN}', 'invalid-input'],
       ['bool as int', JSON.stringify({ ...good, v: true }), 'invalid-input'],
       ['version 2', JSON.stringify({ ...good, v: 2 }), 'unsupported-version'],
+      ['huge version', JSON.stringify({ ...good, v: 0 }).replace('"v":0', '"v":' + '9'.repeat(4000)), 'unsupported-version'],
       ['not json', 'hello', 'invalid-input'],
       ['invalid utf8', Buffer.from([0x7b, 0xff, 0x7d]), 'invalid-input'],
       ['too deep', JSON.stringify({ ...good, context: { candidate_head: [[[[[[[['x']]]]]]]] } }), 'invalid-input'],
@@ -414,6 +430,8 @@ describe('E1/E14 invalid input never mutates and never echoes', () => {
       expect(envelope.reason, name).toBe(reason);
       expect(envelope.diagnostics.trace, name).toBeNull();
       expect(envelope.diagnostics.doc_anchor, name).toContain('#workflow-metrics-');
+      expect(JSON.stringify(envelope.diagnostics).length, name).toBeLessThanOrEqual(4 * 1024);
+      expect(r.stdout, name).not.toContain('9'.repeat(100));
       expect(r.stdout + r.stderr).not.toContain('secret-model');
       expect(r.stdout + r.stderr).not.toContain('a@example.com');
     }
@@ -435,22 +453,25 @@ describe('E1/E14 invalid input never mutates and never echoes', () => {
     const attempt = (delayMs: number, close: boolean) => new Promise<{ stdout: string; ms: number }>((resolve, reject) => {
       const t0 = Date.now();
       const child = spawn(HELPER_BIN, ['metrics', 'decision'], { env: fix.env, cwd: repo });
-      let out = '';
+      let out = '', exited = false;
+      child.stdin.on('error', () => {}); // a write after the helper's deadline exit may EPIPE
       child.stdout.on('data', d => { out += d; });
       child.on('error', reject);
-      child.on('close', () => resolve({ stdout: out, ms: Date.now() - t0 }));
+      child.on('close', () => { exited = true; resolve({ stdout: out, ms: Date.now() - t0 }); });
       setTimeout(() => {
+        if (exited) return;
         child.stdin.write(JSON.stringify({ ...base(sid), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }));
         if (close) child.stdin.end();
         else setTimeout(() => child.kill('SIGKILL'), 4000);
       }, delayMs);
     });
-    const delayed = await attempt(800, true);
-    expect(JSON.parse(delayed.stdout)).toMatchObject({ reason: 'invalid-input' });
-    expect(delayed.ms).toBeLessThan(4000);
+    // The 250 ms deadline must fire long before a write that arrives at 2.5 s, and must name its cause.
+    const delayed = await attempt(2500, true);
+    expect(JSON.parse(delayed.stdout)).toMatchObject({ reason: 'invalid-input', diagnostics: { cause: 'input-timeout' } });
+    expect(delayed.ms).toBeLessThan(2500); // gstack-timing-ok: the bound is the contract under test (10x the 250 ms deadline)
     const open = await attempt(0, false);
-    expect(JSON.parse(open.stdout)).toMatchObject({ reason: 'invalid-input' });
-    expect(open.ms).toBeLessThan(4000);
+    expect(JSON.parse(open.stdout)).toMatchObject({ reason: 'invalid-input', diagnostics: { cause: 'input-timeout' } });
+    expect(open.ms).toBeLessThan(4000); // gstack-timing-ok: an unbounded read would be killed at 4 s with no envelope
   }, 60_000);
   test('terminal stdin is rejected immediately (pty fixture)', () => {
     const fix = makeTelemetryFixture('community');
@@ -589,8 +610,13 @@ describe('E5/E13 partial snapshots and capacity', () => {
     const repo = gitRepo(fix);
     const append = metrics(fix.env, 'decision', { ...base(sid), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }, repo).envelope;
     expect(append).toMatchObject({ status: 'unavailable', reason: 'capacity' });
-    writeFileSync(file, readFileSync(file) + Buffer.alloc(8 * 1024 * 1024, 0x78));
-    expect(read(fix, sid).envelope.status).toBe('partial');
+    // Newline-terminated junk: only the 8 MiB read cap turns this into partial-tail; without the
+    // cap the junk would read as one malformed line instead.
+    writeFileSync(file, readFileSync(file, 'utf8') + 'x'.repeat(8 * 1024 * 1024) + '\n');
+    const over = read(fix, sid).envelope;
+    expect(over).toMatchObject({ status: 'partial', reason: 'partial-tail' });
+    expect(over.data.malformed_records).toBe(0);
+    expect(over.data.records).toBe(4096);
   }, 120_000);
   test('256 findings in one crafted attempt read back exactly', () => {
     const fix = makeTelemetryFixture('community');
@@ -602,17 +628,6 @@ describe('E5/E13 partial snapshots and capacity', () => {
 });
 
 describe('E6/E7 confirmation, crash boundary and one identical replay (injected faults)', () => {
-  function patched(fix: TelemetryFixture, name: string, patchLines: string[], op: string, payload: unknown, cwd: string) {
-    const script = join(fix.home, name + '.py');
-    writeFileSync(script, [
-      'import importlib.util, os, sys',
-      `spec = importlib.util.spec_from_file_location("workflow_metrics", ${JSON.stringify(join(ROOT, 'bin/lib/workflow_metrics.py'))})`,
-      'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
-      ...patchLines,
-      `m.main([${JSON.stringify(op)}])`,
-    ].join('\n'));
-    return spawnSync('python3', ['-B', '-I', script], { env: fix.env, cwd, input: JSON.stringify(payload), encoding: 'utf8', timeout: 15_000 });
-  }
   test('fsync failure is unconfirmed; the same ID replays without duplicating once healthy', () => {
     const fix = makeTelemetryFixture('community');
     const repo = gitRepo(fix);
@@ -778,7 +793,7 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     const { envelope } = metrics({ ...fix.env, PATH: shimBin + ':' + fix.env.PATH }, 'begin',
       { ...base(sid), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo);
     expect(envelope).toMatchObject({ status: 'unavailable', reason: 'ambiguous-binding' });
-    expect(Date.now() - t0).toBeLessThan(4000);
+    expect(Date.now() - t0).toBeLessThan(4000); // gstack-timing-ok: a 5 s git stall must be cut by the bounded lookup
     expect(existsSync(ledgerFile(fix, sid))).toBe(false);
   }, 30_000);
   test('parent invocation identity is explicit or null, and candidates round-trip', () => {
@@ -796,4 +811,241 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     expect(launcher).not.toContain('metrics');
     expect(launcher).toContain('telemetry-protocol: start-finish-v1');
   });
+});
+
+// Review-and-prep fixes (2026-10-19): reader semantics the approved contract requires.
+describe('review fixes: finding corrections, duplicates and decisions', () => {
+  const twoVoices = (sid: string) => passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1')] }, { voice: 'adv', findings: [finding('F1')] }] });
+  const corr = (sid: string, at: number, patch: Record<string, unknown>) => ({ op: 'correction', at, request: { ...base(sid), correction_kind: 'finding', finding_id: 'F1', ...patch } });
+  test('a linear chain applies; competing heads, unqualified targets and duplicate claims stay unknown', () => {
+    const fix = makeTelemetryFixture('community');
+    const build = (rows: (sid: string, p: ReturnType<typeof passRows>) => any[], voices = 'one') => {
+      const sid = 'extend-' + u();
+      const p = voices === 'one' ? passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1')] }] }) : twoVoices(sid);
+      craft(fix, sid, [...runRows(sid).rows, ...p.rows, ...rows(sid, p)]);
+      return read(fix, sid).envelope;
+    };
+    // Value: protects=EN2 one-chain supersession; fails_when=a correction that skips its predecessor still applies; why_new=only voice selections were covered; seam=none; no_claim=producer intent
+    const chain = build((sid) => { const c1 = corr(sid, 2100, { resolution: 'fixed' }); return [c1, corr(sid, 2110, { resolution: 'open', supersedes_event_id: c1.request.event_id })]; });
+    expect(chain.data.findings).toMatchObject({ accepted: 1, fixed: 0, open: 1 });
+    const competing = build((sid) => { const c1 = corr(sid, 2100, { resolution: 'fixed' }); return [c1,
+      corr(sid, 2110, { resolution: 'open', supersedes_event_id: c1.request.event_id }),
+      corr(sid, 2120, { resolution: 'fixed', supersedes_event_id: c1.request.event_id })]; });
+    expect(competing.data.findings.accepted).toBeNull();
+    expect(competing.data.unknown_reasons).toContain('competing-correction');
+    expect(competing).toMatchObject({ status: 'partial' });
+    // Two voices both number a finding F1: a fully qualified correction hits one; a bare finding_id is ambiguous.
+    const qualified = build((sid, p) => [corr(sid, 2100, { resolution: 'fixed', pass_id: p.passId, voice_id: 'adv', attempt_id: p.attempts.adv })], 'two');
+    expect(qualified.data.findings).toMatchObject({ accepted: 2, fixed: 1, open: 1 });
+    const bare = build((sid) => [corr(sid, 2100, { resolution: 'fixed' })], 'two');
+    expect(bare.data.findings.accepted).toBeNull();
+    const duplicateByCorrection = build((sid) => [corr(sid, 2100, { adjudication: 'duplicate' })]);
+    expect(duplicateByCorrection.data.findings.duplicate).toBeNull();
+  }, 60_000);
+  test('a duplicate_of naming no finding in the run leaves totals unknown', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    craft(fix, sid, [...runRows(sid).rows, ...passRows(sid, { voices: [{ voice: 'core', findings: [
+      finding('F1'), finding('F2', { adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'NOPE' })] }] }).rows]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.findings.accepted).toBeNull();
+    expect(data.unknown_reasons).toContain('missing-reference');
+  }, 30_000);
+  test('decisions count once per step and phase; differing choices count as none; fix cycles read back', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const reuseStep = u(), conflictStep = u();
+    const fixStep = (id: string, at: number, outcome: string) => [
+      { op: 'begin', at, request: { ...base(sid), step_id: id, parent_step_id: null, kind: 'fix', phase: 'fix' } },
+      { op: 'end', at: at + 10, request: { ...base(sid), step_id: id, outcome } },
+    ];
+    craft(fix, sid, [...runRows(sid, 0).rows,
+      { op: 'decision', at: 50, request: { ...base(sid), step_id: reuseStep, phase: 'tests', decision: 'REUSE', reason: 'matching-evidence' } },
+      { op: 'decision', at: 51, request: { ...base(sid), step_id: reuseStep, phase: 'tests', decision: 'REUSE', reason: 'matching-evidence' } },
+      { op: 'decision', at: 60, request: { ...base(sid), step_id: u(), phase: 'coverage', decision: 'N/A', reason: 'not-applicable' } },
+      { op: 'decision', at: 70, request: { ...base(sid), step_id: conflictStep, phase: 'documentation', decision: 'RUN', reason: 'required' } },
+      { op: 'decision', at: 71, request: { ...base(sid), step_id: conflictStep, phase: 'documentation', decision: 'REUSE', reason: 'matching-evidence' } },
+      ...fixStep(u(), 100, 'completed'), ...fixStep(u(), 200, 'completed'), ...fixStep(u(), 300, 'failed')]);
+    const envelope = read(fix, sid).envelope;
+    const phase = (p: string) => envelope.data.phases.find((x: any) => x.phase === p);
+    expect(phase('tests').decisions).toEqual({ RUN: 0, REUSE: 1, 'N/A': 0 });
+    expect(phase('tests').observed_wall_duration_ms).toBeNull();
+    expect(phase('coverage').decisions['N/A']).toBe(1);
+    expect(phase('documentation').decisions).toEqual({ RUN: 0, REUSE: 0, 'N/A': 0 });
+    expect(envelope.data.unknown_reasons).toContain('conflicting-terminal');
+    expect(envelope.data.fix_cycles).toBe(2);
+    const sid2 = 'extend-' + u();
+    craft(fix, sid2, [...runRows(sid2, 0).rows,
+      { op: 'correction', at: 300, request: { ...base(sid2), correction_kind: 'fix-cycle', fix_step_id: u() } }]);
+    const d2 = read(fix, sid2).envelope.data;
+    expect(d2.fix_cycles).toBeNull();
+    expect(d2.unknown_reasons).toContain('missing-reference');
+  }, 30_000);
+});
+
+describe('review fixes: unknown is never zero, pauses stay open, candidates inherit', () => {
+  test('a paused wait has unknown duration and is left out of the union; the run still reads ok', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid, 0), wait = u();
+    craft(fix, sid, [...run.rows,
+      { op: 'begin', at: 300, request: { ...base(sid), step_id: wait, parent_step_id: run.step, kind: 'wait', wait_category: 'human' } },
+      { op: 'end', at: 360, request: { ...base(sid), step_id: wait, outcome: 'paused' } }]);
+    const envelope = read(fix, sid).envelope;
+    expect(envelope.status).toBe('ok');
+    expect(envelope.data.waits).toEqual([{ wait_category: 'human', count: 1, observed_wall_duration_ms: null, unknown_durations: 1 }]);
+    expect(envelope.data.union_observed_wall_ms).toBeNull();
+    expect(envelope.data.unknown_reasons).toEqual(expect.arrayContaining(['open-wait', 'missing-end']));
+    expect(envelope.data.receipt_text).toContain('capture=ok');
+  }, 30_000);
+  test('broken references and event conflicts make the read partial; an open run does not', () => {
+    const fix = makeTelemetryFixture('community');
+    const orphanSid = 'extend-' + u();
+    craft(fix, orphanSid, [...runRows(orphanSid, 0).rows,
+      { op: 'begin', at: 10, request: { ...base(orphanSid), step_id: u(), parent_step_id: u(), kind: 'phase', phase: 'tests' } }]);
+    expect(read(fix, orphanSid).envelope).toMatchObject({ status: 'partial', reason: 'malformed-record', data: { capture: 'partial' } });
+    const conflictSid = 'extend-' + u();
+    const same = u();
+    craft(fix, conflictSid, [...runRows(conflictSid, 0).rows,
+      { op: 'decision', at: 10, request: { ...base(conflictSid), event_id: same, step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' } },
+      { op: 'decision', at: 11, request: { ...base(conflictSid), event_id: same, step_id: u(), phase: 'tests', decision: 'REUSE', reason: 'matching-evidence' } }]);
+    expect(read(fix, conflictSid).envelope).toMatchObject({ status: 'partial', reason: 'event-conflict' });
+    const openSid = 'extend-' + u();
+    craft(fix, openSid, runRows(openSid, 0).rows);
+    expect(read(fix, openSid).envelope).toMatchObject({ status: 'ok', reason: null });
+  }, 30_000);
+  test('orphaned pass records and review work with no pass or fix records read unknown, never zero', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const g = passRows(sid, { scope: 'greptile', at: 3000, voices: [{ voice: 'greptile', findings: [] }] });
+    craft(fix, sid, [...runRows(sid, 0).rows, ...g.rows.filter((r: any) => r.request.state !== 'started')]);
+    const orphan = read(fix, sid).envelope.data;
+    expect(orphan.greptile_passes).toBeNull();
+    expect(orphan.greptile_attempted).toBeNull();
+    expect(orphan.local_passes).toBe(0);
+    expect(orphan.receipt_text).toContain('greptile_passes=unknown');
+    const sid2 = 'extend-' + u();
+    craft(fix, sid2, [...runRows(sid2, 0).rows,
+      { op: 'decision', at: 10, request: { ...base(sid2), step_id: u(), phase: 'local-pass', decision: 'RUN', reason: 'required' } },
+      { op: 'decision', at: 20, request: { ...base(sid2), step_id: u(), phase: 'fix', decision: 'RUN', reason: 'required' } }]);
+    const phaseOnly = read(fix, sid2).envelope.data;
+    expect(phaseOnly.local_passes).toBeNull();
+    expect(phaseOnly.fix_cycles).toBeNull();
+    expect(phaseOnly.receipt_text).toContain('local_passes=unknown');
+  }, 30_000);
+  test('attempts inherit the pass candidate and ends inherit the begin; only an explicit change is mixed', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const fixed = { candidate_head: 'e'.repeat(40), candidate_tree: 'f'.repeat(40) };
+    const p = passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1')] }] });
+    p.rows[0].request.context = fixed; // pass 2 after a fix commit declares the new candidate once
+    const same = u(), moved = u();
+    craft(fix, sid, [...runRows(sid, 0).rows, ...p.rows,
+      { op: 'begin', at: 10, request: { ...base(sid), step_id: same, parent_step_id: null, kind: 'phase', phase: 'tests', context: fixed } },
+      { op: 'end', at: 20, request: { ...base(sid), step_id: same, outcome: 'completed' } },
+      { op: 'begin', at: 30, request: { ...base(sid), step_id: moved, parent_step_id: null, kind: 'phase', phase: 'tests' } },
+      { op: 'end', at: 40, request: { ...base(sid), step_id: moved, outcome: 'completed', context: fixed } }]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.local_passes).toBe(1);
+    expect(data.findings).toMatchObject({ accepted: 1, open: 1 });
+    expect(data.unknown_reasons).not.toContain('cross-candidate');
+    expect(data.mixed_candidate_steps).toBe(1);
+  }, 30_000);
+});
+
+describe('review fixes: stdin, stored-line and confirmation edges', () => {
+  test('closed stdin is invalid-input, and an inherited pipe keeps its blocking mode', () => {
+    const fix = makeTelemetryFixture('community');
+    const closed = spawnSync('bash', ['-c', `"${HELPER_BIN}" metrics begin <&-`], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    const envelope = JSON.parse(closed.stdout);
+    expect(envelope).toMatchObject({ status: 'unavailable', reason: 'invalid-input', diagnostics: { cause: 'stdin-unavailable', trace: null } });
+    const shared = spawnSync('bash', ['-c', `(sleep 1) | { "${HELPER_BIN}" metrics begin >/dev/null 2>&1; python3 -c 'import os; print(os.get_blocking(0))'; }`],
+      { env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    expect(shared.stdout.trim()).toBe('True');
+  }, 30_000);
+  test('a parser recursion failure is invalid-input too-deep, never an unexpected io-error', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const deep = patched(fix, 'recursion', ['def boom(*a, **k):\n    raise RecursionError()', 'm.json.loads = boom'], 'begin', { v: 1 }, repo);
+    expect(JSON.parse(deep.stdout)).toMatchObject({ reason: 'invalid-input', diagnostics: { cause: 'too-deep', trace: null } });
+  }, 30_000);
+  test('a stored line whose request is not an object is malformed, not an unreadable run', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const file = craft(fix, sid, runRows(sid).rows);
+    writeFileSync(file, readFileSync(file, 'utf8') + JSON.stringify({ v: 1, op: 'end', event_id: u(), request_digest: '0'.repeat(64), captured_at_ms: 1, producer_version: null, request: [] }) + '\n');
+    const envelope = read(fix, sid).envelope;
+    expect(envelope).toMatchObject({ status: 'partial', reason: 'malformed-record' });
+    expect(envelope.data.malformed_records).toBe(1);
+    expect(envelope.data.records).toBe(1);
+  }, 30_000);
+  test('directory-entry sync failure alone is unconfirmed; a failed replay re-confirmation appends nothing', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    const payload = { ...base(sid), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX };
+    const dirOnly = ['import stat', 'orig = os.fsync',
+      'def f(fd):\n    if stat.S_ISDIR(os.fstat(fd).st_mode):\n        raise OSError("injected")\n    return orig(fd)',
+      'os.fsync = f'];
+    expect(JSON.parse(patched(fix, 'dir-fsync', dirOnly, 'begin', payload, repo).stdout)).toMatchObject({ status: 'unconfirmed', reason: 'io-error' });
+    expect(ledgerLines(fix, sid)).toHaveLength(1);
+    const replay = JSON.parse(patched(fix, 'replay-fsync', dirOnly, 'begin', payload, repo).stdout);
+    expect(replay).toMatchObject({ status: 'unconfirmed', reason: 'io-error', diagnostics: { cause: 'replay-confirm' } });
+    expect(ledgerLines(fix, sid)).toHaveLength(1);
+    expect(metrics(fix.env, 'begin', payload, repo).envelope.status).toBe('replayed');
+  }, 30_000);
+  test('symlinked metrics dir, lock dir and lock file are refused without writing through them', () => {
+    for (const which of ['analytics/workflow-metrics', 'workflow-metrics-locks', 'lockfile'] as const) {
+      const fix = makeTelemetryFixture('community');
+      const repo = gitRepo(fix);
+      const sid = start(fix, repo);
+      const state = join(fix.home, '.gstack-extend');
+      const target = join(fix.home, 'elsewhere');
+      mkdirSync(target, { recursive: true });
+      mkdirSync(join(state, 'analytics'), { recursive: true });
+      writeFileSync(join(target, 'keep'), 'KEEP');
+      if (which === 'lockfile') {
+        mkdirSync(join(state, 'workflow-metrics-locks'), { recursive: true });
+        symlinkSync(join(target, 'keep'), join(state, 'workflow-metrics-locks', createHash('sha256').update(sid).digest('hex') + '.lock'));
+      } else symlinkSync(target, join(state, which));
+      const { envelope } = metrics(fix.env, 'begin', { ...base(sid), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo);
+      expect(envelope, which).toMatchObject({ status: 'unavailable', reason: 'unsafe-path' });
+      expect(readdirSync(target), which).toEqual(['keep']);
+      expect(readFileSync(join(target, 'keep'), 'utf8'), which).toBe('KEEP');
+    }
+  }, 60_000);
+  test('a real start ID is not adopted from a different checkout', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix), other = gitRepo(fix, 'other');
+    const sid = start(fix, repo);
+    const payload = () => ({ ...base(sid), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX });
+    expect(metrics(fix.env, 'begin', payload(), other).envelope).toMatchObject({ status: 'unavailable', reason: 'identity-missing' });
+    expect(existsSync(ledgerFile(fix, sid))).toBe(false);
+    expect(metrics(fix.env, 'begin', payload(), repo).envelope.status).toBe('recorded');
+  }, 30_000);
+  test('an unloadable metrics module yields the fixed unavailable envelope and leaves legacy start intact', () => {
+    const fix = makeTelemetryFixture('community');
+    const install = join(fix.home, 'install');
+    cpSync(join(ROOT, 'bin'), join(install, 'bin'), { recursive: true });
+    cpSync(join(ROOT, 'VERSION'), join(install, 'VERSION'));
+    writeFileSync(join(install, 'bin/lib/workflow_metrics.py'), 'raise RuntimeError("secret-xyz")\n');
+    const repo = gitRepo(fix);
+    const bin = join(install, 'bin/gstack-extend-telemetry');
+    const r = runRaw(fix.env, ['metrics', 'begin'], '{}', repo, bin);
+    expect(r.status).toBe(0);
+    const envelope = JSON.parse(r.stdout);
+    expect(validEnvelope(envelope)).toBe(true);
+    expect(envelope).toMatchObject({ status: 'unavailable', reason: 'io-error', diagnostics: null });
+    expect(r.stdout + r.stderr).not.toContain('secret-xyz');
+    expect(runRaw(fix.env, ['start', '--skill', 'extend:review-and-prep'], '', repo, bin).stdout).toMatch(/session=extend-/);
+  }, 30_000);
+  test('three-part producer versions are accepted for the planned release format', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const file = craft(fix, sid, runRows(sid).rows);
+    writeFileSync(file, readFileSync(file, 'utf8').replace('"producer_version":"0.36.13.0"', '"producer_version":"1.0.0"'));
+    const envelope = read(fix, sid).envelope;
+    expect(envelope.status).toBe('ok');
+    expect(envelope.data.run.producer_version).toBe('1.0.0');
+  }, 30_000);
 });

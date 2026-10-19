@@ -64,7 +64,8 @@ metrics capture is unavailable; continue the workflow. Full contract:
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
 with one JSON object (`v:1`, `stage:"ship-and-land"`, the retained
-`session_id`, a fresh UUID `event_id` you keep stable for that event) on stdin.
+`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
+event; `uuidgen | tr A-Z a-z`) on stdin. Every ID you mint is lowercase.
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
 state and preserve the wrapped work's own exit status separately. A disabled,
 unavailable, conflicting or unconfirmed capture is capture state only — it
@@ -77,6 +78,13 @@ replay that identical payload at most once when the read reports the event
 present or safely absent; on conflict/partial/unknown stop and leave capture
 unknown. Never mint a fresh `event_id` for a replay.
 
+Issue metrics calls one at a time from this session, never as parallel tool
+calls or from subagents: the run lock never waits, so concurrent calls drop
+as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
+nothing further in this invocation and use the literal status line below in
+its receipts. If context compaction loses the retained IDs or a pending
+payload, that capture stays unknown; never guess an ID.
+
 Emit, batched into existing tool calls where practical:
 
 - Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
@@ -84,30 +92,44 @@ Emit, batched into existing tool calls where practical:
   HEAD/tree/base you already observed (or null — never run `git write-tree` or
   create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
   the installed copy of this skill, and `parent_session_id:null` unless the
-  spawning stage handed you its exact ID.
+  spawning stage handed you its exact ID. When you first observe the candidate,
+  and after a base merge or release commit changes it, put a `context`
+  override with the new HEAD/tree/base on the next step `begin` and pass
+  `started`; their ends, attempts and voice records inherit it.
 - One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
-  controlled reason); `begin`/`end` only around work actually executed, so
-  trusted or release-only reuse records decisions without new work intervals.
-  Reached-but-inapplicable phases are `N/A`; unreached phases emit nothing and
-  stay unknown. Each execution uses a fresh `step_id`; phase names are labels
-  only. Parent review intervals enclose their parallel voice intervals.
+  controlled reason), recorded under the phase of the work decided about (a
+  reused review is `local-pass`, reused tests are `tests`; `reuse` labels only
+  the reuse evaluation itself); `begin`/`end` only around work actually
+  executed, so trusted or release-only reuse records decisions without new
+  work intervals. Reached-but-inapplicable phases are `N/A`; unreached phases
+  emit nothing and stay unknown. Each execution uses a fresh `step_id`; phase
+  names are labels only. Parent review intervals enclose their parallel voice
+  intervals; under parallel dispatch those are parent-observed, not per-voice
+  runtime.
 - Any local review actually run here as `pass` records (one round over one
   candidate; required voices declared, attempts separate, one selected attempt
   or an explicit policy-authorized `N/A` per voice; findings as allowlisted
   IDs/severities/dispositions only, never bodies, prompts or command output;
-  an empty array means zero). Greptile is `scope:"greptile"` with its own count
-  and its once-per-PR rule unchanged; a reused Greptile result is a `REUSE`
-  decision with no new pass and no new request, and metrics never triggers one.
+  an empty array means zero; `model_context` only when supplied, with an
+  out-of-grammar identifier null and `unknown_reason:"unsupported"`). Greptile
+  is `scope:"greptile"` with its own count and its once-per-PR rule unchanged;
+  a reused Greptile result is a `REUSE` decision with no new pass and no new
+  request, and metrics never triggers one.
 - Waits as `kind:"wait"` steps (`external-review`, `checks`, `deploy`)
   only for waits actually performed. Unlabeled time stays unclassified;
   elapsed wall time is never model/inference time, and every duration is
   clock-sensitive (`clock_basis=utc-wall`).
-- At completion: `end` the run step, then `metrics read --session-id <id>` and
-  include its `receipt_text` (at most 2 KiB) in the wrapper receipt and landing
-  readiness report — or, when the read is unavailable, the literal line
+- Receipts: immediately before writing the wrapper receipt and the landing
+  readiness report, run `metrics read --session-id <id>` and include that
+  snapshot's `receipt_text` (at most 2 KiB), or, when the read is
+  unavailable, the literal line
   `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-  with the actual status. Existing receipt, handoff and readiness labels are
-  unchanged; the metrics line cannot authorize landing or merge. An
+  with the actual status. An open run reads as in progress; that is expected.
+  The metrics line precedes the readiness report's merge decision, which
+  stays last. `end` the run step just before the legacy telemetry finish.
+  Never write or edit a PR body, comment or report only to refresh metrics,
+  and never after the merge. Existing receipt, handoff and readiness labels
+  are unchanged; the metrics line cannot authorize landing or merge. An
   interrupted run that produces no receipt needs none for metrics.
 
 Phase mapping (stable metric phase IDs, anchored to this file's headings —
@@ -116,7 +138,7 @@ the owner of a wrapper change updates this mapping in the same change):
 | Anchor in this skill | Metric phases |
 |---|---|
 | `1. Resolve the workflows and target` | `handoff`, `evidence` |
-| `2. Decide what can be reused`, `Release-only path`, `Independently verified reuse` | `reuse` decisions |
+| `2. Decide what can be reused`, `Release-only path`, `Independently verified reuse` | `reuse`, plus `REUSE` decisions under each reused phase |
 | `Shared review execution (DOCS and FULL)` | `local-pass`, `voice`, plus actual `coverage`, `documentation`, `tests` |
 | `Greptile and new feedback` | `external-review` decision; wait `external-review` only if actually awaited |
 | `3. Execute ship and verify its final changes` | `release`, `ship`, `publication` |

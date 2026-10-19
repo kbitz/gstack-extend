@@ -526,7 +526,9 @@ producer event on stdin (one EOF-terminated UTF-8 JSON object; depth 8; arrays
 256; a 250 ms healthy-local read deadline for pipes; terminal stdin is
 rejected — use a pipe, heredoc or redirected file), 4096 records and 8 MiB per
 run, a 16 KiB result envelope (diagnostics at most 4 KiB) and a 2 KiB receipt
-line. Local filesystem stalls have no hard wall-time guarantee.
+line. Local filesystem stalls have no hard wall-time guarantee. The stdin,
+fsync and lock paths have been exercised on macOS only; Linux behavior is
+unverified until a named profile is qualified.
 
 Only allowlisted, bounded fields are recorded: controlled enums, UUIDs and
 hashes. No free-form command output, prompts, finding bodies, exception
@@ -554,6 +556,15 @@ never a fresh legacy start. Joining to a stage-runs row is by that ID; it does
 not retroactively prove an ambiguous implicit legacy finish was attributed
 correctly.
 
+Producers send metrics calls one at a time from the invocation's own session:
+the per-run lock never waits, so parallel tool calls or subagents drop events
+as `lock-busy`. Voice intervals under parallel dispatch are therefore
+parent-observed, not per-voice runtime. Every ID is lowercase
+(`uuidgen | tr A-Z a-z` on macOS). If the run `begin` is not `recorded` or
+`replayed`, the invocation emits nothing further and its receipts carry the
+literal status line. Context compaction that loses the retained IDs or a
+pending payload leaves the affected capture unknown; IDs are never guessed.
+
 ### Operations
 
 `gstack-extend-telemetry metrics --help` and `metrics <operation> --help`
@@ -575,9 +586,18 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   `begin` carries a controlled phase (or a `wait_category`:
   `human|external-review|checks|deploy|tool|other`); `end` carries
   `outcome: completed|failed|paused|cancelled`. A pause records an open wait
-  or a `paused` end, never an invented finish.
-- `decision`: `RUN|REUSE|N/A` plus a controlled reason, one per visited phase.
-  Reuse is a decision with no new work interval.
+  or a `paused` end, never an invented finish; a wait ended `paused` has an
+  unknown duration (`open-wait`), because its real end was not observed.
+  Records without `context` inherit the candidate: an `end` inherits its
+  `begin`'s, and a pass's attempts and voice records inherit its `started`
+  record's. Send a `context` override only when the candidate actually
+  changed (after it is first observed, a base merge or a fix commit); only an
+  explicit different override makes a step mixed or an attempt cross-candidate.
+- `decision`: `RUN|REUSE|N/A` plus a controlled reason, one per visited phase,
+  under the phase of the work decided about (a reused test run is
+  `phase:"tests"`, not `reuse`). Reuse is a decision with no new work
+  interval. Repeats of the same choice for one `step_id` and phase count once;
+  differing choices are a conflict and count as none.
 - `pass`: a review round (`scope: local|greptile`) over one candidate.
   `started` declares the nonempty required-voice set; each `attempt` is a
   distinct try (retries/fallback link their predecessor; a completed attempt
@@ -593,27 +613,73 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   (`open|fixed|unknown`) counts, and explicit same-run duplicate links.
   Local passes, Greptile passes and fix cycles are three separate counts —
   Greptile keeps its once-per-PR semantics and is never added to local passes
-  or upstream cycles, and metrics never triggers it.
+  or upstream cycles, and metrics never triggers it. A count is unknown, never
+  zero, when its records are orphaned or when its work shows up only as a
+  phase (`local-pass`, `external-review` or `fix` ran with no pass or fix
+  record). One 16 KiB producer event holds about 100 findings; a voice with
+  more cannot be captured whole.
 - `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
   referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
   acyclic and unambiguous, or the affected totals stay unknown — never
-  last-write-wins, never a rewrite of history.
+  last-write-wins, never a rewrite of history. A `finding` correction targets
+  one finding by its `finding_id` plus whatever pass, voice and attempt it
+  names; several corrections to one finding must form a single chain, each
+  superseding the one before it. A correction that cannot name exactly one
+  finding, a `duplicate` adjudication by correction (its `duplicate_of` link
+  lives only on the finding) and a `duplicate_of` naming no finding in the
+  run all leave the totals unknown.
 - `read --session-id <id> [--event-id <uuid>]`: the only reader, for one named
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
   `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
   With `--event-id` it returns just that event's digest/timestamp as
   match/absent/unknown for reconciliation; only a valid snapshot can report
-  absence. Malformed rows and torn tails make the read `partial` with the
-  affected totals null; nothing is silently dropped and then called complete,
-  and a snapshot can never prove complete capture of events a producer omitted.
+  absence. Malformed rows, torn tails, event conflicts and broken references
+  make the read `partial` with the affected totals null; nothing is silently
+  dropped and then called complete, and a snapshot can never prove complete
+  capture of events a producer omitted. An in-progress run (open steps,
+  unfinished passes) reads `ok` and names its unknowns.
 
-Every receipt the two wrappers produce carries the `receipt_text`, or the
-literal `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-when no summary exists. It preserves every existing receipt/handoff label and
-cannot authorize readiness, landing or merge. Wrappers map their existing
-headings to stable phase IDs in their own "Workflow metrics" sections; the
-owner of a wrapper change updates that mapping in the same change.
+Each wrapper reads a snapshot immediately before writing each receipt or
+report it already produces (including a PAUSED or blocked receipt, the
+pre-ready receipt and a landing readiness report) and includes that
+snapshot's `receipt_text`, or the literal
+`Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
+when no summary exists. It ends the run step just before its legacy finish
+and leaves it open at a pause. No PR body, comment or report is written or
+edited only to refresh metrics — never after readiness or merge, and the
+metrics line comes before a readiness report's merge decision. It preserves
+every existing receipt/handoff label and cannot authorize readiness, landing
+or merge. Wrappers map their existing headings to stable phase IDs in their
+own "Workflow metrics" sections; the owner of a wrapper change updates that
+mapping in the same change.
+
+<a id="workflow-metrics-unknown"></a>
+
+#### Unknown reasons in a read
+
+`data.unknown_reasons` (also printed as `unknown=` in `receipt_text`) says
+why a value is unknown. The first eight make the read `partial`; the rest
+describe an in-progress run and leave it `ok`.
+
+| Reason | Meaning |
+|---|---|
+| `malformed-record` | A stored line failed validation; it was not counted. |
+| `partial-tail` | The last line is torn or the file exceeds 8 MiB. |
+| `event-conflict` | One `event_id` holds two different payloads; both are excluded. |
+| `missing-begin` | An `end` has no `begin`; fix cycles become unknown. |
+| `missing-reference` | A record names a parent, attempt, pass, fix step or duplicate that is absent. |
+| `conflicting-terminal` | An entity was declared or closed twice with different content. |
+| `competing-correction` | Corrections do not form one unambiguous chain. |
+| `cross-candidate` | A selected attempt explicitly names a different candidate than its pass. |
+| `missing-end` | A step is still open. |
+| `incomplete-pass` | A pass has not closed every required voice, or has not completed. |
+| `clock-invalid` | A step's end is earlier than its begin. |
+| `open-wait` | A wait ended `paused`; its duration is unknown. |
+
+The envelope reasons `clock-invalid` and `candidate-changed` are reserved in
+v1: reads report clock problems through `unknown_reasons` and candidate drift
+through `mixed_candidate_steps` and `cross-candidate`.
 
 ### Quickstart (isolated, copyable)
 
@@ -705,11 +771,13 @@ seeded records) 231/270 ms; contended append 163/239 ms; normal read
 163/250 ms; near-cap read 237/335 ms; peak RSS ≈28 MB (append) and ≈43 MB
 (near-cap read). Unchanged legacy paths on the same machine: start p50
 155→156 ms and finish 178→178 ms (base→branch), so the dispatch adds no
-measurable legacy cost. The 100 ms p95 target is **not met on this machine —
-the pre-existing launcher invocation alone exceeds it** (legacy start p95
-171–228 ms); the marginal metrics cost is ≈0 ms at normal run sizes and
-≈70 ms of record scanning near the 4,096-record cap. That is reported, not
-gated: no index, split or weakened guarantee follows from it.
+measurable legacy cost. The 100 ms p95 target was **not met in this run, and
+neither was the pre-existing launcher invocation** (legacy start p95
+171–228 ms). Machine load was not controlled, so absolute figures may be high;
+the interleaved base/branch comparison is the part to rely on. The marginal
+metrics cost is ≈0 ms at normal run sizes and ≈70 ms of record scanning near
+the 4,096-record cap. That is reported, not gated: no index, split or weakened
+guarantee follows from it.
 
 ### Installed two-wrapper smoke (manual, separate from fixtures)
 
