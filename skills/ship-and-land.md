@@ -234,6 +234,11 @@ rule or the explicit `DOCS` override here; it is not missing coverage.
 
 ### Trust prepared reviews by default
 
+The [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`, H-B) publishes this section's marked-handoff rules
+for external callers. This section stays the normative behavior; the contract
+adds no new check.
+
 Enable this path only when the current user supplies a copyable preparation
 prompt (a marked handoff) containing `Review handoff: review-and-prep/v1; review: COMPLETE;`
 with its prepared HEAD, Git tree, reviewed base and receipt pointer. The same text

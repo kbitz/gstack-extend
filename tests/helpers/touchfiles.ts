@@ -127,6 +127,15 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     'docs/source-tag-contract.md',
   ],
+  'tests/handoff-contract.test.ts': [
+    'docs/workflow-handoffs.md',
+    'skills/implement.md',
+    'skills/review-and-prep.md',
+    'skills/pair-review.md',
+    'skills/ship-and-land.md',
+    'README.md',
+    'tests/fixtures/handoffs/**',
+  ],
   'tests/update.test.ts': [
     'bin/update-check',
     'bin/update-run',

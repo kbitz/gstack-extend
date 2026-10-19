@@ -185,6 +185,14 @@ stage normally leaves uncommitted work there. Name both explicitly. A new
 Conductor workspace or worktree will not have that uncommitted work; do not
 start one, and do not commit merely to make the handoff portable.
 
+This prompt is the H-A handoff of the published
+[stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md)
+(`docs/workflow-handoffs.md`). External callers parse it, so keep its first line
+starting with `Run /review-and-prep` and keep the field labels in the template
+below. The contract treats a BLOCKED report as a refusal, never a handoff: the
+no-prompt-while-BLOCKED rule in Step 3 is its rule. Give every `DEFERRED BY USER`
+row its decision reference.
+
 Make the prompt self-contained. Include the plan path/link and accepted scope,
 approval and scope decisions, the complete compact checklist with evidence,
 implementation summary, exact check results, pending verification, and relevant

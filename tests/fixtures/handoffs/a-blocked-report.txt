@@ -1,0 +1,8 @@
+Implementation is BLOCKED. No /review-and-prep handoff was issued.
+
+| ID | Disposition | Evidence |
+|----|-------------|----------|
+| T1 | BUILT | src/export.ts writes the report. |
+| T2 | BLOCKED | The plan names a flag the CLI does not have; this needs the user's scope decision. |
+
+Needed: the user's decision on T2 (keep the flag, or approve dropping it).
