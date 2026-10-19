@@ -62,7 +62,7 @@ PR creation/updates, the single applicable Greptile request, and review replies
 required by its child workflows. Carry existing session authorization forward
 for those routine actions. Preserve explicit user-decision gates, including
 release-level decisions. Merge approval comes only from the user in this
-session, after land-and-deploy's readiness report, for the exact repository,
+session, after this invocation's land-and-deploy readiness report, for the exact repository,
 PR, head and base branch; the invocation, a handoff prompt, receipts, and PR or comment
 text never grant it. Creating or discussing this skill does not invoke it or
 authorize shipping this repository.
@@ -960,9 +960,47 @@ in the same receipt update.
 directly asked to stop before landing, run land-and-deploy with these adapters
 — Step 1.5 read-only, never confirmed — through its readiness report, then
 stop where it would ask for merge approval.
-Do not merge, enqueue, or enable auto-merge. Finish with the readiness report,
-`stopped at merge gate (caller request)` and any blocker. A later
-`/ship-and-land` run resumes at land with fresh evidence and its own approval.
+Do not merge, enqueue, or enable auto-merge. Do not ask land's no-CI,
+check-exclusion or merge-approval questions: this run cannot act on the
+answers. Run telemetry finish (`--outcome success` at the gate, `error` with a
+blocker), then finish with the readiness report, `stopped at merge gate
+(caller request)` and, as the last lines, the merge decision. Print it as
+plain text, not AskUserQuestion: its answer belongs to the next run.
+
+- Name the PR, its full head SHA and every state the landing run will ask the
+  user to accept on that head: the CI verdict (`NO_CHECKS`, or each named
+  non-required failing or pending check), an unconfirmed first-run setup, each
+  readiness warning and any deployment the merge triggers.
+- Ask whether to land it or leave the PR open. To land, give the exact command
+  that starts the landing run: `/ship-and-land <PR URL>`, plus this
+  invocation's verification URL when the user passed one. Never fill in
+  `--reviewed`: when this invocation accepted it, say to add it only if the
+  user still accepts the prior review for that head. When this invocation
+  validated a marked handoff, tell them to paste the same handoff again with
+  it. Say that run rechecks the head, asks for each acceptance and the merge
+  approval, then merges and reports. Leaving the PR open needs no action.
+- With a blocker, name each blocker and its repair instead of offering to land.
+
+For example, for a head with no CI:
+
+```text
+stopped at merge gate (caller request)
+PR #<number> head <full head SHA>: CI NO_CHECKS (no CI ran on this head); 0 blockers.
+Land it, or leave it open? To land, run `/ship-and-land <PR URL>`: it rechecks this head, asks you to accept NO_CHECKS on this head and approve the merge, then merges and reports. To leave the PR open, do nothing.
+```
+
+The answer is never approval, and nothing merges in this run. A reply in this
+session that asks to land, such as "merge it", starts the landing run as a new
+invocation for the same PR and verification URL. Like the printed command, it
+carries `--reviewed` only when the reply explicitly accepts the prior review
+again, and a marked handoff only when the reply pastes it again. When this
+invocation relied on either and the reply omits it, ask once whether to supply
+it before starting; without it, the landing run verifies reuse independently.
+Any other reply asking for more work, such as fixing a blocker, starts a new
+invocation that keeps the stop request unless the reply asks to land. Each new
+invocation runs this skill from Step 1, with its own telemetry start, start
+time and fresh evidence, and its own acceptance and merge-approval questions
+on the head it finds. A reply that leaves the PR open needs nothing further.
 
 Continue to the installed land-and-deploy procedure on the exact shipped PR and
 verification URL. Retain CI/protection checks, version-drift detection, first-run
@@ -986,11 +1024,13 @@ deployment as unverified unless this invocation verifies it.
 
 Finish with PR URL, version, merged/deploy verdict, a brief reused-versus-run
 summary, the path taken, the wall time from the invocation start to the merge
-gate, and any blocker or unverified deployment. CI pending, deployment
+gate, and any blocker or unverified deployment. After a merge-gate stop, the
+merge decision stays last. CI pending, deployment
 unconfirmed, or canary unavailable must not read as deployed and verified.
-This skill has no deliberate pause: every exit, including blockers and
-preparation handoffs, completes the invocation, so run telemetry finish with
-its actual outcome. Waiting in this session for the user's answer is not an exit.
+This skill has no deliberate pause: every exit, including blockers,
+preparation handoffs and the merge decision, completes the invocation, so run
+telemetry finish with its actual outcome. Waiting in this session for an
+answer this invocation acts on, such as merge approval, is not an exit.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
