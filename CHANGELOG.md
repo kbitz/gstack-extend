@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.14.0] - 2026-10-19
+
+### Fixed
+
+- **Stopping before landing no longer confirms first-run deploy setup.** `/ship-and-land --no-land`, or any direct request to stop at the merge gate, still checks whether setup was confirmed. When the check says this is a first run or the configuration changed, the readiness report and receipt record `first-run setup unconfirmed (<token>): the landing run confirms it`. The run does not ask you to confirm setup and does not write the confirmation. A later landing run asks, and only your own answer there writes it. If the check fails, the run stops instead of treating the failure as a first run.
+
+- **A documented "platform none" example no longer skips a real deploy.** Landing treats the project as having no deploy target only when the actual Deploy Configuration section sets Platform to `none` and every other deploy field to `none`. Text inside a fenced example does not count, and a missing or non-none target keeps the normal deploy questions. An observed deployment, one that is still expected, or a verification URL you supplied still takes the normal route.
+
 ## [0.36.13.0] - 2026-10-19
 
 ### Added
