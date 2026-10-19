@@ -2500,6 +2500,156 @@ describe('release-only ship path', () => {
   });
 });
 
+// Landing adapters: a merge-gate stop runs land's first-run detection read-only
+// instead of stalling on its confirmation, and a recorded all-`none` deploy
+// configuration is the no-deploy confirmation instead of a post-merge question.
+describe('ship-and-land first-run and no-deploy landing adapters', () => {
+  const ship = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const shipN = ship.replace(/\s+/g, ' ');
+  const firstRunN = skillSection(ship, '### First-run setup when stopping at the merge gate').replace(/\s+/g, ' ');
+  const noDeployN = skillSection(ship, '### Projects with no deploy target').replace(/\s+/g, ' ');
+
+  // Value: protects=a --no-land run with no land-deploy-confirmed file reaches the readiness report, records the unconfirmed setup and stops at the merge gate; fails_when=the adapter stops at Step 1.5, reads the dry-run section or drops the record; why_new=the merge-gate test locks only the stop line and wall time; seam=none; no_claim=agent behavior (static prose lock)
+  test('a merge-gate stop runs first-run detection read-only and records an unconfirmed setup', () => {
+    expect(firstRunN.length).toBeGreaterThan(0);
+    for (const clause of [
+      "run only its detection block, exactly as installed in the discovered copy: the read-only comparison against the `land-deploy-confirmed` fingerprint.",
+      '`CONFIRMED`: continue exactly as land directs; this adapter changes nothing.',
+      '`FIRST_RUN` or `CONFIG_CHANGED`: do not stop.',
+      'Do not read or execute the first-run validation section, do not present its dry-run confirmation, and do not write, create or refresh the fingerprint.',
+      '`first-run setup unconfirmed (<token>): the landing run confirms it`, with the actual token, in the readiness report and in the `Ship and land` receipt.',
+      'An unconfirmed setup is not a blocker on this path.',
+      "continue through land's CI gate, version-drift check and readiness report to the merge gate",
+      'Other blockers keep their installed behavior and are reported at the gate; only the first-run stop is replaced.',
+      'nothing can merge or deploy on an unconfirmed setup.',
+    ]) expect(firstRunN).toContain(clause);
+    expect(shipN).toContain('When first-run setup is unconfirmed under the merge-gate adapter, record that note in the same receipt update.');
+    expect(shipN).toContain('run land-and-deploy with these adapters — Step 1.5 read-only, never confirmed — through its readiness report');
+    expect(shipN).toContain('`stopped at merge gate (caller request)`');
+    const adapterAt = ship.indexOf('### First-run setup when stopping at the merge gate');
+    expect(adapterAt).toBeGreaterThan(-1);
+    expect(adapterAt).toBeLessThan(ship.indexOf('**Stop at the merge gate on request.**'));
+  });
+
+  test('a failed first-run detection is unknown state, never an unconfirmed setup', () => {
+    expect(firstRunN).toContain('No token, or the detection itself failed: unknown state, not `FIRST_RUN`.');
+    expect(firstRunN).toContain('Never guess a token or read a broken check as unconfirmed setup.');
+  });
+
+  // Value: protects=a landing run still gets the full first-run confirmation and nothing writes the fingerprint without the user; fails_when=the read-only path leaks into landing or the wrapper gains a fingerprint write; why_new=no earlier lock covers Step 1.5 at all; seam=none; no_claim=agent behavior (static prose lock)
+  test('a landing run keeps the full first-run confirmation and the wrapper never writes the fingerprint', () => {
+    expect(shipN).toContain("only the user's own answer there writes the `land-deploy-confirmed` fingerprint, and this wrapper never writes it or answers for the user.");
+    expect(firstRunN).toContain('runs the full first-run confirmation before any merge, unchanged.');
+    expect(firstRunN).toContain('This path leaves the fingerprint absent or unchanged.');
+    expect(firstRunN).toContain('Once setup is confirmed, replace any earlier unconfirmed note in the readiness report and receipt with the actual confirmed status.');
+    expect(shipN).toContain('first-run setup validation (full confirmation on a landing run; read-only only when this invocation stops at the merge gate)');
+    expect(noDeployN).toContain("a landing run on a no-deploy project still runs Step 1.5's full confirmation until the user confirms the recorded setup.");
+    expect(ship).not.toMatch(/echo[^\n]*>[^\n]*land-deploy-confirmed/);
+    expect(ship).not.toContain('mkdir -p "$GSTACK_STATE_ROOT"');
+  });
+
+  // Value: protects=an all-none Deploy Configuration lands as MERGED — NO DEPLOY NEEDED with no URL, staging or canary question; fails_when=the skip list or verdict drifts, or an observed deploy can be erased; why_new=no earlier lock covers the deploy route; seam=none; no_claim=agent behavior (static prose lock)
+  test('a no-deploy project skips the route, staging and canary questions after merge', () => {
+    expect(noDeployN.length).toBeGreaterThan(0);
+    for (const clause of [
+      "That recorded configuration is the user's explicit no-deploy confirmation.",
+      'Deployment facts record no deploy target, from that configuration, not "deployment unknown".',
+      "skip land's production-route question, the staging offer, the deploy wait and canary verification.",
+      'verdict `MERGED — NO DEPLOY NEEDED` and deploy status `NOT_NEEDED`.',
+      'That verdict does not claim any deployment happened or was verified.',
+      'A matching triggered deploy, an expected deployment whose run has not appeared, or an explicit verification URL from the caller takes precedence and restores land\'s steps as installed.',
+      'Poll expected deployments under land\'s existing deadline.',
+      'Failed or unknown detection stays unknown and follows land\'s installed handling; it cannot authorize `NOT_NEEDED`.',
+      'Only after successful detection with no observed or expected deployment and no explicit verification URL',
+      'A `none` configuration cannot erase an observed or expected deployment.',
+    ]) expect(noDeployN).toContain(clause);
+    expect(shipN).toContain("`NO_DEPLOY` is the explicit no-deploy confirmation land's verdicts already accept. Anything else keeps land's steps exactly as installed.");
+  });
+
+  test('anything short of an all-none configuration keeps land exactly as installed', () => {
+    expect(noDeployN).toContain('every field value is exactly `none` (trimmed, case-insensitive), except `Merge method`, `Project type` and `Pre-merge`, which describe the merge, not a deploy target.');
+    expect(noDeployN).toContain('A missing file or section, a missing `Platform`, an empty field value, or any other value');
+    expect(noDeployN).toContain("prints `NOT_NO_DEPLOY`. That keeps land's behavior exactly as installed.");
+  });
+
+  describe('no-deploy classifier', () => {
+    const section = skillSection(ship, '### Projects with no deploy target');
+    const fences = extractFences(section).filter((f) => f.body.includes('NOT_NO_DEPLOY'));
+    const block = fences[0]?.body ?? '';
+    const tmp = makeBaseTmp('skill-protocols-no-deploy-');
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    const home = join(tmp, 'home');
+    mkdirSync(home, { recursive: true });
+    let n = 0;
+    function classify(content: string | null, shell: { shell: 'bash' | 'zsh'; args: string[] }) {
+      const file = join(tmp, `CLAUDE-${++n}.md`);
+      if (content !== null) writeFileSync(file, content);
+      const script = block.replace(/_DEPLOY_DOC="[^"]*"/, `_DEPLOY_DOC=${JSON.stringify(file)}`);
+      return runShell(shell.shell, shell.args, script, scopedEnv(home));
+    }
+    test('classifier fence exists and takes the document as data', () => {
+      expect(block).toContain('_DEPLOY_DOC="<bound checkout CLAUDE.md>"');
+    });
+    const ALL_NONE = [
+      '# Project',
+      '',
+      '## Deploy Configuration (configured by /setup-deploy)',
+      '- Platform: none',
+      '- Production URL: none',
+      '- Deploy workflow: none',
+      '- Deploy status command: none',
+      '- Merge method: squash',
+      '- Project type: CLI',
+      '- Post-deploy health check: none',
+      '',
+      '### Custom deploy hooks',
+      '- Pre-merge: none',
+      '- Deploy trigger: none',
+      '- Deploy status: none',
+      '- Health check: none',
+      '',
+      '## Later section',
+      '- Platform: fly',
+      '',
+    ].join('\n');
+    const CASES: Array<[string, string | null, string]> = [
+      ['an all-none configured section', ALL_NONE, 'NO_DEPLOY'],
+      ['platform-only none', '## Deploy Configuration\n- Platform: none\n', 'NO_DEPLOY'],
+      ['case-insensitive none values', '## Deploy Configuration\n- Platform: None\n- Deploy trigger: NONE\n', 'NO_DEPLOY'],
+      // Value: protects=trimmed and emphasized config keys and values classify consistently; fails_when=key emphasis stripping or whitespace normalization is removed; why_new=existing fixtures use plain keys and unpadded values; seam=none; no_claim=agent execution
+      ['trimmed and emphasized fields', '## Deploy Configuration\n  - **Platform** : \t None \t\n  - **Deploy trigger** : \t NONE \t\n', 'NO_DEPLOY'],
+      // Value: protects=non-deploy merge hooks remain usable; fails_when=Pre-merge loses its exemption; why_new=ALL_NONE uses none for that hook; seam=none; no_claim=agent execution
+      ['a pre-merge command without a deploy target', ALL_NONE.replace('- Pre-merge: none', '- Pre-merge: bun run build'), 'NO_DEPLOY'],
+      // Value: protects=only active configuration authorizes no-deploy; fails_when=a fenced example is treated as configuration; why_new=existing cases are unfenced; seam=none; no_claim=agent execution
+      ['a fenced example without active configuration', '# Usage\n```markdown\n## Deploy Configuration\n- Platform: none\n```\n', 'NOT_NO_DEPLOY'],
+      ['a tilde-fenced example', '~~~markdown\n## Deploy Configuration\n- Platform: none\n~~~\n', 'NOT_NO_DEPLOY'],
+      ['a shorter inner fence does not close an example', '````markdown\n```\n## Deploy Configuration\n- Platform: none\n````\n', 'NOT_NO_DEPLOY'],
+      ['active configuration after an example', '```markdown\n## Deploy Configuration\n- Platform: fly\n```\n' + ALL_NONE, 'NO_DEPLOY'],
+      ['a fenced heading cannot hide a later deploy field', '## Deploy Configuration\n- Platform: none\n```markdown\n## Example\n```\n- Deploy trigger: automatic on push to main\n', 'NOT_NO_DEPLOY'],
+      ['a similarly named documentation section', '## Deploy Configuration Notes\n- Platform: none\n', 'NOT_NO_DEPLOY'],
+      ['a real deploy configuration', ALL_NONE.replace('- Platform: none', '- Platform: fly').replace('- Production URL: none', '- Production URL: https://app.example.com'), 'NOT_NO_DEPLOY'],
+      ['platform none but a production URL', '## Deploy Configuration\n- Platform: none\n- Production URL: https://x.example\n', 'NOT_NO_DEPLOY'],
+      ['platform none but a deploy trigger', '## Deploy Configuration\n- Platform: none\n- Deploy trigger: automatic on push to main\n', 'NOT_NO_DEPLOY'],
+      ['an unlisted non-none field', '## Deploy Configuration\n- Platform: none\n- Fly app: myapp\n', 'NOT_NO_DEPLOY'],
+      ['a duplicate platform that is not none', '## Deploy Configuration\n- Platform: none\n- Platform: fly\n', 'NOT_NO_DEPLOY'],
+      ['an empty field value', '## Deploy Configuration\n- Platform: none\n- Production URL:\n', 'NOT_NO_DEPLOY'],
+      ['no Platform field', '## Deploy Configuration\n- Production URL: none\n', 'NOT_NO_DEPLOY'],
+      ['no Deploy Configuration section', '# Project\n- Platform: none\n', 'NOT_NO_DEPLOY'],
+      ['a missing CLAUDE.md', null, 'NOT_NO_DEPLOY'],
+    ];
+    for (const shell of agentShells()) {
+      for (const [name, content, expected] of CASES) {
+        // Value: protects=the classifier prints the token the adapter acts on, failing safe to today's behavior on anything but a recorded all-none target; fails_when=a parse change widens or narrows NO_DEPLOY; why_new=the fence is new executable skill logic; seam=none
+        test(`${shell.shell}: ${name} prints ${expected}`, () => {
+          const r = classify(content, shell);
+          expect(r.status).toBe(0);
+          expect(r.stdout.trim()).toBe(expected);
+        });
+      }
+    }
+  });
+});
+
 describe('non-preamble setup skills carry only telemetry SHARED blocks', () => {
   const setupSkills = parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8'));
   const outside = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
