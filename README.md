@@ -96,7 +96,10 @@ prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes
 a release-only path: it reuses the fresh test
 evidence and those audits, writes only the version, CHANGELOG entry and PR
 receipt, and hands a finding that needs any other change back to
-`/review-and-prep`. `/ship-and-land --no-land` stops at the merge gate.
+`/review-and-prep`. `/ship-and-land --no-land` stops at the merge gate and
+ends by asking whether to land: it names the head and what landing would ask
+you to accept, such as no CI, and gives the command that starts the landing run,
+which asks for merge approval itself. With a blocker, it names the repair instead.
 Prose-only docs use one repo fact-check, the documentation audit and plan/scope
 checks, with or without preparation.
 Both code and docs use severity filtering and delta rechecks; code specialists
