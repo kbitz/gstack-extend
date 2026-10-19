@@ -190,8 +190,8 @@ This prompt is the H-A handoff of the published
 (`docs/workflow-handoffs.md`). External callers parse it, so keep its first line
 starting with `Run /review-and-prep` and keep the field labels in the template
 below. The contract treats a BLOCKED report as a refusal, never a handoff: the
-no-prompt-while-BLOCKED rule in Step 3 is its rule. Give every `DEFERRED BY USER`
-row its decision reference.
+no-prompt-while-BLOCKED rule in Step 3 is its rule. Name each `DEFERRED BY USER`
+row's scope decision after the disposition words, as the table above requires.
 
 Make the prompt self-contained. Include the plan path/link and accepted scope,
 approval and scope decisions, the complete compact checklist with evidence,

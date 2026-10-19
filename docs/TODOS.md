@@ -66,6 +66,14 @@
 - **Priority:** P3
 - **Revisit when:** A named external consumer asks for a machine-readable schema, or the live external-handoff acceptance Tracks (28A/28B when written) show a consumer misparsing the prose grammar.
 
+### [review] Stage-handoff contract: residual parser gaps and pair-review pause-detector parity
+
+- **Description:** Track 23I's review left four items that need producer changes or live evidence. (1) BLOCKED rows that exist only in a Coverage checklist file are invisible to a caller that does not read the file; require the disposition counts line in `Coverage:` or define how a caller reads the file. (2) Parsers can still diverge on `Pending verification: none, except ...`, on branch names containing `;` or `,`, and on very long label qualifiers. (3) `/pair-review`'s pause detector reads only the viewer's comments, orders them by `createdAt` alone and treats any pause on a draft as active, while `docs/workflow-handoffs.md` orders by `created_at` then `id` and lets a later running-account receipt clear a pause; `skills/pair-review.md` also names a Track as owner of a future canonical hold/resume detector, which should be checked against the roadmap. (4) A resume prompt printed after `DONE_WITH_CONCERNS` holds by design; confirm that against real resumes.
+- **Effort:** M
+- **Context:** Deferred on 2026-10-19 under the stop rule the user set for Track 23I's review (cycle 2 of 3). None is a trust bypass or a contradiction with the contract's current producer text.
+- **Priority:** P3
+- **Revisit when:** The live external-handoff acceptance Tracks (28A/28B) record a real handoff, or the next change to `/pair-review`'s pause detector.
+
 ## Completed
 
 ### [review] install-safety.sh reads ownership through GNU stat's -f output
