@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.17.0] - 2026-10-20
+
+### Fixed
+
+- **`/roadmap` keeps release rows out of Acceptance.** Missing version rows go only in `## Release history`, or in `## Version history` when that is the table this project uses, at their ordered place inside the table. `/roadmap` does not add, edit, or delete any `## Acceptance` section. If neither table can be identified, the step stops and writes nothing; add the heading or name the table, then retry that step once. A failed append stops before the next roadmap step and shows the diff. When `docs/PROGRESS.md` is missing, `/roadmap` creates it with one Version history row and no Acceptance section.
+
 ## [0.36.16.0] - 2026-10-20
 
 ### Added
