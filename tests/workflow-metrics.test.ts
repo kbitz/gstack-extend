@@ -149,21 +149,33 @@ describe('C1 discovery, disabled capture, no legacy side effects', () => {
     expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
   });
   test('env off and provenance=false disable before lookup, mutation or logger calls', () => {
-    for (const mode of ['env', 'provenance'] as const) {
+    // Coverage audit (/ship Step 7, 2026-10-19) added the env-false, provenance-off and config-symlink modes.
+    // Value: protects=metrics capture stays off for every spelling and state that turns legacy provenance off (env false, provenance=off, unreadable config);
+    //   fails_when=the off/false tuple loses a value or an unreadable or symlinked config is read as enabled; why_new=the loop covered only env=off and provenance=false;
+    //   seam=none; no_claim=legacy provenance gating itself (tests/telemetry.test.ts owns it)
+    for (const mode of ['env', 'env-false', 'provenance', 'provenance-off', 'config-symlink'] as const) {
       const fix = makeTelemetryFixture('community');
       const repo = gitRepo(fix);
       let env = fix.env;
-      if (mode === 'env') env = { ...fix.env, GSTACK_EXTEND_WORKFLOW_METRICS: 'off' };
-      else { mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true }); writeFileSync(join(fix.home, '.gstack-extend/config'), 'provenance=false\n'); }
+      const config = join(fix.home, '.gstack-extend/config');
+      if (mode === 'env' || mode === 'env-false') env = { ...fix.env, GSTACK_EXTEND_WORKFLOW_METRICS: mode === 'env' ? 'off' : 'false' };
+      else {
+        mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+        if (mode === 'config-symlink') {
+          // An unreadable config stays off (docs/telemetry.md): a linked config is not trusted even when it says true.
+          writeFileSync(join(fix.home, 'linked-config'), 'provenance=true\n');
+          symlinkSync(join(fix.home, 'linked-config'), config);
+        } else writeFileSync(config, mode === 'provenance' ? 'provenance=false\n' : 'provenance=off\n');
+      }
       const payload = { ...base('extend-' + u()), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX };
       const { envelope } = metrics(env, 'begin', payload, repo);
-      expect(envelope).toMatchObject({ status: 'disabled', reason: 'capture-disabled', data: { capture: 'disabled' } });
-      if (mode === 'env') expect(envelope.diagnostics.config_source).toEqual(['GSTACK_EXTEND_WORKFLOW_METRICS']);
+      expect(envelope, mode).toMatchObject({ status: 'disabled', reason: 'capture-disabled', data: { capture: 'disabled' } });
+      if (mode === 'env' || mode === 'env-false') expect(envelope.diagnostics.config_source).toEqual(['GSTACK_EXTEND_WORKFLOW_METRICS']);
       expect(existsSync(join(fix.home, '.gstack-extend/analytics'))).toBe(false);
       expect(fix.readStubArgs()).toEqual([]);
       expect(fix.readLedger()).toEqual([]);
     }
-  });
+  }, 30_000); // five fixture homes now, not two
   test('metrics-only calls write no stage-runs row and never invoke the logger stub', () => {
     const fix = makeTelemetryFixture('community');
     const repo = gitRepo(fix);
@@ -217,6 +229,22 @@ describe('C2/E3 exact invocation binding', () => {
     expect(metrics(fix.env, 'end', { ...base(ghost), step_id: u(), outcome: 'completed' }, repo).envelope)
       .toMatchObject({ status: 'unavailable', reason: 'capture-missing' });
     expect(read(fix, ghost).envelope).toMatchObject({ status: 'unavailable', reason: 'capture-missing' });
+    // Coverage audit (/ship Step 7, 2026-10-19).
+    // Value: protects=an existing run file with no bound run still binds only through the exact start handoff;
+    //   fails_when=the bind on an existing-but-empty ledger is skipped, so an invented ID records a run; why_new=every binding case above starts with no run file;
+    //   seam=none; no_claim=how an empty run file arises (a crash between create and first write is simulated by writing one)
+    const blank = (id: string) => { mkdirSync(join(ledgerFile(fix, id), '..'), { recursive: true }); writeFileSync(ledgerFile(fix, id), ''); };
+    const emptyGhost = 'extend-' + u();
+    blank(emptyGhost);
+    expect(metrics(fix.env, 'decision', { ...base(emptyGhost), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }, repo).envelope)
+      .toMatchObject({ status: 'unavailable', reason: 'capture-missing' });
+    expect(metrics(fix.env, 'begin', { ...base(emptyGhost), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo).envelope)
+      .toMatchObject({ status: 'unavailable', reason: 'identity-missing' });
+    expect(readFileSync(ledgerFile(fix, emptyGhost), 'utf8')).toBe('');
+    const sid3 = start(fix, repo);
+    blank(sid3);
+    expect(metrics(fix.env, 'begin', { ...base(sid3), step_id: u(), parent_step_id: null, kind: 'run', phase: 'run', context: CTX }, repo).envelope.status).toBe('recorded');
+    expect(ledgerLines(fix, sid3)).toHaveLength(1);
   }, 30_000);
   test('wrong stage, second run begin, and stage drift against the bound run are refused', () => {
     const fix = makeTelemetryFixture('community');
@@ -243,6 +271,29 @@ describe('C2/E3 exact invocation binding', () => {
     const data = read(fix, sid).envelope.data;
     expect(data.run.candidate.candidate_head).toBe(HEAD);
     expect(ledgerLines(fix, sid)).toHaveLength(2);
+  }, 30_000);
+  // Coverage audit (/ship Step 7, 2026-10-19).
+  // Value: protects=the documented ledger location follows an absolute GSTACK_EXTEND_STATE_DIR and ignores a relative one, as legacy start does;
+  //   fails_when=metrics resolves its state root differently from legacy, so binding fails or records land outside the chosen root;
+  //   why_new=every other metrics test leaves the override unset or equal to the HOME default; seam=none; no_claim=legacy state-root handling (tests/telemetry.test.ts owns it)
+  test('an absolute state-dir override holds the run; a relative one falls back to HOME and writes nothing in the checkout', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const custom = join(fix.home, 'custom-state');
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: custom };
+    const sid = start(fix, repo, 'review-and-prep', env);
+    beginRun(fix, repo, sid, 'review-and-prep', env);
+    const digest = createHash('sha256').update(sid).digest('hex');
+    expect(existsSync(join(custom, 'analytics/workflow-metrics', digest + '.jsonl'))).toBe(true);
+    expect(existsSync(join(fix.home, '.gstack-extend/analytics/workflow-metrics'))).toBe(false);
+    expect(existsSync(join(fix.home, '.gstack-extend/workflow-metrics-locks'))).toBe(false);
+    expect(read(fix, sid, undefined, env).envelope).toMatchObject({ status: 'ok', data: { records: 1 } });
+    expect(read(fix, sid).envelope).toMatchObject({ status: 'unavailable', reason: 'capture-missing' });
+    const relative = { ...fix.env, GSTACK_EXTEND_STATE_DIR: 'relative-state' };
+    const sid2 = start(fix, repo, 'review-and-prep', relative);
+    beginRun(fix, repo, sid2, 'review-and-prep', relative);
+    expect(ledgerLines(fix, sid2)).toHaveLength(1);
+    expect(existsSync(join(repo, 'relative-state'))).toBe(false);
   }, 30_000);
 });
 
@@ -351,6 +402,29 @@ describe('C4/E10 pass and finding algebra (crafted imports)', () => {
     // The receipt keeps local and Greptile findings apart, so open Greptile findings are never hidden.
     expect(data.receipt_text).toContain('local_findings accepted=1 fixed=1 open=0');
     expect(data.receipt_text).toContain('greptile_findings accepted=2 fixed=0 open=2');
+  }, 30_000);
+  // Coverage audit (/ship Step 7, 2026-10-19).
+  // Value: protects=local_passes counts each closed round and sums its findings, while a round lacking its completed record stays uncounted with unknown findings;
+  //   fails_when=per-scope totals keep only the last round, or a round with every voice closed counts before its completed record;
+  //   why_new=every existing pass fixture holds one round per scope; seam=none; no_claim=whether producers emit every round they run
+  test('two closed local rounds both count and sum; a round missing its completed record does not', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const first = passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1', { resolution: 'fixed' }), finding('F2')] }] });
+    const second = passRows(sid, { at: 5000, voices: [{ voice: 'core', findings: [finding('F1')] }] });
+    craft(fix, sid, [...runRows(sid).rows, ...first.rows, ...second.rows]);
+    const both = read(fix, sid).envelope;
+    expect(both.status).toBe('ok');
+    expect(both.data).toMatchObject({ local_passes: 2, local_attempted: 2 });
+    expect(both.data.findings).toMatchObject({ accepted: 3, fixed: 1, open: 2 });
+    expect(both.data.receipt_text).toContain('local_passes=2; local_attempted=2');
+    const sid2 = 'extend-' + u();
+    const open = passRows(sid2, { voices: [{ voice: 'core', findings: [finding('F1')] }] });
+    craft(fix, sid2, [...runRows(sid2).rows, ...open.rows.filter((r: any) => r.request.state !== 'completed')]);
+    const pending = read(fix, sid2).envelope;
+    expect(pending.status).toBe('ok');
+    expect(pending.data).toMatchObject({ local_passes: 0, local_attempted: 1, findings: null });
+    expect(pending.data.unknown_reasons).toContain('incomplete-pass');
   }, 30_000);
 });
 
@@ -828,7 +902,7 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
 describe('review fixes: finding corrections, duplicates and decisions', () => {
   const twoVoices = (sid: string) => passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1')] }, { voice: 'adv', findings: [finding('F1')] }] });
   const corr = (sid: string, at: number, patch: Record<string, unknown>) => ({ op: 'correction', at, request: { ...base(sid), correction_kind: 'finding', finding_id: 'F1', ...patch } });
-  test('a linear chain applies; competing heads, unqualified targets and duplicate claims stay unknown', () => {
+  test('a linear chain applies, adjudication corrections move findings; competing heads and unqualified targets stay unknown', () => {
     const fix = makeTelemetryFixture('community');
     const build = (rows: (sid: string, p: ReturnType<typeof passRows>) => any[], voices = 'one') => {
       const sid = 'extend-' + u();
@@ -850,6 +924,14 @@ describe('review fixes: finding corrections, duplicates and decisions', () => {
     expect(qualified.data.findings).toMatchObject({ accepted: 2, fixed: 1, open: 1 });
     const bare = build((sid) => [corr(sid, 2100, { resolution: 'fixed' })], 'two');
     expect(bare.data.findings.accepted).toBeNull();
+    // Coverage audit (/ship Step 7, 2026-10-19).
+    // Value: protects=a finding correction that changes adjudication moves the finding out of accepted/open into its new bucket;
+    //   fails_when=only resolution corrections apply and a triage reclassification is ignored; why_new=every correction above changes resolution only;
+    //   seam=none; no_claim=producer triage accuracy
+    const deferred = build((sid) => [corr(sid, 2100, { adjudication: 'deferred' })]);
+    expect(deferred).toMatchObject({ status: 'ok', data: { findings: { accepted: 0, deferred: 1, open: 0 } } });
+    const rejected = build((sid) => [corr(sid, 2100, { adjudication: 'rejected' })]);
+    expect(rejected).toMatchObject({ status: 'ok', data: { findings: { accepted: 0, rejected: 1, open: 0, fixed: 0 } } });
     // Two corrections on different findings may each supersede their shared attempt event.
     const siblings = (() => {
       const sid = 'extend-' + u();
