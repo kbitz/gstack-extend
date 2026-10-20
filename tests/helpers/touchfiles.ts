@@ -114,6 +114,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/skill-protocols.test.ts': [
     'skills/**',
+    'scripts/init-templates/PROGRESS.md.tmpl',
     'setup',
     // The telemetry drift lock also compares docs/telemetry.md's copied blocks to the canonical text.
     'docs/telemetry.md',
