@@ -317,6 +317,7 @@ describe('C4/E10 pass and finding algebra (crafted imports)', () => {
     const data = read(fix, sid).envelope.data;
     expect(data.findings).toMatchObject({ accepted: 1, fixed: 1, open: 0 });
     expect(data.excluded_na_voices).toBe(1);
+    expect(data.receipt_text).toContain('na_voices=1'); // an N/A exclusion is visible in the receipt
     expect(data.corrections.retry).toBe(1);
   }, 30_000);
   test('explicit empty findings are zero; missing voice and selected failed attempt are null', () => {
@@ -347,6 +348,9 @@ describe('C4/E10 pass and finding algebra (crafted imports)', () => {
     expect(data.greptile_passes).toBe(1);
     expect(data.findings).toMatchObject({ accepted: 1, fixed: 1, open: 0 });
     expect(data.greptile_findings).toMatchObject({ accepted: 2, open: 2 });
+    // The receipt keeps local and Greptile findings apart, so open Greptile findings are never hidden.
+    expect(data.receipt_text).toContain('local_findings accepted=1 fixed=1 open=0');
+    expect(data.receipt_text).toContain('greptile_findings accepted=2 fixed=0 open=2');
   }, 30_000);
 });
 
@@ -422,6 +426,8 @@ describe('E1/E14 invalid input never mutates and never echoes', () => {
       ['empty required voices', JSON.stringify({ ...base(sid), pass_id: u(), scope: 'local', state: 'started', required_voice_ids: [] }), 'invalid-input'],
       ['duplicate finding ids in one attempt (findings)', JSON.stringify({ ...base(sid), pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed', findings: [finding('F1'), finding('F1')] }), 'invalid-input'],
       ['self duplicate_of (findings)', JSON.stringify({ ...base(sid), pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed', findings: [finding('F2', { adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'F2' })] }), 'invalid-input'],
+      ['model reported from launcher config', modelAttempt('m1').replace('"reported_source":"unavailable"', '"reported_source":"launcher-config"'), 'invalid-input'],
+      ['model reported while unavailable', modelAttempt('m1').replace('"reported_model":null', '"reported_model":"m2"'), 'invalid-input'],
       ['257 findings array bound', JSON.stringify({ ...base(sid), pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed', findings: Array.from({ length: 257 }, () => finding('F')) }), 'invalid-input'],
     ];
     for (const [name, input, reason] of cases) {
@@ -597,7 +603,8 @@ describe('E5/E13 partial snapshots and capacity', () => {
     expect(envelope.data.malformed_records).toBe(2);
     expect(envelope.data.capture).toBe('partial');
     // An unreadable line may have been any pass, correction or fix record.
-    expect(envelope.data).toMatchObject({ local_passes: null, greptile_passes: null, fix_cycles: null });
+    expect(envelope.data).toMatchObject({ local_passes: null, greptile_passes: null, fix_cycles: null, excluded_na_voices: null });
+    expect(Object.values(envelope.data.corrections).every(v => v === null)).toBe(true);
     const repo = gitRepo(fix);
     const append = metrics(fix.env, 'decision', { ...base(sid), step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }, repo).envelope;
     expect(append).toMatchObject({ status: 'partial', reason: 'malformed-record' });
@@ -890,6 +897,36 @@ describe('review fixes: finding corrections, duplicates and decisions', () => {
     expect(dup).toMatchObject({ status: 'unavailable', reason: 'invalid-input', diagnostics: { field: 'adjudication' } });
     expect(ledgerLines(fix, sid)).toHaveLength(1);
   }, 30_000);
+  test('a correction to a finding of an unclosed pass is neither missing nor a broken record', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const p = passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1')] }, { voice: 'adv', outcome: 'failed' }] });
+    craft(fix, sid, [...runRows(sid).rows, ...p.rows,
+      corr(sid, 2100, { resolution: 'fixed', pass_id: p.passId, voice_id: 'core', attempt_id: p.attempts.core })]);
+    const envelope = read(fix, sid).envelope;
+    expect(envelope.status).toBe('ok');
+    expect(envelope.data.unknown_reasons).not.toContain('missing-reference');
+    expect(envelope.data.unknown_reasons).toContain('incomplete-pass');
+    expect(envelope.data.findings).toBeNull();
+  }, 30_000);
+  test('a fix step closed inconsistently or declared with mixed kinds makes fix_cycles unknown', () => {
+    const fix = makeTelemetryFixture('community');
+    const build = (rows: (sid: string, step: string) => any[]) => {
+      const sid = 'extend-' + u(), step = u();
+      craft(fix, sid, [...runRows(sid, 0).rows, ...rows(sid, step)]);
+      return read(fix, sid).envelope.data;
+    };
+    const twoEnds = build((sid, step) => [
+      { op: 'begin', at: 10, request: { ...base(sid), step_id: step, parent_step_id: null, kind: 'fix', phase: 'fix' } },
+      { op: 'end', at: 20, request: { ...base(sid), step_id: step, outcome: 'failed' } },
+      { op: 'end', at: 30, request: { ...base(sid), step_id: step, outcome: 'completed' } }]);
+    expect(twoEnds.fix_cycles).toBeNull();
+    const mixedKinds = build((sid, step) => [
+      { op: 'begin', at: 10, request: { ...base(sid), step_id: step, parent_step_id: null, kind: 'fix', phase: 'fix' } },
+      { op: 'begin', at: 11, request: { ...base(sid), step_id: step, parent_step_id: null, kind: 'phase', phase: 'fix' } },
+      { op: 'end', at: 20, request: { ...base(sid), step_id: step, outcome: 'completed' } }]);
+    expect(mixedKinds.fix_cycles).toBeNull();
+  }, 30_000);
   test('a duplicate_of naming no finding in the run leaves totals unknown', () => {
     const fix = makeTelemetryFixture('community');
     const sid = 'extend-' + u();
@@ -1016,6 +1053,24 @@ describe('review fixes: stdin, stored-line and confirmation edges', () => {
     const noStderr = spawnSync('bash', ['-c', `echo '{}' | "${HELPER_BIN}" metrics begin 2>&-`], { env: fix.env, encoding: 'utf8', timeout: 15_000 });
     expect(noStderr.stdout.trim().split('\n')).toHaveLength(1);
     expect(JSON.parse(noStderr.stdout)).toMatchObject({ reason: 'invalid-input' });
+  }, 30_000);
+  test('a broken stderr pipe never adds a second envelope to stdout', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    // Through telemetry.py's dispatch, where a raised stderr write used to add a fallback envelope.
+    const script = join(fix.home, 'broken-stderr.py');
+    writeFileSync(script, [
+      'import importlib.util, sys',
+      `spec = importlib.util.spec_from_file_location("telemetry_main", ${JSON.stringify(join(ROOT, 'bin/lib/telemetry.py'))})`,
+      't = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)',
+      'class Broken:\n    def write(self, *a):\n        raise BrokenPipeError()\n    def flush(self):\n        pass',
+      'sys.stderr = Broken()',
+      't.main(["metrics", "begin"])',
+    ].join('\n'));
+    const broken = spawnSync('python3', ['-B', '-I', script], { env: fix.env, cwd: repo, input: '{"v":1}', encoding: 'utf8', timeout: 15_000 });
+    const lines = broken.stdout.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
   }, 30_000);
   test('a parser recursion failure is invalid-input too-deep, never an unexpected io-error', () => {
     const fix = makeTelemetryFixture('community');

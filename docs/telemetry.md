@@ -538,7 +538,10 @@ authenticate producer claims: any same-user process could write them, so treat
 them as observations from the producing session, not proof of work. Model and
 effort are recorded per voice attempt only when a tool result or launcher
 configuration actually supplied them (`requested_*` versus `reported_*` with
-their sources; anything else is null with a controlled reason). Nothing here
+their sources; anything else is null with a controlled reason). Launcher
+configuration is a requested source only: a reported value needs
+`reported_source:"tool-result"`, and an `unavailable` source carries null
+values. Nothing here
 scans transcripts, credentials, process tables or vendor usage services.
 
 ### Caller identity
@@ -660,7 +663,12 @@ report it already produces (including a PAUSED or blocked receipt, the
 pre-ready receipt and a landing readiness report) and includes that
 snapshot's `receipt_text`, or the literal
 `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
-when no summary exists. It ends the run step just before its legacy finish
+when no summary exists. If any metrics call after the run `begin` ended
+without `recorded` or `replayed` and was not reconciled, it adds the literal
+`capture=partial (<reason>)` line beside the snapshot, because a read cannot
+see a dropped call. The `receipt_text` reports local passes, Greptile passes,
+fix cycles, local and Greptile finding counts separately, and excluded `N/A`
+voices. It ends the run step just before its legacy finish
 and leaves it open at a pause. No PR body, comment or report is written or
 edited only to refresh metrics — never after readiness or merge, and the
 metrics line comes before a readiness report's merge decision. It preserves

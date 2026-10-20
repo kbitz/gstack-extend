@@ -181,8 +181,11 @@ def emit(status, reason, session_id, event_id, data, op, fail=None, config_sourc
     print(text)
     # A closed fd 2 leaves sys.stderr None, and print(file=None) would add a second line to stdout.
     if status not in ("recorded", "replayed", "ok") and sys.stderr is not None:
-        print(f"workflow-metrics: {status} ({reason}). See docs/telemetry.md#workflow-metrics-{reason}.",
-              file=sys.stderr)
+        try:  # a broken stderr pipe must not turn into a second envelope on stdout
+            print(f"workflow-metrics: {status} ({reason}). See docs/telemetry.md#workflow-metrics-{reason}.",
+                  file=sys.stderr)
+        except OSError:
+            pass
     return envelope
 
 
@@ -362,7 +365,11 @@ def _model_context(value):
         if item is not None and not (isinstance(item, str) and SAFE_ID_RE.fullmatch(item)):
             raise _bad("model_context." + field, "bounded-identifier-or-null")
     _enum(value, "requested_source", ("launcher-config", "tool-result", "unavailable"))
-    _enum(value, "reported_source", ("launcher-config", "tool-result", "unavailable"))
+    _enum(value, "reported_source", ("tool-result", "unavailable"))  # configuration is requested, never observed
+    for side in ("requested", "reported"):
+        if value[side + "_source"] == "unavailable" and (value[side + "_model"] is not None
+                                                         or value[side + "_effort"] is not None):
+            raise _bad("model_context." + side + "_source", "null-values-when-unavailable")
     if value["unknown_reason"] not in (None, "not-reported", "unsupported", "ambiguous", "capture-missing"):
         raise _bad("model_context.unknown_reason")
     if any(value[f] is None for f in ("requested_model", "reported_model", "requested_effort", "reported_effort")) \
@@ -890,7 +897,7 @@ def summarize(records, malformed, partial_tail, overflow):
     ran = {p["phase"] for p in phases if p["decisions"]["RUN"] or p["steps_started"]}
     corrections = _correction_counts(effective)
     passes = _passes(effective, by_event, run_context, unknown, ran)
-    fix_unknown = "missing-begin" in unknown
+    fix_unknown = "missing-begin" in unknown or steps["fix_invalid"]
     if "fix" in ran and not steps["fix_started"]:
         unknown.add("unrecorded-work")
         fix_unknown = True
@@ -900,7 +907,10 @@ def summarize(records, malformed, partial_tail, overflow):
         fix_unknown = True
     if malformed or partial_tail or overflow:
         # An unreadable line may have been any pass, correction or fix record: those counts are unknown.
-        passes["local"] = passes["greptile"] = {"attempted": None, "completed": None, "findings": None}
+        passes["local"] = {"attempted": None, "completed": None, "findings": None}
+        passes["greptile"] = {"attempted": None, "completed": None, "findings": None}
+        passes["excluded_na"] = None
+        corrections = {kind: None for kind in corrections}
         fix_unknown = True
     integrity = any(reason in unknown for reason in INTEGRITY_REASONS)
     data = {
@@ -944,6 +954,7 @@ def _steps(effective, run_context, unknown):
             decisions.append(record)
     phase_data, wait_data, union_intervals = {}, {}, []
     unknown_parents = mixed = fix_completed = fix_started = 0
+    fix_invalid = False
     for step_id in set(begins) | set(ends):
         starts = begins.get(step_id, [])
         finishes = ends.get(step_id, [])
@@ -981,6 +992,8 @@ def _steps(effective, run_context, unknown):
         if parent is not None and parent not in begins:
             unknown_parents += 1
             unknown.add("missing-reference")
+        if any(sig[0] == "fix" for sig in sigs) and (len(sigs) > 1 or (finishes and not valid)):
+            fix_invalid = True  # a fix step declared or closed inconsistently: its cycle cannot be counted
         if first.get("kind") == "fix":
             fix_started += 1
             if outcomes == {"completed"}:
@@ -1020,7 +1033,7 @@ def _steps(effective, run_context, unknown):
               "observed_wall_duration_ms": None if slot["unknown"] else _union_ms(slot["intervals"]),
               "unknown_durations": slot["unknown"]} for cat, slot in sorted(wait_data.items())]
     return ({"ids": set(begins) | set(ends), "unknown_parents": unknown_parents, "mixed_candidate": mixed,
-             "fix_started": fix_started},
+             "fix_started": fix_started, "fix_invalid": fix_invalid},
             phases, waits, union_intervals, fix_completed)
 
 
@@ -1258,12 +1271,20 @@ def _passes(effective, by_event, run_context, unknown, ran):
     pool = [(scope, item) for scope in ("local", "greptile") for item in selected_by_scope[scope]]
     pool_findings = [item for _scope, item in pool]
     pool_index = _index(pool_findings)
+    recorded = [(r["request"]["pass_id"], r["request"]["voice_id"], r["request"]["attempt_id"], f)
+                for r in effective if r["op"] == "pass" and r["request"]["state"] == "attempt"
+                for f in r["request"].get("findings") or []]
+    recorded_index = _index(recorded)
     routed = {"local": [], "greptile": []}
     tainted = set()
     for correction in finding_corrections:
         hits = _targets(pool_findings, pool_index, correction)
         if len(hits) == 1:
             routed[pool[hits[0]][0]].append(correction)
+            continue
+        if not hits and _targets(recorded, recorded_index, correction):
+            # The finding exists but is not counted (an unclosed pass or an unselected attempt):
+            # its scope is already unknown or unaffected, so this is neither missing nor ambiguous.
             continue
         named = pass_scope.get(correction.get("pass_id"))
         tainted |= {pool[i][0] for i in hits} or ({named} if named else {"local", "greptile"})
@@ -1286,6 +1307,7 @@ def _fmt(value):
 
 def receipt_text(data):
     findings = data.get("findings") or {}
+    greptile = data.get("greptile_findings") or {}
     # partial means stored records are broken or contradict each other; an in-progress run
     # (open steps, unfinished passes) stays ok and names its unknowns below.
     status = data.get("capture", "unavailable")
@@ -1295,10 +1317,13 @@ def receipt_text(data):
             + "; local_attempted=" + _fmt(data.get("local_attempted"))
             + "; greptile_passes=" + _fmt(data.get("greptile_passes"))
             + "; fix_cycles=" + _fmt(data.get("fix_cycles"))
-            + "; findings accepted=" + _fmt(findings.get("accepted"))
+            + "; local_findings accepted=" + _fmt(findings.get("accepted"))
             + " fixed=" + _fmt(findings.get("fixed")) + " open=" + _fmt(findings.get("open"))
             + " rejected=" + _fmt(findings.get("rejected")) + " deferred=" + _fmt(findings.get("deferred"))
             + " duplicate=" + _fmt(findings.get("duplicate"))
+            + "; greptile_findings accepted=" + _fmt(greptile.get("accepted"))
+            + " fixed=" + _fmt(greptile.get("fixed")) + " open=" + _fmt(greptile.get("open"))
+            + "; na_voices=" + _fmt(data.get("excluded_na_voices"))
             + "; union_wall_ms=" + _fmt(data.get("union_observed_wall_ms"))
             + "; unknown=" + (",".join(data.get("unknown_reasons") or []) or "none") + ".")
     if len(text.encode()) > RECEIPT_LIMIT:

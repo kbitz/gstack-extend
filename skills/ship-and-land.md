@@ -140,6 +140,10 @@ Emit, batched into existing tool calls where practical:
   unavailable, the literal line
   `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
   with the actual status. An open run reads as in progress; that is expected.
+  If any metrics call after the run `begin` ended without `recorded` or
+  `replayed` and was not reconciled, also add the literal line
+  `Workflow metrics (local, optional): capture=partial (<reason>).` beside
+  the snapshot, since the read cannot see a dropped call.
   The metrics line precedes the readiness report's merge decision, which
   stays last. `end` the run step just before the legacy telemetry finish.
   Never write or edit a PR body, comment or report only to refresh metrics,

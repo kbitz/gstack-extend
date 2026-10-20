@@ -44,10 +44,14 @@
         "reported_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
         "reported_effort": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
         "requested_source": { "type": "string", "enum": ["launcher-config", "tool-result", "unavailable"] },
-        "reported_source": { "type": "string", "enum": ["launcher-config", "tool-result", "unavailable"] },
+        "reported_source": { "type": "string", "enum": ["tool-result", "unavailable"], "description": "Launcher configuration is requested, never observed." },
         "unknown_reason": { "type": ["string", "null"], "enum": ["not-reported", "unsupported", "ambiguous", "capture-missing", null] }
       },
-      "required": ["requested_model", "requested_effort", "reported_model", "reported_effort", "requested_source", "reported_source", "unknown_reason"]
+      "required": ["requested_model", "requested_effort", "reported_model", "reported_effort", "requested_source", "reported_source", "unknown_reason"],
+      "allOf": [
+        { "if": { "properties": { "requested_source": { "const": "unavailable" } } }, "then": { "properties": { "requested_model": { "type": "null" }, "requested_effort": { "type": "null" } } } },
+        { "if": { "properties": { "reported_source": { "const": "unavailable" } } }, "then": { "properties": { "reported_model": { "type": "null" }, "reported_effort": { "type": "null" } } } }
+      ]
     },
     "finding": {
       "type": "object", "additionalProperties": false,

@@ -2016,8 +2016,11 @@ def _metrics_dispatch(args):
         print('{"v":1,"status":"unavailable","reason":"io-error","session_id":null,'
               '"event_id":null,"data":null,"diagnostics":null}')
         if sys.stderr is not None:  # print(file=None) would add this line to stdout
-            print("workflow-metrics: unavailable (io-error). See docs/telemetry.md#workflow-metrics-io-error.",
-                  file=sys.stderr)
+            try:
+                print("workflow-metrics: unavailable (io-error). See docs/telemetry.md#workflow-metrics-io-error.",
+                      file=sys.stderr)
+            except OSError:
+                pass
 
 
 def main(args):
