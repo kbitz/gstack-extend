@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.16.0] - 2026-10-20
+
+### Added
+
+- **Optional local workflow metrics for `/review-and-prep` and `/ship-and-land`.** One invocation can record which phases ran, were reused, waited, retried, or needed a correction, then print a summary. Missing times stay unknown rather than zero. Turn it off with `GSTACK_EXTEND_WORKFLOW_METRICS=off` (or `false`), or by turning provenance off. Records stay on this machine under `~/.gstack-extend` and are never uploaded. It does not change a review or release gate, trigger Greptile, or collect token usage. The row format is `docs/workflow-metrics.schema.json`. That schema is not a SPEC stable surface, and this release awards no acceptance checkpoint. The installed two-wrapper smoke is documented and still unverified until it is run.
+
 ## [0.36.15.0] - 2026-10-19
 
 ### Fixed

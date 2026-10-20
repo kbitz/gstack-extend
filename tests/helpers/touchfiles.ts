@@ -117,6 +117,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     // The telemetry drift lock also compares docs/telemetry.md's copied blocks to the canonical text.
     'docs/telemetry.md',
+    // Track 24A drift-locks compare wrapper phases to the helper + schema vocabulary.
+    'bin/lib/workflow_metrics.py',
+    'docs/workflow-metrics.schema.json',
     // The Track 16D guard, routing, and session-state tests source or run these.
     'bin/lib/session-paths.sh',
     'bin/lib/source-tag.sh',
@@ -228,6 +231,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
     'bin/lib/telemetry*.py',
+    'bin/lib/workflow_metrics.py',
+    'docs/workflow-metrics.schema.json',
     // The v1 quota-reader fixture runs `gstack-extend quota runs`.
     'bin/lib/install-safety.sh',
     'bin/lib/projects-registry.sh',
@@ -247,6 +252,18 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/telemetry*.py',
     'setup',
     'skills/**',
+  ],
+  // Track 24A — workflow metrics: the suite spawns the real launcher through
+  // fixtures, validates the published schema, and reads the wrapper/docs contract.
+  'tests/workflow-metrics.test.ts': [
+    'bin/gstack-extend-telemetry',
+    'bin/lib/telemetry.py',
+    'bin/lib/workflow_metrics.py',
+    'docs/workflow-metrics.schema.json',
+    'docs/telemetry.md',
+    'skills/review-and-prep.md',
+    'skills/ship-and-land.md',
+    'VERSION',
   ],
   // Live ROADMAP + shipped archive are loaded at runtime (not imported).
   'tests/parsers-phases.test.ts': [

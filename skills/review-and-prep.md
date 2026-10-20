@@ -52,6 +52,130 @@ true
 ```
 <!-- /SHARED:telemetry-start -->
 
+### Workflow metrics (optional, local)
+
+Step/pass capture for this workflow lives beside the legacy telemetry above and
+never changes it. The SHARED prohibition on copying session values governs
+legacy start/finish calls only. As the one metrics-only exception, retain the
+opaque session ID this invocation's start printed (`GE_TELEMETRY: session=…`)
+solely as the `session_id` of `metrics` calls in this invocation. Never replay
+or alter a legacy start/finish call, never use an ID from another invocation,
+and never start a new legacy run to feed metrics. If the ID is unavailable (for
+example on resume), metrics capture is unavailable; continue the workflow.
+Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
+
+Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
+producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
+with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
+`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
+event; `uuidgen | tr A-Z a-z`) on stdin. Every ID you mint is lowercase.
+The launcher always exits 0: inspect the JSON envelope's `status` for capture
+state and preserve the wrapped work's own exit status separately. A
+disabled, unavailable, conflicting or unconfirmed capture is recorded as
+capture state only — it never changes a review finding, a gate, Greptile
+applicability, readiness, or any outward action, and never delays the fresh
+checks that precede one. Never rerun completed work to manufacture telemetry.
+For `unconfirmed` or a missing envelope, keep the exact payload and
+`event_id`, run `metrics read --session-id <id> --event-id <event_id>`, and
+replay that identical payload at most once when the read reports the event
+present or safely absent; on conflict/partial/unknown stop and leave capture
+unknown. Never mint a fresh `event_id` for a replay.
+
+Issue metrics calls one at a time from this session, never as parallel tool
+calls or from subagents: the run lock never waits, so concurrent calls drop
+as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
+nothing further in this invocation and use the literal status line below in
+its receipts. If context compaction loses the retained IDs or a pending
+payload, that capture stays unknown; never guess an ID. When a metrics call
+shares a tool call with other work, capture that work's exit first
+(`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
+exit is always 0.
+
+Emit, batched into existing tool calls where practical:
+
+- Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
+  run `step_id`, `parent_step_id:null`, and `context` carrying the candidate
+  HEAD/tree/base you already observed (or null — never run `git write-tree` or
+  create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
+  the installed copy of this skill, and `parent_session_id:null` unless the
+  spawning stage handed you its exact ID. Once the candidate changes (you
+  first observe it, a base merge, a fix commit), every later step `begin` and
+  pass `started` carries a `context` override with the new HEAD/tree/base;
+  their ends, attempts and voice records inherit it.
+- One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
+  controlled reason), recorded under the phase of the work decided about,
+  with a fresh `step_id` per phase visit (or the `step_id` of the execution
+  it governs);
+  `begin`/`end` only around work actually executed, so a reused phase has a
+  decision and no new interval. Reached-but-inapplicable phases are `N/A`;
+  unreached phases emit nothing and stay unknown. Each execution uses a fresh
+  `step_id`; phase names are labels only. Parent review intervals enclose
+  their parallel voice intervals (`parent_step_id`); under parallel dispatch
+  those are parent-observed, not per-voice runtime.
+- Local review as `pass` records: one pass is one review round over one
+  candidate, with its required voices declared at `state:"started"`, each
+  attempt recorded separately (a completed attempt carries its findings —
+  allowlisted IDs/severities/dispositions only, never finding bodies, prompts
+  or command output; an empty array means zero), one selected attempt or an
+  explicit policy-authorized `N/A` per voice, then `state:"completed"`. Send an
+  attempt's `model_context` only when a tool result or launcher configuration
+  supplied it; an identifier outside the documented grammar is null with
+  `unknown_reason:"unsupported"`, never a reason to drop the attempt. A
+  `finding_id` is unique within an attempt; declare duplicates on the finding
+  (`duplicate_of`). A fix batch is a `kind:"fix"` step, counted separately
+  from passes. Greptile is
+  `scope:"greptile"` with its own count and its existing once-per-PR rule
+  above unchanged; metrics never triggers, retries or waives it.
+- Corrections, appended as they happen: `correction_kind:"finding"` with the
+  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
+  resolution or adjudication changes after its attempt was recorded (a fix
+  lands: `resolution:"fixed"`; a later change to the same finding names the
+  previous correction in `supersedes_event_id`); `retry` or `fallback` with
+  the new `attempt_id` when a voice attempt is retried or replaced; and
+  `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
+  batch closes.
+- Waits as `kind:"wait"` steps with `wait_category` (`human` at the manual
+  testing checkpoint and while a question to the user is open,
+  `external-review` while awaiting Greptile), ended
+  `paused` at a pause rather than inventing a finish (its duration then reads
+  unknown). Unlabeled time stays unclassified; elapsed wall time is never
+  model/inference time, and every duration is clock-sensitive
+  (`clock_basis=utc-wall`).
+- Receipts: immediately before writing each receipt this workflow already
+  produces (the PAUSED receipt, a blocked-exit receipt, the Step 6 body receipt
+  and its pre-ready receipt comment), run `metrics read --session-id <id>` and
+  include that snapshot's `receipt_text` (at most 2 KiB), or, when the read is
+  unavailable, the literal line
+  `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
+  with the actual status. An open run reads as in progress; that is expected.
+  If any metrics call after the run `begin` ended without `recorded` or
+  `replayed` and was not reconciled, also add the literal line
+  `Workflow metrics (local, optional): capture=partial (<reason>).` beside
+  the snapshot, since the read cannot see a dropped call.
+  `end` the run step just before the legacy telemetry finish, and leave it
+  open at a pause. Never write or edit a PR body or comment only to refresh
+  metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
+  markers and the manual-testing rules are unchanged; the metrics line cannot
+  authorize readiness. An interrupted run that produces no receipt needs none
+  for metrics.
+
+Phase mapping (stable metric phase IDs, anchored to this file's headings —
+the owner of a wrapper change updates this mapping in the same change):
+
+| Anchor in this skill | Metric phases |
+|---|---|
+| `1. Establish the branch, PR, and review inputs` | `evidence`, `scope` |
+| `2. Review and verify locally`, `Merge the latest base before review` | `base-integration`, `local-pass`, `voice` |
+| `Enforce completion, beyond /review's informational audit` | `completion` |
+| `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` |
+| `Capture evidence and commit` | `evidence`, `commit` |
+| `3. Push and create or update the draft` | `publication` |
+| `Manual testing checkpoint and resume` | wait `human` |
+| `4. Trigger once and await Greptile` | `external-review`, wait `external-review` |
+| `5. Triage, fix, and verify locally` | `triage`, `fix` |
+| `6. Final readiness gate and handoff` | `readiness`, `handoff` |
+| `7. Emit the copyable prompt for a new session` | `handoff` |
+
 Own the interval between implementation and `/ship-and-land`:
 
 `merge latest base → /review → ship's release gates and local tests → commit/push → draft PR → pause for /pair-review if user testing is pending → resume → Greptile once when applicable → fixes/local review/tests/push → ready → /ship-and-land`

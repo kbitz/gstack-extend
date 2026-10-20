@@ -4765,3 +4765,89 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
     expect(flatProse(pairSkill)).toContain('`group=` names the test group that surfaced the bug; `pre-test` records that it was parked before testing.');
   }, TIMEOUT_23D);
 });
+
+// Track 24A: workflow-metrics prose lives outside the SHARED telemetry blocks in
+// exactly the two wrappers, maps their real headings, and cannot move a gate.
+describe('Track 24A workflow metrics drift-locks', () => {
+  const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+  const schemaPhases = metricsSchema.definitions.phase.enum as string[];
+  const waitCategories = metricsSchema.definitions.begin_request.properties.wait_category.enum as string[];
+  const wrappers: Record<string, string[]> = {
+    'review-and-prep': ['1. Establish the branch, PR, and review inputs', '2. Review and verify locally',
+      'Merge the latest base before review', "Enforce completion, beyond /review's informational audit",
+      "Prove /ship's release gates on this head", 'Capture evidence and commit',
+      '3. Push and create or update the draft', 'Manual testing checkpoint and resume',
+      '4. Trigger once and await Greptile', '5. Triage, fix, and verify locally',
+      '6. Final readiness gate and handoff', '7. Emit the copyable prompt for a new session'],
+    'ship-and-land': ['1. Resolve the workflows and target', '2. Decide what can be reused',
+      'Release-only path', 'Independently verified reuse', 'Shared review execution (DOCS and FULL)',
+      'Greptile and new feedback', '3. Execute ship and verify its final changes', '4. Land and verify'],
+  };
+  for (const [skill, anchors] of Object.entries(wrappers)) {
+    test(`${skill} carries metrics outside SHARED with every anchor and gate guard`, () => {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      const flat = content.replace(/\s+/g, ' ');
+      const startBlock = content.match(TELEMETRY_PREAMBLE_RE)?.[0] ?? '';
+      const finishBlock = content.match(TELEMETRY_EPILOGUE_RE)?.[0] ?? '';
+      expect(startBlock).not.toContain('metrics');
+      expect(finishBlock).not.toContain('metrics');
+      const at = content.indexOf('### Workflow metrics (optional, local)');
+      expect(at).toBeGreaterThan(content.indexOf('<!-- /SHARED:telemetry-start -->'));
+      expect(at).toBeLessThan(content.indexOf('<!-- SHARED:telemetry-finish -->'));
+      expect(flat).toContain('The SHARED prohibition on copying session values governs legacy start/finish calls only.');
+      expect(flat).toContain('retain the opaque session ID this invocation\'s start printed');
+      expect(flat).toContain('docs/telemetry.md#workflow-metrics');
+      expect(flat).toContain('inspect the JSON envelope\'s `status`');
+      expect(flat).toContain('Never rerun completed work to manufacture telemetry');
+      expect(flat).toContain('replay that identical payload at most once');
+      expect(flat).toContain('capture=disabled|unavailable|partial');
+      expect(flat).toContain('cannot authorize');
+      expect(flat).toContain('clock-sensitive');
+      expect(flat).toContain('metrics never triggers');
+      expect(flat).toContain(`stage:"${skill}"`);
+      expect(flat).toContain('Issue metrics calls one at a time from this session');
+      expect(flat).toContain('emit nothing further in this invocation');
+      expect(flat).toContain('lowercase UUID');
+      expect(flat).toContain('never guess an ID');
+      expect(flat).toContain('immediately before writing');
+      expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
+      expect(flat).toContain('kind:"fix"');
+      expect(flat).toContain('correction_kind:"finding"');
+      expect(flat).toContain('fresh `step_id` per phase visit');
+      expect(flat).toContain('`rc=$?`');
+      // The mapping table: every left-hand anchor is a real heading (inline code stripped), every
+      // required anchor is mapped, and every right-hand token is a controlled phase, wait category
+      // or decision value, so a renamed heading or a misspelt phase fails here.
+      const headings = [...content.matchAll(/^#{2,4} (.+)$/gm)].map(m => m[1].replace(/`/g, '').trim());
+      const tableAt = content.indexOf('| Anchor in this skill | Metric phases |', at);
+      expect(tableAt).toBeGreaterThan(at);
+      const rows = content.slice(tableAt, content.indexOf('\n\n', tableAt)).split('\n').slice(2);
+      const mapped: string[] = [];
+      const allowed = [...schemaPhases, ...waitCategories, 'RUN', 'REUSE', 'N/A'];
+      for (const row of rows) {
+        const [, left, right] = row.split('|');
+        for (const [, anchor] of left.matchAll(/`([^`]+)`/g)) {
+          expect(headings, `${skill}: ${anchor}`).toContain(anchor);
+          mapped.push(anchor);
+        }
+        for (const [, token] of right.matchAll(/`([^`]+)`/g)) expect(allowed, `${skill}: ${row}`).toContain(token);
+      }
+      for (const anchor of anchors) expect(mapped, `${skill} maps ${anchor}`).toContain(anchor);
+      const tablePhases = rows.flatMap(row => [...row.split('|')[2].matchAll(/`([a-z][a-z-]*)`/g)].map(m => m[1]))
+        .filter(p => schemaPhases.includes(p));
+      expect(new Set(tablePhases).size).toBeGreaterThanOrEqual(5);
+    });
+  }
+  test('no other skill gained a workflow-metrics section', () => {
+    for (const skill of EXPECTED_SETUP_SKILLS) {
+      if (skill === 'review-and-prep' || skill === 'ship-and-land') continue;
+      expect(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8')).not.toContain('### Workflow metrics (optional, local)');
+    }
+  });
+  test('the helper phase vocabulary matches the published schema', () => {
+    const py = readFileSync(join(ROOT, 'bin/lib/workflow_metrics.py'), 'utf8');
+    const phasesLine = /PHASES = \(([^)]*)\)/.exec(py)![1];
+    const pyPhases = [...phasesLine.matchAll(/"([^"]+)"/g)].map(m => m[1]);
+    expect(pyPhases).toEqual(schemaPhases);
+  });
+});

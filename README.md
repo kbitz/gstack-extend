@@ -144,7 +144,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
   Only explicit quota commands sample vendors. [Quick start and JSON contract](docs/quota-ledger.md).
 - **Telemetry:** `gstack-extend doctor telemetry` checks local skill-run records.
   Optional usage telemetry follows gstack's settings; local execution provenance
-  is on by default and never uploaded. [Configuration and data contracts](docs/telemetry.md).
+  is on by default and never uploaded. `/review-and-prep` and `/ship-and-land`
+  also keep optional local [workflow metrics](docs/telemetry.md#workflow-metrics)
+  under the same provenance switch. [Configuration and data contracts](docs/telemetry.md).
 - **Merge gate (shadow-only):** `~/.claude/skills/gstack-extend/bin/merge-gate check --base <ref>`
   reports whether a change would merge, and why. It never merges, pushes, or updates
   refs, and it is not on PATH. [Usage and verdict contract](docs/merge-gate.md).

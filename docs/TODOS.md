@@ -2,6 +2,22 @@
 
 ## Unprocessed
 
+### [review] Workflow-metrics reader cardinality edges
+
+- **Description:** Low-severity counting edges in `bin/lib/workflow_metrics.py`'s read projection, left after Track 24A's two review rounds. (1) A duplicate identical pass `completed` record is tolerated while a duplicate identical `voice-complete` is a conflict; pick one rule for repeated identical terminals. (2) An empty or unbound ledger reads `ok` with zero counts; consider `capture-missing`-style unknowns. (3) The "unknown, never zero" rule only checks whether any pass or fix record exists, so a run missing its second pass still undercounts. (4) A `fix-cycle` correction's `fix_step_id` may name a step that is not `kind:"fix"`. (5) A supersession chain across different findings is not rejected. None changes a gate or a recorded event; each can misstate a count in a receipt's optional metrics line.
+- **Effort:** S
+- **Context:** Pass-2 adversarial review of Track 24A on 2026-10-19. The owner chose a bounded fix batch with a stop rule; these were routed here instead of a third fix cycle.
+- **Priority:** P3
+- **Revisit when:** Track 31A's efficiency study or the installed two-wrapper smoke finds a miscounted run, or before a workflow-metrics v2 schema.
+
+### [review] Slim the workflow-metrics helper without dropping requirements
+
+- **Description:** The simplification review proposed nine behavior-preserving shrinks to `bin/lib/workflow_metrics.py` (about 80 lines): one regex-or-null validator instead of about 13 copies, a hoisted context-override check, one bounded reader for stdin and the ledger, one private no-follow open helper for the lock/ledger paths, a shared candidate-key tuple, and removing the dead `overflow` parameter after the partial-tail fold. Also consider moving the one-off overhead figures from `docs/telemetry.md` into PROGRESS evidence.
+- **Effort:** S
+- **Context:** Advisory findings from Track 24A's review on 2026-10-19; the owner kept the freshly tested module as is (no churn before first use) and routed these here.
+- **Priority:** P3
+- **Revisit when:** The next substantive change to `bin/lib/workflow_metrics.py`, or when Track 31A needs new reader features.
+
 ### [plan-ceo-review:track=23H,defer=true] Doctor visibility into open handoffs, completion markers and unconfirmed deliveries
 
 - **Description:** `gstack-extend doctor telemetry` reads the JSONL sinks only. It never reads `telemetry/<hash>/*.json` handoffs, `telemetry-completed/` markers or `usage_uncertain` flags, so an abandoned start, a held unconfirmed delivery or a suppressed retry shows only in debug mode or through the interim listing snippet in `docs/telemetry.md` ("Work item and launcher quick-start"). Report open handoffs per root and skill (count, age, work item, whether a logger run is unconfirmed) and marker counts, then retire the snippet. This overlaps the Future card "Doctor coverage report over stage-runs and leftover handoffs"; fold it into that card if it is still open.
@@ -17,14 +33,6 @@
 - **Context:** CEO cherry-pick E3 from Track 23H's approved autoplan on 2026-10-16. Deleting user state needs its own policy. Related Future card: "Bounded handoff cleanup and a tier-independent marker trigger".
 - **Priority:** P3
 - **Revisit when:** Any root and skill exceeds about 100 open handoffs, or the doctor report in the previous item shows accumulation.
-
-### [plan-ceo-review:track=23E] Add trigger-migration scenarios to the attended planning matrix
-
-- **Description:** Track 23E adds a legacy trigger migration to `/roadmap` (`skills/roadmap.md`, Deferred work). Its string locks prove the instruction exists, not that an agent follows it. Add scenarios to the attended planning matrix: preservation of every existing character, Approve, Revise and Hold behavior, duplicate or missing titles (`not located`), a title-only bullet, a repeat run, a realistically sized backlog, and the owner's review effort for a batch.
-- **Effort:** M (human: ~1 day / CC: ~1 hour)
-- **Context:** Raised by Track 23E's /autoplan (CEO and DX voices). The Track's executable proof is the `--future-index` unit and CLI tests plus a test that runs the Validate snippet from the skill; the migration's agent behavior is prose only. Placement belongs in Track 25B (installed-skill planning acceptance), so the next `/roadmap` run decides it.
-- **Priority:** P3
-- **Revisit when:** `/roadmap` plans Track 25B, or the first trigger-migration batch is run against a real Future file.
 
 ### [ship] init guesses project identity from the slug and the exact path
 

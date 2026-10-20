@@ -6,6 +6,7 @@
 
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
@@ -1393,4 +1394,86 @@ describe('Conductor Cursor live-smoke recipe', () => {
     expect(noneLines).toContain('layouts ndjson=1 sqlite=0 mixed=0 unrecognized=0 unreadable=0');
     expect(noneLines.at(-1)).toBe('result blocked');
   });
+});
+
+// Track 24A: the metrics companion must not disturb the published contracts above.
+describe('workflow metrics contract (Track 24A)', () => {
+  const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+  const helperSource = readFileSync(join(ROOT, 'bin/lib/workflow_metrics.py'), 'utf8');
+  const pyTuple = (name: string) => [...(new RegExp(`^${name} = \\(([^)]*)\\)`, 'm').exec(helperSource)![1]).matchAll(/"([^"]+)"/g)].map(m => m[1]);
+  // Every envelope reason the schema publishes has one fixed helper action and one docs anchor.
+  const REASONS = (metricsSchema.definitions.envelope.properties.reason.enum as (string | null)[]).filter((r): r is string => r !== null);
+  test('docs carry the schema link, clock qualification and one anchored action per reason', () => {
+    const doc = docText();
+    const body = section(doc, '## Workflow metrics');
+    expect(body).toContain('workflow-metrics.schema.json');
+    expect(body).toContain('clock-sensitive');
+    expect(body).toContain('qualified_elapsed_ms');
+    expect(REASONS.length).toBeGreaterThanOrEqual(16);
+    for (const reason of REASONS) expect(body, reason).toContain(`<a id="workflow-metrics-${reason}"></a>`);
+    const fixText = /^FIX_TEXT = \{([\s\S]*?)^\}/m.exec(helperSource)![1];
+    expect([...fixText.matchAll(/^ {4}"([a-z-]+)":/gm)].map(m => m[1]).sort()).toEqual([...REASONS].sort());
+    const local = new Ajv({ strict: true, allErrors: true });
+    local.addSchema(metricsSchema);
+    const envelope = local.getSchema('workflow-metrics#/definitions/envelope')!;
+    expect(envelope({ v: 1, status: 'ok', reason: null, session_id: 'x', event_id: null, data: {}, diagnostics: null })).toBe(true);
+    expect(envelope({ v: 1, status: 'ok', reason: null, session_id: 'x', event_id: null, data: { unknown_reasons: ['not-a-reason'] }, diagnostics: null })).toBe(false);
+  });
+  test('the unknown-reason vocabulary matches across helper, schema and docs', () => {
+    const helper = pyTuple('UNKNOWN_REASONS');
+    const integrity = pyTuple('INTEGRITY_REASONS');
+    expect([...helper].sort()).toEqual([...(metricsSchema.definitions.unknown_reason.enum as string[])].sort());
+    const used = [...new Set([...helperSource.matchAll(/unknown\.add\("([a-z-]+)"\)/g)].map(m => m[1]))];
+    expect(used.every(r => helper.includes(r)), used.join(',')).toBe(true);
+    const body = section(docText(), '## Workflow metrics');
+    const table = body.slice(body.indexOf('#### Unknown reasons in a read'));
+    const rows = [...table.matchAll(/^\| `([a-z-]+)` \|/gm)].map(m => m[1]);
+    expect([...rows].sort()).toEqual([...helper].sort());
+    expect(rows.slice(0, integrity.length).sort()).toEqual([...integrity].sort()); // the first rows make a read partial
+    expect(body).toContain('<a id="workflow-metrics-unknown"></a>');
+  });
+  test('a metrics sequence leaves stage-runs v1 and skill-usage shapes unchanged', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
+    const started = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']);
+    const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)![1];
+    const begin = spawnSync(WRAPPER, ['metrics', 'begin'], {
+      cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000,
+      input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: randomUUID(), parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null, candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }),
+    });
+    expect(JSON.parse(begin.stdout).status).toBe('recorded');
+    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
+    const row = fix.readLedger()[0];
+    expect(verdict(row)).toEqual({ ok: true, errors: [] });
+    expect(row.session_id).toBe(sid);
+    expect(fix.readJsonl().map(r => r.event_type)).toEqual(['skill_start', 'skill_run']);
+    const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
+    expect(JSON.parse(read.stdout).status).toBe('ok');
+    const ledger = join(fix.home, '.gstack-extend/analytics/workflow-metrics', createHash('sha256').update(sid).digest('hex') + '.jsonl');
+    expect(existsSync(ledger)).toBe(true);
+    expect(fix.readJsonl()).toHaveLength(2); // metrics never append to the upstream sink
+  }, 30_000);
+  test('the documented quickstart runs verbatim to a receipt', () => {
+    const body = section(docText(), '## Workflow metrics');
+    const block = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
+    const fix = makeTelemetryFixture('off');
+    const script = join(fix.home, 'quickstart.sh');
+    // The quickstart must really isolate: HOME is the fresh temporary directory, never empty.
+    writeFileSync(script, block + '\necho "QS_HOME=$HOME QS_WM=$WM_HOME"\n');
+    const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home }, encoding: 'utf8', timeout: 30_000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('"status":"recorded"');
+    expect(r.stdout).toContain('"status":"ok"');
+    expect(r.stdout).toContain('capture=ok; clock=utc-wall clock-sensitive');
+    const isolation = /QS_HOME=(\S*) QS_WM=(\S*)/.exec(r.stdout)!;
+    expect(isolation[1]).not.toBe('');
+    expect(isolation[1]).toBe(isolation[2]);
+    expect(isolation[1]).not.toBe(fix.home);
+    // The documented reading: evidence ran and completed; tests were reused with no work interval.
+    const summary = r.stdout.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l)).find(e => e.status === 'ok')!.data;
+    const phase = (name: string) => summary.phases.find((p: any) => p.phase === name);
+    expect(phase('evidence')).toMatchObject({ steps_started: 1, steps_completed: 1 });
+    expect(phase('tests')).toMatchObject({ decisions: { RUN: 0, REUSE: 1, 'N/A': 0 }, steps_started: 0, observed_wall_duration_ms: null });
+    expect(summary.qualified_elapsed_ms).toBeNull();
+  }, 60_000);
 });

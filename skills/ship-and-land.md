@@ -49,6 +49,121 @@ true
 ```
 <!-- /SHARED:telemetry-start -->
 
+### Workflow metrics (optional, local)
+
+Step/pass capture for this workflow lives beside the legacy telemetry above and
+never changes it. The SHARED prohibition on copying session values governs
+legacy start/finish calls only. As the one metrics-only exception, retain the
+opaque session ID this invocation's start printed (`GE_TELEMETRY: session=…`)
+solely as the `session_id` of `metrics` calls in this invocation. Never replay
+or alter a legacy start/finish call, never use an ID from another invocation,
+and never start a new legacy run to feed metrics. If the ID is unavailable,
+metrics capture is unavailable; continue the workflow. Full contract:
+[docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
+
+Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
+producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
+with one JSON object (`v:1`, `stage:"ship-and-land"`, the retained
+`session_id`, a fresh lowercase UUID `event_id` you keep stable for that
+event; `uuidgen | tr A-Z a-z`) on stdin. Every ID you mint is lowercase.
+The launcher always exits 0: inspect the JSON envelope's `status` for capture
+state and preserve the wrapped work's own exit status separately. A disabled,
+unavailable, conflicting or unconfirmed capture is capture state only — it
+never changes a reuse decision, a review requirement, Greptile applicability,
+ship/land readiness, merge approval, or any outward action, and never delays
+the fresh checks that precede one. Never rerun completed work to manufacture
+telemetry. For `unconfirmed` or a missing envelope, keep the exact payload and
+`event_id`, run `metrics read --session-id <id> --event-id <event_id>`, and
+replay that identical payload at most once when the read reports the event
+present or safely absent; on conflict/partial/unknown stop and leave capture
+unknown. Never mint a fresh `event_id` for a replay.
+
+Issue metrics calls one at a time from this session, never as parallel tool
+calls or from subagents: the run lock never waits, so concurrent calls drop
+as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
+nothing further in this invocation and use the literal status line below in
+its receipts. If context compaction loses the retained IDs or a pending
+payload, that capture stays unknown; never guess an ID. When a metrics call
+shares a tool call with other work, capture that work's exit first
+(`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
+exit is always 0.
+
+Emit, batched into existing tool calls where practical:
+
+- Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
+  run `step_id`, `parent_step_id:null`, and `context` carrying the candidate
+  HEAD/tree/base you already observed (or null — never run `git write-tree` or
+  create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
+  the installed copy of this skill, and `parent_session_id:null` unless the
+  spawning stage handed you its exact ID. Once the candidate changes (you
+  first observe it, a base merge, a fix or release commit), every later step
+  `begin` and pass `started` carries a `context` override with the new
+  HEAD/tree/base; their ends, attempts and voice records inherit it.
+- One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
+  controlled reason), recorded under the phase of the work decided about (a
+  reused review is `local-pass`, reused tests are `tests`; `reuse` labels only
+  the reuse evaluation itself), with a fresh `step_id` per phase visit (or
+  the `step_id` of the execution it governs); `begin`/`end` only around work actually
+  executed, so trusted or release-only reuse records decisions without new
+  work intervals. Reached-but-inapplicable phases are `N/A`; unreached phases
+  emit nothing and stay unknown. Each execution uses a fresh `step_id`; phase
+  names are labels only. Parent review intervals enclose their parallel voice
+  intervals; under parallel dispatch those are parent-observed, not per-voice
+  runtime.
+- Any local review actually run here as `pass` records (one round over one
+  candidate; required voices declared, attempts separate, one selected attempt
+  or an explicit policy-authorized `N/A` per voice; findings as allowlisted
+  IDs/severities/dispositions only, never bodies, prompts or command output;
+  an empty array means zero; `model_context` only when supplied, with an
+  out-of-grammar identifier null and `unknown_reason:"unsupported"`; a
+  `finding_id` unique within an attempt, duplicates declared on the finding
+  with `duplicate_of`). A fix batch actually run here is a `kind:"fix"` step,
+  counted separately from passes. Greptile is `scope:"greptile"` with its own
+  count and its once-per-PR rule unchanged; a reused Greptile result is a
+  `REUSE` decision with no new pass and no new request, and metrics never
+  triggers one.
+- Corrections, appended as they happen: `correction_kind:"finding"` with the
+  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
+  resolution or adjudication changes after its attempt was recorded (a fix
+  lands: `resolution:"fixed"`; a later change to the same finding names the
+  previous correction in `supersedes_event_id`); `retry` or `fallback` with
+  the new `attempt_id` when a voice attempt is retried or replaced; and
+  `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
+  batch closes.
+- Waits as `kind:"wait"` steps (`human` while a question to the user, such
+  as merge approval, is open; `external-review`, `checks`, `deploy`) only for
+  waits actually performed. Unlabeled time stays unclassified;
+  elapsed wall time is never model/inference time, and every duration is
+  clock-sensitive (`clock_basis=utc-wall`).
+- Receipts: immediately before writing the wrapper receipt and the landing
+  readiness report, run `metrics read --session-id <id>` and include that
+  snapshot's `receipt_text` (at most 2 KiB), or, when the read is
+  unavailable, the literal line
+  `Workflow metrics (local, optional): capture=disabled|unavailable|partial (<reason>).`
+  with the actual status. An open run reads as in progress; that is expected.
+  If any metrics call after the run `begin` ended without `recorded` or
+  `replayed` and was not reconciled, also add the literal line
+  `Workflow metrics (local, optional): capture=partial (<reason>).` beside
+  the snapshot, since the read cannot see a dropped call.
+  The metrics line precedes the readiness report's merge decision, which
+  stays last. `end` the run step just before the legacy telemetry finish.
+  Never write or edit a PR body, comment or report only to refresh metrics,
+  and never after the merge. Existing receipt, handoff and readiness labels
+  are unchanged; the metrics line cannot authorize landing or merge. An
+  interrupted run that produces no receipt needs none for metrics.
+
+Phase mapping (stable metric phase IDs, anchored to this file's headings —
+the owner of a wrapper change updates this mapping in the same change):
+
+| Anchor in this skill | Metric phases |
+|---|---|
+| `1. Resolve the workflows and target` | `handoff`, `evidence` |
+| `2. Decide what can be reused`, `Release-only path`, `Independently verified reuse` | `reuse`, plus `REUSE` decisions under each reused phase |
+| `Shared review execution (DOCS and FULL)` | `local-pass`, `voice`, `fix`, plus actual `coverage`, `documentation`, `tests` |
+| `Greptile and new feedback` | `external-review` decision; wait `external-review` only if actually awaited |
+| `3. Execute ship and verify its final changes` | `release`, `ship`, `publication` |
+| `4. Land and verify` | `readiness`, `landing`, wait `deploy`, wait `human` |
+
 Run `validate evidence → /ship with the overrides below → /land-and-deploy`.
 When preparation already proved the current head, Step 2's release-only path
 limits ship to release metadata. Stay in this invocation when reviews are missing

@@ -1,0 +1,229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "workflow-metrics",
+  "title": "gstack-extend workflow-metrics record (Track 24A)",
+  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. See docs/telemetry.md#workflow-metrics.",
+  "$comment": "Records, requests, contexts and findings set additionalProperties false: an unknown key is invalid input, not a forward-compatible extension. A shape or meaning change adds a new v branch and keeps v1 readable as partial/unknown, never reinterpreted.",
+  "$ref": "#/definitions/record",
+  "definitions": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "session_id": { "type": "string", "pattern": "^extend-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "voice_id": { "type": "string", "pattern": "^(?:[a-z][a-z0-9-]{0,63}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$" },
+    "uuid_or_null": { "anyOf": [{ "$ref": "#/definitions/uuid" }, { "type": "null" }] },
+    "safe_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "hash_or_null": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$|^[0-9a-f]{64}$" },
+    "sha256_or_null": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "stage": { "type": "string", "enum": ["review-and-prep", "ship-and-land"] },
+    "phase": { "type": "string", "enum": ["run", "evidence", "scope", "base-integration", "local-pass", "voice", "completion", "pregate", "coverage", "documentation", "tests", "commit", "publication", "external-review", "triage", "fix", "readiness", "handoff", "reuse", "release", "ship", "landing"] },
+    "context_full": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "candidate_head": { "$ref": "#/definitions/hash_or_null" },
+        "candidate_tree": { "$ref": "#/definitions/hash_or_null" },
+        "candidate_base": { "$ref": "#/definitions/hash_or_null" },
+        "binding": { "type": "string", "enum": ["clean", "dirty", "unknown"] },
+        "skill_sha256": { "$ref": "#/definitions/sha256_or_null" },
+        "parent_session_id": { "anyOf": [{ "$ref": "#/definitions/session_id" }, { "type": "null" }] }
+      },
+      "required": ["candidate_head", "candidate_tree", "candidate_base", "binding", "skill_sha256", "parent_session_id"]
+    },
+    "context_override": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "candidate_head": { "$ref": "#/definitions/hash_or_null" },
+        "candidate_tree": { "$ref": "#/definitions/hash_or_null" },
+        "candidate_base": { "$ref": "#/definitions/hash_or_null" },
+        "binding": { "type": "string", "enum": ["clean", "dirty", "unknown"] }
+      }
+    },
+    "model_context": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "requested_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "requested_effort": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "reported_model": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "reported_effort": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "requested_source": { "type": "string", "enum": ["launcher-config", "tool-result", "unavailable"] },
+        "reported_source": { "type": "string", "enum": ["tool-result", "unavailable"], "description": "Launcher configuration is requested, never observed." },
+        "unknown_reason": { "type": ["string", "null"], "enum": ["not-reported", "unsupported", "ambiguous", "capture-missing", null] }
+      },
+      "required": ["requested_model", "requested_effort", "reported_model", "reported_effort", "requested_source", "reported_source", "unknown_reason"],
+      "allOf": [
+        { "if": { "properties": { "requested_source": { "const": "unavailable" } } }, "then": { "properties": { "requested_model": { "type": "null" }, "requested_effort": { "type": "null" } } } },
+        { "if": { "properties": { "reported_source": { "const": "unavailable" } } }, "then": { "properties": { "reported_model": { "type": "null" }, "reported_effort": { "type": "null" } } } }
+      ]
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "finding_id": { "$ref": "#/definitions/safe_id" },
+        "severity_source": { "type": "string", "enum": ["P0", "P1", "P2", "P3", "critical", "high", "medium", "low", "info", "unknown"] },
+        "severity_rubric": { "type": "string", "enum": ["core", "specialist", "adversarial", "greptile", "gstack-review", "other", "unknown"] },
+        "adjudication": { "type": "string", "enum": ["accepted", "rejected", "deferred", "duplicate", "unclassified"] },
+        "resolution": { "type": "string", "enum": ["open", "fixed", "unknown"] },
+        "duplicate_of": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
+      },
+      "required": ["finding_id", "severity_source", "severity_rubric", "adjudication", "resolution", "duplicate_of"],
+      "description": "rejected/duplicate require resolution unknown; duplicate requires duplicate_of naming another finding; finding_id is unique within one attempt. Normalized severity: P0/critical->critical, P1/high->high, P2/medium->medium, P3/low->low, info->info, unknown->unclassified. Normalization does not claim rubric equivalence."
+    },
+    "request_base": {
+      "type": "object",
+      "properties": {
+        "v": { "type": "integer", "const": 1 },
+        "stage": { "$ref": "#/definitions/stage" },
+        "session_id": { "$ref": "#/definitions/session_id" },
+        "event_id": { "$ref": "#/definitions/uuid" }
+      },
+      "required": ["v", "stage", "session_id", "event_id"]
+    },
+    "begin_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [
+        { "$ref": "#/definitions/request_base" },
+        { "if": { "properties": { "kind": { "const": "run" } }, "required": ["kind"] },
+          "then": { "properties": { "context": { "$ref": "#/definitions/context_full" } }, "required": ["context"] },
+          "else": { "properties": { "context": { "$ref": "#/definitions/context_override" } } } }
+      ],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "step_id": { "$ref": "#/definitions/uuid" },
+        "parent_step_id": { "$ref": "#/definitions/uuid_or_null" },
+        "kind": { "type": "string", "enum": ["run", "phase", "voice", "wait", "fix"] },
+        "phase": { "$ref": "#/definitions/phase" },
+        "wait_category": { "type": "string", "enum": ["human", "external-review", "checks", "deploy", "tool", "other"] },
+        "context": { "type": "object" }
+      },
+      "required": ["step_id", "parent_step_id", "kind"],
+      "description": "kind=run requires phase=run, null parent_step_id and a context_full, and binds to the exact legacy start handoff; kind=wait requires wait_category; other kinds require phase and forbid wait_category; non-run context is a context_override."
+    },
+    "end_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "step_id": { "$ref": "#/definitions/uuid" },
+        "outcome": { "type": "string", "enum": ["completed", "failed", "paused", "cancelled"] },
+        "context": { "$ref": "#/definitions/context_override" }
+      },
+      "required": ["step_id", "outcome"]
+    },
+    "decision_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "step_id": { "$ref": "#/definitions/uuid" },
+        "phase": { "$ref": "#/definitions/phase" },
+        "decision": { "type": "string", "enum": ["RUN", "REUSE", "N/A"] },
+        "reason": { "type": "string", "enum": ["required", "matching-evidence", "candidate-changed", "base-changed", "policy-changed", "evidence-missing", "evidence-stale", "not-applicable", "user-deferred", "unknown"] },
+        "context": { "$ref": "#/definitions/context_override" }
+      },
+      "required": ["step_id", "phase", "decision", "reason"]
+    },
+    "pass_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "pass_id": { "$ref": "#/definitions/uuid" },
+        "scope": { "type": "string", "enum": ["local", "greptile"] },
+        "state": { "type": "string", "enum": ["started", "attempt", "voice-complete", "completed"] },
+        "required_voice_ids": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "$ref": "#/definitions/voice_id" } },
+        "voice_id": { "$ref": "#/definitions/voice_id" },
+        "attempt_id": { "$ref": "#/definitions/uuid" },
+        "predecessor_attempt_id": { "$ref": "#/definitions/uuid_or_null" },
+        "attempt_outcome": { "type": "string", "enum": ["completed", "failed", "partial"] },
+        "findings": { "type": "array", "maxItems": 256, "items": { "$ref": "#/definitions/finding" } },
+        "model_context": { "$ref": "#/definitions/model_context" },
+        "voice_status": { "type": "string", "enum": ["completed", "not-applicable"] },
+        "selected_attempt_id": { "$ref": "#/definitions/uuid" },
+        "na_reason": { "type": "string", "enum": ["not-applicable", "user-deferred"] },
+        "context": { "$ref": "#/definitions/context_override" }
+      },
+      "required": ["pass_id", "scope", "state"],
+      "description": "Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
+    },
+    "correction_request": {
+      "type": "object", "additionalProperties": false,
+      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "properties": {
+        "v": true, "stage": true, "session_id": true, "event_id": true,
+        "correction_kind": { "type": "string", "enum": ["retry", "fallback", "parent", "finding", "fix-cycle"] },
+        "supersedes_event_id": { "$ref": "#/definitions/uuid_or_null" },
+        "pass_id": { "$ref": "#/definitions/uuid_or_null" },
+        "voice_id": { "anyOf": [{ "$ref": "#/definitions/voice_id" }, { "type": "null" }] },
+        "attempt_id": { "$ref": "#/definitions/uuid_or_null" },
+        "finding_id": { "anyOf": [{ "$ref": "#/definitions/safe_id" }, { "type": "null" }] },
+        "step_id": { "$ref": "#/definitions/uuid_or_null" },
+        "parent_step_id": { "$ref": "#/definitions/uuid_or_null" },
+        "fix_step_id": { "$ref": "#/definitions/uuid_or_null" },
+        "selected_attempt_id": { "$ref": "#/definitions/uuid_or_null" },
+        "adjudication": { "type": ["string", "null"], "enum": ["accepted", "rejected", "deferred", "unclassified", null], "description": "duplicate is declared on the finding itself (duplicate_of), never by correction." },
+        "resolution": { "type": ["string", "null"], "enum": ["open", "fixed", "unknown", null] }
+      },
+      "required": ["correction_kind"],
+      "description": "Optional references may be explicit null (absent). retry/fallback require attempt_id; parent requires step_id+parent_step_id; finding requires finding_id and adjudication or resolution; fix-cycle requires fix_step_id."
+    },
+    "record": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "v": { "type": "integer", "const": 1 },
+        "op": { "type": "string", "enum": ["begin", "end", "decision", "pass", "correction"] },
+        "event_id": { "$ref": "#/definitions/uuid" },
+        "request_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA256 of the canonical producer request (sorted keys, compact separators, {op, request}); helper-assigned timestamps and derived context are outside it, so identical retries keep the original digest and captured_at_ms." },
+        "captured_at_ms": { "type": "integer", "minimum": 0, "description": "Helper-assigned UTC wall milliseconds. Clock-sensitive; see the read projection's clock qualification." },
+        "producer_version": { "type": ["string", "null"], "pattern": "^[0-9]+(\\.[0-9]+){2,3}$" },
+        "request": { "type": "object", "description": "The matching *_request for op, with request.event_id equal to event_id." }
+      },
+      "required": ["v", "op", "event_id", "request_digest", "captured_at_ms", "producer_version", "request"],
+      "allOf": [
+        { "if": { "properties": { "op": { "const": "begin" } } }, "then": { "properties": { "request": { "$ref": "#/definitions/begin_request" } } } },
+        { "if": { "properties": { "op": { "const": "end" } } }, "then": { "properties": { "request": { "$ref": "#/definitions/end_request" } } } },
+        { "if": { "properties": { "op": { "const": "decision" } } }, "then": { "properties": { "request": { "$ref": "#/definitions/decision_request" } } } },
+        { "if": { "properties": { "op": { "const": "pass" } } }, "then": { "properties": { "request": { "$ref": "#/definitions/pass_request" } } } },
+        { "if": { "properties": { "op": { "const": "correction" } } }, "then": { "properties": { "request": { "$ref": "#/definitions/correction_request" } } } }
+      ]
+    },
+    "unknown_reason": {
+      "type": "string",
+      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work"],
+      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
+    },
+    "diagnostics": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": {
+        "operation": { "type": "string" }, "component": { "type": "string" },
+        "field": { "type": ["string", "null"] }, "expected": { "type": ["string", "null"] },
+        "actual": { "type": ["integer", "null"] }, "limit": { "type": ["integer", "null"] },
+        "code": { "type": "string" }, "doc_anchor": { "type": "string" }, "fix": { "type": "string" },
+        "side_effects": { "type": "string", "enum": ["none", "partial", "complete", "unknown"] },
+        "retry_bound": { "type": "integer" }, "helper_version": { "type": ["string", "null"] },
+        "schema_version": { "type": "integer" },
+        "config_source": { "type": "array", "items": { "type": "string" }, "description": "Environment variable names only, never values." },
+        "cause": { "type": ["string", "null"] },
+        "trace": { "type": ["object", "null"], "additionalProperties": false,
+          "properties": { "file": { "type": "string" }, "line": { "type": "integer" }, "exception_class": { "type": "string" } },
+          "required": ["file", "line", "exception_class"],
+          "description": "Unexpected failures only: trusted source basename, line and exception class. No locals, arguments or source lines." }
+      },
+      "required": ["operation", "component", "field", "expected", "actual", "limit", "code", "doc_anchor", "fix", "side_effects", "retry_bound", "helper_version", "schema_version", "config_source", "cause", "trace"],
+      "description": "Bounded to 4 KiB serialized. No raw values, exception text, prompts, private paths or environment values."
+    },
+    "envelope": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "v": { "type": "integer", "const": 1 },
+        "status": { "type": "string", "enum": ["recorded", "replayed", "disabled", "unavailable", "conflict", "partial", "unconfirmed", "ok"] },
+        "reason": { "type": ["string", "null"], "enum": ["capture-disabled", "invalid-input", "unsupported-version", "identity-missing", "identity-mismatch", "unsafe-path", "lock-busy", "capacity", "malformed-record", "partial-tail", "event-conflict", "io-error", "capture-missing", "ambiguous-binding", "clock-invalid", "candidate-changed", null] },
+        "session_id": { "type": ["string", "null"] },
+        "event_id": { "type": ["string", "null"], "description": "Null for read." },
+        "data": { "type": ["object", "null"],
+          "properties": { "unknown_reasons": { "type": "array", "items": { "$ref": "#/definitions/unknown_reason" } } },
+          "description": "Producer: captured_at_ms, request_digest, op. Read: the compact named-run projection including clock_basis=utc-wall, clock_quality=clock-sensitive, qualified_elapsed_ms=null and receipt_text (at most 2 KiB UTF-8). Whole envelope at most 16 KiB." },
+        "diagnostics": { "$ref": "#/definitions/diagnostics" }
+      },
+      "required": ["v", "status", "reason", "session_id", "event_id", "data", "diagnostics"],
+      "description": "The launcher exits 0 either way; callers inspect status for capture state and preserve the wrapped command's exit separately. No invalid input is echoed."
+    }
+  }
+}

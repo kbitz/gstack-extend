@@ -160,3 +160,26 @@ _tombstone: 22_
 ### Track 23F: Allow the first roadmap audit in an untagged project ✓ Shipped (v0.36.9.0)
 - 2026-10-16: merged [PR #144](https://github.com/kbitz/gstack-extend/pull/144) (commit `73188a4`); verified land-time Track 23F, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
 - 25 of 25 in-scope items verified, including a fresh-init audit assertion; invalid versions and mismatched existing tags still fail. User-approved edits to `skills/roadmap.md` and `tests/skill-protocols.test.ts` fell outside the declared footprint. The installed `/roadmap` check stays with the planning qualification Track (25B).
+
+## Individual Track history
+
+### Track 23E: Keep task sizing and deferred revisit triggers visible ✓ Shipped (v0.36.10.0)
+- 2026-10-16: merged [PR #145](https://github.com/kbitz/gstack-extend/pull/145) (commit `7a887ef`); land-time Track 23E, original Group 23. Introduced under this ID on 2026-10-08 in `5b6e516`; no later relabel before landing.
+- The approved-scope completion matrix reports 44/44 requirements verified. Merged code covers whole-marker task sizing and missing-trigger indexing; the skill includes the context-preserving migration. Installed-agent behavior is not claimed from fixtures: the existing planning qualification Track retains its 18 attended cases and now includes the trigger-migration inbox scenarios.
+
+## Individual Track history
+
+### Track 23H: Collision-safe and idempotent telemetry run identity ✓ Shipped (v0.36.11.0)
+- 2026-10-17: merged [PR #146](https://github.com/kbitz/gstack-extend/pull/146) (commit `8f79dd2`); land-time Track 23H, original Group 23. Introduced as Track 24A on 2026-10-08 in `5b6e516`, relabeled 23H by the 2026-10-16 regeneration included in the merged change.
+- The approved revision-1 completion matrix reports 55/55 requirements verified, including persistent launch work-item identity and explicit retry behavior. The approved limits for indistinguishable implicit finishes and uncertain delivery remain limits, not exact-attribution claims. Doctor and abandoned-handoff retention remain deferred; host identity, pause/resume and installed host acceptance remain Current Plan work.
+
+## Individual Track history
+
+### Track 23I: Publish and enforce the external stage-handoff contract ✓ Shipped (v0.36.13.0)
+- 2026-10-19: merged [PR #148](https://github.com/kbitz/gstack-extend/pull/148) (commit `1f828ef`); land-time Track 23I, original Group 23. Introduced as Track 24B on 2026-10-08 in `5b6e516`, relabeled 23I by the 2026-10-16 regeneration in `8f79dd2`.
+- The approved completion matrix reports 47/47 requirements verified with no in-scope deferrals. The versioned document, four producer references, compatibility anchors and fixture classifier are delivered. This was the owner-approved documentation/fixture scope; it does not establish live external-consumer or host acceptance, which remains with the two host qualification Tracks. Residual parser and pause-detector follow-ups remain in TODOS.
+
+## Individual Track history
+_tombstone: 23_
+
+- 2026-10-19: all nine original Group 23 Tracks have individual landed receipts; no active pin is declared. Prefix 23 is retired. Existing owner acceptance obligations remain with their named qualification work.
