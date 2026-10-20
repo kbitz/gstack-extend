@@ -83,7 +83,10 @@ calls or from subagents: the run lock never waits, so concurrent calls drop
 as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
 nothing further in this invocation and use the literal status line below in
 its receipts. If context compaction loses the retained IDs or a pending
-payload, that capture stays unknown; never guess an ID.
+payload, that capture stays unknown; never guess an ID. When a metrics call
+shares a tool call with other work, capture that work's exit first
+(`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
+exit is always 0.
 
 Emit, batched into existing tool calls where practical:
 
@@ -92,14 +95,15 @@ Emit, batched into existing tool calls where practical:
   HEAD/tree/base you already observed (or null — never run `git write-tree` or
   create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
   the installed copy of this skill, and `parent_session_id:null` unless the
-  spawning stage handed you its exact ID. When you first observe the candidate,
-  and after a base merge or release commit changes it, put a `context`
-  override with the new HEAD/tree/base on the next step `begin` and pass
-  `started`; their ends, attempts and voice records inherit it.
+  spawning stage handed you its exact ID. Once the candidate changes (you
+  first observe it, a base merge, a fix or release commit), every later step
+  `begin` and pass `started` carries a `context` override with the new
+  HEAD/tree/base; their ends, attempts and voice records inherit it.
 - One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
   controlled reason), recorded under the phase of the work decided about (a
   reused review is `local-pass`, reused tests are `tests`; `reuse` labels only
-  the reuse evaluation itself); `begin`/`end` only around work actually
+  the reuse evaluation itself), with a fresh `step_id` per phase visit (or
+  the `step_id` of the execution it governs); `begin`/`end` only around work actually
   executed, so trusted or release-only reuse records decisions without new
   work intervals. Reached-but-inapplicable phases are `N/A`; unreached phases
   emit nothing and stay unknown. Each execution uses a fresh `step_id`; phase
@@ -111,12 +115,23 @@ Emit, batched into existing tool calls where practical:
   or an explicit policy-authorized `N/A` per voice; findings as allowlisted
   IDs/severities/dispositions only, never bodies, prompts or command output;
   an empty array means zero; `model_context` only when supplied, with an
-  out-of-grammar identifier null and `unknown_reason:"unsupported"`). Greptile
-  is `scope:"greptile"` with its own count and its once-per-PR rule unchanged;
-  a reused Greptile result is a `REUSE` decision with no new pass and no new
-  request, and metrics never triggers one.
-- Waits as `kind:"wait"` steps (`external-review`, `checks`, `deploy`)
-  only for waits actually performed. Unlabeled time stays unclassified;
+  out-of-grammar identifier null and `unknown_reason:"unsupported"`; a
+  `finding_id` unique within an attempt, duplicates declared on the finding
+  with `duplicate_of`). A fix batch actually run here is a `kind:"fix"` step,
+  counted separately from passes. Greptile is `scope:"greptile"` with its own
+  count and its once-per-PR rule unchanged; a reused Greptile result is a
+  `REUSE` decision with no new pass and no new request, and metrics never
+  triggers one.
+- Corrections, appended as they happen: `correction_kind:"finding"` with the
+  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
+  resolution or adjudication changes after its attempt was recorded (a fix
+  lands: `resolution:"fixed"`; a later change to the same finding names the
+  previous correction in `supersedes_event_id`); `retry` or `fallback` with
+  the new `attempt_id` when a voice attempt is retried or replaced; and
+  `fix-cycle` with the fix `step_id` when a fix batch closes.
+- Waits as `kind:"wait"` steps (`human` while a question to the user, such
+  as merge approval, is open; `external-review`, `checks`, `deploy`) only for
+  waits actually performed. Unlabeled time stays unclassified;
   elapsed wall time is never model/inference time, and every duration is
   clock-sensitive (`clock_basis=utc-wall`).
 - Receipts: immediately before writing the wrapper receipt and the landing
@@ -139,10 +154,10 @@ the owner of a wrapper change updates this mapping in the same change):
 |---|---|
 | `1. Resolve the workflows and target` | `handoff`, `evidence` |
 | `2. Decide what can be reused`, `Release-only path`, `Independently verified reuse` | `reuse`, plus `REUSE` decisions under each reused phase |
-| `Shared review execution (DOCS and FULL)` | `local-pass`, `voice`, plus actual `coverage`, `documentation`, `tests` |
+| `Shared review execution (DOCS and FULL)` | `local-pass`, `voice`, `fix`, plus actual `coverage`, `documentation`, `tests` |
 | `Greptile and new feedback` | `external-review` decision; wait `external-review` only if actually awaited |
 | `3. Execute ship and verify its final changes` | `release`, `ship`, `publication` |
-| `4. Land and verify` | `readiness`, `landing`, wait `deploy` |
+| `4. Land and verify` | `readiness`, `landing`, wait `deploy`, wait `human` |
 
 Run `validate evidence → /ship with the overrides below → /land-and-deploy`.
 When preparation already proved the current head, Step 2's release-only path

@@ -4811,6 +4811,10 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(flat).toContain('never guess an ID');
       expect(flat).toContain('immediately before writing');
       expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
+      expect(flat).toContain('kind:"fix"');
+      expect(flat).toContain('correction_kind:"finding"');
+      expect(flat).toContain('fresh `step_id` per phase visit');
+      expect(flat).toContain('`rc=$?`');
       // The mapping table: every left-hand anchor is a real heading (inline code stripped), every
       // required anchor is mapped, and every right-hand token is a controlled phase, wait category
       // or decision value, so a renamed heading or a misspelt phase fails here.

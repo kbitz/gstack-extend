@@ -2015,8 +2015,9 @@ def _metrics_dispatch(args):
         # need capture state treat a missing/invalid envelope as unavailable, never success.
         print('{"v":1,"status":"unavailable","reason":"io-error","session_id":null,'
               '"event_id":null,"data":null,"diagnostics":null}')
-        print("workflow-metrics: unavailable (io-error). See docs/telemetry.md#workflow-metrics-io-error.",
-              file=sys.stderr)
+        if sys.stderr is not None:  # print(file=None) would add this line to stdout
+            print("workflow-metrics: unavailable (io-error). See docs/telemetry.md#workflow-metrics-io-error.",
+                  file=sys.stderr)
 
 
 def main(args):

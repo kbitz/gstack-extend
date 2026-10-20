@@ -86,7 +86,10 @@ calls or from subagents: the run lock never waits, so concurrent calls drop
 as `lock-busy`. If the run `begin` is not `recorded` or `replayed`, emit
 nothing further in this invocation and use the literal status line below in
 its receipts. If context compaction loses the retained IDs or a pending
-payload, that capture stays unknown; never guess an ID.
+payload, that capture stays unknown; never guess an ID. When a metrics call
+shares a tool call with other work, capture that work's exit first
+(`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
+exit is always 0.
 
 Emit, batched into existing tool calls where practical:
 
@@ -95,12 +98,14 @@ Emit, batched into existing tool calls where practical:
   HEAD/tree/base you already observed (or null — never run `git write-tree` or
   create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
   the installed copy of this skill, and `parent_session_id:null` unless the
-  spawning stage handed you its exact ID. When you first observe the candidate,
-  and after a base merge or fix commit changes it, put a `context` override
-  with the new HEAD/tree/base on the next step `begin` and pass `started`;
+  spawning stage handed you its exact ID. Once the candidate changes (you
+  first observe it, a base merge, a fix commit), every later step `begin` and
+  pass `started` carries a `context` override with the new HEAD/tree/base;
   their ends, attempts and voice records inherit it.
 - One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
-  controlled reason), recorded under the phase of the work decided about;
+  controlled reason), recorded under the phase of the work decided about,
+  with a fresh `step_id` per phase visit (or the `step_id` of the execution
+  it governs);
   `begin`/`end` only around work actually executed, so a reused phase has a
   decision and no new interval. Reached-but-inapplicable phases are `N/A`;
   unreached phases emit nothing and stay unknown. Each execution uses a fresh
@@ -115,12 +120,22 @@ Emit, batched into existing tool calls where practical:
   explicit policy-authorized `N/A` per voice, then `state:"completed"`. Send an
   attempt's `model_context` only when a tool result or launcher configuration
   supplied it; an identifier outside the documented grammar is null with
-  `unknown_reason:"unsupported"`, never a reason to drop the attempt. A fix
-  batch is a `kind:"fix"` step, counted separately from passes. Greptile is
+  `unknown_reason:"unsupported"`, never a reason to drop the attempt. A
+  `finding_id` is unique within an attempt; declare duplicates on the finding
+  (`duplicate_of`). A fix batch is a `kind:"fix"` step, counted separately
+  from passes. Greptile is
   `scope:"greptile"` with its own count and its existing once-per-PR rule
   above unchanged; metrics never triggers, retries or waives it.
+- Corrections, appended as they happen: `correction_kind:"finding"` with the
+  finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
+  resolution or adjudication changes after its attempt was recorded (a fix
+  lands: `resolution:"fixed"`; a later change to the same finding names the
+  previous correction in `supersedes_event_id`); `retry` or `fallback` with
+  the new `attempt_id` when a voice attempt is retried or replaced; and
+  `fix-cycle` with the fix `step_id` when a fix batch closes.
 - Waits as `kind:"wait"` steps with `wait_category` (`human` at the manual
-  testing checkpoint, `external-review` while awaiting Greptile), ended
+  testing checkpoint and while a question to the user is open,
+  `external-review` while awaiting Greptile), ended
   `paused` at a pause rather than inventing a finish (its duration then reads
   unknown). Unlabeled time stays unclassified; elapsed wall time is never
   model/inference time, and every duration is clock-sensitive

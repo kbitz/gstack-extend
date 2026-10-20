@@ -1458,12 +1458,17 @@ describe('workflow metrics contract (Track 24A)', () => {
     const block = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
     const fix = makeTelemetryFixture('off');
     const script = join(fix.home, 'quickstart.sh');
-    writeFileSync(script, block);
+    // The quickstart must really isolate: HOME is the fresh temporary directory, never empty.
+    writeFileSync(script, block + '\necho "QS_HOME=$HOME QS_WM=$WM_HOME"\n');
     const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home }, encoding: 'utf8', timeout: 30_000 });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('"status":"recorded"');
     expect(r.stdout).toContain('"status":"ok"');
     expect(r.stdout).toContain('capture=ok; clock=utc-wall clock-sensitive');
+    const isolation = /QS_HOME=(\S*) QS_WM=(\S*)/.exec(r.stdout)!;
+    expect(isolation[1]).not.toBe('');
+    expect(isolation[1]).toBe(isolation[2]);
+    expect(isolation[1]).not.toBe(fix.home);
     // The documented reading: evidence ran and completed; tests were reused with no work interval.
     const summary = r.stdout.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l)).find(e => e.status === 'ok')!.data;
     const phase = (name: string) => summary.phases.find((p: any) => p.phase === name);

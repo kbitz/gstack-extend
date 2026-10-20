@@ -81,7 +81,7 @@ CANDIDATE_KEYS = ("candidate_head", "candidate_tree", "candidate_base", "binding
 # Why a read summary left something unknown (data.unknown_reasons; docs/telemetry.md#workflow-metrics-unknown).
 UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end",
                    "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass",
-                   "cross-candidate", "clock-invalid", "open-wait")
+                   "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work")
 # The subset that means the stored records contradict or orphan each other: the read is partial.
 INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
                      "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
@@ -179,7 +179,8 @@ def emit(status, reason, session_id, event_id, data, op, fail=None, config_sourc
                     "diagnostics": diagnostics_for(op, Fail("partial", "capacity"), config_sources)}
         text = json.dumps(envelope, ensure_ascii=True, separators=(",", ":"))
     print(text)
-    if status not in ("recorded", "replayed", "ok"):
+    # A closed fd 2 leaves sys.stderr None, and print(file=None) would add a second line to stdout.
+    if status not in ("recorded", "replayed", "ok") and sys.stderr is not None:
         print(f"workflow-metrics: {status} ({reason}). See docs/telemetry.md#workflow-metrics-{reason}.",
               file=sys.stderr)
     return envelope
@@ -387,6 +388,8 @@ def _finding(value):
         raise _bad("findings[].resolution", "unknown-for-rejected-or-duplicate")
     if value["adjudication"] == "duplicate" and value["duplicate_of"] is None:
         raise _bad("findings[].duplicate_of", "required-for-duplicate")
+    if value["duplicate_of"] == value["finding_id"]:
+        raise _bad("findings[].duplicate_of", "another-finding")
 
 
 def validate_request(op, req):
@@ -472,6 +475,9 @@ def _validate_pass(base, req):
                 raise _bad("findings", "array-required-for-completed-attempt (empty means zero)")
             for finding in req["findings"]:
                 _finding(finding)
+            ids = [finding["finding_id"] for finding in req["findings"]]
+            if len(set(ids)) != len(ids):
+                raise _bad("findings[].finding_id", "unique-within-attempt")
         elif "findings" in req:
             raise _bad("findings", "completed-attempts-only")
         if "model_context" in req:
@@ -514,7 +520,7 @@ def _validate_correction(base, req):
             isinstance(req["finding_id"], str) and SAFE_ID_RE.fullmatch(req["finding_id"])):
         raise _bad("finding_id", "bounded-identifier")
     if "adjudication" in req and req["adjudication"] is not None:
-        _enum(req, "adjudication", ADJUDICATIONS)
+        _enum(req, "adjudication", tuple(a for a in ADJUDICATIONS if a != "duplicate"))
     if "resolution" in req and req["resolution"] is not None:
         _enum(req, "resolution", RESOLUTIONS)
     kind = req["correction_kind"]
@@ -884,10 +890,17 @@ def summarize(records, malformed, partial_tail, overflow):
     ran = {p["phase"] for p in phases if p["decisions"]["RUN"] or p["steps_started"]}
     corrections = _correction_counts(effective)
     passes = _passes(effective, by_event, run_context, unknown, ran)
-    fix_unknown = "missing-begin" in unknown or ("fix" in ran and not steps["fix_started"])
+    fix_unknown = "missing-begin" in unknown
+    if "fix" in ran and not steps["fix_started"]:
+        unknown.add("unrecorded-work")
+        fix_unknown = True
     if any(c.get("fix_step_id") and c["fix_step_id"] not in steps["ids"]
            for c in (r["request"] for r in effective if r["op"] == "correction")):
         unknown.add("missing-reference")
+        fix_unknown = True
+    if malformed or partial_tail or overflow:
+        # An unreadable line may have been any pass, correction or fix record: those counts are unknown.
+        passes["local"] = passes["greptile"] = {"attempted": None, "completed": None, "findings": None}
         fix_unknown = True
     integrity = any(reason in unknown for reason in INTEGRITY_REASONS)
     data = {
@@ -1032,9 +1045,14 @@ def _supersede_map(effective, by_event, unknown):
             continue
         mapping.setdefault(target, []).append(record)
     for target, items in mapping.items():
-        if len(items) > 1:
+        if sum(1 for item in items if item["request"]["correction_kind"] != "finding") > 1:
             unknown.add("competing-correction")
-    return mapping
+    selections = {}
+    for target, items in mapping.items():
+        kept = [item for item in items if item["request"]["correction_kind"] != "finding"]
+        if kept:
+            selections[target] = kept
+    return selections
 
 
 def _effective_selection(record, mapping, unknown):
@@ -1056,6 +1074,13 @@ def _effective_selection(record, mapping, unknown):
     return selected
 
 
+def _unknown_totals():
+    return {"accepted": None, "fixed": None, "open": None, "rejected": None, "deferred": None,
+            "duplicate": None, "unclassified": None,
+            "by_normalized_severity": {k: None for k in ("critical", "high", "medium", "low", "info",
+                                                         "unclassified")}}
+
+
 def _finding_totals(selected, corrections, unknown, known_ids):
     """selected: [(pass_id, voice_id, attempt_id, finding)] -> totals, or all-None when a correction
     or duplicate link is ambiguous. A correction targets exactly one finding by its origin (finding_id
@@ -1068,12 +1093,9 @@ def _finding_totals(selected, corrections, unknown, known_ids):
     findings = [(p, v, a, dict(f)) for p, v, a, f in selected]
     competing = dangling = False
     chains = {}
+    index = _index(findings)
     for correction in corrections:
-        targets = [i for i, (p, v, a, f) in enumerate(findings)
-                   if f["finding_id"] == correction.get("finding_id")
-                   and correction.get("pass_id") in (None, p)
-                   and correction.get("voice_id") in (None, v)
-                   and correction.get("attempt_id") in (None, a)]
+        targets = _targets(findings, index, correction)
         # A duplicate claim needs its duplicate_of link, which only the finding record carries.
         if len(targets) != 1 or correction.get("adjudication") == "duplicate":
             competing = True
@@ -1101,8 +1123,7 @@ def _finding_totals(selected, corrections, unknown, known_ids):
     if dangling:
         unknown.add("missing-reference")
     if competing or dangling:
-        return {key: (None if key != "by_normalized_severity" else
-                      {k: None for k in totals["by_normalized_severity"]}) for key in totals}
+        return _unknown_totals()
     for _p, _v, _a, finding in findings:
         adj, res = finding["adjudication"], finding["resolution"]
         totals["by_normalized_severity"][NORMALIZED[finding["severity_source"]]] += 1
@@ -1115,6 +1136,21 @@ def _finding_totals(selected, corrections, unknown, known_ids):
         elif adj in totals:
             totals[adj] += 1
     return totals
+
+
+def _index(findings):
+    index = {}
+    for position, (_p, _v, _a, finding) in enumerate(findings):
+        index.setdefault(finding["finding_id"], []).append(position)
+    return index
+
+
+def _targets(findings, index, correction):
+    """Positions of the findings a correction names: its finding_id plus any pass/voice/attempt it gives."""
+    return [i for i in index.get(correction.get("finding_id"), [])
+            if correction.get("pass_id") in (None, findings[i][0])
+            and correction.get("voice_id") in (None, findings[i][1])
+            and correction.get("attempt_id") in (None, findings[i][2])]
 
 
 def _passes(effective, by_event, run_context, unknown, ran):
@@ -1216,6 +1252,22 @@ def _passes(effective, by_event, run_context, unknown, ran):
     for scope, phase in (("local", "local-pass"), ("greptile", "external-review")):
         if phase in ran and scope not in seen:
             scope_unknown[scope] = True
+            unknown.add("unrecorded-work")
+    # Resolve each finding correction once across every selected finding in the run, so one
+    # correction never lands in two scopes and an unmatched one is never silently dropped.
+    pool = [(scope, item) for scope in ("local", "greptile") for item in selected_by_scope[scope]]
+    pool_findings = [item for _scope, item in pool]
+    pool_index = _index(pool_findings)
+    routed = {"local": [], "greptile": []}
+    tainted = set()
+    for correction in finding_corrections:
+        hits = _targets(pool_findings, pool_index, correction)
+        if len(hits) == 1:
+            routed[pool[hits[0]][0]].append(correction)
+            continue
+        named = pass_scope.get(correction.get("pass_id"))
+        tainted |= {pool[i][0] for i in hits} or ({named} if named else {"local", "greptile"})
+        unknown.add("competing-correction" if hits else "missing-reference")
     for scope in ("local", "greptile"):
         if scope_unknown[scope]:
             out[scope] = {"attempted": None, "completed": None, "findings": None}
@@ -1223,13 +1275,8 @@ def _passes(effective, by_event, run_context, unknown, ran):
         if completed_unknown[scope]:
             out[scope]["completed"] = None
         if out[scope]["completed"] and not scope_bad[scope]:
-            scoped = [c for c in finding_corrections
-                      if pass_scope.get(c.get("pass_id")) == scope
-                      or (not c.get("pass_id") and any(
-                          f["finding_id"] == c.get("finding_id")
-                          for _p, _v, _a, f in selected_by_scope[scope]))
-                      or (c.get("pass_id") not in pass_scope and c.get("pass_id") and scope == "local")]
-            out[scope]["findings"] = _finding_totals(selected_by_scope[scope], scoped, unknown, known_ids)
+            out[scope]["findings"] = (_unknown_totals() if scope in tainted else
+                                      _finding_totals(selected_by_scope[scope], routed[scope], unknown, known_ids))
     return {"local": out["local"], "greptile": out["greptile"], "excluded_na": excluded_na}
 
 

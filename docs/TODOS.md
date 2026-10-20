@@ -2,6 +2,22 @@
 
 ## Unprocessed
 
+### [review] Workflow-metrics reader cardinality edges
+
+- **Description:** Low-severity counting edges in `bin/lib/workflow_metrics.py`'s read projection, left after Track 24A's two review rounds. (1) A duplicate identical pass `completed` record is tolerated while a duplicate identical `voice-complete` is a conflict; pick one rule for repeated identical terminals. (2) An empty or unbound ledger reads `ok` with zero counts; consider `capture-missing`-style unknowns. (3) The "unknown, never zero" rule only checks whether any pass or fix record exists, so a run missing its second pass still undercounts. (4) A `fix-cycle` correction's `fix_step_id` may name a step that is not `kind:"fix"`. (5) A supersession chain across different findings is not rejected. None changes a gate or a recorded event; each can misstate a count in a receipt's optional metrics line.
+- **Effort:** S
+- **Context:** Pass-2 adversarial review of Track 24A on 2026-10-19. The owner chose a bounded fix batch with a stop rule; these were routed here instead of a third fix cycle.
+- **Priority:** P3
+- **Revisit when:** Track 31A's efficiency study or the installed two-wrapper smoke finds a miscounted run, or before a workflow-metrics v2 schema.
+
+### [review] Slim the workflow-metrics helper without dropping requirements
+
+- **Description:** The simplification review proposed nine behavior-preserving shrinks to `bin/lib/workflow_metrics.py` (about 80 lines): one regex-or-null validator instead of about 13 copies, a hoisted context-override check, one bounded reader for stdin and the ledger, one private no-follow open helper for the lock/ledger paths, a shared candidate-key tuple, and removing the dead `overflow` parameter after the partial-tail fold. Also consider moving the one-off overhead figures from `docs/telemetry.md` into PROGRESS evidence.
+- **Effort:** S
+- **Context:** Advisory findings from Track 24A's review on 2026-10-19; the owner kept the freshly tested module as is (no churn before first use) and routed these here.
+- **Priority:** P3
+- **Revisit when:** The next substantive change to `bin/lib/workflow_metrics.py`, or when Track 31A needs new reader features.
+
 ### [plan-ceo-review:track=23H,defer=true] Doctor visibility into open handoffs, completion markers and unconfirmed deliveries
 
 - **Description:** `gstack-extend doctor telemetry` reads the JSONL sinks only. It never reads `telemetry/<hash>/*.json` handoffs, `telemetry-completed/` markers or `usage_uncertain` flags, so an abandoned start, a held unconfirmed delivery or a suppressed retry shows only in debug mode or through the interim listing snippet in `docs/telemetry.md` ("Work item and launcher quick-start"). Report open handoffs per root and skill (count, age, work item, whether a logger run is unconfirmed) and marker counts, then retire the snippet. This overlaps the Future card "Doctor coverage report over stage-runs and leftover handoffs"; fold it into that card if it is still open.

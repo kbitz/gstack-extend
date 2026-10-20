@@ -60,7 +60,7 @@
         "duplicate_of": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
       },
       "required": ["finding_id", "severity_source", "severity_rubric", "adjudication", "resolution", "duplicate_of"],
-      "description": "rejected/duplicate require resolution unknown; duplicate requires duplicate_of. Normalized severity: P0/critical->critical, P1/high->high, P2/medium->medium, P3/low->low, info->info, unknown->unclassified. Normalization does not claim rubric equivalence."
+      "description": "rejected/duplicate require resolution unknown; duplicate requires duplicate_of naming another finding; finding_id is unique within one attempt. Normalized severity: P0/critical->critical, P1/high->high, P2/medium->medium, P3/low->low, info->info, unknown->unclassified. Normalization does not claim rubric equivalence."
     },
     "request_base": {
       "type": "object",
@@ -154,7 +154,7 @@
         "parent_step_id": { "$ref": "#/definitions/uuid_or_null" },
         "fix_step_id": { "$ref": "#/definitions/uuid_or_null" },
         "selected_attempt_id": { "$ref": "#/definitions/uuid_or_null" },
-        "adjudication": { "type": ["string", "null"], "enum": ["accepted", "rejected", "deferred", "duplicate", "unclassified", null] },
+        "adjudication": { "type": ["string", "null"], "enum": ["accepted", "rejected", "deferred", "unclassified", null], "description": "duplicate is declared on the finding itself (duplicate_of), never by correction." },
         "resolution": { "type": ["string", "null"], "enum": ["open", "fixed", "unknown", null] }
       },
       "required": ["correction_kind"],
@@ -182,8 +182,8 @@
     },
     "unknown_reason": {
       "type": "string",
-      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait"],
-      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
+      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work"],
+      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
     },
     "diagnostics": {
       "type": ["object", "null"], "additionalProperties": false,

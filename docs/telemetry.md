@@ -590,13 +590,17 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   unknown duration (`open-wait`), because its real end was not observed.
   Records without `context` inherit the candidate: an `end` inherits its
   `begin`'s, and a pass's attempts and voice records inherit its `started`
-  record's. Send a `context` override only when the candidate actually
-  changed (after it is first observed, a base merge or a fix commit); only an
-  explicit different override makes a step mixed or an attempt cross-candidate.
+  record's; a `begin` or `started` without context falls back to the run's
+  candidate. Once the candidate changes (it is first observed, a base merge,
+  a fix or release commit), every later step `begin` and pass `started`
+  carries the override; only an explicit different override makes a step
+  mixed or an attempt cross-candidate.
 - `decision`: `RUN|REUSE|N/A` plus a controlled reason, one per visited phase,
   under the phase of the work decided about (a reused test run is
   `phase:"tests"`, not `reuse`). Reuse is a decision with no new work
-  interval. Repeats of the same choice for one `step_id` and phase count once;
+  interval. Each decision carries a fresh `step_id` per phase visit (or the
+  `step_id` of the execution it governs); revisiting a phase uses a new one.
+  Repeats of the same choice for one `step_id` and phase count once;
   differing choices are a conflict and count as none.
 - `pass`: a review round (`scope: local|greptile`) over one candidate.
   `started` declares the nonempty required-voice set; each `attempt` is a
@@ -617,17 +621,24 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   zero, when its records are orphaned or when its work shows up only as a
   phase (`local-pass`, `external-review` or `fix` ran with no pass or fix
   record). One 16 KiB producer event holds about 100 findings; a voice with
-  more cannot be captured whole.
+  more cannot be captured whole. A `finding_id` is unique within one attempt
+  (voices may reuse each other's IDs), and `duplicate_of` names another
+  finding.
 - `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
   referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
   acyclic and unambiguous, or the affected totals stay unknown — never
   last-write-wins, never a rewrite of history. A `finding` correction targets
   one finding by its `finding_id` plus whatever pass, voice and attempt it
-  names; several corrections to one finding must form a single chain, each
-  superseding the one before it. A correction that cannot name exactly one
-  finding, a `duplicate` adjudication by correction (its `duplicate_of` link
-  lives only on the finding) and a `duplicate_of` naming no finding in the
-  run all leave the totals unknown.
+  names, resolved once across every selected local and Greptile finding;
+  several corrections to one finding must form a single chain, each
+  superseding the one before it. A correction that matches no finding or
+  more than one, and a `duplicate_of` naming no finding in the run, leave the
+  affected totals unknown. A `duplicate` is declared on the finding
+  (`duplicate_of`); a correction cannot set it. Producers emit a `finding`
+  correction when a finding's resolution or adjudication changes after its
+  attempt was recorded (a fix lands: `resolution:"fixed"`), `retry` or
+  `fallback` when a voice attempt is retried or replaced, and `fix-cycle`
+  when a fix batch closes.
 - `read --session-id <id> [--event-id <uuid>]`: the only reader, for one named
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
@@ -635,7 +646,11 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   With `--event-id` it returns just that event's digest/timestamp as
   match/absent/unknown for reconciliation; only a valid snapshot can report
   absence. Malformed rows, torn tails, event conflicts and broken references
-  make the read `partial` with the affected totals null; nothing is silently
+  make the read `partial` with the affected totals null (an unreadable or torn
+  line may have been any pass, correction or fix record, so those counts are
+  null); a partial read's envelope reason is `partial-tail`, `event-conflict`
+  or otherwise `malformed-record`, and `unknown_reasons` names the cause.
+  Nothing is silently
   dropped and then called complete, and a snapshot can never prove complete
   capture of events a producer omitted. An in-progress run (open steps,
   unfinished passes) reads `ok` and names its unknowns.
@@ -660,7 +675,8 @@ mapping in the same change.
 
 `data.unknown_reasons` (also printed as `unknown=` in `receipt_text`) says
 why a value is unknown. The first eight make the read `partial`; the rest
-describe an in-progress run and leave it `ok`.
+(an in-progress run, a paused wait, a backward clock, work recorded only as a
+phase) leave it `ok`.
 
 | Reason | Meaning |
 |---|---|
@@ -676,6 +692,7 @@ describe an in-progress run and leave it `ok`.
 | `incomplete-pass` | A pass has not closed every required voice, or has not completed. |
 | `clock-invalid` | A step's end is earlier than its begin. |
 | `open-wait` | A wait ended `paused`; its duration is unknown. |
+| `unrecorded-work` | A `local-pass`, `external-review` or `fix` phase ran with no pass or fix record. |
 
 The envelope reasons `clock-invalid` and `candidate-changed` are reserved in
 v1: reads report clock problems through `unknown_reasons` and candidate drift
@@ -689,8 +706,9 @@ repo's tests. The exercise uses a temporary HOME and state root and no
 upstream tier, so nothing uploads and no real ledger is touched:
 
 ~~~sh
-export WM_HOME="$(mktemp -d)" HOME="$WM_HOME"
-export GSTACK_EXTEND_STATE_DIR="$WM_HOME/.gstack-extend"
+export WM_HOME="$(mktemp -d)"
+export HOME="$WM_HOME" GSTACK_EXTEND_STATE_DIR="$WM_HOME/.gstack-extend"
+unset GSTACK_STATE_DIR GSTACK_DIR CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
 mkdir "$WM_HOME/repo" && git init -q "$WM_HOME/repo" && cd "$WM_HOME/repo"
 SID="$(gstack-extend-telemetry start --skill 'extend:review-and-prep' \
   | sed -n 's/.*session=\(extend-[0-9a-f-]*\).*/\1/p')"
@@ -742,7 +760,7 @@ Each reason has one fixed action; messages contain no copied user text.
 | <a id="workflow-metrics-io-error"></a>`io-error` | Inspect the configured state root; continue the workflow without this capture (an `unconfirmed` write reconciles by targeted read + one identical replay). |
 | <a id="workflow-metrics-lock-busy"></a>`lock-busy` | Drop this capture attempt; do not retry it. |
 | <a id="workflow-metrics-capacity"></a>`capacity` | Mark capture partial and continue; do not truncate the run file. |
-| <a id="workflow-metrics-malformed-record"></a>`malformed-record` | Mark capture partial and continue; do not repair the run file in place. |
+| <a id="workflow-metrics-malformed-record"></a>`malformed-record` | Mark capture partial and continue; do not repair the run file in place. A read also returns it when stored records contradict or orphan each other; `data.unknown_reasons` names which. |
 | <a id="workflow-metrics-partial-tail"></a>`partial-tail` | Mark capture partial and continue; never append behind torn bytes. |
 | <a id="workflow-metrics-event-conflict"></a>`event-conflict` | The original event stands; changed content is a new caller decision, never an overwrite. |
 | <a id="workflow-metrics-clock-invalid"></a>`clock-invalid` | Treat the affected duration as unknown; wall time is clock-sensitive. |
