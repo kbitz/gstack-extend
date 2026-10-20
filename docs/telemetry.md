@@ -505,7 +505,7 @@ attribution mixed; time is never split between candidates by inference.
 
 Detailed capture inherits the local provenance switch: `provenance=false` (or
 `off`) in the state config disables it, and
-`GSTACK_EXTEND_WORKFLOW_METRICS=off` disables only this companion. Disabled
+`GSTACK_EXTEND_WORKFLOW_METRICS=off` (or `false`) disables only this companion. Disabled
 calls return before identity lookup, directory creation or any mutation, and
 no setting here can enable upstream upload — gstack's tier never uploads this
 ledger. Rollback is that opt-out for future invocations; history is retained,
@@ -514,7 +514,7 @@ never migrated, backfilled, auto-deleted or silently repaired.
 Records for one invocation live at
 `$GSTACK_EXTEND_STATE_DIR/analytics/workflow-metrics/<sha256(session_id)>.jsonl`
 (default under `$HOME/.gstack-extend/`), mode 0600, with a per-run lock under
-`workflow-metrics-locks/`. Writes take the lock without blocking (contention
+the state root's `workflow-metrics-locks/`. Writes take the lock without blocking (contention
 is a dropped `lock-busy` capture, never a retry or a wait), refuse symlinks,
 FIFOs, extra hard links and unsafe directories without repairing them, check
 the written byte count, and confirm the file plus its directory entries with
@@ -646,12 +646,12 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
   `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
-  With `--event-id` it returns just that event's digest/timestamp as
-  match/absent/unknown for reconciliation; only a valid snapshot can report
-  absence. Malformed rows, torn tails, event conflicts and broken references
-  make the read `partial` with the affected totals null (an unreadable or torn
-  line may have been any pass, correction or fix record, so those counts are
-  null); a partial read's envelope reason is `partial-tail`, `event-conflict`
+  With `--event-id` it also returns `data.event`: that event's `status`
+  (`match`, `absent` or `unknown`) with its digest and timestamp, for
+  reconciliation; only a valid snapshot can report absence. Malformed rows,
+  torn tails, event conflicts and broken references make the read `partial`
+  with the affected totals null (an unreadable or torn line may have been any
+  pass, correction or fix record, so those counts are null); a partial read's envelope reason is `partial-tail`, `event-conflict`
   or otherwise `malformed-record`, and `unknown_reasons` names the cause.
   Nothing is silently
   dropped and then called complete, and a snapshot can never prove complete

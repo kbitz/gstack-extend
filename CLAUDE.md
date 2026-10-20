@@ -55,8 +55,9 @@ narrow. The five utility/workflow skills may carry only telemetry SHARED markers
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
-skill-protocols, audit-compliance, setup-hosts, setup-init-wire, touchfiles, and quota
-suites explicitly: diff selection uses committed `base...HEAD`, not working edits.
+skill-protocols, audit-compliance, setup-hosts, setup-init-wire, touchfiles, quota,
+and workflow-metrics suites explicitly: diff selection uses committed
+`base...HEAD`, not working edits.
 See [docs/telemetry.md](docs/telemetry.md) for the local sink, doctor report, and
 its separation from transcript-derived skill counts produced by other tools. `duration_s` is
 session wall-clock, not model/token spend; skill-usage values above 86400 seconds

@@ -128,7 +128,8 @@ Emit, batched into existing tool calls where practical:
   lands: `resolution:"fixed"`; a later change to the same finding names the
   previous correction in `supersedes_event_id`); `retry` or `fallback` with
   the new `attempt_id` when a voice attempt is retried or replaced; and
-  `fix-cycle` with the fix `step_id` when a fix batch closes.
+  `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
+  batch closes.
 - Waits as `kind:"wait"` steps (`human` while a question to the user, such
   as merge approval, is open; `external-review`, `checks`, `deploy`) only for
   waits actually performed. Unlabeled time stays unclassified;
