@@ -1,7 +1,7 @@
 /**
  * audit-compliance.test.ts — structural invariants for gstack-extend.
  *
- * Four describes:
+ * Structural checks:
  *   (A) Frontmatter sanity — every skills/*.md has --- fence, matching
  *       name:, a non-empty description of at most 1024 UTF-16 code units,
  *       and allowed-tools:. In-memory fixtures lock the shared description
@@ -13,6 +13,8 @@
  *       docs/source-tag-contract.md exactly.
  *   (D) /full-review vocabulary matches the source-tag contract — severities,
  *       the three agent prompt copies, finding fields, and the tag-value rule.
+ *   (E) Skill argument substitution safety — no host placeholders anywhere in
+ *       skills/*.md, including frontmatter and quoted shell/awk programs.
  *
  * While editing a skill description, re-run this suite directly:
  *   bun test tests/audit-compliance.test.ts
@@ -57,6 +59,33 @@ function thrownMessage(run: () => void): string {
 const SKILL_FILES = readdirSync(SKILLS_DIR)
   .filter((f) => f.endsWith('.md'))
   .sort();
+
+function assertNoSkillArgumentTokens(content: string, file: string): void {
+  const hits = content.split('\n').flatMap((line, index) => {
+    const tokens = line.match(/\$[0-9]|\$ARGUMENTS|\$\{CLAUDE_/g);
+    return tokens ? [`${file}:${index + 1}: ${tokens.join(', ')}`] : [];
+  });
+  if (hits.length) {
+    throw new Error(`Claude Code skill argument substitution rewrites these tokens, even in shell/awk quotes and frontmatter; use named shell variables and awk $(0)/$(1)/$(2):\n${hits.join('\n')}`);
+  }
+}
+
+describe('(E) skill argument substitution safety', () => {
+  for (const file of SKILL_FILES) {
+    test(`${file} contains no host argument placeholders, including frontmatter`, () => {
+      assertNoSkillArgumentTokens(readFileSync(join(SKILLS_DIR, file), 'utf8'), file);
+    });
+  }
+
+  test('rejects every reserved token class in frontmatter and quoted shell text', () => {
+    for (const token of ['$0', '$1', '$2', '$9', '$10', '$ARGUMENTS', '$ARGUMENTS[1]', '${CLAUDE_SESSION_ID}']) {
+      for (const content of [fenced(`description: ${token}`), fenced('name: sample', `awk '{print ${token}}'`)]) {
+        expect(() => assertNoSkillArgumentTokens(content, 'sample.md')).toThrow('Claude Code skill argument substitution');
+      }
+    }
+    expect(() => assertNoSkillArgumentTokens('$_GE_CAND $_ER $(0) $(1) $(2) ${HOME}', 'sample.md')).not.toThrow();
+  });
+});
 
 describe('(A) frontmatter sanity', () => {
   for (const file of SKILL_FILES) {

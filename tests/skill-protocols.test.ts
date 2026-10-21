@@ -224,6 +224,33 @@ function telemetryEpilogueFor(skill: string): string {
   return CANONICAL_TELEMETRY_EPILOGUE.replaceAll('"extend:full-review"', `"extend:${skill}"`);
 }
 
+describe('argument-safe executable skill text', () => {
+  test('two-word host rendering leaves every bash block unchanged', () => {
+    // Model positional replacement only: missing indices stay untouched.
+    const args = ['example', 'plan'];
+    const render = (text: string) => text.replace(/\$([0-9]+)/g, (token, index) => args[Number(index)] ?? token);
+    expect(render('length($0); print $1; print $2')).toBe('length(example); print plan; print $2');
+    for (const file of readdirSync(join(ROOT, 'skills')).filter(file => file.endsWith('.md'))) {
+      for (const fence of extractFences(readFileSync(join(ROOT, 'skills', file), 'utf8'))) {
+        if (fence.lang === 'bash') expect(render(fence.body)).toBe(fence.body);
+      }
+    }
+  });
+
+  for (const awk of ['/usr/bin/awk', 'gawk']) {
+    const available = spawnSync(awk, ['BEGIN {exit 0}'], { encoding: 'utf8' });
+    test.skipIf((available.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT')(`${awk}: expression field syntax preserves reads and record assignment`, () => {
+      expect(available.status).toBe(0);
+      const result = spawnSync(awk, ['{ print $(0); print $(1); print $(2); $(0) = "replacement record"; print $(0); print $(2) }'], {
+        input: 'version level timestamp\n', encoding: 'utf8',
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toBe('version level timestamp\nversion\nlevel\nreplacement record\nrecord\n');
+    });
+  }
+});
+
 // ─── Roadmap-only verbatim assertions ─────────────────────────────────
 //
 // These strings live in skills/roadmap.md only. Load-bearing for the
@@ -436,6 +463,45 @@ const upgradeFlowMatch = UPGRADE_FLOW_RE.exec(upgradeSkillContent);
 const CANONICAL_UPGRADE_FLOW = upgradeFlowMatch ? upgradeFlowMatch[0] : '';
 
 describe('Track 10A SHARED:upgrade-flow block', () => {
+  // Value: protects=Not now preserves same-version snooze progression, resets new versions and caps the saved level;
+  // fails_when=the shipped field reads lose the version or level, or reset/increment/cap changes;
+  // why_new=existing update tests consume snooze state but never execute the skill fence that writes it;
+  // seam=none; no_claim=installed host argument rendering (isolated shell fixtures and a fixed date command only).
+  test('Not now writes the expected snooze state in agent shells', () => {
+    const block = extractFences(CANONICAL_UPGRADE_FLOW).find(f => f.body.includes('_SNOOZE_FILE='))?.body;
+    expect(block).toBeDefined();
+    const tmp = makeBaseTmp('skill-protocols-snooze-');
+    const stamp = '1800000000';
+    const cases = [
+      { name: 'absent', previous: null, level: 1 },
+      { name: 'same version', previous: '2.0.0 2 1700000000\n', level: 3 },
+      { name: 'capped', previous: '2.0.0 3 1700000000\n', level: 3 },
+      { name: 'new version', previous: '1.9.0 3 1700000000\n', level: 1 },
+      { name: 'malformed level', previous: '2.0.0 invalid 1700000000\n', level: 1 },
+      { name: 'missing level', previous: '2.0.0\n', level: 1 },
+    ];
+    try {
+      const shim = join(tmp, 'shim');
+      mkdirSync(shim);
+      writeFileSync(join(shim, 'date'), `#!/bin/sh\nprintf '%s\\n' '${stamp}'\n`, { mode: 0o755 });
+      for (const shell of agentShells()) for (const c of cases) {
+        const home = join(tmp, `${shell.shell}-${c.name}`);
+        mkdirSync(join(home, '.gstack-extend'), { recursive: true });
+        const state = join(home, '.gstack-extend', 'update-snoozed');
+        if (c.previous !== null) writeFileSync(state, c.previous);
+        const result = runShell(shell.shell, shell.args, block!.replace('{new}', '2.0.0'), scopedEnv(home, {
+          PATH: `${shim}:/usr/bin:/bin`,
+        }));
+        expect(result.status, `${shell.shell}: ${c.name}`).toBe(0);
+        expect(result.stderr).toBe('');
+        expect(result.stdout).toBe('');
+        expect(readFileSync(state, 'utf8')).toBe(`2.0.0 ${c.level} ${stamp}\n`);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test('canonical block is present in skills/gstack-extend-upgrade.md', () => {
     if (!CANONICAL_UPGRADE_FLOW) {
       throw new Error(
@@ -2908,7 +2974,7 @@ describe('Track 16D extend-root resolver locks', () => {
   });
 
   test('L2: canonical span keeps the absolute-path, file, executable, and marker checks', () => {
-    expect(span).toContain('case "$1" in /*)');
+    expect(span).toContain('case "$_ER" in /*)');
     expect(span).toContain('[ -f');
     expect(span).toContain('[ -x');
     expect(span).toContain(`grep -qx '${MARKER_LINE}'`);
@@ -4408,7 +4474,7 @@ const PAUSED_CHECK = [
   "    NR == 3 && /^PR_URL=https?:\\/\\/[^[:space:]]+$/ {next}",
   "    NR == 4 && /^BODY_PAUSED=(true|false)$/ {next}",
   "    NR == 5 && /^COMMENT_PAUSED=(true|false)$/ {next}",
-  "    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($0) == 50)) {next}",
+  "    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($(0)) == 50)) {next}",
   "    {bad = 1}",
   "    END {exit (bad || NR != 6)}' \"$_PR_OUT\"; then",
   "    awk '{print}' \"$_PR_OUT\"",

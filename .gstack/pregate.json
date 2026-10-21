@@ -1,3 +1,10 @@
 {
-  "runner": "bun run test -- {files}"
+  "runner": "bun run test -- {files}",
+  "dependencies": {
+    "skills/project-spec.md": [
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/audit-compliance.test.ts"
+    ]
+  }
 }
