@@ -30,7 +30,7 @@ const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 const has = (haystack: string, needle: string): boolean => haystack.includes(needle);
 
 type Outcome = 'ADVANCE_TRUSTED' | 'FULL_CHECK_REQUIRED' | 'HOLD' | 'REFUSE';
-type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D';
+type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D' | 'H-E';
 const RANK: Record<Outcome, number> = { ADVANCE_TRUSTED: 0, FULL_CHECK_REQUIRED: 1, HOLD: 2, REFUSE: 3 };
 const TRUSTED: Outcome = 'ADVANCE_TRUSTED';
 const FULL: Outcome = 'FULL_CHECK_REQUIRED';
@@ -77,6 +77,7 @@ const GRAMMAR_HEADINGS: Record<string, string> = {
   'H-B': '### Grammar H-B',
   'H-C-pause': '### Grammar H-C pause',
   'H-C-resume': '### Grammar H-C resume',
+  'H-E': '### Grammar H-E continue',
 };
 type LineMode = 'single' | 'list' | 'prose';
 interface Spec { label: string; required: boolean; lines: LineMode }
@@ -192,6 +193,7 @@ function normalize(text: string): string[] {
 
 function kindOf(line: string): Kind {
   if (/^Run \/review-and-prep resume\b/.test(line)) return 'H-C-resume';
+  if (/^Run \/review-and-prep continue\b/.test(line)) return 'H-E';
   if (/^Run \/pair-review for draft PR\b/.test(line)) return 'H-C-pause';
   if (/^Run \/ship-and-land for this prepared PR\b/.test(line)) return 'H-B';
   return 'H-A';
@@ -202,6 +204,7 @@ const CLOSING: Partial<Record<Kind, RegExp>> = {
   'H-A': /uncommitted implementation lives here\.$/,
   'H-C-pause': /go directly to \/ship\.$/,
   'H-C-resume': /^Do not run \/ship on this PR\.$/,
+  'H-E': /^Do not run \/ship on this PR\.$/,
 };
 function endOf(kind: Kind, lines: string[], s: number, limit: number): number {
   if (kind === 'H-B') {
@@ -275,15 +278,22 @@ function one(f: Fields, v: Verdict, label: string, required: boolean): string[] 
 }
 
 /**
- * Records are oldest first. A pause holds until a later running-account receipt for Prepared HEAD. A pause
- * recorded only by another author holds as `foreign`: only the user can confirm or clear it.
+ * Records are oldest first. Pauses and stops hold until a later running-account receipt for Prepared HEAD.
+ * A foreign or unverified stop still holds; it cannot grant permission to continue.
  */
-function pauseState(live: Live, head?: string): 'none' | 'own' | 'foreign' {
+function pauseState(live: Live, head?: string): 'none' | 'own' | 'foreign' | 'stopped' | 'stop-author' | 'stop-unverified' {
   if (live.bodyPaused === true) return 'own';
-  const markers: Array<{ kind: string; sha?: string; authorIsRunningAccount?: boolean }> = live.markers ?? [];
+  const markers: Array<{ kind: string; sha?: string; authorIsRunningAccount?: boolean; editorsAllRunningAccount?: boolean }> = live.markers ?? [];
   const lastOwnReceipt = markers.findLastIndex((m) => m.kind === 'receipt' && m.authorIsRunningAccount === true &&
     (head === undefined || m.sha === head));
-  const pauses = markers.slice(lastOwnReceipt + 1).filter((m) => m.kind === 'paused');
+  const pending = markers.slice(lastOwnReceipt + 1);
+  const stopped = pending.findLast((m) => m.kind === 'stopped');
+  if (stopped) {
+    if (stopped.authorIsRunningAccount !== true) return 'stop-author';
+    if (stopped.editorsAllRunningAccount !== true) return 'stop-unverified';
+    return 'stopped';
+  }
+  const pauses = pending.filter((m) => m.kind === 'paused');
   if (pauses.some((m) => m.authorIsRunningAccount === true)) return 'own';
   return pauses.length > 0 ? 'foreign' : 'none';
 }
@@ -292,6 +302,9 @@ function flagPause(v: Verdict, live: Live, head?: string): void {
   const state = pauseState(live, head);
   if (state === 'own') v.flag('pause', HOLD, 'no pause in force', 'a pause no running-account receipt supersedes');
   if (state === 'foreign') v.flag('pause-author', HOLD, 'a pause by the running account', 'a pause by another author');
+  if (state === 'stopped' || state === 'stop-author' || state === 'stop-unverified') {
+    v.flag(state, HOLD, 'no unresolved cycle-cap stop', 'a stopped record no running-account receipt supersedes');
+  }
 }
 
 function scanTokens(v: Verdict, f: Fields, lines: string[]): void {
@@ -315,6 +328,9 @@ function statusSignals(v: Verdict, text: string): void {
   if (words.has('NEEDS_CONTEXT')) v.flag('needs-context', HOLD, 'no missing input', 'NEEDS_CONTEXT');
   if (words.has('DONE_WITH_CONCERNS')) v.flag('done-with-concerns', HOLD, 'no open concerns', 'DONE_WITH_CONCERNS');
   if (words.has('PAUSED')) v.flag('pause', HOLD, 'no pause in force', 'PAUSED');
+  if (v.handoff !== 'H-E' && /STOPPED — review cycle cap/.test(text)) {
+    v.flag('stopped', HOLD, 'no stop in force', 'stopped at the review cycle cap');
+  }
 }
 
 /** Fixed producer sentences that hold whatever else the text says. */
@@ -561,29 +577,46 @@ function classifyPause(lines: string[], live: Live): Verdict {
   return v;
 }
 
+/** H-C resume and H-E share one first-line form: `Run /review-and-prep <verb> for PR <URL> on <owner/repo>, branch <branch>.` */
+function prLine(v: Verdict, line: string, verb: 'resume' | 'continue', live: Live): void {
+  const first = new RegExp(`^Run /review-and-prep ${verb} for PR (\\S+) on (\\S+), branch (.+)\\.$`).exec(line);
+  if (!first) {
+    v.flag('malformed', FULL, `Run /review-and-prep ${verb} for PR <URL> on <owner/repo>, branch <branch>.`, line);
+    identityAnywhere(v, line, live);
+    return;
+  }
+  const url = PR_URL.exec(first[1]);
+  if (!url) {
+    v.flag('malformed', FULL, 'a GitHub pull request URL', first[1]);
+    if (live.repo !== undefined && !sameRepo(first[2], live.repo) && !(live.headRepo && sameRepo(first[2], live.headRepo))) v.flag('repo', REFUSE, live.repo, first[2]);
+  }
+  if (url) {
+    identity(v, url[1], Number(url[2]), live);
+    if (!sameRepo(first[2], url[1]) && !(live.headRepo && sameRepo(first[2], live.headRepo))) v.flag('repo', REFUSE, url[1], first[2]);
+  }
+  if (live.branch !== undefined && first[3] !== live.branch) v.flag('branch', REFUSE, live.branch, first[3]);
+}
+
 function classifyResume(lines: string[], live: Live): Verdict {
   const v = new Verdict('H-C-resume', FULL);
   const spec = grammar('H-C-resume');
   const f = parseFields(lines.slice(1), spec);
-  const first = /^Run \/review-and-prep resume for PR (\S+) on (\S+), branch (.+)\.$/.exec(lines[0]);
-  if (!first) {
-    v.flag('malformed', FULL, 'Run /review-and-prep resume for PR <URL> on <owner/repo>, branch <branch>.', lines[0]);
-    identityAnywhere(v, lines[0], live);
-  } else {
-    const url = PR_URL.exec(first[1]);
-    if (!url) {
-      v.flag('malformed', FULL, 'a GitHub pull request URL', first[1]);
-      if (live.repo !== undefined && !sameRepo(first[2], live.repo) && !(live.headRepo && sameRepo(first[2], live.headRepo))) v.flag('repo', REFUSE, live.repo, first[2]);
-    }
-    if (url) {
-      identity(v, url[1], Number(url[2]), live);
-      if (!sameRepo(first[2], url[1]) && !(live.headRepo && sameRepo(first[2], live.headRepo))) v.flag('repo', REFUSE, url[1], first[2]);
-    }
-    if (live.branch !== undefined && first[3] !== live.branch) v.flag('branch', REFUSE, live.branch, first[3]);
-  }
+  prLine(v, lines[0], 'resume', live);
   const at = one(f, v, 'Paused at', false);
-  const markers: Array<{ kind: string; sha: string; authorIsRunningAccount: boolean }> = live.markers ?? [];
-  const paused = markers.findLast((x) => x.kind === 'paused');
+  const markers: Array<{ kind: string; sha: string; authorIsRunningAccount: boolean;
+    editorsAllRunningAccount?: boolean; reviewRestrictionResolved?: boolean }> = live.markers ?? [];
+  const pausedIndex = markers.findLastIndex((x) => x.kind === 'paused');
+  const paused = markers[pausedIndex];
+  const stoppedIndex = markers.findLastIndex((x) => x.kind === 'stopped');
+  const resolvedByReceipt = stoppedIndex >= 0 && markers.slice(stoppedIndex + 1).some((x) =>
+    x.kind === 'receipt' && x.authorIsRunningAccount === true && x.editorsAllRunningAccount === true &&
+    x.reviewRestrictionResolved === true);
+  if (stoppedIndex >= 0 && !resolvedByReceipt) {
+    if (pausedIndex < stoppedIndex) v.flag('stopped', HOLD, 'a later pause resolving the review restriction', 'a newer cycle-cap stop');
+    else if (paused.reviewRestrictionResolved !== true || paused.editorsAllRunningAccount !== true) {
+      v.flag('review-resolution', HOLD, 'a corroborated pause explicitly resolving the review restriction', 'missing or unverified resolution');
+    }
+  }
   if (!at) v.flag('paused-sha-missing', FULL, 'Paused at: <40 hex>', 'absent');
   else if (!SHA40.test(at[0])) v.flag('malformed', FULL, '40-hex Paused at', at[0]);
   else {
@@ -597,6 +630,104 @@ function classifyResume(lines: string[], live: Live): Verdict {
   if (paused && !paused.authorIsRunningAccount) v.flag('pause-author', HOLD, 'running account', 'another author');
   if (live.prState !== undefined && live.prState !== 'OPEN') v.flag('pr-state', HOLD, 'OPEN', live.prState);
   // Resume continues only on a draft: a ready PR needs the user to convert it or defer the checks.
+  else if (live.isDraft === false) v.flag('pr-ready', HOLD, 'a draft PR', 'ready');
+  return v;
+}
+
+const POLICY_VALUES: Record<string, RegExp> = {
+  'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
+  'documentation-audit': /^final$/, 'full-suite': /^final$/, 'max-continuations': /^[0-9]$/,
+};
+/** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
+function parsePolicy(value: string): Map<string, string> | null {
+  const [version, ...pairs] = value.split('; ');
+  if (version !== 'review-and-prep-policy/v1') return null;
+  const keys = new Map<string, string>();
+  for (const pair of pairs) {
+    const kv = /^([a-z-]+)=(\S+)$/.exec(pair);
+    if (!kv || !POLICY_VALUES[kv[1]]?.test(kv[2]) || keys.has(kv[1])) return null;
+    keys.set(kv[1], kv[2]);
+  }
+  return keys;
+}
+
+function classifyContinue(lines: string[], live: Live): Verdict {
+  const v = new Verdict('H-E', FULL);
+  const f = parseFields(lines.slice(1), grammar('H-E'));
+  prLine(v, lines[0], 'continue', live);
+  const at = one(f, v, 'Stopped at', true);
+  const base = one(f, v, 'Delta base', true);
+  const policy = one(f, v, 'Review policy', true);
+  const count = one(f, v, 'Continuation', true);
+  one(f, v, 'Unresolved', true);
+  const markers: Array<{ kind: string; sha: string; authorIsRunningAccount: boolean;
+    editorsAllRunningAccount?: boolean; recordedPolicy?: string; policySource?: string; recordedDeltaBase?: string }> = live.markers ?? [];
+  const stoppedIndex = markers.findLastIndex((x) => x.kind === 'stopped');
+  const stopped = markers[stoppedIndex];
+  const sameStop = stopped ? markers.filter((x) => x.kind === 'stopped' && x.sha === stopped.sha) : [];
+  if (sameStop.length > 1 && sameStop.some((x) => x.authorIsRunningAccount !== true ||
+    x.editorsAllRunningAccount !== true || x.recordedDeltaBase !== stopped.recordedDeltaBase ||
+    x.recordedPolicy !== stopped.recordedPolicy || x.policySource !== stopped.policySource)) {
+    v.flag('stop-conflict', HOLD, 'identical corroborated copies of the current stop', 'conflicting or unverified duplicate');
+  }
+  const liveCount = new Set(markers.filter((x) => x.kind === 'stopped' && x.authorIsRunningAccount === true).map((x) => x.sha)).size;
+  if (!stopped) v.flag('stop-record', HOLD, 'a corroborated stopped record', 'absent');
+  else if (stopped.editorsAllRunningAccount !== true) v.flag('stop-unverified', HOLD, 'every editor is the running account', 'unverified edit history');
+  if (stopped && markers.slice(stoppedIndex + 1).some((x) => x.kind === 'paused' || x.kind === 'receipt')) {
+    v.flag('stop-superseded', HOLD, 'the stop is still current', 'a newer pause or receipt exists');
+  }
+  if (stopped && markers.some((x) => x.kind === 'continuation' && x.sha === stopped.sha)) {
+    v.flag('continuation-consumed', HOLD, 'an unclaimed stop SHA', 'a durable continuation claim exists');
+  }
+  if (!policy) v.flag('policy-malformed', HOLD, 'exactly one Review policy field', 'missing or duplicated');
+  if (!count) v.flag('continuation-limit', HOLD, 'exactly one Continuation field', 'missing or duplicated');
+  if (!at || !SHA40.test(at[0])) v.flag('stopped-sha', HOLD, 'exactly one valid stop SHA', at?.[0] ?? 'missing or duplicated');
+  if (at && !SHA40.test(at[0])) v.flag('malformed', FULL, '40-hex Stopped at', at[0]);
+  else if (at) {
+    if (stopped && at[0] !== stopped.sha) v.flag('stopped-sha', HOLD, stopped.sha, at[0]);
+    if (live.stoppedShaIsAncestorOfHead === false) v.flag('stopped-sha', HOLD, 'stop SHA is an ancestor of HEAD', 'not an ancestor');
+  }
+  if (base && !SHA40.test(base[0])) v.flag('malformed', FULL, '40-hex Delta base', base[0]);
+  // The row comes from the corroborated stop receipt; actual tree is read independently from git.
+  const review = live.reviewedDeltaBaseEvidence;
+  const keys = policy ? parsePolicy(policy[0]) : null;
+  const reviewVerified = review?.commit === base?.[0] && SHA40.test(review?.tree ?? '') &&
+    review.tree === live.reviewedDeltaBaseTree && review.scope === 'full' && review.completed === true &&
+    typeof review.sourceRecordRef === 'string' && /^(?!file:\/\/)[a-z][a-z0-9+.-]*:\/\/\S+$/i.test(review.sourceRecordRef);
+  if (!base || !SHA40.test(base[0]) || (stopped &&
+    (base[0] !== stopped.recordedDeltaBase || (keys?.get('continuation') === 'repair-only' &&
+      (base[0] !== live.reviewedDeltaBase || !reviewVerified))))) {
+    v.flag('delta-base', HOLD, 'delta base matches the stop, with completed full-review evidence for repair-only', base?.[0] ?? 'missing or duplicated');
+  }
+  if (policy && policy[0] === 'none supplied') v.flag('policy-none', HOLD, 'an approved continuation', 'none supplied');
+  else if (policy) {
+    if (!keys) v.flag('policy-malformed', HOLD, 'review-and-prep-policy/v1; key=value; ...', policy[0]);
+    else {
+      const next = keys.get('continuation');
+      if (next !== 'repair-only' && next !== 'full') v.flag('policy-stop', HOLD, 'continuation=repair-only or full', next ?? 'no continuation');
+      else if (count) {
+        const n = Number(keys.get('max-continuations') ?? '1');
+        const kn = /^([1-9]\d*) of (\d)$/.exec(count[0]);
+        if (!kn || Number(kn[2]) !== n || Number(kn[1]) > n ||
+          (stopped?.authorIsRunningAccount === true && Number(kn[1]) !== liveCount)) {
+          v.flag('continuation-limit', HOLD, `live stop count ${liveCount}, at most ${n} of ${n}`, count[0]);
+        }
+      }
+      // A caller that supplied a policy acts only on that exact policy; one that supplied none relays the user's.
+      if (typeof live.callerPolicy === 'string' && live.callerPolicy !== policy[0]) v.flag('policy', HOLD, live.callerPolicy, policy[0]);
+      if (live.callerPolicy === null && (next === 'repair-only' || next === 'full')) {
+        if (!stopped?.recordedPolicy || stopped.policySource !== 'user decision') {
+          v.flag('policy-unverified', HOLD, 'a corroborated user decision', 'missing policy or user-decision source');
+        } else if (stopped.recordedPolicy !== policy[0]) v.flag('policy', HOLD, stopped.recordedPolicy, policy[0]);
+      }
+    }
+  }
+  scanTokens(v, f, lines);
+  if (unknownLive(v, live)) return v;
+  unread(v, live, ['repo', 'prNumber', 'branch', 'prState', 'isDraft', 'markers', 'stoppedShaIsAncestorOfHead', 'callerPolicy'],
+    ['isDraft', 'stoppedShaIsAncestorOfHead']);
+  if (stopped && !stopped.authorIsRunningAccount) v.flag('stop-author', HOLD, 'running account', 'another author');
+  if (live.prState !== undefined && live.prState !== 'OPEN') v.flag('pr-state', HOLD, 'OPEN', live.prState);
   else if (live.isDraft === false) v.flag('pr-ready', HOLD, 'a draft PR', 'ready');
   return v;
 }
@@ -628,6 +759,7 @@ function classify(text: string, prov: Provenance, live: Live): Verdict {
   const v = kind === 'H-A' ? classifyA(handoff, live)
     : kind === 'H-B' ? classifyB(handoff, prov, live)
     : kind === 'H-C-pause' ? classifyPause(handoff, live)
+    : kind === 'H-E' ? classifyContinue(handoff, live)
     : classifyResume(handoff, live);
   // Text around the handoff, and any STATUS: line in it, caps the outcome as it would alone,
   // except that DONE and the bare-summary rule apply only when no handoff is present.
@@ -713,13 +845,13 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
   test('every detection prefix is a byte-frozen anchor in the Versions table', () => {
     const frozen = tableRows(section('## Versions')).map((r) => r[4]).join(' ');
-    for (const p of ['Run /review-and-prep', 'Run /review-and-prep resume', 'Run /pair-review for draft PR', 'Run /ship-and-land for this prepared PR']) {
+    for (const p of ['Run /review-and-prep', 'Run /review-and-prep resume', 'Run /review-and-prep continue', 'Run /pair-review for draft PR', 'Run /ship-and-land for this prepared PR']) {
       expect(frozen, p).toContain(`\`${p}`);
     }
   });
@@ -853,6 +985,7 @@ describe('(B2) classifier rules beyond one fixture per case', () => {
     sweep('A-SUCCESS', ['workspace', 'branch', 'base', 'headSha', 'workState']);
     sweep('C-RESUME', ['repo', 'prNumber', 'branch', 'prState', 'isDraft', 'markers', 'pausedShaIsAncestorOfHead']);
     sweep('C-PAUSED', ['repo', 'prNumber', 'branch', 'headSha']);
+    sweep('E-CONTINUE', ['repo', 'prNumber', 'branch', 'prState', 'isDraft', 'markers', 'stoppedShaIsAncestorOfHead', 'callerPolicy']);
   });
 
   test('required labels match what the producers always print', () => {
@@ -862,6 +995,7 @@ describe('(B2) classifier rules beyond one fixture per case', () => {
     expect(required('H-B')).toEqual(['Greptile', 'PR', 'Plan', 'Prepared HEAD', 'Review handoff']);
     expect(required('H-C-pause')).toEqual(['Required user checks']);
     expect(required('H-C-resume')).toEqual(['Local report (this machine only)', 'Not passed', 'Results']);
+    expect(required('H-E')).toEqual(['Continuation', 'Delta base', 'Review policy', 'Stopped at', 'Unresolved']);
   });
 
   test('a GitHub token with underscores is withheld, as the doc allows', () => {
@@ -912,6 +1046,7 @@ const TEMPLATES: Record<string, { skill: string; first: string }> = {
   'H-B': { skill: 'review-and-prep', first: 'Run /ship-and-land for this prepared PR.' },
   'H-C-pause': { skill: 'review-and-prep', first: 'Run /pair-review for draft PR' },
   'H-C-resume': { skill: 'pair-review', first: 'Run /review-and-prep resume for PR' },
+  'H-E': { skill: 'review-and-prep', first: 'Run /review-and-prep continue for PR' },
 };
 function template(kind: string): string {
   const { skill, first } = TEMPLATES[kind];
@@ -928,6 +1063,7 @@ const FIXED_TEXT: Record<string, string[]> = {
   'H-C-pause': ['Keep this PR draft and leave Greptile postponed while testing and fixing.',
     'Do not follow a generic /pair-review completion suggestion to go directly to /ship.'],
   'H-C-resume': ['Session started at build <build_commit>; current HEAD <full git rev-parse HEAD>.', 'Do not run /ship on this PR.'],
+  'H-E': ['Keep the PR draft.', 'Do not run /ship on this PR.'],
 };
 
 // Byte-frozen compatibility anchors, copied from the producers' text before this Track.
@@ -944,6 +1080,28 @@ const ANCHORS: Array<{ text: string; skills: string[] }> = [
 ];
 
 describe('(C) doc and producers agree', () => {
+  // Value: protects=portable receipt fields match the consumer contract; fails_when=producer and consumer labels diverge; why_new=fixtures otherwise start with parsed bindings; seam=none; no_claim=installed-agent compliance
+  test('stopped receipts publish exact portable evidence and resolution labels', () => {
+    const contract = DOC;
+    const stop = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1].split('\n## ')[0];
+    for (const line of [
+      'Stopped at: <full HEAD SHA>',
+      'Delta base: <full SHA>',
+      'Review policy: <verbatim policy value or none supplied>',
+      'Review policy source: <caller prompt|user decision|none supplied>',
+      'Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; completed=true; source=<durable reference>',
+      'Full-review evidence: unavailable',
+      'reviewRestrictionResolved: true',
+    ]) {
+      expect(stop).toContain(line);
+      expect(contract).toContain(line);
+    }
+    expect(squash(SKILLS['review-and-prep'])).toContain('A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`');
+    expect(squash(stop)).toContain('Use that PR URL as the first-stop `source=` reference');
+    expect(squash(DOC)).toContain('before or after any non-H-E handoff holds.');
+  });
+
+
   for (const kind of Object.keys(TEMPLATES)) {
     test(`${kind}: template labels equal the doc grammar labels in both directions`, () => {
       expect([...templateLabels(template(kind))].sort()).toEqual(grammar(kind).map((g) => g.label).sort());
@@ -958,7 +1116,7 @@ describe('(C) doc and producers agree', () => {
     });
 
     test(`${kind}: a fixture filled mechanically from the template classifies cleanly`, () => {
-      const family = kind.startsWith('H-A') ? 'A' : kind === 'H-B' ? 'B' : 'C';
+      const family = kind.startsWith('H-A') ? 'A' : kind === 'H-B' ? 'B' : kind === 'H-E' ? 'E' : 'C';
       const v = classify(fill(kind, template(kind)), FIX.defaults.provenance, withVars({ ...FIX.defaults.live[family], ...(kind === 'H-C-pause' ? { headSha: '$HEAD' } : {}) }));
       expect(v.handoff).toBe(kind);
       expect(v.mismatches).toEqual([]);
@@ -1014,6 +1172,10 @@ function fill(kind: string, tpl: string): string {
     [/<committed\/staged\/unstaged\/untracked implementation and unrelated work>/g, 'uncommitted: 1 unstaged file'],
   ];
   let out = tpl;
+  if (kind === 'H-E') out = out
+    .replace('<the policy line\'s value verbatim, or "none supplied">', FIX.defaults.live.E.callerPolicy)
+    .replace('Delta base: <full SHA>', `Delta base: ${v.BASE}`)
+    .replace('<k>', '1').replace('<n>', '1');
   for (const [re, to] of common) out = out.replace(re, to);
   out = out.replace(/<(?!!--)[^<>\n]+>/g, 'none');
   if (kind === 'H-B') out = out.replace(/\nSave before shipping:[\s\S]*$/, '\n');

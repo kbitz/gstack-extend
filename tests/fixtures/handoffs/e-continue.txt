@@ -1,0 +1,8 @@
+Run /review-and-prep continue for PR https://github.com/example-org/example-repo/pull/42 on example-org/example-repo, branch feature/handoff-demo.
+Stopped at: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+Delta base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+Review policy: review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1
+Continuation: 1 of 1
+Unresolved: F2 high, F5 medium
+Keep the PR draft.
+Do not run /ship on this PR.

@@ -6,7 +6,8 @@ Consumers validating stage-runs rows: [Schema validation](#schema-validation).
 Consumers joining the files: [Join contract](#join-contract).
 Anyone checking claims: [Evidence](#evidence).
 Step/pass timing for `/review-and-prep` and `/ship-and-land`:
-[Workflow metrics](#workflow-metrics).
+[Workflow metrics](#workflow-metrics); their reviewer subagent join keys:
+[Reviewer join file](#reviewer-join-file).
 
 All nine installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
@@ -820,6 +821,50 @@ metrics calls shared an existing tool call; where a comparable enabled/disabled
 run is not practical, mark end-to-end overhead unqualified. File the result
 with host, harness and gstack-extend versions beside the workflow's other
 acceptance evidence; no part of this smoke is a release or 1.0 gate.
+
+## Reviewer join file
+
+`/review-and-prep` and `/ship-and-land` append one JSON line per reviewer
+attempt and outside call to `voices.jsonl` in the workflow's evidence
+directory (a unique branch/invocation subdirectory under an existing
+`~/.gstack/projects/<slug>/<stage>/`, otherwise `~/scratch/<stage>/`, where
+`<stage>` is `review-and-prep` or `ship-and-land`). It lets a consumer that
+reads the harness's own session logs attribute each reviewer's tokens to its
+part exactly, instead of matching task names by keyword. The agent writes it
+from what it observed; no helper validates it. It is optional, local and
+best-effort: a missing or failed write never changes a review, a gate or a
+handoff, and the file is never uploaded, put in a PR body or quoted in a
+receipt (a receipt may name its local path). It is separate from the
+workflow-metrics ledger, whose v1 records accept no extra keys.
+
+| Field | Value |
+|---|---|
+| `v` | `1` |
+| `stage` | `review-and-prep` or `ship-and-land` |
+| `recorded_at` | UTC time the line was written |
+| `pr` | `<owner/repo>#<number>`, or null before a PR exists |
+| `head` | candidate HEAD, 40 hex, or null |
+| `candidate` | the pass's candidate snapshot SHA when one was taken, else null |
+| `pass`, `attempt` | 1-based pass number in this invocation and attempt number for this voice |
+| `scope` | `full` or `delta` |
+| `voice_id` | the workflow-metrics voice ID when captured, otherwise the reviewer's name (`testing`, `red-team`, `adversarial-native`, `outside-challenge`, `documentation-audit`, ...) |
+| `host` | `claude`, `codex`, `cursor`, `opencode` or `unknown` |
+| `subagent_ref` | `{kind, id, name}`: `kind` is `thread-id`, `agent-id`, `outside-process` or `none`; `id` is the identifier the spawn result or outside command returned; `name` is the task name the dispatcher used |
+| `dispatched_at`, `returned_at` | UTC times the parent observed, or null |
+| `time_basis` | `parent-observed`: under parallel dispatch these bound the wait, not the reviewer's own runtime |
+| `outcome` | `completed`, `failed`, `partial` or `unknown` |
+| `metrics` | `{session_id, pass_id, attempt_id}` of the matching workflow-metrics records, or null |
+| `unknown_reason` | null, `not-reported`, `not-named` or `capture-missing` |
+
+When the host's spawn tool takes a name, the dispatcher names each reviewer
+`<voice_id>-p<pass>`, so a harness log that records the name still joins when
+the spawn result returns no identifier. Values come from tool results and
+variables the harness exports, never from credential files or process
+listings.
+
+```json
+{"v":1,"stage":"review-and-prep","recorded_at":"2026-10-20T21:04:11Z","pr":"example-org/example-repo#42","head":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","candidate":null,"pass":2,"attempt":1,"scope":"delta","voice_id":"testing","host":"codex","subagent_ref":{"kind":"thread-id","id":"019a0000-0000-7000-8000-000000000000","name":"testing-p2"},"dispatched_at":"2026-10-20T21:01:02Z","returned_at":"2026-10-20T21:04:09Z","time_basis":"parent-observed","outcome":"completed","metrics":null,"unknown_reason":null}
+```
 
 ## Execution provenance
 
