@@ -278,17 +278,23 @@ function one(f: Fields, v: Verdict, label: string, required: boolean): string[] 
 }
 
 /**
- * Records are oldest first. Pauses and stops hold until a later running-account receipt for Prepared HEAD.
+ * Records are oldest first. Pauses hold until a later running-account receipt for Prepared HEAD.
+ * Stops require a later corroborated pause or receipt explicitly resolving the review restriction.
  * A foreign or unverified stop still holds; it cannot grant permission to continue.
  */
 function pauseState(live: Live, head?: string): 'none' | 'own' | 'foreign' | 'stopped' | 'stop-author' | 'stop-unverified' {
   if (live.bodyPaused === true) return 'own';
-  const markers: Array<{ kind: string; sha?: string; authorIsRunningAccount?: boolean; editorsAllRunningAccount?: boolean }> = live.markers ?? [];
+  const markers: Array<{ kind: string; sha?: string; authorIsRunningAccount?: boolean;
+    editorsAllRunningAccount?: boolean; reviewRestrictionResolved?: boolean }> = live.markers ?? [];
   const lastOwnReceipt = markers.findLastIndex((m) => m.kind === 'receipt' && m.authorIsRunningAccount === true &&
     (head === undefined || m.sha === head));
   const pending = markers.slice(lastOwnReceipt + 1);
-  const stopped = pending.findLast((m) => m.kind === 'stopped');
-  if (stopped) {
+  const stoppedIndex = markers.findLastIndex((m) => m.kind === 'stopped');
+  const stopped = markers[stoppedIndex];
+  const stopResolved = stoppedIndex >= 0 && markers.slice(stoppedIndex + 1).some((m) =>
+    (m.kind === 'paused' || m.kind === 'receipt') && m.authorIsRunningAccount === true && m.editorsAllRunningAccount === true &&
+    m.reviewRestrictionResolved === true);
+  if (stopped && !stopResolved) {
     if (stopped.authorIsRunningAccount !== true) return 'stop-author';
     if (stopped.editorsAllRunningAccount !== true) return 'stop-unverified';
     return 'stopped';
@@ -303,7 +309,7 @@ function flagPause(v: Verdict, live: Live, head?: string): void {
   if (state === 'own') v.flag('pause', HOLD, 'no pause in force', 'a pause no running-account receipt supersedes');
   if (state === 'foreign') v.flag('pause-author', HOLD, 'a pause by the running account', 'a pause by another author');
   if (state === 'stopped' || state === 'stop-author' || state === 'stop-unverified') {
-    v.flag(state, HOLD, 'no unresolved cycle-cap stop', 'a stopped record no running-account receipt supersedes');
+    v.flag(state, HOLD, 'no unresolved cycle-cap stop', 'a stopped record no corroborated pause or receipt explicitly resolves');
   }
 }
 
@@ -608,10 +614,10 @@ function classifyResume(lines: string[], live: Live): Verdict {
   const pausedIndex = markers.findLastIndex((x) => x.kind === 'paused');
   const paused = markers[pausedIndex];
   const stoppedIndex = markers.findLastIndex((x) => x.kind === 'stopped');
-  const resolvedByReceipt = stoppedIndex >= 0 && markers.slice(stoppedIndex + 1).some((x) =>
-    x.kind === 'receipt' && x.authorIsRunningAccount === true && x.editorsAllRunningAccount === true &&
+  const resolvedByRecord = stoppedIndex >= 0 && markers.slice(stoppedIndex + 1).some((x) =>
+    (x.kind === 'paused' || x.kind === 'receipt') && x.authorIsRunningAccount === true && x.editorsAllRunningAccount === true &&
     x.reviewRestrictionResolved === true);
-  if (stoppedIndex >= 0 && !resolvedByReceipt) {
+  if (stoppedIndex >= 0 && !resolvedByRecord) {
     if (pausedIndex < stoppedIndex) v.flag('stopped', HOLD, 'a later pause resolving the review restriction', 'a newer cycle-cap stop');
     else if (paused.reviewRestrictionResolved !== true || paused.editorsAllRunningAccount !== true) {
       v.flag('review-resolution', HOLD, 'a corroborated pause explicitly resolving the review restriction', 'missing or unverified resolution');
@@ -1097,7 +1103,8 @@ describe('(C) doc and producers agree', () => {
       expect(contract).toContain(line);
     }
     expect(squash(SKILLS['review-and-prep'])).toContain('A later corroborated pause may resolve the review-stop restriction with `reviewRestrictionResolved: true`');
-    expect(squash(stop)).toContain('Use that PR URL as the first-stop `source=` reference');
+    expect(squash(stop)).toContain('dedicated full-review evidence comment');
+    expect(squash(stop)).toContain('use its returned permalink as `source=`');
     expect(squash(DOC)).toContain('before or after any non-H-E handoff holds.');
   });
 

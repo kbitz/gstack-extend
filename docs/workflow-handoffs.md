@@ -273,6 +273,11 @@ classifier reports, with the expected and actual values.
 | <a id="b-stopped-newer"></a>`B-STOPPED-NEWER` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a stopped record follows the prepared receipt | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="b-stopped-foreign"></a>`B-STOPPED-FOREIGN` | H-B | `STOPPED — review cycle cap` | HOLD | `stop-author`: the later stop is by another account | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="b-stopped-unverified"></a>`B-STOPPED-UNVERIFIED` | H-B | `STOPPED — review cycle cap` | HOLD | `stop-unverified`: the later stop has unverified edit history | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stop-resolution-missing"></a>`B-STOP-RESOLUTION-MISSING` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt has no explicit review resolution | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-false"></a>`B-STOP-RESOLUTION-FALSE` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt explicitly leaves review unresolved | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-unverified"></a>`B-STOP-RESOLUTION-UNVERIFIED` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt claims resolution but has unverified editors | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-verified"></a>`B-STOP-RESOLUTION-VERIFIED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; a later receipt explicitly resolves the review restriction and its author and every editor are corroborated as the running account | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR | yes |
+| <a id="b-stop-resolving-pause-then-receipt"></a>`B-STOP-RESOLVING-PAUSE-THEN-RECEIPT` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; a corroborated pause explicitly resolves the review restriction, and a later running-account receipt for Prepared HEAD supersedes the ordinary pause | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR | yes |
 | <a id="e-delta-base"></a>`E-DELTA-BASE` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: the prompt delta base differs from the corroborated stopped record | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="e-delta-base-missing"></a>`E-DELTA-BASE-MISSING` | H-E | `Delta base: <full SHA>` | HOLD | `malformed`, `delta-base`: the prompt delta base is absent | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="e-delta-base-record-missing"></a>`E-DELTA-BASE-RECORD-MISSING` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: the stopped record has no recorded delta base | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
@@ -315,6 +320,7 @@ classifier reports, with the expected and actual values.
 | <a id="e-stop-conflict-unverified"></a>`E-STOP-CONFLICT-UNVERIFIED` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="e-stop-conflict-foreign"></a>`E-STOP-CONFLICT-FOREIGN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="c-resume-resolving-receipt-verified"></a>`C-RESUME-RESOLVING-RECEIPT-VERIFIED` | H-C resume | `Run /review-and-prep resume` | FULL_CHECK_REQUIRED | none; a later corroborated receipt explicitly resolves the stop before the ordinary pause | Run `/review-and-prep resume` under its remaining manual-testing gates | yes |
+| <a id="c-resume-resolving-pause-then-pause"></a>`C-RESUME-RESOLVING-PAUSE-THEN-PAUSE` | H-C resume | `Run /review-and-prep resume` | FULL_CHECK_REQUIRED | none; a corroborated pause explicitly resolves the stop before a newer ordinary pause | Run `/review-and-prep resume` under its remaining manual-testing gates | yes |
 | <a id="c-resume-resolving-receipt-foreign"></a>`C-RESUME-RESOLVING-RECEIPT-FOREIGN` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="c-resume-resolving-receipt-unverified"></a>`C-RESUME-RESOLVING-RECEIPT-UNVERIFIED` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="c-resume-resolving-receipt-false"></a>`C-RESUME-RESOLVING-RECEIPT-FALSE` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
@@ -451,10 +457,15 @@ or `file://` URI is insufficient portable evidence. Require exactly one occurren
 of each label; missing, duplicate or malformed values hold their relevant stop,
 policy or delta-base binding. The explicit `unavailable` alternative remains
 valid for a full continuation, but cannot support a repair-only continuation.
-On a first stop, the producer first writes and corroborates the preserved
-per-stage results in the PR body's receipt, uses the PR URL as `source`, and
-then posts the stopped comment. Consumers read that body's evidence with its
-author/edit-history and content checks; a URL alone proves no completed review.
+On a first stop with available evidence, the producer first posts the preserved
+per-stage results with B and T in a dedicated full-review evidence comment,
+corroborates its author, every editor and content, and uses its returned permalink
+as `source` before posting the stopped comment. This evidence comment carries
+neither a stopped nor a prepared-receipt marker. Preserve it across receipt/body
+rewrites and reuse its verified reference for cumulative continuations. Consumers
+read that comment through the IssueComment author/edit-history and content checks;
+a URL alone proves no completed review. Failed or unverifiable publication leaves
+full-review evidence unavailable; reconcile an uncertain post before retrying.
 
 The literal `reviewRestrictionResolved: true` in a later pause or receipt clears
 the review restriction only after verified review and corroboration of that
@@ -884,7 +895,7 @@ or input it says is needed is for the user.
 | Reviewed base | validated | Prepared HEAD contains it; for trust it is an ancestor of the base tip, for release-only it equals the tip |
 | Receipt comment | validated | exists on the bound PR, authored by the running account, its marker names Prepared HEAD |
 | Pause records | validated | no pause in the body, and no pause comment without a later running-account receipt for Prepared HEAD; a pause only by another author is `pause-author` |
-| Stopped records | validated | a stop after the matching running-account receipt for Prepared HEAD holds as `stopped`; a foreign author holds as `stop-author`, and unread or foreign edit history holds as `stop-unverified` |
+| Stopped records | validated | a historical stop holds as `stopped` until a later pause or receipt explicitly records `reviewRestrictionResolved: true` and its author and every editor are corroborated as the running account; missing, false or unverified resolution does not clear the stop. An unresolved stop by a foreign author holds as `stop-author`, and unread or foreign edit history holds as `stop-unverified`. Resolving the review restriction does not itself supersede an ordinary pause; that still requires a later running-account receipt for Prepared HEAD |
 | Plan SHA-256 | validated | the scope source now, per "Plan source"; the agreed-task form is receipt-present |
 | Ship gates (coverage and documentation audits) bound to head, tree and base | validated, release-only tier only | the receipt, with author and every editor the running account |
 | gstack working-tree fingerprint (`wtree`) | receipt-present | published, labeled apart from the Git tree SHA; consumers ignore it |

@@ -600,6 +600,15 @@ HEAD and refs stay untouched. The metrics rule against `git write-tree` covers
 metrics capture only.
 
 ```bash
+# Refuse hidden index entries before reading working-tree content into a snapshot.
+bun --no-env-file --config=/dev/null --no-install -e '
+const {execFileSync} = require("node:child_process");
+try {
+  const entries = execFileSync("git", ["-C", process.argv[1], "ls-files", "-v", "-z"],
+    {encoding:"utf8",stdio:["ignore","pipe","pipe"]}).split("\0").filter(Boolean);
+  if (entries.some(e => /^[a-zS]/.test(e))) process.exit(1);
+} catch { process.exit(1); }
+' "<workspace>" || exit 1
 _SNAP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/review-and-prep-snapshot.XXXXXX") || exit 1
 _SNAP_IDX="$_SNAP_DIR/index"
 GIT_INDEX_FILE="$_SNAP_IDX" git -C "<workspace>" read-tree HEAD &&
@@ -611,6 +620,12 @@ _SNAP_RC=$?
 rm -rf "$_SNAP_DIR"
 exit "$_SNAP_RC"
 ```
+
+A failed snapshot or missing `CANDIDATE_SNAPSHOT` runs a full-scope pass and
+records the reason; never substitute HEAD or a working-tree diff as the snapshot.
+The preflight refuses skip-worktree and assume-unchanged entries, including
+out-of-cone sparse entries, without reading their local contents. Do not clear
+index flags or change Git identity/configuration to make a snapshot succeed.
 
 Tell the nested `/review` its delta base B and candidate snapshot S. Every
 diff, numstat, name-status and reviewer-prompt diff command compares `"B" "S"`
@@ -747,12 +762,17 @@ Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; comple
    Replace the alternatives with actual values. The source is a whitespace-free
    URL or resource reference to the actual per-stage results preserved in a
    corroborated receipt; a local-only ledger path is not portable evidence.
-   On the first stop, write the actual preserved per-stage results into the PR
-   body's receipt before posting the stopped comment; corroborate that body's
-   author, every editor and reviewed content through Step 6. Use that PR URL as
-   the first-stop `source=` reference, then copy the verified row into the stopped
-   comment. The source therefore exists before the comment is posted; never
-   invent a comment permalink or infer review results from the new receipt.
+   On the first stop with available evidence, preserve the actual per-stage
+   results in a dedicated full-review evidence comment before posting the stopped
+   comment. Scan it through Step 6, include B and T, and corroborate its author,
+   every editor and reviewed content; use its returned permalink as `source=`.
+   Reuse an existing comment only after those same checks. After an uncertain
+   post, reconcile the live comments before retrying; unverifiable evidence
+   remains unavailable. Never invent a permalink or infer review results.
+   This evidence comment carries neither a stopped nor a prepared-receipt marker;
+   retain its original results across continuation/body rewrites, and copy its
+   verified reference into later stopped receipts. STOPPED exits never post
+   `review-and-prep:receipt:`; Step 6 reserves that marker for preparation.
    When evidence is unavailable, replace its entire line with
    `Full-review evidence: unavailable`. Never fill placeholder hashes with HEAD
    merely to produce a well-formed row. Ambiguous, repeated or malformed fields
@@ -959,7 +979,9 @@ Capture evidence as the work runs so a new session can reuse it:
   `docs/telemetry.md` (Reviewer join file): the host's subagent ID or name
   from the spawn result, and the dispatch and return times you observed. When
   the host's spawn tool takes a name, name each reviewer subagent
-  `<voice_id>-p<pass>`. Use only tool results and variables the harness
+  `<voice_id>_p<pass>_a<attempt>`, normalizing the name to the host's allowed
+  characters (lowercase letters, digits and underscores on Codex). Preserve the
+  original `voice_id` and record the actual dispatched name. Use only tool results and variables the harness
   exports; unknown values are null with a reason. Never put these identifiers
   in the PR body or a receipt; the receipt may name the file's local path. A
   failed write never blocks the workflow.

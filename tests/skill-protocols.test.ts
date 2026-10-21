@@ -1786,6 +1786,15 @@ describe('review-and-prep repeated-review cuts', () => {
     expect(stopFlat).toContain(rule);
   });
 
+  // Value: protects=portable baseline evidence survives body rewrites; fails_when=the source only points to a mutable body or a stop posts a prepared marker; why_new=first-stop evidence gap; seam=none; no_claim=installed-agent execution
+  test('full-review evidence has a dedicated corroborated comment', () => {
+    expect(stopFlat).toContain('dedicated full-review evidence comment');
+    expect(stopFlat).toContain('use its returned permalink');
+    expect(stopFlat).toContain('STOPPED exits never post `review-and-prep:receipt:`');
+    expect(stopFlat).not.toContain('Use that PR URL as the first-stop');
+    expect(deltaFlat).toContain('A failed snapshot or missing `CANDIDATE_SNAPSHOT` runs a full-scope pass');
+  });
+
   // Value: protects=repeated continuations retain honest full coverage; fails_when=a delta-reviewed start is required to have full evidence; why_new=second continuation boundary; seam=none; no_claim=installed-agent execution
   test('later repair-only continuations carry the full baseline and review the cumulative delta', () => {
     expect(stopFlat).toContain('retain the newest corroborated full-review base across repair-only continuations');
@@ -1800,7 +1809,7 @@ describe('review-and-prep repeated-review cuts', () => {
     expect(flat).toContain('instead of restating the receipt, matrix, findings or reports in chat');
     expect(flat).toContain('Keep long evidence in files, not chat.');
     expect(flat).toContain('as parallel tool calls where the host allows; metrics calls stay serial.');
-    expect(flat).toContain('name each reviewer subagent `<voice_id>-p<pass>`');
+    expect(flat).toContain('name each reviewer subagent `<voice_id>_p<pass>_a<attempt>`');
     expect(flat).toContain('Never put these identifiers in the PR body or a receipt');
     expect(shipFlat).toContain('Record each reader in `voices.jsonl`');
     expect(shipFlat).toContain('Link the receipt instead of restating it or the review findings in chat.');
@@ -1848,6 +1857,33 @@ describe('review-and-prep repeated-review cuts', () => {
     });
 
     for (const sh of agentShells()) {
+      // Value: protects=hidden local tracked edits stay out of reviewer snapshots; fails_when=temporary index drops hidden flags and stages local values; why_new=reproduced data-boundary defect; seam=none
+      for (const flag of ['skip-worktree', 'assume-unchanged']) {
+        test(`${sh.shell}: snapshot refuses ${flag} local edits`, () => {
+          const cwd = repo();
+          git(cwd, ['update-index', `--${flag}`, 'app.ts']);
+          writeFileSync(join(cwd, 'app.ts'), 'SYNTHETIC_PRIVATE_LOCAL_VALUE\n');
+          const before = readFileSync(join(cwd, '.git', 'index'));
+          const r = runShell(sh.shell, sh.args, block.replaceAll('<workspace>', cwd), env, cwd);
+          expect(r.stdout).not.toContain('CANDIDATE_SNAPSHOT:');
+          expect(readFileSync(join(cwd, '.git', 'index'))).toEqual(before);
+        });
+      }
+
+      // Value: protects=failed snapshots never masquerade as review evidence; fails_when=missing identity yields a success marker or leaks temporary index files; why_new=fallback failure contract; seam=none
+      test(`${sh.shell}: failed snapshot leaves no evidence or temporary index`, () => {
+        const cwd = repo();
+        git(cwd, ['config', 'user.useConfigOnly', 'true']);
+        const snapTmp = join(tmp, `snap-tmp-${++n}`);
+        mkdirSync(snapTmp);
+        const noIdentity = { ...env, TMPDIR: snapTmp };
+        for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) delete noIdentity[key];
+        const r = runShell(sh.shell, sh.args, block.replaceAll('<workspace>', cwd), noIdentity, cwd);
+        expect(r.status).not.toBe(0);
+        expect(r.stdout).not.toContain('CANDIDATE_SNAPSHOT:');
+        expect(readdirSync(snapTmp).filter((name) => name.startsWith('review-and-prep-snapshot.'))).toEqual([]);
+      });
+
       // Value: protects=scope selection includes reversals and removed untracked paths; fails_when=delta scope silently omits them; why_new=snapshot regressions missed by HEAD-based scope; seam=none
       test(`${sh.shell}: snapshot scope guard rejects missing paths and accepts covered deltas`, () => {
         const guard = extractFences(delta).find((f) => f.body.includes('SCOPE_DELTA:'))?.body;

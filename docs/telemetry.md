@@ -857,13 +857,15 @@ workflow-metrics ledger, whose v1 records accept no extra keys.
 | `unknown_reason` | null, `not-reported`, `not-named` or `capture-missing` |
 
 When the host's spawn tool takes a name, the dispatcher names each reviewer
-`<voice_id>-p<pass>`, so a harness log that records the name still joins when
-the spawn result returns no identifier. Values come from tool results and
+`<voice_id>_p<pass>_a<attempt>`, so a harness log that records the name still joins when
+the spawn result returns no identifier. Normalize the name to the host's allowed
+characters (lowercase letters, digits and underscores on Codex), preserve the
+original `voice_id`, and record the actual dispatched name. Values come from tool results and
 variables the harness exports, never from credential files or process
 listings.
 
 ```json
-{"v":1,"stage":"review-and-prep","recorded_at":"2026-10-20T21:04:11Z","pr":"example-org/example-repo#42","head":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","candidate":null,"pass":2,"attempt":1,"scope":"delta","voice_id":"testing","host":"codex","subagent_ref":{"kind":"thread-id","id":"019a0000-0000-7000-8000-000000000000","name":"testing-p2"},"dispatched_at":"2026-10-20T21:01:02Z","returned_at":"2026-10-20T21:04:09Z","time_basis":"parent-observed","outcome":"completed","metrics":null,"unknown_reason":null}
+{"v":1,"stage":"review-and-prep","recorded_at":"2026-10-20T21:04:11Z","pr":"example-org/example-repo#42","head":"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1","candidate":null,"pass":2,"attempt":1,"scope":"delta","voice_id":"testing","host":"codex","subagent_ref":{"kind":"thread-id","id":"019a0000-0000-7000-8000-000000000000","name":"testing_p2_a1"},"dispatched_at":"2026-10-20T21:01:02Z","returned_at":"2026-10-20T21:04:09Z","time_basis":"parent-observed","outcome":"completed","metrics":null,"unknown_reason":null}
 ```
 
 ## Execution provenance
