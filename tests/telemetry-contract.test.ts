@@ -290,6 +290,14 @@ const RELEASE = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
 const V1_FIELDS = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
   'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
   'agent_source', 'model_source', 'effort_source'];
+const V2_FIELDS = [...V1_FIELDS, 'workspace_host', 'host_agent_id'];
+// Immutable historical fixture, independent of current docs, schema and writer constants.
+function historicalRow(): Record<string, unknown> {
+  return { stage: 'roadmap', agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', rung: 0,
+    outcome: 'success', started_at: '2026-09-20T12:00:00Z', duration_s: 3, session_id: 'extend-example',
+    repo: 'acme/widget', branch: 'main', work_item: null, source: 'gstack-extend', route: 'cli', entrypoint_raw: 'cli',
+    schema_version: 1, producer_version: '1.2.3.4', agent_source: 'detected', model_source: 'detected', effort_source: 'detected' };
+}
 const METADATA = V1_FIELDS.slice(15);
 
 function compileSchema() {
@@ -318,6 +326,122 @@ function legacyOf(row: Record<string, unknown>, keep: string[] = V1_FIELDS.slice
   return Object.fromEntries(keep.map(key => [key, row[key]]));
 }
 
+// Frozen pre-v2 reader command from planning HEAD 45a60d1; never derive this from current docs.
+const V1_READER_COMMAND = [
+  "bun --no-install -e '",
+  "import Ajv from \"ajv\";",
+  "import { createReadStream, readFileSync, statSync } from \"node:fs\";",
+  "import { createInterface } from \"node:readline\";",
+  "import { Readable } from \"node:stream\";",
+  "",
+  "const DOC = \"See docs/telemetry.md#schema-validation\";",
+  "const FIELDS = [\"stage\", \"agent\", \"model\", \"effort\", \"rung\", \"outcome\", \"started_at\", \"duration_s\", \"session_id\",",
+  "  \"repo\", \"branch\", \"work_item\", \"source\", \"route\", \"entrypoint_raw\", \"schema_version\", \"producer_version\",",
+  "  \"agent_source\", \"model_source\", \"effort_source\"];",
+  "const EXAMPLE = {\"stage\":\"roadmap\",\"agent\":\"claude\",\"model\":\"claude-opus-5\",\"effort\":\"xhigh\",\"rung\":0,\"outcome\":\"success\",\"started_at\":\"2026-09-20T12:00:00Z\",\"duration_s\":3,\"session_id\":\"extend-example\",\"repo\":\"acme/widget\",\"branch\":\"main\",\"work_item\":null,\"source\":\"gstack-extend\",\"route\":\"cli\",\"entrypoint_raw\":\"cli\",\"schema_version\":1,\"producer_version\":\"1.2.3.4\",\"agent_source\":\"detected\",\"model_source\":\"detected\",\"effort_source\":\"detected\"};",
+  "const EVIDENCE = \"a null value needs source unknown; any other value needs flag or detected\";",
+  "const WHY = {",
+  "  required: [\"a required field is missing\", \"write every field the contract requires, never a default\"],",
+  "  additionalProperties: [\"a field outside this contract\", \"remove it, or route the row to its own contract\"],",
+  "  type: [\"a value has the wrong JSON type\", \"write the documented type\"],",
+  "  const: [\"a value differs from the fixed contract value\", \"write the documented value\"],",
+  "  enum: [\"a value is outside the documented set\", \"write a documented value\"],",
+  "  pattern: [\"a string does not match the documented format\", \"write the documented format\"],",
+  "  minimum: [\"a number is below the documented minimum\", \"write a nonnegative value\"],",
+  "  \"false schema\": [\"v1 metadata without schema_version\", \"keep the row whole; never strip or add fields\"],",
+  "};",
+  "const counts = { rows: 0, blank: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };",
+  "let shown = 0;",
+  "let hidden = 0;",
+  "function report(line, where, keyword, cause, fix) {",
+  "  if (shown === 20) return hidden++;",
+  "  shown++;",
+  "  console.log(`line ${line}: ${where} ${keyword}: ${cause}. Fix: ${fix}. ${DOC}`);",
+  "}",
+  "",
+  "let validate;",
+  "try {",
+  "  validate = new Ajv({ strict: true, allErrors: true }).compile(JSON.parse(readFileSync(\"docs/stage-runs.schema.json\", \"utf8\")));",
+  "} catch {",
+  "  console.error(`schema unavailable: run from the gstack-extend checkout root. ${DOC}`);",
+  "  process.exit(1);",
+  "}",
+  "async function* utf8(file) {",
+  "  const decoder = new TextDecoder(\"utf-8\", { fatal: true, ignoreBOM: true });",
+  "  for await (const chunk of createReadStream(file)) yield decoder.decode(chunk, { stream: true });",
+  "  yield decoder.decode();",
+  "}",
+  "const file = process.env.STAGE_RUNS_FILE;",
+  "let lines = [JSON.stringify(EXAMPLE)];",
+  "if (file) {",
+  "  try {",
+  "    if (!statSync(file).isFile()) throw new Error();",
+  "    lines = createInterface({ input: Readable.from(utf8(file)), crlfDelay: Infinity });",
+  "  } catch {",
+  "    console.error(`input unreadable: pass a readable JSONL file. ${DOC}`);",
+  "    process.exit(1);",
+  "  }",
+  "}",
+  "",
+  "let line = 0;",
+  "try {",
+  "  for await (const text of lines) {",
+  "    line++;",
+  "    if (text.trim() === \"\") { counts.blank++; continue; }",
+  "    counts.rows++;",
+  "    let row;",
+  "    try { row = JSON.parse(text); } catch { row = undefined; }",
+  "    if (row === null || typeof row !== \"object\" || Array.isArray(row)) {",
+  "      counts.invalid++;",
+  "      report(line, \"(root)\", \"json\", \"the line is not one JSON object\", \"write one JSON object per line\");",
+  "      continue;",
+  "    }",
+  "    if (typeof row.source !== \"string\" || row.source.trim() === \"\") {",
+  "      counts.invalid++;",
+  "      report(line, \"/source\", \"source\", \"the writer label is missing, blank or not a string\", \"every row names its writer\");",
+  "      continue;",
+  "    }",
+  "    if (row.source !== \"gstack-extend\") { counts.routed++; continue; }",
+  "    let kind = \"legacy\";",
+  "    if (Object.hasOwn(row, \"schema_version\")) {",
+  "      const version = row.schema_version;",
+  "      if (Number.isInteger(version) && version >= 2) {",
+  "        counts.unsupported++;",
+  "        report(line, \"/schema_version\", \"unsupported\", \"newer than this contract\", \"keep the row and use a schema release that supports it\");",
+  "        continue;",
+  "      }",
+  "      if (version !== 1) {",
+  "        counts.invalid++;",
+  "        report(line, \"/schema_version\", \"version\", \"not a positive integer\", \"correct the producer; never guess a version\");",
+  "        continue;",
+  "      }",
+  "      kind = \"v1\";",
+  "    }",
+  "    if (validate(row)) { counts[kind]++; continue; }",
+  "    counts.invalid++;",
+  "    const seen = new Set();",
+  "    for (const error of validate.errors) {",
+  "      if (error.keyword === \"if\") continue;",
+  "      const field = error.keyword === \"required\" ? error.params.missingProperty : error.instancePath.slice(1);",
+  "      const where = FIELDS.includes(field) ? \"/\" + field : \"(root)\";",
+  "      if (seen.has(where + error.keyword)) continue;",
+  "      seen.add(where + error.keyword);",
+  "      const [cause, fix] = WHY[error.keyword] ?? [\"the row fails the contract\", \"compare it with the schema\"];",
+  "      const evidence = where.endsWith(\"_source\") && (error.keyword === \"const\" || error.keyword === \"enum\");",
+  "      report(line, where, error.keyword, evidence ? EVIDENCE : cause, evidence ? \"correct the producer, never the saved row\" : fix);",
+  "    }",
+  "  }",
+  "} catch {",
+  "  console.error(`input unreadable or invalid UTF-8 after line ${line}. ${DOC}`);",
+  "  process.exit(1);",
+  "}",
+  "if (hidden) console.log(`${hidden} more diagnoses not shown`);",
+  "console.log(`summary: rows=${counts.rows} valid=${counts.v1 + counts.legacy} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);",
+  "process.exitCode = counts.invalid || counts.unsupported ? 1 : 0;",
+  "'",
+  "",
+].join('\n');
+
 /** The one `bun --no-install -e` block under "## Schema validation", byte for byte. */
 function validationCommand(doc: string) {
   const blocks = [...section(doc, '## Schema validation').matchAll(/~~~sh\n([\s\S]*?)~~~/g)].map(match => match[1]);
@@ -345,14 +469,14 @@ function runValidation(input?: string | Buffer, options: { cwd?: string; file?: 
   if (file !== undefined) env.STAGE_RUNS_FILE = file;
   const result = spawnSync('bash', ['-c', validationCommand(docText())],
     { cwd: options.cwd ?? ROOT, env, encoding: 'utf8', timeout: 30_000 });
-  const diagnoses = result.stdout.split('\n').filter(line => line.startsWith('line '));
+  const diagnoses = result.stderr.split('\n').filter(line => line.startsWith('line '));
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, diagnoses, file,
     summary: result.stdout.split('\n').find(line => line.startsWith('summary: ')) ?? '' };
 }
 
-function summaryOf(counts: Partial<Record<'rows' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
+function summaryOf(counts: Partial<Record<'rows' | 'v2' | 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank', number>>) {
   const value = (name: keyof typeof counts) => counts[name] ?? 0;
-  return `summary: rows=${value('rows')} valid=${value('v1') + value('legacy')} v1=${value('v1')} legacy=${value('legacy')} `
+  return `summary: rows=${value('rows')} valid=${value('v2') + value('v1') + value('legacy')} v2=${value('v2')} v1=${value('v1')} legacy=${value('legacy')} `
     + `invalid=${value('invalid')} unsupported=${value('unsupported')} routed=${value('routed')} blank=${value('blank')}`;
 }
 
@@ -374,11 +498,12 @@ describe('docs/telemetry.md join contract', () => {
     const outcomes = backtickedValues(valueCell(doc, 'outcome'));
     const routes = backtickedValues(valueCell(doc, 'route'));
     if (!same(agents, constants.harnesses)) mismatch('agent values differ from HARNESSES', agents, constants.harnesses);
-    if (!same(outcomes, constants.outcomes)) mismatch('outcome values differ from OUTCOMES', outcomes, constants.outcomes);
+    if (!same(outcomes, [...constants.outcomes, 'blocked'])) mismatch('outcome values differ from v2 vocabulary', outcomes, [...constants.outcomes, 'blocked']);
     if (!same(routes, constants.routes)) mismatch('route values differ from ROUTES', routes, constants.routes);
     for (const field of ['agent_source', 'model_source', 'effort_source']) {
       const values = backtickedValues(valueCell(doc, field));
-      if (!same(values, constants.sources)) mismatch(`${field} values differ from SOURCES`, values, constants.sources);
+      const expected = field === "agent_source" ? constants.sources : [...constants.sources, "requested"];
+      if (!same(values, expected)) mismatch(`${field} values differ from schema vocabulary`, values, expected);
     }
     expect(fix.readJsonl()).toHaveLength(0);
   });
@@ -623,17 +748,21 @@ describe('docs/stage-runs.schema.json', () => {
     if (!same(defs.outcome.enum, constants.outcomes)) mismatch('schema outcome enum differs from OUTCOMES', defs.outcome.enum, constants.outcomes);
     if (!same(defs.route.enum, constants.routes)) mismatch('schema route enum differs from ROUTES', defs.route.enum, constants.routes);
     if (!same(defs.evidence_source.enum, constants.sources)) mismatch('schema evidence_source enum differs from SOURCES', defs.evidence_source.enum, constants.sources);
-    expect(defs.schema_version.const).toBe(constants.schema_version);
+    expect(defs.schema_version.const).toBe(1);
+    expect(defs.schema_version_2.const).toBe(constants.schema_version);
     // One release grammar: what the writer accepts from VERSION is exactly what the schema accepts.
-    expect(defs.producer_version.pattern).toBe('^' + constants.release + '$');
-    expect(Object.keys(schema.properties)).toEqual(V1_FIELDS);
-    expect(Object.keys(defs.v1.properties)).toEqual(V1_FIELDS);
+    expect(defs.producer_version.pattern).toBe('^[0-9]+(\\.[0-9]+){3}$');
+    expect(defs.producer_version_2.pattern).toBe('^' + constants.release + '$');
+    expect(Object.keys(schema.properties)).toEqual(V2_FIELDS);
+    expect(Object.keys(defs.v2.properties)).toEqual(V2_FIELDS);
+    expect(defs.v2.required).toEqual(V2_FIELDS);
+    expect(Object.keys(defs.v1.properties)).toEqual(V2_FIELDS);
     expect(defs.v1.required).toEqual(V1_FIELDS);
     expect(defs.legacy.required).toEqual(V1_FIELDS.slice(0, 13));
-    expect(Object.keys(defs.legacy.properties)).toEqual([...V1_FIELDS.slice(0, 15), ...METADATA.slice(1)]);
+    expect(Object.keys(defs.legacy.properties)).toEqual([...V1_FIELDS.slice(0, 15), ...METADATA.slice(1), ...V2_FIELDS.slice(20)]);
   });
 
-  test('wrapper-emitted rows are v1, name this checkout as producer, and validate', () => {
+  test('wrapper-emitted rows are v2, name this checkout as producer, and validate', () => {
     const fix = makeTelemetryFixture('off');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const sid = '0c7f2e29-0000-4000-8000-0000000000c1';
@@ -655,15 +784,15 @@ describe('docs/stage-runs.schema.json', () => {
       [run(claude, ['--agent', 'codex']), ['flag', 'unknown', 'unknown']],
     ];
     for (const [row, sources] of cases) {
-      expect(Object.keys(row)).toEqual(V1_FIELDS);
-      expect(row).toMatchObject({ schema_version: 1, producer_version: RELEASE });
+      expect(Object.keys(row)).toEqual(V2_FIELDS);
+      expect(row).toMatchObject({ schema_version: 2, producer_version: RELEASE });
       expect([row.agent_source, row.model_source, row.effort_source]).toEqual(sources);
       expect(verdict(row)).toEqual({ ok: true, errors: [] });
     }
   }, 30_000);
 
   test('genuine legacy rows validate with route and entrypoint_raw each optional; hybrids are not legacy', () => {
-    const v1 = quickstartRow();
+    const v1 = historicalRow();
     const base = legacyOf(v1);
     const legacy = [
       base,
@@ -686,7 +815,7 @@ describe('docs/stage-runs.schema.json', () => {
   });
 
   test('each missing field and each version, type, enum, source/value and extra-key mutation fails at its path', () => {
-    const v1 = quickstartRow();
+    const v1 = historicalRow();
     for (const field of V1_FIELDS) {
       const { [field]: _gone, ...row } = v1;
       // Without schema_version the row is judged as legacy, which the remaining metadata fails.
@@ -702,7 +831,7 @@ describe('docs/stage-runs.schema.json', () => {
       [{ schema_version: 0 }, ['/schema_version const']],
       [{ schema_version: -1 }, ['/schema_version const']],
       [{ schema_version: 1.5 }, ['/schema_version type', '/schema_version const']],
-      [{ schema_version: 2 }, ['/schema_version const']],
+      [{ schema_version: 3 }, ['/schema_version const']],
       [{ schema_version: true }, ['/schema_version type', '/schema_version const']],
       [{ stage: 7 }, ['/stage type']],
       [{ agent: 'gpt' }, ['/agent enum']],
@@ -747,10 +876,15 @@ describe('docs/stage-runs.schema.json', () => {
   test('quota runs enrichment is unchanged by v1 metadata, and the metadata never reaches skill-usage', () => {
     const quota = quotaFixture();
     try {
-      const v1 = { ...quickstartRow(), agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor', agent_source: 'flag' };
+      const attribution = { agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor', agent_source: 'flag' };
+      const v1 = { ...historicalRow(), ...attribution };
+      const v2 = { ...quickstartRow(), ...attribution, workspace_host: 'paseo', host_agent_id: 'quota-host' };
+      expect(v1.schema_version).toBe(1);
+      expect(v2.schema_version).toBe(2);
       const ledger = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs.jsonl');
       mkdirSync(dirname(ledger), { recursive: true });
-      writeFileSync(ledger, [{ ...v1, session_id: 'run-v1' }, { ...legacyOf(v1), session_id: 'run-legacy' }]
+      writeFileSync(ledger, [{ ...v1, session_id: 'run-v1' }, { ...legacyOf(v1), session_id: 'run-legacy' },
+        { ...v2, session_id: 'run-v2' }]
         .map(row => JSON.stringify(row)).join('\n') + '\n');
       const enriched = (sid: string) => {
         for (const [phase, at] of [['start', '2026-09-23T12:00:00Z'], ['finish', '2026-09-23T12:01:00Z']]) {
@@ -761,11 +895,12 @@ describe('docs/stage-runs.schema.json', () => {
         expect(runs.status).toBe(0);
         const rows = JSON.parse(runs.stdout).runs as Array<Record<string, unknown>>;
         expect(rows.length).toBeGreaterThan(0);
-        for (const row of rows) for (const field of METADATA) expect(row).not.toHaveProperty(field);
+        for (const row of rows) for (const field of [...METADATA, ...V2_FIELDS.slice(20)]) expect(row).not.toHaveProperty(field);
         return rows.map(row => ({ stage: row.stage, agent: row.agent, model: row.model, effort: row.effort, route: row.route }));
       };
       const expected = { stage: 'roadmap', agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor' };
       expect(enriched('run-v1')).toEqual([expected]);
+      expect(enriched('run-v2')).toEqual([expected]);
       expect(enriched('run-legacy')).toEqual([expected]);
     } finally {
       quota.cleanup();
@@ -773,9 +908,9 @@ describe('docs/stage-runs.schema.json', () => {
     const fix = makeTelemetryFixture('community');
     expect(runTelemetry(fix.env, ROOT, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(runTelemetry(fix.env, ROOT, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(Object.keys(fix.readLedger()[0])).toEqual(V1_FIELDS);
+    expect(Object.keys(fix.readLedger()[0])).toEqual(V2_FIELDS);
     const usage = JSON.stringify(fix.readJsonl()) + fix.readStubArgs().join('\n');
-    for (const field of [...METADATA, 'producer', 'schema-version', 'detected']) expect(usage).not.toContain(field);
+    for (const field of [...METADATA, ...V2_FIELDS.slice(20), 'producer', 'schema-version', 'detected']) expect(usage).not.toContain(field);
   }, 60_000);
 
   test('schema-only and VERSION-only diffs reach their suites; any lockfile change runs everything', () => {
@@ -805,21 +940,22 @@ describe('docs/telemetry.md schema validation command', () => {
     const doc = docText();
     const command = validationCommand(doc);
     const [success, failure] = documentedOutputs(doc);
-    // The included row is the quickstart row, so both examples stay one valid v1 row.
+    // The included row is the quickstart row, so both examples stay one valid v2 row.
     expect(command).toContain('const EXAMPLE = ' + JSON.stringify(quickstartRow()) + ';');
     const result = runValidation();
     expect([result.status, result.stdout.trimEnd(), result.stderr]).toEqual([0, success, '']);
     const v1 = quickstartRow();
-    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 2 }]
+    const shown = runValidation([{ ...v1, model: null, model_source: 'flag' }, { ...v1, schema_version: 3 }]
       .map(row => JSON.stringify(row)).join('\n') + '\n');
-    expect([shown.status, shown.stdout.trimEnd(), shown.stderr]).toEqual([1, failure, '']);
+    expect([shown.status, (shown.stderr + shown.stdout).trimEnd()]).toEqual([1, failure]);
+    expect(shown.stdout).toBe(shown.summary + '\n');
     // One streamed pass: the schema is the only file read whole.
-    expect(command).toContain('createInterface({ input: Readable.from(utf8(file))');
+    expect(command).toContain('lines = jsonLines(file)');
     expect(command.match(/readFileSync\(/g)).toHaveLength(1);
   }, 30_000);
 
   // Every line carries its expected classification, written independently of the command.
-  const v1 = () => quickstartRow();
+  const v1 = () => historicalRow();
   const mixed: Array<[string, 'v1' | 'legacy' | 'invalid' | 'unsupported' | 'routed' | 'blank']> = [
     [JSON.stringify(v1()), 'v1'],
     [JSON.stringify(v1()), 'v1'],
@@ -840,7 +976,7 @@ describe('docs/telemetry.md schema validation command', () => {
     [JSON.stringify({ ...v1(), schema_version: 1.5 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: 0 }), 'invalid'],
     [JSON.stringify({ ...v1(), schema_version: -3 }), 'invalid'],
-    [JSON.stringify({ ...v1(), schema_version: 2 }), 'unsupported'],
+    [JSON.stringify({ ...v1(), schema_version: 3 }), 'unsupported'],
     [JSON.stringify({ ...v1(), schema_version: 7 }), 'unsupported'],
     ['{"stage": "roadmap",', 'invalid'],
     ['null', 'invalid'],
@@ -859,15 +995,16 @@ describe('docs/telemetry.md schema validation command', () => {
   test('a mixed ledger is dispatched by source, then version, then schema, and fails with exact counts', () => {
     const text = mixed.map(([line]) => line).join('\n') + '\n';
     const result = runValidation(text);
-    expect([result.status, result.stderr, result.summary]).toEqual([1, '', expectedSummary(mixed)]);
+    expect([result.status, result.summary]).toEqual([1, expectedSummary(mixed)]);
+    expect(result.stdout).toBe(result.summary + '\n');
     const failedLines = mixed.map(([, kind], index) => [kind, index + 1] as const)
       .filter(([kind]) => kind === 'invalid' || kind === 'unsupported').map(([, line]) => line);
     expect([...new Set(result.diagnoses.map(line => Number(line.match(/^line (\d+):/)![1])))]).toEqual(failedLines);
     for (const line of result.diagnoses) {
       expect(line).toMatch(/^line \d+: (\/[a-z_]+|\(root\)) [a-z ]+: .+\. Fix: .+\. See docs\/telemetry\.md#schema-validation$/);
     }
-    expect(result.diagnoses).toContain(`line 13: /producer_version required: a required field is missing. Fix: write every field the contract requires, never a default. ${SEE}`);
-    expect(result.diagnoses).toContain(`line 14: /effort_source const: a null value needs source unknown; any other value needs flag or detected. Fix: correct the producer, never the saved row. ${SEE}`);
+    expect(result.diagnoses).toContain(`line 13: /producer_version required: a required field is missing. Fix: keep the saved row unchanged; correct the producer to emit every field required by this branch. ${SEE}`);
+    expect(result.diagnoses).toContain(`line 14: /effort_source const: a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested. Fix: correct the producer, never the saved row. ${SEE}`);
     // The file is read, never written; duplicates count separately.
     expect(readFileSync(result.file!, 'utf8')).toBe(text);
   }, 30_000);
@@ -907,7 +1044,9 @@ describe('docs/telemetry.md schema validation command', () => {
     }
     // Preserve the BOM for JSON.parse to reject, rather than silently stripping it.
     const bom = runValidation(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(v1()))]));
-    expect([bom.status, bom.stderr, bom.summary]).toEqual([1, '', summaryOf({ rows: 1, invalid: 1 })]);
+    expect([bom.status, bom.summary]).toEqual([1, summaryOf({ rows: 1, invalid: 1 })]);
+    expect(bom.stdout).toBe(bom.summary + '\n');
+    expect(bom.stderr).toContain('(root) json:');
   }, 30_000);
 
   test('a ten-times ledger keeps every count but shows at most 20 diagnoses', () => {
@@ -915,7 +1054,7 @@ describe('docs/telemetry.md schema validation command', () => {
     const result = runValidation(lines.map(([line]) => line).join('\n') + '\n');
     expect([result.status, result.summary]).toEqual([1, expectedSummary(mixed, 10)]);
     expect(result.diagnoses).toHaveLength(20);
-    const hidden = Number(result.stdout.match(/^(\d+) more diagnoses not shown$/m)?.[1]);
+    const hidden = Number(result.stderr.match(/^(\d+) more diagnoses not shown$/m)?.[1]);
     expect(hidden).toBeGreaterThan(0);
   }, 30_000);
 
@@ -1432,7 +1571,7 @@ describe('workflow metrics contract (Track 24A)', () => {
     expect(rows.slice(0, integrity.length).sort()).toEqual([...integrity].sort()); // the first rows make a read partial
     expect(body).toContain('<a id="workflow-metrics-unknown"></a>');
   });
-  test('a metrics sequence leaves stage-runs v1 and skill-usage shapes unchanged', () => {
+  test('a metrics sequence leaves stage-runs v2 and skill-usage shapes unchanged', () => {
     const fix = makeTelemetryFixture('community');
     const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
     const started = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']);
@@ -1446,6 +1585,7 @@ describe('workflow metrics contract (Track 24A)', () => {
     const row = fix.readLedger()[0];
     expect(verdict(row)).toEqual({ ok: true, errors: [] });
     expect(row.session_id).toBe(sid);
+    expect(row.schema_version).toBe(2);
     expect(fix.readJsonl().map(r => r.event_type)).toEqual(['skill_start', 'skill_run']);
     const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
     expect(JSON.parse(read.stdout).status).toBe('ok');
@@ -1476,4 +1616,186 @@ describe('workflow metrics contract (Track 24A)', () => {
     expect(phase('tests')).toMatchObject({ decisions: { RUN: 0, REUSE: 1, 'N/A': 0 }, steps_started: 0, observed_wall_duration_ms: null });
     expect(summary.qualified_elapsed_ms).toBeNull();
   }, 60_000);
+});
+
+
+describe('Track 26A v2 regression bundles G1–G5/G8', () => {
+  test('G4 historical branches remain closed; v2 reserves vocabulary without widening history', () => {
+    const v1 = historicalRow();
+    const v2 = quickstartRow();
+    const legacy = legacyOf(v1);
+    expect(verdict(v1).ok).toBe(true);
+    expect(verdict(v2).ok).toBe(true);
+    for (const old of [legacy, v1]) {
+      for (const field of ['workspace_host', 'host_agent_id']) {
+        expect(verdict({ ...old, [field]: v2[field] }).ok).toBe(false);
+      }
+      for (const patch of [{ outcome: 'blocked' }, { model_source: 'requested' }, { effort_source: 'requested' }]) {
+        expect(verdict({ ...old, ...patch }).ok).toBe(false);
+      }
+    }
+    for (const field of V2_FIELDS) {
+      const { [field]: _gone, ...row } = v2;
+      expect([field, verdict(row).ok]).toEqual([field, false]);
+    }
+    for (const patch of [
+      { schema_version: 1 }, { schema_version: 3 }, { extra: true },
+      { workspace_host: 'unknown', host_agent_id: 'invented' }, { workspace_host: 'other' },
+      { host_agent_id: 3 }, { agent_source: 'requested' },
+      { model: null, model_source: 'requested' }, { effort: null, effort_source: 'requested' },
+      { model_source: 'unknown' }, { effort_source: 'unknown' },
+    ]) expect([patch, verdict({ ...v2, ...patch }).ok]).toEqual([patch, false]);
+    for (const source of ['flag', 'detected', 'requested']) {
+      const row = { ...v2, model_source: source, effort_source: source, outcome: 'blocked' };
+      expect(verdict(row).ok).toBe(true);
+      expect(verdict({ ...v1, producer_version: '1.0.0' }).ok).toBe(false);
+    }
+    expect(verdict({ ...v2, agent: null, model: null, effort: null,
+      agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown',
+      workspace_host: 'unknown', host_agent_id: null, producer_version: null }).ok).toBe(true);
+  });
+
+  test('G1/G2 actual wrapper host matrix and Unicode agree with strict schema and exact docs reader', () => {
+    const fix = makeTelemetryFixture('off');
+    const roots = [join(fix.home, '.paseo/worktrees/key/repo'), join(fix.home, 'custom-paseo/worktrees/key/repo'),
+      join(fix.home, 'configured-outside-root/repo'), join(fix.home, 'arbitrary'), join(fix.home, 'lookalike/.paseo/worktrees/repo')];
+    for (const root of roots) mkdirSync(root, { recursive: true });
+    const rows: Record<string, unknown>[] = [];
+    const run = (markers: Record<string, string>, host: string, id: string | null,
+      harness: Record<string, string> = {}, agent: string | null = null, route = 'unknown', cwd = roots[3]) => {
+      const env = { ...fix.env, ...markers, ...harness };
+      expect(runTelemetry(env, cwd, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+      const result = runTelemetry(env, cwd, ['finish', '--skill', 'extend:roadmap', '--outcome', 'blocked',
+        '--model', 'fixture-model', '--effort', 'high']);
+      expect([result.status, result.stdout, result.stderr]).toEqual([0, '', '']);
+      const row = fix.readLedger().at(-1)!;
+      expect(row).toMatchObject({ schema_version: 2, workspace_host: host, host_agent_id: id, agent, route,
+        model: 'fixture-model', effort: 'high', model_source: 'flag', effort_source: 'flag', outcome: 'unknown' });
+      expect(Object.keys(row)).toEqual(V2_FIELDS);
+      expect(verdict(row).ok).toBe(true);
+      rows.push(row);
+    };
+    for (const cwd of roots) {
+      const home: Record<string, string> = cwd === roots[0] ? {} : { PASEO_HOME: join(fix.home, 'custom-paseo') };
+      run(home, 'unknown', null, {}, null, 'unknown', cwd);
+      run({ ...home, PASEO_AGENT_ID: 'paseo-id' }, 'paseo', 'paseo-id', {}, null, 'unknown', cwd);
+    }
+    for (const [markers, host, id] of [
+      [{ PASEO_AGENT_ID: '', CONDUCTOR_SESSION_ID: ' \t' }, 'unknown', null],
+      [{ PASEO_AGENT_ID: ' \n' }, 'unknown', null],
+      [{ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null],
+      [{ PASEO_AGENT_ID: 'bad\nSENTINEL', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null],
+      [{ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'bad\nSENTINEL' }, 'unknown', null],
+      [{ CONDUCTOR_SESSION_ID: 'bad\nSENTINEL' }, 'conductor', null],
+    ] as Array<[Record<string, string>, string, string | null]>) run(markers, host, id);
+    for (const [harness, agent, routeP, routeC] of [
+      [{ CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-fixture' }, 'claude', 'sdk', 'conductor'],
+      [{ CODEX_THREAD_ID: 'host-matrix' }, 'codex', 'unknown', 'conductor'],
+      [{ CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent' }, 'cursor', 'cli', 'cli'],
+    ] as Array<[Record<string, string>, string, string, string]>) {
+      run({ PASEO_AGENT_ID: 'p' }, 'paseo', 'p', harness, agent, routeP);
+      run({ CONDUCTOR_SESSION_ID: 'c' }, 'conductor', 'c', harness, agent, routeC);
+      run({ PASEO_AGENT_ID: 'p', CONDUCTOR_SESSION_ID: 'c' }, 'unknown', null, harness, agent, routeC);
+    }
+    const ids: Array<[string, string | null]> = [
+      ['x', 'x'], ['x'.repeat(200), 'x'.repeat(200)], ['x'.repeat(201), null],
+      ['café', 'café'], ['🎉'.repeat(200), '🎉'.repeat(200)], ['🎉'.repeat(201), null],
+      [' a 🎉 ', ' a 🎉 '], ['   ', null], ['', null], ['bad\tvalue', null],
+      ['bad\nvalue', null], ['bad\u007fvalue', null], ['a\u00a0b', null], ['a\u2028b', null],
+      ['a\u200db', null], ['a\ue000b', null], ['a\u0378b', null],
+    ];
+    for (const [id, accepted] of ids) {
+      run({ PASEO_AGENT_ID: id }, id.trim() ? 'paseo' : 'unknown', accepted);
+      expect(verdict({ ...quickstartRow(), host_agent_id: id }).ok).toBe(accepted !== null);
+    }
+    // Lone surrogates cannot be transported in an OS environment. Exercise the real
+    // constructor with a plain inherited-environment mapping at this encoding boundary.
+    const script = [
+      'import json, sys', 'from unittest import mock', 'sys.path.insert(0, sys.argv[1])', 'import telemetry',
+      'with mock.patch.object(telemetry.os, "environ", {"PASEO_AGENT_ID": "bad\\ud800id"}), mock.patch.object(telemetry, "detect", return_value=(None,None,None)):',
+      '    row = telemetry.provenance_row("roadmap", "surrogate", 1790000000, 1, {}, None)',
+      'print(json.dumps(row))',
+    ].join('\n');
+    const surrogate = spawnSync('python3', ['-B', '-I', '-c', script, join(ROOT, 'bin/lib')],
+      { env: fix.env, encoding: 'utf8' });
+    expect([surrogate.status, surrogate.stderr]).toEqual([0, '']);
+    rows.push(JSON.parse(surrogate.stdout));
+    expect(rows.at(-1)).toMatchObject({ workspace_host: 'paseo', host_agent_id: null });
+    expect(verdict({ ...quickstartRow(), host_agent_id: 'bad\ud800id' }).ok).toBe(false);
+    const result = runValidation(rows.map(row => JSON.stringify(row)).join('\n'));
+    expect([result.status, result.stderr, result.summary]).toEqual([0, '', summaryOf({ rows: rows.length, v2: rows.length })]);
+    const rejected = ids.filter(([, accepted]) => accepted === null).map(([id]) => ({ ...quickstartRow(), host_agent_id: id }));
+    rejected.push({ ...quickstartRow(), host_agent_id: 'bad\ud800id' });
+    const invalid = runValidation(rejected.map(row => JSON.stringify(row)).join('\n'));
+    expect(invalid.summary).toBe(summaryOf({ rows: rejected.length, invalid: rejected.length }));
+    expect(invalid.status).toBe(1);
+  }, 120_000);
+
+  test('G5 JSONL boundaries preserve Unicode separators and split CRLF without changing rows', () => {
+    const empty = { ...quickstartRow(), model: '' };
+    const padded = { ...empty, model: 'x'.repeat(65535 - Buffer.byteLength(JSON.stringify(empty))) };
+    const unicode = { ...quickstartRow(), model: 'a\u2028b\u2029c' };
+    const invalid = { ...quickstartRow(), host_agent_id: 'a\u2028b\u2029c' };
+    const routed = { source: 'other', value: 'a\u2028b\u2029c' };
+    for (const ending of ['\n', '\r', '\r\n']) {
+      const input = [padded, unicode, invalid, routed].map(row => JSON.stringify(row)).join(ending) + ending;
+      const result = runValidation(input);
+      expect([result.status, result.summary]).toEqual([1, summaryOf({ rows: 4, v2: 2, invalid: 1, routed: 1 })]);
+      expect(readFileSync(result.file!, 'utf8')).toBe(input);
+      expect(result.stderr).not.toMatch(/a\u2028b|a\u2029b/);
+    }
+  });
+
+  test('G5 positive safe integer dispatch, mixed versions and frozen old-reader rollback are read-only', () => {
+    const base = JSON.stringify(historicalRow());
+    const versions: Array<[string, 'v1' | 'v2' | 'unsupported' | 'invalid']> = [
+      ['1', 'v1'], ['2', 'v2'], ['3', 'unsupported'], ['9007199254740991', 'unsupported'],
+      ['9007199254740992', 'invalid'], ['9007199254740993', 'invalid'], ['1e400', 'invalid'],
+      ['0', 'invalid'], ['-1', 'invalid'], ['1.5', 'invalid'], ['"1"', 'invalid'], ['null', 'invalid'], ['true', 'invalid'],
+    ];
+    for (const [version, kind] of versions) {
+      const row = kind === 'v2' ? JSON.stringify(quickstartRow()) : base.replace('"schema_version":1', '"schema_version":' + version);
+      const result = runValidation(row);
+      expect([version, result.status, result.summary]).toEqual([version, ['v1', 'v2'].includes(kind) ? 0 : 1,
+        summaryOf({ rows: 1, [kind]: 1 })]);
+      expect(readFileSync(result.file!, 'utf8')).toBe(row);
+      if (kind === 'unsupported') expect(result.stderr).toContain(`version ${version} is newer than supported versions 1/2`);
+      if (kind === 'invalid') {
+        expect(result.stderr).toContain('not a positive safe integer');
+        expect(result.stderr).not.toContain('version ' + version);
+      }
+    }
+    const text = [legacyOf(historicalRow()), historicalRow(), quickstartRow()].map(row => JSON.stringify(row)).join('\n');
+    expect(runValidation(text).summary).toBe(summaryOf({ rows: 3, legacy: 1, v1: 1, v2: 1 }));
+    const fix = makeTelemetryFixture('off');
+    const file = join(fix.home, 'old-reader.jsonl');
+    writeFileSync(file, text);
+    const old = spawnSync('bash', ['-c', V1_READER_COMMAND], { cwd: ROOT,
+      env: { HOME: fix.home, PATH: dirname(process.execPath) + ':/usr/bin:/bin', STAGE_RUNS_FILE: file }, encoding: 'utf8' });
+    expect([old.status, old.stderr]).toEqual([1, '']);
+    expect(old.stdout).toContain('summary: rows=3 valid=2 v1=1 legacy=1 invalid=0 unsupported=1');
+    expect(old.stdout).toContain('newer than this contract');
+    expect(readFileSync(file, 'utf8')).toBe(text);
+  }, 30_000);
+
+  test('G8 all actual remediation targets the producer/reader and preserves cross-version input', () => {
+    const v2 = quickstartRow();
+    const rows = [
+      { ...v2, schema_version: 1 }, { ...v2, workspace_host: 'unknown' },
+      { ...v2, host_agent_id: 'bad\nPRIVATE-ID' }, { ...v2, extra: 'PRIVATE-EXTRA' },
+      { ...v2, host_agent_id: 'x'.repeat(201) }, { ...v2, host_agent_id: ' ' },
+      { ...legacyOf(historicalRow()), model_source: 'requested' }, { ...v2, model: null, model_source: 'requested' },
+    ];
+    const text = rows.map(row => JSON.stringify(row)).join('\n');
+    const result = runValidation(text);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe(result.summary + '\n');
+    expect(result.diagnoses.length).toBeGreaterThan(0);
+    for (const line of result.diagnoses) {
+      expect(line).toMatch(/Fix: (keep the saved row unchanged;|correct the producer, never the saved row)/);
+      expect(line).not.toMatch(/Fix: (remove|write|add)/);
+    }
+    for (const secret of ['PRIVATE-ID', 'PRIVATE-EXTRA']) expect(result.stderr + result.stdout).not.toContain(secret);
+    expect(readFileSync(result.file!, 'utf8')).toBe(text);
+  });
 });

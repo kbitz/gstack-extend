@@ -1,0 +1,3 @@
+{
+  "runner": "bun run test -- {files}"
+}

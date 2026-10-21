@@ -84,7 +84,7 @@ describe('shipped blocks and installation lookup', () => {
       // The installed copy resolves to this checkout, so the provenance row names its release.
       const ledger = fix.readLedger();
       expect(ledger).toHaveLength(1);
-      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 1, producer_version: RELEASE });
+      expect(ledger[0]).toMatchObject({ stage: 'full-review', session_id: rows[0].session_id, schema_version: 2, producer_version: RELEASE });
       expect(validRow(ledger[0])).toBe(true);
     }, 30_000);
   }
@@ -1452,7 +1452,7 @@ describe('writer and reader agree for every installed skill', () => {
 
 const SCHEMA = ['stage', 'agent', 'model', 'effort', 'rung', 'outcome', 'started_at', 'duration_s', 'session_id',
   'repo', 'branch', 'work_item', 'source', 'route', 'entrypoint_raw', 'schema_version', 'producer_version',
-  'agent_source', 'model_source', 'effort_source'];
+  'agent_source', 'model_source', 'effort_source', 'workspace_host', 'host_agent_id'];
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const writeJsonl = (file: string, records: object[]) => {
   mkdirSync(dirname(file), { recursive: true });
@@ -1503,7 +1503,7 @@ describe('execution provenance', () => {
     expect(Object.keys(row)).toEqual(SCHEMA);
     expect(row).toMatchObject({ stage: 'roadmap', agent: null, model: null, effort: null, rung: 0, outcome: 'success',
       session_id: sid, repo: 'acme/widget', branch: 'feature/x', work_item: null, source: 'gstack-extend',
-      schema_version: 1, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
+      schema_version: 2, producer_version: RELEASE, agent_source: 'unknown', model_source: 'unknown', effort_source: 'unknown' });
     expect(validRow(row)).toBe(true);
     expect(row.started_at).toBe(iso(epoch).replace(/\.\d{3}Z$/, 'Z'));
     expect(Number.isInteger(row.duration_s) && row.duration_s >= 0).toBe(true);
@@ -3169,7 +3169,7 @@ describe('Conductor Cursor store', () => {
     expect([happy.finish.status, happy.finish.stdout, happy.finish.stderr]).toEqual([0, '', '']);
     expect(Object.keys(happy.row)).toEqual(SCHEMA);
     expect(happy.row).toMatchObject({
-      agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor', schema_version: 1,
+      agent: 'cursor', model: 'grok-4.7', effort: 'high', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 2,
       agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
     });
     expect(validRow(happy.row)).toBe(true);
@@ -3692,7 +3692,7 @@ describe('Conductor Cursor store', () => {
       expect([finished.finish.status, finished.finish.stdout]).toEqual([0, '']);
       expect(Object.keys(finished.row)).toEqual(SCHEMA);
       expect(finished.row).toMatchObject({
-        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', schema_version: 1,
+        agent: 'cursor', model: 'grok-4.7', effort: 'xhigh', route: 'conductor', workspace_host: 'unknown', host_agent_id: null, schema_version: 2,
         agent_source: 'detected', model_source: 'detected', effort_source: 'detected', producer_version: RELEASE,
       });
       expect(validRow(finished.row)).toBe(true);
@@ -3761,8 +3761,9 @@ function copiedInstall(fix: TelemetryFixture, name: string, version: string | nu
   return { root, versionFile: join(root, 'VERSION'), run };
 }
 
-const UNKNOWN_PRODUCER = (reason: string) => `telemetry: producer_version unknown (${reason}); the row still records. `
-  + 'Fix: restore or upgrade the gstack-extend installation so its VERSION holds a valid release. See docs/telemetry.md.';
+const UNKNOWN_PRODUCER = (reason: string) => `telemetry: PRODUCER_VERSION_UNKNOWN: producer_version unknown (${reason}). `
+  + 'Fix: restore or upgrade the gstack-extend installation so its VERSION holds a valid release; only newly constructed rows improve, '
+  + 'saved retries retain their original producer. See docs/telemetry.md#producer-version.';
 
 describe('row version, producer and sources', () => {
   test('producer_version names the running installation, never the caller repository, gstack, or an override', () => {
@@ -3782,7 +3783,7 @@ describe('row version, producer and sources', () => {
     const finish = spawnSync(join(installed, 'bin/gstack-extend-telemetry'), ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], options);
     expect([finish.status, finish.stdout, finish.stderr]).toEqual([0, '', '']);
     expect(fix.readLedger()).toHaveLength(1);
-    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 1, producer_version: RELEASE });
+    expect(fix.readLedger()[0]).toMatchObject({ schema_version: 2, producer_version: RELEASE });
     // Release and sources stay local: the completion the logger receives carries none of them.
     const forwarded = fix.readStubArgs().join('\n') + JSON.stringify(fix.readJsonl());
     for (const text of [RELEASE, 'schema', 'producer', '_source']) expect(forwarded).not.toContain(text);
@@ -3791,7 +3792,7 @@ describe('row version, producer and sources', () => {
   test('an unusable installation VERSION leaves producer_version null, quietly, and the row still records', () => {
     const fix = makeTelemetryFixture('off');
     const unreadable = 'VERSION is unreadable, oversized, or not a private regular file';
-    const malformed = 'VERSION is not a four-part numeric release';
+    const malformed = 'VERSION is not a three- or four-part numeric release';
     const cases: Array<[string, (file: string) => void, string | null, string | null]> = [
       ['plain', file => writeFileSync(file, '0.40.1.2\n'), '0.40.1.2', null],
       ['CRLF and spaces', file => writeFileSync(file, ' 0.40.1.2\r\n'), '0.40.1.2', null],
@@ -3806,7 +3807,11 @@ describe('row version, producer and sources', () => {
       ['directory', file => mkdirSync(file), null, unreadable],
       ['invalid UTF-8', file => writeFileSync(file, Buffer.from([0x30, 0x2e, 0xff, 0xfe, 0x0a])), null, 'VERSION is not UTF-8'],
       ['Unicode digits', file => writeFileSync(file, '٠.40.1.2\n'), null, malformed],
-      ['three parts', file => writeFileSync(file, '0.40.1\n'), null, malformed],
+      ['three parts', file => writeFileSync(file, ' 1.0.0\r\n'), '1.0.0', null],
+      ['two parts', file => writeFileSync(file, '0.40\n'), null, malformed],
+      ['five parts', file => writeFileSync(file, '0.40.1.2.3\n'), null, malformed],
+      ['prefix', file => writeFileSync(file, 'v1.0.0\n'), null, malformed],
+      ['suffix', file => writeFileSync(file, '1.0.0-rc1\n'), null, malformed],
       ['internal space', file => writeFileSync(file, '0.40. 1.2\n'), null, malformed],
       ['private contents', file => writeFileSync(file, 'SENTINEL-RELEASE-TEXT\n'), null, malformed],
     ];
@@ -3829,7 +3834,7 @@ describe('row version, producer and sources', () => {
     const install = copiedInstall(usage, 'install-missing', null);
     expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
     expect(install.run(['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
-    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 1 }]);
+    expect(usage.readLedger()).toMatchObject([{ producer_version: null, schema_version: 2 }]);
     expect(usage.readJsonl().map(entry => entry.event_type)).toEqual(['skill_start', 'skill_run']);
   }, 60_000);
 
@@ -3898,7 +3903,7 @@ describe('row version, producer and sources', () => {
       expect([name, Object.keys(row), stderr]).toEqual([name, SCHEMA, '']);
       expect([name, row.agent, row.model, row.effort, row.agent_source, row.model_source, row.effort_source])
         .toEqual([name, ...expected]);
-      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 1, RELEASE, true]);
+      expect([name, row.schema_version, row.producer_version, validRow(row)]).toEqual([name, 2, RELEASE, true]);
     });
     // A read the operating system refuses (no portable chmod needed) costs only the release.
     const denied = rows.at(-1)!;
@@ -3928,11 +3933,11 @@ describe('row version, producer and sources', () => {
       return readHandoff(fix).row as Record<string, unknown>;
     };
 
-    // A v1 row built by the older release is appended by the newer one exactly as built, whatever the retry passes.
-    const saved = failFirstAppend(older, { CLAUDECODE: '1' });
-    expect(saved).toMatchObject({ agent: 'claude', schema_version: 1, producer_version: '0.40.0.0',
-      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown' });
-    expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread' }).status).toBe(0);
+    // A current v2 row built by the older installation is appended by the newer one exactly as built, whatever the retry passes.
+    const saved = failFirstAppend(older, { CLAUDECODE: '1', PASEO_AGENT_ID: 'original-agent' });
+    expect(saved).toMatchObject({ agent: 'claude', schema_version: 2, producer_version: '0.40.0.0',
+      agent_source: 'detected', model_source: 'unknown', effort_source: 'unknown', workspace_host: 'paseo', host_agent_id: 'original-agent' });
+    expect(newer.run([...finish, '--agent', 'codex', '--model', 'gpt-6-astra'], { CODEX_THREAD_ID: 'later-thread', CONDUCTOR_SESSION_ID: 'later-session' }).status).toBe(0);
     expect(lines()).toEqual([JSON.stringify(saved)]);
     expect(handoffs(fix)).toHaveLength(0);
 
@@ -6043,5 +6048,129 @@ Path.home().joinpath('logger-saw.json').write_text(json.dumps({'item': os.enviro
     expect(help.stdout).toContain('GSTACK_EXTEND_WORK_ITEM');
     expect(help.stdout).toMatch(/--work-item, else the value start saved .* else that variable at finish/);
     expect(help.stdout).toContain('at most 200 printable characters, otherwise null');
+  }, 30_000);
+});
+
+
+describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
+  test('host attribution is sampled at first finish, then retained through failed and completed explicit retries', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const install = copiedInstall(fix, 'construction-time', '1.0.0\n');
+    const start = install.run(['start', '--skill', 'extend:roadmap'], { PASEO_AGENT_ID: 'start-agent' });
+    expect([start.status, start.stderr]).toEqual([0, '']);
+    expect(start.stdout).toMatch(/^GE_TELEMETRY: session=\S+ start=\d+\n$/);
+    expect(start.stdout).not.toContain('start-agent');
+    const initial = readHandoff(fix);
+    expect(initial).not.toHaveProperty('row');
+    expect(JSON.stringify(initial)).not.toContain('start-agent');
+    const args = ['finish', '--skill', 'extend:roadmap', '--session-id', String(initial.session_id),
+      '--start', String(initial.start), '--outcome', 'success', '--work-item', 'original-work'];
+    const blocker = join(fix.home, '.gstack-extend/analytics');
+    writeFileSync(blocker, '');
+    const failed = install.run(args, { CONDUCTOR_SESSION_ID: 'first-finish-session', CLAUDECODE: '1' });
+    expect([failed.status, failed.stdout, failed.stderr]).toEqual([0, '', '']);
+    const saved = readHandoff(fix).row as Record<string, unknown>;
+    expect(saved).toMatchObject({ schema_version: 2, producer_version: '1.0.0', workspace_host: 'conductor',
+      host_agent_id: 'first-finish-session', work_item: 'original-work', agent: 'claude' });
+    expect(Object.keys(saved)).toEqual(SCHEMA);
+    rmSync(blocker);
+    writeFileSync(install.versionFile, '1.0.1\n');
+    const changed = { PASEO_AGENT_ID: 'retry-SENTINEL', CONDUCTOR_SESSION_ID: 'conflict-SENTINEL',
+      CODEX_THREAD_ID: 'different-harness', ...DEBUG };
+    const retry = install.run([...args, '--agent', 'codex', '--model', 'later-model', '--work-item', 'later-work'], changed);
+    expect([retry.status, retry.stdout]).toEqual([0, '']);
+    expect(retry.stderr).not.toMatch(/HOST_|PRODUCER_VERSION_UNKNOWN|SENTINEL/);
+    const ledger = join(blocker, 'stage-runs.jsonl');
+    const exact = JSON.stringify(saved) + '\n';
+    expect(readFileSync(ledger, 'utf8')).toBe(exact);
+    const usageCount = fix.readJsonl().length;
+    expect(install.run(args, changed).status).toBe(0);
+    expect(readFileSync(ledger, 'utf8')).toBe(exact);
+    expect(fix.readJsonl()).toHaveLength(usageCount);
+    const usage = JSON.stringify(fix.readJsonl()) + fix.readStubArgs().join('\n');
+    for (const secret of ['first-finish-session', 'start-agent', 'workspace_host', 'host_agent_id', 'schema_version', 'producer_version']) {
+      expect(usage).not.toContain(secret);
+    }
+  }, 30_000);
+
+  test('immutable v1 and legacy rows replay in exact original field order under new host/version context', () => {
+    const fix = makeTelemetryFixture('off');
+    const install = copiedInstall(fix, 'historical-replay', '1.0.0\n');
+    for (const version of ['legacy-13', 'legacy-15', 'v1']) {
+      expect(install.run(['start', '--skill', 'extend:roadmap']).status).toBe(0);
+      const state = readHandoff(fix);
+      const historical = { stage: 'roadmap', agent: 'codex', model: 'gpt-5-codex', effort: 'high', rung: 0,
+        outcome: 'success', started_at: '2026-09-22T14:50:06Z', duration_s: 42, session_id: state.session_id,
+        repo: 'acme/widget', branch: 'main', work_item: 'historical-work', source: 'gstack-extend', route: 'conductor',
+        entrypoint_raw: null, schema_version: 1, producer_version: '0.33.1.0', agent_source: 'detected',
+        model_source: 'flag', effort_source: 'detected' };
+      const row = Object.fromEntries(Object.entries(historical).slice(0, version === 'v1' ? 20 : version === 'legacy-13' ? 13 : 15));
+      const exact = JSON.stringify(row);
+      rewriteHandoff(fix, { row, done: [] });
+      const args = ['finish', '--skill', 'extend:roadmap', '--session-id', String(state.session_id), '--start', String(state.start)];
+      const changed = { PASEO_AGENT_ID: 'new-host', CONDUCTOR_SESSION_ID: 'conflict', ...DEBUG };
+      const result = install.run([...args, '--model', 'later-model', '--work-item', 'later-work'], changed);
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toMatch(/HOST_|PRODUCER_VERSION_UNKNOWN/);
+      const file = join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl');
+      const bytes = readFileSync(file, 'utf8');
+      expect(bytes.trimEnd().split('\n').at(-1)).toBe(exact);
+      expect(validRow(row)).toBe(true);
+      expect(install.run(args, changed).status).toBe(0);
+      expect(readFileSync(file, 'utf8')).toBe(bytes);
+    }
+  }, 30_000);
+
+  test('reserved requested environment values do not become producer observations', () => {
+    const fix = makeTelemetryFixture('off');
+    const { row } = provenanceRun(fix, { GSTACK_EXTEND_MODEL: 'SENTINEL-REQUESTED-MODEL', GSTACK_EXTEND_EFFORT: 'max' });
+    expect(row).toMatchObject({ model: null, effort: null, model_source: 'unknown', effort_source: 'unknown' });
+  });
+
+  test('host and producer faults give fixed next-invocation advice without values, paths or premature success', () => {
+    const fix = makeTelemetryFixture('off');
+    const install = copiedInstall(fix, 'PRIVATE-INSTALL-PATH', 'PRIVATE-VERSION-TEXT\n');
+    const cases: Array<[Record<string, string>, string, string, string]> = [
+      [{ PASEO_AGENT_ID: 'PRIVATE-PASEO', CONDUCTOR_SESSION_ID: 'PRIVATE-CONDUCTOR' },
+        'HOST_MARKERS_CONFLICT', 'PASEO_AGENT_ID and CONDUCTOR_SESSION_ID', 'unknown/null'],
+      [{ PASEO_AGENT_ID: 'PRIVATE-PASEO\nBAD' }, 'HOST_AGENT_ID_INVALID', 'PASEO_AGENT_ID', 'paseo/null'],
+      [{ CONDUCTOR_SESSION_ID: 'PRIVATE-CONDUCTOR\nBAD' }, 'HOST_AGENT_ID_INVALID', 'CONDUCTOR_SESSION_ID', 'conductor/null'],
+    ];
+    for (const [index, [env, code, markers, result]] of cases.entries()) {
+      const args = ['finish', '--skill', 'extend:roadmap', '--start', String(epochNow() - 1), '--outcome', 'success'];
+      const quiet = install.run([...args, '--session-id', 'quiet-' + index], env);
+      expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+      const debug = install.run([...args, '--session-id', 'debug-' + index], { ...env, ...DEBUG });
+      expect([debug.status, debug.stdout]).toEqual([0, '']);
+      const diagnosis = debug.stderr.split('\n').find(line => line.includes(code))!;
+      expect(diagnosis).toContain(markers);
+      expect(diagnosis).toContain(result);
+      expect(diagnosis).toContain('Saved replay cannot repair attribution');
+      expect(diagnosis).toContain('ask the launcher owner');
+      expect(diagnosis).toContain('next new invocation');
+      expect(diagnosis).toContain('never invent an ID, blindly unset a marker or rewrite this row');
+      expect(diagnosis).toContain('docs/telemetry.md#host-attribution');
+      if (code === 'HOST_AGENT_ID_INVALID') {
+        expect(diagnosis).toContain('1–200 printable Unicode code points and not blank');
+        expect(diagnosis).not.toContain(markers === 'PASEO_AGENT_ID' ? 'CONDUCTOR_SESSION_ID' : 'PASEO_AGENT_ID');
+      }
+      expect(debug.stderr).toContain(UNKNOWN_PRODUCER('VERSION is not a three- or four-part numeric release'));
+      for (const secret of ['PRIVATE-PASEO', 'PRIVATE-CONDUCTOR', 'PRIVATE-VERSION-TEXT', 'PRIVATE-INSTALL-PATH']) {
+        expect(debug.stderr + debug.stdout).not.toContain(secret);
+      }
+      // Existing debug output names its sink. The new metadata diagnostics must never name a private path.
+      const metadataDiagnostics = debug.stderr.split('\n').filter(line => /HOST_|PRODUCER_VERSION_UNKNOWN/.test(line)).join('\n');
+      expect(metadataDiagnostics).not.toContain(fix.home);
+      expect(debug.stderr).not.toMatch(/row still records|append succeeded/);
+    }
+    // Both diagnostics are also safe when append fails after construction.
+    const blocker = join(fix.home, '.gstack-extend/analytics');
+    renameSync(blocker, blocker + '.kept');
+    writeFileSync(blocker, '');
+    const failed = install.run(['finish', '--skill', 'extend:roadmap', '--session-id', 'failed-advice',
+      '--start', String(epochNow() - 1)], { ...cases[0][0], ...DEBUG });
+    expect(failed.status).toBe(0);
+    expect(failed.stderr).toContain('HOST_MARKERS_CONFLICT');
+    expect(failed.stderr).not.toMatch(/row still records|append succeeded/);
   }, 30_000);
 });
