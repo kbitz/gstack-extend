@@ -76,6 +76,12 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/layout-scaffold', 'src/layout-scaffold/**', 'VERSION',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',
   ],
+  'tests/autoplan-lean.test.ts': [
+    'bin/autoplan-lean', 'skills/autoplan-lean.md', 'tests/fixtures/autoplan-lean/**', 'VERSION',
+  ],
+  'tests/autoplan-lean-history.test.ts': [
+    'bin/autoplan-lean', 'skills/autoplan-lean.md', 'tests/fixtures/autoplan-lean/**', 'VERSION',
+  ],
   'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md', 'VERSION'],
   'tests/merge-gate-review-regressions.test.ts': ['VERSION'],
   'tests/quota.test.ts': [

@@ -182,6 +182,7 @@ SKILLS=(
   review-and-prep
   implement
   ship-and-land
+  autoplan-lean
 )
 
 LEGACY_SKILLS=(

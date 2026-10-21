@@ -15,6 +15,7 @@ export const ROOT_RESOLVER_SKILLS = [
   'roadmap',
   'gstack-extend-upgrade',
   'gstack-extend-init',
+  'autoplan-lean',
 ] as const;
 
 export const WORKFLOW_SKILLS = [
@@ -99,6 +100,11 @@ export const INIT_TAIL = [
   "printf '_EXTEND_ROOT=%q\\n' \"$_EXTEND_ROOT\"",
   'unset _ER_UNVERIFIED _ER_SKILL',
 ].join('\n');
+
+// autoplan-lean needs its helper launcher, so it checks bin/autoplan-lean the way init checks bin/gstack-extend.
+export const AUTOPLAN_LEAN_TAIL = INIT_TAIL
+  .replace('"$_EXTEND_ROOT/bin/gstack-extend" ] || [ ! -x "$_EXTEND_ROOT/bin/gstack-extend"', '"$_EXTEND_ROOT/bin/autoplan-lean" ] || [ ! -x "$_EXTEND_ROOT/bin/autoplan-lean"')
+  .replace('$_EXTEND_ROOT/bin/gstack-extend is missing or not executable. Fix: git -C \\"$_EXTEND_ROOT\\" checkout -- bin/gstack-extend', '$_EXTEND_ROOT/bin/autoplan-lean is missing or not executable. Fix: git -C \\"$_EXTEND_ROOT\\" checkout -- bin/autoplan-lean');
 
 export const GUARD_LINE =
   'case "${_EXTEND_ROOT:-}" in /*) grep -qx \'# extend-root-protocol: v1\' "$_EXTEND_ROOT/bin/update-check" 2>/dev/null ;; *) false ;; esac || { echo "ERROR: no verified gstack-extend root. Re-run this skill\'s preamble, or run setup --host auto from your gstack-extend checkout" >&2; exit 1; }';

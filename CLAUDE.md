@@ -30,7 +30,7 @@ never use it to reintroduce scope or override the current spec.
 
 Skill bodies (including frontmatter) must not use `$<digit>`, `$ARGUMENTS` or `${CLAUDE_*}` because hosts substitute them; use named shell variables and awk `$(0)`/`$(1)`/`$(2)` field expressions instead.
 
-Run `bun install --frozen-lockfile` once per checkout before any test command. Development and tests need Bun 1.3.3+ (`package.json` `engines.bun`; text `bun.lock` alone needs 1.2+; Ajv 8 is pinned and development-only). Every `bin/` launcher that execs Bun (`roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`) passes `--no-env-file --no-install --config=/dev/null`, whose three flags first coexist in Bun 1.3.3, so those commands (and `gstack-extend init` through its audit step) need 1.3.3+ at runtime too; `setup` only checks that `bun` exists, not its version. Tests never install packages: `Cannot find package 'ajv'` means the install has not run.
+Run `bun install --frozen-lockfile` once per checkout before any test command. Development and tests need Bun 1.3.3+ (`package.json` `engines.bun`; text `bun.lock` alone needs 1.2+; Ajv 8 is pinned and development-only). Every `bin/` launcher that execs Bun (`roadmap-audit`, `roadmap-pack`, `roadmap-touches`, `roadmap-renumber`, `layout-scaffold`, `merge-gate`, `outside-review`, `autoplan-lean`) passes `--no-env-file --no-install --config=/dev/null`, whose three flags first coexist in Bun 1.3.3, so those commands (and `gstack-extend init` through its audit step) need 1.3.3+ at runtime too; `setup` only checks that `bun` exists, not its version. Tests never install packages: `Cannot find package 'ajv'` means the install has not run.
 
 `bun run test` runs `scripts/select-tests.ts`, which narrows by `git diff` against the detected base branch (`origin/main` → `origin/master` → `main` → `master`, override with `TOUCHFILES_BASE=<ref>`). Every `tests/*.test.ts` declares its dependencies via the static TS import graph plus a small manual map in `tests/helpers/touchfiles.ts` for non-TS deps (shell binaries, fixture trees, skill files, the `setup` script). Four safety fallbacks force a full run: empty diff, missing base, any global touchfile hit (`package.json`, `bun.lock`, `tsconfig.json`, `tests/helpers/{touchfiles,fixture-repo,run-bin}.ts`), and any non-empty diff that selects zero tests. User-supplied argv (`bun test --watch foo`) and `EVALS_ALL=1` bypass selection entirely. To skip the wrapper unconditionally: `bun run test:full`. `/ship` invokes `bun run test`.
 
@@ -52,8 +52,8 @@ git diff tests/roadmap-audit/   # review what audit behavior changed
 When changing the installed skill list, update the independently hardcoded `tests/helpers/expected-setup-skills.ts` list too. The setup, update, and skill-protocol suites share it; `tests/skill-protocols.test.ts` compares it exactly against `setup`. Keep protocol cohorts explicit. The selector follows these TypeScript imports without manual touchfile entries.
 
 Telemetry, SHARED protocol, and upgrade-preamble memberships are independent.
-`TELEMETRY_SKILLS` covers all nine setup skills; protocol/preamble cohorts stay
-narrow. The five utility/workflow skills may carry only telemetry SHARED markers.
+`TELEMETRY_SKILLS` covers all ten setup skills; protocol/preamble cohorts stay
+narrow. The six utility/workflow skills may carry only telemetry SHARED markers.
 Telemetry tests execute canonical skill blocks in independent processes, isolate
 HOME and all state overrides, and test generated host copies without PATH wiring.
 For telemetry changes run the telemetry, telemetry-contract, telemetry-doctor,
@@ -93,6 +93,7 @@ Key routing rules:
 - Ship, deploy, push, create PR → invoke ship
 - QA, test the site, find bugs → invoke qa
 - Code review, check my diff → invoke review
+- Autoplan with a small plan, autoplan lean → invoke autoplan-lean (upstream /autoplan's review; review record in a sidecar)
 - Implement the plan, build this plan → invoke implement (targeted checks, then a fresh-session review-and-prep handoff)
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
 - Ship and land, finish a prepared PR → invoke ship-and-land (reuse verified evidence; run missing/stale stages, then land)
