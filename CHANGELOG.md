@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.36.18.0] - 2026-10-21
+
+### Fixed
+
+- **Passing arguments to a skill no longer rewrites that skill's shell.** Invoking any of the nine installed skills with arguments used to substitute positional parameters, `$ARGUMENTS`, and `${CLAUDE_*}` inside the skill before it ran, so helper checks and awk field reads saw the caller's words. Telemetry and install-root resolution, snooze levels, pause SHA checks, session archive moves, commit-trailer cleanup, and the no-deploy classifier now use names and awk expressions that substitution leaves alone. A skill file that still contains those placeholders fails the repository audit, including text in frontmatter.
+
 ## [0.36.17.0] - 2026-10-20
 
 ### Fixed
