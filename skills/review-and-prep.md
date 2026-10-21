@@ -1623,6 +1623,12 @@ rest of the description. Record the body's last-edited time and editor,
 re-read the body immediately before each edit, apply the receipt to that fresh
 text, and re-read after writing; if another actor edited in that window,
 re-apply the receipt onto their version and note the collision in the receipt.
+If a verified completed review resolves an earlier cycle-cap stop, include the
+exact line `reviewRestrictionResolved: true` in the new receipt, regardless of
+invocation spelling or authorization route (`continue`, ordinary, `resume`, or
+a fresh review explicitly authorized in this session). Step 3's pause receipt
+uses this same rule. Never emit it for an incomplete review or merely because
+the user approved another attempt; retain the stop until completion is verified.
 Include the repository identity, head/base branches
 and full SHAs, final Git tree SHA, preparation timestamp, and the Step 2 review
 and test evidence. Include required user-test outcomes, tested builds, and

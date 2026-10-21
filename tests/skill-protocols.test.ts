@@ -1861,6 +1861,17 @@ describe('review-and-prep repeated-review cuts', () => {
     expect(deltaFlat).toContain('A failed snapshot or missing `CANDIDATE_SNAPSHOT` runs a full-scope pass');
   });
 
+  // Value: protects=all authorized review routes publish machine-readable stop resolution;
+  // fails_when=the common receipt procedure omits the exact field or permits incomplete review;
+  // why_new=existing producer assertions only read the continue procedure; seam=none;
+  // no_claim=installed-agent execution
+  test('common receipts resolve completed stops for every authorized review route', () => {
+    const receipt = skillSection(prep, '## 6. Final readiness gate and handoff').replace(/\s+/g, ' ');
+    expect(receipt).toContain('exact line `reviewRestrictionResolved: true`');
+    expect(receipt).toContain('regardless of invocation spelling or authorization route');
+    expect(receipt).toContain('Never emit it for an incomplete review');
+  });
+
   // Value: protects=repeated continuations retain honest full coverage; fails_when=a delta-reviewed start is required to have full evidence; why_new=second continuation boundary; seam=none; no_claim=installed-agent execution
   test('later repair-only continuations carry the full baseline and review the cumulative delta', () => {
     expect(stopFlat).toContain('retain the newest corroborated full-review base across repair-only continuations');
