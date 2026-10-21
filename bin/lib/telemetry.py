@@ -40,12 +40,12 @@ SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN = "flag", "detected", "unknown"
 SOURCES = (SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN)
 # The stage-runs row format in docs/stage-runs.schema.json. Bump it, and add a schema branch, when the row's
 # shape or meaning changes; a release alone does not. Unrelated to skill-usage's v and PROTOCOL_MARKER.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # The installation running this file, resolved so a symlinked bin/ names its real checkout. Never the caller's
 # repository, an environment override, or gstack's VERSION.
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
 VERSION_BYTES = 128
-RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){3}")  # ASCII digits only; the schema's producer_version pattern
+RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # ASCII digits only; the schema's producer_version pattern
 LOG_TAIL_BYTES = 8 << 20  # a stage's turns sit at the end of its session log; bounds finish latency on huge logs
 TORN_QUIET_S = 10  # a torn last line counts as crash residue only on a Conductor store file this long untouched
 # Fixed Cursor provenance diagnostics. The text after the hash is an anchor in docs/telemetry.md.
@@ -702,10 +702,11 @@ def producer_version():
     else:
         if RELEASE_RE.fullmatch(text):
             return text
-        reason = "VERSION is not a four-part numeric release"
+        reason = "VERSION is not a three- or four-part numeric release"
     # Never the file's contents. trace(), not debug(): nothing is skipped.
-    trace(f"producer_version unknown ({reason}); the row still records. Fix: restore or upgrade the "
-          "gstack-extend installation so its VERSION holds a valid release. See docs/telemetry.md.")
+    trace(f"PRODUCER_VERSION_UNKNOWN: producer_version unknown ({reason}). Fix: restore or upgrade the "
+          "gstack-extend installation so its VERSION holds a valid release; only newly constructed rows improve, "
+          "saved retries retain their original producer. See docs/telemetry.md#producer-version.")
     return None
 
 
@@ -1934,6 +1935,28 @@ def repo_slug(url):
     return clean(slug)
 
 
+def workspace_host():
+    """Explicit inherited launch context at first row construction, independently of harness/route."""
+    markers = (("paseo", "PASEO_AGENT_ID"), ("conductor", "CONDUCTOR_SESSION_ID"))
+    present = [(host, name, os.environ[name]) for host, name in markers
+               if os.environ.get(name, "").strip()]
+    recovery = ("Saved replay cannot repair attribution. Fix: ask the launcher owner for the correct original "
+                "host context on the next new invocation; never invent an ID, blindly unset a marker or rewrite this row. "
+                "See docs/telemetry.md#host-attribution.")
+    if len(present) == 2:
+        trace("HOST_MARKERS_CONFLICT: PASEO_AGENT_ID and CONDUCTOR_SESSION_ID are both nonblank; "
+              "attribution for this row is unknown/null. " + recovery)
+        return "unknown", None
+    if not present:
+        return "unknown", None
+    host, name, value = present[0]
+    agent_id = clean(value)
+    if agent_id is None:
+        trace(f"HOST_AGENT_ID_INVALID: {name} must be 1–200 printable Unicode code points and not blank; "
+              f"attribution for this row is {host}/null. " + recovery)
+    return host, agent_id
+
+
 def provenance_row(stage, sid, start, duration, values, root, work_item=None):
     # Read the mutable store before sampling the observation end, then share that one selection.
     captured = capture_cursor_store() if _observe_cursor_store() else None
@@ -1986,6 +2009,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
         _cursor_debug(cursor_selection.reasons, cursor_selection.causes)
     # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
+    host, host_id = workspace_host()
     return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,
                 outcome=outcome if outcome in OUTCOMES else "unknown", started_at=iso(begin), duration_s=duration,
                 session_id=sid, repo=repo, branch=branch,
@@ -1993,7 +2017,7 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
                 source="gstack-extend", route=route, entrypoint_raw=entrypoint,
                 schema_version=SCHEMA_VERSION, producer_version=producer_version(),
                 agent_source=source("agent", agent), model_source=source("model", model),
-                effort_source=source("effort", effort))
+                effort_source=source("effort", effort), workspace_host=host, host_agent_id=host_id)
 
 
 def _metrics_dispatch(args):
