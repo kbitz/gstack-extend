@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.38.0.0] - 2026-10-21
+
+### Added
+
+- **A review that hits its cycle cap can stop and continue later, instead of starting another full pass.** `/review-and-prep` keeps the pull request as a draft, records the stop, and prints a continuation prompt for a fresh session. That session chooses a repair-only review, a full review, or stop. An optional policy line can travel with the prompt. A hand run that omits it gets the choice as a question. Existing review gates and the three-cycle cap stay in force. Callers that only recognize the broad `Run /review-and-prep` prefix must use the H-E hold rules before they act on a continuation prompt. The existing H-B and H-C success markers are unchanged.
+
+- **You can ask a later review to cover only the repair.** Delta scope is opt-in, through that policy or a direct request. The default is still a full review. A base merge, a scope change, rewritten history, or a dependency the review cannot see falls back to the full diff. The same opt-in can limit cycles 2 and 3, inside the cap, to the previous cycle's fixes, and it keeps the specialists that already found something. If the installed review instructions no longer match the expected anchors, that narrower path stays off and the full review runs.
+
+- **Reviewer attempts can be joined to the harness log on this machine.** `/review-and-prep` and `/ship-and-land` may append one local `voices.jsonl` row per reviewer or outside attempt, with the host, the attempt, and the times the parent observed. The file is optional. It is never uploaded or quoted in a pull request. A missing or failed write does not change a review, a gate, or a handoff. No acceptance checkpoint is awarded. Proof that an installed agent follows a real continuation remains scheduled for the first run after this release.
+
 ## [0.37.0.0] - 2026-10-21
 
 ### Changed

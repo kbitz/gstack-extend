@@ -1,0 +1,1 @@
+STOPPED — review cycle cap. PR https://github.com/example-org/example-repo/pull/42 is still a draft at a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; /review stopped after three fix cycles with two findings unresolved. The stopped receipt on the PR lists them.

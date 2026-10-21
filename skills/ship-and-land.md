@@ -267,7 +267,9 @@ decision, hold even when unconfirmed or recorded by another actor or a closed
 predecessor PR; show them to the user as blockers until verified or explicitly
 deferred. Only claims that let work be skipped need corroboration.
 If preparation explicitly paused for required manual testing, preserve that
-pause and use its `/pair-review` then `/review-and-prep resume` handoff; if the
+pause and use its `/pair-review` then `/review-and-prep resume` handoff. If it
+stopped at `/review`'s cycle cap (`review-and-prep:stopped:`), preserve that
+stop and use its `/review-and-prep continue` prompt; if the
 PR is already ready, the user must convert it to draft or explicitly defer the
 remaining checks before either skill continues. Do not
 use fallback ship reviews to bypass pending user testing or scope decisions.
@@ -680,7 +682,12 @@ finding activates it, dispatch it as soon as that finding arrives. Each reads th
 frozen diff/tree/base independently; it need not wait for the others' findings.
 Schedule within the host's concurrency limit. Wait for all required outputs and
 confirm every reader/writer is terminal before edits, then deduplicate/synthesize
-once. Pass these overrides and the project's Shell Rules to every subagent. A
+once. Pass these overrides and the project's Shell Rules to every subagent.
+Record each reader in `voices.jsonl` as `/review-and-prep`'s evidence rules
+describe (Reviewer join file in `docs/telemetry.md`): local only, never in a
+receipt or the PR body. Use a unique branch/invocation subdirectory under an
+existing `~/.gstack/projects/<slug>/ship-and-land/`, otherwise
+`~/scratch/ship-and-land/`. A
 failed required reader still needs coverage; a peer's output is not its substitute.
 Re-dispatch only that reader once on the same frozen snapshot, keeping completed
 peers' outputs; if it fails again, record incomplete coverage and ask the user.
@@ -1139,7 +1146,8 @@ deployment as unverified unless this invocation verifies it.
 
 Finish with PR URL, version, merged/deploy verdict, a brief reused-versus-run
 summary, the path taken, the wall time from the invocation start to the merge
-gate, and any blocker or unverified deployment. After a merge-gate stop, the
+gate, and any blocker or unverified deployment. Link the receipt instead of
+restating it or the review findings in chat. After a merge-gate stop, the
 merge decision stays last. CI pending, deployment
 unconfirmed, or canary unavailable must not read as deployed and verified.
 This skill has no deliberate pause: every exit, including blockers,

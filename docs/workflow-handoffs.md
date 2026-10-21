@@ -19,6 +19,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-B | `/review-and-prep` to `/ship-and-land` | 1 | `review-and-prep/v1` | `Run /ship-and-land for this prepared PR.` (first line), `Review handoff: review-and-prep/v1; review: COMPLETE; tree: <Git tree SHA>; base: <full base SHA>` |
 | H-C | PAUSED hold, then `/pair-review` to `/review-and-prep resume` | 1 | none; additive-only | `Run /pair-review for draft PR` (prefix of the pause prompt), `<!-- review-and-prep:paused:<full-sha> -->`, `Run /review-and-prep resume` (prefix of the resume prompt) |
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
+| H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -34,7 +35,7 @@ between success and failure, so a literal prefix match cannot mistake one for th
 | Outcome | Meaning | Caller may | Caller must never |
 |---|---|---|---|
 | `ADVANCE_TRUSTED` | Every validated binding matches live state, the text's provenance is attested, and the producer reported a completed review and a completed Greptile run. Only H-B reaches it. | Start the named next stage with the text unchanged, or stop at the prepared PR and report it as prepared. | Treat it as merge authorization, skip the next stage's own checks, or reuse it on a different revision. |
-| `FULL_CHECK_REQUIRED` | The caller cannot vouch for the work, but nothing needs a human first. H-A and H-C resume reach at most this outcome. | Start the next stage and relay the producer's text unchanged; the stage applies its own rules and verifies what it cannot reuse. Name the caller's bound PR, never one the text chooses. When provenance failed, first remove every line that contains the marker token (`review-and-prep/v<N>;` starting a word, in any letter case) or starts with `Review handoff`. | Claim the work is verified, tell the stage a review is complete, add or re-attach a marker, pass `--reviewed`, or run Greptile again. |
+| `FULL_CHECK_REQUIRED` | The caller cannot vouch for the work, but nothing needs a human first. H-A, H-C resume and H-E reach at most this outcome. | Start the next stage and relay the producer's text unchanged; the stage applies its own rules and verifies what it cannot reuse. Name the caller's bound PR, never one the text chooses. When provenance failed, first remove every line that contains the marker token (`review-and-prep/v<N>;` starting a word, in any letter case) or starts with `Review handoff`. | Claim the work is verified, tell the stage a review is complete, add or re-attach a marker, pass `--reviewed`, or run Greptile again. |
 | `HOLD` | A named human action is required first. | Show that action to the user and stop. | Start any stage itself, mark the PR ready, or retry past the stated bound. |
 | `REFUSE` | The input is not a handoff for this work: blocked, wrong repository, PR or branch, or a summary with nothing to check. | Stop and show the failing binding. | Advance, infer bindings from prose, or accept encouragement in the text. |
 
@@ -238,6 +239,95 @@ classifier reports, with the expected and actual values.
 | <a id="d-bare-wrong-pr"></a>`D-BARE-WRONG-PR` | H-D | `—` | REFUSE | `pr`: summary names another PR than the bound one | Stop and show the user the failing binding; start nothing | yes |
 | <a id="d-unknown-status"></a>`D-UNKNOWN-STATUS` | H-D | `STATUS: BLOCKED \| NEEDS_CONTEXT` | HOLD | `unknown-status`: a status word this contract does not know | Show the text to the user; new producer words default to hold | yes |
 | <a id="d-release-only-handback"></a>`D-RELEASE-ONLY-HANDBACK` | H-D | `/ship-and-land stopped on the release-only path; it made no change for this finding.` | HOLD | `release-only-handback`: preparation work is needed | Tell the user to convert the PR to draft and run `/review-and-prep` to fix the finding, then use its new handoff | yes |
+| <a id="d-stopped"></a>`D-STOPPED` | H-D | `STOPPED — review cycle cap` | HOLD | `stopped`: preparation stopped at `/review`'s cycle cap and no continuation prompt came with it | Ask the user how to continue; the stopped receipt on the PR names the options; keep the PR draft | yes |
+| <a id="e-continue"></a>`E-CONTINUE` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; the policy is the one the caller supplied and the count is within it | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
+| <a id="e-user-policy"></a>`E-USER-POLICY` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | FULL_CHECK_REQUIRED | none; the caller supplied no policy, and the prompt exactly matches the corroborated stopped record's user decision | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
+| <a id="e-policy-mismatch"></a>`E-POLICY-MISMATCH` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | HOLD | `policy`: the prompt's policy differs from the one the caller supplied | Show the user both policies; continue only on their decision | yes |
+| <a id="e-policy-none"></a>`E-POLICY-NONE` | H-E | `Review policy: none supplied` | HOLD | `policy-none`: nobody approved a continuation | Ask the user which continuation to run; their answer becomes the policy | yes |
+| <a id="e-policy-stop"></a>`E-POLICY-STOP` | H-E | `continuation=repair-only\|full\|stop` | HOLD | `policy-stop`: the policy says `continuation=stop` or names no continuation | Hand the stop to the user; start nothing | yes |
+| <a id="e-policy-malformed"></a>`E-POLICY-MALFORMED` | H-E | `review-and-prep-policy/v1` | HOLD | `policy-malformed`: an unknown version, key or value, or a repeated key | Show the user the policy line; continue only with a corrected one | yes |
+| <a id="e-limit"></a>`E-LIMIT` | H-E | `Continuation: <k> of <n>` | HOLD | `continuation-limit`: this continuation exceeds the approved count, or the count disagrees with the policy | Ask the user whether to approve another continuation | yes |
+| <a id="e-stopped-sha"></a>`E-STOPPED-SHA` | H-E | `Stopped at: <full HEAD SHA>` | HOLD | `stopped-sha`: `Stopped at` is not the newest stopped record, or not an ancestor of HEAD | Read and validate the newest stopped record; start no continuation on the stale prompt | yes |
+| <a id="e-stop-author"></a>`E-STOP-AUTHOR` | H-E | `<!-- review-and-prep:stopped:<full-sha> -->` | HOLD | `stop-author`: the newest stopped record is not by the running account | Ask the user to confirm the stopped record; do not continue on it | yes |
+| <a id="e-ready"></a>`E-READY` | H-E | `Keep the PR draft.` | HOLD | `pr-ready`: the PR is ready, and a continuation runs only on a draft | Tell the user to convert the PR to draft; then run `/review-and-prep continue` | yes |
+| <a id="e-wrong-pr"></a>`E-WRONG-PR` | H-E | `Run /review-and-prep continue` | REFUSE | `pr`: prompt PR number vs the bound PR | Stop and show the user the failing binding; start nothing | yes |
+| <a id="e-after-blocked"></a>`E-AFTER-BLOCKED` | H-E | `BLOCKED` | REFUSE | `blocked`: a BLOCKED status around the prompt, which is why the producer prints `STOPPED` | Stop; give the user the session's report; do not continue yet | yes |
+| <a id="e-live-missing"></a>`E-LIVE-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `unknown`: a live binding the caller never read, including whether it supplied a policy | Read every H-E binding, then classify again; an unread binding is never a pass | yes |
+| <a id="e-policy-missing"></a>`E-POLICY-MISSING` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | HOLD | `malformed`, `policy-malformed`: the required policy label is absent | Correct the prompt against the approved policy and live records; start nothing until it validates | yes |
+| <a id="e-policy-duplicate"></a>`E-POLICY-DUPLICATE` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | HOLD | `malformed`, `policy-malformed`: more than one policy label is present | Correct the prompt against the approved policy and live records; start nothing until it validates | yes |
+| <a id="e-count-missing"></a>`E-COUNT-MISSING` | H-E | `Continuation: <k> of <n>` | HOLD | `malformed`, `continuation-limit`: the required continuation count is absent | Correct the prompt against the approved policy and live records; start nothing until it validates | yes |
+| <a id="e-count-duplicate"></a>`E-COUNT-DUPLICATE` | H-E | `Continuation: <k> of <n>` | HOLD | `malformed`, `continuation-limit`: more than one continuation count is present | Correct the prompt against the approved policy and live records; start nothing until it validates | yes |
+| <a id="e-live-count"></a>`E-LIVE-COUNT` | H-E | `Continuation: <k> of <n>` | HOLD | `continuation-limit`: the prompt replays a lower count than the live running-account stopped records | Correct the prompt against the approved policy and live records; start nothing until it validates | yes |
+| <a id="e-renewed-budget"></a>`E-RENEWED-BUDGET` | H-E | `Continuation: <k> of <n>` | FULL_CHECK_REQUIRED | none; renewed approval raises the PR-lifetime ceiling to cover the live stop count | Run `/review-and-prep continue` with the renewed invocation policy; keep the PR draft | yes |
+| <a id="e-renewed-exhausted"></a>`E-RENEWED-EXHAUSTED` | H-E | `Continuation: <k> of <n>` | HOLD | `continuation-limit`: the renewed policy ceiling is still below the live stop count | Ask the user to correct the prompt or approve a sufficient PR-lifetime ceiling; start nothing | yes |
+| <a id="e-stop-missing"></a>`E-STOP-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `stop-record`: no stopped record exists | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="e-stop-unverified"></a>`E-STOP-UNVERIFIED` | H-E | `Run /review-and-prep continue` | HOLD | `stop-unverified`: stopped record edit history is unread or unverified | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="e-stop-foreign-edit"></a>`E-STOP-FOREIGN-EDIT` | H-E | `Run /review-and-prep continue` | HOLD | `stop-unverified`: another account edited the stopped record | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="e-user-policy-missing"></a>`E-USER-POLICY-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `policy-unverified`: the claimed user decision is absent from the corroborated record | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="e-user-policy-mismatch"></a>`E-USER-POLICY-MISMATCH` | H-E | `Run /review-and-prep continue` | HOLD | `policy`: the prompt differs from the corroborated user decision | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="e-user-policy-source"></a>`E-USER-POLICY-SOURCE` | H-E | `Run /review-and-prep continue` | HOLD | `policy-unverified`: the recorded policy is not a user decision | Verify the stopped record and user authorization before continuing; start nothing | yes |
+| <a id="a-stopped-before"></a>`A-STOPPED-BEFORE` | H-A | `STOPPED — review cycle cap` | HOLD | `stopped`: STOPPED text before or after the handoff preserves the cycle-cap hold | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="a-stopped-after"></a>`A-STOPPED-AFTER` | H-A | `STOPPED — review cycle cap` | HOLD | `stopped`: STOPPED text before or after the handoff preserves the cycle-cap hold | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stopped-before"></a>`B-STOPPED-BEFORE` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: STOPPED text before or after the handoff preserves the cycle-cap hold | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stopped-after"></a>`B-STOPPED-AFTER` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: STOPPED text before or after the handoff preserves the cycle-cap hold | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stopped-newer"></a>`B-STOPPED-NEWER` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a stopped record follows the prepared receipt | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stopped-foreign"></a>`B-STOPPED-FOREIGN` | H-B | `STOPPED — review cycle cap` | HOLD | `stop-author`: the later stop is by another account | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stopped-unverified"></a>`B-STOPPED-UNVERIFIED` | H-B | `STOPPED — review cycle cap` | HOLD | `stop-unverified`: the later stop has unverified edit history | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="b-stop-resolution-missing"></a>`B-STOP-RESOLUTION-MISSING` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt has no explicit review resolution | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-false"></a>`B-STOP-RESOLUTION-FALSE` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt explicitly leaves review unresolved | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-unverified"></a>`B-STOP-RESOLUTION-UNVERIFIED` | H-B | `review-and-prep/v1` | HOLD | `stopped`: the later receipt claims resolution but has unverified editors | Preserve the stop until a corroborated record explicitly resolves the review restriction | yes |
+| <a id="b-stop-resolution-verified"></a>`B-STOP-RESOLUTION-VERIFIED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; a later receipt explicitly resolves the review restriction and its author and every editor are corroborated as the running account | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR | yes |
+| <a id="b-stop-resolving-pause-then-receipt"></a>`B-STOP-RESOLVING-PAUSE-THEN-RECEIPT` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; a corroborated pause explicitly resolves the review restriction, and a later running-account receipt for Prepared HEAD supersedes the ordinary pause | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR | yes |
+| <a id="e-delta-base"></a>`E-DELTA-BASE` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: the prompt delta base differs from the corroborated stopped record | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="e-delta-base-missing"></a>`E-DELTA-BASE-MISSING` | H-E | `Delta base: <full SHA>` | HOLD | `malformed`, `delta-base`: the prompt delta base is absent | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="e-delta-base-record-missing"></a>`E-DELTA-BASE-RECORD-MISSING` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: the stopped record has no recorded delta base | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="e-delta-base-unverified"></a>`E-DELTA-BASE-UNVERIFIED` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: no completed-review evidence corroborates the delta base | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="e-delta-base-record-edited"></a>`E-DELTA-BASE-RECORD-EDITED` | H-E | `Delta base: <full SHA>` | HOLD | `delta-base`: the recorded delta base differs from completed-review evidence | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="e-dedup-stop"></a>`E-DEDUP-STOP` | H-E | `Continuation: <k> of <n>` | FULL_CHECK_REQUIRED | none; duplicate stopped comments at the same SHA count as one stop | Run `/review-and-prep continue` on the same draft with the valid prompt | yes |
+| <a id="e-superseded-paused-own"></a>`E-SUPERSEDED-PAUSED-OWN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-superseded-paused-foreign"></a>`E-SUPERSEDED-PAUSED-FOREIGN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-superseded-paused-unverified"></a>`E-SUPERSEDED-PAUSED-UNVERIFIED` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-superseded-receipt-own"></a>`E-SUPERSEDED-RECEIPT-OWN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-superseded-receipt-foreign"></a>`E-SUPERSEDED-RECEIPT-FOREIGN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-superseded-receipt-unverified"></a>`E-SUPERSEDED-RECEIPT-UNVERIFIED` | H-E | `Run /review-and-prep continue` | HOLD | `stop-superseded`: a newer pause or receipt supersedes the stop, regardless of its author or verification | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-claim-own"></a>`E-CLAIM-OWN` | H-E | `Run /review-and-prep continue` | HOLD | `continuation-consumed`: a durable claim already exists for this stop SHA | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-claim-foreign"></a>`E-CLAIM-FOREIGN` | H-E | `Run /review-and-prep continue` | HOLD | `continuation-consumed`: a durable claim already exists for this stop SHA | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-claim-next-stop"></a>`E-CLAIM-NEXT-STOP` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; a new genuine stop at a different SHA follows the earlier claim and fits the raised ceiling | Run `/review-and-prep continue` for the new stop within its approved ceiling | yes |
+| <a id="e-stopped-sha-mismatch"></a>`E-STOPPED-SHA-MISMATCH` | H-E | `Run /review-and-prep continue` | HOLD | `stopped-sha`: the prompt does not name the newest stop SHA | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-row-missing"></a>`E-REVIEW-ROW-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-tree-mismatch"></a>`E-REVIEW-TREE-MISMATCH` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-tree-unknown"></a>`E-REVIEW-TREE-UNKNOWN` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-partial"></a>`E-REVIEW-PARTIAL` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-incomplete"></a>`E-REVIEW-INCOMPLETE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-source-missing"></a>`E-REVIEW-SOURCE-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="e-review-commit-mismatch"></a>`E-REVIEW-COMMIT-MISMATCH` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: portable completed full-review evidence is missing or fails its commit, tree, scope, completion or source binding | Hold; validate the current stop and its portable evidence, and do not replay a consumed continuation | yes |
+| <a id="c-resume-after-continuation"></a>`C-RESUME-AFTER-CONTINUATION` | H-C resume | `Run /review-and-prep resume` | FULL_CHECK_REQUIRED | none; the newer manual-testing pause resolves the review restriction after the claimed continuation | Run `/review-and-prep resume` with the recorded manual-testing results; do not replay the old H-E | yes |
+| <a id="e-stopped-at-missing"></a>`E-STOPPED-AT-MISSING` | H-E | `Run /review-and-prep continue` | HOLD | `malformed`, `stopped-sha`: the stop SHA is missing, duplicated or invalid | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="e-stopped-at-duplicate"></a>`E-STOPPED-AT-DUPLICATE` | H-E | `Run /review-and-prep continue` | HOLD | `malformed`, `stopped-sha`: the stop SHA is missing, duplicated or invalid | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="e-stopped-at-invalid"></a>`E-STOPPED-AT-INVALID` | H-E | `Run /review-and-prep continue` | HOLD | `malformed`, `stopped-sha`: the stop SHA is missing, duplicated or invalid | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="e-full-review-missing"></a>`E-FULL-REVIEW-MISSING` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; a full continuation needs no prior completed delta-base review evidence | Run the named stage on the same draft under its remaining gates | yes |
+| <a id="e-full-review-partial"></a>`E-FULL-REVIEW-PARTIAL` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; a full continuation needs no prior completed delta-base review evidence | Run the named stage on the same draft under its remaining gates | yes |
+| <a id="c-resume-newer-stop"></a>`C-RESUME-NEWER-STOP` | H-C resume | `Run /review-and-prep resume` | HOLD | `stopped`: a stop is newer than the manual-testing pause | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="c-resume-missing-resolution"></a>`C-RESUME-MISSING-RESOLUTION` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: the later pause lacks a true corroborated resolution of the review restriction | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="c-resume-false-resolution"></a>`C-RESUME-FALSE-RESOLUTION` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: the later pause lacks a true corroborated resolution of the review restriction | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="c-resume-unverified-resolution"></a>`C-RESUME-UNVERIFIED-RESOLUTION` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: the later pause lacks a true corroborated resolution of the review restriction | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="c-resume-foreign-resolution"></a>`C-RESUME-FOREIGN-RESOLUTION` | H-C resume | `Run /review-and-prep resume` | HOLD | `pause-author`: a foreign pause cannot resolve the review restriction | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="e-cumulative-full-anchor"></a>`E-CUMULATIVE-FULL-ANCHOR` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; the retained full-review BASE predates the stopped delta invocation start HEAD | Run the named stage on the same draft under its remaining gates | yes |
+| <a id="e-full-delta-identity"></a>`E-FULL-DELTA-IDENTITY` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: full scope still requires the prompt delta base to match the corroborated stop record | Hold and validate the latest restriction and its evidence; start no review on this prompt | yes |
+| <a id="e-stop-conflict-base"></a>`E-STOP-CONFLICT-BASE` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-stop-conflict-policy"></a>`E-STOP-CONFLICT-POLICY` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-stop-conflict-source"></a>`E-STOP-CONFLICT-SOURCE` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-stop-conflict-unverified"></a>`E-STOP-CONFLICT-UNVERIFIED` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-stop-conflict-foreign"></a>`E-STOP-CONFLICT-FOREIGN` | H-E | `Run /review-and-prep continue` | HOLD | `stop-conflict`: duplicate current-stop records disagree or include a foreign or unverified copy | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="c-resume-resolving-receipt-verified"></a>`C-RESUME-RESOLVING-RECEIPT-VERIFIED` | H-C resume | `Run /review-and-prep resume` | FULL_CHECK_REQUIRED | none; a later corroborated receipt explicitly resolves the stop before the ordinary pause | Run `/review-and-prep resume` under its remaining manual-testing gates | yes |
+| <a id="c-resume-resolving-pause-then-pause"></a>`C-RESUME-RESOLVING-PAUSE-THEN-PAUSE` | H-C resume | `Run /review-and-prep resume` | FULL_CHECK_REQUIRED | none; a corroborated pause explicitly resolves the stop before a newer ordinary pause | Run `/review-and-prep resume` under its remaining manual-testing gates | yes |
+| <a id="c-resume-resolving-receipt-foreign"></a>`C-RESUME-RESOLVING-RECEIPT-FOREIGN` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="c-resume-resolving-receipt-unverified"></a>`C-RESUME-RESOLVING-RECEIPT-UNVERIFIED` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="c-resume-resolving-receipt-false"></a>`C-RESUME-RESOLVING-RECEIPT-FALSE` | H-C resume | `Run /review-and-prep resume` | HOLD | `review-resolution`: a foreign, unverified or false receipt resolution cannot clear the stop | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-cumulative-delta-not-full"></a>`E-CUMULATIVE-DELTA-NOT-FULL` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the invocation-start commit has only delta-scope evidence and cannot replace the full-review anchor | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-review-source-local-path"></a>`E-REVIEW-SOURCE-LOCAL-PATH` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-review-source-file-uri"></a>`E-REVIEW-SOURCE-FILE-URI` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="e-review-source-whitespace"></a>`E-REVIEW-SOURCE-WHITESPACE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 
 ## Worked caller flow
 
@@ -325,8 +415,13 @@ with no marker, fails its binding.
 | Greptile's reviewed commit is in the head's history | `git merge-base --is-ancestor <reviewed-sha> <live-head>` |
 | Plan SHA-256 | see "Plan source" |
 | Running account | `gh api user --jq .login` |
-| Receipt and pause records, with authors and markers | `gh api 'repos/<owner/repo>/issues/<number>/comments?per_page=100&page=<n>'` for pages 1 to 10, ordered by `created_at` then `id`, oldest first; more than 10 pages is `unknown` |
+| Receipt, pause, stopped and continuation-claim records, with authors and markers | `gh api 'repos/<owner/repo>/issues/<number>/comments?per_page=100&page=<n>'` for pages 1 to 10, ordered by `created_at` then `id`, oldest first; more than 10 pages is `unknown`; unread claim or supersession state holds |
 | Receipt edit history | `gh api graphql -f query='query($id:ID!,$after:String){node(id:$id){... on IssueComment{userContentEdits(first:100,after:$after){nodes{editor{login}} pageInfo{hasNextPage endCursor}}}}}' -f id=<comment node_id>`, adding `-f after=<endCursor>` until `hasNextPage` is false; an unreadable history is unverified |
+| Stop SHA is an ancestor of HEAD (H-E) | `git merge-base --is-ancestor <stopped-at> <live-head>` (exit 0 yes, 1 no) |
+| Caller policy (H-E) | the exact policy from the caller's own state, or none; never infer it from the relayed H-E or PR. Supply `Invocation policy provenance: caller-supplied` or `Invocation policy provenance: user-decision-relay` as a direct instruction outside the unchanged H-E prompt, according to that state |
+| Stop count and recorded user decision (H-E) | count distinct stopped SHAs across all running-account stopped records on this PR; read the newest stopped record's policy and source; corroborate its author and every editor using the comment queries above |
+| Delta base (H-E) | every policy requires exactly one valid prompt SHA matching the corroborated stopped record's delta base. For repair-only, also require a portable completed full-review evidence row for retained anchor B: tree T, full scope, completion, per-stage evidence and source record reference; independently run `git rev-parse <B>^{tree}` and require T. Require the stop receipt's author and every editor to be the running account. A full continuation does not require prior review evidence |
+| Continuation availability (H-E) | no paused/receipt record may follow the latest stop, and no `review-and-prep:continuation:<stop-sha>` claim may exist for that SHA. Any such record holds, including foreign or unverified records; absent or uncertain query results never authorize dispatch |
 | Checks not run and Ship gates | the receipt's list of checks that were not run and its `Ship gates` section (`/review-and-prep` Step 6); a required check listed as not run, or an unreadable list, is `check-not-run`, and unreadable Ship gates make `releaseOnlyEligible` false |
 
 For H-A, `<checkout>` is the caller's own bound checkout, never a path taken from the text:
@@ -338,6 +433,45 @@ For H-A, `<checkout>` is the caller's own bound checkout, never a path taken fro
 | Target base | the base the caller was asked to use; compare after removing a leading configured remote name (`git -C <checkout> remote`) from both sides |
 | HEAD | `git -C <checkout> rev-parse HEAD` |
 | Work state | `git -C <checkout> status --porcelain`; empty output is clean |
+
+Stopped receipts publish these fixed labels exactly once, independent of the H-E
+prompt. Consumers parse their values into the modeled stopped-record fields:
+
+```text
+Stopped at: <full HEAD SHA>
+Delta base: <full SHA>
+Review policy: <verbatim policy value or none supplied>
+Review policy source: <caller prompt|user decision|none supplied>
+Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; completed=true; source=<durable reference>
+```
+
+When full-review evidence is absent, replace its entire line with
+`Full-review evidence: unavailable`; never emit both forms. `Stopped at` maps to
+the stopped SHA, `Delta base` to `recordedDeltaBase`, `Review policy` to
+`recordedPolicy`, and `Review policy source` to `policySource`. The full-review
+row supplies the reviewed commit, tree, scope, completion and source used by
+`reviewedDeltaBaseEvidence`; `reviewedDeltaBaseTree` is independently read from
+Git. `source` is a whitespace-free URL or resource URI in `scheme://...` form
+pointing to actual per-stage results in a corroborated receipt. A local-only path
+or `file://` URI is insufficient portable evidence. Require exactly one occurrence
+of each label; missing, duplicate or malformed values hold their relevant stop,
+policy or delta-base binding. The explicit `unavailable` alternative remains
+valid for a full continuation, but cannot support a repair-only continuation.
+On a first stop with available evidence, the producer first posts the preserved
+per-stage results with B and T in a dedicated full-review evidence comment,
+corroborates its author, every editor and content, and uses its returned permalink
+as `source` before posting the stopped comment. This evidence comment carries
+neither a stopped nor a prepared-receipt marker. Preserve it across receipt/body
+rewrites and reuse its verified reference for cumulative continuations. Consumers
+read that comment through the IssueComment author/edit-history and content checks;
+a URL alone proves no completed review. Failed or unverifiable publication leaves
+full-review evidence unavailable; reconcile an uncertain post before retrying.
+
+The literal `reviewRestrictionResolved: true` in a later pause or receipt clears
+the review restriction only after verified review and corroboration of that
+record's author and every editor as the running account. A false, absent or
+unverified claim does not clear it. This specifies receipt labels and caller
+validation; it does not introduce a transport or orchestration parser.
 
 After fetching the PR head, a SHA that is still missing is not in the PR's history: a missing
 Prepared HEAD is `head` (its tree cannot be read, so `tree` fails too), and a missing
@@ -389,12 +523,13 @@ Rules for every handoff:
    spaces are trimmed. When the handoff's first line sits inside a code fence, the handoff
    cannot run past that fence. Fenced or not, it ends at its fixed closing text: H-A after
    `Stay in this workspace and branch; uncommitted implementation lives here.`, H-C pause
-   after `go directly to /ship.`, H-C resume after `Do not run /ship on this PR.`, and H-B
+   after `go directly to /ship.`, H-C resume and H-E after `Do not run /ship on this PR.`, and H-B
    at the first blank line after its `Greptile` value. Every other line is outside text, so
    a report pasted after an unfenced prompt is still read.
 2. **Detect.** Handoff first lines start with `Run /review-and-prep resume` (H-C resume),
+   `Run /review-and-prep continue` (H-E),
    `Run /pair-review for draft PR` (H-C pause), `Run /ship-and-land for this prepared PR`
-   (H-B) or any other `Run /review-and-prep` (H-A). The earliest such line wins; resume is
+   (H-B) or any other `Run /review-and-prep` (H-A). The earliest such line wins; resume and continue are
    tested before H-A because they share a prefix. Ignore any handoff name the caller
    supplies. More than one first line in one input is `multiple-handoffs`: `HOLD`. With
    none, the input is H-D.
@@ -402,9 +537,11 @@ Rules for every handoff:
    is not part of it but still counts: an H-D signal there caps the outcome exactly as it
    would alone, and so does every `STATUS:` line anywhere. H-B carries no free prose, so
    for H-B the whole input is scanned for these signals. A pasted BLOCKED report that quotes
-   an H-B prompt therefore refuses, before or after it. Two exceptions: `DONE` and the bare-summary rule never
-   cap a handoff, so a producer's own `DONE` wrapper around its prompt is fine, and a zero
-   count such as `0 BLOCKED` is never a status.
+   an H-B prompt therefore refuses, before or after it. `STOPPED — review cycle cap`
+   before or after any non-H-E handoff holds. Exceptions: `DONE` and the bare-summary rule never
+   cap a handoff, so a producer's own `DONE` wrapper around its prompt is fine; a zero
+   count such as `0 BLOCKED` is never a status; and `STOPPED — review cycle cap`
+   beside H-E is its producer's own status and does not cap that continuation.
 4. **Labels.** A label starts a line as `Label: ` or as `Label:` ending the line (a capital
    letter, then letters, `/`, `(`, `)`, `-` or spaces, at most 39 characters), or as
    `X-name: `. A defined label may carry a parenthetical qualifier before the colon:
@@ -602,6 +739,127 @@ Local report (this machine only): /home/example/.gstack/example/report.md. On an
 Do not run /ship on this PR.
 ```
 
+### Grammar H-E continue
+
+| Label | Required | Lines | Format | Validation | On failure |
+|---|---|---|---|---|---|
+| `Stopped at` | yes | single | `<40 hex>` | exactly one valid SHA; equals the newest stopped record's SHA, which must be an ancestor of HEAD | `stopped-sha`: `HOLD`; missing, duplicate or invalid syntax also carries `malformed` |
+| `Delta base` | yes | single | `<40 hex>`; the recorded base, and for repair-only the retained completed full-review anchor B | exactly one valid SHA matching the newest corroborated stopped record; repair-only additionally requires independently corroborated completed full-review evidence for B | `delta-base`: `HOLD`; missing, duplicate or invalid syntax also carries `malformed` |
+| `Review policy` | yes | single | `review-and-prep-policy/v1; key=value; ...` or `none supplied` | exactly one field; parses; names `continuation=repair-only` or `full`; equals the caller's own policy, or the corroborated user decision when the caller supplied none | `policy-none`, `policy-stop`, `policy-malformed`, `policy-unverified`, `policy`: `HOLD` |
+| `Continuation` | yes | single | `<k> of <n>` | exactly one field; `k` equals the live count of distinct stopped SHAs across all running-account stopped records on this PR and is at most `n`; `n` is the policy's `max-continuations` | `continuation-limit`: `HOLD` |
+| `Unresolved` | yes | single | finding IDs and severities, or `none recorded` | none | `malformed` |
+
+H-E holds as `stop-superseded` if any newer paused or receipt record follows the
+latest stop. A foreign author or unverified edit history cannot turn that newer
+record into authorization to reuse the old continuation. A matching durable
+`<!-- review-and-prep:continuation:<stop-sha> -->` claim holds as
+`continuation-consumed`, even when HEAD is unchanged and the PR is still draft.
+Claims never authorize another `/review`. The stage persists and verifies a
+one-use claim before dispatch; uncertain posting or a subsequent failure leaves
+the claim consumed. The caller must read the entire bounded record history;
+unknown claim or supersession state holds.
+
+Each new genuine cycle-cap stop uses a unique SHA; the producer creates an empty
+feature-branch commit if its SHA already has a stopped record. Duplicate comments
+for one stop remain a single event. A later genuine stop with a new SHA may
+continue within the approved ceiling even when an earlier stop has a claim. A
+later manual-testing pause that explicitly resolves the review restriction uses
+H-C resume after its required results are available; it never revives H-E.
+For H-C resume with stop history, an unresolved stop newer than the pause holds
+as `stopped`.
+A later corroborated running-account receipt explicitly recording
+`reviewRestrictionResolved: true` clears the earlier stop; an ordinary later
+manual-testing pause then needs no second review-resolution claim. A foreign,
+unverified or false resolution receipt cannot clear it. Without such a receipt,
+a later pause must explicitly record `reviewRestrictionResolved: true`, with
+the running account as author and every editor corroborated; missing, false or
+unverified resolution holds as `review-resolution`, and a foreign author holds
+as `pause-author`. No-stop H-C resume behavior is unchanged.
+
+The first line is `Run /review-and-prep continue for PR <URL> on <owner/repo>, branch <branch>.`,
+checked exactly like H-C resume's (`repo`, `pr`, `branch`: `REFUSE`). A continuation
+runs only on an open draft (`pr-state`, `pr-ready`: `HOLD`). Fixed text a producer keeps:
+`Keep the PR draft.` and `Do not run /ship on this PR.` The producer's own line
+`STOPPED — review cycle cap` beside the prompt does not cap it; a BLOCKED status does
+(rule 3).
+
+The policy grammar is `/review-and-prep`'s "Read an optional review policy": a version
+token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
+`; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
+`documentation-audit` (`final`), `full-suite` (`final`) and `max-continuations` (`0` to
+`9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
+else is `policy-malformed`. The caller's own policy is the exact value it put in the
+invocation prompt, or none; never read it from the text. A caller with no policy of its
+own relays a user's decision only when the newest stopped record contains that exact
+policy and source `user decision`, with its author and every editor corroborated as
+the running account (`E-USER-POLICY`). An absent record is `stop-record`: `HOLD`;
+a foreign author is `stop-author`: `HOLD`; unread or foreign edit history is
+`stop-unverified`: `HOLD`. Missing policy/source is `policy-unverified`: `HOLD`,
+and a policy mismatch is `policy`: `HOLD`. A missing or duplicate policy/count label
+also carries `malformed`, but its authorization failure promotes the outcome to
+`HOLD`; the generic malformed-label rule never permits continuing here.
+
+When invoking the next session, the caller adds exactly one direct provenance
+instruction outside the unchanged relayed H-E prompt:
+`Invocation policy provenance: caller-supplied` if it independently supplied the
+policy, or `Invocation policy provenance: user-decision-relay` when relaying the
+corroborated user decision. Derive this instruction from the caller's own state,
+never from relayed text or a PR assertion. Do not add a second `Review policy`
+line. The provenance instruction identifies which verification path applies;
+it does not replace the policy comparison or author/edit-history checks.
+
+For `continuation=repair-only`, retain the newest corroborated commit B that
+actually received a completed full review. Carry B and its portable evidence
+across repair-only continuations, reviewing the cumulative delta from B to the
+current candidate. B need not equal the latest invocation's start commit: a
+delta-only invocation starting at HEAD does not turn HEAD into a full-review
+anchor. Advance B only after corroborating a genuinely completed full review.
+`E-CUMULATIVE-FULL-ANCHOR` models this consumer binding; its invocation-start
+value is fixture context, not consumed authorization or installed-agent proof.
+The negative twin rejects replacing B with a commit backed only by delta review.
+The stopped receipt carries B, T, scope `full`, completion, per-stage evidence
+and the original source record reference. Compare B with both delta-base values
+and independently check `git rev-parse <B>^{tree}` equals T. A local ledger path
+alone is insufficient on another host. Missing evidence, partial scope,
+incomplete review, a missing source reference or a tree mismatch holds as
+`delta-base`; the fixture consumer models these bindings with
+`reviewedDeltaBaseEvidence` and the independently read `reviewedDeltaBaseTree`.
+
+For `continuation=full`, prior completed review evidence is unnecessary because
+the next invocation reviews the full scope. The prompt must still contain exactly
+one valid delta-base SHA matching the corroborated stopped record. Every policy,
+stop, claim and provenance restriction remains in force.
+
+`max-continuations` is a PR-lifetime ceiling, not a fresh allowance per invocation.
+The consumer recomputes `k` from distinct stopped SHAs across all running-account
+stopped records, including the current one. Duplicate comments for the same stop
+SHA count once; replaying an earlier prompt cannot reset the count. After two stops,
+renewed explicit approval of `max-continuations=2` permits `Continuation: 2 of 2`;
+repeating the default ceiling of 1 does not. Raise the ceiling only on explicit
+user approval; never reset the historical count or increase it automatically.
+
+Before deduplicating the current stop SHA, compare every stopped record for it.
+Every copy must have the running account as author and every editor verified,
+and agree on `recordedDeltaBase`, `recordedPolicy` and `policySource`. Any foreign,
+unverified or conflicting duplicate holds as `stop-conflict`; a later clean copy
+does not erase the conflict. Identical verified duplicates still count once.
+
+A continuation prompt is never a `/ship-and-land` handoff. Older consumers may
+misclassify the new `Run /review-and-prep continue` prefix as H-A; they must
+upgrade to recognize H-E and enforce its caller-side holds. Additive syntax does
+not mean older consumers enforce these new authorization checks.
+
+```text fixture=e-continue.txt
+Run /review-and-prep continue for PR https://github.com/example-org/example-repo/pull/42 on example-org/example-repo, branch feature/handoff-demo.
+Stopped at: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+Delta base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+Review policy: review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1
+Continuation: 1 of 1
+Unresolved: F2 high, F5 medium
+Keep the PR draft.
+Do not run /ship on this PR.
+```
+
 ### Signals H-D
 
 When no handoff first line matches, the consumer looks for these producer words. The
@@ -619,6 +877,7 @@ every `STATUS:` line counts.
 | `PAUSED — manual testing required` | `/review-and-prep` | `HOLD` | the draft stays draft |
 | `STATUS: <unknown word>` | any | `HOLD` | new producer words default to hold |
 | `/ship-and-land stopped on the release-only path; it made no change for this finding.` | `/ship-and-land` | `HOLD` | preparation work is needed |
+| `STOPPED — review cycle cap` | `/review-and-prep` | `HOLD` | `stopped`: holds alone or before/after any other handoff; only beside an H-E prompt is it the producer's own line |
 | `Could not check this branch's PR for a paused /review-and-prep` | `/pair-review` | `HOLD` | `unknown`: the pause check failed |
 | `<URL> is CLOSED while its /review-and-prep preparation was paused` (or `MERGED`) | `/pair-review` | `HOLD` | `closed-paused`: a replacement PR needs a new decision |
 | a bare summary | any | `HOLD` with a PR URL or full SHA, else `REFUSE` | a success summary never starts a stage |
@@ -636,6 +895,7 @@ or input it says is needed is for the user.
 | Reviewed base | validated | Prepared HEAD contains it; for trust it is an ancestor of the base tip, for release-only it equals the tip |
 | Receipt comment | validated | exists on the bound PR, authored by the running account, its marker names Prepared HEAD |
 | Pause records | validated | no pause in the body, and no pause comment without a later running-account receipt for Prepared HEAD; a pause only by another author is `pause-author` |
+| Stopped records | validated | a historical stop holds as `stopped` until a later pause or receipt explicitly records `reviewRestrictionResolved: true` and its author and every editor are corroborated as the running account; missing, false or unverified resolution does not clear the stop. An unresolved stop by a foreign author holds as `stop-author`, and unread or foreign edit history holds as `stop-unverified`. Resolving the review restriction does not itself supersede an ordinary pause; that still requires a later running-account receipt for Prepared HEAD |
 | Plan SHA-256 | validated | the scope source now, per "Plan source"; the agreed-task form is receipt-present |
 | Ship gates (coverage and documentation audits) bound to head, tree and base | validated, release-only tier only | the receipt, with author and every editor the running account |
 | gstack working-tree fingerprint (`wtree`) | receipt-present | published, labeled apart from the Git tree SHA; consumers ignore it |
