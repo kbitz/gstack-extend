@@ -23,7 +23,7 @@ allowed-tools:
 
 ```bash
 _ER_SKILL=pair-review
-_er_ok() { case "$1" in /*) [ -f "$1/bin/update-check" ] && [ -x "$1/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$1/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
+_er_ok() { case "$_ER" in /*) [ -f "$_ER/bin/update-check" ] && [ -x "$_ER/bin/update-check" ] && grep -qx '# extend-root-protocol: v1' "$_ER/bin/update-check" 2>/dev/null ;; *) false ;; esac; }
 _EXTEND_ROOT=""
 _ER_SEEN=""
 for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do
@@ -32,7 +32,7 @@ for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skill
   [ -n "$_ER" ] || continue
   case "$_ER" in /*) ;; *) _ER="$(dirname "$_ER_SRC")/$_ER" ;; esac
   _ER=$(dirname "$(dirname "$_ER")")
-  if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+  if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi
   _ER_SEEN="${_ER_SEEN:-$_ER}"
 done
 if [ -z "$_EXTEND_ROOT" ]; then
@@ -41,7 +41,7 @@ if [ -z "$_EXTEND_ROOT" ]; then
     [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue
     _ER=""
     IFS= read -r _ER < "$_ER_SRC" || true
-    if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi
+    if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi
     _ER_SEEN="${_ER_SEEN:-${_ER:-empty:$_ER_SRC}}"
   done
 fi
@@ -113,9 +113,9 @@ _SNOOZE_FILE=~/.gstack-extend/update-snoozed
 _REMOTE_VER="{new}"
 _CUR_LEVEL=0
 if [ -f "$_SNOOZE_FILE" ]; then
-  _SNOOZED_VER=$(awk '{print $1}' "$_SNOOZE_FILE")
+  _SNOOZED_VER=$(awk '{print $(1)}' "$_SNOOZE_FILE")
   if [ "$_SNOOZED_VER" = "$_REMOTE_VER" ]; then
-    _CUR_LEVEL=$(awk '{print $2}' "$_SNOOZE_FILE")
+    _CUR_LEVEL=$(awk '{print $(2)}' "$_SNOOZE_FILE")
     case "$_CUR_LEVEL" in *[!0-9]*) _CUR_LEVEL=0 ;; esac
   fi
 fi
@@ -139,15 +139,15 @@ Run once when this skill begins. On resuming a paused invocation in the same rep
 
 ```bash
 if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _ge_ok "$_GE_BIN"; then
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
   done
 fi
@@ -1539,7 +1539,7 @@ else
     NR == 3 && /^PR_URL=https?:\/\/[^[:space:]]+$/ {next}
     NR == 4 && /^BODY_PAUSED=(true|false)$/ {next}
     NR == 5 && /^COMMENT_PAUSED=(true|false)$/ {next}
-    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($0) == 50)) {next}
+    NR == 6 && (/^PAUSE_SHA=$/ || (/^PAUSE_SHA=[0-9a-fA-F]+$/ && length($(0)) == 50)) {next}
     {bad = 1}
     END {exit (bad || NR != 6)}' "$_PR_OUT"; then
     awk '{print}' "$_PR_OUT"
@@ -1665,7 +1665,7 @@ SESSION_DIR=$(session_dir pair-review "$BRANCH")
 [ -e "$SESSION_DIR" ] || exit 0
 _ENTRIES=$(command ls -A "$SESSION_DIR") || { echo "ERROR: cannot list $SESSION_DIR; check its permissions. Nothing was moved." >&2; exit 1; }
 [ -n "$_ENTRIES" ] || exit 0
-_SESSION_ID=$(command ls -di "$SESSION_DIR" | awk '{print $1}')
+_SESSION_ID=$(command ls -di "$SESSION_DIR" | awk '{print $(1)}')
 [ -n "$_SESSION_ID" ] || { echo "ERROR: cannot list $SESSION_DIR; check its permissions. Nothing was moved." >&2; exit 1; }
 PROJECT_DIR=$(session_dir pair-review)
 TS=$(date -u +%Y%m%d-%H%M%S)
@@ -1677,7 +1677,7 @@ if [ -e "$ARCHIVE_DIR" ]; then echo "ERROR: $ARCHIVE_DIR already exists; run /pa
 mv "$SESSION_DIR" "$ARCHIVE_DIR" || { echo "ERROR: could not move $SESSION_DIR to $ARCHIVE_DIR; check permissions on its parent directory. The old session is unchanged." >&2; exit 1; }
 # A rename keeps the inode, so finding the session one level down means mv nested it.
 _NESTED="$ARCHIVE_DIR/$(basename "$SESSION_DIR")"
-if [ -e "$_NESTED" ] && [ "$(command ls -di "$_NESTED" | awk '{print $1}')" = "$_SESSION_ID" ]; then echo "ERROR: $ARCHIVE_DIR appeared during the move; the old session is now at $_NESTED." >&2; exit 1; fi
+if [ -e "$_NESTED" ] && [ "$(command ls -di "$_NESTED" | awk '{print $(1)}')" = "$_SESSION_ID" ]; then echo "ERROR: $ARCHIVE_DIR appeared during the move; the old session is now at $_NESTED." >&2; exit 1; fi
 echo "ARCHIVED=$ARCHIVE_DIR"
 ```
 
@@ -1868,15 +1868,15 @@ Run when this invocation completes. Set `--outcome` to the actual result (`succe
 
 ```bash
 if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _ge_ok "$_GE_BIN"; then
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
   done
 fi

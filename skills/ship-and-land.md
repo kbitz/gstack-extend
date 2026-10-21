@@ -28,15 +28,15 @@ Run once when this skill begins. On resuming a paused invocation in the same rep
 
 ```bash
 if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _ge_ok "$_GE_BIN"; then
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
   done
 fi
@@ -848,7 +848,7 @@ for _C in $(printf '%s\n' "$_COMMITS"); do
   if [ "$_ANCESTOR" -eq 0 ]; then _TIP=$_C; continue; fi
   [ "$_ANCESTOR" -eq 1 ] || exit 1
   _OLD=$(git rev-parse --verify "$_C^1") || exit 1
-  _NEW=$(git cat-file commit "$_C" | awk -v op="parent $_OLD" -v np="parent $_TIP" 'BEGIN { h = 1 } h { if (!d && $0 == op) { $0 = np; d = 1 } print; if ($0 == "") h = 0; next } tolower($0) ~ /^co-authored-by:/ { next } { l[++n] = $0 } END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' | git hash-object -t commit -w --stdin) || exit 1
+  _NEW=$(git cat-file commit "$_C" | awk -v op="parent $_OLD" -v np="parent $_TIP" 'BEGIN { h = 1 } h { if (!d && $(0) == op) { $(0) = np; d = 1 } print; if ($(0) == "") h = 0; next } tolower($(0)) ~ /^co-authored-by:/ { next } { l[++n] = $(0) } END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' | git hash-object -t commit -w --stdin) || exit 1
   if [ "$_NEW" != "$_C" ] && git cat-file commit "$_C" | sed '/^$/q' | grep -q '^gpgsig'; then echo "TRAILERS: BLOCKED — $_C is signed; a rewrite would invalidate its signature"; exit 1; fi
   [ -n "$(git log -1 --no-show-signature --format=%s "$_NEW")" ] || { echo "TRAILERS: BLOCKED — $_C would have an empty message"; exit 1; }
   _TIP=$_NEW
@@ -1003,7 +1003,7 @@ else
   awk '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
     {
-      line = trim($0)
+      line = trim($(0))
       if (match(line, /^(```+|~~~+)/)) {
         delimiter = substr(line, 1, RLENGTH)
         if (!fence) { fence = substr(delimiter, 1, 1); fence_len = length(delimiter) }
@@ -1011,8 +1011,8 @@ else
         next
       }
       if (fence) next
-      if ($0 ~ /^## Deploy Configuration([ \t]*$| \(configured by \/setup-deploy\)[ \t]*$)/) { insec = 1; seen = 1; next }
-      if ($0 ~ /^##? /) insec = 0
+      if ($(0) ~ /^## Deploy Configuration([ \t]*$| \(configured by \/setup-deploy\)[ \t]*$)/) { insec = 1; seen = 1; next }
+      if ($(0) ~ /^##? /) insec = 0
       if (!insec) next
       sub(/^- /, "", line)
       i = index(line, ":")
@@ -1154,15 +1154,15 @@ Run when this invocation completes. Set `--outcome` to the actual result (`succe
 
 ```bash
 if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$1" in /*) [ -f "$1" ] && [ -x "$1" ] && grep -q 'telemetry-protocol: start-finish-v1' "$1" ;; *) false ;; esac; }
+_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
 _GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _ge_ok "$_GE_BIN"; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _ge_ok "$_GE_BIN"; then
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
+if ! _GE_CAND="$_GE_BIN" _ge_ok; then
   _GE_BIN=""
   for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
     if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
       IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _ge_ok "$_GE_ROOT/bin/gstack-extend-telemetry"; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
+      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
     fi
   done
 fi
