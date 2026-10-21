@@ -28,7 +28,7 @@ export const SPAN_END = 'unset _ER _ER_SRC _ER_SEEN';
 export const MARKER_LINE = '# extend-root-protocol: v1';
 
 export const CANONICAL_SPAN = [
-  "_er_ok() { case \"$1\" in /*) [ -f \"$1/bin/update-check\" ] && [ -x \"$1/bin/update-check\" ] && grep -qx '# extend-root-protocol: v1' \"$1/bin/update-check\" 2>/dev/null ;; *) false ;; esac; }",
+  "_er_ok() { case \"$_ER\" in /*) [ -f \"$_ER/bin/update-check\" ] && [ -x \"$_ER/bin/update-check\" ] && grep -qx '# extend-root-protocol: v1' \"$_ER/bin/update-check\" 2>/dev/null ;; *) false ;; esac; }",
   '_EXTEND_ROOT=""',
   '_ER_SEEN=""',
   'for _ER_SRC in "$HOME"/.claude/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.codex/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.config/opencode/skills/"$_ER_SKILL"/SKILL.md "$HOME"/.cursor/skills/"$_ER_SKILL"/SKILL.md; do',
@@ -37,7 +37,7 @@ export const CANONICAL_SPAN = [
   '  [ -n "$_ER" ] || continue',
   '  case "$_ER" in /*) ;; *) _ER="$(dirname "$_ER_SRC")/$_ER" ;; esac',
   '  _ER=$(dirname "$(dirname "$_ER")")',
-  '  if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi',
+  '  if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi',
   '  _ER_SEEN="${_ER_SEEN:-$_ER}"',
   'done',
   'if [ -z "$_EXTEND_ROOT" ]; then',
@@ -46,7 +46,7 @@ export const CANONICAL_SPAN = [
   '    [ -f "$_ER_SRC" ] && [ -r "$_ER_SRC" ] || continue',
   '    _ER=""',
   '    IFS= read -r _ER < "$_ER_SRC" || true',
-  '    if _er_ok "$_ER"; then _EXTEND_ROOT="$_ER"; break; fi',
+  '    if _er_ok; then _EXTEND_ROOT="$_ER"; break; fi',
   '    _ER_SEEN="${_ER_SEEN:-${_ER:-empty:$_ER_SRC}}"',
   '  done',
   'fi',
