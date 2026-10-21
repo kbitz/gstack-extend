@@ -1834,7 +1834,7 @@ reads SQLite shards, shows a reader gap, not run evidence: its null model, null 
 `unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
 from a matching store record of any shape; those stay null unless finish flags
-supply them. The row schema, field order, source labels and finish flags are
+supply them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
