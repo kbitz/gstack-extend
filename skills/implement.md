@@ -15,6 +15,7 @@ allowed-tools:
   - Grep
   - Skill
   - AskUserQuestion
+  - Agent
 ---
 
 # /implement
@@ -55,6 +56,44 @@ Accept a plan path or reference and an optional scope boundary (for example,
 one Track in a larger plan). With no arguments, use the plan and scope already
 established in the session. A handoff from `/autoplan` is a normal input.
 
+## Keep the main session small
+
+Keep the approved plan's current task, decisions, edits, and complete coverage
+checklist in the main session. Delegate exploration and verification to
+subagents using the current host's native mechanism: Claude Code's Agent tool,
+Codex's subagent tools, or Muse's subagent tools. Do not require another
+harness or hard-code one host's tool calls. If subagents are unavailable or a
+dispatch fails (including Muse's current recursive MCP schema failures),
+continue the same work in the main session rather than stopping. Keep reads
+and output bounded in that fallback too; do not repeatedly retry a broken
+subagent mechanism.
+
+- **Exploration:** delegate finding where code lives, wide greps, reading long
+  files or logs to answer a specific question, and checking a hypothesis.
+  Give each subagent a focused question and relevant paths, not the whole
+  session or plan. Require a compact answer: paths, line numbers, the few
+  lines that matter, and a conclusion (including uncertainty). Keep only that
+  answer in the main session; do not paste raw search results or full files.
+  Read only the local code ranges needed to decide and edit safely.
+- **Verification:** delegate the independently chosen test commands and working
+  directory to a subagent. Require exit status, pass/fail/skip counts, failing
+  test names, and only the relevant traceback lines, never the full output.
+  Preserve the exact commands, cwd, and any unavailable counts or incomplete
+  checks in its compact report. Keep full logs outside the main context for
+  targeted follow-up. The main session still owns fixes and the coverage
+  checklist; a passing subagent report does not establish plan completeness.
+
+**Wait without polling.** This applies to the main session and its subagents.
+For a long command, use background execution only when the host can wake the
+session on command exit. End the turn while it runs, naming the command or
+task being awaited and its handle; resume on the host's completion event and
+collect the result once. Do not use `sleep`, polling loops, repeated status
+checks, or periodic wakeups to wait. Where the host cannot wake a session on
+background exit (Cursor today), run the command in the foreground instead.
+The same foreground fallback applies when completion notifications are
+unavailable or uncertain. A waiting turn is a pause, not completion: do not
+emit the final handoff or finish telemetry while checks are still running.
+
 ## 1. Establish what to build
 
 Read `docs/SPEC.md` when present as a product spec (it has an `## Authority`
@@ -74,6 +113,13 @@ implementing dependent work. Do not guess from the newest plan filename or
 substitute a handoff summary for an available full plan. The user's instruction
 to implement an identified plan establishes authorization; do not ask them to
 approve that same scope again.
+
+Read the full approved plan once, then retain its item IDs and section/line
+references in the coverage checklist. For later work, grep for the current
+task or acceptance criterion and re-read only the needed line ranges, not
+the whole plan. Apply the same rule during completeness checks; do not reload
+the plan just to refresh context. Accepted revisions require reading the
+changed scope and updating coverage, not another full read of unchanged text.
 
 Inspect the current branch, target base, HEAD, and committed, staged, unstaged,
 and untracked changes. Record existing work so you can build on it and preserve
