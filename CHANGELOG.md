@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.37.0.0] - 2026-10-21
+
+### Changed
+
+- **A new local stage-run row names the workspace host and the gstack-extend install that wrote it.** The row is schema version 2. It records `paseo` or `conductor` only when exactly one of those launch markers is set, and it records that install's VERSION when the file is a three- or four-part release. A missing or unusable VERSION is null. Rows already on disk keep their original version, fields, and values. If a write fails and is retried, the retry appends that saved row unchanged, even when the markers or the install version have changed.
+
+- **Use a reader that understands version 2 before you depend on these rows, including when you roll the writer back.** A reader that only knows version 1 reports a version 2 row as unsupported and leaves the line in the file. Do not delete, rewrite, or backfill the ledger. Recovery text names a fixed class and does not print the launch ID or a private path. `blocked` and `requested` are reserved on a valid version 2 row; this writer does not emit them, and a recorded host or model is not proof that a model was billed. No acceptance checkpoint is awarded. Installed host checks remain scheduled, not claimed.
+
 ## [0.36.18.0] - 2026-10-21
 
 ### Fixed

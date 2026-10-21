@@ -892,7 +892,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | `model` | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
 | `effort` | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
-| `outcome` | `success`, `error`, `abort`, or `unknown`; any other value becomes `unknown` |
+| `outcome` | `success`, `error`, `abort`, or `unknown`, plus reserved `blocked`; this producer maps other values, including the reserved outcome, to unknown |
 | `started_at` | UTC start; null when an explicit `--start` or a legacy `--duration` cannot be represented as a UTC time |
 | `duration_s` | Session wall-clock seconds including human waits, never capped |
 | `session_id` | Wrapper-issued IDs are `extend-<uuid>`; an explicit `--session-id` can be any valid ID |
@@ -902,11 +902,13 @@ table below is the reader's reference; the schema is authoritative where they di
 | `source` | `gstack-extend`: the writer label, which any caller can choose |
 | `route` | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
 | `entrypoint_raw` | The selected harness entrypoint marker, when present |
-| `schema_version` | `1`: the row format, not a release |
+| `schema_version` | `2`: the row format, not a release |
 | `producer_version` | Release in the VERSION file of the gstack-extend installation that constructed the row; null when unknown |
 | `agent_source` | `flag`, `detected`, or `unknown`: where `agent` came from |
-| `model_source` | `flag`, `detected`, or `unknown`: where `model` came from |
-| `effort_source` | `flag`, `detected`, or `unknown`: where `effort` came from |
+| `model_source` | `flag`, `detected`, `requested` (reserved), or `unknown`: where `model` came from |
+| `effort_source` | `flag`, `detected`, `requested` (reserved), or `unknown`: where `effort` came from |
+| `workspace_host` | `paseo`, `conductor`, or `unknown`: explicit inherited launch context |
+| `host_agent_id` | Exact host launch ID (1–200 printable Unicode code points, not blank), or null; unknown host requires null |
 
 **Work item.** `work_item` resolves in this order: a valid `--work-item` flag, then the
 value start saved in the handoff from `GSTACK_EXTEND_WORK_ITEM`, then that variable in
@@ -920,45 +922,100 @@ value stays local: the handoff, stage-runs, and start's `GE_TELEMETRY:` line; it
 removed from the environment of the delegated skill-usage logger and never forwarded.
 See the [quick-start](#work-item-and-launcher-quick-start).
 
-**Versions.** Every row this writer constructs has all 20 fields in table order,
-with `schema_version` 1. `schema_version` names the row format. It is unrelated to
-skill-usage's `v` and to the `telemetry-protocol` marker. A change to the row's
-shape or meaning adds a new schema version as a new schema branch and keeps the
-existing branches; a release that leaves the row alone keeps 1.
+<a id="host-attribution"></a>
 
-`producer_version` comes from the VERSION file of the installation the wrapper
-resolves to (its real checkout, through any symlinks), never from the repository
-the skill ran in, gstack's VERSION, or an environment variable. A missing, unsafe
-(symlink, FIFO, hard link, non-regular), oversized, non-UTF-8, or malformed VERSION,
-anything but four dot-separated ASCII numbers after trimming surrounding whitespace,
-makes `producer_version` null. Null means unknown. The row still records, and
-debug mode prints `producer_version unknown` with the reason class (never the file's
-contents), the fix, and a pointer here. Restore or upgrade the installation to fix it.
+### Host attribution
 
-Rows without `schema_version` are legacy rows from older writers. They carry the
-13 fields from `stage` through `source`, plus `route` and `entrypoint_raw` when
-their writer had them, and none of the v1 metadata. An absent key in a legacy row
-is unknown: key presence does not identify an older release, and readers never
-fill in a version, producer, or source. A row with `schema_version` 1 that lacks
-any of the 20 fields is malformed, not legacy. Deleting only `schema_version` from
-a v1 row does not make it legacy: the remaining metadata keeps it invalid.
+`workspace_host` is separate from the executing harness (`agent`) and historical
+launch classifier (`route`/`entrypoint_raw`). At the first finish that constructs
+a row, only nonblank `PASEO_AGENT_ID` and `CONDUCTOR_SESSION_ID` identify a host.
+With neither, attribution is unknown/null. With one, its host is retained and its
+ID is copied exactly if `clean()` accepts it: 1–200 printable Unicode code points,
+not blank, with outer spaces preserved. An invalid nonblank ID keeps its host
+with null ID. Two nonblank markers, even invalid+valid, yield unknown/null.
+The draft-07 ID constraints use Unicode categories and code-point length. Tests
+compare the supported Python/Bun runtimes on a bounded corpus; they do not prove
+equivalence across every Unicode-version pair. A plain hand-run has null ID.
+PASEO_HOME, default/custom/configured worktree roots,
+arbitrary cwd and lookalike directory names never establish a launch.
 
-**Retries keep their first construction.** When a finish cannot append, its handoff
-saves the row, and the retry appends that saved row unchanged, even under a newer
-release. Its `schema_version`, `producer_version`, and sources describe the attempt
-that constructed it, not the release that later appended it. A row saved by a
-writer older than `schema_version` is appended as that legacy row, with nothing
-added. Repairing a broken VERSION improves only rows constructed afterwards; a saved
-row keeps its null `producer_version`.
+The marker sources are Paseo commit
+[14e638451652e443ac8b9f74c50c9bfd4b967cb6](https://github.com/getpaseo/paseo/blob/14e638451652e443ac8b9f74c50c9bfd4b967cb6/packages/server/src/server/agent/agent-manager.ts),
+`buildLaunchContext` exporting `PASEO_AGENT_ID`, and Conductor's
+[environment-variable contract](https://www.conductor.build/docs/reference/environment-variables),
+which exports `CONDUCTOR_SESSION_ID` in agent processes, not ordinary terminals.
+Availability can differ on older/cloud hosts; installed availability remains
+unverified until scheduled host acceptance. Custom roots in tests are inputs,
+never launch evidence. Paseo's ID names the hosting agent; Conductor's names the
+hosting session. Nested harnesses may inherit either; neither promises a distinct
+native-subagent ID. Environment assertions are local attribution, not authentication,
+permission or ownership. They describe the constructing process's inherited context,
+not guaranteed identity at start. No new host state is saved by start.
 
-**Rolling back the writer.** Reverting to an older writer stops new v1 rows. Keep
-the published schema and these rules: they still read both the legacy rows the old
-writer appends and the v1 rows already in the ledger. Never delete, rewrite,
-backfill, or re-stamp ledger rows to match a writer.
+Host conflict affects only host attribution. It cannot change independently
+established harness, model or route evidence. Legitimate pairs include Paseo with
+route cli/sdk/unknown, and unknown host with a certified historical conductor
+route when no launch ID is exported. Route cannot replace workspace_host.
 
-**Nothing is guessed.** Agent, model, and effort come from the harness's own
-session log for the stage's window. Any value the wrapper cannot verify is null,
-never a configured default:
+Debug-only `HOST_MARKERS_CONFLICT` and `HOST_AGENT_ID_INVALID` name the relevant
+markers, rule and resulting host/ID class, never raw IDs. Saved replay cannot
+repair attribution. Ask the launcher owner for the correct original context on
+the next new invocation; never invent an ID, blindly unset a marker, or rewrite
+a saved row. Quiet mode remains silent and optional telemetry remains nonfatal.
+
+### Versions
+
+Every newly constructed row has all 22 fields in table order: the original 20,
+then workspace_host and host_agent_id, with schema_version 2. This is the row
+format, unrelated to skill-usage v and the start-finish protocol marker. Changes
+to row shape or meaning add a branch and retain the historical branches; a
+release alone does not change schema_version.
+
+<a id="producer-version"></a>
+
+### Producer version
+
+producer_version comes from the VERSION file in the wrapper's real installation
+checkout (resolving symlinks), never the caller repository, upstream gstack or an
+environment override. New v2 rows accept exactly three or four dot-separated ASCII
+numeric components after trimming, including 1.0.0 and legacy four-part releases.
+Missing, unreadable, unsafe (symlink/FIFO/hard-link/non-regular), over-128-byte,
+non-UTF-8 or malformed files degrade to null. Prefixes, suffixes, non-ASCII digits
+and other component counts are malformed. Debug-only PRODUCER_VERSION_UNKNOWN
+reports a fixed failure class, never contents or private paths. Restore or upgrade
+the normal installation; only newly constructed rows improve. Saved retries retain
+the original producer, including null. These fixtures do not qualify the updater,
+tagging or full stable-release transition (Track 28A).
+
+| Row branch | Required shape | Producer grammar |
+|---|---|---|
+| Legacy (absent schema_version) | Original 13 fields; route and entrypoint_raw individually optional; no version/source/host metadata | No producer field |
+| v1 (schema_version 1) | Original 20 fields, no host keys | Four numeric parts or null |
+| v2 (schema_version 2) | All 22 fields | Three or four numeric parts or null |
+
+Absent legacy keys stay unknown, with no defaults or release inference. Missing
+required keys or cross-version keys are invalid; stripping a version does not
+make a metadata-bearing row legacy. Historical v0/v1 acceptance is unchanged.
+
+**Retries keep their first construction.** A failed append saves the exact row.
+A retry reuses its order, values, version, producer, host, sources, duration and
+work item without detecting markers again, including legacy/v1 saved rows under
+a newer writer. Completion markers still suppress an already-completed retry.
+
+**Reader-first migration and rollback.** The supported in-repo readers are
+stage-runs.schema.json and the executable validator below (legacy/v1/v2), plus
+quota's existing-field projection of agent/model/effort/route. Before shipping
+the writer, the existing release owner checks those reader tests and publishes
+the schema and migration guidance with the release. Consumers pinned to v1
+upgrade their reader/schema before opting into the new writer release. Apply
+SPEC's existing 0.x MINOR disclosure/migration policy; no release number is
+reserved here. An old reader reports v2 unsupported and keeps it. Roll back the
+writer while retaining a reader capable of every emitted version, including v2,
+and retain all ledger rows. Never delete, rewrite, backfill or re-stamp them.
+Installed two-host and release acceptance remain with Tracks 30B/30C and 28A.
+
+**Acquisition and unknowns.** Existing detectors read harness markers and
+session logs for the stage window; unavailable values remain null:
 
 - **Claude Code** exports CLAUDECODE and CLAUDE_CODE_SESSION_ID. The transcript
   `~/.claude/projects/*/<session>.jsonl` (CLAUDE_CONFIG_DIR honored) records model
@@ -1000,7 +1057,10 @@ gstack's logger.
 
 `agent_source`, `model_source`, and `effort_source` label the value the row
 actually holds. `flag` means an accepted flag supplied it, even one equal to the
-detected value. `detected` means the harness's markers or session log did.
+detected value. `detected` labels that acquisition path, never proof of a served
+or billed model.
+Existing Cursor SDK metadata is requested configuration even when the historical
+detector labels it `detected`.
 `unknown` means the value is null, and a null value is always `unknown`. A
 rejected flag changes nothing, so the detected value keeps `detected`: an
 `--agent` outside the four harnesses, or a blank, non-printable, or over-200-character
@@ -1008,6 +1068,13 @@ rejected flag changes nothing, so the detected value keeps `detected`: an
 model and effort first, so an omitted `--model` or `--effort` is then null and
 `unknown`. `source` is the writer label; the three `*_source` fields are evidence
 origins. A `flag` label records who supplied the value, not that it is correct.
+
+The v2 schema reserves outcome `blocked` and source `requested` for non-null
+model/effort only; agent_source remains flag/detected/unknown and every null value
+requires unknown. Track 26A does not emit blocked lifecycle events or read
+GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT. Tracks 27A/29A own those producers;
+synthetic reserved-vocabulary fixtures demonstrate shape only. Existing flags,
+detection, optional capture and upstream skill-usage behavior are unchanged.
 
 **Switch.** Provenance is on by default and independent of gstack's tier, because
 its rows stay local while enabling the tier also enables the upload. Turn it off
@@ -1031,19 +1098,23 @@ off, and a missing or broken gstack costs only the skill-usage rows.
 2. Read `source`. A missing, blank, or non-string `source` is invalid. Any other
    label belongs to another producer: route that row to its own contract rather
    than reporting a malformed gstack-extend row.
-3. Read `schema_version`. Absent means legacy and the integer 1 means v1. An
-   integer 2 or greater is unsupported: report it, keep the row, and use a schema
-   release that supports it. Anything else (null, a string, a fraction, zero, or a
-   negative number) is invalid. Never guess a version.
-4. Validate the row against the schema, which picks the legacy or v1 branch by
-   whether `schema_version` is present. Never coerce values, fill defaults, or drop
-   unknown keys to make a row pass.
+3. Read `schema_version`. Absent means legacy; positive safe integers 1/2 select
+   v1/v2. Safe integers 3 through Number.MAX_SAFE_INTEGER are unsupported: keep
+   the row and upgrade the reader. All other types/values, including unsafe
+   integers and nonfinite numbers, are invalid without echoing their value.
+4. Validate against the matching closed legacy/v1/v2 schema branch. Never coerce
+   values, fill defaults, or drop unknown keys to make a row pass.
 
 Keep every row, duplicates included, and never rewrite the ledger to make it
 validate. Pin a release tag or commit of the schema, or vendor a copy: the file
 on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
+
+The v2 host ID pattern requires Unicode property escapes and Unicode-mode
+ECMA-262 regex evaluation, as provided by the pinned Ajv's default
+`unicodeRegExp: true`. Draft-07 support alone does not establish compatibility:
+readers using other regex engines must verify these capabilities before rollout.
 
 Validity is shape, not truth. A valid row, including one whose sources say
 `flag`, does not prove that capture was complete, that attribution is right, or
@@ -1063,38 +1134,40 @@ The install uses the committed `bun.lock` and fails rather than change it. Ajv 8
 is a development dependency only; the skills and telemetry need no package. The
 command below runs with `--no-install`, so it never downloads anything. If Bun
 reports `Cannot find package 'ajv'`, run the install above. Run the command from
-the checkout root. With no input it validates its included 20-field v1 row:
+the checkout root. With no input it validates its included synthetic 22-field v2 row:
 
 ~~~sh
 bun --no-install -e '
 import Ajv from "ajv";
 import { createReadStream, readFileSync, statSync } from "node:fs";
-import { createInterface } from "node:readline";
-import { Readable } from "node:stream";
 
 const DOC = "See docs/telemetry.md#schema-validation";
 const FIELDS = ["stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
   "repo", "branch", "work_item", "source", "route", "entrypoint_raw", "schema_version", "producer_version",
-  "agent_source", "model_source", "effort_source"];
-const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":1,"producer_version":"1.2.3.4","agent_source":"detected","model_source":"detected","effort_source":"detected"};
-const EVIDENCE = "a null value needs source unknown; any other value needs flag or detected";
+  "agent_source", "model_source", "effort_source", "workspace_host", "host_agent_id"];
+const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":2,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent"};
+const EVIDENCE = "a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested";
+const KEEP = "keep the saved row unchanged; correct the producer to ";
 const WHY = {
-  required: ["a required field is missing", "write every field the contract requires, never a default"],
-  additionalProperties: ["a field outside this contract", "remove it, or route the row to its own contract"],
-  type: ["a value has the wrong JSON type", "write the documented type"],
-  const: ["a value differs from the fixed contract value", "write the documented value"],
-  enum: ["a value is outside the documented set", "write a documented value"],
-  pattern: ["a string does not match the documented format", "write the documented format"],
-  minimum: ["a number is below the documented minimum", "write a nonnegative value"],
-  "false schema": ["v1 metadata without schema_version", "keep the row whole; never strip or add fields"],
+  required: ["a required field is missing", KEEP + "emit every field required by this branch"],
+  additionalProperties: ["this schema branch rejects an extra field", KEEP + "emit only fields documented for this branch"],
+  type: ["a value has the wrong JSON type", KEEP + "emit the documented type"],
+  const: ["a value differs from the fixed contract value", KEEP + "emit the documented value"],
+  enum: ["a value is outside the documented set", KEEP + "emit a documented value"],
+  pattern: ["a string does not match the documented format", KEEP + "emit the documented format"],
+  minLength: ["a string is too short", KEEP + "respect the documented code-point bound"],
+  maxLength: ["a string is too long", KEEP + "respect the documented code-point bound"],
+  not: ["a value violates a branch constraint", KEEP + "respect the documented nonblank rule"],
+  minimum: ["a number is below the documented minimum", KEEP + "emit a nonnegative value"],
+  "false schema": ["a field is forbidden in this schema branch", "keep the saved row unchanged; fix the producer or use the appropriate reader/contract"],
 };
-const counts = { rows: 0, blank: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
+const counts = { rows: 0, blank: 0, v2: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
 let shown = 0;
 let hidden = 0;
 function report(line, where, keyword, cause, fix) {
   if (shown === 20) return hidden++;
   shown++;
-  console.log(`line ${line}: ${where} ${keyword}: ${cause}. Fix: ${fix}. ${DOC}`);
+  console.error(`line ${line}: ${where} ${keyword}: ${cause}. Fix: ${fix}. ${DOC}`);
 }
 
 let validate;
@@ -1109,12 +1182,35 @@ async function* utf8(file) {
   for await (const chunk of createReadStream(file)) yield decoder.decode(chunk, { stream: true });
   yield decoder.decode();
 }
+async function* jsonLines(file) {
+  let pending = "";
+  let afterCR = false;
+  for await (let chunk of utf8(file)) {
+    if (afterCR && chunk) {
+      if (chunk.startsWith("\n")) chunk = chunk.slice(1);
+      afterCR = false;
+    }
+    let start = 0;
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] !== "\r" && chunk[i] !== "\n") continue;
+      yield pending + chunk.slice(start, i);
+      pending = "";
+      if (chunk[i] === "\r") {
+        if (chunk[i + 1] === "\n") i++;
+        else if (i + 1 === chunk.length) afterCR = true;
+      }
+      start = i + 1;
+    }
+    pending += chunk.slice(start);
+  }
+  if (pending) yield pending;
+}
 const file = process.env.STAGE_RUNS_FILE;
 let lines = [JSON.stringify(EXAMPLE)];
 if (file) {
   try {
     if (!statSync(file).isFile()) throw new Error();
-    lines = createInterface({ input: Readable.from(utf8(file)), crlfDelay: Infinity });
+    lines = jsonLines(file);
   } catch {
     console.error(`input unreadable: pass a readable JSONL file. ${DOC}`);
     process.exit(1);
@@ -1131,29 +1227,29 @@ try {
     try { row = JSON.parse(text); } catch { row = undefined; }
     if (row === null || typeof row !== "object" || Array.isArray(row)) {
       counts.invalid++;
-      report(line, "(root)", "json", "the line is not one JSON object", "write one JSON object per line");
+      report(line, "(root)", "json", "the line is not one JSON object", "keep the saved row unchanged; correct the producer to emit one JSON object per line");
       continue;
     }
     if (typeof row.source !== "string" || row.source.trim() === "") {
       counts.invalid++;
-      report(line, "/source", "source", "the writer label is missing, blank or not a string", "every row names its writer");
+      report(line, "/source", "source", "the writer label is missing, blank or not a string", "keep the saved row unchanged; correct the producer to name its writer");
       continue;
     }
     if (row.source !== "gstack-extend") { counts.routed++; continue; }
     let kind = "legacy";
     if (Object.hasOwn(row, "schema_version")) {
       const version = row.schema_version;
-      if (Number.isInteger(version) && version >= 2) {
-        counts.unsupported++;
-        report(line, "/schema_version", "unsupported", "newer than this contract", "keep the row and use a schema release that supports it");
-        continue;
-      }
-      if (version !== 1) {
+      if (!Number.isSafeInteger(version) || version <= 0) {
         counts.invalid++;
-        report(line, "/schema_version", "version", "not a positive integer", "correct the producer; never guess a version");
+        report(line, "/schema_version", "version", "not a positive safe integer", "keep the saved row unchanged; correct the producer, never guess a version");
         continue;
       }
-      kind = "v1";
+      if (version > 2) {
+        counts.unsupported++;
+        report(line, "/schema_version", "unsupported", `version ${version} is newer than supported versions 1/2 (and legacy)`, "keep the saved row unchanged; upgrade the reader/schema");
+        continue;
+      }
+      kind = version === 1 ? "v1" : "v2";
     }
     if (validate(row)) { counts[kind]++; continue; }
     counts.invalid++;
@@ -1164,7 +1260,7 @@ try {
       const where = FIELDS.includes(field) ? "/" + field : "(root)";
       if (seen.has(where + error.keyword)) continue;
       seen.add(where + error.keyword);
-      const [cause, fix] = WHY[error.keyword] ?? ["the row fails the contract", "compare it with the schema"];
+      const [cause, fix] = WHY[error.keyword] ?? ["the row fails the contract", "keep the saved row unchanged; check the producer against the appropriate reader/contract"];
       const evidence = where.endsWith("_source") && (error.keyword === "const" || error.keyword === "enum");
       report(line, where, error.keyword, evidence ? EVIDENCE : cause, evidence ? "correct the producer, never the saved row" : fix);
     }
@@ -1173,8 +1269,8 @@ try {
   console.error(`input unreadable or invalid UTF-8 after line ${line}. ${DOC}`);
   process.exit(1);
 }
-if (hidden) console.log(`${hidden} more diagnoses not shown`);
-console.log(`summary: rows=${counts.rows} valid=${counts.v1 + counts.legacy} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
+if (hidden) console.error(`${hidden} more diagnoses not shown`);
+console.log(`summary: rows=${counts.rows} valid=${counts.v2 + counts.v1 + counts.legacy} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
 process.exitCode = counts.invalid || counts.unsupported ? 1 : 0;
 '
 ~~~
@@ -1186,8 +1282,13 @@ including private input in the diagnosis.
 Expected output, with exit status 0:
 
 ~~~text
-summary: rows=1 valid=1 v1=1 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
+summary: rows=1 valid=1 v2=1 v1=0 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
 ~~~
+
+The included synthetic sample demonstrates shape, not installed-host evidence.
+workspace_host identifies the launch host, host_agent_id its hosting agent/session,
+agent the harness, route the independent launch classifier, and session_id this
+telemetry invocation. Source labels describe acquisition, not serving or billing.
 
 To check a ledger instead, set `STAGE_RUNS_FILE` and run the same command;
 `unset STAGE_RUNS_FILE` returns to the included row:
@@ -1201,7 +1302,8 @@ esac
 
 As the writer does, this uses an absolute state-directory override and ignores
 a relative one. The command reads the file one line at a time and never writes it.
-Line endings follow `readline`: LF, CRLF or CR. It compiles
+Line endings are LF, CRLF or CR, including CRLF split across read chunks.
+Unicode line/paragraph separators inside JSON strings remain data. It compiles
 the schema once, with Ajv's strict mode and all errors, and no coercion, defaults,
 or network references. It prints at most 20 diagnoses, then a count of the rest,
 and always the complete per-row counts; a row with several problems counts once.
@@ -1210,14 +1312,16 @@ or `(root)` for unknown keys and whole-line problems), the failed check, the
 cause, the fix, and this section. It never prints row values, unknown key names,
 parser messages, raw validator details, or the input path. It exits 1 when any row
 is invalid or unsupported, or when the input or schema cannot be read. Rows routed
-to other producers and blank lines do not fail it. For example, a v1 row whose
+to other producers and blank lines do not fail it. Diagnoses and truncation notices
+go to stderr; the summary alone goes to stdout. The validated safe schema version
+is the only row value printed. For example, a v2 row whose
 `model` is null but whose `model_source` is `flag`, followed by a row with
-`schema_version` 2, prints:
+`schema_version` 3, prints (the first two lines on stderr):
 
 ~~~text
-line 1: /model_source const: a null value needs source unknown; any other value needs flag or detected. Fix: correct the producer, never the saved row. See docs/telemetry.md#schema-validation
-line 2: /schema_version unsupported: newer than this contract. Fix: keep the row and use a schema release that supports it. See docs/telemetry.md#schema-validation
-summary: rows=2 valid=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
+line 1: /model_source const: a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested. Fix: correct the producer, never the saved row. See docs/telemetry.md#schema-validation
+line 2: /schema_version unsupported: version 3 is newer than supported versions 1/2 (and legacy). Fix: keep the saved row unchanged; upgrade the reader/schema. See docs/telemetry.md#schema-validation
+summary: rows=2 valid=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
 ~~~
 
 ### Contributor setup
@@ -1234,6 +1338,12 @@ stop at `Cannot find package 'ajv'`. `bun.lock` is a global touchfile, so a
 lockfile change runs the full suite.
 
 ## Join contract
+
+Optional workflow-metrics v1 records already bind to the same session_id, including
+after the start handoff is consumed. Join on that ID; no companion pointer is
+needed. A join identifies associated optional records, not complete capture.
+Missing companion capture means unknown, never zero work. Detailed metrics stay
+in their unchanged companion format.
 
 For a wrapper-issued start plus a finish that recovers both values from the
 handoff, where one finish attempt both built the stage-runs row and delegated
@@ -1252,7 +1362,7 @@ same `session_id`.
 3. To pair gstack-extend's own stage-runs rows with skill-usage, key on `(skill, session_id)`, mapping stage-runs `stage` to `extend:<stage>`. Rows other callers write to stage-runs, and the quota ledger, join by `session_id` alone. `(skill, session_id)` is a correlation key, not a unique key: expect duplicate or conflicting rows for one key and keep them visible rather than silently picking one, especially for rows outside the guarantees below (other writers, pruned markers, a `skill_run` beyond the logger scan).
 4. A session ID without the `extend-<uuid>` shape came from explicit flags or an older writer and may stay unpaired locally. An explicit retry that reuses the original IDs pairs normally and, while its completion marker lives, writes nothing new. The `extend-` prefix alone does not prove the wrapper issued the ID.
 5. Sort per dataset. Stage-runs file order is finish order: sort by `started_at`, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
-6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1 row missing a key is malformed.
+6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2 row missing a required key is malformed.
 
 Session IDs match `[A-Za-z0-9][A-Za-z0-9._:-]{0,199}` (the wrapper's `valid_session`).
 gstack-extend's `ts` and `started_at` use UTC `YYYY-MM-DDTHH:MM:SSZ` at second
@@ -1303,7 +1413,7 @@ a finish ran with provenance on and its append succeeded. A missing row is not
 evidence that a run did not happen. Upstream nulls `skill_run.duration_s` above
 86400 seconds (read in gstack 1.89.1.0 source, `gstack-telemetry-log`); stage-runs
 never caps. `skill_run.gstack_version` is upstream's version, seen on captured
-rows. Skill-usage rows carry no gstack-extend version. A v1 stage-runs row carries
+rows. Skill-usage rows carry no gstack-extend version. A v1/v2 stage-runs row carries
 `producer_version`, the release that constructed it; a legacy row carries none.
 
 **What provenance can and cannot prove.** One stage-runs row per extend-skill
@@ -1312,7 +1422,7 @@ the agent is the harness detected for the finish command: the nearest marked
 ancestor when several harness markers are present, otherwise the latest
 comparable harness log when ancestry is unavailable. Model and effort are the pair behind the most turns in the
 window. Subagent (sidechain) turns are skipped. Nested reviewer voices
-(outside-voice CLIs, subagents, external review services) write no row. In a v1
+(outside-voice CLIs, subagents, external review services) write no row. In a v1/v2
 row an accepted `--agent`, `--model`, or `--effort` override says `flag`. Legacy
 rows do not mark overrides, so any legacy value may have come from a flag. Neither
 a `flag` or `detected` label nor schema validity proves that a value is correct,
@@ -1370,7 +1480,7 @@ routinely lose their duration.
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
 {"v":1,"ts":"2026-09-20T12:00:03Z","event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","duration_s":3,"outcome":"success","source":"gstack-extend"}
-{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":1,"producer_version":"1.2.3.4","agent_source":"detected","model_source":"detected","effort_source":"detected"}
+{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":2,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent"}
 ~~~
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
@@ -1479,7 +1589,7 @@ finish in the same tool shell; a terminal export does not reach the GUI.
 | `ignored <source> work item (<problem>)` | A work item was present but unusable (not a string, blank, over 200 characters, or non-printable), so that source counts as absent | Pass 1 to 200 printable characters |
 | `gstack helper unresolvable:` | `gstack-telemetry-log` or `gstack-config` was not found. The line names the missing helper(s) and the searched locations. Provenance may still record | Install gstack for this host (`./setup --host <host>` in the gstack checkout) or set `GSTACK_DIR`, then rerun `gstack-extend doctor telemetry` |
 | `gstack state resolver unavailable` | The selected modern logger's colocated resolver is missing or fails. Skill-usage stays unwritten; provenance may still record | Reinstall gstack, then rerun `gstack-extend doctor telemetry` |
-| `producer_version unknown` | The installation's VERSION is missing, unsafe, oversized, not UTF-8, or not a four-part release. The row still records, with a null `producer_version` | Restore or upgrade the gstack-extend installation. Rows already saved for a retry keep their null |
+| `PRODUCER_VERSION_UNKNOWN` | The installation's VERSION is missing, unsafe, oversized, not UTF-8, or not a three- or four-part ASCII numeric release. A newly constructed row has null `producer_version`; this diagnosis does not prove append success | Restore or upgrade the gstack-extend installation. Rows already saved for a retry keep their original producer value; see [Producer version](#producer-version) |
 
 Doctor is read-only and always exits zero for missing/empty sinks, malformed
 JSON, partial tails, and bad arguments. Debug mode prints the resolved binaries,
@@ -1771,7 +1881,7 @@ reads SQLite shards, shows a reader gap, not run evidence: its null model, null 
 `unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
 from a matching store record of any shape; those stay null unless finish flags
-supply them. The row schema, field order, source labels and finish flags are
+supply them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
