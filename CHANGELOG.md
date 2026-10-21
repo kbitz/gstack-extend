@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.39.1.0] - 2026-10-21
+
+### Fixed
+
+- **`/implement` keeps exploration and test output out of the main session when the host supports subagents.** Focused subagents return compact code locations, conclusions and verification results; the main session retains the current task, decisions, edits and coverage checklist. After one full plan read, later reads target only the needed ranges. Long commands wait for a background completion notification, or run in the foreground when the host cannot wake the session; sleep and polling loops are forbidden. Missing or failing subagents fall back to local work. The coverage checklist, handoff, BUILT/ADAPTED/BLOCKED/DEFERRED reporting and leave-work-uncommitted rule are unchanged.
+- **Measurement baseline:** mmm-factory Track 36A's implement stage (Sonnet 5.5 xhigh through Paseo, 2026-10-21) used 182 distinct API requests, 445K average context, 629K maximum context and 80.3M cache-read tokens. The first real `/implement` run after this release will be measured the same way, counting distinct API requests by message ID. No improvement is claimed until that measurement is recorded.
+
 ## [0.39.0.0] - 2026-10-21
 
 ### Changed
