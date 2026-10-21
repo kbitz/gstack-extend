@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.39.0.0] - 2026-10-21
+
+### Changed
+
+- **Claude Code outside reviews receive a bounded prompt.** `/review-and-prep` sends the selected diff, acceptance criteria, review instructions and relevant context excerpts. Its delta and repair-only policies now govern the outside prompt too. The challenge and structured review remain separate, including both calls on the first cycle for diffs of 200 or more lines, but share an identical cacheable prefix. Combining the voices remains a measured follow-up. Upstream gstack is unchanged; this is an extension wrapper override.
+- **Completed outside calls can count despite malformed markers.** Conservative local parsing recovers completion without paying for the same review again, preserves finding severity, and records parse failures separately from transport failures. Unrecoverable output and missing context remain missing coverage. Private per-call records capture prompt-section byte sizes and reported cache usage without retaining prompt content.
+- **Savings are not yet measured.** The baseline is a median $2.55 per call, 265K cache-write tokens, a 230K–330K token prompt, and at least 4 of 26 paid calls uncredited. The first real review after release will be measured against that baseline, including retained findings and credited calls. No saving is claimed until that measurement is complete; no acceptance checkpoint is awarded here.
+
 ## [0.38.0.0] - 2026-10-21
 
 ### Added

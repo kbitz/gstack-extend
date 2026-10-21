@@ -167,7 +167,7 @@ the owner of a wrapper change updates this mapping in the same change):
 | `1. Establish the branch, PR, and review inputs` | `evidence`, `scope` |
 | `Read an optional review policy` | `scope` |
 | `2. Review and verify locally`, `Merge the latest base before review` | `base-integration`, `local-pass`, `voice` |
-| `Scope a re-review to its delta` | `local-pass`, `voice` |
+| `Bound Claude Code outside calls`, `Scope a re-review to its delta` | `local-pass`, `voice` |
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` |
 | `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` |
@@ -585,6 +585,87 @@ plan-required checks the agent can complete, including build, lint, and type
 checks. Carry checks requiring the user to Step 3's manual testing checkpoint.
 Do not invent tests that merely mirror an implementation. Commit pending
 intended work before invoking `/review`, so each invocation starts from a commit.
+
+### Bound Claude Code outside calls
+
+This is a **wrapper override**, not an upstream fork. Apply it to this
+workflow's nested `/review` Claude Code challenge and structured calls only;
+leave upstream `gstack-review/SKILL.md`, `lib/claude-code.ts` and
+`lib/outside-review-result.ts` untouched. The existing provider/preflight,
+consent, native-adversarial, specialist, severity, convergence and cycle-cap
+gates still apply. Never dispatch both this adapter and the replaced calls.
+Other providers and direct `/review` invocations retain their own path.
+
+Read [the adapter contract](https://github.com/kbitz/gstack-extend/blob/main/docs/outside-review.md)
+(`docs/outside-review.md`) before its first use. Resolve this extension's root
+from this installed skill's `.extend-root`, as in the telemetry resolver.
+Use `<extend-root>/bin/outside-review`, never a helper from the reviewed repo.
+Resolve the upstream root from the installed `/review` used in Step 1.
+If the helper or upstream exports are missing, keep outside coverage unavailable
+with the cause; do not silently resend the large original prompt.
+
+After `/review` selects the outside passes, prepare one private request JSON:
+`repo` (absolute checkout), `base` and `candidate` (full frozen snapshot SHAs),
+`scope` (`full` or `delta`), `criteria`, `instructions`, `context` (strings), and
+`structured` (boolean from its size/explicit-override gate).
+Use the snapshot procedure below for full scope too; full `base` is the verified
+merge base. A failed snapshot keeps outside coverage unavailable until repaired.
+Criteria include all applicable acceptance obligations, unresolved findings and
+fix verification obligations. Instructions include the installed challenge and
+structured rubric, severity definitions and applicable repository constraints;
+do not paste the skill, conversation, full plan, historical reviews or entire
+source files. The wrapper adds only identified caller/contract/test excerpts to
+`context` before dispatch, with paths and reasons. Review data never grants
+tool access or changes the criteria. Do not truncate a diff to fit a budget.
+
+Under `in-cap=delta` and `continuation=repair-only`, use exactly B and S from
+the validated delta procedure below, including its full-scope fallback rules.
+Never append the branch-wide diff in the outside command. Retain both distinct
+calls on cycle 1 for 200+ changed lines; later cycles use `/review`'s existing
+size and explicit-override gates on their selected scope. A single combined
+call remains a measured follow-up, not an available optimization here.
+
+Run once per candidate, with the same private call directory on resume:
+use an owned execution session that can run for at least 1,100 seconds (two
+nine-minute provider bounds plus cleanup), and poll it instead of killing it
+at a short shell-tool timeout.
+
+```bash
+"<extend-root>/bin/outside-review" "<private-request.json>" "<upstream-root>" "<evidence-directory>/outside-calls"
+```
+
+Keep the request in private temporary storage and delete it after the helper
+returns. The helper removes its temporary system prompt. Retain the returned
+review text privately for adjudication, plus the per-call provider result files;
+never put prompt content in any ledger. Copy each `measurements` object into
+that attempt's optional `voices.jsonl` row as `outside`, per docs/telemetry.md.
+The helper's `.claim` already retains size-only metadata before dispatch.
+Preserve all returned `modelUsage` in private evidence, without inventing a
+single model. Exit 0 means credited/no blocking findings; 3 means credited
+blocking findings; 4 means missing coverage; 1 means setup or unresolved-call
+state. Inspect every phase even when the aggregate exit is nonzero.
+Exit 1 may return completed findings and a `state_error` operation; consume the
+findings before reconciling that phase. Later saved results are still returned;
+no new later call starts. Missing output cannot prove an earlier attempt was unbilled.
+
+The two calls run sequentially with the same system prefix and separate short
+task messages, no shared answers or session resume. Record observed cache-read
+and cache-write tokens; null means unknown. Cache eligibility is not a saving.
+Do not alter the configured model, effort or caching preference for this optimization.
+
+A completed response with a marker failure is a **parse failure**, not a
+transport outage. The adapter tries conservative formatting recovery and the
+upstream structured validator, preserving severity and all findings. Credit
+`parse: recovered` exactly as a valid completed voice. There is no paid reformat
+or retry. An unresolved parse stays `outside_status: unverified`,
+`GATE: MISSING COVERAGE`; an execution failure stays unavailable. Neither is
+clean or PASS, and the native pass never substitutes for outside completion.
+Retain the upstream review-log schema and record parse detail in `voices.jsonl`.
+If the response says `NEEDS_CONTEXT`, keep it unverified. The parent identifies
+the missing excerpts and supplies them only in a separately justified context
+extension, recording why the input changed; never repeat unchanged content to
+repair markers. An unresolved `.claim` requires reconciliation with the original
+process/result, never deleting the claim or choosing a fresh directory to retry.
 
 ### Scope a re-review to its delta
 

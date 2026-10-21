@@ -35,8 +35,8 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
 agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
-`/roadmap` audit tools, `gstack-extend init`, the merge gate, and
-`bin/layout-scaffold`. `setup` only checks that `bun` is installed, not its
+`/roadmap` audit tools, `gstack-extend init`, the merge gate,
+`bin/layout-scaffold`, and `bin/outside-review`. `setup` only checks that `bun` is installed, not its
 version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
@@ -147,6 +147,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
   is on by default and never uploaded. `/review-and-prep` and `/ship-and-land`
   also keep optional local [workflow metrics](docs/telemetry.md#workflow-metrics)
   under the same provenance switch. [Configuration and data contracts](docs/telemetry.md).
+  Claude Code outside calls use [bounded prompts and local parse recovery](docs/outside-review.md),
+  with per-section byte counts and reported cache usage. Savings remain unmeasured
+  until the first real review after release.
 - **Merge gate (shadow-only):** `~/.claude/skills/gstack-extend/bin/merge-gate check --base <ref>`
   reports whether a change would merge, and why. It never merges, pushes, or updates
   refs, and it is not on PATH. [Usage and verdict contract](docs/merge-gate.md).

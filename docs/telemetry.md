@@ -855,6 +855,25 @@ workflow-metrics ledger, whose v1 records accept no extra keys.
 | `outcome` | `completed`, `failed`, `partial` or `unknown` |
 | `metrics` | `{session_id, pass_id, attempt_id}` of the matching workflow-metrics records, or null |
 | `unknown_reason` | null, `not-reported`, `not-named` or `capture-missing` |
+| `outside` | Optional content-free Claude Code adapter measurement, described below; absent for other attempts |
+
+The [bounded outside adapter](outside-review.md) supplies `outside` with
+`call_id` (SHA-256), `phase` (`challenge` or `structured`), `replay`, `dispatched`
+(whether this invocation actually sent the call), `state_error` (operation or
+null), and `parse`
+(`valid`, `recovered`, `failed`, `not-applicable`), `credited`, and `verdict`.
+`prompt` contains `supplied_bytes`, `sections` (`diff`, `criteria`, `instructions`,
+`other_context`), `shared_prefix_bytes`, `shared_prefix_sha256`, and
+`provider_overhead_bytes: null`. Counts are UTF-8 bytes of serialized sections;
+instructions include delimiters, policy, scope metadata and the task message,
+so the four section sizes sum exactly to supplied bytes. They are not token
+estimates and exclude unobservable CLI/provider overhead. No content is stored.
+The optional `cache_read_input_tokens`, `cache_creation_input_tokens`,
+`input_tokens` and `output_tokens` are provider-reported nonnegative counts or
+null. A replay is local reclassification of the original attempt, not another
+paid call; retain its original attempt row instead of counting it twice.
+`parse: failed` is missing coverage even though transport completed. These
+fields add no keys to workflow-metrics or stage-runs schemas.
 
 When the host's spawn tool takes a name, the dispatcher names each reviewer
 `<voice_id>_p<pass>_a<attempt>`, so a harness log that records the name still joins when
