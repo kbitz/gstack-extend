@@ -994,10 +994,13 @@ reuse these records.
    PR adds or changes `.gstack/pregate.json` or `.gstack/generated.json`, pass
    `--policy-from head` to every full pregate run and record that policy source.
    Find lane gaps before the long suite with `gstack-pregate --stage tests
-   --explain` without `--allow-repo-commands` (base policy only; that record is
-   `incomplete` and never counts), and check a changed pin file with
-   `gstack-pregate validate`. A touched file with no test lane or a refused
-   runner is preparation work: repair the map here and review it like any fix.
+   --explain --out <temp-path>` without `--allow-repo-commands` (base policy
+   only; that record is `incomplete` and never counts, and `--out <temp-path>`
+   outside `.gstack/tmp/pregate.json` avoids overwriting a passing stamp; read
+   the `--explain` output because `pregate.json` cuts `lanes` `ran:` at
+   200 characters), and check a changed pin file with `gstack-pregate validate`.
+   A touched file with no test lane or a refused runner is preparation work:
+   repair the map here and review it like any fix.
 2. **Coverage audit.** Run `/ship`'s Test Coverage Audit section, including its
    test generation, regression rule and threshold decision. Generated or
    strengthened tests belong to this PR: review and test them like any fix. A
@@ -1009,11 +1012,22 @@ reuse these records.
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
    base and documentation section. It covers every changed path, so a later edit
    spends its one re-audit.
-4. **Pregate and test lanes.** Run the installed `gstack-pregate` command the
-   tests section names, with `--allow-repo-commands`, and the main test lanes,
-   on the same final content, so the pregate record and the ledger entries
-   describe the head you push. Fix a failure like any other and rerun the
-   gates whose inputs the fix touched.
+4. **Pregate and test lanes.** Before the full pregate run, make every declared
+   JS lane runnable: for each lane whose package directory has a lockfile but no
+   installed `node_modules`, run its install (`npm ci --prefix <dir>`) first and
+   log it in the run log, so one lane's missing dependencies never force a
+   second full run of every lane (per-lane rerun would be an upstream pregate
+   feature). When `.gstack/pregate.json` declares a runner, the prescribed test
+   form is one ledger-wrapped full pregate run, `gstack-evidence run --label
+   tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` (adding
+   `--policy-from head` when item 1 requires it, and setting `<ample>` above the
+   full suite's runtime rather than pregate's 600s default), and do not rerun
+   the main suite again under another label when that pregate run selected the
+   main suite. Otherwise run the installed `gstack-pregate` command the tests
+   section names, with `--allow-repo-commands`, and the main test lanes, on the
+   same final content, so the pregate record and the ledger entries describe the
+   head you push. Fix a failure like any other and rerun the gates whose inputs
+   the fix touched.
 
 A later change, such as a Greptile fix or a base merge, reruns each gate whose
 inputs it touched under that gate's own freshness rule before Step 6. Copy the
@@ -1040,12 +1054,17 @@ Capture evidence as the work runs so a new session can reuse it:
   make old work appear current.
 - When the installed `gstack-evidence` helper is available, wrap local checks
   using its documented `run --label <lane> -- '<exact command>'` interface.
-  Use `tests` for the project's main suite and distinct labels for other
-  required lanes. Capture the actual command string, repo-relative working
-  directory, UTC timestamp, exit code, result summary, tested commit/tree and
-  `wtree` when available, plus the returned log path. Preserve exact command
-  spelling for later `check --expect-cmd` use. Use the normal host command
-  runner if the helper is unavailable; lack of a ledger is not a test failure.
+  When `.gstack/pregate.json` declares a runner, wrap the single full pregate
+  run under `tests` (`gstack-evidence run --label tests -- '<gstack-pregate>
+  --allow-repo-commands --timeout <ample>'`) as the prescribed `tests` record
+  instead of running the main suite a second time; otherwise use `tests` for
+  the project's main suite and distinct labels for other required lanes.
+  Capture the actual command string, repo-relative working directory, UTC
+  timestamp, exit code, result summary, tested commit/tree and `wtree` when
+  available, plus the returned log path. Preserve exact command spelling for
+  later `check --expect-cmd` or pregate-command data comparison. Use the normal
+  host command runner if the helper is unavailable; lack of a ledger is not a
+  test failure.
 - Keep long evidence in files, not chat. Write the completion matrix,
   per-review evidence, gate records and receipt drafts to the evidence
   directory (a unique branch/invocation subdirectory under an existing

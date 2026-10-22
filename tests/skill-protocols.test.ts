@@ -2648,6 +2648,24 @@ describe('release-only ship path', () => {
     );
   });
 
+  test('review and ship wrap one full pregate in the ledger, install missing JS lane deps, and accept pregate-wrapped test records', () => {
+    for (const clause of [
+      "Find lane gaps before the long suite with `gstack-pregate --stage tests --explain --out <temp-path>` without `--allow-repo-commands`",
+      "Before the full pregate run, make every declared JS lane runnable: for each lane whose package directory has a lockfile but no installed `node_modules`, run its install (`npm ci --prefix <dir>`) first and log it in the run log",
+      "When `.gstack/pregate.json` declares a runner, the prescribed test form is one ledger-wrapped full pregate run, `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'`",
+      "do not rerun the main suite again under another label when that pregate run selected the main suite.",
+    ]) expect(gatesN).toContain(clause);
+    expect(prepN).toContain(
+      "When `.gstack/pregate.json` declares a runner, wrap the single full pregate run under `tests` (`gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'`) as the prescribed `tests` record instead of running the main suite a second time",
+    );
+    for (const clause of [
+      "When `.gstack/pregate.json` declares a runner and the main suite needs to run, first make every declared JS lane runnable — for each lane whose package directory has a lockfile but no installed `node_modules`, run `npm ci --prefix <dir>` first and log it in the run log — then run `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` once (setting `<ample>` above the full suite's runtime), and do not rerun the main suite under another label.",
+      "When `.gstack/pregate.json` declares a runner, also accept a FRESH `tests` ledger record whose command invokes `gstack-pregate --allow-repo-commands` (compared as data, ignoring the `gstack-pregate` install path and `--timeout`, and allowing `--policy-from head` when that policy source applies) as covering the `AGENTS.md` / `CLAUDE.md` main test command",
+      'verify main-suite selection without overwriting `.gstack/tmp/pregate.json` by running `gstack-pregate --stage tests --explain --out <temp-path>` (because `pregate.json` cuts the `lanes` `ran:` line at 200 characters)',
+      "After the release stamp (`12–15`), when `git diff --name-only <tested tree> <current tree>` lists only release metadata, check the `tests` ledger record in stage 4 with `--allow-paths` naming only the release-metadata files this run changed, preserve an immutable verified copy of the pre-stamp tree's full pregate record, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree before Step 17's push (with the same policy source) so Step 18's receipt check has a current stamp, and cite that immutable full pregate record (path, SHA-256, policy source and cleared requires-remote obligations) separately from the final preflight record, as the release-only path already does.",
+    ]) expect(shipN).toContain(clause);
+  });
+
   test('missing or mismatched gate evidence cannot enter release-only', () => {
     for (const clause of [
       "The user has not explicitly asked for the full ship path. That request disables release-only without discarding otherwise valid review reuse.",
