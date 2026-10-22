@@ -152,8 +152,9 @@ session memory, write `ACTIVE_PLAN` to a durable path outside the work tree
 (`~/.gstack/projects/<slug>/plans/<plan-stem>.md` when
 `~/.gstack/projects/<slug>/` exists, otherwise
 `~/scratch/gstack-autoplan-lean/<slug>-<plan-stem>.md`). If that durable target
-already exists with different bytes, do not overwrite it: stop and surface the
-collision, or write to a distinct stem the caller approves. When a caller (a person
+already exists with different bytes and is not this skill's own earlier
+output (it carries no `## Review record`), do not overwrite it: stop and
+surface the collision, or write to a distinct stem the caller approves. When a caller (a person
 or an external transport) asks for any of these, apply it for the whole run:
 
 - **HOLD SCOPE:** the CEO phase uses the loaded skill's HOLD SCOPE mode instead
@@ -449,7 +450,9 @@ sidecar after sealing; to change the review record, edit the run files and seal
 again. Then write the final message (§7) to `<run>/final-message.md`, scan it
 with `gstack-redact --from-file "<run>/final-message.md"` when available
 (otherwise inspect manually for credentials or token-shaped values and scrub
-any flagged value before checking or emitting), and check both:
+any flagged value before checking or emitting), and check both. If redaction
+flags a bound value such as the Verify command, fix the plan and re-seal
+instead of scrubbing only the message, or block:
 
 ```bash
 "$_EXTEND_ROOT/bin/autoplan-lean" check --plan "<ACTIVE_PLAN>" --message "<run>/final-message.md"
@@ -457,7 +460,7 @@ any flagged value before checking or emitting), and check both:
 
 `CHECK: ok` is required. The check also binds the message to this plan: its
 plan path, plan SHA-256, Tier, sidecar path/SHA-256 and Verify command must
-match the sealed plan, so a stale prompt fails. Fix each `PROBLEM:` in the
+match the checked plan, so a stale prompt fails. Fix each `PROBLEM:` in the
 plan proper or the message, re-seal if the plan changed, and re-check. Do
 not finish with a failing check.
 The required shape: a numbered acceptance-criteria list under an acceptance

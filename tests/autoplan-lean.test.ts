@@ -367,6 +367,7 @@ describe('transport contract shape', () => {
     const stale: Array<[string, Record<string, string>, string]> = [
       ['stale plan hash', { planSha: '0'.repeat(64) }, 'does not match the checked plan'],
       ['stale sidecar hash', { sidecarSha: '0'.repeat(64) }, 'does not match the checked plan'],
+      ['different sidecar path', { sidecar: '/tmp/other.review-record.md' }, 'does not match the checked plan'],
       ['wrong Tier', { tier: 'novel' }, 'does not match the checked plan'],
       ['divergent Verify command', { verify: '`bun run other`' }, 'does not match the checked plan'],
       ['different plan path', { planPath: '/tmp/elsewhere.md' }, 'does not match the checked plan'],
@@ -377,6 +378,28 @@ describe('transport contract shape', () => {
       expect(r.stdout, name).toContain(expected);
       expect(field(r.stdout, 'CHECK'), name).toBe('fail');
     }
+  });
+
+  test('check fails closed when the plan Verify lines disagree', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: `bun run test`\nVerify command: `bun run other`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout, { planSha: '0'.repeat(64) }));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('cannot bind the /implement prompt to the checked plan');
+  });
+
+  test('a bound Verify command containing an angle span passes verbatim', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: bun test --grep <pattern>'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout, { verify: 'bun test --grep <pattern>' }));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'CHECK')).toBe('ok');
   });
 
   test('an unsealed plan fails: no review record', () => {
@@ -445,7 +468,10 @@ describe('transport contract shape', () => {
     ['bare stub without /implement prompt fields', 'Run /implement /p.md\nAuto-decisions:\n- none\n', 'missing required field(s): Workspace, Branch'],
     ['missing plan path on Run /implement line', `Run /implement\n${promptFields()}\nAuto-decisions:\n- none\n`, 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
     ['unfilled <ACTIVE_PLAN> on Run /implement line', handoff('Auto-decisions:\n- none\n', '<ACTIVE_PLAN>'), 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
-    ['unfilled <ACTIVE_PLAN> in prompt prose', `Run /implement /p.md\nRead <ACTIVE_PLAN> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'still contains the placeholder <ACTIVE_PLAN>'],
+    ['unfilled <ACTIVE_PLAN> in prompt prose', `Run /implement /p.md\nRead <ACTIVE_PLAN> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'still contains unfilled'],
+    ['generic placeholder in prompt prose', `Run /implement /p.md\nRead <branch-name> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'unfilled'],
+    ['placeholder only in an Auto-decisions bullet', handoff('Auto-decisions:\n- [fork] chose <option>\n'), 'Auto-decisions bullet still contains an unfilled'],
+    ['shadow lowercase plan label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nplan: /evil.md`), 'looks like the "Plan:" field'],
     ['relative Workspace path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Workspace: /tmp/work/widgets — continue in this same workspace', 'Workspace: relative/path')), 'Workspace: must name an absolute workspace path'],
     ['malformed Branch line (short SHA)', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace(HEAD40, 'abc1234')), 'Branch: must be'],
     ['Plan path disagrees with Run /implement path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields('/other.md')), 'Plan: path (/other.md) does not match "Run /implement /p.md"'],

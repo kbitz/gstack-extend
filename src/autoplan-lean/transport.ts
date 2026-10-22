@@ -47,8 +47,18 @@ const MD_HEADING = /^\s*#{1,6}\s/;
 const TIER_ANY = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:\*\*|__)?tier(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(routine|standard|novel)\b/i;
 const TIER_STANDALONE = /^Tier: (routine|standard|novel)\s*$/;
 const VERIFY_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*\S/i;
-const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.+?)\s*$/i;
-const PLACEHOLDER_SPAN = /<[A-Za-z][^>\n]*>/;
+const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(.+?)\s*$/i;
+const VERIFY_STANDALONE = /^verify(?:\s+command)?:\s*(.+?)\s*$/i;
+const PLACEHOLDER_SPAN = /<[^>\n]+>/;
+
+/** Strip one balanced emphasis pair; never eat `__main__`-style value text. */
+function verifyValue(raw: string): string {
+  let v = raw.trim();
+  for (const m of ['**', '__']) {
+    if (v.length > 2 * m.length && v.startsWith(m) && v.endsWith(m)) v = v.slice(m.length, -m.length).trim();
+  }
+  return v;
+}
 
 /** The checked plan's values a bound /implement prompt must quote verbatim. */
 export interface PromptBinding {
@@ -62,8 +72,8 @@ export interface PromptBinding {
 
 /**
  * Derive the binding from sealed plan bytes, or undefined when the plan does
- * not carry every value (checkPlan already reports those shape problems, so
- * the caller falls back to format-only message checks without cascade noise).
+ * not carry every value unambiguously. Callers that check a message must
+ * fail closed on undefined: format-only checks cannot detect a stale prompt.
  */
 export function promptBindingForPlan(bytes: Uint8Array, planPath: string): PromptBinding | undefined {
   let text: string;
@@ -76,7 +86,15 @@ export function promptBindingForPlan(bytes: Uint8Array, planPath: string): Promp
   const recordIdx = unfenced.findIndex((l) => /^##\s+Review record\s*$/i.test(l.text));
   const before = recordIdx < 0 ? unfenced : unfenced.slice(0, recordIdx);
   const tier = before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).find((t): t is string => !!t);
-  const verify = before.map((l) => VERIFY_VALUE.exec(l.text)?.[1]?.replace(/(?:\*\*|__)\s*$/, '').trim()).find((v): v is string => !!v);
+  const verifyFrom = (re: RegExp) => before
+    .map((l, i) => { const m = re.exec(l.text); return m ? { i, v: verifyValue(m[1]!) } : undefined; })
+    .filter((c): c is { i: number; v: string } => !!c && !!c.v);
+  const standalone = verifyFrom(VERIFY_STANDALONE);
+  const candidates = standalone.length ? standalone : verifyFrom(VERIFY_VALUE);
+  const distinct = [...new Set(candidates.map((c) => c.v))];
+  const first = candidates[0];
+  const continued = first !== undefined && /^\s+\S/.test(before[first.i + 1]?.text ?? '');
+  const verify = distinct.length === 1 && !continued ? distinct[0] : undefined;
   const seal = readSeal(splitPlan(text).record);
   if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
   return {
@@ -200,22 +218,27 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
 
   const seen = new Map<string, string>();
   let currentLabel: string | undefined;
-  let sawPlaceholder = false;
+  const normalizedLabels = new Map(PROMPT_LABELS.map((k) => [k.toLowerCase(), k]));
   for (const line of block.slice(1, label)) {
-    if (line.includes('<ACTIVE_PLAN>')) sawPlaceholder = true;
     const field = /^([A-Z][A-Za-z ]+):(?:\s+(.*?))?\s*$/.exec(line);
     if (field && (PROMPT_LABELS as readonly string[]).includes(field[1]!)) {
       const key = field[1]!;
       if (seen.has(key)) problems.push(`duplicate "${key}:" line in the /implement prompt`);
       else seen.set(key, field[2] ?? '');
       currentLabel = key;
+      continue;
+    }
+    const loose = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?([A-Za-z][A-Za-z ]*?)(?:\*\*|__)?\s*:/.exec(line);
+    const exact = loose ? normalizedLabels.get(loose[1]!.trim().toLowerCase().replace(/\s+/g, ' ')) : undefined;
+    if (exact) {
+      problems.push(`"${loose![1]!.trim()}:" looks like the "${exact}:" field; use the exact label`);
+      currentLabel = undefined;
     } else if (/^\s+\S/.test(line) && currentLabel && seen.has(currentLabel)) {
       seen.set(currentLabel, `${seen.get(currentLabel)!} ${line.trim()}`.trim());
     } else if (!line.trim()) {
       currentLabel = undefined;
     }
   }
-  if (sawPlaceholder) problems.push('the /implement prompt still contains the placeholder <ACTIVE_PLAN>');
 
   const missing = PROMPT_LABELS.filter((k) => {
     const v = seen.get(k)?.trim();
@@ -224,20 +247,14 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
   if (missing.length) {
     problems.push(`the /implement prompt is missing required field(s): ${missing.join(', ')}`);
   }
-  for (const [key, value] of seen) {
-    const v = value.trim();
-    if (v && !/^<[^>]+>$/.test(v) && PLACEHOLDER_SPAN.test(v)) {
-      problems.push(`"${key}:" still contains an unfilled <...> placeholder`);
-    }
-  }
 
   const workspace = seen.get('Workspace')?.trim();
   if (workspace && !/^<[^>]+>$/.test(workspace) && (!/^\/(?!\s)/.test(workspace) || /<absolute path/i.test(workspace))) {
     problems.push('Workspace: must name an absolute workspace path');
   }
   const branch = seen.get('Branch')?.trim();
-  if (branch && !/^<[^>]+>$/.test(branch) && !/^([^;<>]+);\s*target base:\s*([^;<>]+);\s*HEAD:\s*([0-9a-f]{40})\s*$/.test(branch)) {
-    problems.push('Branch: must be "<current branch>; target base: <base ref>; HEAD: <40-char lowercase hex SHA>"');
+  if (branch && !/^<[^>]+>$/.test(branch) && !/^([^;<>]+);\s*target base:\s*([^;<>]+);\s*HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$/.test(branch)) {
+    problems.push('Branch: must be "<current branch>; target base: <base ref>; HEAD: <40- or 64-char lowercase hex SHA>"');
   }
   const planField = seen.get('Plan')?.trim();
   let planMatch: RegExpExecArray | undefined;
@@ -290,8 +307,21 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
     else if (/^\s+\S/.test(line) && bullets.length) bullets[bullets.length - 1] += ` ${line.trim()}`;
     else { unexpected = `unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`; break; }
   }
-  if (bullets.some((b) => PLACEHOLDER_SPAN.test(b))) {
-    problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
+  // Placeholder scan over the whole block (prose, fields, bullets). Code
+  // spans are exempt (quoted commands/code may contain angle brackets), as
+  // is a Verify command value the binding already proved verbatim.
+  const verifyBound = binding !== undefined && seen.get('Verify command')?.trim() === binding.verifyCommand;
+  const spans: string[] = [];
+  for (const [idx, line] of block.slice(1).entries()) {
+    if (verifyBound && /^Verify command:/.test(line)) continue;
+    const bare = line.replace(/`[^`]*`/g, '');
+    const span = PLACEHOLDER_SPAN.exec(bare)?.[0];
+    if (!span) continue;
+    if (idx + 1 > label) problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
+    else spans.push(span);
+  }
+  if (spans.length) {
+    problems.push(`the /implement prompt still contains unfilled <...> placeholder(s): ${spans[0]}${spans.length > 1 ? ` (+${spans.length - 1} more)` : ''}`);
   }
   if (unexpected) problems.push(unexpected);
   else if (!bullets.length) problems.push('the Auto-decisions list is empty; write "- none" when there were no auto-decisions');

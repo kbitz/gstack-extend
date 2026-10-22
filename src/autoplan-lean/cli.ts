@@ -330,7 +330,9 @@ function checkCmd(argv: string[], io: CliIo): number {
   if (message !== undefined) {
     const text = readRegular(abs(io.cwd, message), 'message');
     if (!text) throw new Refusal('MESSAGE_MISSING', `message file ${message} does not exist`, 'write the final message to a file first');
-    problems.push(...checkMessage(text.toString('utf8'), promptBindingForPlan(bytes, planPath)).map((p) => `message: ${p}`));
+    const binding = promptBindingForPlan(bytes, planPath);
+    if (!binding) problems.push('message: cannot bind the /implement prompt to the checked plan (missing or ambiguous standalone Tier, Verify command, or review record)');
+    problems.push(...checkMessage(text.toString('utf8'), binding).map((p) => `message: ${p}`));
   }
   const { proper } = splitPlan(bytes.toString('utf8'));
   let out = `PLAN_BYTES: ${bytes.byteLength}\nPROPER_BYTES: ${Buffer.byteLength(proper)}\n`;
