@@ -50,6 +50,23 @@ const VERIFY_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|_
 const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(.+?)\s*$/i;
 const PLACEHOLDER_SPAN = /<[^>\n]+>/;
 
+/**
+ * Generous label normalization for fail-closed ambiguity scans: structural
+ * prefixes, emphasis, backticks, unicode spaces and fullwidth colons must
+ * not let a second Tier/Verify/label value hide beside the canonical one.
+ */
+function looseLabel(line: string): { label: string; value: string } | undefined {
+  const stripped = line
+    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, '')
+    .replace(/[`*_]/g, '')
+    .replace(/[\s\u00A0\u2000-\u200B\uFEFF]+/g, ' ')
+    .replace(/\uFF1A/g, ':')
+    .trim();
+  const m = /^([A-Za-z][A-Za-z -]*?):\s*(.*?)\s*$/.exec(stripped);
+  if (!m) return undefined;
+  return { label: m[1]!.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' '), value: m[2]! };
+}
+
 /** Strip one balanced emphasis pair; never eat `__main__`-style value text. */
 function verifyValue(raw: string): string {
   let v = raw.trim().replace(/^(?:\*\*|__)\s+/, '');
@@ -85,22 +102,27 @@ export function promptBindingForPlan(bytes: Uint8Array, planPath: string): Promp
   const recordIdx = unfenced.findIndex((l) => /^##\s+Review record\s*$/i.test(l.text));
   const before = recordIdx < 0 ? unfenced : unfenced.slice(0, recordIdx);
   const tiers = [...new Set(before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).filter((t): t is string => !!t))];
-  // A loose Tier label (single-emphasis, tabbed, bulleted) carrying a
-  // different value makes the plan ambiguous even when checkPlan's own
-  // Tier scan does not count that form.
-  const looseTiers = [...new Set(before.map((l) => {
-    const m = /^\s*(?:[-*+]\s+)?[*_]*tier[*_]*\s*:\s*[*_]*(routine|standard|novel)\b/i.exec(l.text);
-    return m?.[1]?.toLowerCase();
-  }).filter((t): t is string => !!t))];
+  // Loose Tier/Verify labels in any Markdown dress (headings, quotes,
+  // numbering, single emphasis, backticks) count for ambiguity even when
+  // checkPlan's own scans do not count that form; no form silently wins.
+  const loose = before.map((l, i) => ({ i, parsed: looseLabel(l.text) })).filter((c) => c.parsed);
+  const looseTiers = [...new Set(loose.filter((c) => c.parsed!.label === 'tier')
+    .map((c) => /^(routine|standard|novel)\b/i.exec(c.parsed!.value)?.[1]?.toLowerCase())
+    .filter((t): t is string => !!t))];
   const tier = tiers.length === 1 && looseTiers.every((t) => t === tiers[0]!.toLowerCase()) ? tiers[0] : undefined;
-  // Every Verify form (standalone, bulleted, bold) must agree, mirroring how
-  // checkPlan makes every Tier form agree; no form silently wins.
   const candidates = before
     .map((l, i) => { const m = VERIFY_VALUE.exec(l.text); return m ? { i, v: verifyValue(m[1]!) } : undefined; })
     .filter((c): c is { i: number; v: string } => !!c && !!c.v);
+  const looseVerifies = [...new Set(loose
+    .filter((c) => c.parsed!.label === 'verify' || c.parsed!.label === 'verify command')
+    .map((c) => verifyValue(c.parsed!.value)).filter(Boolean))];
   const distinct = [...new Set(candidates.map((c) => c.v))];
   const continued = candidates.some((c) => /^\s+\S/.test(before[c.i + 1]?.text ?? ''));
-  const verify = distinct.length === 1 && !continued ? distinct[0] : undefined;
+  const normLoose = (s: string) => s.replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim();
+  const verify = distinct.length === 1 && !continued && looseVerifies.every((v) => normLoose(v) === normLoose(distinct[0]!)) ? distinct[0] : undefined;
+  const recordText = splitPlan(text).record ?? '';
+  const sealLines = (re: RegExp) => (recordText.match(re) ?? []).length;
+  if (sealLines(/^- Sidecar: /gm) > 1 || sealLines(/^- SHA-256: /gm) > 1) return undefined;
   const seal = readSeal(splitPlan(text).record);
   if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
   return {
@@ -224,25 +246,30 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
 
   const seen = new Map<string, string>();
   let currentLabel: string | undefined;
+  const consumed = new Set<number>();
   const normalizedLabels = new Map(PROMPT_LABELS.map((k) => [k.toLowerCase(), k]));
-  for (const line of block.slice(1, label)) {
+  for (const [idx, line] of block.slice(1, label).entries()) {
     const field = /^([A-Z][A-Za-z ]+):(?:\s+(.*?))?\s*$/.exec(line);
     if (field && (PROMPT_LABELS as readonly string[]).includes(field[1]!)) {
       const key = field[1]!;
       if (seen.has(key)) problems.push(`duplicate "${key}:" line in the /implement prompt`);
       else seen.set(key, field[2] ?? '');
       currentLabel = key;
+      consumed.add(idx + 1);
       continue;
     }
-    const loose = /^\s*(?:[-*+]\s+)?[*_]*([A-Za-z][A-Za-z \t\u00A0*_]*?)\s*:/.exec(line);
-    const exact = loose ? normalizedLabels.get(loose[1]!.replace(/[*_]/g, '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase()) : undefined;
+    const loose = looseLabel(line);
+    const exact = loose ? normalizedLabels.get(loose.label) : undefined;
     if (exact) {
-      problems.push(`"${loose![1]!.trim()}:" looks like the "${exact}:" field; use the exact label`);
+      problems.push(`"${loose!.label}:" looks like the "${exact}:" field; use the exact label`);
       currentLabel = undefined;
+      consumed.add(idx + 1);
     } else if (/^\s+\S/.test(line) && currentLabel && seen.has(currentLabel)) {
       seen.set(currentLabel, `${seen.get(currentLabel)!} ${line.trim()}`.trim());
+      consumed.add(idx + 1);
     } else if (!line.trim()) {
       currentLabel = undefined;
+      consumed.add(idx + 1);
     }
   }
 
@@ -323,13 +350,16 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
     const span = PLACEHOLDER_SPAN.exec(value.replace(/`[^`]*`/g, ''))?.[0];
     if (span) spans.push(span);
   }
-  for (const [idx, line] of block.slice(1).entries()) {
-    if (verifyBound && /^Verify command:/.test(line)) continue;
-    const bare = line.replace(/`[^`]*`/g, '');
-    const span = PLACEHOLDER_SPAN.exec(bare)?.[0];
-    if (!span) continue;
-    if (idx + 1 > label) problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
-    else spans.push(span);
+  for (const bullet of bullets) {
+    if (PLACEHOLDER_SPAN.test(bullet.replace(/`[^`]*`/g, ''))) {
+      problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
+      break;
+    }
+  }
+  for (const [idx, line] of block.slice(1, label).entries()) {
+    if (consumed.has(idx + 1)) continue;
+    const span = PLACEHOLDER_SPAN.exec(line.replace(/`[^`]*`/g, ''))?.[0];
+    if (span) spans.push(span);
   }
   const uniqueSpans = [...new Set(spans)];
   if (uniqueSpans.length) {
