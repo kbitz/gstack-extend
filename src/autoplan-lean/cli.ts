@@ -9,7 +9,7 @@ import {
 import { buildPrompt, parseSizeRecords } from './prompt.ts';
 import { assembleSidecar } from './sidecar.ts';
 import { PHASE_HISTORY, PHASE_OUTPUTS, parsePhaseHistory, type PhaseAttempt } from './history.ts';
-import { checkMessage, checkPlan } from './transport.ts';
+import { checkMessage, checkPlan, promptBindingForPlan } from './transport.ts';
 
 // All three launcher flags first coexist in Bun 1.3.3's src/cli/Arguments.zig.
 export const BUN_FLOOR = '1.3.3';
@@ -56,7 +56,7 @@ seal     Assemble DIR's review files into the sidecar <plan-stem>.review-record.
          pair unchanged; publication failures restore it or report the
          retained recovery file. New review-record copies are owner-only;
          PLAN uses its existing permission mode, restricted by the process umask.
-check    Check the transport shape of PLAN (and of the final message in FILE).
+check    Check the transport shape of PLAN (and the copyable /implement prompt in FILE).
 drift    Compare native criteria exactly and check known outside paragraphs
          in installed upstream text. Added outside requirements are not detected.
 
@@ -261,6 +261,8 @@ function sealCmd(argv: string[], io: CliIo): number {
   const hash = sha256(record);
   const size = Buffer.byteLength(record);
   const nextPlan = withRecord(plan, recordSection(sidecar, hash, size));
+  const planHash = sha256(nextPlan);
+  const planSize = Buffer.byteLength(nextPlan);
   const staged: string[] = [];
   const stage = (path: string, text: string | Buffer, mode?: number) => {
     const tmp = stageAtomic(path, text, mode);
@@ -308,7 +310,7 @@ function sealCmd(argv: string[], io: CliIo): number {
       }
     }
   }
-  io.stdout(`SIDECAR: ${sidecar}\nSHA256: ${hash}\nBYTES: ${size}\nPLAN: ${planPath}\n${previous ? `PREVIOUS: ${previous.path}\n` : ''}STATUS: sealed\n`);
+  io.stdout(`SIDECAR: ${sidecar}\nSHA256: ${hash}\nBYTES: ${size}\nPLAN: ${planPath}\nPLAN_SHA256: ${planHash}\nPLAN_BYTES: ${planSize}\n${previous ? `PREVIOUS: ${previous.path}\n` : ''}STATUS: sealed\n`);
   return EXIT.ok;
 }
 
@@ -328,7 +330,9 @@ function checkCmd(argv: string[], io: CliIo): number {
   if (message !== undefined) {
     const text = readRegular(abs(io.cwd, message), 'message');
     if (!text) throw new Refusal('MESSAGE_MISSING', `message file ${message} does not exist`, 'write the final message to a file first');
-    problems.push(...checkMessage(text.toString('utf8')).map((p) => `message: ${p}`));
+    const binding = promptBindingForPlan(bytes, planPath);
+    if (!binding) problems.push('message: cannot bind the /implement prompt to the checked plan (missing or ambiguous standalone Tier, Verify command, or review record)');
+    problems.push(...checkMessage(text.toString('utf8'), binding).map((p) => `message: ${p}`));
   }
   const { proper } = splitPlan(bytes.toString('utf8'));
   let out = `PLAN_BYTES: ${bytes.byteLength}\nPROPER_BYTES: ${Buffer.byteLength(proper)}\n`;

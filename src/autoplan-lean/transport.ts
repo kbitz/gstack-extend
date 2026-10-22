@@ -13,12 +13,32 @@
  * which must match the sidecar's bytes, and the last H2 heading must be
  * `## GSTACK REVIEW REPORT`. The plan proper must carry no raw review output.
  *
- * Final message: it ends with a block whose first line starts `Run /implement`
- * (unfenced at column 0, or the first line inside a column-0 fence that closes
- * the message), followed by an `Auto-decisions:` line and either one `- none`
- * bullet or bullets that each carry `[fork]` or `[challenge]`.
+ * Final message: it ends with a copyable /implement prompt block whose first
+ * line starts `Run /implement <ACTIVE_PLAN>` (unfenced at column 0, or the
+ * first line inside a column-0 fence that closes the message), carries the
+ * required `/implement` handoff fields (`Workspace`, `Branch`, `Work state`,
+ * `Plan`, `Review record`, `Approved scope`, `Spec`, `Test plan`,
+ * `Verify command`, `Preserve`), and finishes with an `Auto-decisions:` line
+ * followed by either one `- none` bullet or bullets that each carry `[fork]`
+ * or `[challenge]`. When the caller supplies the checked plan's binding
+ * (`promptBindingForPlan`), the prompt's plan path, plan SHA-256, Tier,
+ * sidecar path/SHA-256 and Verify command must also match that plan, so a
+ * stale prompt fails instead of handing off the wrong revision.
  */
 import { REPORT_HEADING, REVIEW_RECORD_HEADING, rawOutputMarkers, readSeal, scanLines, sha256, splitPlan } from './plan.ts';
+
+export const PROMPT_LABELS = [
+  'Workspace',
+  'Branch',
+  'Work state',
+  'Plan',
+  'Review record',
+  'Approved scope',
+  'Spec',
+  'Test plan',
+  'Verify command',
+  'Preserve',
+] as const;
 
 const ACCEPTANCE_HEADING = /^\s*#{1,6}\s+.*acceptance/i;
 const ACCEPTANCE_LABEL = /^\s*(?:\*\*|__)[^*_]*acceptance[^*_]*(?:\*\*|__)\s*:?\s*$/i;
@@ -27,6 +47,97 @@ const MD_HEADING = /^\s*#{1,6}\s/;
 const TIER_ANY = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:\*\*|__)?tier(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(routine|standard|novel)\b/i;
 const TIER_STANDALONE = /^Tier: (routine|standard|novel)\s*$/;
 const VERIFY_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*\S/i;
+const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(.+?)\s*$/i;
+const PLACEHOLDER_SPAN = /<[^>\n]+>/;
+
+/**
+ * Generous label normalization for fail-closed ambiguity scans: structural
+ * prefixes, emphasis, backticks, unicode spaces and fullwidth colons must
+ * not let a second Tier/Verify/label value hide beside the canonical one.
+ */
+function looseLabel(line: string): { label: string; value: string } | undefined {
+  let rest = line;
+  for (let prev = ''; prev !== rest;) {
+    prev = rest;
+    rest = rest.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, '');
+  }
+  const stripped = rest
+    .replace(/[`*_]/g, '')
+    .replace(/[\s\u00A0\u2000-\u200B\uFEFF]+/g, ' ')
+    .replace(/\uFF1A/g, ':')
+    .trim();
+  const m = /^([A-Za-z][A-Za-z -]*?):\s*(.*?)\s*$/.exec(stripped);
+  if (!m) return undefined;
+  return { label: m[1]!.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' '), value: m[2]! };
+}
+
+/** Strip one balanced emphasis pair; never eat `__main__`-style value text. */
+function verifyValue(raw: string): string {
+  let v = raw.trim().replace(/^(?:\*\*|__)\s*/, '');
+  for (const m of ['**', '__']) {
+    if (v.length > 2 * m.length && v.startsWith(m) && v.endsWith(m)) v = v.slice(m.length, -m.length).trim();
+  }
+  return v;
+}
+
+/** The checked plan's values a bound /implement prompt must quote verbatim. */
+export interface PromptBinding {
+  planPath: string;
+  planSha256: string;
+  tier: string;
+  sidecarPath: string;
+  sidecarSha256: string;
+  verifyCommand: string;
+}
+
+/**
+ * Derive the binding from sealed plan bytes, or undefined when the plan does
+ * not carry every value unambiguously. Callers that check a message must
+ * fail closed on undefined: format-only checks cannot detect a stale prompt.
+ */
+export function promptBindingForPlan(bytes: Uint8Array, planPath: string): PromptBinding | undefined {
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+  const unfenced = scanLines(text).filter((l) => !l.fenced);
+  const recordIdx = unfenced.findIndex((l) => /^##\s+Review record\s*$/i.test(l.text));
+  const before = recordIdx < 0 ? unfenced : unfenced.slice(0, recordIdx);
+  const tiers = [...new Set(before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).filter((t): t is string => !!t))];
+  // Loose Tier/Verify labels in any Markdown dress (headings, quotes,
+  // numbering, single emphasis, backticks) count for ambiguity even when
+  // checkPlan's own scans do not count that form; no form silently wins.
+  const loose = before.map((l, i) => ({ i, parsed: looseLabel(l.text) })).filter((c) => c.parsed);
+  const looseTiers = [...new Set(loose.filter((c) => c.parsed!.label === 'tier')
+    .map((c) => /^(routine|standard|novel)\b/i.exec(c.parsed!.value)?.[1]?.toLowerCase())
+    .filter((t): t is string => !!t))];
+  const tier = tiers.length === 1 && looseTiers.every((t) => t === tiers[0]!.toLowerCase()) ? tiers[0] : undefined;
+  const candidates = before
+    .map((l, i) => { const m = VERIFY_VALUE.exec(l.text); return m ? { i, v: verifyValue(m[1]!) } : undefined; })
+    .filter((c): c is { i: number; v: string } => !!c && !!c.v);
+  const looseVerifies = [...new Set(loose
+    .filter((c) => c.parsed!.label === 'verify' || c.parsed!.label === 'verify command')
+    .map((c) => verifyValue(c.parsed!.value)).filter(Boolean))];
+  const distinct = [...new Set(candidates.map((c) => c.v))];
+  const continued = candidates.some((c) => /^\s+\S/.test(before[c.i + 1]?.text ?? ''));
+  const normLoose = (s: string) => s.replace(/[`*_]/g, '').replace(/\s+/g, ' ').trim();
+  const verify = distinct.length === 1 && !continued && looseVerifies.every((v) => normLoose(v) === normLoose(distinct[0]!)) ? distinct[0] : undefined;
+  const recordText = splitPlan(text).record ?? '';
+  const sealLines = (re: RegExp) => (recordText.match(re) ?? []).length;
+  if (sealLines(/^\s*-\s*Sidecar:/gm) > 1 || sealLines(/^\s*-\s*SHA-256:/gm) > 1) return undefined;
+  const seal = readSeal(splitPlan(text).record);
+  if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
+  return {
+    planPath,
+    planSha256: sha256(bytes),
+    tier: tier.toLowerCase(),
+    sidecarPath: seal.path,
+    sidecarSha256: seal.sha256.toLowerCase(),
+    verifyCommand: verify,
+  };
+}
 const TASKS_HEADING_ANY = /^\s*#{1,6}\s+.*implementation tasks/i;
 
 export type SidecarReader = (path: string) => Uint8Array | undefined;
@@ -122,23 +233,151 @@ export function handoffBlock(message: string): string[] | undefined {
   return undefined;
 }
 
-export function checkMessage(message: string): string[] {
+export function checkMessage(message: string, binding?: PromptBinding): string[] {
   const block = handoffBlock(message);
   if (!block) return ['the final message does not end with a block whose first line starts "Run /implement"'];
   const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
   if (label < 0) return ['the handoff block has no bare "Auto-decisions:" line after "Run /implement"'];
+
+  const problems: string[] = [];
+  const run = /^Run \/implement(?:\s+(\S.*?))?\s*$/.exec(block[0]!);
+  const runPlan = run?.[1];
+  if (!runPlan || /^<[^>]+>$/.test(runPlan)) {
+    problems.push('the first line of the handoff block must be "Run /implement <ACTIVE_PLAN>" with a concrete plan path');
+  } else if (!runPlan.startsWith('/')) {
+    problems.push(`the "Run /implement" plan path must be an absolute path, got ${runPlan}`);
+  }
+
+  const seen = new Map<string, string>();
+  let currentLabel: string | undefined;
+  const consumed = new Set<number>();
+  const normalizedLabels = new Map(PROMPT_LABELS.map((k) => [k.toLowerCase(), k]));
+  for (const [idx, line] of block.slice(1, label).entries()) {
+    const field = /^([A-Z][A-Za-z ]+):(?:\s+(.*?))?\s*$/.exec(line);
+    if (field && (PROMPT_LABELS as readonly string[]).includes(field[1]!)) {
+      const key = field[1]!;
+      if (seen.has(key)) problems.push(`duplicate "${key}:" line in the /implement prompt`);
+      else seen.set(key, field[2] ?? '');
+      currentLabel = key;
+      consumed.add(idx + 1);
+      continue;
+    }
+    const loose = looseLabel(line);
+    const exact = loose ? normalizedLabels.get(loose.label) : undefined;
+    if (exact) {
+      problems.push(`"${loose!.label}:" looks like the "${exact}:" field; use the exact label`);
+      currentLabel = undefined;
+      consumed.add(idx + 1);
+    } else if (/^\s+\S/.test(line) && currentLabel && seen.has(currentLabel)) {
+      seen.set(currentLabel, `${seen.get(currentLabel)!} ${line.trim()}`.trim());
+      consumed.add(idx + 1);
+    } else if (!line.trim()) {
+      currentLabel = undefined;
+      consumed.add(idx + 1);
+    }
+  }
+
+  const missing = PROMPT_LABELS.filter((k) => {
+    const v = seen.get(k)?.trim();
+    return !v || /^<[^>]+>$/.test(v);
+  });
+  if (missing.length) {
+    problems.push(`the /implement prompt is missing required field(s): ${missing.join(', ')}`);
+  }
+
+  const workspace = seen.get('Workspace')?.trim();
+  if (workspace && !/^<[^>]+>$/.test(workspace) && (!/^\/(?!\s)/.test(workspace) || /<absolute path/i.test(workspace))) {
+    problems.push('Workspace: must name an absolute workspace path');
+  }
+  const branch = seen.get('Branch')?.trim();
+  if (branch && !/^<[^>]+>$/.test(branch) && !/^([^;<>]+);\s*target base:\s*([^;<>]+);\s*HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$/.test(branch)) {
+    problems.push('Branch: must be "<current branch>; target base: <base ref>; HEAD: <40- or 64-char lowercase hex SHA>"');
+  }
+  const planField = seen.get('Plan')?.trim();
+  let planMatch: RegExpExecArray | undefined;
+  if (planField && !/^<[^>]+>$/.test(planField)) {
+    planMatch = /^(\S.*?);\s*SHA-256:\s*([0-9a-f]{64});\s*Tier:\s*(routine|standard|novel)\s*$/i.exec(planField) ?? undefined;
+    if (!planMatch) problems.push('Plan: must be "<ACTIVE_PLAN>; SHA-256: <64-char hex>; Tier: <routine|standard|novel>"');
+    else if (runPlan && !/^<[^>]+>$/.test(runPlan) && planMatch[1] !== runPlan) {
+      problems.push(`Plan: path (${planMatch[1]}) does not match "Run /implement ${runPlan}"`);
+    }
+  }
+  const reviewRecord = seen.get('Review record')?.trim();
+  let recordMatch: RegExpExecArray | undefined;
+  if (reviewRecord && !/^<[^>]+>$/.test(reviewRecord)) {
+    recordMatch = /^(\/[^;<>]*\.review-record\.md);\s*SHA-256:\s*([0-9a-f]{64})\s*$/i.exec(reviewRecord) ?? undefined;
+    if (!recordMatch) problems.push('Review record: must be "<sidecar .review-record.md path>; SHA-256: <64-char hex>"');
+  }
+
+  if (binding) {
+    if (runPlan && !/^<[^>]+>$/.test(runPlan) && runPlan !== binding.planPath) {
+      problems.push(`the /implement prompt names plan ${runPlan}, which does not match the checked plan ${binding.planPath}`);
+    }
+    if (planMatch) {
+      if (planMatch[2]!.toLowerCase() !== binding.planSha256) {
+        problems.push('Plan: SHA-256 does not match the checked plan (stale prompt; re-seal or update it)');
+      }
+      if (planMatch[3]!.toLowerCase() !== binding.tier) {
+        problems.push(`Plan: Tier ${planMatch[3]} does not match the checked plan Tier ${binding.tier}`);
+      }
+    }
+    if (recordMatch) {
+      if (recordMatch[1] !== binding.sidecarPath) {
+        problems.push(`Review record: path (${recordMatch[1]}) does not match the checked plan sidecar ${binding.sidecarPath}`);
+      }
+      if (recordMatch[2]!.toLowerCase() !== binding.sidecarSha256) {
+        problems.push('Review record: SHA-256 does not match the checked plan sidecar (stale prompt; re-seal or update it)');
+      }
+    }
+    const verifyField = seen.get('Verify command')?.trim();
+    if (verifyField && !/^<[^>]+>$/.test(verifyField) && verifyField !== binding.verifyCommand) {
+      problems.push(`Verify command: (${verifyField}) does not match the checked plan Verify command (${binding.verifyCommand})`);
+    }
+  }
+
   const bullets: string[] = [];
+  let unexpected: string | undefined;
   for (const line of block.slice(label + 1)) {
     if (!line.trim()) continue;
     const bullet = /^\s*[-*+]\s+(\S.*?)\s*$/.exec(line);
     if (bullet && !/^\s{2,}/.test(line)) bullets.push(bullet[1]!);
     else if (/^\s+\S/.test(line) && bullets.length) bullets[bullets.length - 1] += ` ${line.trim()}`;
-    else return [`unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`];
+    else { unexpected = `unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`; break; }
   }
-  if (!bullets.length) return ['the Auto-decisions list is empty; write "- none" when there were no auto-decisions'];
-  const none = bullets.filter((b) => /^none[\s.!]*$/i.test(b));
-  if (none.length && bullets.length > 1) return ['"- none" cannot be combined with other Auto-decisions bullets'];
-  if (none.length) return [];
-  const unmarked = bullets.filter((b) => !/\[(?:fork|challenge)\]/.test(b));
-  return unmarked.length ? [`${unmarked.length} Auto-decisions bullet(s) lack a [fork] or [challenge] marker`] : [];
+  // Placeholder scan over the whole block (prose, fields, bullets). Code
+  // spans are exempt (quoted commands/code may contain angle brackets), as
+  // is a Verify command value the binding already proved verbatim.
+  const verifyBound = binding !== undefined && seen.get('Verify command')?.trim() === binding.verifyCommand;
+  const spans: string[] = [];
+  for (const [key, value] of seen) {
+    if (verifyBound && key === 'Verify command') continue;
+    const span = PLACEHOLDER_SPAN.exec(value.replace(/`[^`]*`/g, ''))?.[0];
+    if (span) spans.push(span);
+  }
+  for (const bullet of bullets) {
+    if (PLACEHOLDER_SPAN.test(bullet.replace(/`[^`]*`/g, ''))) {
+      problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
+      break;
+    }
+  }
+  for (const [idx, line] of block.slice(1, label).entries()) {
+    if (consumed.has(idx + 1)) continue;
+    const span = PLACEHOLDER_SPAN.exec(line.replace(/`[^`]*`/g, ''))?.[0];
+    if (span) spans.push(span);
+  }
+  const uniqueSpans = [...new Set(spans)];
+  if (uniqueSpans.length) {
+    problems.push(`the /implement prompt still contains unfilled <...> placeholder(s): ${uniqueSpans[0]}${uniqueSpans.length > 1 ? ` (+${uniqueSpans.length - 1} more)` : ''}`);
+  }
+  if (unexpected) problems.push(unexpected);
+  else if (!bullets.length) problems.push('the Auto-decisions list is empty; write "- none" when there were no auto-decisions');
+  else {
+    const none = bullets.filter((b) => /^none[\s.!]*$/i.test(b));
+    if (none.length && bullets.length > 1) problems.push('"- none" cannot be combined with other Auto-decisions bullets');
+    else if (!none.length) {
+      const unmarked = bullets.filter((b) => !/\[(?:fork|challenge)\]/.test(b));
+      if (unmarked.length) problems.push(`${unmarked.length} Auto-decisions bullet(s) lack a [fork] or [challenge] marker`);
+    }
+  }
+  return problems;
 }

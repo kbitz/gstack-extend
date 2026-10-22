@@ -15,7 +15,7 @@ import { main, sidecarPathFor, type CliIo } from '../src/autoplan-lean/cli.ts';
 import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, UPSTREAM, driftReport } from '../src/autoplan-lean/criteria.ts';
 import { PHASES, parseSettlements, readSeal, sha256, splitPlan } from '../src/autoplan-lean/plan.ts';
 import { buildPrompt, parseSizeRecords } from '../src/autoplan-lean/prompt.ts';
-import { checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
+import { PROMPT_LABELS, checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'autoplan-lean');
@@ -94,6 +94,8 @@ describe('plan proper and sidecar split', () => {
     expect(field(r.stdout, 'SHA256')).toBe(sha256(bytes));
 
     const sealed = readFileSync(plan, 'utf8');
+    expect(field(r.stdout, 'PLAN_SHA256')).toBe(sha256(Buffer.from(sealed)));
+    expect(field(r.stdout, 'PLAN_BYTES')).toBe(String(Buffer.byteLength(sealed)));
     const parts = splitPlan(sealed);
     expect(readSeal(parts.record)).toEqual({ path: sidecar, sha256: sha256(bytes), bytes: bytes.byteLength });
     // The record sits between the plan proper and the report, which stays last.
@@ -321,9 +323,128 @@ describe('transport contract shape', () => {
   test('the sealed fixture plan and both fixture messages pass', () => {
     const text = sealedPlan();
     expect(problems(text)).toEqual([]);
+    // Fixture messages carry example hashes, so they prove the format layer;
+    // the bound cli check below builds its message from real seal output.
     expect(checkMessage(readFileSync(join(FIXTURES, 'final-message.md'), 'utf8'))).toEqual([]);
     expect(checkMessage(readFileSync(join(FIXTURES, 'final-message-fenced.md'), 'utf8'))).toEqual([]);
-    const r = cli('check', '--plan', plan, '--message', join(FIXTURES, 'final-message.md'));
+  });
+
+  const boundMessage = (sealOut: string, over: Record<string, string> = {}) => {
+    const values: Record<string, string> = {
+      planPath: plan,
+      planSha: field(sealOut, 'PLAN_SHA256')!,
+      sidecar: field(sealOut, 'SIDECAR')!,
+      sidecarSha: field(sealOut, 'SHA256')!,
+      tier: 'standard',
+      verify: '`bun run test`',
+      ...over,
+    };
+    return [
+      'DONE', '', '```text', `Run /implement ${values.planPath}`, '',
+      `Workspace: ${temp} — continue in this same workspace`,
+      'Branch: feature/x; target base: origin/main; HEAD: 0123456789abcdef0123456789abcdef01234567',
+      'Work state: clean working tree',
+      `Plan: ${values.planPath}; SHA-256: ${values.planSha}; Tier: ${values.tier}`,
+      `Review record: ${values.sidecar}; SHA-256: ${values.sidecarSha}`,
+      'Approved scope: Export widgets as CSV; approved as-is',
+      'Spec: none', 'Test plan: in plan', `Verify command: ${values.verify}`, 'Preserve: none', '',
+      'Auto-decisions:', '- none', '```', '',
+    ].join('\n');
+  };
+
+  test('check binds the prompt to the sealed plan it checks', () => {
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    const check = (text: string) => {
+      writeFileSync(msg, text);
+      return cli('check', '--plan', plan, '--message', msg);
+    };
+    const ok = check(boundMessage(seal.stdout));
+    expect(ok.code).toBe(0);
+    expect(field(ok.stdout, 'CHECK')).toBe('ok');
+
+    const stale: Array<[string, Record<string, string>, string]> = [
+      ['stale plan hash', { planSha: '0'.repeat(64) }, 'does not match the checked plan'],
+      ['stale sidecar hash', { sidecarSha: '0'.repeat(64) }, 'does not match the checked plan'],
+      ['different sidecar path', { sidecar: '/tmp/other.review-record.md' }, 'does not match the checked plan'],
+      ['wrong Tier', { tier: 'novel' }, 'does not match the checked plan'],
+      ['divergent Verify command', { verify: '`bun run other`' }, 'does not match the checked plan'],
+      ['different plan path', { planPath: '/tmp/elsewhere.md' }, 'does not match the checked plan'],
+    ];
+    for (const [name, over, expected] of stale) {
+      const r = check(boundMessage(seal.stdout, over));
+      expect(r.code, name).toBe(1);
+      expect(r.stdout, name).toContain(expected);
+      expect(field(r.stdout, 'CHECK'), name).toBe('fail');
+    }
+  });
+
+  test('check fails closed when the plan Verify lines disagree', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: `bun run test`\nVerify command: `bun run other`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout, { planSha: '0'.repeat(64) }));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('cannot bind the /implement prompt to the checked plan');
+  });
+
+  test('check fails closed when a bullet Verify line diverges from the standalone one', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: `bun run test`\n- Verify: `bun run evil`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('cannot bind the /implement prompt to the checked plan');
+  });
+
+  test('check fails closed when a loose Tier or heading Verify diverges', () => {
+    for (const extra of ['*Tier*: novel', '### Verify command: `bun run evil`', '> - Tier: novel', '> - **Tier:** novel']) {
+      rmSync(sidecarPathFor(plan), { force: true });
+      writeFileSync(plan, readFileSync(join(FIXTURES, 'plan.md'), 'utf8').replace('Tier: standard', `Tier: standard\n${extra}`));
+      const seal = cli('seal', '--plan', plan, '--run', run);
+      expect(seal.code, extra).toBe(0);
+      const msg = join(temp, 'bound.md');
+      writeFileSync(msg, boundMessage(seal.stdout));
+      const r = cli('check', '--plan', plan, '--message', msg);
+      expect(r.code, extra).toBe(1);
+      expect(r.stdout, extra).toContain('cannot bind the /implement prompt to the checked plan');
+    }
+  });
+
+  test('a bold-colon Verify label in the plan binds to its plain value', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', '**Verify command:** `bun run test`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'CHECK')).toBe('ok');
+  });
+
+  test('fenced Tier and Verify examples in the plan do not bind', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('## Acceptance criteria', 'Example:\n\n```\nTier: novel\nVerify command: `bun run evil`\n```\n\n## Acceptance criteria'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'CHECK')).toBe('ok');
+  });
+
+  test('a bound Verify command containing an angle span passes verbatim', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: bun test --grep <pattern>'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout, { verify: 'bun test --grep <pattern>' }));
+    const r = cli('check', '--plan', plan, '--message', msg);
     expect(r.code).toBe(0);
     expect(field(r.stdout, 'CHECK')).toBe('ok');
   });
@@ -359,30 +480,70 @@ describe('transport contract shape', () => {
     });
   }
 
+  const HASH64 = 'a'.repeat(64);
+  const SIDECAR64 = 'b'.repeat(64);
+  const HEAD40 = '0123456789abcdef'.repeat(2) + '01234567';
+  const promptFields = (planPath = '/p.md') => [
+    'Workspace: /tmp/work/widgets — continue in this same workspace',
+    `Branch: feature/widget-csv; target base: origin/main; HEAD: ${HEAD40}`,
+    'Work state: clean working tree',
+    `Plan: ${planPath}; SHA-256: ${HASH64}; Tier: standard`,
+    `Review record: ${planPath.replace(/\.md$/, '')}.review-record.md; SHA-256: ${SIDECAR64}`,
+    'Approved scope: Export widgets as CSV; approved as-is',
+    'Spec: none',
+    'Test plan: in plan',
+    'Verify command: `bun run test`',
+    'Preserve: none',
+  ].join('\n');
+  const handoff = (decisions: string, planPath = '/p.md', fields = promptFields(planPath)) =>
+    `Run /implement ${planPath}\n\n${fields}\n\n${decisions}`;
+
   const messages: Array<[string, string, string | undefined]> = [
-    ['plain block with marked bullets', 'Done.\n\nRun /implement /p.md\nAuto-decisions:\n- [fork] a\n- [challenge] b\n', undefined],
-    ['continuation lines join their bullet', 'Run /implement\nAuto-decisions:\n- [fork] a long\n  decision\n', undefined],
-    ['none', 'Run /implement /p.md\nAuto-decisions:\n- none\n', undefined],
-    ['an earlier fenced example quoting the handoff', 'Example:\n\n```\nRun /implement /old.md\n```\n\nRun /implement /p.md\nAuto-decisions:\n- none\n', undefined],
+    ['plain block with marked bullets', `Done.\n\n${handoff('Auto-decisions:\n- [fork] a\n- [challenge] b\n')}`, undefined],
+    ['continuation lines join their bullet and field', handoff('Auto-decisions:\n- [fork] a long\n  decision\n', '/p.md', promptFields('/p.md').replace('Approved scope: Export widgets as CSV; approved as-is', 'Approved scope: Export widgets as CSV;\n  approved as-is')), undefined],
+    ['none', handoff('Auto-decisions:\n- none\n'), undefined],
+    ['an earlier fenced example quoting the handoff', `Example:\n\n\`\`\`\nRun /implement /old.md\n\`\`\`\n\n${handoff('Auto-decisions:\n- none\n')}`, undefined],
     ['no block', 'All done; run implement next.\n', 'does not end with a block'],
-    ['indented run line', '  Run /implement /p.md\nAuto-decisions:\n- none\n', 'does not end with a block'],
-    ['fence not last', '```\nRun /implement /p.md\nAuto-decisions:\n- none\n```\nThanks!\n', 'does not end with a block'],
-    ['no label', 'Run /implement /p.md\n- [fork] a\n', 'no bare "Auto-decisions:"'],
-    ['inline none label', 'Run /implement /p.md\nAuto-decisions: none\n', 'no bare "Auto-decisions:"'],
-    ['empty list', 'Run /implement /p.md\nAuto-decisions:\n', 'list is empty'],
-    ['unmarked bullet', 'Run /implement /p.md\nAuto-decisions:\n- [fork] a\n- chose b\n', 'lack a [fork] or [challenge]'],
-    ['none with others', 'Run /implement /p.md\nAuto-decisions:\n- none\n- [fork] a\n', 'cannot be combined'],
-    ['prose after the list', 'Run /implement /p.md\nAuto-decisions:\n- [fork] a\nThat is all.\n', 'unexpected line'],
+    ['indented run line', `  Run /implement /p.md\n${promptFields()}\nAuto-decisions:\n- none\n`, 'does not end with a block'],
+    ['fence not last', `\`\`\`\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\nThanks!\n`, 'does not end with a block'],
+    ['no label', `Run /implement /p.md\n${promptFields()}\n- [fork] a\n`, 'no bare "Auto-decisions:"'],
+    ['inline none label', `Run /implement /p.md\n${promptFields()}\nAuto-decisions: none\n`, 'no bare "Auto-decisions:"'],
+    ['empty list', handoff('Auto-decisions:\n'), 'list is empty'],
+    ['unmarked bullet', handoff('Auto-decisions:\n- [fork] a\n- chose b\n'), 'lack a [fork] or [challenge]'],
+    ['none with others', handoff('Auto-decisions:\n- none\n- [fork] a\n'), 'cannot be combined'],
+    ['prose after the list', handoff('Auto-decisions:\n- [fork] a\nThat is all.\n'), 'unexpected line'],
+    ['bare stub without /implement prompt fields', 'Run /implement /p.md\nAuto-decisions:\n- none\n', 'missing required field(s): Workspace, Branch'],
+    ['missing plan path on Run /implement line', `Run /implement\n${promptFields()}\nAuto-decisions:\n- none\n`, 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
+    ['unfilled <ACTIVE_PLAN> on Run /implement line', handoff('Auto-decisions:\n- none\n', '<ACTIVE_PLAN>'), 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
+    ['unfilled <ACTIVE_PLAN> in prompt prose', `Run /implement /p.md\nRead <ACTIVE_PLAN> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'still contains unfilled'],
+    ['generic placeholder in prompt prose', `Run /implement /p.md\nRead <branch-name> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'unfilled'],
+    ['placeholder only in an Auto-decisions bullet', handoff('Auto-decisions:\n- [fork] chose <option>\n'), 'Auto-decisions bullet still contains an unfilled'],
+    ['shadow lowercase plan label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nplan: /evil.md`), 'looks like the "Plan:" field'],
+    ['shadow tab Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nVerify\tcommand: bun run evil`), 'looks like the "Verify command:" field'],
+    ['shadow single-asterisk Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\n*Verify command*: bun run evil`), 'looks like the "Verify command:" field'],
+    ['placeholder split across a continuation', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Approved scope: Export widgets as CSV; approved as-is', 'Approved scope: Build <the\n  thing> now')), 'unfilled'],
+    ['shadow numbered Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\n1. Verify command: bun run evil`), 'looks like the "Verify command:" field'],
+    ['shadow stacked-prefix Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\n> - Verify command: bun run evil`), 'looks like the "Verify command:" field'],
+    ['placeholder split across a bullet continuation', handoff('Auto-decisions:\n- [fork] chose <opt\n  ion>\n'), 'Auto-decisions bullet still contains an unfilled'],
+    ['relative Workspace path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Workspace: /tmp/work/widgets — continue in this same workspace', 'Workspace: relative/path')), 'Workspace: must name an absolute workspace path'],
+    ['malformed Branch line (short SHA)', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace(HEAD40, 'abc1234')), 'Branch: must be'],
+    ['Plan path disagrees with Run /implement path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields('/other.md')), 'Plan: path (/other.md) does not match "Run /implement /p.md"'],
+    ['malformed Review record line', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('/p.review-record.md', '/p.sidecar.md')), 'Review record: must be'],
+    ['duplicate prompt field label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nSpec: docs/SPEC.md`), 'duplicate "Spec:" line'],
+    ['malformed Plan hash (short)', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace(HASH64, 'abc123')), 'Plan: must be'],
+    ['Plan Tier outside the enum', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Tier: standard', 'Tier: huge')), 'Plan: must be'],
+    ['relative Run /implement path', handoff('Auto-decisions:\n- none\n', 'relative/p.md', promptFields('relative/p.md')), 'absolute'],
+    ['embedded placeholder in a free-text field', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Approved scope: Export widgets as CSV; approved as-is', 'Approved scope: Build <thing> now')), 'unfilled'],
     // Generated by /ship coverage audit.
     // Value: protects=a fenced handoff counts only in a column-0 fence of the same char, closed by an equal or
     //   longer fence on the last line; fails_when=fence char/length matching or the inner-close guard breaks;
     //   why_new=only one backtick-fenced fixture was tested; seam=none; no_claim=parity with any one transport parser
-    ['tilde-fenced block', 'Done.\n\n~~~\nRun /implement /p.md\nAuto-decisions:\n- none\n~~~\n', undefined],
-    ['four-backtick fence closed by five', '````text\nRun /implement /p.md\nAuto-decisions:\n- none\n`````\n', undefined],
-    ['fence closed by a shorter fence', '````\nRun /implement /p.md\nAuto-decisions:\n- none\n```\n', 'does not end with a block'],
-    ['fence closed by the other character', '```\nRun /implement /p.md\nAuto-decisions:\n- none\n~~~\n', 'does not end with a block'],
-    ['indented fence', '  ```\nRun /implement /p.md\nAuto-decisions:\n- none\n  ```\n', 'does not end with a block'],
-    ['handoff fence closed before the list', '```\nRun /implement /p.md\n```\nAuto-decisions:\n- none\n```\n', 'does not end with a block'],
+    ['tilde-fenced block', `Done.\n\n~~~\n${handoff('Auto-decisions:\n- none\n')}~~~\n`, undefined],
+    ['four-backtick fence closed by five', `\`\`\`\`text\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\`\`\n`, undefined],
+    ['fence closed by a shorter fence', `\`\`\`\`\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\n`, 'does not end with a block'],
+    ['fence closed by the other character', `\`\`\`\n${handoff('Auto-decisions:\n- none\n')}~~~\n`, 'does not end with a block'],
+    ['indented fence', `  \`\`\`\n${handoff('Auto-decisions:\n- none\n')}  \`\`\`\n`, 'does not end with a block'],
+    ['handoff fence closed before the list', `\`\`\`\nRun /implement /p.md\n\`\`\`\nAuto-decisions:\n- none\n\`\`\`\n`, 'does not end with a block'],
   ];
   for (const [name, message, expected] of messages) {
     test(`final message: ${name}`, () => {
@@ -719,7 +880,8 @@ describe('launcher and skill contract', () => {
   });
 
   test('the skill orchestrates upstream phase skills and keeps the transport contract', () => {
-    const skill = readFileSync(join(ROOT, 'skills', 'autoplan-lean.md'), 'utf8').replace(/\s+/g, ' ');
+    const rawSkill = readFileSync(join(ROOT, 'skills', 'autoplan-lean.md'), 'utf8');
+    const skill = rawSkill.replace(/\s+/g, ' ');
     for (const phrase of [
       '`autoplan`, `plan-ceo-review`, `plan-design-review`, `plan-devex-review` and `plan-eng-review`',
       'Never invoke `/autoplan` itself.',
@@ -734,11 +896,43 @@ describe('launcher and skill contract', () => {
       '**Auto-choose at every gate:**',
       '**No repository edits, commits, pushes or PRs:**',
       'never in `TODOS.md` or any other repository file',
-      'Run /implement <ACTIVE_PLAN> Auto-decisions:',
+      'Never leave the only copy of the reviewed plan in `.context`, `/tmp`, or session memory',
+      'On E (reject), stop after writing `<run>/gate.md`: do not seal the plan or emit the `/implement` prompt.',
+      'gstack-redact --from-file "<run>/final-message.md"',
+      'Run /implement <ACTIVE_PLAN>',
+      'Read the sealed plan once, then re-read only needed line ranges and keep the plan read-only.',
+      'Do not load the review-record sidecar into main context unless a task or accepted decision needs deeper phase detail.',
       'With none, the list is exactly `- none`.',
       'Mark each User Challenge `[challenge]` and every other entry `[fork]`.',
       'End the message with this block. Nothing may follow it:',
       '`CHECK: ok` is required.',
     ]) expect(skill).toContain(phrase);
+
+    const fenceMatch = /## 7\. Final message[\s\S]*?```text\n([\s\S]*?)\n```/.exec(rawSkill);
+    expect(fenceMatch).not.toBeNull();
+    const tpl = fenceMatch![1]!;
+    const labels = tpl.split('\n').flatMap((l) => (/^([A-Z][A-Za-z ]+): /.exec(l) ? [l.split(': ')[0]!] : []));
+    expect(labels).toEqual([...PROMPT_LABELS]);
+    expect(checkMessage(`Summary.\n\n\`\`\`text\n${tpl}\n\`\`\`\n`).length).toBeGreaterThan(0);
+
+    const filled = tpl
+      .replaceAll('<ACTIVE_PLAN>', '/tmp/plan.md')
+      .replace('<absolute path — continue in this same workspace>', '/tmp/work/widgets — continue in this same workspace')
+      .replace('<current branch>', 'feature/widget-csv')
+      .replace('<base ref>', 'origin/main')
+      .replace('<full SHA>', '0123456789abcdef0123456789abcdef01234567')
+      .replace('<clean, or committed/staged/unstaged/untracked changes including any TODOS.md updates>', 'clean working tree')
+      .replace('<plan SHA-256>', 'a'.repeat(64))
+      .replace('<routine|standard|novel>', 'standard')
+      .replace('<sidecar path>', '/tmp/plan.review-record.md')
+      .replace('<sidecar SHA-256>', 'b'.repeat(64))
+      .replace('<what to build, gate outcome, and any HOLD SCOPE or Track boundary>', 'Export widgets as CSV; approved as-is')
+      .replace('<docs/SPEC.md path and relevant outcome/target IDs, or none>', 'none')
+      .replace('<Eng test-plan artifact path under ~/.gstack/projects/<slug>/, or in plan>', 'in plan')
+      .replace('<the plan\'s Verify command line, as data>', '`bun run test`')
+      .replace('<TODOS.md deferrals written by Eng and any unrelated working-tree changes, or none>', 'none')
+      .replace('<decision on the caller\'s fork list, and the option taken>', 'Stream rows instead of buffering')
+      .replace('<User Challenge and the option taken>', 'Keep CSV only');
+    expect(checkMessage(`Summary.\n\n\`\`\`text\n${filled}\n\`\`\`\n`)).toEqual([]);
   });
 });
