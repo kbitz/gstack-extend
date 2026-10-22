@@ -117,6 +117,8 @@ export function extractNative(snapshotSource: string, phase: Phase): string | un
  * Compare the copied criteria with installed upstream text. `sections` maps a
  * phase to its installed section text (a host that inlines sections passes its
  * SKILL.md for every phase); a missing entry is unreadable, never a match.
+ * Native strings are compared exactly. Outside checks only establish presence
+ * of known paragraphs; additions and surrounding instructions are not compared.
  */
 export function driftReport(snapshotSource: string | undefined, sections: Partial<Record<Phase, string>>, phases: readonly Phase[]): DriftItem[] {
   const items: DriftItem[] = [];

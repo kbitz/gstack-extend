@@ -201,10 +201,14 @@ installed text. Pass each applicable phase's section file, or the inlining
 "$_EXTEND_ROOT/bin/autoplan-lean" drift --snapshot-tool "<SNAPSHOT_TOOL>" --section ceo="<ceo section>" --section design="<design section>" --section dx="<dx section>" --section eng="<eng section>"
 ```
 
-`DRIFT: none` means the voices get upstream's exact criteria. Upstream changed
-on `found` and could not be compared on `unknown`. Continue in both cases, but
-record each non-matching `CRITERIA:` line in `intake.md` and in the report's
-VERDICT line. The run is then not upstream-identical for those voices.
+`DRIFT: none` means the native criteria strings match exactly and the known
+outside-criteria paragraphs remain present after whitespace normalization.
+The outside check does not detect added requirements or changes to surrounding
+instructions, so it does not prove full upstream equivalence. `found` means a
+copied criterion changed or disappeared; `unknown` means comparison was unavailable.
+Continue in both cases, but record each non-matching `CRITERIA:` line in
+`intake.md` and in the report's VERDICT line. The run is then not
+upstream-identical for those voices.
 
 ## 2. Intake
 

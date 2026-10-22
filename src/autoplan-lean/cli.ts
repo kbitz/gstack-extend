@@ -57,7 +57,8 @@ seal     Assemble DIR's review files into the sidecar <plan-stem>.review-record.
          retained recovery file. New review-record copies are owner-only;
          PLAN uses its existing permission mode, restricted by the process umask.
 check    Check the transport shape of PLAN (and of the final message in FILE).
-drift    Compare the copied reviewer criteria with installed upstream text.
+drift    Compare native criteria exactly and check known outside paragraphs
+         in installed upstream text. Added outside requirements are not detected.
 
 Output is KEY: value lines. Errors print "ERROR <CODE>: ..." and "FIX: ..." on
 stderr. Exit codes: 0 ok · 1 check failed · 2 usage · 3 refused · 4 drift or
