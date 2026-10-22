@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.40.0.0] - 2026-10-21
+
+### Added
+
+- **`/autoplan-lean` keeps the reviewed plan small.** It runs the installed upstream CEO, design, DX and engineering review methods, keeps accepted decisions and one task list in the plan, and puts reviewer outputs, consensus tables and the audit trail in a hashed sidecar beside it. Each voice receives the plan proper, its criteria and earlier accepted settlements; prompt-size records contain byte counts and hashes rather than prompt content. Callers switch to the new skill name separately. HOLD SCOPE, automatic gate choices, repository-edit restrictions and the implementation handoff shape remain supported.
+- **Review records survive retries and failed updates.** Phase reruns retain earlier attempts. Re-sealing validates inputs before publication and restores the prior sealed pair on a write failure, or identifies retained recovery bytes if restoration also fails. Newly written sidecars, archives and recovery copies are private; the scope command ignores checkout Bun configuration. These are local CLI guarantees, not crash-atomic or concurrent-writer guarantees.
+- **Upstream criteria have recorded provenance and a bounded drift check.** Native criteria are compared exactly; outside checks confirm known paragraphs remain present but do not detect added requirements or prove full equivalence. Phase methodology is read from the installed skills instead of maintaining a full autoplan fork.
+- **Savings remain unmeasured.** The baselines are a 129KB, 676-line plan with about 600 lines of review record, 22–26KB per-phase reviewer prompts, and 73.0M cached input tokens over a 2 h 15 min run. The first real run will be measured against them, including review depth and downstream plan reads. No saving is claimed until then; real host and failed-subagent checks remain scheduled for that run.
+
 ## [0.39.1.0] - 2026-10-21
 
 ### Fixed

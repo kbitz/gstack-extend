@@ -2,6 +2,14 @@
 
 ## Unprocessed
 
+### [manual] Measure /autoplan-lean's first real run against upstream /autoplan baselines
+
+- **Why:** `/autoplan-lean` claims no saving until a real run is measured. The baselines are from upstream `/autoplan` runs launched by an external transport. One plan reached 129KB and 676 lines, about 600 of them review record. Its per-phase reviewer prompts were 22–26KB each. Another run used 73.0M cached input tokens and 168K output tokens over 2 h 15 min.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Owner request, 2026-10-21. Compare the plan proper's bytes, the sidecar's `Reviewer prompt sizes` table, the parent's cached input and output tokens, wall time, and the downstream `/implement` stage's plan reads. Use the same model and effort as the baseline. Also confirm that review depth held: the same phases ran, mandatory outputs were present, and decision counts are comparable. No host run had happened when it shipped (owner decision at /ship, 2026-10-21): run it once each on Claude Code, Codex and Muse, confirm each finds the skill and the upstream phase skills and ends with `autoplan-lean check` reporting `CHECK: ok`, and force one subagent failure to confirm the voice is recorded unavailable.
+- **Revisit when:** The first real `/autoplan-lean` run completes, or a caller switches its autoplan stage to it.
+
 ### [manual] Decide whether delta-scoped review becomes the wrapper default
 
 - **Why:** The completed repeated-review item keeps delta-scoped wrapper re-reviews and delta-scoped in-cap cycles opt-in. Rerunning every reviewer on unchanged code is a second sample that can catch what the first pass missed, so making the delta the default needs evidence that it loses no accepted finding.

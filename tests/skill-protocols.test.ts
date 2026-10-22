@@ -44,6 +44,7 @@ import { CANONICAL_SECTIONS, OPTIONAL_SECTIONS } from '../src/audit/sections.ts'
 import { countTodoPatterns } from '../src/audit/lib/todo-patterns.ts';
 import { validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import {
+  AUTOPLAN_LEAN_TAIL,
   CANONICAL_SPAN,
   CMD_BIN_RE,
   FOR_POINTER_LINE,
@@ -101,6 +102,7 @@ const NON_PREAMBLE_SETUP_SKILLS = [
   'review-and-prep',
   'implement',
   'ship-and-land',
+  'autoplan-lean',
 ] as const;
 const CONDUCTOR_SKILLS = [
   'pair-review',
@@ -3354,6 +3356,9 @@ describe('Track 16D extend-root resolver locks', () => {
     expect(extractPreambleFence(resolverSkillText('gstack-extend-init'))).toBe(
       skillPreamble('gstack-extend-init', INIT_TAIL),
     );
+    expect(extractPreambleFence(resolverSkillText('autoplan-lean'))).toBe(
+      skillPreamble('autoplan-lean', AUTOPLAN_LEAN_TAIL),
+    );
   });
 
   test('L4: hand-off paragraph, upgrade no-root branch, and renames ER= line', () => {
@@ -3364,6 +3369,7 @@ describe('Track 16D extend-root resolver locks', () => {
     }
     expect(resolverSkillText('gstack-extend-upgrade')).toContain(UPGRADE_NO_ROOT);
     expect(resolverSkillText('gstack-extend-init')).toContain(INIT_ERROR_STOP);
+    expect(resolverSkillText('autoplan-lean')).toContain(INIT_ERROR_STOP);
     expect(resolverSkillText('roadmap')).toContain(RENAMES_ER_LINE);
   });
 
@@ -3480,6 +3486,9 @@ function runPreamble(skill: string, home: string, cwd: string, extra: Record<str
   });
 }
 
+// Init-tail skills exit 1 without a verified root and never run update-check.
+const INIT_LIKE = new Set<string>(['gstack-extend-init', 'autoplan-lean']);
+
 describe('Track 16D preamble representatives', () => {
   const cohorts = ['pair-review', 'gstack-extend-upgrade', 'gstack-extend-init'] as const;
 
@@ -3494,8 +3503,8 @@ describe('Track 16D preamble representatives', () => {
         const hostileSentinel = join(extendRootTmp, `${label}-hostile`);
         mkdirSync(cwd, { recursive: true });
         writeUpdateCheck(root, { marker: install !== 'unverified', record: true });
-        if (skill === 'gstack-extend-init') {
-          const bin = join(root, 'bin', 'gstack-extend');
+        if (skill === 'gstack-extend-init' || skill === 'autoplan-lean') {
+          const bin = join(root, 'bin', skill === 'autoplan-lean' ? 'autoplan-lean' : 'gstack-extend');
           writeFileSync(bin, '#!/bin/sh\nexit 0\n');
           chmodSync(bin, 0o755);
         }
@@ -3523,12 +3532,12 @@ describe('Track 16D preamble representatives', () => {
           if (install === 'unverified') {
             expect(r.stdout).toContain("lacks the line '# extend-root-protocol: v1'");
             expect(r.stdout).not.toContain('EXTEND_ROOT:');
-            expect(r.status).toBe(skill === 'gstack-extend-init' ? 1 : 0);
+            expect(r.status).toBe(INIT_LIKE.has(skill) ? 1 : 0);
             expect(existsSync(r.sentinel!)).toBe(false);
           } else {
             expect(r.status).toBe(0);
             expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
-            if (skill !== 'gstack-extend-init') {
+            if (!INIT_LIKE.has(skill)) {
               expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
             }
           }
