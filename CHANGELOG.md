@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.41.1.0] - 2026-10-22
+
+### Fixed
+
+- **Reuse completed pregate runs across review and ship.** Wrap pregate once during review preparation and reuse its verified evidence in `/ship-and-land` when the candidate tree, policy source, and pins are unchanged. Avoid repeating identical full pregate runs across workflow boundaries while preserving mechanical preflight verification for the final release candidate.
+
 ## [0.41.0.0] - 2026-10-22
 
 ### Added

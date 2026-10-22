@@ -2644,8 +2644,56 @@ describe('release-only ship path', () => {
       "cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record.",
     ]) expect(releaseOnlyN).toContain(clause);
     expect(shipN).toContain(
-      "Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree;",
+      "Reuse preparation's policy source only while its pin files are unchanged.",
     );
+  });
+
+  // Value: protects=the suite-once prompt contract and its reuse refusal branches;
+  // fails_when=coverage, policy, provenance or before-write preservation guards disappear;
+  // why_new=existing release-only assertions do not cover the FULL-path test gate;
+  // seam=none; no_claim=installed-agent or consumer acceptance (static prompt contract only).
+  test('review and ship wrap one full pregate and retain evidence before release writes', () => {
+    for (const clause of [
+      "--explain --out <temp-path>` without `--allow-repo-commands`",
+      'Put `<temp-path>` outside the worktree',
+      'never add `--policy-from head` to it',
+      'retain selection evidence from the actual head-policy run with `--explain`',
+      'make every declared JS lane runnable',
+      'documented frozen-lockfile install',
+      'A failed install stops here.',
+      'one ledger-wrapped full pregate run',
+      "gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'",
+      'above the longest runner process',
+      "`--stall-timeout` above the suite's longest silent stretch",
+      'A matching runner name or selection hash alone is insufficient.',
+      'If coverage is partial or unknown, preserve the pregate record and run the documented main command under `tests`',
+      'Never relabel or import a completed run.',
+    ]) expect(gatesN).toContain(clause);
+    for (const clause of [
+      "use item 4's ordinary `tests` fallback when main-command coverage is partial or unknown",
+      'keep distinct labels for required lanes that run does not cover',
+    ]) expect(prepN).toContain(clause);
+    for (const clause of [
+      "installed `gstack-pregate` resolved with the skill's `gstack-evidence`",
+      'each at most once with valid values; reject every other argument, environment override, redirection and compound command',
+      'changed pins require new head-policy evidence',
+      "the record's `wtree` equals the stamp's `tree`",
+      'exactly the full `CHECK_IDS` from that installed version, once each',
+      'no `fail`, `incomplete` or `not_installed` status',
+      'all `requires_remote[].receipt` values present',
+      'verdict consistent with the installed `verdictOf` implementation',
+      'SHA-256 before any release write or later pregate can replace it',
+      'complete non-empty test set the documented main command would execute',
+      'empty selection, unknown counts or partial coverage do not qualify',
+      'Never use that probe for head policy',
+      "using the validated record's exact command as `--expect-cmd`",
+      'any later `tests` record displaces it',
+      '**Release-metadata verification (FULL path).** Before Steps 12–15, verify and preserve',
+      'A filename allow-list or unchanged selection hash is insufficient.',
+      'if that affected set cannot be established, rerun the required full gate',
+      '`gstack-pregate --stage preflight --allow-repo-commands`',
+      'not new test evidence',
+    ]) expect(shipN).toContain(clause);
   });
 
   test('missing or mismatched gate evidence cannot enter release-only', () => {
