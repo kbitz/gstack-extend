@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.40.0.1] - 2026-10-22
+
+### Added
+
+- **You can read the installed planning and adoption qualification.** `docs/acceptance/planning.md` records what this operator run executed for `/roadmap` and `/project-spec`, which human checks the owner replaced with an adversarial technical review, and the evidence those results use. It does not award planning acceptance (O2) or treat unmeasured human usability as passed.
+
 ## [0.40.0.0] - 2026-10-21
 
 ### Added
