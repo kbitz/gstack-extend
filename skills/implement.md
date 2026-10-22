@@ -123,7 +123,11 @@ the plan just to refresh context. Accepted revisions require reading the
 changed scope and updating coverage, not another full read of unchanged text.
 For an `/autoplan-lean` plan, its `## Review record` names a
 `<plan-stem>.review-record.md` sidecar; keep that sidecar out of main context
-unless a task or accepted decision needs deeper phase detail.
+unless a task or accepted decision needs deeper phase detail. When the
+handoff carries plan and sidecar SHA-256 values, verify them against the
+files on disk (and the named HEAD against `git rev-parse HEAD`) before
+implementing; a mismatch means the handoff is stale — stop and surface it
+instead of implementing a different revision than the one reviewed.
 
 Inspect the current branch, target base, HEAD, and committed, staged, unstaged,
 and untracked changes. Record existing work so you can build on it and preserve

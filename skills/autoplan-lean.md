@@ -151,7 +151,9 @@ pass an explicit `ACTIVE_PLAN` and the source lives in `.context`, `/tmp`, or
 session memory, write `ACTIVE_PLAN` to a durable path outside the work tree
 (`~/.gstack/projects/<slug>/plans/<plan-stem>.md` when
 `~/.gstack/projects/<slug>/` exists, otherwise
-`~/scratch/gstack-autoplan-lean/<slug>-<plan-stem>.md`). When a caller (a person
+`~/scratch/gstack-autoplan-lean/<slug>-<plan-stem>.md`). If that durable target
+already exists with different bytes, do not overwrite it: stop and surface the
+collision, or write to a distinct stem the caller approves. When a caller (a person
 or an external transport) asks for any of these, apply it for the whole run:
 
 - **HOLD SCOPE:** the CEO phase uses the loaded skill's HOLD SCOPE mode instead
@@ -453,8 +455,11 @@ any flagged value before checking or emitting), and check both:
 "$_EXTEND_ROOT/bin/autoplan-lean" check --plan "<ACTIVE_PLAN>" --message "<run>/final-message.md"
 ```
 
-`CHECK: ok` is required. Fix each `PROBLEM:` in the plan proper or the message,
-re-seal if the plan changed, and re-check. Do not finish with a failing check.
+`CHECK: ok` is required. The check also binds the message to this plan: its
+plan path, plan SHA-256, Tier, sidecar path/SHA-256 and Verify command must
+match the sealed plan, so a stale prompt fails. Fix each `PROBLEM:` in the
+plan proper or the message, re-seal if the plan changed, and re-check. Do
+not finish with a failing check.
 The required shape: a numbered acceptance-criteria list under an acceptance
 heading, a standalone `Tier: routine|standard|novel` line and a
 `Verify command:` line, all before `## Review record`; one task list; the

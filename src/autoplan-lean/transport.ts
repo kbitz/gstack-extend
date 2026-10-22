@@ -20,7 +20,10 @@
  * `Plan`, `Review record`, `Approved scope`, `Spec`, `Test plan`,
  * `Verify command`, `Preserve`), and finishes with an `Auto-decisions:` line
  * followed by either one `- none` bullet or bullets that each carry `[fork]`
- * or `[challenge]`.
+ * or `[challenge]`. When the caller supplies the checked plan's binding
+ * (`promptBindingForPlan`), the prompt's plan path, plan SHA-256, Tier,
+ * sidecar path/SHA-256 and Verify command must also match that plan, so a
+ * stale prompt fails instead of handing off the wrong revision.
  */
 import { REPORT_HEADING, REVIEW_RECORD_HEADING, rawOutputMarkers, readSeal, scanLines, sha256, splitPlan } from './plan.ts';
 
@@ -44,6 +47,47 @@ const MD_HEADING = /^\s*#{1,6}\s/;
 const TIER_ANY = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:\*\*|__)?tier(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(routine|standard|novel)\b/i;
 const TIER_STANDALONE = /^Tier: (routine|standard|novel)\s*$/;
 const VERIFY_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*\S/i;
+const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.+?)\s*$/i;
+const PLACEHOLDER_SPAN = /<[A-Za-z][^>\n]*>/;
+
+/** The checked plan's values a bound /implement prompt must quote verbatim. */
+export interface PromptBinding {
+  planPath: string;
+  planSha256: string;
+  tier: string;
+  sidecarPath: string;
+  sidecarSha256: string;
+  verifyCommand: string;
+}
+
+/**
+ * Derive the binding from sealed plan bytes, or undefined when the plan does
+ * not carry every value (checkPlan already reports those shape problems, so
+ * the caller falls back to format-only message checks without cascade noise).
+ */
+export function promptBindingForPlan(bytes: Uint8Array, planPath: string): PromptBinding | undefined {
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+  const unfenced = scanLines(text).filter((l) => !l.fenced);
+  const recordIdx = unfenced.findIndex((l) => /^##\s+Review record\s*$/i.test(l.text));
+  const before = recordIdx < 0 ? unfenced : unfenced.slice(0, recordIdx);
+  const tier = before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).find((t): t is string => !!t);
+  const verify = before.map((l) => VERIFY_VALUE.exec(l.text)?.[1]?.replace(/(?:\*\*|__)\s*$/, '').trim()).find((v): v is string => !!v);
+  const seal = readSeal(splitPlan(text).record);
+  if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
+  return {
+    planPath,
+    planSha256: sha256(bytes),
+    tier: tier.toLowerCase(),
+    sidecarPath: seal.path,
+    sidecarSha256: seal.sha256.toLowerCase(),
+    verifyCommand: verify,
+  };
+}
 const TASKS_HEADING_ANY = /^\s*#{1,6}\s+.*implementation tasks/i;
 
 export type SidecarReader = (path: string) => Uint8Array | undefined;
@@ -139,7 +183,7 @@ export function handoffBlock(message: string): string[] | undefined {
   return undefined;
 }
 
-export function checkMessage(message: string): string[] {
+export function checkMessage(message: string, binding?: PromptBinding): string[] {
   const block = handoffBlock(message);
   if (!block) return ['the final message does not end with a block whose first line starts "Run /implement"'];
   const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
@@ -150,6 +194,8 @@ export function checkMessage(message: string): string[] {
   const runPlan = run?.[1];
   if (!runPlan || /^<[^>]+>$/.test(runPlan)) {
     problems.push('the first line of the handoff block must be "Run /implement <ACTIVE_PLAN>" with a concrete plan path');
+  } else if (!runPlan.startsWith('/')) {
+    problems.push(`the "Run /implement" plan path must be an absolute path, got ${runPlan}`);
   }
 
   const seen = new Map<string, string>();
@@ -178,6 +224,12 @@ export function checkMessage(message: string): string[] {
   if (missing.length) {
     problems.push(`the /implement prompt is missing required field(s): ${missing.join(', ')}`);
   }
+  for (const [key, value] of seen) {
+    const v = value.trim();
+    if (v && !/^<[^>]+>$/.test(v) && PLACEHOLDER_SPAN.test(v)) {
+      problems.push(`"${key}:" still contains an unfilled <...> placeholder`);
+    }
+  }
 
   const workspace = seen.get('Workspace')?.trim();
   if (workspace && !/^<[^>]+>$/.test(workspace) && (!/^\/(?!\s)/.test(workspace) || /<absolute path/i.test(workspace))) {
@@ -188,16 +240,45 @@ export function checkMessage(message: string): string[] {
     problems.push('Branch: must be "<current branch>; target base: <base ref>; HEAD: <40-char lowercase hex SHA>"');
   }
   const planField = seen.get('Plan')?.trim();
+  let planMatch: RegExpExecArray | undefined;
   if (planField && !/^<[^>]+>$/.test(planField)) {
-    const pm = /^(\S.*?);\s*SHA-256:\s*([0-9a-f]{64});\s*Tier:\s*(routine|standard|novel)\s*$/i.exec(planField);
-    if (!pm) problems.push('Plan: must be "<ACTIVE_PLAN>; SHA-256: <64-char hex>; Tier: <routine|standard|novel>"');
-    else if (runPlan && !/^<[^>]+>$/.test(runPlan) && pm[1] !== runPlan) {
-      problems.push(`Plan: path (${pm[1]}) does not match "Run /implement ${runPlan}"`);
+    planMatch = /^(\S.*?);\s*SHA-256:\s*([0-9a-f]{64});\s*Tier:\s*(routine|standard|novel)\s*$/i.exec(planField) ?? undefined;
+    if (!planMatch) problems.push('Plan: must be "<ACTIVE_PLAN>; SHA-256: <64-char hex>; Tier: <routine|standard|novel>"');
+    else if (runPlan && !/^<[^>]+>$/.test(runPlan) && planMatch[1] !== runPlan) {
+      problems.push(`Plan: path (${planMatch[1]}) does not match "Run /implement ${runPlan}"`);
     }
   }
   const reviewRecord = seen.get('Review record')?.trim();
-  if (reviewRecord && !/^<[^>]+>$/.test(reviewRecord) && !/^(\/[^;<>]*\.review-record\.md);\s*SHA-256:\s*([0-9a-f]{64})\s*$/.test(reviewRecord)) {
-    problems.push('Review record: must be "<sidecar .review-record.md path>; SHA-256: <64-char hex>"');
+  let recordMatch: RegExpExecArray | undefined;
+  if (reviewRecord && !/^<[^>]+>$/.test(reviewRecord)) {
+    recordMatch = /^(\/[^;<>]*\.review-record\.md);\s*SHA-256:\s*([0-9a-f]{64})\s*$/i.exec(reviewRecord) ?? undefined;
+    if (!recordMatch) problems.push('Review record: must be "<sidecar .review-record.md path>; SHA-256: <64-char hex>"');
+  }
+
+  if (binding) {
+    if (runPlan && !/^<[^>]+>$/.test(runPlan) && runPlan !== binding.planPath) {
+      problems.push(`the /implement prompt names plan ${runPlan}, which does not match the checked plan ${binding.planPath}`);
+    }
+    if (planMatch) {
+      if (planMatch[2]!.toLowerCase() !== binding.planSha256) {
+        problems.push('Plan: SHA-256 does not match the checked plan (stale prompt; re-seal or update it)');
+      }
+      if (planMatch[3]!.toLowerCase() !== binding.tier) {
+        problems.push(`Plan: Tier ${planMatch[3]} does not match the checked plan Tier ${binding.tier}`);
+      }
+    }
+    if (recordMatch) {
+      if (recordMatch[1] !== binding.sidecarPath) {
+        problems.push(`Review record: path (${recordMatch[1]}) does not match the checked plan sidecar ${binding.sidecarPath}`);
+      }
+      if (recordMatch[2]!.toLowerCase() !== binding.sidecarSha256) {
+        problems.push('Review record: SHA-256 does not match the checked plan sidecar (stale prompt; re-seal or update it)');
+      }
+    }
+    const verifyField = seen.get('Verify command')?.trim();
+    if (verifyField && !/^<[^>]+>$/.test(verifyField) && verifyField !== binding.verifyCommand) {
+      problems.push(`Verify command: (${verifyField}) does not match the checked plan Verify command (${binding.verifyCommand})`);
+    }
   }
 
   const bullets: string[] = [];
@@ -208,6 +289,9 @@ export function checkMessage(message: string): string[] {
     if (bullet && !/^\s{2,}/.test(line)) bullets.push(bullet[1]!);
     else if (/^\s+\S/.test(line) && bullets.length) bullets[bullets.length - 1] += ` ${line.trim()}`;
     else { unexpected = `unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`; break; }
+  }
+  if (bullets.some((b) => PLACEHOLDER_SPAN.test(b))) {
+    problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
   }
   if (unexpected) problems.push(unexpected);
   else if (!bullets.length) problems.push('the Auto-decisions list is empty; write "- none" when there were no auto-decisions');

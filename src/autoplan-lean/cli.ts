@@ -9,7 +9,7 @@ import {
 import { buildPrompt, parseSizeRecords } from './prompt.ts';
 import { assembleSidecar } from './sidecar.ts';
 import { PHASE_HISTORY, PHASE_OUTPUTS, parsePhaseHistory, type PhaseAttempt } from './history.ts';
-import { checkMessage, checkPlan } from './transport.ts';
+import { checkMessage, checkPlan, promptBindingForPlan } from './transport.ts';
 
 // All three launcher flags first coexist in Bun 1.3.3's src/cli/Arguments.zig.
 export const BUN_FLOOR = '1.3.3';
@@ -330,7 +330,7 @@ function checkCmd(argv: string[], io: CliIo): number {
   if (message !== undefined) {
     const text = readRegular(abs(io.cwd, message), 'message');
     if (!text) throw new Refusal('MESSAGE_MISSING', `message file ${message} does not exist`, 'write the final message to a file first');
-    problems.push(...checkMessage(text.toString('utf8')).map((p) => `message: ${p}`));
+    problems.push(...checkMessage(text.toString('utf8'), promptBindingForPlan(bytes, planPath)).map((p) => `message: ${p}`));
   }
   const { proper } = splitPlan(bytes.toString('utf8'));
   let out = `PLAN_BYTES: ${bytes.byteLength}\nPROPER_BYTES: ${Buffer.byteLength(proper)}\n`;
