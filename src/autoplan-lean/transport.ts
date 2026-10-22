@@ -13,12 +13,29 @@
  * which must match the sidecar's bytes, and the last H2 heading must be
  * `## GSTACK REVIEW REPORT`. The plan proper must carry no raw review output.
  *
- * Final message: it ends with a block whose first line starts `Run /implement`
- * (unfenced at column 0, or the first line inside a column-0 fence that closes
- * the message), followed by an `Auto-decisions:` line and either one `- none`
- * bullet or bullets that each carry `[fork]` or `[challenge]`.
+ * Final message: it ends with a copyable /implement prompt block whose first
+ * line starts `Run /implement <ACTIVE_PLAN>` (unfenced at column 0, or the
+ * first line inside a column-0 fence that closes the message), carries the
+ * required `/implement` handoff fields (`Workspace`, `Branch`, `Work state`,
+ * `Plan`, `Review record`, `Approved scope`, `Spec`, `Test plan`,
+ * `Verify command`, `Preserve`), and finishes with an `Auto-decisions:` line
+ * followed by either one `- none` bullet or bullets that each carry `[fork]`
+ * or `[challenge]`.
  */
 import { REPORT_HEADING, REVIEW_RECORD_HEADING, rawOutputMarkers, readSeal, scanLines, sha256, splitPlan } from './plan.ts';
+
+export const PROMPT_LABELS = [
+  'Workspace',
+  'Branch',
+  'Work state',
+  'Plan',
+  'Review record',
+  'Approved scope',
+  'Spec',
+  'Test plan',
+  'Verify command',
+  'Preserve',
+] as const;
 
 const ACCEPTANCE_HEADING = /^\s*#{1,6}\s+.*acceptance/i;
 const ACCEPTANCE_LABEL = /^\s*(?:\*\*|__)[^*_]*acceptance[^*_]*(?:\*\*|__)\s*:?\s*$/i;
@@ -127,18 +144,80 @@ export function checkMessage(message: string): string[] {
   if (!block) return ['the final message does not end with a block whose first line starts "Run /implement"'];
   const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
   if (label < 0) return ['the handoff block has no bare "Auto-decisions:" line after "Run /implement"'];
+
+  const problems: string[] = [];
+  const run = /^Run \/implement(?:\s+(\S.*?))?\s*$/.exec(block[0]!);
+  const runPlan = run?.[1];
+  if (!runPlan || /^<[^>]+>$/.test(runPlan)) {
+    problems.push('the first line of the handoff block must be "Run /implement <ACTIVE_PLAN>" with a concrete plan path');
+  }
+
+  const seen = new Map<string, string>();
+  let currentLabel: string | undefined;
+  let sawPlaceholder = false;
+  for (const line of block.slice(1, label)) {
+    if (line.includes('<ACTIVE_PLAN>')) sawPlaceholder = true;
+    const field = /^([A-Z][A-Za-z ]+):(?:\s+(.*?))?\s*$/.exec(line);
+    if (field && (PROMPT_LABELS as readonly string[]).includes(field[1]!)) {
+      const key = field[1]!;
+      if (seen.has(key)) problems.push(`duplicate "${key}:" line in the /implement prompt`);
+      else seen.set(key, field[2] ?? '');
+      currentLabel = key;
+    } else if (/^\s+\S/.test(line) && currentLabel && seen.has(currentLabel)) {
+      seen.set(currentLabel, `${seen.get(currentLabel)!} ${line.trim()}`.trim());
+    } else if (!line.trim()) {
+      currentLabel = undefined;
+    }
+  }
+  if (sawPlaceholder) problems.push('the /implement prompt still contains the placeholder <ACTIVE_PLAN>');
+
+  const missing = PROMPT_LABELS.filter((k) => {
+    const v = seen.get(k)?.trim();
+    return !v || /^<[^>]+>$/.test(v);
+  });
+  if (missing.length) {
+    problems.push(`the /implement prompt is missing required field(s): ${missing.join(', ')}`);
+  }
+
+  const workspace = seen.get('Workspace')?.trim();
+  if (workspace && !/^<[^>]+>$/.test(workspace) && (!/^\/(?!\s)/.test(workspace) || /<absolute path/i.test(workspace))) {
+    problems.push('Workspace: must name an absolute workspace path');
+  }
+  const branch = seen.get('Branch')?.trim();
+  if (branch && !/^<[^>]+>$/.test(branch) && !/^([^;<>]+);\s*target base:\s*([^;<>]+);\s*HEAD:\s*([0-9a-f]{40})\s*$/.test(branch)) {
+    problems.push('Branch: must be "<current branch>; target base: <base ref>; HEAD: <40-char lowercase hex SHA>"');
+  }
+  const planField = seen.get('Plan')?.trim();
+  if (planField && !/^<[^>]+>$/.test(planField)) {
+    const pm = /^(\S.*?);\s*SHA-256:\s*([0-9a-f]{64});\s*Tier:\s*(routine|standard|novel)\s*$/i.exec(planField);
+    if (!pm) problems.push('Plan: must be "<ACTIVE_PLAN>; SHA-256: <64-char hex>; Tier: <routine|standard|novel>"');
+    else if (runPlan && !/^<[^>]+>$/.test(runPlan) && pm[1] !== runPlan) {
+      problems.push(`Plan: path (${pm[1]}) does not match "Run /implement ${runPlan}"`);
+    }
+  }
+  const reviewRecord = seen.get('Review record')?.trim();
+  if (reviewRecord && !/^<[^>]+>$/.test(reviewRecord) && !/^(\/[^;<>]*\.review-record\.md);\s*SHA-256:\s*([0-9a-f]{64})\s*$/.test(reviewRecord)) {
+    problems.push('Review record: must be "<sidecar .review-record.md path>; SHA-256: <64-char hex>"');
+  }
+
   const bullets: string[] = [];
+  let unexpected: string | undefined;
   for (const line of block.slice(label + 1)) {
     if (!line.trim()) continue;
     const bullet = /^\s*[-*+]\s+(\S.*?)\s*$/.exec(line);
     if (bullet && !/^\s{2,}/.test(line)) bullets.push(bullet[1]!);
     else if (/^\s+\S/.test(line) && bullets.length) bullets[bullets.length - 1] += ` ${line.trim()}`;
-    else return [`unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`];
+    else { unexpected = `unexpected line after the Auto-decisions list: ${JSON.stringify(line.slice(0, 80))}`; break; }
   }
-  if (!bullets.length) return ['the Auto-decisions list is empty; write "- none" when there were no auto-decisions'];
-  const none = bullets.filter((b) => /^none[\s.!]*$/i.test(b));
-  if (none.length && bullets.length > 1) return ['"- none" cannot be combined with other Auto-decisions bullets'];
-  if (none.length) return [];
-  const unmarked = bullets.filter((b) => !/\[(?:fork|challenge)\]/.test(b));
-  return unmarked.length ? [`${unmarked.length} Auto-decisions bullet(s) lack a [fork] or [challenge] marker`] : [];
+  if (unexpected) problems.push(unexpected);
+  else if (!bullets.length) problems.push('the Auto-decisions list is empty; write "- none" when there were no auto-decisions');
+  else {
+    const none = bullets.filter((b) => /^none[\s.!]*$/i.test(b));
+    if (none.length && bullets.length > 1) problems.push('"- none" cannot be combined with other Auto-decisions bullets');
+    else if (!none.length) {
+      const unmarked = bullets.filter((b) => !/\[(?:fork|challenge)\]/.test(b));
+      if (unmarked.length) problems.push(`${unmarked.length} Auto-decisions bullet(s) lack a [fork] or [challenge] marker`);
+    }
+  }
+  return problems;
 }

@@ -15,7 +15,7 @@ import { main, sidecarPathFor, type CliIo } from '../src/autoplan-lean/cli.ts';
 import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, UPSTREAM, driftReport } from '../src/autoplan-lean/criteria.ts';
 import { PHASES, parseSettlements, readSeal, sha256, splitPlan } from '../src/autoplan-lean/plan.ts';
 import { buildPrompt, parseSizeRecords } from '../src/autoplan-lean/prompt.ts';
-import { checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
+import { PROMPT_LABELS, checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'autoplan-lean');
@@ -94,6 +94,8 @@ describe('plan proper and sidecar split', () => {
     expect(field(r.stdout, 'SHA256')).toBe(sha256(bytes));
 
     const sealed = readFileSync(plan, 'utf8');
+    expect(field(r.stdout, 'PLAN_SHA256')).toBe(sha256(Buffer.from(sealed)));
+    expect(field(r.stdout, 'PLAN_BYTES')).toBe(String(Buffer.byteLength(sealed)));
     const parts = splitPlan(sealed);
     expect(readSeal(parts.record)).toEqual({ path: sidecar, sha256: sha256(bytes), bytes: bytes.byteLength });
     // The record sits between the plan proper and the report, which stays last.
@@ -359,30 +361,57 @@ describe('transport contract shape', () => {
     });
   }
 
+  const HASH64 = 'a'.repeat(64);
+  const SIDECAR64 = 'b'.repeat(64);
+  const HEAD40 = '0123456789abcdef'.repeat(2) + '01234567';
+  const promptFields = (planPath = '/p.md') => [
+    'Workspace: /tmp/work/widgets — continue in this same workspace',
+    `Branch: feature/widget-csv; target base: origin/main; HEAD: ${HEAD40}`,
+    'Work state: clean working tree',
+    `Plan: ${planPath}; SHA-256: ${HASH64}; Tier: standard`,
+    `Review record: ${planPath.replace(/\.md$/, '')}.review-record.md; SHA-256: ${SIDECAR64}`,
+    'Approved scope: Export widgets as CSV; approved as-is',
+    'Spec: none',
+    'Test plan: in plan',
+    'Verify command: `bun run test`',
+    'Preserve: none',
+  ].join('\n');
+  const handoff = (decisions: string, planPath = '/p.md', fields = promptFields(planPath)) =>
+    `Run /implement ${planPath}\n\n${fields}\n\n${decisions}`;
+
   const messages: Array<[string, string, string | undefined]> = [
-    ['plain block with marked bullets', 'Done.\n\nRun /implement /p.md\nAuto-decisions:\n- [fork] a\n- [challenge] b\n', undefined],
-    ['continuation lines join their bullet', 'Run /implement\nAuto-decisions:\n- [fork] a long\n  decision\n', undefined],
-    ['none', 'Run /implement /p.md\nAuto-decisions:\n- none\n', undefined],
-    ['an earlier fenced example quoting the handoff', 'Example:\n\n```\nRun /implement /old.md\n```\n\nRun /implement /p.md\nAuto-decisions:\n- none\n', undefined],
+    ['plain block with marked bullets', `Done.\n\n${handoff('Auto-decisions:\n- [fork] a\n- [challenge] b\n')}`, undefined],
+    ['continuation lines join their bullet and field', handoff('Auto-decisions:\n- [fork] a long\n  decision\n', '/p.md', promptFields('/p.md').replace('Approved scope: Export widgets as CSV; approved as-is', 'Approved scope: Export widgets as CSV;\n  approved as-is')), undefined],
+    ['none', handoff('Auto-decisions:\n- none\n'), undefined],
+    ['an earlier fenced example quoting the handoff', `Example:\n\n\`\`\`\nRun /implement /old.md\n\`\`\`\n\n${handoff('Auto-decisions:\n- none\n')}`, undefined],
     ['no block', 'All done; run implement next.\n', 'does not end with a block'],
-    ['indented run line', '  Run /implement /p.md\nAuto-decisions:\n- none\n', 'does not end with a block'],
-    ['fence not last', '```\nRun /implement /p.md\nAuto-decisions:\n- none\n```\nThanks!\n', 'does not end with a block'],
-    ['no label', 'Run /implement /p.md\n- [fork] a\n', 'no bare "Auto-decisions:"'],
-    ['inline none label', 'Run /implement /p.md\nAuto-decisions: none\n', 'no bare "Auto-decisions:"'],
-    ['empty list', 'Run /implement /p.md\nAuto-decisions:\n', 'list is empty'],
-    ['unmarked bullet', 'Run /implement /p.md\nAuto-decisions:\n- [fork] a\n- chose b\n', 'lack a [fork] or [challenge]'],
-    ['none with others', 'Run /implement /p.md\nAuto-decisions:\n- none\n- [fork] a\n', 'cannot be combined'],
-    ['prose after the list', 'Run /implement /p.md\nAuto-decisions:\n- [fork] a\nThat is all.\n', 'unexpected line'],
+    ['indented run line', `  Run /implement /p.md\n${promptFields()}\nAuto-decisions:\n- none\n`, 'does not end with a block'],
+    ['fence not last', `\`\`\`\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\nThanks!\n`, 'does not end with a block'],
+    ['no label', `Run /implement /p.md\n${promptFields()}\n- [fork] a\n`, 'no bare "Auto-decisions:"'],
+    ['inline none label', `Run /implement /p.md\n${promptFields()}\nAuto-decisions: none\n`, 'no bare "Auto-decisions:"'],
+    ['empty list', handoff('Auto-decisions:\n'), 'list is empty'],
+    ['unmarked bullet', handoff('Auto-decisions:\n- [fork] a\n- chose b\n'), 'lack a [fork] or [challenge]'],
+    ['none with others', handoff('Auto-decisions:\n- none\n- [fork] a\n'), 'cannot be combined'],
+    ['prose after the list', handoff('Auto-decisions:\n- [fork] a\nThat is all.\n'), 'unexpected line'],
+    ['bare stub without /implement prompt fields', 'Run /implement /p.md\nAuto-decisions:\n- none\n', 'missing required field(s): Workspace, Branch'],
+    ['missing plan path on Run /implement line', `Run /implement\n${promptFields()}\nAuto-decisions:\n- none\n`, 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
+    ['unfilled <ACTIVE_PLAN> on Run /implement line', handoff('Auto-decisions:\n- none\n', '<ACTIVE_PLAN>'), 'first line of the handoff block must be "Run /implement <ACTIVE_PLAN>"'],
+    ['unfilled <ACTIVE_PLAN> in prompt prose', `Run /implement /p.md\nRead <ACTIVE_PLAN> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'still contains the placeholder <ACTIVE_PLAN>'],
+    ['relative Workspace path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Workspace: /tmp/work/widgets — continue in this same workspace', 'Workspace: relative/path')), 'Workspace: must name an absolute workspace path'],
+    ['malformed Branch line (short SHA)', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace(HEAD40, 'abc1234')), 'Branch: must be'],
+    ['Plan path disagrees with Run /implement path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields('/other.md')), 'Plan: path (/other.md) does not match "Run /implement /p.md"'],
+    ['malformed Review record line', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('/p.review-record.md', '/p.sidecar.md')), 'Review record: must be'],
+    ['duplicate prompt field label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nSpec: docs/SPEC.md`), 'duplicate "Spec:" line'],
     // Generated by /ship coverage audit.
     // Value: protects=a fenced handoff counts only in a column-0 fence of the same char, closed by an equal or
     //   longer fence on the last line; fails_when=fence char/length matching or the inner-close guard breaks;
     //   why_new=only one backtick-fenced fixture was tested; seam=none; no_claim=parity with any one transport parser
-    ['tilde-fenced block', 'Done.\n\n~~~\nRun /implement /p.md\nAuto-decisions:\n- none\n~~~\n', undefined],
-    ['four-backtick fence closed by five', '````text\nRun /implement /p.md\nAuto-decisions:\n- none\n`````\n', undefined],
-    ['fence closed by a shorter fence', '````\nRun /implement /p.md\nAuto-decisions:\n- none\n```\n', 'does not end with a block'],
-    ['fence closed by the other character', '```\nRun /implement /p.md\nAuto-decisions:\n- none\n~~~\n', 'does not end with a block'],
-    ['indented fence', '  ```\nRun /implement /p.md\nAuto-decisions:\n- none\n  ```\n', 'does not end with a block'],
-    ['handoff fence closed before the list', '```\nRun /implement /p.md\n```\nAuto-decisions:\n- none\n```\n', 'does not end with a block'],
+    ['tilde-fenced block', `Done.\n\n~~~\n${handoff('Auto-decisions:\n- none\n')}~~~\n`, undefined],
+    ['four-backtick fence closed by five', `\`\`\`\`text\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\`\`\n`, undefined],
+    ['fence closed by a shorter fence', `\`\`\`\`\n${handoff('Auto-decisions:\n- none\n')}\`\`\`\n`, 'does not end with a block'],
+    ['fence closed by the other character', `\`\`\`\n${handoff('Auto-decisions:\n- none\n')}~~~\n`, 'does not end with a block'],
+    ['indented fence', `  \`\`\`\n${handoff('Auto-decisions:\n- none\n')}  \`\`\`\n`, 'does not end with a block'],
+    ['handoff fence closed before the list', `\`\`\`\nRun /implement /p.md\n\`\`\`\nAuto-decisions:\n- none\n\`\`\`\n`, 'does not end with a block'],
   ];
   for (const [name, message, expected] of messages) {
     test(`final message: ${name}`, () => {
@@ -719,7 +748,8 @@ describe('launcher and skill contract', () => {
   });
 
   test('the skill orchestrates upstream phase skills and keeps the transport contract', () => {
-    const skill = readFileSync(join(ROOT, 'skills', 'autoplan-lean.md'), 'utf8').replace(/\s+/g, ' ');
+    const rawSkill = readFileSync(join(ROOT, 'skills', 'autoplan-lean.md'), 'utf8');
+    const skill = rawSkill.replace(/\s+/g, ' ');
     for (const phrase of [
       '`autoplan`, `plan-ceo-review`, `plan-design-review`, `plan-devex-review` and `plan-eng-review`',
       'Never invoke `/autoplan` itself.',
@@ -734,11 +764,43 @@ describe('launcher and skill contract', () => {
       '**Auto-choose at every gate:**',
       '**No repository edits, commits, pushes or PRs:**',
       'never in `TODOS.md` or any other repository file',
-      'Run /implement <ACTIVE_PLAN> Auto-decisions:',
+      'Never leave the only copy of the reviewed plan in `.context`, `/tmp`, or session memory',
+      'On E (reject), stop after writing `<run>/gate.md`: do not seal the plan or emit the `/implement` prompt.',
+      'gstack-redact --from-file "<run>/final-message.md"',
+      'Run /implement <ACTIVE_PLAN>',
+      'Read the sealed plan once, then re-read only needed line ranges and keep the plan read-only.',
+      'Do not load the review-record sidecar into main context unless a task or accepted decision needs deeper phase detail.',
       'With none, the list is exactly `- none`.',
       'Mark each User Challenge `[challenge]` and every other entry `[fork]`.',
       'End the message with this block. Nothing may follow it:',
       '`CHECK: ok` is required.',
     ]) expect(skill).toContain(phrase);
+
+    const fenceMatch = /## 7\. Final message[\s\S]*?```text\n([\s\S]*?)\n```/.exec(rawSkill);
+    expect(fenceMatch).not.toBeNull();
+    const tpl = fenceMatch![1]!;
+    const labels = tpl.split('\n').flatMap((l) => (/^([A-Z][A-Za-z ]+): /.exec(l) ? [l.split(': ')[0]!] : []));
+    expect(labels).toEqual([...PROMPT_LABELS]);
+    expect(checkMessage(`Summary.\n\n\`\`\`text\n${tpl}\n\`\`\`\n`).length).toBeGreaterThan(0);
+
+    const filled = tpl
+      .replaceAll('<ACTIVE_PLAN>', '/tmp/plan.md')
+      .replace('<absolute path — continue in this same workspace>', '/tmp/work/widgets — continue in this same workspace')
+      .replace('<current branch>', 'feature/widget-csv')
+      .replace('<base ref>', 'origin/main')
+      .replace('<full SHA>', '0123456789abcdef0123456789abcdef01234567')
+      .replace('<clean, or committed/staged/unstaged/untracked changes including any TODOS.md updates>', 'clean working tree')
+      .replace('<plan SHA-256>', 'a'.repeat(64))
+      .replace('<routine|standard|novel>', 'standard')
+      .replace('<sidecar path>', '/tmp/plan.review-record.md')
+      .replace('<sidecar SHA-256>', 'b'.repeat(64))
+      .replace('<what to build, gate outcome, and any HOLD SCOPE or Track boundary>', 'Export widgets as CSV; approved as-is')
+      .replace('<docs/SPEC.md path and relevant outcome/target IDs, or none>', 'none')
+      .replace('<Eng test-plan artifact path under ~/.gstack/projects/<slug>/, or in plan>', 'in plan')
+      .replace('<the plan\'s Verify command line, as data>', '`bun run test`')
+      .replace('<TODOS.md deferrals written by Eng and any unrelated working-tree changes, or none>', 'none')
+      .replace('<decision on the caller\'s fork list, and the option taken>', 'Stream rows instead of buffering')
+      .replace('<User Challenge and the option taken>', 'Keep CSV only');
+    expect(checkMessage(`Summary.\n\n\`\`\`text\n${filled}\n\`\`\`\n`)).toEqual([]);
   });
 });
