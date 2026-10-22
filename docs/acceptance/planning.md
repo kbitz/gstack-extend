@@ -40,13 +40,13 @@ This report records operator-executed installed-skill behavior. On 2026-10-22 th
 | `skills/project-spec.md` | PS1–PS2 |
 | `skills/roadmap.md` | All 18 roadmap rows, TM1–TM7 and PS1–PS2 roadmap handoffs |
 | `bin/roadmap-*`, supporting shell libraries, `src/audit/**`, Bun version | All 27 rows |
-| `setup` | T1 host parity |
+| `setup` | T1 host parity, plus all 27 behavioral rows on hosts whose installed skill body `setup` transforms (`codex`, `cursor`) |
 
 The builder pins system/global Git configuration, author/committer identity and dates, signing, hooks and the default branch. Ten original seeds rebuilt twice to identical HEADs. Scenario prerequisites are retained as explicit amendments before pre snapshots. Each repository has a local bare remote and separate state, telemetry and proposal roots.
 
 ## Attended /roadmap Qualification Matrix (PR #126 — 18 Rows)
 
-Original source paths below are relative to `~/.gstack/projects/kbitz-gstack-extend/`; runtime evidence pointers are relative to the acceptance root. Primary scenario fingerprints accompany separately retained immutable subcase manifests; their complete SHA-256 index is `operator/roadmap/results.json`.
+Original source paths below are relative to `~/.gstack/projects/kbitz-gstack-extend/`; runtime evidence pointers are relative to the acceptance root. Primary scenario fingerprints hash the retained snapshot directory trees (`snapshots/<row>/{pre,post}/repo`, including `.git/`), while portable git `HEAD` and `HEAD^{tree}` SHAs are verified against each snapshot's `manifest.json` (`--verify-only` checks all 27 primary `snapshots/` pairs and `verify-evidence.py` checks the 4 supplemental `retests/ps-complete-measured/snapshots/` pairs); their complete SHA-256 index is `operator/roadmap/results.json`.
 
 Exact source rows: `review-and-prep/track-22b-20261001-9wzap6j1/completion-matrix.md` SHA-256 `509fa06f10435464c249dcde4394bf620dc34d197565b8c137cc962601136700`; expanded acceptance source `kb-kbitz-track-22b-reconcile-packing-eng-review-test-plan-20261001-095338.md` SHA-256 `3fa2b090cd7be16140bf15b50d3e19ea34b9675b4c1793aaf1bd32f1945f0ef5`.
 
@@ -139,12 +139,29 @@ Adversarial corrections covered missing executable CP1 proof, missing dispositio
 
 Verification receipt: `operator/checks/verification.json`; sanitized full logs are retained beside it.
 
+| Acceptance artifact / verifier | SHA-256 |
+|---|---|
+| `build-repos.sh` | `e3bc73ab8dc749b8ea4020700d8932f6414d96efbd51021f3ad8f6e5c52bb6e5` |
+| `acceptance.py` | `1fafefbb016a1bf26f60acf037eabecf37a69793dd9c0c95954870002e319fda` |
+| `preflight.json` | `56cf84a3d055147fd5d6c710e3062ecd43f68846460d0f83b92a6a343ca8ae8c` |
+| `operator/verify-evidence.py` | `88e55a26fe4b585325329a33b3e5acfa7bade3188a6e2053663aaa66990612dd` |
+| `operator/report-audit.ts` | `e377a665c428442aa1695a85a787cbcc09fd8eef23cb254600ca67970edf7a17` |
+| `operator/run-context.json` | `5e5443bb9cfbd7e9585519b7d9ec2a9abcf45d718cc6aa158807a16c6d152a61` |
+| `operator/user-scope-revision.json` | `42a83ebabe620f0907de1967158676264018afac52c8d2acdcdea1560cc90638` |
+| `operator/adversarial-assessment.json` | `c4d19f4628729fef33131ca58c38698e387eeeb5da23ecf4ae495d3940a6dda0` |
+| `operator/roadmap/results.json` | `1bc1a2aa1de8b57599f2c9cf958fe3e6ab2ef5d9c3a3edf74c8facc153233ceb` |
+| `operator/roadmap/integrity.json` | `de50cb558b30223e2aaab5afbc9e972d6a96cb57cf23d0102525a502ebf417e8` |
+| `operator/tm/results.json` | `de06650f4dda3ea01e2e4511258a84a4148b3a99cf108d93b69431b66a57665f` |
+| `retests/ps-complete-measured/scenarios/PS1/results.json` | `8efefb453c9b5df155979448c6891ecc4b3d475c55af5596cc7704ae542e58d3` |
+| `retests/ps-complete-measured/scenarios/PS2/results.json` | `2ef16b586dbbe01350ba868d2f870178669c750e7b4d571972740138c14a9006` |
+| `operator/checks/verification.json` | `0a1eb0ae500f7f2abfe6e09dbcb6915cc6a0996bc1dd543e0833429674289896` |
+
 | Check | Result |
 |---|---|
 | Frozen dependency install | Passed; Bun1.3.10 |
 | Full test suite outside sandbox | 3906 passed,3 skipped,0 failed; exit0;828.24 seconds |
 | Earlier sandbox test run | 3799 passed,3 skipped,107 failed; exit1;687.63 seconds; failures cleared outside sandbox |
-| Installed parity / immutable evidence | Passed:3 host copies,27 primary pairs,4 supplemental snapshots,1748 indexed roadmap artifacts |
+| Installed parity / immutable evidence | Passed:3 host copies,27 primary pairs,4 supplemental snapshots,1748 indexed roadmap artifacts,1875 redaction-clean text files |
 | Section-scoped report audit / redaction | Passed:zero inventory patterns, scattered total1 with no report entry, document type/location/taxonomy pass |
 | Source boundary | Only this new report; root Acceptance/inbox/README/version/release files unchanged; no commit or push |
 
