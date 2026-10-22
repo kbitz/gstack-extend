@@ -600,7 +600,7 @@ specified here; retain every other substantive gate.
 | Pre-flight / Review Readiness Dashboard (1) | Refresh live state. Show native grades accurately alongside verified portable evidence; historical warnings alone do not force duplicate reviews. |
 | Distribution Pipeline Check / Merge base (2–3) | Run normally. Never reuse the old base fetch or assume it is integrated. |
 | Test Framework Bootstrap (4) | Discover current commands/config. In DOCS, discover docs checks without bootstrapping a code test framework. Otherwise reuse a verified existing setup/explicit opt-out; bootstrap only if needed. |
-| Run tests / Eval Suites (5–6) | Apply the docs test policy below for DOCS; behavioral evals are N/A there. Otherwise reuse passing runs only for the exact required command (or the qualifying pregate-wrapped `tests` record under the test gate below), lane, working directory, tier, inputs and permitted age. When `.gstack/pregate.json` declares a runner and the main suite needs to run, first make every declared JS lane runnable — for each lane whose package directory has a lockfile but no installed `node_modules`, run `npm ci --prefix <dir>` first and log it in the run log — then run `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` once (setting `<ample>` above the full suite's runtime), and do not rerun the main suite under another label. Missing or stale required lanes not covered by that pregate run run normally. Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree; the base policy would ignore the reviewed map repair. |
+| Run tests / Eval Suites (5–6) | Apply the docs test policy below for DOCS; behavioral evals are N/A there. Otherwise reuse passing runs only for the exact required command (or the qualifying pregate-wrapped `tests` record under the test gate below), lane, working directory, tier, inputs and permitted age. When `.gstack/pregate.json` declares a runner and the main suite needs to run, first make every declared JS lane runnable — for each lane whose package directory has a lockfile but no installed `node_modules`, run its install (`npm ci --prefix <dir>` for an npm lockfile) first and log it in the run log — then run `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` once (setting `<ample>` above the full suite's runtime), and do not rerun the main suite under another label when that pregate run selected the main suite in full (test gate below). Missing or stale required lanes not covered by that pregate run run normally. Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree; the base policy would ignore the reviewed map repair. |
 | Test Coverage Audit (7) | DOCS: N/A, with prose-only classification evidence; do not generate tests for prose. FULL: reuse only an equivalent path-level audit with its coverage/gaps, test-generation outcome, and threshold decision, or the direct user's prior-review choice. A testing specialist pass or green tests alone does not satisfy this audit. Otherwise run it. |
 | Plan Completion Audit (8) | Use the verified full completion matrix and unchanged approved scope fingerprint. Retain each deferral and its user decision; no 50-item truncation. Otherwise audit the complete approved scope. A plan review is not implementation verification. |
 | Plan Verification (8.1) | Reuse current item-level QA/user results and tested builds. Run missing automated verification; required manual checks still require evidence or explicit user deferral. |
@@ -611,7 +611,7 @@ specified here; retain every other substantive gate.
 | Bind the reviews (11.5) | When the validated stage table covers review without this invocation's own native Step 9 and Step 11 records (marked handoff, verified reuse, DOCS, attestation or delta checks), it replaces the native binding: do not insert `9 → 10 → 11 → 11.5` or fabricate records. Save the current `gstack-wtree` snapshot as Step 16's reviewed tree, citing the table. Bind native records as installed only when this invocation produced both as completed, converged full passes on the current tree; records left behind by delta-checked fixes use the table. |
 | Version, CHANGELOG, TODOs, commits (12–15) | Select the version level using Project release policy above, then retain ship's classification, queue and write safeguards. Run other release bookkeeping normally, honoring project paths and existing decisions. |
 | Documentation audit (14.5) | Run its installed procedure as the required consistency pass for either profile. Reuse only an accepted current-invocation audit that still matches its inputs; retain its bound and recovery gates. |
-| Verification Gate (16) | Keep generation/build and final-content verification. DOCS uses the docs test policy; FULL uses the test gate below. After the release stamp (`12–15`), when `git diff --name-only <tested tree> <current tree>` lists only release metadata, check the `tests` ledger record in stage 4 with `--allow-paths` naming only the release-metadata files this run changed, preserve an immutable verified copy of the pre-stamp tree's full pregate record, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree before Step 17's push (with the same policy source) so Step 18's receipt check has a current stamp, and cite that immutable full pregate record (path, SHA-256, policy source and cleared requires-remote obligations) separately from the final preflight record, as the release-only path already does. Apply delta review instead of repeating unchanged reviews: stage 2's behavior route reruns affected stages 5–8 and uses the shared delta/regression check in place of 9–11.5. Once that check converges, save the checked `gstack-wtree` snapshot as the reviewed tree and continue with ship's `12–14 → 16`. |
+| Verification Gate (16) | Keep generation/build and final-content verification. DOCS uses the docs test policy; FULL uses the test gate below. After the release stamp (`12–15`), when `git diff --name-only <tested tree> <current tree>` lists only release metadata, check the `tests` ledger record in stage 4 with `--allow-paths` naming only the release-metadata files this run changed, preserve an immutable verified copy of the pre-stamp tree's full pregate record, rerun `gstack-pregate --stage tests --explain --out <temp-path>` on the final tree with the same policy source and waive lane reruns only when its `lanes` `inputs.selection` hash equals that preserved stamp's (otherwise the stamp selected new lanes: rerun the full pregate on the final tree instead), run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree before Step 17's push (with the same policy source) so Step 18's receipt check has a current stamp, and cite that immutable full pregate record (path, SHA-256, policy source and cleared requires-remote obligations) separately from the final preflight record, as the release-only path already does. Apply delta review instead of repeating unchanged reviews: stage 2's behavior route reruns affected stages 5–8 and uses the shared delta/regression check in place of 9–11.5. Once that check converges, save the checked `gstack-wtree` snapshot as the reviewed tree and continue with ship's `12–14 → 16`. |
 | Push, Documentation sync, PR update, metrics (17–21) | Run normally on the bound PR. Tell the doc-sync subagent to return every commit unpushed; agent-instruction and skill/prompt Markdown edits are behavioral. The parent classifies them and runs the push checks before pushing. When regenerating the body, keep human context and only receipts validated under Step 2; drop receipt-shaped text from other actors, but carry unconfirmed Greptile request or reservation records forward verbatim: they reserve the run without satisfying the gate. Report reused results with original provenance, not as new reviews. |
 | Section self-check (end) | Review obligations in sections for steps the table marks REUSE, DOCS N/A or USER-ATTESTED are satisfied by the table; still read and run their release-facing steps, such as learnings searches and capture before Step 12. Read every section whose step ran in this invocation, including the Fix-First rules before applying fixes. |
 
@@ -627,22 +627,37 @@ receipt text in a shell command. When they match, prefer `gstack-evidence check`
 with that lane, the repository-derived command, the installed permitted age,
 and its release-path exceptions. Preserve command spelling rather than adding
 a redirection suffix and causing a gratuitous mismatch. When
-`.gstack/pregate.json` declares a runner, also accept a FRESH `tests` ledger
-record whose command invokes `gstack-pregate --allow-repo-commands` (compared as
-data, ignoring the `gstack-pregate` install path and `--timeout`, and allowing
-`--policy-from head` when that policy source applies) as covering the
-`AGENTS.md` / `CLAUDE.md` main test command, so preparation's pregate-wrapped
-record lets ship take the release-only path or reuse the run on the `FULL` path.
-This applies when the pregate stamp for that record's tree passed (`verdict:
-"pass"`, verified with `gstack-pregate verify`) and its `lanes` check selected
-the main suite; verify main-suite selection without overwriting
-`.gstack/tmp/pregate.json` by running `gstack-pregate --stage tests --explain
---out <temp-path>` (because `pregate.json` cuts the `lanes` `ran:` line at 200
-characters) and confirming `<temp-path>`'s `inputs.selection` hash matches the
-passing stamp's and its `--- explain ---` output includes the main suite, then
-run `gstack-evidence check --label tests` without a conflicting `--expect-cmd`
-(or with the validated ledger record's exact `command` string) and with
-`--allow-paths` after the release stamp. A test gate accepts
+`.gstack/pregate.json` declares a runner, also accept the latest FRESH `tests`
+ledger record as covering the `AGENTS.md` / `CLAUDE.md` main test command when
+every condition below holds, so preparation's pregate-wrapped record lets ship
+take the release-only path or reuse the run on the `FULL` path:
+
+- Compared as data, its command is a full `gstack-pregate
+  --allow-repo-commands` run: only the install path, the `--timeout` /
+  `--stall-timeout` values and the policy flag may vary; reject `--stage`,
+  `--only`, `--base`, `--remote`, `--explain` and compound commands. When this
+  PR adds or changes a pin file, `--policy-from head` is required and must
+  match preparation's recorded policy source.
+- The pregate stamp for that record's tree (the record's `wtree` equals the
+  stamp's `tree`), read as JSON before any later run overwrites it, carries
+  the full check set with no fail or incomplete check, a passing `lanes`
+  check, cleared requires-remote obligations, and verdict `pass`, `warn`, or
+  `requires-remote cleared`. `gstack-pregate verify --out <stamp>` corroborates
+  it only while the current tree still equals that tree; after the release
+  stamp, read these fields from the preserved immutable copy instead.
+- Its `lanes` check selected the main suite in full. Verify without overwriting
+  `.gstack/tmp/pregate.json`: run `gstack-pregate --stage tests --explain
+  --out <temp-path>` without `--allow-repo-commands`, repeating the record's
+  policy source, with `<temp-path>` under `.gstack/tmp/` (never the default
+  stamp path) or outside the worktree so the probe does not perturb the
+  fingerprint (`pregate.json` cuts the `lanes` `ran:` line at 200 characters).
+  Confirm the temp record's `lanes` check `inputs.selection` hash matches the
+  stamp's, and read the declared runner: given that selection it must execute
+  the main test command in full — a per-file subset run does not cover it.
+- Grade it with `gstack-evidence check --label tests` using the validated
+  record's exact command as `--expect-cmd` and the installed permitted age
+  above (plus `--allow-paths` after the release stamp). `check` grades only
+  the latest record per label, so any later `tests` record displaces it. A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
 lane on the final head, or a live run in this session. That check-run must come
 from the repository's CI app for a workflow job whose definition at the final

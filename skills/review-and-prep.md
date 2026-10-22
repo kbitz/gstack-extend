@@ -995,9 +995,10 @@ reuse these records.
    `--policy-from head` to every full pregate run and record that policy source.
    Find lane gaps before the long suite with `gstack-pregate --stage tests
    --explain --out <temp-path>` without `--allow-repo-commands` (base policy
-   only; that record is `incomplete` and never counts, and `--out <temp-path>`
-   outside `.gstack/tmp/pregate.json` avoids overwriting a passing stamp; read
-   the `--explain` output because `pregate.json` cuts `lanes` `ran:` at
+   only; that record is `incomplete` and never counts, and `<temp-path>` under
+   `.gstack/tmp/` (never the default stamp path) or outside the worktree, so
+   the probe neither overwrites a passing stamp nor perturbs the fingerprint;
+   read the `--explain` output because `pregate.json` cuts `lanes` `ran:` at
    200 characters), and check a changed pin file with `gstack-pregate validate`.
    A touched file with no test lane or a refused runner is preparation work:
    repair the map here and review it like any fix.
@@ -1014,16 +1015,19 @@ reuse these records.
    spends its one re-audit.
 4. **Pregate and test lanes.** Before the full pregate run, make every declared
    JS lane runnable: for each lane whose package directory has a lockfile but no
-   installed `node_modules`, run its install (`npm ci --prefix <dir>`) first and
+   installed `node_modules`, run its install (`npm ci --prefix <dir>` for an npm lockfile) first and
    log it in the run log, so one lane's missing dependencies never force a
    second full run of every lane (per-lane rerun would be an upstream pregate
    feature). When `.gstack/pregate.json` declares a runner, the prescribed test
    form is one ledger-wrapped full pregate run, `gstack-evidence run --label
    tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` (adding
-   `--policy-from head` when item 1 requires it, and setting `<ample>` above the
-   full suite's runtime rather than pregate's 600s default), and do not rerun
-   the main suite again under another label when that pregate run selected the
-   main suite. Otherwise run the installed `gstack-pregate` command the tests
+   `--policy-from head` when item 1 requires it; `--timeout` bounds each runner
+   process, so set `<ample>` above the longest runner process rather than
+   pregate's 600s default, and set `--stall-timeout` above the suite's longest
+   silent stretch when its runner buffers output), and do not rerun the main
+   suite again under another label when that pregate run selected the main
+   suite in full (the declared runner, given that selection, executes the main
+   command rather than a per-file subset). Otherwise run the installed `gstack-pregate` command the tests
    section names, with `--allow-repo-commands`, and the main test lanes, on the
    same final content, so the pregate record and the ledger entries describe the
    head you push. Fix a failure like any other and rerun the gates whose inputs
@@ -1057,8 +1061,11 @@ Capture evidence as the work runs so a new session can reuse it:
   When `.gstack/pregate.json` declares a runner, wrap the single full pregate
   run under `tests` (`gstack-evidence run --label tests -- '<gstack-pregate>
   --allow-repo-commands --timeout <ample>'`) as the prescribed `tests` record
-  instead of running the main suite a second time; otherwise use `tests` for
-  the project's main suite and distinct labels for other required lanes.
+  instead of running the main suite a second time, on item 4's conditions
+  (`--policy-from head` when item 1 requires it; no second run only when that
+  run selected the main suite in full); keep distinct labels for required
+  lanes that run does not cover. Otherwise use `tests` for the project's main
+  suite and distinct labels for other required lanes.
   Capture the actual command string, repo-relative working directory, UTC
   timestamp, exit code, result summary, tested commit/tree and `wtree` when
   available, plus the returned log path. Preserve exact command spelling for
