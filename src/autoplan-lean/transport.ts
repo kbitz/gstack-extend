@@ -56,8 +56,12 @@ const PLACEHOLDER_SPAN = /<[^>\n]+>/;
  * not let a second Tier/Verify/label value hide beside the canonical one.
  */
 function looseLabel(line: string): { label: string; value: string } | undefined {
-  const stripped = line
-    .replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, '')
+  let rest = line;
+  for (let prev = ''; prev !== rest;) {
+    prev = rest;
+    rest = rest.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, '');
+  }
+  const stripped = rest
     .replace(/[`*_]/g, '')
     .replace(/[\s\u00A0\u2000-\u200B\uFEFF]+/g, ' ')
     .replace(/\uFF1A/g, ':')
@@ -69,7 +73,7 @@ function looseLabel(line: string): { label: string; value: string } | undefined 
 
 /** Strip one balanced emphasis pair; never eat `__main__`-style value text. */
 function verifyValue(raw: string): string {
-  let v = raw.trim().replace(/^(?:\*\*|__)\s+/, '');
+  let v = raw.trim().replace(/^(?:\*\*|__)\s*/, '');
   for (const m of ['**', '__']) {
     if (v.length > 2 * m.length && v.startsWith(m) && v.endsWith(m)) v = v.slice(m.length, -m.length).trim();
   }
@@ -122,7 +126,7 @@ export function promptBindingForPlan(bytes: Uint8Array, planPath: string): Promp
   const verify = distinct.length === 1 && !continued && looseVerifies.every((v) => normLoose(v) === normLoose(distinct[0]!)) ? distinct[0] : undefined;
   const recordText = splitPlan(text).record ?? '';
   const sealLines = (re: RegExp) => (recordText.match(re) ?? []).length;
-  if (sealLines(/^- Sidecar: /gm) > 1 || sealLines(/^- SHA-256: /gm) > 1) return undefined;
+  if (sealLines(/^\s*-\s*Sidecar:/gm) > 1 || sealLines(/^\s*-\s*SHA-256:/gm) > 1) return undefined;
   const seal = readSeal(splitPlan(text).record);
   if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
   return {
