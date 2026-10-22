@@ -152,9 +152,10 @@ session memory, write `ACTIVE_PLAN` to a durable path outside the work tree
 (`~/.gstack/projects/<slug>/plans/<plan-stem>.md` when
 `~/.gstack/projects/<slug>/` exists, otherwise
 `~/scratch/gstack-autoplan-lean/<slug>-<plan-stem>.md`). If that durable target
-already exists with different bytes and is not this skill's own earlier
-output (it carries no `## Review record`), do not overwrite it: stop and
-surface the collision, or write to a distinct stem the caller approves. When a caller (a person
+already exists with different bytes, do not overwrite it: stop and surface
+the collision, or write to a distinct stem the caller approves. (A rerun of
+this same run reuses the `ACTIVE_PLAN` already chosen; it does not
+re-derive the fallback.) When a caller (a person
 or an external transport) asks for any of these, apply it for the whole run:
 
 - **HOLD SCOPE:** the CEO phase uses the loaded skill's HOLD SCOPE mode instead

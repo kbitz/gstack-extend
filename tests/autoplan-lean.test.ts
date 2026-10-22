@@ -391,6 +391,39 @@ describe('transport contract shape', () => {
     expect(r.stdout).toContain('cannot bind the /implement prompt to the checked plan');
   });
 
+  test('check fails closed when a bullet Verify line diverges from the standalone one', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: `bun run test`\n- Verify: `bun run evil`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain('cannot bind the /implement prompt to the checked plan');
+  });
+
+  test('a bold-colon Verify label in the plan binds to its plain value', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', '**Verify command:** `bun run test`'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'CHECK')).toBe('ok');
+  });
+
+  test('fenced Tier and Verify examples in the plan do not bind', () => {
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('## Acceptance criteria', 'Example:\n\n```\nTier: novel\nVerify command: `bun run evil`\n```\n\n## Acceptance criteria'));
+    const seal = cli('seal', '--plan', plan, '--run', run);
+    expect(seal.code).toBe(0);
+    const msg = join(temp, 'bound.md');
+    writeFileSync(msg, boundMessage(seal.stdout));
+    const r = cli('check', '--plan', plan, '--message', msg);
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'CHECK')).toBe('ok');
+  });
+
   test('a bound Verify command containing an angle span passes verbatim', () => {
     writeFileSync(plan, readFileSync(plan, 'utf8').replace('Verify command: `bun run test`', 'Verify command: bun test --grep <pattern>'));
     const seal = cli('seal', '--plan', plan, '--run', run);
@@ -472,6 +505,9 @@ describe('transport contract shape', () => {
     ['generic placeholder in prompt prose', `Run /implement /p.md\nRead <branch-name> once.\n${promptFields()}\nAuto-decisions:\n- none\n`, 'unfilled'],
     ['placeholder only in an Auto-decisions bullet', handoff('Auto-decisions:\n- [fork] chose <option>\n'), 'Auto-decisions bullet still contains an unfilled'],
     ['shadow lowercase plan label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nplan: /evil.md`), 'looks like the "Plan:" field'],
+    ['shadow tab Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\nVerify\tcommand: bun run evil`), 'looks like the "Verify command:" field'],
+    ['shadow single-asterisk Verify label', handoff('Auto-decisions:\n- none\n', '/p.md', `${promptFields()}\n*Verify command*: bun run evil`), 'looks like the "Verify command:" field'],
+    ['placeholder split across a continuation', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Approved scope: Export widgets as CSV; approved as-is', 'Approved scope: Build <the\n  thing> now')), 'unfilled'],
     ['relative Workspace path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace('Workspace: /tmp/work/widgets — continue in this same workspace', 'Workspace: relative/path')), 'Workspace: must name an absolute workspace path'],
     ['malformed Branch line (short SHA)', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields().replace(HEAD40, 'abc1234')), 'Branch: must be'],
     ['Plan path disagrees with Run /implement path', handoff('Auto-decisions:\n- none\n', '/p.md', promptFields('/other.md')), 'Plan: path (/other.md) does not match "Run /implement /p.md"'],

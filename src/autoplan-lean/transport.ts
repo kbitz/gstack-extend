@@ -48,12 +48,11 @@ const TIER_ANY = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?(?:\*\*|__)?tier(?:\*\*|__)?\s*
 const TIER_STANDALONE = /^Tier: (routine|standard|novel)\s*$/;
 const VERIFY_LINE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*\S/i;
 const VERIFY_VALUE = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?verify(?:\s+command)?(?:\*\*|__)?\s*:\s*(.+?)\s*$/i;
-const VERIFY_STANDALONE = /^verify(?:\s+command)?:\s*(.+?)\s*$/i;
 const PLACEHOLDER_SPAN = /<[^>\n]+>/;
 
 /** Strip one balanced emphasis pair; never eat `__main__`-style value text. */
 function verifyValue(raw: string): string {
-  let v = raw.trim();
+  let v = raw.trim().replace(/^(?:\*\*|__)\s+/, '');
   for (const m of ['**', '__']) {
     if (v.length > 2 * m.length && v.startsWith(m) && v.endsWith(m)) v = v.slice(m.length, -m.length).trim();
   }
@@ -85,15 +84,22 @@ export function promptBindingForPlan(bytes: Uint8Array, planPath: string): Promp
   const unfenced = scanLines(text).filter((l) => !l.fenced);
   const recordIdx = unfenced.findIndex((l) => /^##\s+Review record\s*$/i.test(l.text));
   const before = recordIdx < 0 ? unfenced : unfenced.slice(0, recordIdx);
-  const tier = before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).find((t): t is string => !!t);
-  const verifyFrom = (re: RegExp) => before
-    .map((l, i) => { const m = re.exec(l.text); return m ? { i, v: verifyValue(m[1]!) } : undefined; })
+  const tiers = [...new Set(before.map((l) => TIER_STANDALONE.exec(l.text)?.[1]).filter((t): t is string => !!t))];
+  // A loose Tier label (single-emphasis, tabbed, bulleted) carrying a
+  // different value makes the plan ambiguous even when checkPlan's own
+  // Tier scan does not count that form.
+  const looseTiers = [...new Set(before.map((l) => {
+    const m = /^\s*(?:[-*+]\s+)?[*_]*tier[*_]*\s*:\s*[*_]*(routine|standard|novel)\b/i.exec(l.text);
+    return m?.[1]?.toLowerCase();
+  }).filter((t): t is string => !!t))];
+  const tier = tiers.length === 1 && looseTiers.every((t) => t === tiers[0]!.toLowerCase()) ? tiers[0] : undefined;
+  // Every Verify form (standalone, bulleted, bold) must agree, mirroring how
+  // checkPlan makes every Tier form agree; no form silently wins.
+  const candidates = before
+    .map((l, i) => { const m = VERIFY_VALUE.exec(l.text); return m ? { i, v: verifyValue(m[1]!) } : undefined; })
     .filter((c): c is { i: number; v: string } => !!c && !!c.v);
-  const standalone = verifyFrom(VERIFY_STANDALONE);
-  const candidates = standalone.length ? standalone : verifyFrom(VERIFY_VALUE);
   const distinct = [...new Set(candidates.map((c) => c.v))];
-  const first = candidates[0];
-  const continued = first !== undefined && /^\s+\S/.test(before[first.i + 1]?.text ?? '');
+  const continued = candidates.some((c) => /^\s+\S/.test(before[c.i + 1]?.text ?? ''));
   const verify = distinct.length === 1 && !continued ? distinct[0] : undefined;
   const seal = readSeal(splitPlan(text).record);
   if (!tier || !verify || !seal.path || !seal.sha256) return undefined;
@@ -228,8 +234,8 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
       currentLabel = key;
       continue;
     }
-    const loose = /^\s*(?:[-*+]\s+)?(?:\*\*|__)?([A-Za-z][A-Za-z ]*?)(?:\*\*|__)?\s*:/.exec(line);
-    const exact = loose ? normalizedLabels.get(loose[1]!.trim().toLowerCase().replace(/\s+/g, ' ')) : undefined;
+    const loose = /^\s*(?:[-*+]\s+)?[*_]*([A-Za-z][A-Za-z \t\u00A0*_]*?)\s*:/.exec(line);
+    const exact = loose ? normalizedLabels.get(loose[1]!.replace(/[*_]/g, '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase()) : undefined;
     if (exact) {
       problems.push(`"${loose![1]!.trim()}:" looks like the "${exact}:" field; use the exact label`);
       currentLabel = undefined;
@@ -312,6 +318,11 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
   // is a Verify command value the binding already proved verbatim.
   const verifyBound = binding !== undefined && seen.get('Verify command')?.trim() === binding.verifyCommand;
   const spans: string[] = [];
+  for (const [key, value] of seen) {
+    if (verifyBound && key === 'Verify command') continue;
+    const span = PLACEHOLDER_SPAN.exec(value.replace(/`[^`]*`/g, ''))?.[0];
+    if (span) spans.push(span);
+  }
   for (const [idx, line] of block.slice(1).entries()) {
     if (verifyBound && /^Verify command:/.test(line)) continue;
     const bare = line.replace(/`[^`]*`/g, '');
@@ -320,8 +331,9 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
     if (idx + 1 > label) problems.push('an Auto-decisions bullet still contains an unfilled <...> placeholder');
     else spans.push(span);
   }
-  if (spans.length) {
-    problems.push(`the /implement prompt still contains unfilled <...> placeholder(s): ${spans[0]}${spans.length > 1 ? ` (+${spans.length - 1} more)` : ''}`);
+  const uniqueSpans = [...new Set(spans)];
+  if (uniqueSpans.length) {
+    problems.push(`the /implement prompt still contains unfilled <...> placeholder(s): ${uniqueSpans[0]}${uniqueSpans.length > 1 ? ` (+${uniqueSpans.length - 1} more)` : ''}`);
   }
   if (unexpected) problems.push(unexpected);
   else if (!bullets.length) problems.push('the Auto-decisions list is empty; write "- none" when there were no auto-decisions');
