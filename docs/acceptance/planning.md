@@ -163,7 +163,7 @@ Verification receipt: `operator/checks/verification.json`; sanitized full logs a
 | Earlier sandbox test run | 3799 passed,3 skipped,107 failed; exit1;687.63 seconds; failures cleared outside sandbox |
 | Installed parity / immutable evidence | Passed:3 host copies,27 primary pairs,4 supplemental snapshots,1748 indexed roadmap artifacts,1875 redaction-clean text files |
 | Section-scoped report audit / redaction | Passed:zero inventory patterns, scattered total1 with no report entry, document type/location/taxonomy pass |
-| Source boundary | Only this new report; root Acceptance/inbox/README/version/release files unchanged; no commit or push |
+| Source boundary | Only this new report is the product diff; root Acceptance/inbox/README/version/release files unchanged |
 
 ## Discovered 1.0 Blockers
 
