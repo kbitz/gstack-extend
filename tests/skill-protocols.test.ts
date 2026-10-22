@@ -2644,37 +2644,55 @@ describe('release-only ship path', () => {
       "cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record.",
     ]) expect(releaseOnlyN).toContain(clause);
     expect(shipN).toContain(
-      "Pass ship's pregate `--policy-from head` only when preparation recorded that policy source and its pin files are unchanged since the prepared tree;",
+      "Reuse preparation's policy source only while its pin files are unchanged.",
     );
   });
 
-  test('review and ship wrap one full pregate in the ledger, install missing JS lane deps, and accept pregate-wrapped test records', () => {
+  // Value: protects=the suite-once prompt contract and its reuse refusal branches;
+  // fails_when=coverage, policy, provenance or before-write preservation guards disappear;
+  // why_new=existing release-only assertions do not cover the FULL-path test gate;
+  // seam=none; no_claim=installed-agent or consumer acceptance (static prompt contract only).
+  test('review and ship wrap one full pregate and retain evidence before release writes', () => {
     for (const clause of [
-      "Find lane gaps before the long suite with `gstack-pregate --stage tests --explain --out <temp-path>` without `--allow-repo-commands`",
-      "Before the full pregate run, make every declared JS lane runnable: for each lane whose package directory has a lockfile but no installed `node_modules`, run its install (`npm ci --prefix <dir>` for an npm lockfile) first and log it in the run log",
-      "When `.gstack/pregate.json` declares a runner, the prescribed test form is one ledger-wrapped full pregate run, `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'`",
-      'adding `--policy-from head` when item 1 requires it;',
-      "set `<ample>` above the longest runner process rather than pregate's 600s default, and set `--stall-timeout` above the suite's longest silent stretch when its runner buffers output",
-      'do not rerun the main suite again under another label when that pregate run selected the main suite in full (the declared runner, given that selection, executes the main command rather than a per-file subset).',
-      '`<temp-path>` under `.gstack/tmp/` (never the default stamp path) or outside the worktree, so the probe neither overwrites a passing stamp nor perturbs the fingerprint',
+      "--explain --out <temp-path>` without `--allow-repo-commands`",
+      'Put `<temp-path>` outside the worktree',
+      'never add `--policy-from head` to it',
+      'retain selection evidence from the actual head-policy run with `--explain`',
+      'make every declared JS lane runnable',
+      'documented frozen-lockfile install',
+      'A failed install stops here.',
+      'one ledger-wrapped full pregate run',
+      "gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'",
+      'above the longest runner process',
+      "`--stall-timeout` above the suite's longest silent stretch",
+      'A matching runner name or selection hash alone is insufficient.',
+      'If coverage is partial or unknown, preserve the pregate record and run the documented main command under `tests`',
+      'Never relabel or import a completed run.',
     ]) expect(gatesN).toContain(clause);
-    expect(prepN).toContain(
-      "When `.gstack/pregate.json` declares a runner, wrap the single full pregate run under `tests` (`gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'`) as the prescribed `tests` record instead of running the main suite a second time, on item 4's conditions (`--policy-from head` when item 1 requires it; no second run only when that run selected the main suite in full); keep distinct labels for required lanes that run does not cover.",
-    );
     for (const clause of [
-      "When `.gstack/pregate.json` declares a runner and the main suite needs to run, first make every declared JS lane runnable — for each lane whose package directory has a lockfile but no installed `node_modules`, run its install (`npm ci --prefix <dir>` for an npm lockfile) first and log it in the run log — then run `gstack-evidence run --label tests -- '<gstack-pregate> --allow-repo-commands --timeout <ample>'` once (setting `<ample>` above the full suite's runtime), and do not rerun the main suite under another label when that pregate run selected the main suite in full (test gate below).",
-      'Missing or stale required lanes not covered by that pregate run run normally.',
-      "also accept the latest FRESH `tests` ledger record as covering the `AGENTS.md` / `CLAUDE.md` main test command when every condition below holds",
-      'reject `--stage`, `--only`, `--base`, `--remote`, `--explain` and compound commands.',
-      'When this PR adds or changes a pin file, `--policy-from head` is required and must match preparation\'s recorded policy source.',
+      "use item 4's ordinary `tests` fallback when main-command coverage is partial or unknown",
+      'keep distinct labels for required lanes that run does not cover',
+    ]) expect(prepN).toContain(clause);
+    for (const clause of [
+      "installed `gstack-pregate` resolved with the skill's `gstack-evidence`",
+      'each at most once with valid values; reject every other argument, environment override, redirection and compound command',
+      'changed pins require new head-policy evidence',
       "the record's `wtree` equals the stamp's `tree`",
-      'carries the full check set with no fail or incomplete check, a passing `lanes` check, cleared requires-remote obligations, and verdict `pass`, `warn`, or `requires-remote cleared`.',
-      "`gstack-pregate verify --out <stamp>` corroborates it only while the current tree still equals that tree; after the release stamp, read these fields from the preserved immutable copy instead.",
-      "Its `lanes` check selected the main suite in full. Verify without overwriting `.gstack/tmp/pregate.json`: run `gstack-pregate --stage tests --explain --out <temp-path>` without `--allow-repo-commands`, repeating the record's policy source",
-      "Confirm the temp record's `lanes` check `inputs.selection` hash matches the stamp's, and read the declared runner: given that selection it must execute the main test command in full — a per-file subset run does not cover it.",
-      "using the validated record's exact command as `--expect-cmd` and the installed permitted age",
-      '`check` grades only the latest record per label, so any later `tests` record displaces it.',
-      "After the release stamp (`12–15`), when `git diff --name-only <tested tree> <current tree>` lists only release metadata, check the `tests` ledger record in stage 4 with `--allow-paths` naming only the release-metadata files this run changed, preserve an immutable verified copy of the pre-stamp tree's full pregate record, rerun `gstack-pregate --stage tests --explain --out <temp-path>` on the final tree with the same policy source and waive lane reruns only when its `lanes` `inputs.selection` hash equals that preserved stamp's (otherwise the stamp selected new lanes: rerun the full pregate on the final tree instead), run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree before Step 17's push (with the same policy source) so Step 18's receipt check has a current stamp, and cite that immutable full pregate record (path, SHA-256, policy source and cleared requires-remote obligations) separately from the final preflight record, as the release-only path already does.",
+      'exactly the full `CHECK_IDS` from that installed version, once each',
+      'no `fail`, `incomplete` or `not_installed` status',
+      'all `requires_remote[].receipt` values present',
+      'verdict consistent with the installed `verdictOf` implementation',
+      'SHA-256 before any release write or later pregate can replace it',
+      'complete non-empty test set the documented main command would execute',
+      'empty selection, unknown counts or partial coverage do not qualify',
+      'Never use that probe for head policy',
+      "using the validated record's exact command as `--expect-cmd`",
+      'any later `tests` record displaces it',
+      '**Release-metadata verification (FULL path).** Before Steps 12–15, verify and preserve',
+      'A filename allow-list or unchanged selection hash is insufficient.',
+      'if that affected set cannot be established, rerun the required full gate',
+      '`gstack-pregate --stage preflight --allow-repo-commands`',
+      'not new test evidence',
     ]) expect(shipN).toContain(clause);
   });
 

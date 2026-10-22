@@ -995,11 +995,13 @@ reuse these records.
    `--policy-from head` to every full pregate run and record that policy source.
    Find lane gaps before the long suite with `gstack-pregate --stage tests
    --explain --out <temp-path>` without `--allow-repo-commands` (base policy
-   only; that record is `incomplete` and never counts, and `<temp-path>` under
-   `.gstack/tmp/` (never the default stamp path) or outside the worktree, so
-   the probe neither overwrites a passing stamp nor perturbs the fingerprint;
+   only; that record is `incomplete` and never counts). Put `<temp-path>`
+   outside the worktree, so the probe never overwrites the passing stamp;
    read the `--explain` output because `pregate.json` cuts `lanes` `ran:` at
-   200 characters), and check a changed pin file with `gstack-pregate validate`.
+   200 characters. This probe describes base policy only: never add
+   `--policy-from head` to it, because that requires permission to execute
+   lanes. Validate changed pins with `gstack-pregate validate` and retain
+   selection evidence from the actual head-policy run with `--explain`.
    A touched file with no test lane or a refused runner is preparation work:
    repair the map here and review it like any fix.
 2. **Coverage audit.** Run `/ship`'s Test Coverage Audit section, including its
@@ -1015,8 +1017,12 @@ reuse these records.
    spends its one re-audit.
 4. **Pregate and test lanes.** Before the full pregate run, make every declared
    JS lane runnable: for each lane whose package directory has a lockfile but no
-   installed `node_modules`, run its install (`npm ci --prefix <dir>` for an npm lockfile) first and
-   log it in the run log, so one lane's missing dependencies never force a
+   installed `node_modules`, trace its runner to the package directory and
+   use the repository's documented frozen-lockfile install (`npm ci --prefix
+   <dir>` for an npm lockfile). Inspect lifecycle scripts under the same
+   repository-command authorization as pregate, require install outputs to be
+   ignored, and log the directory, command and exit before starting tests. A
+   failed install stops here. This prevents missing dependencies from causing a
    second full run of every lane (per-lane rerun would be an upstream pregate
    feature). When `.gstack/pregate.json` declares a runner, the prescribed test
    form is one ledger-wrapped full pregate run, `gstack-evidence run --label
@@ -1025,9 +1031,15 @@ reuse these records.
    process, so set `<ample>` above the longest runner process rather than
    pregate's 600s default, and set `--stall-timeout` above the suite's longest
    silent stretch when its runner buffers output), and do not rerun the main
-   suite again under another label when that pregate run selected the main
-   suite in full (the declared runner, given that selection, executes the main
-   command rather than a per-file subset). Otherwise run the installed `gstack-pregate` command the tests
+   suite again under another label when that pregate run covers the documented
+   main command. Establish coverage using `/ship-and-land`'s pregate-wrapped
+   test gate: retain the complete selection (add `--explain` to the full run),
+   inspect the runner and main command, and require evidence that tests ran.
+   A matching runner name or selection hash alone is insufficient. If coverage
+   is partial or unknown, preserve the pregate record and run the documented
+   main command under `tests`; this deliberately replaces the latest `tests`
+   entry, and ship reuses that ordinary exact-command record. Never relabel or
+   import a completed run. Without a declared runner, run the installed `gstack-pregate` command the tests
    section names, with `--allow-repo-commands`, and the main test lanes, on the
    same final content, so the pregate record and the ledger entries describe the
    head you push. Fix a failure like any other and rerun the gates whose inputs
@@ -1062,8 +1074,9 @@ Capture evidence as the work runs so a new session can reuse it:
   run under `tests` (`gstack-evidence run --label tests -- '<gstack-pregate>
   --allow-repo-commands --timeout <ample>'`) as the prescribed `tests` record
   instead of running the main suite a second time, on item 4's conditions
-  (`--policy-from head` when item 1 requires it; no second run only when that
-  run selected the main suite in full); keep distinct labels for required
+  (`--policy-from head` when item 1 requires it; retain `--explain` output;
+  use item 4's ordinary `tests` fallback when main-command coverage is partial
+  or unknown); keep distinct labels for required
   lanes that run does not cover. Otherwise use `tests` for the project's main
   suite and distinct labels for other required lanes.
   Capture the actual command string, repo-relative working directory, UTC
