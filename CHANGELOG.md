@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.41.0.0] - 2026-10-22
+
+### Added
+
+- **Continue from `/autoplan-lean` with one copyable `/implement` prompt.** The handoff includes the workspace, branch, approved scope, sealed plan and review-record hashes, verification context, and decisions for a fresh session. Plans without an explicit durable destination move out of temporary workspace storage, with a stop on conflicting content.
+
+### Changed
+
+- **Check the handoff against the sealed plan before implementation.** `seal` reports the plan's SHA-256 and byte count; `check --message` requires the complete handoff and verifies its plan path/hash, Tier, review-record path/hash, and Verify command. Old minimal handoff stubs must be regenerated using the current template. `/implement` checks supplied hashes and HEAD before starting. These checks validate the documented handoff format; they do not establish trust in arbitrary plan prose.
+
 ## [0.40.0.1] - 2026-10-22
 
 ### Added
