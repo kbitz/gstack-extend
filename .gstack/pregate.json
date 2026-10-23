@@ -1,6 +1,9 @@
 {
   "runner": "bun run test -- {files}",
   "dependencies": {
+    "src/secret-dispositions/cli.ts": [
+      "tests/secret-dispositions.test.ts"
+    ],
     "skills/project-spec.md": [
       "tests/skill-protocols.test.ts",
       "tests/telemetry.test.ts",
