@@ -394,11 +394,13 @@ Before invoking `/review`, determine whether Greptile applies:
 - The full intended PR diff must include more than documentation changes.
   Use the repository's documented docs-only classification, read from the
   base tip, when available; if the PR modifies that documentation, treat it
-  like a root-marker change. Otherwise inspect the changes for
-  documentation/prose and supporting doc assets only. Behavior, configuration, build, or test changes make it a mixed
+  like a root-marker change. Otherwise apply the shared
+  [docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) without its `docs-ship:docs` opt-ins,
+  and inspect the changes for documentation/prose and supporting doc assets only. Behavior, configuration, build, or test changes make it a mixed
   PR. Skill/prompt instructions that drive agent behavior are implementation,
   even when stored in Markdown. Inspect the whole base-to-head PR diff plus
   intended uncommitted changes, not just the latest commit or fix batch.
+  `/docs-ship` is the lighter path for a docs-only PR.
 
 Record the decision. If Greptile does not apply under the rules above, do not
 discover or call Greptile tools, load its triage instructions, trigger or fetch

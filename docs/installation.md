@@ -4,7 +4,7 @@
 
 ## Installation
 
-**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode / Cursor, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/). The commands that start Bun with `--no-env-file --no-install --config=/dev/null` (the `/roadmap` audit tools, `gstack-extend init`, the merge gate, `bin/layout-scaffold`, `bin/outside-review` and `bin/autoplan-lean`) need Bun v1.3.3 or newer. `setup` checks for `bun` and fails fast with install instructions if it's missing; it does not check the version.
+**Requirements:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (or Codex / OpenCode / Cursor, see below), [Git](https://git-scm.com/), [Bun](https://bun.sh/). The commands that start Bun with `--no-env-file --no-install --config=/dev/null` (the `/roadmap` audit tools, `gstack-extend init`, the merge gate, `bin/layout-scaffold`, `bin/outside-review`, `bin/autoplan-lean` and `bin/docs-ship`) need Bun v1.3.3 or newer. `setup` checks for `bun` and fails fast with install instructions if it's missing; it does not check the version.
 
 Clone and run setup:
 

@@ -356,6 +356,14 @@ audience ceiling, release-policy summary, and any pending evidence. Do not run
 implementation, upstream `/spec`, shipping, deployments or changes to other
 repositories.
 
+When the documentation commit landed, end with roadmap's Step 7 handoff for a
+fresh session: `Run /docs-ship`, the approved candidate's proposal as the
+brief, every committed path as the allowed files, and the version reasoning.
+This docs-only change goes to `/docs-ship`, not `/review-and-prep` and
+`/ship-and-land`. If the commit changed the instruction source (`AGENTS.md` or
+`CLAUDE.md`), add a line saying so: `/docs-ship` treats agent instructions as
+executable, so it stops at classification and asks whether to proceed.
+
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
