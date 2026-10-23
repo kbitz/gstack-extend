@@ -28,6 +28,8 @@ export type DocsShipConfig = {
   testCommand?: string;
   /** Files the markers came from (symlinked duplicates once). */
   sources: string[];
+  /** Resolved instruction paths at the base tip, even when no marker is active. */
+  sourcePaths: string[];
 };
 
 export type Marker = { key: string; value: string; line: number };
@@ -54,12 +56,13 @@ function invalid(source: string, marker: Marker, why: string): never {
 }
 
 export function readConfig(git: Git, rev: string): DocsShipConfig {
-  const config: DocsShipConfig = { docs: [], notDocs: [], tests: [], sources: [] };
+  const config: DocsShipConfig = { docs: [], notDocs: [], tests: [], sources: [], sourcePaths: [] };
   const read = new Set<string>();
   for (const file of CONFIG_FILES) {
     const real = resolvedPath(git, rev, file);
     if (real === undefined || read.has(real)) continue;
     read.add(real);
+    config.sourcePaths.push(real);
     const text = readAt(git, rev, file);
     if (text === undefined) continue;
     const markers = markersIn(text);

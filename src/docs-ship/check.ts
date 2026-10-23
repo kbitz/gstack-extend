@@ -88,13 +88,18 @@ function lcs(a: string[], b: string[]): number {
 /** The brief passage closest to the quotation, when similar enough to be a misquote. */
 export function nearestPassage(quote: string, brief: string): { text: string; score: number } | undefined {
   const q = tokens(quote).map((t) => t.word);
-  if (q.length < 3) return undefined;
+  if (q.length < 3 || q.length > 128) return undefined;
   const b = tokens(brief);
+  if (b.length > 25000) return undefined;
+  let cells = 0;
   const words = new Set(q);
   let best: { text: string; score: number } | undefined;
   for (let i = 0; i < b.length; i++) {
     if (!words.has(b[i]!.word)) continue;
     for (let len = Math.max(1, q.length - 2); len <= q.length + 2 && i + len <= b.length; len++) {
+      // Budget the quadratic work. Exhaustion leaves the claim unconfirmed.
+      cells += q.length * len;
+      if (cells > 1000000) return undefined;
       const window = b.slice(i, i + len);
       const score = lcs(q, window.map((t) => t.word)) / Math.max(q.length, len);
       if (!best || score > best.score) best = { text: brief.slice(window[0]!.start, window[len - 1]!.end), score };

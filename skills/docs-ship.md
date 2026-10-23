@@ -122,14 +122,14 @@ This replaces `/review-and-prep` and `/ship-and-land` for that PR. It never merg
 - **Light by design.** Work in this session only: no Agent tool, no subagents, no outside voices, no `/review`, no Greptile, no full test suite. Never run `gh pr merge`.
 - **Read on demand.** `"$_EXTEND_ROOT/docs/docs-ship.md"` is the contract. Read only the section a step names (`grep -n '^## '`, then that range).
 - **Helper.** Every `docs-ship` command below is `"$_EXTEND_ROOT/bin/docs-ship"`, run in the PR checkout. Start each command with the `_EXTEND_ROOT=…` line the preamble printed. `<base>` is `origin/<PR base branch>`, fetched first. Output is `KEY: value` lines; exit 1 means stop or findings, 3 a refusal to relay with its `FIX:` line.
-- **Files.** Keep saved PR JSON and receipt drafts outside the worktree: `~/.gstack/projects/<slug>/docs-ship/` when `~/.gstack/projects/<slug>/` exists (slug from the installed gstack's `gstack-slug`), otherwise `~/scratch/docs-ship/`.
+- **Files.** Keep saved PR JSON and receipt drafts outside the worktree: `~/.gstack/projects/<slug>/docs-ship/` when `~/.gstack/projects/<slug>/` exists (slug from the installed gstack's `gstack-slug`), otherwise `~/scratch/docs-ship/`. After classification passes, create a unique per-invocation subdirectory there with `mktemp -d`; that directory is `<files dir>` for every scratch file. Never share filenames across runs.
 - **Host ownership.** Never create, switch, rename or delete branches or worktrees.
 - **Findings** are `file:line`, what is wrong and the fix, one line each. Keep a running list; every step adds to it.
 
 ## 1. Bind the PR (read-only)
 
 1. The checkout must be clean (`git status --porcelain` empty). If it is not, stop and say what is uncommitted.
-2. Find the PR: the argument, else `gh pr list --head <current branch> --state open --json number,baseRefName,headRefName,isDraft`. A query error is not "no PR". With several matches, ask which one. With none, use the default branch as the base; step 2 opens the PR. If the branch has no commits its base lacks, stop: there is nothing to ship.
+2. Find the PR: the argument, else `gh pr list --head <current branch> --state open --json number,baseRefName,headRefName,isDraft`. A query error is not "no PR". With several matches, ask which one. With none, use the default branch as the base; step 2 opens the PR. If HEAD is detached, or the current branch equals the default branch or selected base branch, stop before any write and name the need for a feature-branch workspace; the host owns its creation. If the branch has no commits its base lacks, stop: there is nothing to ship.
 3. The current branch must be the PR's head branch; otherwise stop and name the workspace to run from. Fetch the base and head branches. If the remote head has commits this checkout lacks, stop.
 4. Record the local head SHA and the base tip SHA (`git rev-parse <base>`). Nothing is written before step 2 classifies the change.
 
@@ -137,11 +137,11 @@ This replaces `/review-and-prep` and `/ship-and-land` for that PR. It never merg
 
 Run `docs-ship classify --base <base>`.
 
-- `STATUS: docs`: prepare the branch. Push local commits the PR lacks. With no PR, open a draft (`gh pr create --draft`) whose title and body say what changed and name the brief. If the base tip is not an ancestor of HEAD, run `git merge --no-edit <base>` and push; on a conflict, run `git merge --abort` and go to step 11 with `CHANGES`, listing the conflicting files. Then save `gh pr view <n> --json number,url,headRefName,headRefOid,baseRefName,body,isDraft,files` to `<files dir>/pr-<n>-<UTC stamp>.json` and record the head SHA again. Keep each `FINDING: … | release-policy` line for step 5.
+- `STATUS: docs`: prepare the branch. Push local commits the PR lacks. With no PR, open a draft (`gh pr create --draft`) whose title and body say what changed and name the brief. If the base tip is not an ancestor of HEAD, run `git merge --no-edit <base>` and push; on a conflict, run `git merge --abort` and go to step 11 with `CHANGES`, listing the conflicting files. Then save `gh pr view <n> --json number,url,headRefName,headRefOid,baseRefName,body,isDraft,files` to `<files dir>/pr-<n>-<UTC stamp>.json` and record the head SHA again. After a base merge, repeat classification and steps 3–8 against the integrated head; previous user overrides do not approve newly changed hunks. Keep each `FINDING: … | release-policy` line for step 5.
 - `STATUS: empty`: stop; the PR changes nothing.
 - `STATUS: stop`: change nothing. Read § Stops and choices, then ask once, listing each `FILE: stop` path and reason, with the three choices: **Proceed anyway** (recorded in the receipt; then prepare the branch as for `docs`), **Drop the offending change** (restore those paths to their merge-base content, commit `docs: drop non-docs changes`, and classify again), **Run the normal review** (verdict `HANDED-BACK`). Without a question tool, or when the caller asked for no questions, choose `HANDED-BACK`.
 
-`HANDED-BACK` writes nothing: no commit, push, PR, body edit or receipt. Go to step 11 and end with this handoff:
+At this initial classification gate, `HANDED-BACK` writes nothing: no commit, push, PR, body edit or receipt. A later test hand-back preserves earlier commits, pushes and PR creation, and makes no further writes. Go to step 11 and end with this handoff:
 
 ```text
 Run /review-and-prep (PR #<n>, when one exists). /docs-ship handed it back: <path> (<reason>), ...
@@ -163,37 +163,37 @@ Then confirm each `CLAIM:` line whose status is `check`, `exists` or `unconfirme
 
 ## 6. Doc-pinning tests
 
-Run `docs-ship tests --base <base>`. With `TESTS: 0`, record "none selected". Otherwise use the `COMMAND:` line when present. If there is none, build the command from the project's documented test runner, with the `TEST:` paths in the listed order. Never use the full suite or a wrapper that selects its own tests.
+Run `docs-ship tests --base <base>`. With `TESTS: 0`, record "none selected" and skip cache commands. Track the evidence mode as none, cached or uncached. Otherwise use the `COMMAND:` line when present. If there is none, build the command from the project's documented test runner, with the `TEST:` paths in the listed order. Never use the full suite or a wrapper that selects its own tests.
 
-Read § Doc-pinning tests. When the installed gstack's `gstack-evidence` exists (for Claude Code, `"$HOME/.claude/skills/gstack/bin/gstack-evidence"`), first run `check --label docs-ship-tests --expect-cmd '<command>'`. `FRESH` means reuse the record. Otherwise run `run --label docs-ship-tests -- '<command>'`. Without the helper, run the command directly and record it as uncached. Each failing test is a finding: name the test and the doc line it reads. A docs PR cannot change tests. If the test itself must change, end with `HANDED-BACK` and step 2's handoff; the branch keeps what step 2 pushed.
+Pass each complete command as one safely shell-quoted argument, preserving quotes already present in `COMMAND:`. Read § Doc-pinning tests. When the installed gstack's `gstack-evidence` exists (for Claude Code, `"$HOME/.claude/skills/gstack/bin/gstack-evidence"`), first run `check --label docs-ship-tests --expect-cmd '<command>'`. `FRESH` means reuse the record. Otherwise run `run --label docs-ship-tests -- '<command>'`. Without the helper, run the command directly and record it as uncached. Each failing test is a finding: name the test and the doc line it reads. A docs PR cannot change tests. If the test itself must change, end with `HANDED-BACK` and step 2's handoff; the branch keeps what step 2 pushed.
 
 ## 7. PR body
 
-The PR body must say what changed and name any departure from the brief. If it does not, rewrite it: keep the human text, then run `gh pr edit <n> --body-file <file>`. Re-save the PR JSON afterwards.
+The PR body must say what changed and name any departure from the brief. If it does not, fetch the latest body immediately before rewriting it: keep the human text, then run `gh pr edit <n> --body-file <file>`. Re-save the PR JSON afterwards.
 
 ## 8. Fix or report
 
-With findings, list them. In an interactive run, ask once: **Apply the fixes** or **Stop with CHANGES**. Apply only fixes whose correct text the evidence shows, and only to files that classify as docs. Commit them as `docs: address docs-ship findings`, push, and repeat steps 2–8 on the new head. Reruns reuse fresh test records. Stop after two fix rounds. A caller that asked for no questions gets `CHANGES`. `CHANGES` skips step 9 and still writes the receipt.
+With findings, list them. In an interactive run, ask once: **Apply the fixes** or **Stop with CHANGES**. Apply only fixes whose correct text the evidence shows, and only to files that classify as docs. Commit them as `docs: address docs-ship findings`, push, and repeat steps 2–8 on the new head. Reruns reuse fresh test records. Stop with `CHANGES` if findings remain after two fix rounds. A caller that asked for no questions gets `CHANGES`. `CHANGES` skips step 9 and still writes the receipt.
 
 ## 9. Release
 
-Read § Release, then the project's release policy. If the policy bumps for documentation changes, and no stopped version change was proceeded, write the bump as that section describes, then push. Run `docs-ship tests --base <pre-bump SHA>`. Run any tests it selects under `docs-ship-release-tests`. Then confirm the first record with `check --label docs-ship-tests --expect-cmd '<command>' --allow-paths <bump files>`. If the policy is silent or says docs do not bump, write nothing and record why.
+Read § Release, then the project's release policy. Re-fetch base/head first: if either moved since verification, return to step 2 before bumping. If the policy bumps for documentation changes, and no stopped version change was proceeded, write the bump as that section describes, then push. Run `docs-ship tests --base <pre-bump SHA>`. Run any tests it selects under `docs-ship-release-tests` (directly whenever the evidence helper is unavailable, even if step 6 selected none). For cached evidence only, confirm the first record with `check --label docs-ship-tests --expect-cmd '<command>' --allow-paths <bump files>`; if stale, rerun the original selected command. For uncached evidence, rerun that command directly; for none, no original run is needed. A failed release or original test is a finding and means `CHANGES`, never readiness. If the policy is silent or says docs do not bump, write nothing and record why.
 
 ## 10. Receipt, ready and CI
 
-1. Read § Receipt. Fetch the current body (`gh pr view <n> --json body --jq .body > <files dir>/body.md`) and run `docs-ship hash --body <files dir>/body.md`.
+1. Read § Receipt. Freeze the verified head and base SHAs after step 9 (or after the last checks for `CHANGES`); these identities must never be replaced by an unreviewed current tip.
 2. On `PASS`, mark the PR ready (`gh pr ready <n>`) if it is a draft. Then poll `gh pr checks <n>` until no check is pending, for at most 15 minutes. A failing check is a finding, and the verdict becomes `CHANGES`; never convert the PR back to draft. Checks still pending after the wait are reported as pending, never as passed.
-3. Write the receipt from the template to `<files dir>/receipt.md`. Use the hash from item 1 and the current head. Run `docs-ship receipt --body <files dir>/body.md --receipt <files dir>/receipt.md --out <files dir>/body.new.md`, then `gh pr edit <n> --body-file <files dir>/body.new.md`. Fetch the body again; `docs-ship hash` must print the recorded hash.
+3. Re-fetch head/base after the wait. Require local HEAD, remote branch and PR head to equal the verified head, and the base to equal the reviewed base. On drift, stop with `CHANGES` and no PASS receipt or merge command. Fetch the current body and its last-edit metadata immediately before editing (`gh pr view <n> --json body --jq .body > <files dir>/body.md`), then run `docs-ship hash --body <files dir>/body.md`. Write the receipt from the template to `<files dir>/receipt.md` using that hash and the frozen identities. Run `docs-ship receipt --body <files dir>/body.md --receipt <files dir>/receipt.md --out <files dir>/body.new.md`, then `gh pr edit <n> --body-file <files dir>/body.new.md`. Re-read body, head and base after writing; the hash and identities must still match. If another actor edited, reconcile onto their latest body once, preserving their text, or stop with `CHANGES`. Never certify an unreviewed head.
 
 ## 11. Finish
 
-Run Telemetry finish with `--outcome success` for `PASS`, `CHANGES` or `HANDED-BACK`. Use `error` when the run could not complete. Then end with a few summary lines (checks run, claims unconfirmed, tests run, release) and the result block from § Result line:
+Run Telemetry finish with `--outcome success` for `PASS`, `CHANGES` or `HANDED-BACK`. Use `error` when the run could not complete. Then give a few summary lines (checks run, claims unconfirmed, tests run, release), the outcome-specific text below, and end with the result block from § Result line:
 
 ```text
 Docs ship: docs-ship/v1; verdict: <PASS|CHANGES|HANDED-BACK>; pr: <n>; head: <full head SHA>; base: <full base SHA>; body-sha256: <hash>
 ```
 
-After `PASS`, ask the user to merge. Give the exact command: `gh pr merge <n> --<method> --match-head-commit <head>`, using the merge method the repository allows (prefer the one its recent merges used). After `CHANGES`, give one finding per line. After `HANDED-BACK`, give the handoff from step 2.
+For `PASS`, ask the user to merge. Give the exact command: `gh pr merge <n> --<method> --match-head-commit <head>`, using the merge method the repository allows (prefer the one its recent merges used). For `CHANGES`, give one finding per line. For `HANDED-BACK`, give the handoff from step 2. For any early exit, compute the body hash read-only from the existing PR, or use `pr: 0` and the SHA-256 of an empty body when no PR exists. Head/base name the observed commits; these exits never authorize merging.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish

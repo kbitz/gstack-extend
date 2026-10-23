@@ -9,8 +9,8 @@
  * release-policy finding, not a stop.
  */
 import { globMatcher } from '../merge-gate/glob.ts';
-import { CONFIG_FILES, hasMarker, type DocsShipConfig } from './config.ts';
-import { hunks, readAt, type Change, type Git, type Hunks } from './git.ts';
+import { CONFIG_FILES, hasMarker, markersIn, type DocsShipConfig } from './config.ts';
+import { hunks, readAt, resolvedPath, type Change, type Git, type Hunks } from './git.ts';
 
 export const CHANGELOG = 'CHANGELOG.md';
 const PROSE_EXT = /\.(md|markdown|rst|adoc|txt)$/i;
@@ -39,21 +39,25 @@ export type Classification = { files: FileResult[]; findings: ReleaseFinding[] }
 const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 const segments = (p: string) => p.split('/').slice(0, -1);
 
-/** Level-2 version headings, keyed by version text: `## [1.2.3] - date`, `## v1.2.3`, `## 1.2.3.4`. */
+/** Version headings, including linked headings used by release generators. */
 export function versionOf(heading: string): string | undefined {
-  const m = /^\[?v?(\d+(?:\.\d+)+)\]?(?:\s|$)/.exec(heading.trim());
+  const m = /^\[?v?(\d+(?:\.\d+)+(?:-[\w.-]+)?(?:\+[\w.-]+)?)\]?(?:\([^)]*\))?(?:\s|$)/.exec(heading.trim());
   return m?.[1];
 }
 
 type Section = { title: string; version?: string };
 
-/** The level-2 section each 1-based line belongs to; undefined before the first one. */
+/** Release sections retain their nested non-version subheadings. */
 function sectionsByLine(text: string): (Section | undefined)[] {
   const out: (Section | undefined)[] = [undefined];
   let current: Section | undefined;
+  let level = 2;
   for (const line of text.split('\n')) {
-    const h = /^##(?!#)\s+(.*?)\s*$/.exec(line);
-    if (h) current = { title: h[1]!, version: versionOf(h[1]!) };
+    const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    if (h && (versionOf(h[2]!) || h[1]!.length <= level)) {
+      current = { title: h[2]!, version: versionOf(h[2]!) };
+      level = h[1]!.length;
+    }
     out.push(current);
   }
   return out;
@@ -125,16 +129,43 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
   const optedIn = globMatcher(config.docs);
   const excluded = globMatcher(config.notDocs);
   const findings: ReleaseFinding[] = [];
+  const configPaths = new Set<string>([...CONFIG_FILES, ...config.sourcePaths]);
+  for (const rev of [from, to]) for (const file of CONFIG_FILES) {
+    const real = resolvedPath(git, rev, file);
+    if (real) configPaths.add(real);
+  }
   const files: FileResult[] = list.map((change): FileResult => {
     const { path, status } = change;
     const stop = (reason: Reason, why: string): FileResult => ({ path, status, kind: 'stop', reason, why });
     let cached: string[] | undefined;
     const lines = () => (cached ??= changedLines(hunks(git, from, to, path)));
     if ([change.oldMode, change.newMode].some((m) => m === '120000' || m === '160000')) return stop('special-file', 'symlink or submodule');
-    if ((CONFIG_FILES as readonly string[]).includes(path) && lines().some(hasMarker)) return stop('classification-config', 'changes a docs-ship marker');
+    if (configPaths.has(path)) {
+      const active = (rev: string) => markersIn(readAt(git, rev, path) ?? '').map(({ key, value }) => [key, value]);
+      if (lines().some(hasMarker) || JSON.stringify(active(from)) !== JSON.stringify(active(to))) return stop('classification-config', 'changes a docs-ship marker');
+    }
     if (excluded(path)) return stop('project-excluded', 'docs-ship:not-docs');
     if (basename(path) === 'VERSION') return stop('version', 'VERSION changed');
     if (path === CHANGELOG) return changelog(git, from, to, change, findings);
+    // Prose examples are not release fields; Markdown frontmatter is metadata.
+    const frontmatterVersions = (rev: string) => {
+      const body = /^(---|\+\+\+)\r?\n([\s\S]*?)\r?\n\1(?:\r?\n|$)/.exec(readAt(git, rev, path) ?? '')?.[2] ?? '';
+      const fields: string[] = [];
+      let fieldIndent: number | undefined;
+      for (const line of body.split('\n')) {
+        const indent = /^\s*/.exec(line)![0].length;
+        if (VERSION_FIELD.test(line)) fieldIndent = indent;
+        else if (fieldIndent !== undefined && indent <= fieldIndent && /^\s*["']?[\w.-]+["']?\s*[:=]/.test(line)) fieldIndent = undefined;
+        // Include multiline YAML values (and TOML string continuations), not
+        // merely the key line. The next sibling field ends the value.
+        if (fieldIndent !== undefined) fields.push(line);
+      }
+      return fields;
+    };
+    const versionChanged = PROSE_EXT.test(path)
+      ? JSON.stringify(frontmatterVersions(from)) !== JSON.stringify(frontmatterVersions(to))
+      : lines().some((line) => VERSION_FIELD.test(line));
+    if (versionChanged) return stop('version', 'changes a version field');
     if (optedIn(path)) return { path, status, kind: 'docs', why: 'docs-ship:docs' };
     if (isAgentInstructions(path)) return stop('agent-instructions', 'agent instructions are executable');
     if (isDefaultDocs(path)) return { path, status, kind: 'docs', why: 'default allowlist' };

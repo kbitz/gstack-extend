@@ -2,6 +2,8 @@
 
 Extension skills for gstack.
 
+<!-- docs-ship:not-docs=docs/docs-ship.md -->
+
 ## Versioning
 
 Current format: `MAJOR.MINOR.PATCH.MICRO`; the planned three-part transition and compatibility rules are in `docs/SPEC.md`. Until its tooling transition lands, retain the current format. Source of truth: `VERSION`. Release history and acceptance: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.

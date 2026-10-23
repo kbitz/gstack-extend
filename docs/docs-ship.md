@@ -50,16 +50,16 @@ allowlist, symlinks and submodules. Each stopped file gets a reason:
 
 - A change to `VERSION` or to any version field stops (reason `version`). Version
   fields include package-manifest and lockfile version slots and version
-  constants in code. A version change, not a changelog line, signals a release.
+  constants in code and Markdown frontmatter. Version-like text in prose examples is not a version field. A version change, not a changelog line, signals a release.
 - `CHANGELOG.md` lines are docs when no version changes and no version heading
-  is added. Adding a version heading (`## [1.2.3]`, `## v1.2.3`) stops.
+  is added. Adding a version heading (`## [1.2.3]`, `## v1.2.3`, or linked headings at any level) stops. These section rules apply to the root `CHANGELOG.md`; other changelog names need project rules.
 - Adding, changing or removing a line inside an already-released version's
   section is a finding, not a stop, because it rewrites shipped notes. Check it
   against the project's release policy. If the policy is silent, report it and
   suggest moving the line to `## [Unreleased]` or the next version's section.
 
 A PR that changes a `docs-ship:` marker line stops (`classification-config`):
-the base tip's configuration applies, so a PR cannot opt itself in.
+including a symlink target or a fence edit that activates a marker. The base tip's configuration applies, so a PR cannot opt itself in.
 
 ## Configuration
 
@@ -78,7 +78,7 @@ depth); brackets and braces are rejected.
 | `<!-- docs-ship:test-command=python3 -m pytest {tests} -->` | The runner command; `{tests}` becomes the selected test paths. Without it, the skill builds the command from the project's documented test instructions. |
 
 List markers may repeat; their values merge. A scalar set twice with different
-values, an unknown key or an invalid glob refuses with `CONFIG_INVALID`.
+values, an unknown key or an invalid glob refuses with `CONFIG_INVALID`. A `tests` pattern matching no tracked file at head refuses with `CONFIG_TESTS_MISSING`; it never silently drops an always-run test.
 
 ## Stops and choices
 
@@ -91,7 +91,7 @@ one of three choices:
 - **Drop the offending change.** Restore each stopped path to its merge-base
   content (delete it if the PR added it), commit, push, and classify again.
 - **Run the normal review.** End with verdict `HANDED-BACK` and a
-  `/review-and-prep` handoff. Nothing is written.
+  `/review-and-prep` handoff. At initial classification nothing is written. A later hand-back because a test itself needs changing preserves prior commits, pushes and PR creation and makes no further writes.
 
 A caller that cannot answer questions gets `HANDED-BACK`.
 
@@ -116,7 +116,7 @@ record. After its own release bump, it runs the tests that read the bump's
 files under `docs-ship-release-tests`. The first record stays valid with
 `--allow-paths` naming exactly those files. Without the helper, it runs the
 command directly and records the run as uncached. `/ship-and-land` does not
-consume these records.
+consume these records. No-test runs have no cache to check; uncached runs rerun their original command after a bump. Any failing selected test yields `CHANGES`. A new invocation still classifies the complete PR: an existing version bump, including one from a previous run, stops under the release-file rule and offers the same three choices.
 
 ## Release
 
@@ -160,20 +160,27 @@ trailing whitespace trimmed. It survives writing the receipt, so anyone can
 recompute it from the final body with `docs-ship hash`. `docs-ship receipt`
 refuses a receipt whose recorded hash does not match the body.
 
+Body updates use a fresh read and a post-write check. GitHub's body edit is not
+an atomic compare-and-swap: an edit in the final read/write interval can still
+race. Keep the saved body snapshots for recovery; the hash proves the resulting
+body binding, not exclusive ownership of the edit window.
+
 ## Result line
 
-The skill's final message ends with one line a caller can parse:
+The skill's final message ends with one line a caller can parse (put outcome-specific text before it):
 
 ```text
 Docs ship: docs-ship/v1; verdict: <PASS|CHANGES|HANDED-BACK>; pr: <number>; head: <40-hex SHA>; base: <40-hex SHA>; body-sha256: <64-hex>
 ```
 
-- `PASS` is followed by `Merge when ready:` and the exact merge command
+- `PASS` includes `Merge when ready:` and the exact merge command
   (`gh pr merge <number> --<method> --match-head-commit <head>`). The skill
   never runs it.
-- `CHANGES` is followed by one `- <file>:<line> — <what is wrong> — fix: <fix>`
+- `CHANGES` includes one `- <file>:<line> — <what is wrong> — fix: <fix>`
   line per finding.
-- `HANDED-BACK` is followed by the `/review-and-prep` handoff.
+- `HANDED-BACK` includes the `/review-and-prep` handoff.
+
+With no PR, `pr: 0` and the SHA-256 of the empty body (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`) represent absence. Early exits use observed head/base identities and never authorize merging. PASS requires the verified local, remote and PR head and reviewed base still match after CI and receipt publication.
 
 Fields stay in this order. A breaking change to them needs `docs-ship/v2`.
 An idle agent or a success summary never stands in for this line.
@@ -185,5 +192,5 @@ this repository, and a quotation that nearly matches a brief passage without
 matching it verbatim. A SHA that exists may still be the wrong commit. Other
 numbers, dates, versions, PR numbers and IDs are a checklist that the reviewer
 confirms against the cited source. Inbound links to a heading the PR renamed
-are not checked. Classification by path cannot see a code reader that loads a
+or a deleted or moved docs file are not checked; inspect inbound references to those paths manually. Near-quote matching is bounded to 128 quote tokens, 25,000 brief tokens and one million comparison cells per quote/brief; exceeding a bound leaves the quote unconfirmed, while exact matches are still checked. Classification by path cannot see a code reader that loads a
 docs file at runtime; list such files in `docs-ship:not-docs`.

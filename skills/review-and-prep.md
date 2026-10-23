@@ -395,7 +395,7 @@ Before invoking `/review`, determine whether Greptile applies:
   Use the repository's documented docs-only classification, read from the
   base tip, when available; if the PR modifies that documentation, treat it
   like a root-marker change. Otherwise apply the shared
-  [docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) without its `docs-ship:docs` opt-ins,
+  [docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `docs/docs-ship.md` in the gstack-extend root resolved by this skill's preamble; use that installed version) without its `docs-ship:docs` opt-ins,
   and inspect the changes for documentation/prose and supporting doc assets only. Behavior, configuration, build, or test changes make it a mixed
   PR. Skill/prompt instructions that drive agent behavior are implementation,
   even when stored in Markdown. Inspect the whole base-to-head PR diff plus

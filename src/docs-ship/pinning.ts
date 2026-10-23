@@ -6,7 +6,7 @@
  */
 import { globMatcher } from '../merge-gate/glob.ts';
 import { shellQuote } from '../audit/lib/shell-quote.ts';
-import { readAt, trackedFiles, type Git } from './git.ts';
+import { readAt, Refusal, trackedFiles, type Git } from './git.ts';
 
 const TEST_NAME = /(\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const TEST_DIR = /(^|\/)(tests?|__tests__|specs?)\//;
@@ -51,8 +51,11 @@ export function selectTests(git: Git, head: string, changed: string[], configure
     }
   }
   if (configured.length) {
-    const match = globMatcher(configured);
-    for (const f of all) if (match(f)) note(f, 'docs-ship:tests');
+    for (const pattern of configured) {
+      const matches = all.filter(globMatcher([pattern]));
+      if (!matches.length) throw new Refusal('CONFIG_TESTS_MISSING', `docs-ship:tests pattern ${pattern} matches no tracked files at head`, 'restore the configured tests or fix the marker on the base branch');
+      for (const f of matches) note(f, 'docs-ship:tests');
+    }
   }
   return [...byTest.entries()].map(([test, reasons]) => ({ test, reasons })).sort((a, b) => (a.test < b.test ? -1 : a.test > b.test ? 1 : 0));
 }

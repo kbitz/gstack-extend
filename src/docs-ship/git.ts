@@ -15,7 +15,7 @@ export type Git = (args: string[], allowFail?: boolean) => GitResult;
 
 export function gitIn(cwd: string): Git {
   return (args, allowFail = false) => {
-    const r = spawnSync('git', ['-c', 'core.quotepath=off', '--no-pager', ...args], {
+    const r = spawnSync('git', ['-c', 'core.quotepath=off', '--no-pager', '--literal-pathspecs', ...args], {
       cwd,
       encoding: 'utf8',
       maxBuffer: 256 * 1024 * 1024,

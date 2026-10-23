@@ -52,7 +52,7 @@ receipt   Insert or replace the receipt block from --receipt in the body and
 
 Output is KEY: value lines; list fields are separated by " | ". Errors print
 "ERROR <CODE>: ..." and "FIX: ..." on stderr. Exit codes: 0 ok · 1 stop or
-findings · 2 usage · 3 refused.
+findings · 2 usage · 3 refused (including internal errors). Launcher exit 5 means unavailable runtime.
 `;
 }
 
@@ -216,7 +216,7 @@ export function main(argv: string[], io: CliIo): number {
       return error instanceof Refusal ? error.exit : EXIT.refused;
     }
     io.stderr(`ERROR INTERNAL: ${(error as Error).message}\nFIX: report this with the command you ran\n`);
-    return EXIT.failed;
+    return EXIT.refused;
   }
 }
 
