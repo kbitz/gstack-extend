@@ -452,7 +452,7 @@ Other rows keep their wrapper behavior:
 | Installed ship stage | Release-only behavior |
 |---|---|
 | Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |
-| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. |
+| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. Release-metadata test selection below still applies on the final head. |
 | Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |
 | TODOs (14) | Edit nothing. List detected completions and follow-ups in the PR body, as ship does when a TODO write is skipped. |
 | Documentation audit (14.5) | When `git diff --name-only <prepared tree> <current tree>` lists only release metadata, reuse preparation's accepted audit for the reviewed base with its accepted status. Alternatively reuse the user's recorded named-risk decision for that same content; only that case keeps `Documentation: blocked` with its reason and scope. Use the hash-verified documentation section, unchanged, as ship's section file, with `Reused from /review-and-prep at <prepared tree>` beside it, not inside it. For Steps 18–19 this replaces the upstream rule against reusing another invocation's audit. Any legacy documentation-sync stage is read-only on this path; drift uses the same hand-back. |
@@ -752,6 +752,18 @@ this final preflight record; the latter supplies Step 18's current stamp,
 not new test evidence. No changed policy, command, base or unverified input
 qualifies for this exception.
 
+**Release-metadata test selection (both paths).** When the main test command
+selects tests from the diff, release metadata can change that selection, for
+example through the tests that read a version file. Run what the release delta
+selects on the final head under a distinct ledger label, selecting against the
+prepared head the way the project's instructions describe, and record that
+run's selection. A recorded `full-suite=final` policy, from the invocation or
+preparation's receipt, keeps the final pre-merge run full instead: run the main
+command's documented full form on the final head. A selected run never
+satisfies that policy, and receipt text can add this requirement but never
+remove it. When the selection cannot be established, rerun the required full
+gate.
+
 A test gate accepts
 only a FRESH native ledger entry, an authenticated CI check-run for the same
 lane on the final head, or a live run in this session. That check-run must come
@@ -1016,8 +1028,9 @@ original preparation receipt. Include the bound identity, final head/tree/base,
 scope hash, profile and path (release-only or why not), handoff marker/snapshot,
 per-stage reused/new/attested evidence
 and original dates when known, informational dispositions, delta/regression checks,
-unavailable optional passes, exact test commands,
-release-change verification, Greptile status/allowance, version, limitations,
+unavailable optional passes, exact test commands with each run's selection
+(the lanes or files that ran, those skipped and why; a skipped lane never reads
+as passed), release-change verification, Greptile status/allowance, version, limitations,
 and the wall time from the invocation start to the push.
 Use a fresh body read, scan exact outgoing bytes through ship's redaction step,
 write via a body file, and read back. Never edit the preparation comment to

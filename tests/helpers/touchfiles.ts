@@ -9,7 +9,7 @@
  *
  *   1. Detect base branch (TOUCHFILES_BASE > origin/main > origin/master > main > master).
  *   2. `git diff base...HEAD --name-status` → changed files (renames keep both sides).
- *   3. computeTestSelection() returns {selected, skipped, reason}.
+ *   3. computeTestSelection() returns {selected, skipped, reason, hits}.
  *   4. Wrapper spawns `bun test ${selected}` and propagates exit + signals.
  *
  * Four safety fallbacks force run-all:
@@ -17,6 +17,11 @@
  *   2. base branch missing                          → wrapper-side
  *   3. any changed file matches GLOBAL_TOUCHFILES   → reason: 'global: ...'
  *   4. non-empty diff but zero tests selected       → reason: 'no-match-fallback'
+ *
+ * One narrowing: a `package.json` change that touches only its `version`
+ * field (packageJsonChange() === 'version-only') is not global; it selects
+ * the tests that declare `package.json`, like any other manual dependency.
+ * Every other `package.json` change still runs everything.
  *
  * EVALS_ALL=1 env bypasses selection entirely (also wrapper-side).
  *
@@ -58,6 +63,16 @@ export function matchGlob(file: string, pattern: string): boolean {
 // ─── Touchfile maps ─────────────────────────────────────────────────────
 
 /**
+ * `skills/<name>.md`. The map spells skill paths through this helper because
+ * pregate reads quoted repo paths in test-tree sources as dependencies: a
+ * literal here would make every importer of this module (telemetry-contract,
+ * touchfiles) a consumer of each skill the map names.
+ */
+function skill(name: string): string {
+  return `skills/${name}.md`;
+}
+
+/**
  * Manual non-TS dependencies — keyed by test path (relative to repo root).
  *
  * Only entries that the static import-graph cannot capture belong here:
@@ -69,22 +84,33 @@ export function matchGlob(file: string, pattern: string): boolean {
  *
  * The TS import graph already covers everything `import`-able. Keep this
  * list small — every entry is hand-maintained drift surface.
+ *
+ * `.gstack/pregate.json` `dependencies` is this map inverted (pregateDependencies();
+ * regenerate with `bun scripts/sync-pregate-deps.ts`), so pregate's lane
+ * selection and `bun run test` read the same edges.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
-  'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', 'skills/review-and-prep.md', 'skills/ship-and-land.md', 'docs/secret-dispositions.md'],
-  'tests/outside-review.test.ts': ['bin/outside-review', 'skills/review-and-prep.md', 'docs/outside-review.md', 'docs/telemetry.md'],
+  'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
+  'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
   'tests/layout-scaffold.test.ts': [
     'bin/layout-scaffold', 'src/layout-scaffold/**', 'VERSION',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',
+    // Its Bun-floor lock reads package.json's engines.bun.
+    'package.json',
   ],
   'tests/autoplan-lean.test.ts': [
-    'bin/autoplan-lean', 'skills/autoplan-lean.md', 'tests/fixtures/autoplan-lean/**', 'VERSION',
+    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**', 'VERSION',
   ],
   'tests/autoplan-lean-history.test.ts': [
-    'bin/autoplan-lean', 'skills/autoplan-lean.md', 'tests/fixtures/autoplan-lean/**', 'VERSION',
+    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**', 'VERSION',
+  ],
+  // The release and manifest checks: what a release commit (VERSION, the
+  // CHANGELOG entry and package.json's version field) can break on its own.
+  'tests/release-manifest.test.ts': [
+    'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml',
   ],
   'tests/docs-ship.test.ts': [
-    'bin/docs-ship', 'skills/docs-ship.md', 'docs/docs-ship.md', 'skills/roadmap.md', 'skills/project-spec.md',
+    'bin/docs-ship', skill('docs-ship'), 'docs/docs-ship.md', skill('roadmap'), skill('project-spec'),
   ],
   'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md', 'VERSION'],
   'tests/merge-gate-review-regressions.test.ts': ['VERSION'],
@@ -123,20 +149,39 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-route',
     'bin/lib/source-tag.sh',
   ],
+  // The cross-skill protocol rules read every skill and setup's install list.
   'tests/skill-protocols.test.ts': [
     'skills/**',
-    'scripts/init-templates/PROGRESS.md.tmpl',
     'setup',
     // The telemetry drift lock also compares docs/telemetry.md's copied blocks to the canonical text.
     'docs/telemetry.md',
     // Track 24A drift-locks compare wrapper phases to the helper + schema vocabulary.
     'bin/lib/workflow_metrics.py',
     'docs/workflow-metrics.schema.json',
-    // The Track 16D guard, routing, and session-state tests source or run these.
+    // The Track 16D guard test sources the real session-paths helper.
     'bin/lib/session-paths.sh',
-    'bin/lib/source-tag.sh',
-    'bin/roadmap-route',
   ],
+  // One suite per skill. Each lists every skill file it reads, and
+  // tests/touchfiles.test.ts checks the list against the skill paths the suite
+  // names, so a skill change selects exactly the suites that read it.
+  'tests/skill-protocols-full-review.test.ts': [skill('full-review'), 'bin/lib/session-paths.sh'],
+  'tests/skill-protocols-implement.test.ts': [skill('implement')],
+  'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), 'bin/lib/session-paths.sh'],
+  'tests/skill-protocols-project-spec.test.ts': [
+    skill('project-spec'),
+    // The composition locks check that these consumers keep the spec's clauses.
+    skill('roadmap'), skill('implement'), skill('review-and-prep'), skill('ship-and-land'),
+    'scripts/init-templates/PROGRESS.md.tmpl',
+  ],
+  'tests/skill-protocols-review-and-prep.test.ts': [
+    skill('review-and-prep'),
+    // Producer-side locks for the ship-and-land handoff read the consumer too.
+    skill('ship-and-land'),
+    'docs/telemetry.md',
+  ],
+  // The routing test runs bin/roadmap-route, which sources source-tag.sh.
+  'tests/skill-protocols-roadmap.test.ts': [skill('roadmap'), 'bin/roadmap-route', 'bin/lib/source-tag.sh'],
+  'tests/skill-protocols-ship-and-land.test.ts': [skill('ship-and-land')],
   'tests/audit-compliance.test.ts': [
     'skills/**',
     'setup',
@@ -144,10 +189,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   'tests/handoff-contract.test.ts': [
     'docs/workflow-handoffs.md',
-    'skills/implement.md',
-    'skills/review-and-prep.md',
-    'skills/pair-review.md',
-    'skills/ship-and-land.md',
+    skill('implement'),
+    skill('review-and-prep'),
+    skill('pair-review'),
+    skill('ship-and-land'),
     'README.md',
     'tests/fixtures/handoffs/**',
   ],
@@ -158,11 +203,11 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/run-migrations.sh',
     'bin/lib/semver.sh',
     'migrations/**',
-    'skills/gstack-extend-upgrade.md',
+    skill('gstack-extend-upgrade'),
     // Track 23C R6 checks the frozen preamble text in these skills.
-    'skills/roadmap.md',
-    'skills/pair-review.md',
-    'skills/full-review.md',
+    skill('roadmap'),
+    skill('pair-review'),
+    skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
   ],
@@ -206,6 +251,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/config',
     'bin/lib/semver.sh',
     'docs/installation.md',
+    // The update-check fixtures serve the checkout's own VERSION as the remote one.
+    'VERSION',
   ],
   'tests/lib-install-safety.test.ts': ['bin/lib/install-safety.sh'],
   'tests/setup-init-wire.test.ts': [
@@ -273,10 +320,13 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/workflow_metrics.py',
     'docs/workflow-metrics.schema.json',
     'docs/telemetry.md',
-    'skills/review-and-prep.md',
-    'skills/ship-and-land.md',
+    skill('review-and-prep'),
+    skill('ship-and-land'),
     'VERSION',
   ],
+  // The selection suite checks the pregate copy of this map and each split
+  // protocol suite's declared skill reads against its source.
+  'tests/touchfiles.test.ts': ['.gstack/pregate.json', 'tests/skill-protocols*.test.ts'],
   // Live ROADMAP + shipped archive are loaded at runtime (not imported).
   'tests/parsers-phases.test.ts': [
     'docs/ROADMAP.md',
@@ -300,11 +350,64 @@ export const GLOBAL_TOUCHFILES: string[] = [
   'tests/helpers/touchfiles.ts',
   'tests/helpers/fixture-repo.ts',
   'tests/helpers/run-bin.ts',
+  // Dependencies, scripts and engines reach every test. A version-only change
+  // does not: see packageJsonChange().
   'package.json',
   // A lockfile-only change can move a transitive validator dependency under every test that loads it.
   'bun.lock',
   'tsconfig.json',
 ];
+
+/** The global input a version-only change narrows. */
+export const PACKAGE_JSON = 'package.json';
+
+/**
+ * How `package.json` changed between the merge base of `baseRef` and HEAD:
+ * `version-only` when the two parsed documents are equal once `version` is
+ * removed (formatting does not count), otherwise `other`. Anything unreadable,
+ * an added or deleted file, or invalid JSON is `other`, which keeps the file
+ * global.
+ */
+export function packageJsonChange(baseRef: string, cwd: string): 'version-only' | 'other' {
+  const git = (args: string[]) => spawnSync('git', ['-C', cwd, ...args], { stdio: 'pipe', timeout: 5000, encoding: 'utf8' });
+  const mergeBase = git(['merge-base', baseRef, 'HEAD']);
+  if (mergeBase.status !== 0) return 'other';
+  const read = (rev: string): Record<string, unknown> | null => {
+    const r = git(['show', `${rev}:${PACKAGE_JSON}`]);
+    if (r.status !== 0) return null;
+    try {
+      const parsed: unknown = JSON.parse(r.stdout);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  };
+  const before = read(mergeBase.stdout.trim());
+  const after = read('HEAD');
+  if (!before || !after) return 'other';
+  const { version: _beforeVersion, ...beforeRest } = before;
+  const { version: _afterVersion, ...afterRest } = after;
+  return Bun.deepEquals(beforeRest, afterRest, true) ? 'version-only' : 'other';
+}
+
+/**
+ * `.gstack/pregate.json` `dependencies`: MANUAL_TOUCHFILES inverted to
+ * glob → test files, keys and lists sorted. Pregate adds these edges to its
+ * own import graph, so it selects at least what the manual map selects.
+ */
+export function pregateDependencies(manual: Record<string, string[]> = MANUAL_TOUCHFILES): Record<string, string[]> {
+  const byGlob = new Map<string, Set<string>>();
+  for (const [testFile, globs] of Object.entries(manual)) {
+    for (const glob of globs) {
+      const tests = byGlob.get(glob) ?? new Set<string>();
+      tests.add(testFile);
+      byGlob.set(glob, tests);
+    }
+  }
+  const out: Record<string, string[]> = {};
+  for (const glob of [...byGlob.keys()].sort()) out[glob] = [...byGlob.get(glob)!].sort();
+  return out;
+}
 
 // ─── Static TS import graph ─────────────────────────────────────────────
 
@@ -414,16 +517,31 @@ export function listTestFiles(repoRoot: string = REPO_ROOT_DEFAULT): string[] {
     .sort();
 }
 
+/** Why one selected test runs: the changed file and the edge that reaches it. */
+export type SelectionHit = {
+  file: string;
+  via: 'self' | 'import' | 'declared';
+  /** The MANUAL_TOUCHFILES glob, for `declared`. */
+  glob?: string;
+};
+
 export type Selection = {
   selected: string[];
   skipped: string[];
   reason: string;
+  /** Diff selections only: every hit that selected each test, in changed-file order. */
+  hits?: Record<string, SelectionHit[]>;
 };
 
 export type SelectionOptions = {
   repoRoot?: string;
   manual?: Record<string, string[]>;
   globals?: string[];
+  /**
+   * The `package.json` change touches only its version field (packageJsonChange()).
+   * It then selects the tests that declare `package.json` instead of the suite.
+   */
+  packageJsonVersionOnly?: boolean;
 };
 
 /**
@@ -439,7 +557,8 @@ export function computeTestSelection(
 ): Selection {
   const repoRoot = options.repoRoot ?? REPO_ROOT_DEFAULT;
   const manual = options.manual ?? MANUAL_TOUCHFILES;
-  const globals = options.globals ?? GLOBAL_TOUCHFILES;
+  const globals = (options.globals ?? GLOBAL_TOUCHFILES)
+    .filter(g => !(options.packageJsonVersionOnly && g === PACKAGE_JSON));
 
   if (changedFiles.length === 0) {
     return { selected: [...testFiles], skipped: [], reason: 'empty-diff' };
@@ -454,14 +573,22 @@ export function computeTestSelection(
 
   const selected: string[] = [];
   const skipped: string[] = [];
+  const hits: Record<string, SelectionHit[]> = {};
   for (const t of testFiles) {
     const tsDeps = analyzeTestImports(t, repoRoot);
     const manualDeps = manual[t] ?? [];
-    const selfHit = changedFiles.includes(t);
-    const tsHit = changedFiles.some(f => tsDeps.includes(f));
-    const manualHit = changedFiles.some(f => manualDeps.some(g => matchGlob(f, g)));
-    if (selfHit || tsHit || manualHit) {
+    const found: SelectionHit[] = [];
+    for (const f of changedFiles) {
+      if (f === t) found.push({ file: f, via: 'self' });
+      else if (tsDeps.includes(f)) found.push({ file: f, via: 'import' });
+      else {
+        const glob = manualDeps.find(g => matchGlob(f, g));
+        if (glob) found.push({ file: f, via: 'declared', glob });
+      }
+    }
+    if (found.length > 0) {
       selected.push(t);
+      hits[t] = found;
     } else {
       skipped.push(t);
     }
@@ -471,7 +598,7 @@ export function computeTestSelection(
     return { selected: [...testFiles], skipped: [], reason: 'no-match-fallback' };
   }
 
-  return { selected, skipped, reason: 'diff' };
+  return { selected, skipped, reason: 'diff', hits };
 }
 
 // ─── Base branch + diff ─────────────────────────────────────────────────
