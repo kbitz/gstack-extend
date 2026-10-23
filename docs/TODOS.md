@@ -7,7 +7,7 @@
 - **Why:** `/docs-ship` shipped with helper fixture tests and static skill checks only, and a static prose test is not installed-agent acceptance. `/roadmap` and `/project-spec` now hand their commits to it instead of `/review-and-prep` and `/ship-and-land`, so its first real runs carry that path.
 - **Effort:** S
 - **Priority:** P2
-- **Context:** Owner request, 2026-10-23. Run it once on Paseo and once on Conductor, including one on a Sonnet-class model and one from a `/roadmap` handoff. Confirm that it classifies the PR, that a hand-back changes nothing, that the pinned tests run once and a rerun on the same tree reuses the `docs-ship-tests` record, that `docs-ship hash` on the final body prints the receipt's hash, that the bump follows the release policy, and that the run ends with the `docs-ship/v1` result line without merging. Record the wall-clock time against a recent `/ship-and-land` run on a docs PR.
+- **Context:** Owner request, 2026-10-23. Run it once on Paseo and once on Conductor, including one on a Sonnet-class model and one from a `/roadmap` handoff. Confirm that it classifies the PR, that an initial classification hand-back changes nothing, that the pinned tests run once and a same-tree rerun within the invocation reuses the `docs-ship-tests` record, that `docs-ship hash` on the final body prints the receipt's hash, that the bump follows the release policy, and that the run ends with the `docs-ship/v1` result line without merging. Record the wall-clock time against a recent `/ship-and-land` run on a docs PR.
 - **Revisit when:** The first docs-only PR after this release, or the next `/roadmap` run that commits.
 
 ### [ship] Harden /autoplan-lean's plan checks, outline and spec-loop guard after 0.43

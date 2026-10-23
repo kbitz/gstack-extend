@@ -15,14 +15,14 @@ import { hunks, readAt, resolvedPath, type Change, type Git, type Hunks } from '
 export const CHANGELOG = 'CHANGELOG.md';
 const PROSE_EXT = /\.(md|markdown|rst|adoc|txt)$/i;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
-const AGENT_NAMES = new Set(['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'SKILL.md']);
+const AGENT_NAMES = new Set(['agents.md', 'claude.md', 'gemini.md', 'skill.md']);
 const AGENT_SEGMENTS = new Set(['skills', 'prompts', 'templates', 'template']);
 const TEMPLATE_NAME = /\.(tmpl|template)(\.[^/]+)?$/i;
 const TEST_SEGMENTS = new Set(['tests', 'test', '__tests__', 'spec', 'specs']);
 const TEST_NAME = /(\.(test|spec)\.[cm]?[jt]sx?$|^test_.*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const BUILD_NAME = /^(package(-lock)?\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|Cargo\.(toml|lock)|pyproject\.toml|setup\.(py|cfg)|requirements.*\.txt|poetry\.lock|go\.(mod|sum)|Gemfile(\.lock)?|.*\.gemspec|Makefile|Dockerfile|.*\.gradle(\.kts)?|pom\.xml|tsconfig.*\.json|composer\.(json|lock)|pubspec\.ya?ml|mix\.exs)$/;
 const CODE_EXT = /\.([cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|pl|lua|scala|sql|ex|exs|vue|svelte)$/i;
-const VERSION_FIELD = /(^|[^\w])(__version__|version|VERSION)\s*["']?\s*[:=]/;
+const VERSION_FIELD = /(^|[^\w])(__version__|version)\s*["']?\s*[:=]/i;
 
 export type Reason =
   | 'version' | 'agent-instructions' | 'classification-config' | 'project-excluded'
@@ -38,6 +38,16 @@ export type Classification = { files: FileResult[]; findings: ReleaseFinding[] }
 
 const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 const segments = (p: string) => p.split('/').slice(0, -1);
+const isBuild = (path: string) => BUILD_NAME.test(basename(path)) || path.startsWith('.github/');
+
+/** Match YAML/TOML frontmatter fences without interpreting metadata values. */
+function frontmatterBody(text: string): string {
+  const opening = /^\uFEFF?(---|\+\+\+)[ \t]*\r?\n/.exec(text);
+  if (!opening) return '';
+  const rest = text.slice(opening[0].length);
+  const closing = (opening[1] === '---' ? /^(---|\.\.\.)[ \t]*\r?$/m : /^\+\+\+[ \t]*\r?$/m).exec(rest);
+  return closing ? rest.slice(0, closing.index).replace(/\r?\n$/, '') : '';
+}
 
 /** Version headings, including linked headings used by release generators. */
 export function versionOf(heading: string): string | undefined {
@@ -110,14 +120,14 @@ function stopCategory(path: string, lines: () => string[]): { reason: Reason; wh
   const segs = segments(path);
   if (lines().some((l) => VERSION_FIELD.test(l))) return { reason: 'version', why: 'changes a version field' };
   if (TEST_NAME.test(name) || segs.some((s) => TEST_SEGMENTS.has(s))) return { reason: 'test', why: 'test file' };
-  if (BUILD_NAME.test(name) || path.startsWith('.github/')) return { reason: 'build', why: 'build or CI file' };
+  if (isBuild(path)) return { reason: 'build', why: 'build or CI file' };
   if (CODE_EXT.test(name)) return { reason: 'code', why: 'code file' };
   return { reason: 'outside-allowlist', why: 'outside the docs allowlist' };
 }
 
 export function isAgentInstructions(path: string): boolean {
   const name = basename(path);
-  return AGENT_NAMES.has(name) || TEMPLATE_NAME.test(name) || segments(path).some((s) => AGENT_SEGMENTS.has(s));
+  return AGENT_NAMES.has(name.toLowerCase()) || TEMPLATE_NAME.test(name) || segments(path).some((s) => AGENT_SEGMENTS.has(s));
 }
 
 export function isDefaultDocs(path: string): boolean {
@@ -149,7 +159,7 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
     if (path === CHANGELOG) return changelog(git, from, to, change, findings);
     // Prose examples are not release fields; Markdown frontmatter is metadata.
     const frontmatterVersions = (rev: string) => {
-      const body = /^(---|\+\+\+)\r?\n([\s\S]*?)\r?\n\1(?:\r?\n|$)/.exec(readAt(git, rev, path) ?? '')?.[2] ?? '';
+      const body = frontmatterBody(readAt(git, rev, path) ?? '');
       const fields: string[] = [];
       let fieldIndent: number | undefined;
       for (const line of body.split('\n')) {
@@ -168,6 +178,7 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
     if (versionChanged) return stop('version', 'changes a version field');
     if (optedIn(path)) return { path, status, kind: 'docs', why: 'docs-ship:docs' };
     if (isAgentInstructions(path)) return stop('agent-instructions', 'agent instructions are executable');
+    if (isBuild(path)) return stop('build', 'build or CI file');
     if (isDefaultDocs(path)) return { path, status, kind: 'docs', why: 'default allowlist' };
     const c = stopCategory(path, lines);
     return stop(c.reason, c.why);

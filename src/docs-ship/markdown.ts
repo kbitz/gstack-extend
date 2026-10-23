@@ -51,9 +51,12 @@ export function anchors(text: string): Set<string> {
   const out = new Set<string>();
   const add = (heading: string) => {
     const base = githubSlug(heading);
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    out.add(n === 0 ? base : `${base}-${n}`);
+    let slug = base;
+    let n = seen.get(base) ?? 0;
+    while (seen.has(slug)) slug = `${base}-${++n}`;
+    seen.set(base, n);
+    seen.set(slug, 0);
+    out.add(slug);
   };
   lines.forEach((line, i) => {
     if (fenced.has(i + 1)) return;
@@ -71,17 +74,88 @@ export function anchors(text: string): Set<string> {
 
 export type LinkRef = { target: string; column: number };
 
+/** Index balanced pairs once so malformed links cannot repeatedly scan a suffix. */
+function destinationPairs(text: string): Map<number, number> {
+  const pairs = new Map<number, number>();
+  const stack: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]!;
+    if (char === '\\' && i + 1 < text.length && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(text[i + 1]!)) i++;
+    // Bare destinations cannot continue through whitespace, even inside a pair.
+    else if (/\s/.test(char)) stack.length = 0;
+    else if (char === '(') stack.push(i);
+    else if (char === ')') {
+      const opening = stack.pop();
+      if (opening !== undefined) pairs.set(opening, i);
+    }
+  }
+  return pairs;
+}
+
+/** Read a destination without treating escaped or balanced parentheses as link delimiters. */
+function destination(text: string, start: number, pairs: Map<number, number>): { target: string; end: number } | undefined {
+  const angle = text[start] === '<';
+  const begin = start + (angle ? 1 : 0);
+  let i = begin;
+  for (; i < text.length; i++) {
+    const char = text[i]!;
+    if (char === '\\' && i + 1 < text.length && /[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/.test(text[i + 1]!)) {
+      i++;
+      continue;
+    }
+    if (angle) {
+      if (char === '>') break;
+      if (char === '<') return undefined;
+    } else {
+      if (/\s/.test(char)) break;
+      if (char === '(') {
+        const close = pairs.get(i);
+        if (close === undefined) return undefined;
+        i = close;
+      } else if (char === ')') break;
+    }
+  }
+  if (angle && text[i] !== '>') return undefined;
+  return { target: text.slice(begin, i).replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~])/g, '$1'), end: i + (angle ? 1 : 0) };
+}
+
+/** An inline destination may be followed by whitespace and a quoted/parenthesized title. */
+function inlineEnd(text: string, start: number): number | undefined {
+  let i = start;
+  while (/\s/.test(text[i] ?? '') && i < text.length) i++;
+  if (text[i] === ')') return i + 1;
+  if (i === start || !['"', "'", '('].includes(text[i] ?? '')) return undefined;
+  const close = text[i] === '(' ? ')' : text[i];
+  for (i++; i < text.length; i++) {
+    if (text[i] === '\\') i++;
+    else if (text[i] === close) break;
+  }
+  if (i === text.length) return undefined;
+  for (i++; i < text.length && /\s/.test(text[i]!); i++);
+  return text[i] === ')' ? i + 1 : undefined;
+}
+
 /** Link targets on one line (inline, reference definitions, href/src attributes); inline code is masked first. */
 export function linkTargets(line: string): LinkRef[] {
   const masked = maskInlineCode(line);
+  const pairs = destinationPairs(masked);
   const out: LinkRef[] = [];
-  for (const m of masked.matchAll(/!?\[(?:[^\]\\]|\\.)*\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g)) {
-    out.push({ target: m[1]!, column: m.index! + 1 });
+  const inline = /!?\[(?:[^\]\\]|\\.)*\]\(\s*/g;
+  for (let m; (m = inline.exec(masked));) {
+    const dest = destination(masked, inline.lastIndex, pairs);
+    if (!dest) continue;
+    const end = inlineEnd(masked, dest.end);
+    if (end === undefined) continue;
+    out.push({ target: dest.target, column: m.index + 1 });
+    inline.lastIndex = end;
   }
-  const def = /^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)/.exec(masked);
-  if (def) out.push({ target: def[1]!, column: 1 });
+  const def = /^ {0,3}\[[^\]]+\]:\s*/.exec(masked);
+  if (def) {
+    const dest = destination(masked, def[0].length, pairs);
+    if (dest) out.push({ target: dest.target, column: 1 });
+  }
   for (const m of masked.matchAll(/<(?:a|img)\s[^>]*\b(?:href|src)\s*=\s*"([^"]*)"/gi)) out.push({ target: m[1]!, column: m.index! + 1 });
-  return out.map((l) => ({ ...l, target: l.target.replace(/^<|>$/g, '') }));
+  return out;
 }
 
 /** True for targets docs-ship does not resolve: URLs with a scheme and protocol-relative links. */

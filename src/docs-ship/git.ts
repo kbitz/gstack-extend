@@ -51,7 +51,7 @@ export type Change = { status: string; path: string; oldMode: string; newMode: s
 
 /** The PR's own changes: merge-base to head, renames split into delete + add. */
 export function changes(git: Git, from: string, to: string): Change[] {
-  const out = git(['diff', '--raw', '-z', '--no-renames', '--no-ext-diff', from, to]).stdout;
+  const out = git(['diff', '--raw', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', from, to]).stdout;
   const parts = out.split('\0');
   const list: Change[] = [];
   for (let i = 0; i + 1 < parts.length; i += 2) {
@@ -68,7 +68,7 @@ export type Hunks = { added: Line[]; removed: Line[]; removedAt: number[] };
 
 /** Added lines carry head line numbers; removed lines carry base line numbers and the head line they sat at. */
 export function hunks(git: Git, from: string, to: string, path: string): Hunks {
-  const out = git(['diff', '-U0', '--no-ext-diff', '--no-color', from, to, '--', path]).stdout;
+  const out = git(['diff', '-U0', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--text', '--no-color', from, to, '--', path]).stdout;
   const result: Hunks = { added: [], removed: [], removedAt: [] };
   let oldLine = 0;
   let newLine = 0;

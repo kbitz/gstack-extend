@@ -21,7 +21,7 @@ Requires Bun >= ${BUN_FLOOR} (--no-env-file --no-install --config=/dev/null).
 Usage:
   docs-ship classify --base REF [--head REF]
   docs-ship check --base REF [--head REF] [--brief FILE]...
-  docs-ship tests --base REF [--head REF]
+  docs-ship tests --base REF [--head REF] [--config-ref REF]
   docs-ship hash --body FILE
   docs-ship receipt --body FILE --receipt FILE --out FILE
   docs-ship --help | -h | --version
@@ -45,6 +45,8 @@ check     For added lines in changed Markdown: every relative link and #anchor
 tests     List the test files that name a changed path or file name, plus the
           docs-ship:tests marker's files. COMMAND is the docs-ship:test-command
           template with {tests} filled in, when the project sets one.
+          Read settings at --config-ref (default --base), independently of
+          the diff range. CONFIG_REF reports the settings' commit.
 hash      Print the SHA-256 of FILE's PR body without the receipt block.
 receipt   Insert or replace the receipt block from --receipt in the body and
           write the result to --out. Refuses a receipt whose "Body SHA-256"
@@ -161,11 +163,14 @@ function checkCmd(argv: string[], io: CliIo): number {
 }
 
 function testsCmd(argv: string[], io: CliIo): number {
-  const r = range(parse(argv, { '--base': 'value', '--head': 'value' }), io.cwd);
-  const config = readConfig(r.git, r.base);
+  const args = parse(argv, { '--base': 'value', '--head': 'value', '--config-ref': 'value' });
+  const r = range(args, io.cwd);
+  const configRef = args['--config-ref']?.[0] ?? r.baseRef;
+  const configCommit = args['--config-ref'] === undefined ? r.base : commitOf(r.git, configRef, '--config-ref');
+  const config = readConfig(r.git, configCommit);
   const changed = changes(r.git, r.from, r.head).map((c) => c.path);
   const selected = selectTests(r.git, r.head, changed, config.tests);
-  let out = `HEAD: ${r.head}\nMERGE_BASE: ${r.from}\nCHANGED: ${changed.length}\n`;
+  let out = `HEAD: ${r.head}\nMERGE_BASE: ${r.from}\nCONFIG_REF: ${configCommit} (${configRef})\nCHANGED: ${changed.length}\n`;
   for (const s of selected) out += `TEST: ${show(s.test)} | ${s.reasons.join('; ')}\n`;
   out += `TESTS: ${selected.length}\n`;
   if (config.testCommand && selected.length) out += `COMMAND: ${expandCommand(config.testCommand, selected.map((s) => s.test))}\n`;

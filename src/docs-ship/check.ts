@@ -25,7 +25,7 @@ function checkLink(git: Git, head: string, file: string, line: number, raw: stri
   const anchor = hash === -1 ? undefined : raw.slice(hash + 1);
   let decoded = pathPart;
   try {
-    decoded = decodeURI(pathPart.split('?')[0]!);
+    decoded = decodeURIComponent(pathPart.split('?')[0]!);
   } catch {
     // keep the raw path; resolution below reports it if it is wrong
   }
@@ -126,7 +126,7 @@ function quoteClaim(file: string, line: number, quote: string, briefs: string[],
     findings.push({ file, line, kind: 'quote', message: `quotation does not match the brief verbatim: "${clip(norm)}"`, fix: `quote the brief exactly: "${clip(verbatim)}"` });
     return;
   }
-  claims.push({ file, line, kind: 'quote', value, status: 'unconfirmed', detail: 'not in the brief; confirm its source' });
+  claims.push({ file, line, kind: 'quote', value, status: 'unconfirmed', detail: 'no confirmed match; confirm its source' });
 }
 
 function quotesOn(masked: string): string[] {

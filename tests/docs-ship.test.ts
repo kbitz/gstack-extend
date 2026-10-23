@@ -12,7 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { help, main, type CliIo } from '../src/docs-ship/cli.ts';
 import { bodyHash, END, REQUIRED_FIELDS, START, receiptField, upsert } from '../src/docs-ship/body.ts';
 import { MARKER_KEYS } from '../src/docs-ship/config.ts';
-import { anchors, githubSlug } from '../src/docs-ship/markdown.ts';
+import { anchors, githubSlug, linkTargets } from '../src/docs-ship/markdown.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'docs-ship-')));
@@ -445,6 +445,16 @@ describe('links, anchors and claims', () => {
 });
 
 describe('GitHub anchors', () => {
+  // Value: protects=valid links survive malformed nested prefixes;
+  // fails_when=rejecting an outer destination skips a later valid link;
+  // why_new=ordinary links have no malformed prefix; seam=none;
+  // no_claim=performance bound; retained native timing probes measure scaling.
+  test('malformed prefixes retain later valid destinations', () => {
+    expect(linkTargets('[bad](([ok](good)')).toEqual([{ target: 'good', column: 8 }]);
+    const prefix = '[a](foo(bar)'.repeat(4000);
+    expect(linkTargets(`${prefix} [ok](good)`)).toEqual([{ target: 'good', column: prefix.length + 2 }]);
+  });
+
   test('slugs follow GitHub rules, including repeats and punctuation', () => {
     expect(githubSlug('Docs-only classification')).toBe('docs-only-classification');
     expect(githubSlug('`docs-ship` result line (v1)')).toBe('docs-ship-result-line-v1');
@@ -453,8 +463,85 @@ describe('GitHub anchors', () => {
   });
 });
 
+describe('continuation review regressions', () => {
+  // Value: protects=valid Markdown destinations and colliding headings resolve;
+  // fails_when=balanced delimiters, escapes, encoded path characters or emitted slugs are lost;
+  // why_new=earlier link fixtures use simple paths and identical headings; seam=none;
+  // no_claim=complete Markdown renderer conformance; real Git fixture only.
+  test('ordinary links retain balanced paths and collision-safe anchors', () => {
+    const r = repo({
+      'docs/guide(v2).md': '# Guide\n',
+      'docs/release#notes.md': '# Notes\n',
+      'docs/collision.md': '# A\n# A-1\n# A\n\n[third](#a-2)\n[guide](guide(v2).md)\n[escaped](guide\\(v2\\).md)\n[encoded](release%23notes.md)\n',
+    });
+    const out = cli(r.dir, 'check', '--base', r.base);
+    expect(lines(out.stdout, 'FINDING')).toEqual([]);
+    expect(field(out.stdout, 'LINKS')).toBe('4');
+  });
+
+  // Value: protects=known build files and version metadata cannot default to prose;
+  // fails_when=the docs allowlist wins over build names or BOM/case hides frontmatter;
+  // why_new=prior classification cases omit these spellings; seam=none;
+  // no_claim=every possible custom build or metadata format.
+  test('build inputs and version metadata variants stop', () => {
+    const r = repo({
+      'docs/requirements.txt': 'sphinx==8.0.0\n',
+      'docs/release.md': '\ufeff--- \nVersion: 1.2.1\n...\n# Release\n',
+      'docs/agents.md': '# Changed instructions\n',
+    }, { 'docs/release.md': '\ufeff--- \nVersion: 1.2.0\n...\n# Release\n' });
+    const out = cli(r.dir, 'classify', '--base', r.base);
+    expect(['docs/requirements.txt', 'docs/release.md', 'docs/agents.md'].map((f) => fileLine(out.stdout, f)?.[3]))
+      .toEqual(['build', 'version', 'agent-instructions']);
+  });
+
+  // Value: protects=quoted receipt syntax remains human body text;
+  // fails_when=marker examples are removed from the hash or overwritten by an upsert;
+  // why_new=existing body fixtures contain only actual markers; seam=none;
+  // no_claim=concurrent GitHub edit ownership.
+  test('receipt examples stay intact and real malformed markers refuse', () => {
+    const body = `Use \`${START}\` and \`${END}\`.\n\n\`\`\`md\n${START}\nexample\n${END}\n\`\`\`\n\n    ${START}\n    indented example\n    ${END}\n`;
+    const hash = bodyHash(body);
+    const receipt = `## Docs ship\n- **Verdict:** PASS\n- **Head:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n- **Base:** main at bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n- **Body SHA-256:** ${hash}\n- **Classification:** docs\n- **Tests:** none\n`;
+    const result = upsert(body, receipt);
+    expect(result.body.startsWith(body.trimEnd())).toBe(true);
+    expect(bodyHash(body.replace('example', 'changed example'))).not.toBe(hash);
+    expect(() => bodyHash(`${START}\nunclosed\n`)).toThrow(/unpaired/);
+  });
+
+  // Value: protects=mixed-language direct readers and original-base release test policy;
+  // fails_when=shell readers disappear or PR markers choose the release runner;
+  // why_new=earlier tests bind diff and config to one revision; seam=none;
+  // no_claim=execution of selected commands or installed skill acceptance.
+  test('mixed-language readers use a separately pinned configuration revision', () => {
+    const r = repo({ 'AGENTS.md': '<!-- docs-ship:test-command=changed {tests} -->\n' }, {
+      'AGENTS.md': '<!-- docs-ship:test-command=original {tests} -->\n',
+      'tests/docs.test.sh': "cat 'README.md'\n",
+    });
+    const before = git(r.dir, 'rev-parse', 'HEAD');
+    write(r.dir, { 'README.md': '# Updated\n' });
+    git(r.dir, 'add', '-A'); git(r.dir, 'commit', '--quiet', '-m', 'release delta');
+    const out = cli(r.dir, 'tests', '--base', before, '--config-ref', r.base);
+    expect(out.code).toBe(0);
+    expect(lines(out.stdout, 'TEST')).toEqual([['tests/docs.test.sh', 'names README.md']]);
+    expect(field(out.stdout, 'COMMAND')).toBe('original tests/docs.test.sh');
+  });
+
+  // Value: protects=Git binary attributes cannot hide opted-in version changes;
+  // fails_when=hunk inspection accepts the repository binary diff override;
+  // why_new=prior pathspec fixtures only use default textual diffs; seam=none;
+  // no_claim=all possible Git configuration or hosted renderer behavior.
+  test('binary attributes cannot hide version fields', () => {
+    const r = repo({ 'release.cfg': 'version = 2\n' }, {
+      'release.cfg': 'version = 1\n', '.gitattributes': 'release.cfg -diff\n',
+      'AGENTS.md': '<!-- docs-ship:docs=release.cfg -->\n',
+    });
+    const out = cli(r.dir, 'classify', '--base', r.base);
+    expect(fileLine(out.stdout, 'release.cfg')?.[3]).toBe('version');
+  });
+});
+
 describe('receipt binding', () => {
-  const receipt = (hash: string) => `## Docs ship\n\n- **Verdict:** PASS\n- **Head:** abc\n- **Base:** main@def\n- **Body SHA-256:** \`${hash}\`\n- **Classification:** docs (2 files)\n- **Tests:** none selected\n`;
+  const receipt = (hash: string) => `## Docs ship\n\n- **Verdict:** PASS\n- **Head:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n- **Base:** main at bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n- **Body SHA-256:** \`${hash}\`\n- **Classification:** docs (2 files)\n- **Tests:** none selected\n`;
 
   test('the body hash ignores the receipt block, so it survives the write', () => {
     const body = 'Summary of the change.\r\n\r\nMore detail.\r\n';
@@ -469,12 +556,29 @@ describe('receipt binding', () => {
     expect(bodyHash(second.body)).toBe(hash);
   });
 
+  // Value: protects=receipt identity and verdict fields are usable; fails_when=blank or malformed required fields publish;
+  // why_new=prior receipts validate only hash presence; seam=none; no_claim=live GitHub identity matching.
+  test('receipt identity fields and required values reject malformed input', () => {
+    const body = 'Summary.\n';
+    const valid = receipt(bodyHash(body));
+    for (const field of REQUIRED_FIELDS) {
+      const broken = valid.split('\n').map((line) => line.startsWith(`- **${field}:**`) ? `- **${field}:**` : line).join('\n');
+      expect(() => upsert(body, broken)).toThrow();
+    }
+    expect(() => upsert(body, valid.replace('PASS', 'MAYBE'))).toThrow();
+    expect(() => upsert(body, valid.replace('a'.repeat(40), 'short'))).toThrow();
+    for (const field of ['Classification', 'Tests']) {
+      const broken = valid.split('\n').map((line) => line.startsWith(`- **${field}:**`) ? `- **${field}:** \`\`` : line).join('\n');
+      expect(() => upsert(body, broken)).toThrow();
+    }
+  });
+
   test('a stale hash, a missing field or a forged marker refuses', () => {
     const body = 'Summary.\n';
     expect(() => upsert(body, receipt('0'.repeat(64)))).toThrow(/BODY|records body SHA-256/);
     expect(() => upsert(body, receipt(bodyHash(body)).replace(/- \*\*Tests:\*\*.*\n/, ''))).toThrow(/missing Tests/);
     expect(() => upsert(body, `${receipt(bodyHash(body))}\n${END}`)).toThrow(/must not contain/);
-    expect(() => bodyHash(`a ${START} b`)).toThrow(/unpaired/);
+    expect(() => bodyHash(`a\n${START}\nb`)).toThrow(/unpaired/);
   });
 
   test('the receipt command writes the new body and prints the hash', () => {

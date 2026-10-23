@@ -35,12 +35,12 @@ reading the configuration from the base branch tip.
 - `CHANGELOG.md` lines, under the release-file rules below.
 
 **Not docs by default (executable instructions):** `AGENTS.md`, `CLAUDE.md`,
-`GEMINI.md` and `SKILL.md` at any depth; anything under a `skills/`,
+`GEMINI.md` and `SKILL.md` at any depth (case-insensitive); anything under a `skills/`,
 `prompts/`, `templates/` or `template/` directory; `*.tmpl` and `*.template`
 files, with or without a further extension. A project opts such paths in with
 `docs-ship:docs=` (see [Configuration](#configuration)).
 
-**Everything else stops:** code, tests, build and CI files, configuration,
+**Everything else stops:** code, tests, build and CI files (including `docs/requirements.txt`), configuration,
 non-prose files under `docs/` (SVG, HTML, scripts), Markdown outside the
 allowlist, symlinks and submodules. Each stopped file gets a reason:
 `version`, `agent-instructions`, `classification-config`, `project-excluded`,
@@ -101,11 +101,17 @@ A docs edit can break a test that reads the file, for example one that slices
 a runbook by position. `docs-ship tests` selects every runnable test file whose
 text names a changed path or file name, plus the `docs-ship:tests` files.
 Runnable means it matches a test-file name pattern (`*.test.*`, `*.spec.*`,
-`test_*.py`, `*_test.py`, `*_test.go`, `*_spec.rb`). Only when a repository has
+`test_*.py`, `*_test.py`, `*_test.go`, `*_spec.rb`) with a supported code extension
+(JS/TS including JSX/TSX and CJS/MJS variants, Python, Ruby, Go, Rust, Java,
+Kotlin, Swift, shell `.sh`/`.bash`, PHP or Elixir). Only when a repository has
 no such files does it fall back to code files under a test directory.
 Fixtures, snapshots and helpers are not tests. An extensionless name such as
 `VERSION` counts only inside a string or as a path segment. Imports and
-computed paths are not followed; list those tests in the marker.
+computed paths are not followed; list those tests in the marker. Other naming
+conventions, extensions and capitalized test directories also need that marker.
+`tests --config-ref REF` pins configuration independently from `--base`, which
+selects the diff; it defaults to `--base`. Release-delta checks pass the original
+verified base as `--config-ref`, so PR edits cannot choose their own runner.
 
 Run only the selected tests, never the full suite. When upstream gstack's
 `gstack-evidence` is installed, run them as
@@ -133,7 +139,8 @@ nothing is bumped and the receipt says so.
 ## Receipt
 
 The receipt is one block in the PR body between
-`<!-- docs-ship:receipt:start -->` and `<!-- docs-ship:receipt:end -->`;
+`<!-- docs-ship:receipt:start -->` and `<!-- docs-ship:receipt:end -->`, each on
+its own line outside fenced or indented code. Quoted code examples remain body text;
 `docs-ship receipt` inserts or replaces it. Write it with this template:
 
 ```markdown
@@ -158,7 +165,8 @@ The receipt is one block in the PR body between
 endings normalized to LF, the whitespace around the block collapsed, and
 trailing whitespace trimmed. It survives writing the receipt, so anyone can
 recompute it from the final body with `docs-ship hash`. `docs-ship receipt`
-refuses a receipt whose recorded hash does not match the body.
+refuses a receipt whose recorded hash does not match the body, repeated or empty
+required fields, an unknown verdict, or a head/base identity without a full SHA.
 
 Body updates use a fresh read and a post-write check. GitHub's body edit is not
 an atomic compare-and-swap: an edit in the final read/write interval can still
@@ -193,4 +201,7 @@ matching it verbatim. A SHA that exists may still be the wrong commit. Other
 numbers, dates, versions, PR numbers and IDs are a checklist that the reviewer
 confirms against the cited source. Inbound links to a heading the PR renamed
 or a deleted or moved docs file are not checked; inspect inbound references to those paths manually. Near-quote matching is bounded to 128 quote tokens, 25,000 brief tokens and one million comparison cells per quote/brief; exceeding a bound leaves the quote unconfirmed, while exact matches are still checked. Classification by path cannot see a code reader that loads a
-docs file at runtime; list such files in `docs-ship:not-docs`.
+docs file at runtime; list such files in `docs-ship:not-docs`. This also applies
+to imported instruction files and host-specific instruction names outside the
+explicit list above. Nonstandard changelog headings and metadata formats need
+project rules or exclusions; the helper is not a complete Markdown/YAML parser.

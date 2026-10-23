@@ -291,7 +291,7 @@ ordinary test gate before push); unaffected coverage stays.
 `DOCS` requires authored prose/documentation and supporting static doc assets
 (images or diagrams nothing executes) only. Use the repository's docs
 classification from the base tip when present, otherwise the shared
-[docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `docs/docs-ship.md` in the gstack-extend root resolved by this skill's preamble; use that installed version) without its `docs-ship:docs` opt-ins, but
+[docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `docs/docs-ship.md` under the absolute gstack-extend root recorded in this installed skill directory's `.extend-root`; use that installed version and stop if the pointer or contract is missing) without its `docs-ship:docs` opt-ins, but
 inspect the actual hunks as well. Unknown or mixed scope uses `FULL`. Executable example files/fixtures,
 generated code, configuration, builds, tests, dependencies, active HTML/SVG/MDX
 content, agent instructions, skills and prompts are behavioral even in

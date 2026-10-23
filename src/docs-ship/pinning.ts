@@ -8,7 +8,7 @@ import { globMatcher } from '../merge-gate/glob.ts';
 import { shellQuote } from '../audit/lib/shell-quote.ts';
 import { readAt, Refusal, trackedFiles, type Git } from './git.ts';
 
-const TEST_NAME = /(\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|_spec\.rb$)/;
+const TEST_NAME = /(\.(test|spec)\.[^/.]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const TEST_DIR = /(^|\/)(tests?|__tests__|specs?)\//;
 const NOT_TESTS = /(^|\/)(fixtures?|__fixtures__|testdata|__snapshots__|helpers?)\//;
 const CODE_EXT = /\.([cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|sh|bash|php|ex|exs)$/;
@@ -17,7 +17,7 @@ export type Selected = { test: string; reasons: string[] };
 
 /** Runnable test files: name-pattern tests when the repo has any, else code files under a test directory. */
 export function testFiles(files: string[]): string[] {
-  const named = files.filter((f) => TEST_NAME.test(f) && !NOT_TESTS.test(f));
+  const named = files.filter((f) => TEST_NAME.test(f) && CODE_EXT.test(f) && !NOT_TESTS.test(f));
   if (named.length) return named;
   return files.filter((f) => TEST_DIR.test(f) && CODE_EXT.test(f) && !NOT_TESTS.test(f));
 }
