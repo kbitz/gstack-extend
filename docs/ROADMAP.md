@@ -19,78 +19,19 @@ it does not add them to the 1.0 acceptance gates.
 
 ## In Progress
 
-No active Track is declared. Merged Tracks 23E, 23H and 23I are recorded in
-`docs/roadmap-shipped.md`; their separate installed acceptance obligations remain.
+No active Track is declared. Merged Tracks 24A, 25A, 26A and 26B are recorded in
+`docs/roadmap-shipped.md`. Installed host acceptance and the release transition
+that the user deferred from 26A stay with Tracks 28A, 30B and 30C.
 
 ---
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23_
-
-### Group 24: Review and release step measurements
-
-_Depends on: none_
-
-**This group delivers:** Optional local step/pass records that distinguish work, reuse, waits and corrections in review and release workflows.
-
-##### Track 24A: Measure review and release phases without changing their gates
-_3 tasks . ~620 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can see which review/preparation and shipping phases ran, were reused, waited, retried or required corrections, rather than treating whole-session duration as model work.
-**Supports:** Owner-selected efficiency investigation, 2026-10-19, alongside SPEC O3/O4; this instrumentation is not a new 1.0 acceptance gate.
-**Done when:** Both workflows emit optional local step/pass records bound to the invocation, candidate and skill version; fixtures demonstrate waits, reuse, retries, interrupted capture and concurrent readers without double counting; missing boundaries remain unknown; the existing handoff, approval, Greptile and stage-runs v1 contracts are unchanged.
-_touches: bin/lib/telemetry.py, bin/lib/workflow_metrics.py (new), docs/workflow-metrics.schema.json (new), docs/telemetry.md, skills/review-and-prep.md, skills/ship-and-land.md, tests/workflow-metrics.test.ts (new), tests/telemetry-contract.test.ts, tests/skill-protocols.test.ts, tests/helpers/touchfiles.ts_
-_blocked-by: Track 23H, Track 23I_
-_read-first: docs/telemetry.md, docs/workflow-handoffs.md, docs/quota-ledger.md_
-_produces: a versioned local step/pass contract keyed to the existing stage invocation, with explicit event identity and measurement limits_
-- **Record step timing and reuse decisions** -- Add an optional local companion ledger and bounded helper for phases such as evidence collection, review, coverage, documentation, tests, external review, publication and landing readiness. Preserve stage-runs as one provenance row per segment. Record parent/run/step IDs, candidate identity, skill content/version, RUN/REUSE/N/A and invalidation reason, start/end and explicit wait categories. Account for overlapping children; time without an observed boundary is unknown, never inferred active model time. Snapshot observed/requested model and effort sources separately. Source: owner request, 2026-10-19. _~300 lines._ (M)
-- **Define review passes and corrections once** -- Absorb the Future item "Record each review pass in the `/review-and-prep` receipt, with one definition of a cycle". Record per-pass findings by original severity and a documented normalized disposition, fixed/open counts, accepted findings, parent corrections, retries and fallback. Settle pass versus fix-cycle semantics and Greptile membership explicitly; retain voice identity and candidate tree so a later study can deduplicate findings without calling every success a useful review. Mirror bounded summaries in receipts without changing public handoff labels or upstream gstack logs. _~180 lines._ (S)
-- **Qualify optional capture and its overhead** -- Cover disabled capture, malformed/partial records, repeated events, nested skills, parallel readers and pause boundaries. Instrument both wrappers at existing boundaries; retain fresh checks before outward actions. Measure helper overhead and record missing capture separately from zero work. Raw private transcripts and free-form secrets never enter the public record. Update touchfile selection and the author contract. _~140 lines._ (S)
-
-### Group 25: Protect acceptance records
-
-_Depends on: Group 24_
-
-**This group delivers:** Planning and release-history updates that preserve owner-controlled acceptance records.
-
-##### Track 25A: Keep acceptance records separate from release-history appends
-_1 task . ~80 LOC incl. tests . medium risk_
-**Outcome:** Planning and documentation updates cannot accidentally award a checkpoint.
-**Supports:** [SPEC](SPEC.md) O2/O5 — this spec creates the Acceptance table and meets the deferred finding's trigger.
-**Done when:** Roadmap and template instructions name the release-history destination and preserve Acceptance bytes, including when Acceptance is the last table.
-_touches: skills/roadmap.md, scripts/init-templates/PROGRESS.md.tmpl, tests/skill-protocols.test.ts_
-_blocked-by: Track 23E, Track 23D_
-- **Protect the acceptance boundary** -- Apply the retained 2026-10-07 red-team finding: replace the ambiguous existing-row-format append rule, preserve owner authority and lock both table orderings. Do not backfill or award stage evidence. _~80 lines._ (S)
-
-### Group 26: Host provenance ∥ installed planning acceptance
-
-_Depends on: Group 24, Group 25_
-
-**This group delivers:** A versioned host and requested-model source contract, plus real installed planning and adoption evidence.
-
-##### Track 26A: Version provenance for both hosts and stable releases
-_2 tasks . ~460 LOC incl. tests . medium risk_
-**Outcome:** Users and orchestrators can distinguish Paseo launches from their agent harness, join a row to the host agent that ran it, and retain truthful provenance.
-**Supports:** [SPEC](SPEC.md) O4/O5 — route_for has Conductor branches but no Paseo identity, and no code reads any `PASEO_*` variable; equal host support needs an explicit public representation.
-**Done when:** Paseo markers and custom worktree roots are qualified, a Paseo row records `PASEO_AGENT_ID` and a Conductor row its equivalent identifier (null when absent), conflicting markers remain unknown, legacy rows stay readable, and requested model names never become observed proof; three-part producer releases validate without changing the historical v0/v1 branches.
-_touches: bin/lib/telemetry.py, docs/stage-runs.schema.json, tests/telemetry-contract.test.ts, tests/telemetry.test.ts, docs/telemetry.md_
-_blocked-by: Track 23H, Track 24A_
-_read-first: 23H, docs/telemetry.md_
-- **Represent the workspace host compatibly** -- Define host versus harness/launch-route semantics from actual Paseo and Conductor markers; preserve old readers through an explicit versioned schema branch if needed. Record `PASEO_AGENT_ID` when present and the matching Conductor identifier, null otherwise, so a caller can join a row to the agent it launched; hand-run rows stay null. Cover missing/conflicting markers and representative Codex, Claude and Cursor launches. Do not add routing, billing or independent-review claims. Source for the agent ID: `[manual] Fill work_item and the host's agent ID from the launch environment` (2026-10-16). _~280 lines._ (M)
-- **Transition the producer contract before the release format** -- Do not weaken the historical v1 branch in place. Introduce the compatible reader/writer migration required by the public schema policy, cover 1.0.0 and legacy release rows, and retain original row construction metadata on retry. Use the same new schema branch as the host representation in this Track. That branch also defines the `blocked` outcome and a requested-value source label, which Tracks 27A and 29A write, so the row format changes once. Consume the step/pass contract from Track 24A when deciding whether the new schema needs a companion-record reference; detailed metrics stay in the companion ledger. _~180 lines._ (M)
-
-##### Track 26B: Qualify installed planning and adoption behavior
-_1 task . ~180 LOC incl. tests . medium risk_
-**Outcome:** Public users can establish a spec and regenerate a plan with the acceptance guarantees already promised.
-**Supports:** [SPEC](SPEC.md) O2 — Track 22B's 18 attended cases and real project-spec adoption remain unproven.
-**Done when:** Named installed-skill evidence covers new/untagged and existing-project adoption, retirement/link preservation and C14, DX8, DX9, E5, CP1, CP4–CP6, EC2, EC3, EC6–EC13; every row is passed or remains an explicit blocking hold.
-_touches: docs/acceptance/planning.md (new)_
-_blocked-by: Track 23E, Track 23F, Track 25A_
-- **Run and retain the attended planning matrix** -- Recover the exact PR #126 matrix rather than infer its cases from titles. Include complete-candidate preview/approval, pins, Hold, stale inputs, interruption, historical identity, repeat runs and the bounded timing attempt separating reading, prerequisites, execution and human understanding. Add new-project/adoption checks for the current project-spec skill. Absorb the 2026-10-16 trigger-migration inbox item: preservation of every existing character, Approve/Revise/Hold, duplicate or missing titles, title-only bullets, repeat runs, a realistically sized backlog and owner review effort. Record versions and sanitized evidence; schedule any discovered defect before 1.0. This is an operator acceptance Track, not fixture proof. _~180 documentation lines._ (L)
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26_
 
 ### Group 27: Paused and resumed workflow segments
 
-_Depends on: Group 26_
+_Depends on: none_
 
 **This group delivers:** Linked, truthful provenance for deliberate holds and later completions across checkouts.
 
@@ -98,16 +39,16 @@ _Depends on: Group 26_
 _2 tasks . ~300 LOC incl. tests . medium risk_
 **Outcome:** An external caller can tell a run that stopped for a person from one that never ran, and a run resumed in another checkout still records its completion.
 **Supports:** [SPEC](SPEC.md) O4 criteria 2–3 and O3 — blocked work must be explicit and starts and finishes must keep their run identity; today a deliberate pause defers finish, and a resume in a new worktree finds no handoff in its root and writes nothing.
-**Done when:** A deliberate pause in `/review-and-prep`, `/pair-review` or `/full-review` writes one row with outcome `blocked`; a resumed run that completes writes its own row, including from a different checkout root; each start pairs with exactly one finish; the join contract describes how segments link, and v1 and legacy rows stay readable.
-_touches: bin/lib/telemetry.py, docs/telemetry.md, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/skill-protocols.test.ts, skills/full-review.md, skills/gstack-extend-init.md, skills/gstack-extend-upgrade.md, skills/implement.md, skills/pair-review.md, skills/project-spec.md, skills/review-and-prep.md, skills/roadmap.md, skills/ship-and-land.md_
+**Done when:** A deliberate pause in `/review-and-prep`, `/pair-review` or `/full-review` writes one row with outcome `blocked`; a resumed run that completes writes its own row, including from a different checkout root; each start pairs with exactly one finish; every installed skill copy carries the same updated start/finish wording; the join contract describes how segments link, and v1, v2 and legacy rows stay readable.
+_touches: bin/lib/telemetry.py, docs/telemetry.md, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/skill-protocols.test.ts, skills/autoplan-lean.md, skills/full-review.md, skills/gstack-extend-init.md, skills/gstack-extend-upgrade.md, skills/implement.md, skills/pair-review.md, skills/project-spec.md, skills/review-and-prep.md, skills/roadmap.md, skills/ship-and-land.md_
 _blocked-by: Track 23H, Track 23I, Track 26A_
 _read-first: 23H, 23I, 26A, docs/telemetry.md_
-- **Close each paused segment with a blocked row** -- Replace "A deliberate pause defers finish" at the pause points of the three resumable skills with a finish that records `blocked`, and update the shared start/finish wording in every skill copy and the `RESUMABLE` adoption rule with it. Evidence (2026-10-16): no review-and-prep row for five of seven recent orchestrated PRs, and 5 review-and-prep handoffs among 24 leftover starts. Source: `[manual] Give paused and blocked /review-and-prep runs a stage-runs row`. _~180 lines._ (M)
+- **Close each paused segment with a blocked row** -- Replace "A deliberate pause defers finish" at the pause points of the three resumable skills with a finish that records `blocked`, the outcome stage-runs schema v2 has reserved since 0.37.0.0. Update the shared start/finish wording in all ten skill copies, including `skills/autoplan-lean.md` (added in 0.40.0.0), and the `RESUMABLE` adoption rule with it. While editing, re-anchor two stale Track references to their current owners in words rather than IDs: `skills/pair-review.md` ("Track 24B owns the future canonical hold/resume detector") and `docs/telemetry.md` ("receipt 2 or Track 27A evidence", which means the Conductor host qualification). Evidence (2026-10-16): no review-and-prep row for five of seven recent orchestrated PRs, and 5 review-and-prep handoffs among 24 leftover starts. Source: `[manual] Give paused and blocked /review-and-prep runs a stage-runs row`. _~180 lines._ (M)
 - **Record a resumed completion in any checkout** -- A resume starts its own segment, linked to the paused one by an identifier settled at planning (run identity or the launcher's work item), so a resume in a new worktree records its completion; use the status words of the stage-handoff contract. Align step/pass boundaries with the companion ledger from Track 24A; interrupted or unobserved intervals stay unknown. Settle at planning how this relates to the Future cards "Recover a telemetry finish run from a different repository root" and "In-flight marker and crash detection for extend telemetry". _~120 lines._ (M)
 
 ### Group 28: Stable release compatibility
 
-_Depends on: Group 26, Group 27_
+_Depends on: Group 27_
 
 **This group delivers:** A verified legacy-to-three-part upgrade/release path and matching public compatibility guidance.
 
@@ -115,14 +56,14 @@ _Depends on: Group 26, Group 27_
 _1 task . ~180 LOC incl. tests . medium risk_
 **Outcome:** Maintainers can publish and users can install stable SemVer releases through the existing release path.
 **Supports:** [SPEC](SPEC.md) O1/O5 — the four-part instruction and tooling assumptions need an explicit verified transition.
-**Done when:** Upgrading a named legacy install to a three-part candidate passes comparison, migration, audit and tag checks; public instructions declare the new policy without changing old tags or assigning a release during this Track.
+**Done when:** Upgrading a named legacy install to a three-part candidate passes comparison, migration, audit and tag checks; the stage-runs v2 reader contract is confirmed on the stable-surface list; public instructions declare the new policy without changing old tags or assigning a release during this Track.
 _touches: tests/update.test.ts, tests/checks-version.test.ts, tests/telemetry-contract.test.ts, bin/lib/semver.sh, .github/workflows/auto-tag.yml, CLAUDE.md, README.md, docs/installation.md_
 _blocked-by: Track 26A, Track 23C, Track 23F_
-- **Qualify release compatibility and document the transition** -- Exercise the existing three/four-part readers and change only demonstrated incompatibilities. Verify representative legacy-to-candidate upgrade and malformed-version controls, preserve tag history and schema guarantees, and reconcile this repo's maintained instructions. This does not change consumers' init defaults or reinterpret their versions. VERSION/package assignment belongs to the eventual release workflow. _~180 lines._ (M)
+- **Qualify release compatibility and document the transition** -- Exercise the existing three/four-part readers and change only demonstrated incompatibilities. Verify representative legacy-to-candidate upgrade and malformed-version controls, preserve tag history and schema guarantees, and reconcile this repo's maintained instructions. Carry the two release items the user deferred from Track 26A (PR #155): the full updater, tagging and three-part transition (DFR2), and the release owner's reader-compatibility check for stage-runs schema v2 (DFR3). The v2 writer already shipped in 0.37.0.0 with its reader-first rollback note, so DFR3 is now a post-release compatibility check on the stable surfaces, not a pre-release gate. This does not change consumers' init defaults or reinterpret their versions. VERSION/package assignment belongs to the eventual release workflow. _~180 lines._ (M)
 
 ### Group 29: Requested-model provenance
 
-_Depends on: Group 26, Group 27, Group 28_
+_Depends on: Group 27, Group 28_
 
 **This group delivers:** Caller-requested model and effort values labeled separately from observed evidence.
 
@@ -134,11 +75,11 @@ _1 task . ~120 LOC incl. tests . low risk_
 _touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/stage-runs.schema.json_
 _blocked-by: Track 26A_
 _read-first: 26A, docs/telemetry.md_
-- **Record the caller's requested model and effort** -- On Cursor's CLI route (`CURSOR_INVOKED_AS` set) `_observe_cursor_store()` skips the store and `cursor_turns()` returns only a transcript mtime. A local check on 2026-10-16 found no model in `cursor-agent` transcripts or chat-store metadata, and `~/.cursor/cli-config.json` holds only a configured default, which provenance must not record. Check whether `cursor-agent --output-format json` events name the model before relying on the environment alone. Source: `[manual] Accept a caller-supplied model when detection finds none, labeled as requested`. _~120 lines._ (S)
+- **Record the caller's requested model and effort** -- Stage-runs schema v2 (0.37.0.0) already reserves the `requested` source for non-null model and effort; this Track is its first producer. On Cursor's CLI route (`CURSOR_INVOKED_AS` set) `_observe_cursor_store()` skips the store and `cursor_turns()` returns only a transcript mtime. A local check on 2026-10-16 found no model in `cursor-agent` transcripts or chat-store metadata, and `~/.cursor/cli-config.json` holds only a configured default, which provenance must not record. Check whether `cursor-agent --output-format json` events name the model before relying on the environment alone. Source: `[manual] Accept a caller-supplied model when detection finds none, labeled as requested`. _~120 lines._ (S)
 
 ### Group 30: Workflow usage attribution ∥ equal host acceptance
 
-_Depends on: Group 24, Group 26, Group 27, Group 28, Group 29_
+_Depends on: Group 27, Group 28, Group 29_
 
 **This group delivers:** Usage attributed from local logs with explicit uncertainty, alongside independent real Paseo and Conductor workflow qualification.
 
@@ -152,8 +93,8 @@ _blocked-by: Track 24A, Track 26A, Track 27A, Track 29A_
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 _produces: comparable per-run and per-voice local usage projections, source/attribution grades and a replayable sanitized fixture corpus_
 - **Reuse the local log parser for run usage** -- Absorb "Record each run's token usage and plan-window readings from the harness's own logs". Reuse or isolate the existing quota usage parser rather than introduce a third parser. Record uncached input, cache read/write and output; reasoning is a subset, never added twice. Retain logged start/end rate-limit readings with reset and concurrency caveats; account-wide percentage changes are not attributable stage consumption. Cursor/Grok sources remain unknown until verified. Read only session logs and CLI output: no credentials, identity/capacity readers or vendor usage services. _~240 lines._ (M)
-- **Attribute child and outside-reviewer usage** -- Absorb "Record outside-voice calls' vendor, model, tokens and window readings". Join each recorded call to its invocation and pass using direct parent/session evidence when available; mark directory/time matches as correlation and ambiguous shared-worktree matches as unknown. Deduplicate native subagents and cross-harness children, account for children that outlive the step, and preserve every contributing model/source. Do not modify upstream commands or claim observed/billed models from requested labels. _~240 lines._ (M)
-- **Preserve schema and parser compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1 stage rows. Coordinate any stage-row reference fields with the still-unshipped host-provenance schema; never add fields silently to a published closed schema. Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. _~120 lines._ (S)
+- **Attribute child and outside-reviewer usage** -- Absorb "Record outside-voice calls' vendor, model, tokens and window readings". Join each recorded call to its invocation and pass using direct parent/session evidence when available, including the local `voices.jsonl` reviewer join (host subagent identifier, parent-observed dispatch/return times) that 0.38.0.0 added; mark directory/time matches as correlation and ambiguous shared-worktree matches as unknown. Deduplicate native subagents and cross-harness children, account for children that outlive the step, and preserve every contributing model/source. Do not modify upstream commands or claim observed/billed models from requested labels. _~240 lines._ (M)
+- **Preserve schema and parser compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1/v2 stage rows. Coordinate any stage-row reference fields with the stage-runs v2 schema shipped in 0.37.0.0; never add fields silently to a published closed schema. Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. When editing `bin/lib/workflow_metrics.py`, weigh the Future item "Slim the workflow-metrics helper without dropping requirements"; adopting it is optional. _~120 lines._ (S)
 
 ##### Track 30B: Qualify the complete Conductor workflow and cross-session handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
@@ -162,7 +103,7 @@ _1 task . ~200 LOC incl. tests . medium risk_
 **Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and cross-session handoff evidence; unknown model evidence remains unknown.
 _touches: docs/acceptance/conductor.md (new)_
 _blocked-by: Track 26A, Track 23I, Track 23A, Track 23G, Track 28A, Track 26B, Track 27A, Track 29A_
-- **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the SQLite store-reader fix from Track 23G, with its still-open owner gate: T42 native receipt 2 on an installed release and the 2-5 minute row-interpretation check (O4 stays unawarded until the owner confirms), plus the open owner note on receipt 1's expected effort. Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
+- **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the SQLite store-reader fix from Track 23G, with its still-open owner gate: T42 native receipt 2 on an installed release and the 2-5 minute row-interpretation check (O4 stays unawarded until the owner confirms), plus the open owner note on receipt 1's expected effort. Include the installed Conductor host-attribution check the user deferred from Track 26A (DFR1). Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
 
 ##### Track 30C: Qualify the complete Paseo workflow and external handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
@@ -171,7 +112,7 @@ _1 task . ~200 LOC incl. tests . medium risk_
 **Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and external-consumer handoff evidence; pending approvals or failures remain holds.
 _touches: docs/acceptance/paseo.md (new)_
 _blocked-by: Track 26A, Track 23I, Track 23A, Track 28A, Track 26B, Track 27A, Track 29A_
-- **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. Confirm independent onboarding across the two host qualification Tracks. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
+- **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. Include the installed Paseo host-attribution check the user deferred from Track 26A (DFR1). The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. Confirm independent onboarding across the two host qualification Tracks. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
 
 ### Group 31: Workflow efficiency assessment
 
@@ -189,7 +130,7 @@ _blocked-by: Track 30A_
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 - **Build a comparable baseline** -- Produce an offline report from sanitized projections. Separate DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs; report sample size and missingness. Reuse eligible existing release-only receipts and preserve the separate first-installed-no-CI timing obligation and 15-minute target. Report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~180 lines._ (M)
 - **Assess the uncertain efficiency choices** -- Compare smaller models and lower effort for bounded drafting/extraction versus the main runner, including launch/context-transfer and parent-correction costs. Investigate repeated plan extraction, evidence reads, long-suite reruns, section loading, parallel scheduling and each reviewer voice's unique accepted findings. Use the existing eval/benchmark facilities where suitable; define corpus, quality bars, fixed budgets and stop rules before any model trial. Include known-defect controls and false positives; a saved success flag is not quality evidence. This Track authorizes offline analysis; any new paid/API trials need a separately approved concrete pilot and spend bound. _~180 lines._ (M)
-- **Publish decisions and follow-up ownership** -- For each candidate give adopt/reject/insufficient-evidence, expected benefit, observed limitations and the smallest follow-up scope. Map recommendations to existing lifecycle-helper, eval persistence and vendor-diversity Future items rather than duplicating them. Preserve the independent historical review-independence study and its unfulfilled evidence obligations. An insufficient-evidence result names missing data and a bounded next measurement; it never silently removes a review or acceptance gate. _~80 lines._ (S)
+- **Publish decisions and follow-up ownership** -- For each candidate give adopt/reject/insufficient-evidence, expected benefit, observed limitations and the smallest follow-up scope. Map recommendations to existing Future items rather than duplicating them: lifecycle helper, eval persistence, vendor diversity, the delta-scoped review default, on-demand `/review-and-prep` section loading and the `/autoplan-lean` measurement. Preserve the independent historical review-independence study and its unfulfilled evidence obligations. An insufficient-evidence result names missing data and a bounded next measurement; it never silently removes a review or acceptance gate. _~80 lines._ (S)
 
 ### Execution Map
 
@@ -198,17 +139,14 @@ The owner-selected measurement and efficiency Tracks are additional work,
 not new stable-release acceptance gates.
 
 ```
-- Group 24 ← {}
-- Group 25 ← {24}
-- Group 26 ← {24, 25}
-- Group 27 ← {26}
-- Group 28 ← {26, 27}
-- Group 29 ← {26, 27, 28}
-- Group 30 ← {24, 26, 27, 28, 29}
+- Group 27 ← {}
+- Group 28 ← {27}
+- Group 29 ← {27, 28}
+- Group 30 ← {27, 28, 29}
 - Group 31 ← {30}
 ```
 
-**8 Groups / 11 Tracks remaining: 8 existing target Tracks and 3 owner-selected measurement/investigation Tracks.**
+**5 Groups / 7 Tracks remaining: 5 existing target Tracks and 2 owner-selected measurement/investigation Tracks.**
 
 Track completion is not stage acceptance. O1–O5 need owner-confirmed evidence
 in PROGRESS before the stable release. Operator acceptance Tracks remain open
@@ -219,7 +157,7 @@ remain outside this target.
 
 ## Future
 
-Deferred: docs/roadmap-future.md (43 items)
+Deferred: docs/roadmap-future.md (51 items)
 
 ## Shipped
 

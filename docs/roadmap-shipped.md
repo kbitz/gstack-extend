@@ -183,3 +183,32 @@ _tombstone: 22_
 _tombstone: 23_
 
 - 2026-10-19: all nine original Group 23 Tracks have individual landed receipts; no active pin is declared. Prefix 23 is retired. Existing owner acceptance obligations remain with their named qualification work.
+
+## Individual Track history
+
+### Track 24A: Measure review and release phases without changing their gates ✓ Shipped (v0.36.16.0)
+- 2026-10-20: merged [PR #151](https://github.com/kbitz/gstack-extend/pull/151) (commit `edc5df5`); verified land-time Track 24A, original Group 24. Introduced under this ID on 2026-10-20 by the regeneration squashed into the same commit; no later relabel before landing. The ID had earlier labeled the host-provenance Track (2026-10-17 to 2026-10-19), which landed separately as 26A.
+- The approved plan's completion matrix reports 66 VERIFIED and 0 deferred. The installed two-wrapper smoke, Linux paths and the five-minute first-user target were recorded as evidence limits, not requirements. Reader-cardinality and helper-slimming follow-ups went to TODOS under the owner's stop rule.
+
+## Individual Track history
+
+### Track 25A: Keep acceptance records separate from release-history appends ✓ Shipped (v0.36.17.0)
+- 2026-10-20: merged [PR #152](https://github.com/kbitz/gstack-extend/pull/152) (commit `45a60d1`); verified land-time Track 25A, original Group 25. Introduced as Track 24C on 2026-10-08 in `5b6e516`, relabeled 24B on 2026-10-17 (`8f79dd2`) and 25A on 2026-10-20 (`edc5df5`).
+- HOLD SCOPE approved plan plus in-session decisions D1–D7: `/roadmap` Step 4 names the release-history destination, preserves every `## Acceptance` byte in either table ordering, stops on a missing or ambiguous destination and checks the delegated append against a baseline; a protocol lock pins the rules. `tests/helpers/touchfiles.ts` was an intentional fourth file. The user deferred an executable Acceptance-byte guard, heading convergence and listed edge cases (D01, D02, D5/D6, D07). Installed-agent proof was carried by Track 26B.
+
+## Individual Track history
+
+### Track 26A: Version provenance for both hosts and stable releases ✓ Shipped (v0.37.0.0)
+- 2026-10-21: merged [PR #155](https://github.com/kbitz/gstack-extend/pull/155) (commit `cffe446`); verified land-time Track 26A, original Group 26. Introduced as Track 25A on 2026-10-08 in `5b6e516`, relabeled 24A on 2026-10-17 (`8f79dd2`) and 26A on 2026-10-20 (`edc5df5`).
+- 29 VERIFIED (28 approved plan items plus approved runner exception R1): stage-runs schema v2 with `workspace_host` and `host_agent_id` from explicit Paseo/Conductor markers (default and custom roots in fixtures), a three- or four-part `producer_version`, saved-row retry and reserved `blocked`/`requested` vocabulary. The user explicitly deferred three items to existing Tracks: installed Paseo/Conductor host acceptance (DFR1, Tracks 30B and 30C as of 2026-10-23), the full updater, tagging and three-part transition (DFR2, Track 28A) and the release owner's reader-compatibility check (DFR3, Track 28A). No acceptance checkpoint is awarded.
+
+## Individual Track history
+
+### Track 26B: Qualify installed planning and adoption behavior ✓ Shipped (v0.40.0.1)
+- 2026-10-22: merged [PR #159](https://github.com/kbitz/gstack-extend/pull/159) (commit `e1b9605`); verified land-time Track 26B, original Group 26. Introduced as Track 25B on 2026-10-08 in `5b6e516`, relabeled 26B on 2026-10-20 (`edc5df5`).
+- `docs/acceptance/planning.md` records 27 operator-executed rows (the 18 recovered PR #126 roadmap cases, TM1–TM7 and PS1–PS2), all passed with no blocking hold. On 2026-10-22 the owner replaced the human comprehension, effort and timing checkpoints with an independent adversarial technical review (DX8, DX9, E5, TM7, PS1 and PS2 deferred by the user); those human measurements stay unmeasured. O2 is not awarded; acceptance stays the owner's decision in PROGRESS.
+
+## Individual Track history
+_tombstone: 24, 25, 26_
+
+- 2026-10-23: every original Group 24 (24A), Group 25 (25A) and Group 26 (26A, 26B) Track has an individual landed receipt; no active pin is declared. Prefixes 24, 25 and 26 are retired. Owner acceptance obligations stay with their named qualification work.
