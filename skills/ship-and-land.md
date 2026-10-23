@@ -530,7 +530,8 @@ For other reuse claims, apply the following rules:
 - **Completion:** require completed, converged results with no unresolved
   blocking findings and valid recorded decisions. Unavailable, failed, or
   partial required coverage is not a pass. Honor current applicability rules
-  for optional/disabled outside voices and adaptive specialist skips.
+  for optional/disabled outside voices, adaptive specialist skips, and recorded
+  light-default or bounded-wait-host skips.
 
 For unchanged content/base, carry forward only rows meeting these conditions.
 On a later invocation after release work, verify the chain from the original
@@ -824,7 +825,13 @@ repair; do not research valid settings again or ask a second marker-change
 question. When a repair is needed, show the concrete rename/consolidation and
 preserved settings before asking; never create `greptile.json` beside an
 existing `.greptile.json` or silently discard its labels.
-Always check authorized human blocking reviews separately. When applicable,
+Always check authorized human blocking reviews separately. List each
+`Auto-chosen (veto by replying on this PR):` line from the corroborated
+review-and-prep receipt in land's readiness report, before merge approval. A
+veto of one under review-and-prep's rule is blocking feedback: check for
+unresolved veto comments before ship writes or pushes release commits and again
+before merge approval, and hold release writes and hold landing for the user's
+decision. When applicable,
 preserve the PR-wide single-run allowance across commits and sessions; submitted
 requests, automatic runs, failures and cancellations consume it. This wrapper
 never requests another run or resets a timeout. Carry a qualifying recorded
