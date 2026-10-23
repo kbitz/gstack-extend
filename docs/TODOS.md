@@ -10,6 +10,14 @@
 - **Context:** Owner request, 2026-10-23. Run it once on Paseo and once on Conductor, including one on a Sonnet-class model and one from a `/roadmap` handoff. Confirm that it classifies the PR, that an initial classification hand-back changes nothing, that the pinned tests run once and a same-tree rerun within the invocation reuses the `docs-ship-tests` record, that `docs-ship hash` on the final body prints the receipt's hash, that the bump follows the release policy, and that the run ends with the `docs-ship/v1` result line without merging. Record the wall-clock time against a recent `/ship-and-land` run on a docs PR.
 - **Revisit when:** The first docs-only PR after this release, or the next `/roadmap` run that commits.
 
+### [manual] Narrow the two `skills/**` suites that dominate a one-skill test run
+
+- **Description:** After the per-skill split of the protocol suite, a change to one skill file still selects every suite that declares `skills/**`. Two of them carry most of the cost: `tests/telemetry.test.ts` (230 tests, 256 s alone) and `tests/setup-hosts.test.ts` (188 tests, 193 s alone) in the 2026-10-23 serial baseline of 927 s. A measured `skills/roadmap.md` edit ran 8 of 74 files and 1,060 tests in 770 s; the split protocol suites were 244 of those tests. Both suites read every skill for cross-skill rules (the telemetry blocks each skill executes, the installed host copies), so a path-level map cannot tell a telemetry-block edit from a prose edit. Candidate: move the assertions that read real skill content into small per-skill or shared-rule suites, and keep the installer and telemetry mechanics on fixture skills that do not declare `skills/**`.
+- **Effort:** M
+- **Context:** Measured while splitting `tests/skill-protocols.test.ts` (owner request, 2026-10-23); the receipts' `Test selection:` lines now show which files each run selected and why.
+- **Priority:** P3
+- **Revisit when:** A skill-only PR's `Test selection:` line shows these two suites above half of its test wall time, or before a Group that edits several skills.
+
 ### [ship] Harden /autoplan-lean's plan checks, outline and spec-loop guard after 0.43
 
 - **Description:** Review findings deferred at `/ship`, most important first:
