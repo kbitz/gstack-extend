@@ -516,6 +516,8 @@ describe('continuation review regressions', () => {
       '<a data-href=README.md href=missing.md>open</a>',
       '<img data-src=README.md src=missing.md>',
       '<img src="missing.md"',
+      '<img src="missing.md" alt="wrapped',
+      "<a href=missing.md title='wrapped",
       `<a title='example href=README.md' href=missing.md>open</a>`,
       `<a title="a > b" href=missing.md>open</a>`,
     ]) expect(linkTargets(html).map((l) => l.target)).toEqual(['missing.md']);

@@ -230,3 +230,5 @@ docs file at runtime; list such files in `docs-ship:not-docs`. This also applies
 to imported instruction files and host-specific instruction names outside the
 explicit list above. Nonstandard changelog headings and metadata formats need
 project rules or exclusions; the helper is not a complete Markdown/YAML parser.
+Link extraction is line-oriented: an HTML target must be complete on the opening-tag
+line. It is not a full HTML parser.

@@ -154,16 +154,28 @@ export function linkTargets(line: string): LinkRef[] {
     const dest = destination(masked, def[0].length, pairs);
     if (dest) out.push({ target: dest.target, column: 1 });
   }
-  // Consume complete attribute values so metadata and quoted examples cannot hide a real target.
-  for (const tag of masked.matchAll(/<(a|img)(?=[\s/>])((?:[^"'<>]|"[^"]*"|'[^']*')*)(?:>|$)/gi)) {
+  // Read attributes in order: a later wrapped value cannot erase an already-complete target.
+  const tags = /<(a|img)(?=[\s/>])/gi;
+  const attributes = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y;
+  for (let tag; (tag = tags.exec(masked));) {
     const wanted = tag[1]!.toLowerCase() === 'a' ? 'href' : 'src';
-    for (const attr of tag[2]!.matchAll(/(?:^|\s)([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+    let i = tags.lastIndex;
+    let found = false;
+    while (i < masked.length) {
+      while (i < masked.length && /\s/.test(masked[i]!)) i++;
+      if (masked[i] === '>') { i++; break; }
+      if (masked.slice(i, i + 2) === '/>') { i += 2; break; }
+      attributes.lastIndex = i;
+      const attr = attributes.exec(masked);
+      if (!attr) { i = masked.length; break; }
+      i = attributes.lastIndex;
       const target = attr[2] ?? attr[3] ?? attr[4];
-      if (attr[1]!.toLowerCase() === wanted && target !== undefined) {
-        out.push({ target, column: tag.index! + 1 });
-        break;
+      if (!found && attr[1]!.toLowerCase() === wanted && target !== undefined) {
+        out.push({ target, column: tag.index + 1 });
+        found = true;
       }
     }
+    tags.lastIndex = i;
   }
   return out;
 }
