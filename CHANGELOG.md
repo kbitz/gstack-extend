@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.42.0.0] - 2026-10-23
+
+### Added
+
+- **You can opt hand-launched reviews into lighter repair cycles.** Set `review_default` to `light`. The first cycle is still a full review. Later cycles review only the repair: no outside call, and Red Team does not run. The documentation audit and the full test suite still run at the end. A review policy you pass in the prompt overrides this setting. Until you opt in, reviews stay on the standard path.
+
+- **A single recommended, reversible fix-scope choice can proceed without waiting.** The receipt lists each one as `Auto-chosen (veto by replying on this PR): ...`. Reply on the PR to choose another offered option, or to hold. Questions about scope, spend, security, required testing, Greptile, CI, or a stopped review still wait for you.
+
+- **A review shows elapsed time and stops when the provider keeps failing.** Status lines count wall-clock time from the start. After three provider failures, or 15 minutes of them, preparation stops, says why, and tells you how to resume. It does not mark the PR ready.
+
+- **On a host that limits how long a subagent wait can block, a timed-out reviewer is still running.** The workflow does not start a second copy of that reviewer. Red Team runs on the first cycle only.
+
+### Changed
+
+- **`/review-and-prep` reads a linked doc by the section the step names.** It no longer reads `docs/telemetry.md` and `docs/workflow-handoffs.md` from start to end when a step starts. The receipt still publishes the review default and each auto-chosen line so a caller can show them. Those lines do not authorize a stage or a merge.
+
 ## [0.41.1.0] - 2026-10-22
 
 ### Fixed
