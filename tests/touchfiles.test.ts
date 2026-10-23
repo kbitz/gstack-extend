@@ -30,7 +30,7 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 
@@ -558,6 +558,91 @@ describe('pregate dependencies', () => {
     }
     expect(deps['skills/roadmap.md']).toEqual(declaredConsumers('skills/roadmap.md').filter(t => MANUAL_TOUCHFILES[t]!.includes('skills/roadmap.md')));
   });
+
+  // Value: protects=an owned glob listed as [] stays filled from the map; a non-array value and a missing dependencies key are ignored;
+  //   fails_when=sync copies [] over a mapped glob, keeps a non-array previous value, or drops the map when dependencies is absent;
+  //   why_new=the existing pregate test only keeps an unowned [] and drops a stale non-empty list; seam=none;
+  //   no_claim=the CLI exit code and whether the file is written (syncedPregateConfig text only).
+  test('an owned empty glob stays filled from the map, and a non-array or missing dependencies key is ignored', () => {
+    const owned = 'skills/roadmap.md';
+    const kept = 'docs/notes/**';
+    const map = pregateDependencies();
+    expect(map[owned]!.length).toBeGreaterThan(0);
+    const deps: Record<string, string[]> = { ...map, [kept]: [] };
+    const sorted = Object.fromEntries(Object.keys(deps).sort().map(glob => [glob, deps[glob]!]));
+    const merged = JSON.stringify({ runner: 'x {files}', dependencies: sorted }, null, 2) + '\n';
+    const withPrevious = JSON.stringify({
+      runner: 'x {files}',
+      dependencies: { [owned]: [], [kept]: [], 'not-a-list': 'nope', 'also-bad': { a: 1 }, 'null-bad': null },
+    });
+    expect(syncedPregateConfig(withPrevious)).toBe(merged);
+    const mapOnly = JSON.stringify({ runner: 'x', dependencies: map }, null, 2) + '\n';
+    expect(syncedPregateConfig(JSON.stringify({ runner: 'x' }))).toBe(mapOnly);
+    expect(syncedPregateConfig(JSON.stringify({ runner: 'x', dependencies: null }))).toBe(mapOnly);
+  });
+
+  // Value: protects=--check exits 1 and writes nothing when regenerated text differs, exits 0 when it matches, and a normal run writes only when the text changes;
+  //   fails_when=--check rewrites the file or exits 0 while stale, or a normal run writes when the text is already current;
+  //   why_new=the unit comparison never spawns the CLI, so the exit status and the write guard stay untested; seam=none;
+  //   no_claim=which dependency edges are correct (syncedPregateConfig is the text oracle).
+  test('the sync CLI --check exits without writing, and a normal run writes only when the text changes', () => {
+    const checkout = join(REPO_ROOT, PREGATE_CONFIG);
+    const checkoutBefore = readFileSync(checkout, 'utf8');
+    const base = makeBaseTmp('pregate-sync-');
+    try {
+      // The CLI roots itself at the script file, so the copy's repo is this temp tree.
+      const root = join(base, 'repo');
+      mkdirSync(join(root, 'scripts'), { recursive: true });
+      mkdirSync(join(root, 'tests/helpers'), { recursive: true });
+      mkdirSync(join(root, '.gstack'), { recursive: true });
+      const script = join(root, 'scripts/sync-pregate-deps.ts');
+      copyFileSync(join(REPO_ROOT, 'scripts/sync-pregate-deps.ts'), script);
+      copyFileSync(join(REPO_ROOT, 'tests/helpers/touchfiles.ts'), join(root, 'tests/helpers/touchfiles.ts'));
+      const config = join(root, PREGATE_CONFIG);
+      const stale = JSON.stringify({
+        runner: 'keep',
+        dependencies: { 'docs/notes/**': [], 'skills/roadmap.md': [], 'stale/glob': ['tests/gone.test.ts'] },
+      }, null, 2) + '\n';
+      writeFileSync(config, stale);
+      const run = (args: string[]) => spawnSync(
+        'bun',
+        ['--no-env-file', '--no-install', '--config=/dev/null', script, ...args],
+        { encoding: 'utf8', cwd: root },
+      );
+
+      const check = run(['--check']);
+      expect(check.status).toBe(1);
+      expect(check.stdout).toBe('');
+      expect(check.stderr).toBe(`${PREGATE_CONFIG} is out of date; run: bun scripts/sync-pregate-deps.ts\n`);
+      expect(readFileSync(config, 'utf8')).toBe(stale);
+
+      const wrote = run([]);
+      const next = syncedPregateConfig(stale);
+      expect(wrote.status).toBe(0);
+      expect(wrote.stderr).toBe('');
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(wrote.stdout).toBe(`${PREGATE_CONFIG}: ${Object.keys(JSON.parse(next).dependencies).length} dependency globs\n`);
+
+      const frozen = new Date('2020-01-01T00:00:00.000Z');
+      utimesSync(config, frozen, frozen);
+      const same = run([]);
+      expect(same.status).toBe(0);
+      expect(same.stderr).toBe('');
+      expect(same.stdout).toBe(wrote.stdout);
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(statSync(config).mtimeMs).toBe(frozen.getTime());
+
+      const fresh = run(['--check']);
+      expect(fresh.status).toBe(0);
+      expect(fresh.stdout).toBe('');
+      expect(fresh.stderr).toBe('');
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(statSync(config).mtimeMs).toBe(frozen.getTime());
+    } finally {
+      if (readFileSync(checkout, 'utf8') !== checkoutBefore) writeFileSync(checkout, checkoutBefore);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── Wrapper E2E (planWrapperAction in fixture repos) ───────────────────
@@ -730,6 +815,72 @@ describe('wrapper E2E', () => {
     expect(filtered.report.ran).toEqual([]);
     expect(filtered.report.notes[0]).toContain('not only test file paths');
   });
+
+  // Value: protects=an unmapped change is reported as mode all with one shared reason, not a select report whose why strings are empty;
+  //   fails_when=planWrapperAction treats no-match-fallback as a diff selection and emits blank hit reasons;
+  //   why_new=computeTestSelection covers the no-match reason, but not the wrapper report mode or its lines; seam=none;
+  //   no_claim=a caller file list on that same diff (bare run only).
+  test('S12 an unmapped change runs every test with one reason, not a select report of empty whys', () => {
+    const repo = featureRepo({ 'notes/stray.txt': 'old\n' }, { 'notes/stray.txt': 'new\n' });
+    const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
+    expect(action.kind).toBe('all');
+    if (action.kind === 'all') expect(action.reason).toBe('no-match-fallback');
+    expect(action.report.mode).toBe('all');
+    expect(action.report.skipped).toEqual([]);
+    expect(action.report.ran).toEqual([
+      { file: 'tests/a.test.ts', why: 'no test depends on the changed files, so every test runs' },
+      { file: 'tests/b.test.ts', why: 'no test depends on the changed files, so every test runs' },
+    ]);
+    expect(reportLines(action.report)).toEqual([
+      'base main; 1 changed file(s): notes/stray.txt',
+      'ran all 2 test file(s): no test depends on the changed files, so every test runs',
+    ]);
+  });
+
+  // Value: protects=a partial file list says the diff would run every test for an empty, global, or no-match diff, and does not call omitted files diff hits;
+  //   fails_when=those runs drop the run-all note or mark a skipped file as selected by the diff;
+  //   why_new=S11 only covers a real diff hit the caller left out; seam=none;
+  //   no_claim=the bare-run mode-all report for an unmapped change (caller file list only).
+  test('S13 a caller file list says when the diff would run every test, and does not call omitted files diff hits', () => {
+    const requested = [{ file: 'tests/a.test.ts', why: 'requested by the caller' }];
+    const omitted = { file: 'tests/b.test.ts', why: 'not requested by the caller' };
+
+    const empty = makeEmptyRepo(baseTmp);
+    seedMinimalProject(empty);
+    spawnSync('git', ['-C', empty, 'add', '-A'], { encoding: 'utf8' });
+    spawnSync('git', ['-C', empty, 'commit', '--amend', '--no-edit', '--quiet'], { encoding: 'utf8' });
+    const emptyAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: empty });
+    expect(emptyAction.kind).toBe('argv');
+    if (emptyAction.kind === 'argv') expect(emptyAction.args).toEqual(['tests/a.test.ts']);
+    expect(emptyAction.report.mode).toBe('argv');
+    expect(emptyAction.report.ran).toEqual(requested);
+    expect(emptyAction.report.skipped).toEqual([omitted]);
+    expect(emptyAction.report.notes).toEqual(['the diff selection would run every test file (empty-diff)']);
+
+    const globalRepo = featureRepo(RELEASE_SEED, {
+      'package.json': '{"name":"fixture","version":"0","devDependencies":{"left-pad":"1.0.0"}}\n',
+    });
+    const globalAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: globalRepo });
+    expect(globalAction.kind).toBe('argv');
+    expect(globalAction.report.mode).toBe('argv');
+    expect(globalAction.report.ran).toEqual(requested);
+    expect(globalAction.report.skipped).toEqual([
+      omitted,
+      { file: 'tests/release-manifest.test.ts', why: 'not requested by the caller' },
+    ]);
+    expect(globalAction.report.notes).toEqual([
+      'package.json: more than its version field changed, so it is a global input',
+      'the diff selection would run every test file (global: package.json matches package.json)',
+    ]);
+
+    const unmatched = featureRepo({ 'notes/stray.txt': 'old\n' }, { 'notes/stray.txt': 'new\n' });
+    const unmatchedAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: unmatched });
+    expect(unmatchedAction.kind).toBe('argv');
+    expect(unmatchedAction.report.mode).toBe('argv');
+    expect(unmatchedAction.report.ran).toEqual(requested);
+    expect(unmatchedAction.report.skipped).toEqual([omitted]);
+    expect(unmatchedAction.report.notes).toEqual(['the diff selection would run every test file (no-match-fallback)']);
+  });
 });
 
 describe('selection report', () => {
@@ -778,6 +929,55 @@ describe('selection report', () => {
     const skipped = action.report.skipped.map(e => e.file);
     expect(ran.filter(f => skipped.includes(f))).toEqual([]);
     expect([...ran, ...skipped].sort()).toEqual(listTestFiles(REPO_ROOT));
+  });
+
+  // Value: protects=the process writes TEST_SELECTION_OUT when set, skips a blank value, and logs an unwritable path without failing the run;
+  //   fails_when=a blank value is written, a good path is skipped, or an unwritable path makes the process exit non-zero;
+  //   why_new=writeReport is unit-tested; the entry env gate and its log-and-continue path are not; seam=none;
+  //   no_claim=a diff-selection JSON body (the spawn argv is not a test-file list).
+  test('the process writes TEST_SELECTION_OUT, skips a blank value, and logs an unwritable path without failing', () => {
+    const script = join(REPO_ROOT, 'scripts/select-tests.ts');
+    const cwd = join(baseTmp, 'process-cwd');
+    mkdirSync(cwd);
+    const spawn = (selectionOut: string) => spawnSync(
+      'bun',
+      ['--no-env-file', '--no-install', '--config=/dev/null', script, '--help'],
+      { encoding: 'utf8', cwd, env: { ...process.env, TEST_SELECTION_OUT: selectionOut } },
+    );
+    const out = join(baseTmp, 'process-out', 'selection.json');
+    const wrote = spawn(out);
+    expect(wrote.status).toBe(0);
+    expect(wrote.stdout).toContain('Usage: bun test');
+    expect(wrote.stderr).toContain(`[select-tests] report: ${out}`);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({
+      schema: REPORT_SCHEMA,
+      mode: 'argv',
+      reason: 'argv',
+      base: null,
+      changed: [],
+      notes: ['the arguments are not only test file paths, so the run is not reported file by file'],
+      total: listTestFiles(REPO_ROOT).length,
+      ran: [],
+      skipped: [],
+    });
+
+    for (const blank of ['', '   ']) {
+      const skippedWrite = spawn(blank);
+      expect(skippedWrite.status).toBe(0);
+      expect(skippedWrite.stdout).toContain('Usage: bun test');
+      expect(skippedWrite.stderr).not.toContain('[select-tests] report:');
+      expect(skippedWrite.stderr).not.toContain('report not written');
+    }
+    expect(existsSync(join(cwd, '   '))).toBe(false);
+
+    const blocked = join(baseTmp, 'process-not-a-dir');
+    writeFileSync(blocked, 'x');
+    const bad = join(blocked, 'selection.json');
+    const failed = spawn(bad);
+    expect(failed.status).toBe(0);
+    expect(failed.stdout).toContain('Usage: bun test');
+    expect(failed.stderr).toContain(`[select-tests] report not written to ${bad}:`);
+    expect(existsSync(bad)).toBe(false);
   });
 });
 

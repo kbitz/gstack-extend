@@ -111,7 +111,8 @@ on the head it hands off. For a code PR (not the prose-only profile) whose
 prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes
 a release-only path: it reuses the fresh test
 evidence and those audits, writes only the version, CHANGELOG entry and PR
-receipt, and hands a finding that needs any other change back to
+receipt, then runs the tests that release metadata selects (the full suite
+instead when `full-suite=final` is in force), and hands a finding that needs any other change back to
 `/review-and-prep`. `/ship-and-land --no-land` stops at the merge gate and
 ends by asking whether to land: it names the head and what landing would ask
 you to accept, such as no CI, and gives the command that starts the landing run,
@@ -182,7 +183,8 @@ bun run test        # Select tests from the committed diff against the base bran
 bun run test:full   # Run all tests, including checks for uncommitted changes
 ```
 
-`bun run test` prints which test files it ran and skipped, and why. Editing one
+`bun run test` prints which test files it ran and skipped, and why. A run of
+every file prints that reason once. Editing one
 skill runs that skill's tests plus the shared skill rules. A release commit
 (VERSION, CHANGELOG.md, package.json's version) runs the release and manifest
 checks. Any other `package.json` change still runs everything.
