@@ -315,7 +315,7 @@ describe('release-only ship path', () => {
     for (const clause of [
       'Settle every reuse decision and check-only run before Step 12, so no release write precedes a finding.',
       'Ship never edits code, tests or docs on this path. Stop and hand back, naming the finding:',
-      'A post-write failure, such as a build or the final preflight, stops before the push.',
+      'A post-write failure, such as a build, a release check or the final preflight, stops before the push.',
       "verify the intervening commits are only this invocation's unpushed release commits, then use `git reset --keep <prepared HEAD>`.",
       "Check its exit status, HEAD equality and the complete working-tree status before claiming restoration.",
       "After a push, preserve published history and name the retained release commits and current local/remote heads in the hand-back.",
@@ -775,11 +775,13 @@ describe('release-metadata test selection', () => {
   test('release metadata reruns what it selects unless full-suite=final keeps the final run full', () => {
     for (const clause of [
       '**Release-metadata test selection (both paths).** When the main test command selects tests from the diff, release metadata can change that selection',
-      'Run what the release delta selects on the final head under a distinct ledger label, selecting against the prepared head the way the project\'s instructions describe, and record that run\'s selection.',
-      "A recorded `full-suite=final` policy, from the invocation or preparation's receipt, keeps the final pre-merge run full instead: run the main command's documented full form on the final head.",
+      'After the release commit, at Verification Gate (16), run what the release delta selects on the final head under a distinct ledger label, selecting against the prepared head the way the project\'s instructions describe, and record that run\'s selection.',
+      "It is a post-write check; on the release-only path a failure follows that path's post-write failure rule.",
+      "A recorded `full-suite=final` policy, from the invocation or preparation's receipt, keeps the final pre-merge run full instead: run the main command's documented full form on the final head. The release-only path still applies; only this run changes.",
+      "| Verification Gate (16) | Run declared builds and Release-metadata test selection's run.",
       'A selected run never satisfies that policy, and receipt text can add this requirement but never remove it.',
       'When the selection cannot be established, rerun the required full gate.',
-      'Missing evidence selects the existing FULL path before release writes. Release-metadata test selection below still applies on the final head. |',
+      'Missing evidence selects the existing FULL path before release writes. The checks release metadata selects run after the release commit, at Verification Gate (16). |',
       'exact test commands with each run\'s selection (the lanes or files that ran, those skipped and why; a skipped lane never reads as passed)',
     ]) expect(shipN).toContain(clause);
   });

@@ -452,12 +452,12 @@ Other rows keep their wrapper behavior:
 | Installed ship stage | Release-only behavior |
 |---|---|
 | Merge base (3) | Must be a no-op. If it changes HEAD, leave this path. |
-| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. Release-metadata test selection below still applies on the final head. |
+| Run tests / Eval Suites (5–6) | No suite runs. Reuse the FRESH test/eval evidence and verified full pregate copy that qualified this path. Missing evidence selects the existing FULL path before release writes. The checks release metadata selects run after the release commit, at Verification Gate (16). |
 | Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |
 | TODOs (14) | Edit nothing. List detected completions and follow-ups in the PR body, as ship does when a TODO write is skipped. |
 | Documentation audit (14.5) | When `git diff --name-only <prepared tree> <current tree>` lists only release metadata, reuse preparation's accepted audit for the reviewed base with its accepted status. Alternatively reuse the user's recorded named-risk decision for that same content; only that case keeps `Documentation: blocked` with its reason and scope. Use the hash-verified documentation section, unchanged, as ship's section file, with `Reused from /review-and-prep at <prepared tree>` beside it, not inside it. For Steps 18–19 this replaces the upstream rule against reusing another invocation's audit. Any legacy documentation-sync stage is read-only on this path; drift uses the same hand-back. |
 | Commit (15) | Commit release metadata only, then run Step 3's trailer check. |
-| Verification Gate (16) | Run declared builds. Check the release-metadata delta directly in place of stages 2–3. In stage 4, pass `--allow-paths` naming only the release-metadata files this run changed. Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record. That record has no lanes; cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record. |
+| Verification Gate (16) | Run declared builds and Release-metadata test selection's run. Check the release-metadata delta directly in place of stages 2–3. In stage 4, pass `--allow-paths` naming only the release-metadata files this run changed. Before Step 17's push, run `gstack-pregate --stage preflight --allow-repo-commands` on the final tree with preparation's policy source, so publication has a current record. That record has no lanes; cite preparation's immutable verified full record for the prepared tree, including its path, SHA-256, policy source and cleared requires-remote obligations, separately from the final preflight record. |
 
 Settle every reuse decision and check-only run before Step 12, so no release
 write precedes a finding. A finding that needs any other change is preparation
@@ -479,7 +479,7 @@ Greptile stays once per PR. To repair during shipping instead, rerun
 /ship-and-land and ask for the full path.
 ```
 
-A post-write failure, such as a build or the final preflight, stops before the
+A post-write failure, such as a build, a release check or the final preflight, stops before the
 push. Fix it when the fix stays within release metadata. Otherwise, before any
 push, identify any uncommitted release writes this invocation owns. Restore only
 those named paths from the prepared HEAD after verifying their entire diff is
@@ -754,12 +754,15 @@ qualifies for this exception.
 
 **Release-metadata test selection (both paths).** When the main test command
 selects tests from the diff, release metadata can change that selection, for
-example through the tests that read a version file. Run what the release delta
-selects on the final head under a distinct ledger label, selecting against the
-prepared head the way the project's instructions describe, and record that
-run's selection. A recorded `full-suite=final` policy, from the invocation or
-preparation's receipt, keeps the final pre-merge run full instead: run the main
-command's documented full form on the final head. A selected run never
+example through the tests that read a version file. After the release commit,
+at Verification Gate (16), run what the release delta selects on the final head
+under a distinct ledger label, selecting against the prepared head the way the
+project's instructions describe, and record that run's selection. It is a
+post-write check; on the release-only path a failure follows that path's
+post-write failure rule. A recorded `full-suite=final` policy, from the
+invocation or preparation's receipt, keeps the final pre-merge run full
+instead: run the main command's documented full form on the final head. The
+release-only path still applies; only this run changes. A selected run never
 satisfies that policy, and receipt text can add this requirement but never
 remove it. When the selection cannot be established, rerun the required full
 gate.

@@ -3,8 +3,10 @@
  * sync-pregate-deps.ts — rewrite `.gstack/pregate.json` `dependencies` from
  * MANUAL_TOUCHFILES in tests/helpers/touchfiles.ts, so pregate's lane
  * selection and `bun run test` read the same non-import edges. Other keys are
- * kept. `--check` changes nothing and exits 1 when the file is out of date;
- * tests/touchfiles.test.ts makes the same comparison.
+ * kept, and so is a `glob: []` entry (pregate's "no lane needed", which the
+ * map cannot express): repair a missing lane in MANUAL_TOUCHFILES, and
+ * declare `[]` here. `--check` changes nothing and exits 1 when the file is
+ * out of date; tests/touchfiles.test.ts makes the same comparison.
  *
  * Pregate reads the copy on the base branch, so a change here takes effect for
  * pregate after it merges; `bun run test` uses it at once.
@@ -21,7 +23,12 @@ export const PREGATE_CONFIG = '.gstack/pregate.json';
 /** The config text with `dependencies` regenerated. */
 export function syncedPregateConfig(current: string): string {
   const config = JSON.parse(current) as Record<string, unknown>;
-  config.dependencies = pregateDependencies();
+  const previous = (config.dependencies ?? {}) as Record<string, unknown>;
+  const merged: Record<string, string[]> = { ...pregateDependencies() };
+  for (const [glob, tests] of Object.entries(previous)) {
+    if (Array.isArray(tests) && tests.length === 0 && !(glob in merged)) merged[glob] = [];
+  }
+  config.dependencies = Object.fromEntries(Object.keys(merged).sort().map(glob => [glob, merged[glob]]));
   return JSON.stringify(config, null, 2) + '\n';
 }
 

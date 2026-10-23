@@ -411,13 +411,31 @@ function declaredConsumers(file: string): string[] {
     .sort();
 }
 
+/** The skill-path spellings a split suite may use; each names one skill. */
+const SKILL_PATH_FORMS = [
+  /join\(ROOT, (['"])skills\1, (['"])(?<name>[a-z-]+)\.md\2\)/g,
+  /(['"])skills\/(?<name>[a-z-]+)\.md\1/g,
+  /resolverSkillText\((['"])(?<name>[a-z-]+)\1\)/g,
+];
+
 /** Skill names a split suite reads, from the path forms the suites use. */
 function namedSkills(source: string): string[] {
   const names = new Set<string>();
-  for (const m of source.matchAll(/join\(ROOT, 'skills', '([a-z-]+)\.md'\)/g)) names.add(m[1]!);
-  for (const m of source.matchAll(/'skills\/([a-z-]+)\.md'/g)) names.add(m[1]!);
-  for (const m of source.matchAll(/resolverSkillText\('([a-z-]+)'\)/g)) names.add(m[1]!);
+  for (const form of SKILL_PATH_FORMS) for (const m of source.matchAll(form)) names.add(m.groups!.name!);
   return [...names].sort();
+}
+
+/**
+ * Skill references outside SKILL_PATH_FORMS: a `skills` path segment
+ * (`'skills'`, `"skills/" + name`, a template literal, a directory listing) or
+ * resolverSkillText with a computed argument. Each can read a skill the
+ * suite does not declare.
+ */
+function computedSkillReads(source: string): string[] {
+  let rest = source;
+  for (const form of SKILL_PATH_FORMS) rest = rest.replace(form, '');
+  const hits = [...rest.matchAll(/(['"`])skills(?:\1|\/)|resolverSkillText\(/g)];
+  return hits.map(m => rest.slice(Math.max(0, m.index! - 30), m.index! + 30).replace(/\s+/g, ' '));
 }
 
 describe('per-skill selection', () => {
@@ -453,6 +471,26 @@ describe('per-skill selection', () => {
     expect(roadmap).toEqual(['tests/skill-protocols-project-spec.test.ts', 'tests/skill-protocols-roadmap.test.ts', SHARED_SUITE]);
   });
 
+  test('the read lint names literal skill paths and flags every computed one', () => {
+    const literal = [
+      "join(ROOT, 'skills', 'roadmap.md')",
+      'join(ROOT, "skills", "implement.md")',
+      "read('skills/pair-review.md')",
+      'read("skills/full-review.md")',
+      "resolverSkillText('ship-and-land')",
+    ].join(';\n');
+    expect(namedSkills(literal)).toEqual(['full-review', 'implement', 'pair-review', 'roadmap', 'ship-and-land']);
+    expect(computedSkillReads(literal)).toEqual([]);
+    for (const computed of [
+      "readdirSync(join(ROOT, 'skills'))",
+      'join(ROOT, "skills", file)',
+      "join(ROOT, 'skills', `${name}.md`)",
+      "'skills/' + name + '.md'",
+      'readFileSync(`skills/${name}.md`)',
+      'resolverSkillText(name)',
+    ]) expect([computed, computedSkillReads(computed).length]).toEqual([computed, 1]);
+  });
+
   test('each split suite declares exactly the skill files it names, and none reads a skill by a computed path', () => {
     const problems: string[] = [];
     for (const t of [...splitSuites, SHARED_SUITE]) {
@@ -462,7 +500,7 @@ describe('per-skill selection', () => {
         if (!declared.includes('skills/**')) problems.push(`${t}: must declare skills/**`);
         continue;
       }
-      if (/'skills', `|skills\/\$\{/.test(source)) problems.push(`${t}: reads a skill through a computed path; move the test to ${SHARED_SUITE} or name the file`);
+      for (const hit of computedSkillReads(source)) problems.push(`${t}: reads a skill through a computed path (…${hit}…); name the file, or move the test to ${SHARED_SUITE}`);
       const named = namedSkills(source).map(n => `skills/${n}.md`);
       const missing = named.filter(f => !declared.some(g => matchGlob(f, g)));
       const stale = declared.filter(g => !named.some(f => matchGlob(f, g)));
@@ -500,6 +538,15 @@ describe('release selection', () => {
 });
 
 describe('pregate dependencies', () => {
+  test('the sync keeps a no-lane-needed [] entry and replaces every other edge from the map', () => {
+    const current = JSON.stringify({ runner: 'x {files}', dependencies: { 'docs/notes/**': [], 'stale/glob': ['tests/gone.test.ts'] } });
+    const deps = JSON.parse(syncedPregateConfig(current)).dependencies as Record<string, string[]>;
+    expect(deps['docs/notes/**']).toEqual([]);
+    expect(deps['stale/glob']).toBeUndefined();
+    expect(deps['skills/roadmap.md']).toEqual(pregateDependencies()['skills/roadmap.md']);
+    expect(Object.keys(deps)).toEqual([...Object.keys(deps)].sort());
+  });
+
   test(`${PREGATE_CONFIG} dependencies are MANUAL_TOUCHFILES inverted`, () => {
     const current = readFileSync(join(REPO_ROOT, PREGATE_CONFIG), 'utf8');
     // Out of date: run `bun scripts/sync-pregate-deps.ts`.
@@ -633,7 +680,7 @@ describe('wrapper E2E', () => {
     const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
     expect(action.kind).toBe('select');
     if (action.kind === 'select') expect(action.selected).toEqual(['tests/release-manifest.test.ts']);
-    expect(action.report.notes).toContain('package.json: only its version field changed, so it selects the tests that declare it');
+    expect(action.report.notes).toContain('package.json: only its version field changed, so it is not a global input');
     expect(action.report.ran).toEqual([{ file: 'tests/release-manifest.test.ts', why: 'CHANGELOG.md (declared CHANGELOG.md); VERSION (declared VERSION); package.json (declared package.json)' }]);
     expect(action.report.skipped.map(e => e.file)).toEqual(['tests/a.test.ts', 'tests/b.test.ts']);
   });
@@ -718,6 +765,10 @@ describe('selection report', () => {
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(sample);
     writeFileSync(join(baseTmp, 'file'), 'x');
     expect(writeReport(sample, join(baseTmp, 'file', 'selection.json'))).toBeString();
+    // A failed rename (the target is a directory) leaves no temp file beside it.
+    mkdirSync(join(baseTmp, 'taken.json'));
+    expect(writeReport(sample, join(baseTmp, 'taken.json'))).toBeString();
+    expect(readdirSync(baseTmp).filter(n => n.includes('.tmp-'))).toEqual([]);
   });
 
   test('ran and skipped partition the test files; nothing skipped is listed as ran', () => {

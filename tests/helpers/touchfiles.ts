@@ -108,7 +108,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // that read it (layout-scaffold, autoplan-lean, merge-gate, setup-hosts,
   // workflow-metrics) only echo it back: full runs on 2026-10-23 with VERSION
   // set to `not-a-version` or to the next release failed only the telemetry
-  // suites. Only package.json's version can change without selecting every
+  // suites; rerun that probe when VERSION's format changes (SPEC's three-part
+  // transition). Only package.json's version can change without selecting every
   // test, so only suites that read that field declare package.json.
   'tests/release-manifest.test.ts': [
     'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml',

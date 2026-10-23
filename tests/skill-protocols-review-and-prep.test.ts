@@ -1056,7 +1056,7 @@ describe('test selection in the receipt', () => {
     for (const clause of [
       'For each test run, include a `Test selection:` line from the runner\'s or pregate\'s selection report when one is printed: the lanes or test files that ran, those skipped and why, and whether the run was the full suite.',
       'A skipped lane reads `skipped — <reason>`, never passed, and a selected run is never reported as the full suite.',
-      'A run that selects tests from the diff is not the full suite; `/ship-and-land` keeps the final pre-merge run full under this policy.',
+      'That main-suite run may be a diff selection, which is not the full suite: under this policy `/ship-and-land` runs the full suite once on the final head before merge.',
     ]) expect(prepN).toContain(clause);
   });
 });

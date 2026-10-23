@@ -648,8 +648,9 @@ A caller may pre-approve review choices with one line in the invocation prompt:
   re-audit once, after the last fix batch and before Step 6, never after each
   batch and never a third attempt. `full-suite=final` runs targeted lanes
   between fix batches and the pregate and main suite once on the final content.
-  A run that selects tests from the diff is not the full suite; `/ship-and-land`
-  keeps the final pre-merge run full under this policy.
+  That main-suite run may be a diff selection, which is not the full suite:
+  under this policy `/ship-and-land` runs the full suite once on the final head
+  before merge.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless

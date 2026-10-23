@@ -31,7 +31,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import {
@@ -100,7 +100,7 @@ function diffSelection(env: NodeJS.ProcessEnv, cwd: string, testFiles: string[])
   if (changed.includes(PACKAGE_JSON)) {
     packageJsonVersionOnly = packageJsonChange(base, cwd) === 'version-only';
     notes.push(packageJsonVersionOnly
-      ? `${PACKAGE_JSON}: only its version field changed, so it selects the tests that declare it`
+      ? `${PACKAGE_JSON}: only its version field changed, so it is not a global input`
       : `${PACKAGE_JSON}: more than its version field changed, so it is a global input`);
   }
   const sel = computeTestSelection(changed, testFiles, { repoRoot: cwd, packageJsonVersionOnly });
@@ -216,14 +216,16 @@ export function reportLines(r: SelectionReport): string[] {
 
 /** Write the JSON report atomically; a failed write warns and never fails the run. */
 export function writeReport(r: SelectionReport, path: string): string | null {
+  const target = resolve(path);
+  const tmp = `${target}.tmp-${process.pid}`;
   try {
-    const target = resolve(path);
     mkdirSync(dirname(target), { recursive: true });
-    const tmp = `${target}.tmp-${process.pid}`;
     writeFileSync(tmp, JSON.stringify(r, null, 2) + '\n');
     renameSync(tmp, target);
     return null;
   } catch (e) {
+    // Leave nothing behind: a stray temp file inside the checkout would dirty the tested tree.
+    try { rmSync(tmp, { force: true }); } catch { /* best effort */ }
     return (e as Error).message;
   }
 }
