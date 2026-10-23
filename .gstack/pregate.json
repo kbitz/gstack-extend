@@ -14,16 +14,9 @@
       "tests/handoff-contract.test.ts"
     ],
     "VERSION": [
-      "tests/autoplan-lean-history.test.ts",
-      "tests/autoplan-lean.test.ts",
-      "tests/layout-scaffold.test.ts",
-      "tests/merge-gate-review-regressions.test.ts",
-      "tests/merge-gate.test.ts",
       "tests/release-manifest.test.ts",
-      "tests/setup-hosts.test.ts",
       "tests/telemetry-contract.test.ts",
-      "tests/telemetry.test.ts",
-      "tests/workflow-metrics.test.ts"
+      "tests/telemetry.test.ts"
     ],
     "bin/autoplan-lean": [
       "tests/autoplan-lean-history.test.ts",
@@ -213,7 +206,6 @@
       "tests/update.test.ts"
     ],
     "package.json": [
-      "tests/layout-scaffold.test.ts",
       "tests/release-manifest.test.ts"
     ],
     "scripts/extract-changelog-section.sh": [

@@ -93,27 +93,30 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
   'tests/layout-scaffold.test.ts': [
-    'bin/layout-scaffold', 'src/layout-scaffold/**', 'VERSION',
+    'bin/layout-scaffold', 'src/layout-scaffold/**',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',
-    // Its Bun-floor lock reads package.json's engines.bun.
-    'package.json',
   ],
   'tests/autoplan-lean.test.ts': [
-    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**', 'VERSION',
+    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**',
   ],
   'tests/autoplan-lean-history.test.ts': [
-    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**', 'VERSION',
+    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**',
   ],
   // The release and manifest checks: what a release commit (VERSION, the
   // CHANGELOG entry and package.json's version field) can break on its own.
+  // Only this suite and the two telemetry suites declare VERSION. The others
+  // that read it (layout-scaffold, autoplan-lean, merge-gate, setup-hosts,
+  // workflow-metrics) only echo it back: full runs on 2026-10-23 with VERSION
+  // set to `not-a-version` or to the next release failed only the telemetry
+  // suites. Only package.json's version can change without selecting every
+  // test, so only suites that read that field declare package.json.
   'tests/release-manifest.test.ts': [
     'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml',
   ],
   'tests/docs-ship.test.ts': [
     'bin/docs-ship', skill('docs-ship'), 'docs/docs-ship.md', skill('roadmap'), skill('project-spec'),
   ],
-  'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md', 'VERSION'],
-  'tests/merge-gate-review-regressions.test.ts': ['VERSION'],
+  'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md'],
   'tests/quota.test.ts': [
     'bin/gstack-extend', 'bin/lib/quota-cli.py', 'bin/lib/quota/**',
     'bin/lib/telemetry*.py', 'tests/quota_cases.py', 'tests/fixtures/quota/**',
@@ -251,8 +254,6 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/config',
     'bin/lib/semver.sh',
     'docs/installation.md',
-    // The update-check fixtures serve the checkout's own VERSION as the remote one.
-    'VERSION',
   ],
   'tests/lib-install-safety.test.ts': ['bin/lib/install-safety.sh'],
   'tests/setup-init-wire.test.ts': [
@@ -322,7 +323,6 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/telemetry.md',
     skill('review-and-prep'),
     skill('ship-and-land'),
-    'VERSION',
   ],
   // The selection suite checks the pregate copy of this map and each split
   // protocol suite's declared skill reads against its source.

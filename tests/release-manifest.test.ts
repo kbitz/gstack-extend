@@ -2,9 +2,9 @@
  * release-manifest.test.ts — the release and manifest checks.
  *
  * A release commit changes VERSION, the CHANGELOG entry and package.json's
- * version field. Diff selection runs this suite (plus the suites that read
- * VERSION or package.json) for such a commit instead of the whole suite, so
- * it pins what those three files must agree on:
+ * version field. Diff selection runs this suite (plus the two telemetry
+ * suites, which validate VERSION's format) for such a commit instead of the
+ * whole suite, so it pins what those three files must agree on:
  *
  *   - VERSION matches the format the auto-tag workflow accepts;
  *   - package.json's version is VERSION's MAJOR.MINOR.PATCH;
