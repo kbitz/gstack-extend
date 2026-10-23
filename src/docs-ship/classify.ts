@@ -56,6 +56,7 @@ export function versionOf(heading: string): string | undefined {
 }
 
 type Section = { title: string; version?: string };
+const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 
 /** Release sections retain their nested non-version subheadings. */
 function sectionsByLine(text: string): (Section | undefined)[] {
@@ -63,7 +64,7 @@ function sectionsByLine(text: string): (Section | undefined)[] {
   let current: Section | undefined;
   let level = 2;
   for (const line of text.split('\n')) {
-    const h = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    const h = HEADING.exec(line);
     if (h && (versionOf(h[2]!) || h[1]!.length <= level)) {
       current = { title: h[2]!, version: versionOf(h[2]!) };
       level = h[1]!.length;
@@ -73,10 +74,14 @@ function sectionsByLine(text: string): (Section | undefined)[] {
   return out;
 }
 
-function versionHeadings(text: string): Set<string> {
-  const set = new Set<string>();
-  for (const s of sectionsByLine(text)) if (s?.version) set.add(s.version);
-  return set;
+function versionHeadings(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const line of text.split('\n')) {
+    const h = HEADING.exec(line);
+    const version = h && versionOf(h[2]!);
+    if (version) counts.set(version, (counts.get(version) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function changelog(git: Git, from: string, to: string, change: Change, findings: ReleaseFinding[]): FileResult {
@@ -85,7 +90,7 @@ function changelog(git: Git, from: string, to: string, change: Change, findings:
   const before = readAt(git, from, change.path) ?? '';
   const after = readAt(git, to, change.path) ?? '';
   const released = versionHeadings(before);
-  const added = [...versionHeadings(after)].filter((v) => !released.has(v));
+  const added = [...versionHeadings(after)].filter(([v, count]) => count > (released.get(v) ?? 0)).map(([v]) => v);
   if (added.length) return { ...base, kind: 'stop', reason: 'version', why: `adds version heading ${added.map((v) => `[${v}]`).join(', ')}` };
   const h = hunks(git, from, to, change.path);
   const headSections = sectionsByLine(after);
@@ -115,10 +120,9 @@ function changedLines(h: Hunks): string[] {
   return [...h.added.map((l) => l.text), ...h.removed.map((l) => l.text)];
 }
 
-function stopCategory(path: string, lines: () => string[]): { reason: Reason; why: string } {
+function stopCategory(path: string): { reason: Reason; why: string } {
   const name = basename(path);
   const segs = segments(path);
-  if (lines().some((l) => VERSION_FIELD.test(l))) return { reason: 'version', why: 'changes a version field' };
   if (TEST_NAME.test(name) || segs.some((s) => TEST_SEGMENTS.has(s))) return { reason: 'test', why: 'test file' };
   if (isBuild(path)) return { reason: 'build', why: 'build or CI file' };
   if (CODE_EXT.test(name)) return { reason: 'code', why: 'code file' };
@@ -151,7 +155,7 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
     const lines = () => (cached ??= changedLines(hunks(git, from, to, path)));
     if ([change.oldMode, change.newMode].some((m) => m === '120000' || m === '160000')) return stop('special-file', 'symlink or submodule');
     if (configPaths.has(path)) {
-      const active = (rev: string) => markersIn(readAt(git, rev, path) ?? '').map(({ key, value }) => [key, value]);
+      const active = (rev: string) => markersIn(readAt(git, rev, path) ?? '', `${rev}:${path}`).map(({ key, value }) => [key, value]);
       if (lines().some(hasMarker) || JSON.stringify(active(from)) !== JSON.stringify(active(to))) return stop('classification-config', 'changes a docs-ship marker');
     }
     if (excluded(path)) return stop('project-excluded', 'docs-ship:not-docs');
@@ -172,7 +176,7 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
       }
       return fields;
     };
-    const versionChanged = PROSE_EXT.test(path)
+    const versionChanged = IMAGE_EXT.test(path) ? false : PROSE_EXT.test(path)
       ? JSON.stringify(frontmatterVersions(from)) !== JSON.stringify(frontmatterVersions(to))
       : lines().some((line) => VERSION_FIELD.test(line));
     if (versionChanged) return stop('version', 'changes a version field');
@@ -180,7 +184,7 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
     if (isAgentInstructions(path)) return stop('agent-instructions', 'agent instructions are executable');
     if (isBuild(path)) return stop('build', 'build or CI file');
     if (isDefaultDocs(path)) return { path, status, kind: 'docs', why: 'default allowlist' };
-    const c = stopCategory(path, lines);
+    const c = stopCategory(path);
     return stop(c.reason, c.why);
   });
   return { files, findings };

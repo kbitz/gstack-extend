@@ -13,6 +13,7 @@ import { help, main, type CliIo } from '../src/docs-ship/cli.ts';
 import { bodyHash, END, REQUIRED_FIELDS, START, receiptField, upsert } from '../src/docs-ship/body.ts';
 import { MARKER_KEYS } from '../src/docs-ship/config.ts';
 import { anchors, githubSlug, linkTargets } from '../src/docs-ship/markdown.ts';
+import { expandCommand } from '../src/docs-ship/pinning.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'docs-ship-')));
@@ -127,6 +128,8 @@ describe('docs-only classification', () => {
     ['VERSION', { 'VERSION': '1.2.1\n' }, 'version'],
     ['a manifest version field', { 'package.json': '{\n  "name": "fixture",\n  "version": "1.2.1"\n}\n' }, 'version'],
     ['a new CHANGELOG version heading', { 'CHANGELOG.md': CHANGELOG.replace('## [Unreleased]\n', '## [Unreleased]\n\n## [1.2.1] - 2026-10-23\n\n- Fix.\n') }, 'version'],
+    ['a duplicate CHANGELOG version heading', { 'CHANGELOG.md': CHANGELOG + '\n## [1.2.0]\n\n- Duplicate.\n' }, 'version'],
+    ['an indented CHANGELOG version heading', { 'CHANGELOG.md': CHANGELOG + '\n   ## [2.0.0]\n\n- Release.\n' }, 'version'],
     ['a non-prose file under docs/', { 'docs/build.py': 'print(1)\n' }, 'code'],
     ['a Markdown file outside the allowlist', { 'notes/plan.md': '# Plan\n' }, 'outside-allowlist'],
   ];
@@ -222,6 +225,15 @@ describe('docs-only classification', () => {
     const out = cli(bad.dir, 'classify', '--base', bad.base);
     expect(out.code).toBe(3);
     expect(out.stderr).toContain('ERROR CONFIG_INVALID: AGENTS.md:1: docs-ship:colour is not a known key');
+    // Value: protects=ambiguous marker indentation cannot silently drop exclusions; fails_when=indented markers vanish;
+    // why_new=prior marker cases are top-level; seam=none; no_claim=full CommonMark parsing.
+    for (const prefix of ['- Exclusions:\n', 'Paragraph\n', '\n']) {
+      const indented = repo({ 'docs/other.md': '# Changed\n' }, { 'AGENTS.md': prefix + '    <!-- docs-ship:not-docs=docs/other.md -->\n' });
+      const refused = cli(indented.dir, 'classify', '--base', indented.base);
+      expect(refused.code).toBe(3);
+      expect(refused.stderr).toContain('CONFIG_INVALID');
+      expect(refused.stderr).toContain(`${git(indented.dir, 'rev-parse', indented.base).trim()}:AGENTS.md:`);
+    }
   });
 
   test('a symlink under docs/ is a special file; an empty PR is empty', () => {
@@ -253,6 +265,23 @@ describe('doc-pinning tests', () => {
     const out = cli(r.dir, 'tests', '--base', r.base);
     expect(lines(out.stdout, 'TEST').map((t) => t[0])).toEqual(['tests/app.test.ts', 'tests/guide.test.ts']);
     expect(field(out.stdout, 'COMMAND')).toBe('bun test tests/app.test.ts tests/guide.test.ts');
+  });
+
+  // Value: protects=selected paths stay literal command arguments; fails_when=quoted or repeated placeholders alter shell parsing;
+  // why_new=prior template fixtures use one ordinary path; seam=none; no_claim=runner or provider acceptance.
+  test('runner templates refuse shell contexts and preserve literal paths', () => {
+    const invalid = ['bun test "{tests}"', "bun test '{tests}'", 'bun test {tests} {tests}', 'sh -c "bun test {tests}"'];
+    for (const command of invalid) {
+      const r = repo({ 'docs/guide.md': '# Changed\n' }, { 'AGENTS.md': `<!-- docs-ship:test-command=${command} -->\n` });
+      const out = cli(r.dir, 'tests', '--base', r.base);
+      expect(out.code).toBe(3);
+      expect(out.stderr).toContain('CONFIG_INVALID');
+    }
+    const paths = ['tests/a b.test.ts', 'tests/$(printf substituted).test.ts', 'tests/$$-$&.test.ts', '-option.test.ts'];
+    const command = expandCommand('printf %s {tests}', paths);
+    const run = spawnSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe(paths.map((p) => p.startsWith('-') ? `./${p}` : p).join(''));
   });
 
   test('a change no test reads selects none', () => {
@@ -464,6 +493,34 @@ describe('GitHub anchors', () => {
 });
 
 describe('continuation review regressions', () => {
+  // Value: protects=ordinary prose and raster metadata do not imply release changes; fails_when=version words suppress a policy bump;
+  // why_new=earlier prose fixtures are allowlisted and images contain no metadata; seam=none; no_claim=all binary formats.
+  test('version-like prose and image metadata retain their actual classification', () => {
+    const r = repo({ 'notes/plan.md': '# Plan\n\nSet the version: field.\n', 'docs/image.png': '<?xml version="1.0"?>\n' });
+    const out = cli(r.dir, 'classify', '--base', r.base);
+    expect(fileLine(out.stdout, 'notes/plan.md')?.[3]).toBe('outside-allowlist');
+    expect(fileLine(out.stdout, 'docs/image.png')?.[0]).toBe('docs');
+    const before = '# Changelog\n\n   ## [1.2.0]\n\n- Shipped.\n';
+    const released = repo({ 'CHANGELOG.md': before.replace('Shipped.', 'Corrected.') }, { 'CHANGELOG.md': before });
+    expect(field(cli(released.dir, 'classify', '--base', released.base).stdout, 'RELEASE_FINDINGS')).toBe('1');
+  });
+
+  // Value: protects=ordinary HTML links receive missing-target checks; fails_when=quote style hides href or src;
+  // why_new=prior links use Markdown syntax; seam=none; no_claim=complete HTML parsing.
+  test('HTML links with either quote style or unquoted attributes are checked', () => {
+    const r = repo({ 'docs/links.md': `# Links\n\n<a href='missing.md'>missing</a>\n<img src="missing.png">\n<a href=gone.md>gone</a>\n` });
+    const out = cli(r.dir, 'check', '--base', r.base);
+    expect(field(out.stdout, 'LINKS')).toBe('3');
+    expect(lines(out.stdout, 'FINDING').map((f) => f[1])).toEqual(['link', 'link', 'link']);
+    for (const html of [
+      '<a data-href=README.md href=missing.md>open</a>',
+      '<img data-src=README.md src=missing.md>',
+      '<img src="missing.md"',
+      `<a title='example href=README.md' href=missing.md>open</a>`,
+      `<a title="a > b" href=missing.md>open</a>`,
+    ]) expect(linkTargets(html).map((l) => l.target)).toEqual(['missing.md']);
+    for (const tag of ['a-panel', 'img-preview']) expect(linkTargets(`<${tag} href=missing.md src=missing.md>`)).toEqual([]);
+  });
   // Value: protects=valid Markdown destinations and colliding headings resolve;
   // fails_when=balanced delimiters, escapes, encoded path characters or emitted slugs are lost;
   // why_new=earlier link fixtures use simple paths and identical headings; seam=none;

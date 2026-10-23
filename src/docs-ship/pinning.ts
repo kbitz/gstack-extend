@@ -7,6 +7,7 @@
 import { globMatcher } from '../merge-gate/glob.ts';
 import { shellQuote } from '../audit/lib/shell-quote.ts';
 import { readAt, Refusal, trackedFiles, type Git } from './git.ts';
+import { validTestCommand } from './config.ts';
 
 const TEST_NAME = /(\.(test|spec)\.[^/.]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const TEST_DIR = /(^|\/)(tests?|__tests__|specs?)\//;
@@ -61,5 +62,9 @@ export function selectTests(git: Git, head: string, changed: string[], configure
 }
 
 export function expandCommand(template: string, tests: string[]): string {
-  return template.replace('{tests}', tests.map((t) => (/^[\w./-]+$/.test(t) ? t : shellQuote(t))).join(' '));
+  if (!validTestCommand(template)) throw new Refusal('CONFIG_INVALID', 'unsafe docs-ship:test-command template', 'use one standalone unquoted {tests} argument; put shell syntax in a wrapper script');
+  return template.replace('{tests}', () => tests.map((t) => {
+    const path = t.startsWith('-') ? `./${t}` : t;
+    return /^[\w./-]+$/.test(path) ? path : shellQuote(path);
+  }).join(' '));
 }

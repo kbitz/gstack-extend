@@ -1373,7 +1373,7 @@ changes since the last tag (or VERSION baseline if no tags):
 | Breaking changes, public launch | MAJOR |
 | Doc-only, config, CI | None |
 
-In that fallback, if the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. The recommendation stands until /ship Step 12 confirms.
+In that fallback, if the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. `/docs-ship` checks this recommendation against the base tip's release policy.
 
 /roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user the level and its reason, for example: "I recommend a PATCH bump because <reason>. `/docs-ship` applies the release policy and writes the version." If no bump needed, say so. Step 7 carries the recommendation into the handoff.
 

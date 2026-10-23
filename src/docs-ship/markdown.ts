@@ -154,7 +154,17 @@ export function linkTargets(line: string): LinkRef[] {
     const dest = destination(masked, def[0].length, pairs);
     if (dest) out.push({ target: dest.target, column: 1 });
   }
-  for (const m of masked.matchAll(/<(?:a|img)\s[^>]*\b(?:href|src)\s*=\s*"([^"]*)"/gi)) out.push({ target: m[1]!, column: m.index! + 1 });
+  // Consume complete attribute values so metadata and quoted examples cannot hide a real target.
+  for (const tag of masked.matchAll(/<(a|img)(?=[\s/>])((?:[^"'<>]|"[^"]*"|'[^']*')*)(?:>|$)/gi)) {
+    const wanted = tag[1]!.toLowerCase() === 'a' ? 'href' : 'src';
+    for (const attr of tag[2]!.matchAll(/(?:^|\s)([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g)) {
+      const target = attr[2] ?? attr[3] ?? attr[4];
+      if (attr[1]!.toLowerCase() === wanted && target !== undefined) {
+        out.push({ target, column: tag.index! + 1 });
+        break;
+      }
+    }
+  }
   return out;
 }
 

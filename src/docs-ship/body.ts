@@ -79,6 +79,6 @@ export function upsert(body: string, receipt: string): { body: string; hash: str
   const block = `${START}\n${r}\n${END}`;
   const s = split(body);
   const next = s.block === undefined ? `${s.before.trimEnd()}${s.before.trim() ? '\n\n' : ''}${block}\n` : `${s.before}${block}${s.after}`;
-  if (bodyHash(next) !== hash) throw new BodyError('INTERNAL', 'writing the receipt changed the reviewed body', 'report this with the body you passed');
+  if (bodyHash(next) !== hash) throw new BodyError('INTERNAL', 'writing the receipt changed the reviewed body', 'close any unclosed code fence in the body and retry; if it persists, report this with the body you passed');
   return { body: next, hash };
 }

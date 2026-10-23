@@ -20,6 +20,13 @@ const LIST_KEYS = ['docs', 'not-docs', 'tests'] as const;
 const SCALAR_KEYS = ['rules', 'test-command'] as const;
 export const MARKER_KEYS = [...LIST_KEYS, ...SCALAR_KEYS];
 
+/** A simple command with one argument-list slot; shell programs belong in a wrapper script. */
+export function validTestCommand(template: string): boolean {
+  const words = template.trim().split(/[ \t]+/);
+  return words.length > 1 && words[0] !== '{tests}' && words.filter((w) => w === '{tests}').length === 1
+    && words.every((w) => w === '{tests}' || /^[\w./:=+@%,-]+$/.test(w));
+}
+
 export type DocsShipConfig = {
   docs: string[];
   notDocs: string[];
@@ -41,12 +48,15 @@ export function hasMarker(line: string): boolean {
   return new RegExp(MARKER.source).test(maskInlineCode(line));
 }
 
-export function markersIn(text: string): Marker[] {
+export function markersIn(text: string, source: string): Marker[] {
   const fenced = fencedLines(text);
   const out: Marker[] = [];
   text.split('\n').forEach((line, i) => {
     if (fenced.has(i + 1)) return;
-    for (const m of maskInlineCode(line).matchAll(MARKER)) out.push({ key: m[1]!, value: m[2]!.trim(), line: i + 1 });
+    for (const m of maskInlineCode(line).matchAll(MARKER)) {
+      if (/^( {4}|\t)/.test(line)) throw new Refusal('CONFIG_INVALID', `${source}:${i + 1}: ambiguous indented docs-ship marker`, 'put active markers at the top level with at most three leading spaces; use fenced blocks for examples');
+      out.push({ key: m[1]!, value: m[2]!.trim(), line: i + 1 });
+    }
   });
   return out;
 }
@@ -65,7 +75,7 @@ export function readConfig(git: Git, rev: string): DocsShipConfig {
     config.sourcePaths.push(real);
     const text = readAt(git, rev, file);
     if (text === undefined) continue;
-    const markers = markersIn(text);
+    const markers = markersIn(text, `${rev}:${file}`);
     if (markers.length) config.sources.push(file);
     for (const marker of markers) {
       if ((LIST_KEYS as readonly string[]).includes(marker.key)) {
@@ -83,7 +93,7 @@ export function readConfig(git: Git, rev: string): DocsShipConfig {
         for (const v of values) if (!list.includes(v)) list.push(v);
       } else if ((SCALAR_KEYS as readonly string[]).includes(marker.key)) {
         if (marker.value === '') invalid(file, marker, 'is empty');
-        if (marker.key === 'test-command' && !marker.value.includes('{tests}')) invalid(file, marker, 'must contain {tests}');
+        if (marker.key === 'test-command' && !validTestCommand(marker.value)) invalid(file, marker, 'requires one standalone unquoted {tests} argument and simple command words; put shell syntax in a wrapper script');
         const prop = marker.key === 'rules' ? 'rules' : 'testCommand';
         if (config[prop] !== undefined && config[prop] !== marker.value) invalid(file, marker, `conflicts with an earlier value (${config[prop]})`);
         config[prop] = marker.value;

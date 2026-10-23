@@ -65,8 +65,10 @@ including a symlink target or a fence edit that activates a marker. The base tip
 
 Settings are HTML comment markers in the base tip's `AGENTS.md` or `CLAUDE.md`,
 like the existing `<!-- roadmap:parallelism_cap=N -->`. A symlinked
-instructions file is read once. Markers inside fenced blocks or inline code are
-examples, not settings. Globs use `*` (within one path segment) and `**` (any
+instructions file is read once. Markers inside fenced blocks or inline code are examples, not settings.
+A marker with four leading spaces or a leading tab refuses with `CONFIG_INVALID`
+because code examples and list contents are ambiguous; put active markers at the
+top level with at most three leading spaces, and use fenced blocks for examples. Globs use `*` (within one path segment) and `**` (any
 depth); brackets and braces are rejected.
 
 | Marker | Effect |
@@ -79,6 +81,23 @@ depth); brackets and braces are rejected.
 
 List markers may repeat; their values merge. A scalar set twice with different
 values, an unknown key or an invalid glob refuses with `CONFIG_INVALID`. A `tests` pattern matching no tracked file at head refuses with `CONFIG_TESTS_MISSING`; it never silently drops an always-run test.
+
+The rules value is a literal path: `rules=none` names a file called `none`, not a disabling switch. Test-command templates contain exactly one standalone, unquoted `{tests}` argument. Other words use letters, digits, `_./:=+@%,-` only; quoting, shell operators and substitutions belong in a repository wrapper script, for example `./scripts/docs-test {tests}`. Selected paths are shell-quoted and leading `-` paths receive `./` so they reach the configured command as literal arguments. The base-tip command is trusted executable configuration: validation checks the outer shell syntax, not the command's behavior. Choose a test runner that treats these arguments as paths; evaluators such as `eval` or `sh -c` can reinterpret them, and wrapper scripts must preserve the same boundary.
+
+## Automatic review guards
+
+Before a push, PR creation or ready transition, inspect both tips for root
+`.greptile.json`, `greptile.json` or `.greptile/`, and any already-known Greptile
+installation. When present, require verified source-branch settings that exclude
+the impending automatic event; unknown settings mean `CHANGES` before that write.
+Read `.greptile/config.json` in preference to `greptile.json`. `autoReview: []`
+or `skipReview: "AUTOMATIC"` excludes automatic events. Otherwise the default is
+`["open"]`; `push` implies `open`, `rebase` implies both, and
+`triggerOnUpdates: true` enables all three. Labels alone do not prove exclusion;
+the legacy `.greptile.json` does not establish effective settings. Verified
+dashboard settings may establish exclusion. Do not change settings, request a
+review or start an outside voice. Report the configuration the owner must resolve.
+Repository automation is separate from the skill's local checks.
 
 ## Stops and choices
 
@@ -135,6 +154,8 @@ tip's `VERSION` at the level the policy names. The bump is one
 `chore: bump version and changelog (v<version>)` commit, then pinned-test
 reruns as above. When the policy is silent or says docs changes do not bump,
 nothing is bumped and the receipt says so.
+A caller's version recommendation is advisory: report whether it agrees with
+the policy and explain any difference; it does not override the base policy.
 
 ## Receipt
 
@@ -172,6 +193,10 @@ Body updates use a fresh read and a post-write check. GitHub's body edit is not
 an atomic compare-and-swap: an edit in the final read/write interval can still
 race. Keep the saved body snapshots for recovery; the hash proves the resulting
 body binding, not exclusive ownership of the edit window.
+Recheck the latest body against the brief before hashing it if it changed after
+the body review, then fetch the body from the PR again into the saved file. Require it to match the just-reviewed text before hashing; on another change, stop with `CHANGES`. CI may require leaving draft before it runs; a subsequent
+`CHANGES` verdict can therefore leave the PR ready. Readiness alone is not PASS
+or merge authorization. An old receipt naming another head is stale.
 
 ## Result line
 
