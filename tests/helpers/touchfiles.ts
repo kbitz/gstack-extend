@@ -71,6 +71,7 @@ export function matchGlob(file: string, pattern: string): boolean {
  * list small — every entry is hand-maintained drift surface.
  */
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
+  'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', 'skills/review-and-prep.md', 'skills/ship-and-land.md', 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', 'skills/review-and-prep.md', 'docs/outside-review.md', 'docs/telemetry.md'],
   'tests/layout-scaffold.test.ts': [
     'bin/layout-scaffold', 'src/layout-scaffold/**', 'VERSION',

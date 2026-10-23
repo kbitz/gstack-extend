@@ -2719,7 +2719,7 @@ describe('release-only ship path', () => {
     ]) expect(gatesN).toContain(clause);
     for (const clause of [
       'A gate whose section or command this installation lacks is recorded as `unavailable — <reason>`, not as passed; `/ship-and-land` runs it.',
-      "Step 2's `/ship` gates are current for the final content: pregate passed, the coverage audit completed or was waived with a recorded reason, and the documentation audit was accepted or carries the user's named-risk decision.",
+      "Step 2's `/ship` gates are current for the final content: pregate passed or the **Reviewed secret findings** evaluator satisfies the wrapper gate, the coverage audit completed or was waived with a recorded reason, and the documentation audit was accepted or carries the user's named-risk decision.",
       'Record each `/ship` gate under `Ship gates`, bound to the final HEAD, Git tree, `wtree` and base',
       'that is not a `/ship` run.',
     ]) expect(prepN).toContain(clause);
@@ -2746,7 +2746,7 @@ describe('release-only ship path', () => {
     for (const clause of [
       '| Run tests / Eval Suites (5–6) | No suite runs.',
       "Every required test lane has FRESH ledger evidence under the test gate below, and required evals have reusable recorded results for the prepared tree.",
-      "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, including cleared requires-remote obligations.",
+      "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, or the **Reviewed secret findings** evaluator below satisfies the wrapper gate for that current full record, including cleared requires-remote obligations.",
       "Missing evidence selects the existing FULL path before release writes.",
       "| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |",
       '| TODOs (14) | Edit nothing.',
@@ -2826,7 +2826,7 @@ describe('release-only ship path', () => {
     expect(prepN).toContain('Bind each audit or decision to the final HEAD, Git tree and reviewed base.');
     // Value: protects=preparation's Ship gates names the pregate and coverage evidence release-only consumes; fails_when=a producer bullet is dropped or reworded so release-only never qualifies; why_new=the assertions above pin the documentation bullet and the binding only; seam=none; no_claim=agent behavior (static prose lock that also freezes producer wording)
     for (const clause of [
-      "pregate: verdict, policy source, the record's tree, its durable copy's path and SHA-256, the lanes it ran with counts, and requires-remote obligations with their receipts;",
+      "pregate: raw verdict, separate wrapper verdict, policy source, the record's tree, its durable copy's path and SHA-256, the lanes it ran with counts, and requires-remote obligations with their receipts;",
       'coverage audit: `coverage_pct`, `coverage_pct_value`, gaps, weak gaps, tests added, extended and rejected, `regression_proof` and the threshold decision, or its waiver and reason;',
     ]) expect(prepN).toContain(clause);
   });

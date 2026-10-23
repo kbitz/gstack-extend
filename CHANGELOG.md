@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.44.0.0] - 2026-10-23
+
+### Added
+
+- **Reuse a user-approved secret-scanner false positive during review and ship.** Commit a disposition tied to the exact path, rule and line hash after approval in the session. `/review-and-prep` and `/ship-and-land` can satisfy the secrets gate when every blocking finding matches, while retaining the raw failure and listing the dispositions in a separate receipt. HIGH findings and unapproved findings still block; changed or missing lines are reported as stale.
+- **Inspect dispositions without changing approvals or scanner evidence.** `bin/secret-dispositions` validates the committed file against current upstream pregate evidence and reports matches, stale entries and remaining blockers.
+
 ## [0.43.0.0] - 2026-10-23
 
 ### Added

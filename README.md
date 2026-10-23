@@ -38,7 +38,7 @@ Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
 agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
 `/roadmap` audit tools, `gstack-extend init`, the merge gate,
-`bin/layout-scaffold`, `bin/outside-review`, `/autoplan-lean`'s
+`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `/autoplan-lean`'s
 `bin/autoplan-lean` helper and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
 version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
@@ -102,6 +102,10 @@ in its final prompt. Paste that prompt to run `/ship-and-land`; it trusts those
 completed reviews across sessions/models after one receipt lookup and checks
 subsequent changes.
 The [stage-handoff contract](docs/workflow-handoffs.md) specifies each handoff and how a caller should treat it.
+
+Both wrappers support [reviewed secret-scanner dispositions](docs/secret-dispositions.md):
+user-approved, committed exact-line exceptions for MEDIUM false positives, with
+the raw pregate failure retained. HIGH findings remain blocking.
 Preparation also runs `/ship`'s pregate, coverage audit and documentation audit
 on the head it hands off. For a code PR (not the prose-only profile) whose
 prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes
