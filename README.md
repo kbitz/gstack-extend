@@ -182,6 +182,11 @@ bun run test        # Select tests from the committed diff against the base bran
 bun run test:full   # Run all tests, including checks for uncommitted changes
 ```
 
+`bun run test` prints which test files it ran and skipped, and why. Editing one
+skill runs that skill's tests plus the shared skill rules. A release commit
+(VERSION, CHANGELOG.md, package.json's version) runs the release and manifest
+checks. Any other `package.json` change still runs everything.
+
 Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
 install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
 [`VERSION`](VERSION) is the version source of truth, using up to four segments:
