@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.46.0.0] - 2026-10-23
+
+### Added
+
+- **See which tests a change runs.** When the diff selects a subset, `bun run test` prints each file it ran and each it skipped, with the reason. A run of every file prints that reason once, and the JSON report still lists each file. Set `TEST_SELECTION_OUT` to write the report. A command that names test files is still compared with the diff, so a file the diff would have run and the command left out is recorded as skipped, not as passed.
+
+### Changed
+
+- **A change to one skill no longer runs every skill's protocol tests.** It runs that skill's suite and the shared rules. A release commit that only bumps the version in `package.json`, `VERSION`, and `CHANGELOG.md` runs the release checks. Changing a dependency, a script, or any other `package.json` field still runs the whole suite.
+- **Pregate's test lanes stay on the same map.** `bun scripts/sync-pregate-deps.ts` rewrites those lanes from the manual test dependencies, and `--check` fails without writing when the committed copy is stale.
+
 ## [0.45.0.0] - 2026-10-23
 
 ### Added
