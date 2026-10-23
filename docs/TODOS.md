@@ -9,6 +9,39 @@
 - **Priority:** P2
 - **Context:** Owner request, 2026-10-21. Compare the plan proper's bytes, the sidecar's `Reviewer prompt sizes` table, the parent's cached input and output tokens, wall time, and the downstream `/implement` stage's plan reads. Use the same model and effort as the baseline. Also confirm that review depth held: the same phases ran, mandatory outputs were present, and decision counts are comparable. No host run had happened when it shipped (owner decision at /ship, 2026-10-21): run it once each on Claude Code, Codex and Muse, confirm each finds the skill and the upstream phase skills and ends with `autoplan-lean check` reporting `CHECK: ok`, and force one subagent failure to confirm the voice is recorded unavailable.
 - **Revisit when:** The first real `/autoplan-lean` run completes, or a caller switches its autoplan stage to it.
+- **First real run (2026-10-22, Codex host, HOLD SCOPE, 14.4 KB card, installed 0.40.0.0/0.41.0.0):** 1 h 26 min wall; parent 22.06M cached input, 0.48M uncached input and 73K output tokens over 160 model calls with 2 compactions; subagents 5.5M tokens, about 2.2M of them host approval reviewers. Reviewer prompts 16.6–36.0 KB (212,992 bytes in all), growing phase by phase; plan 45.3 KB (3.1 × the card), sidecar 173.7 KB. All three outside voices completed but were discarded as `untagged_review` (bold `**High.**` severities). Of the CEO consolidation's 25 minutes, 16.6 were one tool call whose commands finished at once (a host stall) and about 3 a context compaction; the parent's own source reads ran while the outside voice was still working, and its one reality-check failure took 22 seconds to fix, so neither warrants a change yet. The follow-up change bounds the plan, sends settlements once, runs a phase's voices together, loads skill text by section and states the validator's severity format; compare the next real run against these figures before claiming a saving. A different model from the 2 h 15 min baseline, so the wall-time comparison is not like for like.
+
+### [ship] Harden /autoplan-lean's plan checks, outline and spec-loop guard after 0.43
+
+- **Description:** Review findings deferred at `/ship`, most important first:
+  - **Reordered input counts as unchanged.** `proper --previous` compares lines as an unordered multiset. Moving an unchanged line between sections, such as from a deferred list into the tasks, reports `CHANGED_LINES: 0` and stops the CEO spec loop after a real scope change. Three independent reviewers found it. Use an ordered or section-keyed diff.
+  - **The task-reference check misreads IDs.**
+    - `taskRefs` ignores inline code and is case-sensitive, so a dangling `` `d9` `` or `D9` seals.
+    - A bare tool name such as d3 is refused as a dangling ID.
+    - IDs joined as `d4/d9` escape the check.
+    - Count IDs only in the task's metadata clause.
+  - **Seal's plan pre-checks have gaps.**
+    - A second exact `## Accepted decisions` section escapes settlement validation.
+    - `check` reruns none of seal's plan pre-checks.
+    - A refused `prompt` leaves the previous prompt file in place.
+  - **Outline misreads some files.**
+    - `#` lines in YAML frontmatter become headings.
+    - A skip list with blank lines between bullets is cut off.
+    - Skip-list names match any heading with the same prefix.
+  - **The budget source and timing are unchecked.** The budget is not checked again after the gate outcome is applied, and `restore.md` is not compared with the SHA-256 recorded at intake.
+  - **Settlement IDs can collide.** They can repeat IDs carried by a reviewed source plan, and the gate brief's `d<n>` labels use the same namespace.
+  - **Skill prose and docs:**
+    - `--over-budget "<reason>"` is double-quoted, so backticks in the reason would be expanded by the shell.
+    - `budget` prints "over (no reason given)".
+    - `SECTION_HEADING_INVALID` is missing from `--help` and the skill.
+    - A variant heading in card text is refused.
+    - The `shared` skip rule conflicts with re-reading after a compaction.
+    - Concurrent voices could read each other's output files.
+    - Only an opt-in test checks `OUTSIDE_OUTPUT_FORMAT` against the installed validator.
+- **Effort:** M
+- **Context:** From the final pre-landing review passes and the adversarial review of 0.43.0.0 on 2026-10-23. None was rated critical. Under the owner's stop rule for the final pass, only critical findings were fixed before release. The four untested `seal --replace` state cells (code unchanged) were also left.
+- **Priority:** P2
+- **Revisit when:** The next real `/autoplan-lean` run, or before an external caller relies on the `CHANGED_LINES` guard or the task-reference check.
 
 ### [manual] Decide whether delta-scoped review becomes the wrapper default
 
