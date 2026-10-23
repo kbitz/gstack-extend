@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.45.0.0] - 2026-10-23
+
+### Added
+
+- **Ship a docs-only pull request with `/docs-ship`.** One session classifies the change, checks claims, writing rules, links and the tests that read those files, writes the version bump the release policy asks for, and records a receipt. It stops at the merge gate and does not merge. `/roadmap` and `/project-spec` send their documentation commits here. The skill is beta. `bin/docs-ship` needs Bun 1.3.3 or newer.
+
+### Changed
+
+- **`/review-and-prep` and `/ship-and-land` share that docs-only classification and ignore `docs-ship:docs` opt-ins.** Skill, prompt and agent-instruction edits stay implementation changes on those paths.
+
 ## [0.44.0.0] - 2026-10-23
 
 ### Added
