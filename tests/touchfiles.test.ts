@@ -19,11 +19,18 @@
  *
  * Wrapper E2E scenarios drive `planWrapperAction` against fixture-repo
  * builds, exercising each of the four fallbacks and the three bypasses
- * (argv passthrough, EVALS_ALL=1, rename pair).
+ * (argv passthrough, EVALS_ALL=1, rename pair), the version-only package.json
+ * narrowing, per-skill selection and the selection report.
+ *
+ * Per-skill and release selection: a change to one skill file selects that
+ * skill's suites and the shared-rule suites (those declaring `skills/**`); a
+ * version-only release commit selects the release and manifest checks; a
+ * package.json dependency or script change still selects everything; and
+ * `.gstack/pregate.json` carries the same edges as MANUAL_TOUCHFILES.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, relative } from 'node:path';
 
@@ -36,10 +43,21 @@ import {
   getChangedFiles,
   listTestFiles,
   matchGlob,
+  packageJsonChange,
   parseDiffNameStatus,
+  pregateDependencies,
 } from './helpers/touchfiles.ts';
 import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
-import { bunTestArgs, planWrapperAction, TEST_TIMEOUT_MS } from '../scripts/select-tests.ts';
+import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
+import {
+  REPORT_SCHEMA,
+  bunTestArgs,
+  planWrapperAction,
+  reportLines,
+  TEST_TIMEOUT_MS,
+  writeReport,
+} from '../scripts/select-tests.ts';
+import { PREGATE_CONFIG, syncedPregateConfig } from '../scripts/sync-pregate-deps.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 
@@ -379,6 +397,254 @@ describe('structural invariants', () => {
   });
 });
 
+// ─── Per-skill and release selection (the live map) ─────────────────────
+
+const SPLIT_SUITE_RE = /^tests\/skill-protocols-([a-z-]+)\.test\.ts$/;
+const SHARED_SUITE = 'tests/skill-protocols.test.ts';
+const RELEASE_INPUTS = ['VERSION', 'CHANGELOG.md', 'package.json'];
+
+/** Tests whose manual deps match `file`. */
+function declaredConsumers(file: string): string[] {
+  return Object.entries(MANUAL_TOUCHFILES)
+    .filter(([, globs]) => globs.some(g => matchGlob(file, g)))
+    .map(([t]) => t)
+    .sort();
+}
+
+/** The skill-path spellings a split suite may use; each names one skill. */
+const SKILL_PATH_FORMS = [
+  /join\(ROOT, (['"])skills\1, (['"])(?<name>[a-z-]+)\.md\2\)/g,
+  /(['"])skills\/(?<name>[a-z-]+)\.md\1/g,
+  /resolverSkillText\((['"])(?<name>[a-z-]+)\1\)/g,
+];
+
+/** Skill names a split suite reads, from the path forms the suites use. */
+function namedSkills(source: string): string[] {
+  const names = new Set<string>();
+  for (const form of SKILL_PATH_FORMS) for (const m of source.matchAll(form)) names.add(m.groups!.name!);
+  return [...names].sort();
+}
+
+/**
+ * Skill references outside SKILL_PATH_FORMS: a `skills` path segment
+ * (`'skills'`, `"skills/" + name`, a template literal, a directory listing) or
+ * resolverSkillText with a computed argument. Each can read a skill the
+ * suite does not declare.
+ */
+function computedSkillReads(source: string): string[] {
+  let rest = source;
+  for (const form of SKILL_PATH_FORMS) rest = rest.replace(form, '');
+  const hits = [...rest.matchAll(/(['"`])skills(?:\1|\/)|resolverSkillText\(/g)];
+  return hits.map(m => rest.slice(Math.max(0, m.index! - 30), m.index! + 30).replace(/\s+/g, ' '));
+}
+
+describe('per-skill selection', () => {
+  const tests = listTestFiles(REPO_ROOT);
+  const splitSuites = tests.filter(t => SPLIT_SUITE_RE.test(t));
+  const sharedRule = declaredConsumers('skills/__any__.md');
+
+  test('the shared-rule suites are the ones that read every skill', () => {
+    expect(sharedRule).toContain(SHARED_SUITE);
+    expect(MANUAL_TOUCHFILES[SHARED_SUITE]).toContain('skills/**');
+    for (const t of splitSuites) expect(sharedRule).not.toContain(t);
+  });
+
+  // Value: protects=the split's point — one skill's change runs only its own suites plus the shared rules;
+  //   fails_when=a split suite reads (or declares) another skill, or a skill change falls back to the whole suite;
+  //   why_new=the monolith selected all 612 protocol tests for any skill edit; seam=none
+  test('a change to one skill file selects only that skill\'s suites and the shared-rule suites', () => {
+    const importsByTest = new Map(tests.map(t => [t, analyzeTestImports(t, REPO_ROOT)]));
+    for (const name of EXPECTED_SETUP_SKILLS) {
+      const file = `skills/${name}.md`;
+      const sel = computeTestSelection([file], tests);
+      expect([name, sel.reason]).toEqual([name, 'diff']);
+      // A suite that imports the skill as text (init-bin reads gstack-extend-init.md) is that skill's suite too.
+      const importers = tests.filter(t => importsByTest.get(t)!.includes(file));
+      expect([name, sel.selected]).toEqual([name, [...new Set([...declaredConsumers(file), ...importers])].sort()]);
+      for (const t of sharedRule) expect([name, sel.selected]).toEqual([name, expect.arrayContaining([t])]);
+      const otherSkillSuites = sel.selected.filter(t => SPLIT_SUITE_RE.test(t) && !MANUAL_TOUCHFILES[t]!.includes(file));
+      expect([name, otherSkillSuites]).toEqual([name, []]);
+      const own = `tests/skill-protocols-${name}.test.ts`;
+      if (splitSuites.includes(own)) expect([name, sel.selected]).toEqual([name, expect.arrayContaining([own])]);
+    }
+    // The acceptance case, spelled out.
+    const roadmap = computeTestSelection(['skills/roadmap.md'], tests).selected.filter(t => t.startsWith('tests/skill-protocols'));
+    expect(roadmap).toEqual(['tests/skill-protocols-project-spec.test.ts', 'tests/skill-protocols-roadmap.test.ts', SHARED_SUITE]);
+  });
+
+  test('the read lint names literal skill paths and flags every computed one', () => {
+    const literal = [
+      "join(ROOT, 'skills', 'roadmap.md')",
+      'join(ROOT, "skills", "implement.md")',
+      "read('skills/pair-review.md')",
+      'read("skills/full-review.md")',
+      "resolverSkillText('ship-and-land')",
+    ].join(';\n');
+    expect(namedSkills(literal)).toEqual(['full-review', 'implement', 'pair-review', 'roadmap', 'ship-and-land']);
+    expect(computedSkillReads(literal)).toEqual([]);
+    for (const computed of [
+      "readdirSync(join(ROOT, 'skills'))",
+      'join(ROOT, "skills", file)',
+      "join(ROOT, 'skills', `${name}.md`)",
+      "'skills/' + name + '.md'",
+      'readFileSync(`skills/${name}.md`)',
+      'resolverSkillText(name)',
+    ]) expect([computed, computedSkillReads(computed).length]).toEqual([computed, 1]);
+  });
+
+  test('each split suite declares exactly the skill files it names, and none reads a skill by a computed path', () => {
+    const problems: string[] = [];
+    for (const t of [...splitSuites, SHARED_SUITE]) {
+      const source = readFileSync(join(REPO_ROOT, t), 'utf8');
+      const declared = (MANUAL_TOUCHFILES[t] ?? []).filter(g => g.startsWith('skills/'));
+      if (t === SHARED_SUITE) {
+        if (!declared.includes('skills/**')) problems.push(`${t}: must declare skills/**`);
+        continue;
+      }
+      for (const hit of computedSkillReads(source)) problems.push(`${t}: reads a skill through a computed path (…${hit}…); name the file, or move the test to ${SHARED_SUITE}`);
+      const named = namedSkills(source).map(n => `skills/${n}.md`);
+      const missing = named.filter(f => !declared.some(g => matchGlob(f, g)));
+      const stale = declared.filter(g => !named.some(f => matchGlob(f, g)));
+      if (missing.length) problems.push(`${t}: reads ${missing.join(', ')} without declaring it`);
+      if (stale.length) problems.push(`${t}: declares ${stale.join(', ')} but never names it`);
+    }
+    expect(problems).toEqual([]);
+  });
+});
+
+describe('release selection', () => {
+  const tests = listTestFiles(REPO_ROOT);
+
+  // Value: protects=a release commit runs the checks its three files can break, not the whole suite;
+  //   fails_when=VERSION, CHANGELOG.md or a version-only package.json change becomes global again, or the release check loses its inputs;
+  //   why_new=#162's release commit ran all 3,950 tests because package.json was global; seam=none
+  test('a version-only release commit selects only the release and manifest checks', () => {
+    const sel = computeTestSelection(RELEASE_INPUTS, tests, { packageJsonVersionOnly: true });
+    expect(sel.reason).toBe('diff');
+    const releaseChecks = [...new Set(RELEASE_INPUTS.flatMap(declaredConsumers))].sort();
+    expect(sel.selected).toEqual(releaseChecks);
+    expect(sel.selected).toContain('tests/release-manifest.test.ts');
+    expect(sel.selected.filter(t => t.startsWith('tests/skill-protocols'))).toEqual([]);
+    expect(sel.skipped.length).toBeGreaterThan(sel.selected.length);
+    for (const input of RELEASE_INPUTS) expect(MANUAL_TOUCHFILES['tests/release-manifest.test.ts']).toContain(input);
+  });
+
+  test('a package.json dependency or script change still selects everything', () => {
+    const sel = computeTestSelection(RELEASE_INPUTS, tests);
+    expect(sel.reason).toBe('global: package.json matches package.json');
+    expect(sel.selected).toEqual(tests);
+    // Only package.json narrows; the lockfile and tsconfig stay global either way.
+    expect(computeTestSelection(['bun.lock'], tests, { packageJsonVersionOnly: true }).reason).toStartWith('global');
+  });
+});
+
+describe('pregate dependencies', () => {
+  test('the sync keeps a no-lane-needed [] entry and replaces every other edge from the map', () => {
+    const current = JSON.stringify({ runner: 'x {files}', dependencies: { 'docs/notes/**': [], 'stale/glob': ['tests/gone.test.ts'] } });
+    const deps = JSON.parse(syncedPregateConfig(current)).dependencies as Record<string, string[]>;
+    expect(deps['docs/notes/**']).toEqual([]);
+    expect(deps['stale/glob']).toBeUndefined();
+    expect(deps['skills/roadmap.md']).toEqual(pregateDependencies()['skills/roadmap.md']);
+    expect(Object.keys(deps)).toEqual([...Object.keys(deps)].sort());
+  });
+
+  test(`${PREGATE_CONFIG} dependencies are MANUAL_TOUCHFILES inverted`, () => {
+    const current = readFileSync(join(REPO_ROOT, PREGATE_CONFIG), 'utf8');
+    // Out of date: run `bun scripts/sync-pregate-deps.ts`.
+    expect(current).toBe(syncedPregateConfig(current));
+    const deps = pregateDependencies();
+    for (const [testFile, globs] of Object.entries(MANUAL_TOUCHFILES)) {
+      for (const g of globs) expect(deps[g]).toContain(testFile);
+    }
+    expect(deps['skills/roadmap.md']).toEqual(declaredConsumers('skills/roadmap.md').filter(t => MANUAL_TOUCHFILES[t]!.includes('skills/roadmap.md')));
+  });
+
+  // Value: protects=an owned glob listed as [] stays filled from the map; a non-array value and a missing dependencies key are ignored;
+  //   fails_when=sync copies [] over a mapped glob, keeps a non-array previous value, or drops the map when dependencies is absent;
+  //   why_new=the existing pregate test only keeps an unowned [] and drops a stale non-empty list; seam=none;
+  //   no_claim=the CLI exit code and whether the file is written (syncedPregateConfig text only).
+  test('an owned empty glob stays filled from the map, and a non-array or missing dependencies key is ignored', () => {
+    const owned = 'skills/roadmap.md';
+    const kept = 'docs/notes/**';
+    const map = pregateDependencies();
+    expect(map[owned]!.length).toBeGreaterThan(0);
+    const deps: Record<string, string[]> = { ...map, [kept]: [] };
+    const sorted = Object.fromEntries(Object.keys(deps).sort().map(glob => [glob, deps[glob]!]));
+    const merged = JSON.stringify({ runner: 'x {files}', dependencies: sorted }, null, 2) + '\n';
+    const withPrevious = JSON.stringify({
+      runner: 'x {files}',
+      dependencies: { [owned]: [], [kept]: [], 'not-a-list': 'nope', 'also-bad': { a: 1 }, 'null-bad': null },
+    });
+    expect(syncedPregateConfig(withPrevious)).toBe(merged);
+    const mapOnly = JSON.stringify({ runner: 'x', dependencies: map }, null, 2) + '\n';
+    expect(syncedPregateConfig(JSON.stringify({ runner: 'x' }))).toBe(mapOnly);
+    expect(syncedPregateConfig(JSON.stringify({ runner: 'x', dependencies: null }))).toBe(mapOnly);
+  });
+
+  // Value: protects=--check exits 1 and writes nothing when regenerated text differs, exits 0 when it matches, and a normal run writes only when the text changes;
+  //   fails_when=--check rewrites the file or exits 0 while stale, or a normal run writes when the text is already current;
+  //   why_new=the unit comparison never spawns the CLI, so the exit status and the write guard stay untested; seam=none;
+  //   no_claim=which dependency edges are correct (syncedPregateConfig is the text oracle).
+  test('the sync CLI --check exits without writing, and a normal run writes only when the text changes', () => {
+    const checkout = join(REPO_ROOT, PREGATE_CONFIG);
+    const checkoutBefore = readFileSync(checkout, 'utf8');
+    const base = makeBaseTmp('pregate-sync-');
+    try {
+      // The CLI roots itself at the script file, so the copy's repo is this temp tree.
+      const root = join(base, 'repo');
+      mkdirSync(join(root, 'scripts'), { recursive: true });
+      mkdirSync(join(root, 'tests/helpers'), { recursive: true });
+      mkdirSync(join(root, '.gstack'), { recursive: true });
+      const script = join(root, 'scripts/sync-pregate-deps.ts');
+      copyFileSync(join(REPO_ROOT, 'scripts/sync-pregate-deps.ts'), script);
+      copyFileSync(join(REPO_ROOT, 'tests/helpers/touchfiles.ts'), join(root, 'tests/helpers/touchfiles.ts'));
+      const config = join(root, PREGATE_CONFIG);
+      const stale = JSON.stringify({
+        runner: 'keep',
+        dependencies: { 'docs/notes/**': [], 'skills/roadmap.md': [], 'stale/glob': ['tests/gone.test.ts'] },
+      }, null, 2) + '\n';
+      writeFileSync(config, stale);
+      const run = (args: string[]) => spawnSync(
+        'bun',
+        ['--no-env-file', '--no-install', '--config=/dev/null', script, ...args],
+        { encoding: 'utf8', cwd: root },
+      );
+
+      const check = run(['--check']);
+      expect(check.status).toBe(1);
+      expect(check.stdout).toBe('');
+      expect(check.stderr).toBe(`${PREGATE_CONFIG} is out of date; run: bun scripts/sync-pregate-deps.ts\n`);
+      expect(readFileSync(config, 'utf8')).toBe(stale);
+
+      const wrote = run([]);
+      const next = syncedPregateConfig(stale);
+      expect(wrote.status).toBe(0);
+      expect(wrote.stderr).toBe('');
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(wrote.stdout).toBe(`${PREGATE_CONFIG}: ${Object.keys(JSON.parse(next).dependencies).length} dependency globs\n`);
+
+      const frozen = new Date('2020-01-01T00:00:00.000Z');
+      utimesSync(config, frozen, frozen);
+      const same = run([]);
+      expect(same.status).toBe(0);
+      expect(same.stderr).toBe('');
+      expect(same.stdout).toBe(wrote.stdout);
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(statSync(config).mtimeMs).toBe(frozen.getTime());
+
+      const fresh = run(['--check']);
+      expect(fresh.status).toBe(0);
+      expect(fresh.stdout).toBe('');
+      expect(fresh.stderr).toBe('');
+      expect(readFileSync(config, 'utf8')).toBe(next);
+      expect(statSync(config).mtimeMs).toBe(frozen.getTime());
+    } finally {
+      if (readFileSync(checkout, 'utf8') !== checkoutBefore) writeFileSync(checkout, checkoutBefore);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Wrapper E2E (planWrapperAction in fixture repos) ───────────────────
 
 describe('wrapper E2E', () => {
@@ -468,6 +734,294 @@ describe('wrapper E2E', () => {
     if (action.kind === 'select') {
       expect(action.selected).toContain('tests/a.test.ts');
     }
+  });
+
+  /** A seeded fixture on a `feature` branch whose last commit writes `files`. */
+  function featureRepo(seed: Record<string, string>, files: Record<string, string>): string {
+    const repo = makeEmptyRepo(baseTmp);
+    seedMinimalProject(repo);
+    for (const [path, body] of Object.entries(seed)) {
+      mkdirSync(join(repo, path, '..'), { recursive: true });
+      writeFileSync(join(repo, path), body);
+    }
+    spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+    spawnSync('git', ['-C', repo, 'commit', '-m', 'seed', '--quiet'], { encoding: 'utf8' });
+    spawnSync('git', ['-C', repo, 'checkout', '-q', '-b', 'feature'], { encoding: 'utf8' });
+    for (const [path, body] of Object.entries(files)) writeFileSync(join(repo, path), body);
+    spawnSync('git', ['-C', repo, 'commit', '-qam', 'change'], { encoding: 'utf8' });
+    return repo;
+  }
+  const RELEASE_SEED = {
+    VERSION: '1.2.3.0\n',
+    'CHANGELOG.md': '# Changelog\n\n## [1.2.3.0] - 2026-01-01\n\n- old\n',
+    'tests/release-manifest.test.ts': '\n',
+  };
+
+  test('S8 version-only release commit: selects the release check, not the suite', () => {
+    const repo = featureRepo(RELEASE_SEED, {
+      VERSION: '1.2.4.0\n',
+      'CHANGELOG.md': '# Changelog\n\n## [1.2.4.0] - 2026-01-02\n\n- new\n\n## [1.2.3.0] - 2026-01-01\n\n- old\n',
+      'package.json': '{\n  "name": "fixture",\n  "version": "1.2.4"\n}\n',
+    });
+    const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
+    expect(action.kind).toBe('select');
+    if (action.kind === 'select') expect(action.selected).toEqual(['tests/release-manifest.test.ts']);
+    expect(action.report.notes).toContain('package.json: only its version field changed, so it is not a global input');
+    expect(action.report.ran).toEqual([{ file: 'tests/release-manifest.test.ts', why: 'CHANGELOG.md (declared CHANGELOG.md); VERSION (declared VERSION); package.json (declared package.json)' }]);
+    expect(action.report.skipped.map(e => e.file)).toEqual(['tests/a.test.ts', 'tests/b.test.ts']);
+  });
+
+  test('S9 package.json dependency change: still runs everything', () => {
+    const repo = featureRepo(RELEASE_SEED, {
+      'package.json': '{"name":"fixture","version":"0","devDependencies":{"left-pad":"1.0.0"}}\n',
+    });
+    const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
+    expect(action.kind).toBe('all');
+    if (action.kind === 'all') expect(action.reason).toBe('global');
+    expect(action.report.notes).toContain('package.json: more than its version field changed, so it is a global input');
+    expect(action.report.ran.map(e => e.file)).toEqual(['tests/a.test.ts', 'tests/b.test.ts', 'tests/release-manifest.test.ts']);
+    expect(action.report.skipped).toEqual([]);
+  });
+
+  test('S10 one skill file: selects its suite and the shared rules, not another skill\'s suite', () => {
+    const repo = featureRepo({
+      'skills/roadmap.md': 'roadmap\n',
+      'skills/pair-review.md': 'pair\n',
+      'tests/skill-protocols.test.ts': '\n',
+      'tests/skill-protocols-roadmap.test.ts': '\n',
+      'tests/skill-protocols-pair-review.test.ts': '\n',
+    }, { 'skills/roadmap.md': 'roadmap, edited\n' });
+    const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
+    expect(action.kind).toBe('select');
+    if (action.kind === 'select') expect(action.selected).toEqual(['tests/skill-protocols-roadmap.test.ts', 'tests/skill-protocols.test.ts']);
+    expect(action.report.ran).toEqual([
+      { file: 'tests/skill-protocols-roadmap.test.ts', why: 'skills/roadmap.md (declared skills/roadmap.md)' },
+      { file: 'tests/skill-protocols.test.ts', why: 'skills/roadmap.md (declared skills/**)' },
+    ]);
+    expect(action.report.skipped.map(e => e.file)).toContain('tests/skill-protocols-pair-review.test.ts');
+  });
+
+  test('S11 a caller-chosen file list is reported against the diff selection', () => {
+    const repo = featureRepo({}, { 'src/a.ts': 'export const a = 3;\n', 'src/b.ts': 'export const b = 4;\n' });
+    const partial = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: repo });
+    expect(partial.kind).toBe('argv');
+    expect(partial.report.ran).toEqual([{ file: 'tests/a.test.ts', why: 'requested by the caller' }]);
+    expect(partial.report.skipped).toEqual([{ file: 'tests/b.test.ts', why: 'not requested by the caller; the diff selects it: src/b.ts (import)' }]);
+    expect(partial.report.notes).toContain('1 file(s) the diff selects were not requested');
+    const full = planWrapperAction({ argv: ['./tests/a.test.ts', 'tests/b.test.ts'], env: {}, cwd: repo });
+    expect(full.report.notes).toContain('the request covers the diff selection');
+    // Flags or filters are passed through without a file-by-file report.
+    const filtered = planWrapperAction({ argv: ['--bail', 'tests/a.test.ts'], env: {}, cwd: repo });
+    expect(filtered.report.ran).toEqual([]);
+    expect(filtered.report.notes[0]).toContain('not only test file paths');
+  });
+
+  // Value: protects=an unmapped change is reported as mode all with one shared reason, not a select report whose why strings are empty;
+  //   fails_when=planWrapperAction treats no-match-fallback as a diff selection and emits blank hit reasons;
+  //   why_new=computeTestSelection covers the no-match reason, but not the wrapper report mode or its lines; seam=none;
+  //   no_claim=a caller file list on that same diff (bare run only).
+  test('S12 an unmapped change runs every test with one reason, not a select report of empty whys', () => {
+    const repo = featureRepo({ 'notes/stray.txt': 'old\n' }, { 'notes/stray.txt': 'new\n' });
+    const action = planWrapperAction({ argv: [], env: {}, cwd: repo });
+    expect(action.kind).toBe('all');
+    if (action.kind === 'all') expect(action.reason).toBe('no-match-fallback');
+    expect(action.report.mode).toBe('all');
+    expect(action.report.skipped).toEqual([]);
+    expect(action.report.ran).toEqual([
+      { file: 'tests/a.test.ts', why: 'no test depends on the changed files, so every test runs' },
+      { file: 'tests/b.test.ts', why: 'no test depends on the changed files, so every test runs' },
+    ]);
+    expect(reportLines(action.report)).toEqual([
+      'base main; 1 changed file(s): notes/stray.txt',
+      'ran all 2 test file(s): no test depends on the changed files, so every test runs',
+    ]);
+  });
+
+  // Value: protects=a partial file list says the diff would run every test for an empty, global, or no-match diff, and does not call omitted files diff hits;
+  //   fails_when=those runs drop the run-all note or mark a skipped file as selected by the diff;
+  //   why_new=S11 only covers a real diff hit the caller left out; seam=none;
+  //   no_claim=the bare-run mode-all report for an unmapped change (caller file list only).
+  test('S13 a caller file list says when the diff would run every test, and does not call omitted files diff hits', () => {
+    const requested = [{ file: 'tests/a.test.ts', why: 'requested by the caller' }];
+    const omitted = { file: 'tests/b.test.ts', why: 'not requested by the caller' };
+
+    const empty = makeEmptyRepo(baseTmp);
+    seedMinimalProject(empty);
+    spawnSync('git', ['-C', empty, 'add', '-A'], { encoding: 'utf8' });
+    spawnSync('git', ['-C', empty, 'commit', '--amend', '--no-edit', '--quiet'], { encoding: 'utf8' });
+    const emptyAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: empty });
+    expect(emptyAction.kind).toBe('argv');
+    if (emptyAction.kind === 'argv') expect(emptyAction.args).toEqual(['tests/a.test.ts']);
+    expect(emptyAction.report.mode).toBe('argv');
+    expect(emptyAction.report.ran).toEqual(requested);
+    expect(emptyAction.report.skipped).toEqual([omitted]);
+    expect(emptyAction.report.notes).toEqual(['the diff selection would run every test file (empty-diff)']);
+
+    const globalRepo = featureRepo(RELEASE_SEED, {
+      'package.json': '{"name":"fixture","version":"0","devDependencies":{"left-pad":"1.0.0"}}\n',
+    });
+    const globalAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: globalRepo });
+    expect(globalAction.kind).toBe('argv');
+    expect(globalAction.report.mode).toBe('argv');
+    expect(globalAction.report.ran).toEqual(requested);
+    expect(globalAction.report.skipped).toEqual([
+      omitted,
+      { file: 'tests/release-manifest.test.ts', why: 'not requested by the caller' },
+    ]);
+    expect(globalAction.report.notes).toEqual([
+      'package.json: more than its version field changed, so it is a global input',
+      'the diff selection would run every test file (global: package.json matches package.json)',
+    ]);
+
+    const unmatched = featureRepo({ 'notes/stray.txt': 'old\n' }, { 'notes/stray.txt': 'new\n' });
+    const unmatchedAction = planWrapperAction({ argv: ['tests/a.test.ts'], env: {}, cwd: unmatched });
+    expect(unmatchedAction.kind).toBe('argv');
+    expect(unmatchedAction.report.mode).toBe('argv');
+    expect(unmatchedAction.report.ran).toEqual(requested);
+    expect(unmatchedAction.report.skipped).toEqual([omitted]);
+    expect(unmatchedAction.report.notes).toEqual(['the diff selection would run every test file (no-match-fallback)']);
+  });
+});
+
+describe('selection report', () => {
+  const baseTmp = makeBaseTmp('selection-report-');
+  afterAll(() => {
+    try { rmSync(baseTmp, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+  const sample = {
+    schema: REPORT_SCHEMA,
+    mode: 'select' as const,
+    reason: 'diff',
+    base: 'origin/main',
+    changed: ['skills/roadmap.md'],
+    notes: [],
+    total: 3,
+    ran: [{ file: 'tests/a.test.ts', why: 'skills/roadmap.md (declared skills/**)' }],
+    skipped: [
+      { file: 'tests/b.test.ts', why: 'no changed file is a dependency' },
+      { file: 'tests/c.test.ts', why: 'no changed file is a dependency' },
+    ],
+  };
+
+  test('stderr lines name every file that ran and every file skipped, with the reason', () => {
+    expect(reportLines(sample)).toEqual([
+      'base origin/main; 1 changed file(s): skills/roadmap.md',
+      'ran tests/a.test.ts: skills/roadmap.md (declared skills/**)',
+      'skipped 2 (no changed file is a dependency): tests/b.test.ts, tests/c.test.ts',
+    ]);
+  });
+
+  test('TEST_SELECTION_OUT gets the same report as JSON, and a failed write is reported, not thrown', () => {
+    const out = join(baseTmp, 'nested', 'selection.json');
+    expect(writeReport(sample, out)).toBeNull();
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(sample);
+    writeFileSync(join(baseTmp, 'file'), 'x');
+    expect(writeReport(sample, join(baseTmp, 'file', 'selection.json'))).toBeString();
+    // A failed rename (the target is a directory) leaves no temp file beside it.
+    mkdirSync(join(baseTmp, 'taken.json'));
+    expect(writeReport(sample, join(baseTmp, 'taken.json'))).toBeString();
+    expect(readdirSync(baseTmp).filter(n => n.includes('.tmp-'))).toEqual([]);
+  });
+
+  test('ran and skipped partition the test files; nothing skipped is listed as ran', () => {
+    const action = planWrapperAction({ argv: [], env: {}, cwd: REPO_ROOT });
+    const ran = action.report.ran.map(e => e.file);
+    const skipped = action.report.skipped.map(e => e.file);
+    expect(ran.filter(f => skipped.includes(f))).toEqual([]);
+    expect([...ran, ...skipped].sort()).toEqual(listTestFiles(REPO_ROOT));
+  });
+
+  // Value: protects=the process writes TEST_SELECTION_OUT when set, skips a blank value, and logs an unwritable path without failing the run;
+  //   fails_when=a blank value is written, a good path is skipped, or an unwritable path makes the process exit non-zero;
+  //   why_new=writeReport is unit-tested; the entry env gate and its log-and-continue path are not; seam=none;
+  //   no_claim=a diff-selection JSON body (the spawn argv is not a test-file list).
+  test('the process writes TEST_SELECTION_OUT, skips a blank value, and logs an unwritable path without failing', () => {
+    const script = join(REPO_ROOT, 'scripts/select-tests.ts');
+    const cwd = join(baseTmp, 'process-cwd');
+    mkdirSync(cwd);
+    const spawn = (selectionOut: string) => spawnSync(
+      'bun',
+      ['--no-env-file', '--no-install', '--config=/dev/null', script, '--help'],
+      { encoding: 'utf8', cwd, env: { ...process.env, TEST_SELECTION_OUT: selectionOut } },
+    );
+    const out = join(baseTmp, 'process-out', 'selection.json');
+    const wrote = spawn(out);
+    expect(wrote.status).toBe(0);
+    expect(wrote.stdout).toContain('Usage: bun test');
+    expect(wrote.stderr).toContain(`[select-tests] report: ${out}`);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({
+      schema: REPORT_SCHEMA,
+      mode: 'argv',
+      reason: 'argv',
+      base: null,
+      changed: [],
+      notes: ['the arguments are not only test file paths, so the run is not reported file by file'],
+      total: listTestFiles(REPO_ROOT).length,
+      ran: [],
+      skipped: [],
+    });
+
+    for (const blank of ['', '   ']) {
+      const skippedWrite = spawn(blank);
+      expect(skippedWrite.status).toBe(0);
+      expect(skippedWrite.stdout).toContain('Usage: bun test');
+      expect(skippedWrite.stderr).not.toContain('[select-tests] report:');
+      expect(skippedWrite.stderr).not.toContain('report not written');
+    }
+    expect(existsSync(join(cwd, '   '))).toBe(false);
+
+    const blocked = join(baseTmp, 'process-not-a-dir');
+    writeFileSync(blocked, 'x');
+    const bad = join(blocked, 'selection.json');
+    const failed = spawn(bad);
+    expect(failed.status).toBe(0);
+    expect(failed.stdout).toContain('Usage: bun test');
+    expect(failed.stderr).toContain(`[select-tests] report not written to ${bad}:`);
+    expect(existsSync(bad)).toBe(false);
+  });
+});
+
+describe('packageJsonChange', () => {
+  const baseTmp = makeBaseTmp('package-json-change-');
+  afterAll(() => {
+    try { rmSync(baseTmp, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+  const BEFORE = '{\n  "name": "x",\n  "version": "1.0.0",\n  "scripts": { "test": "bun test" },\n  "devDependencies": { "ajv": "8.20.0" }\n}\n';
+  const repo = makeEmptyRepo(baseTmp);
+  writeFileSync(join(repo, 'other.txt'), 'x\n');
+  spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'commit', '-qm', 'no-pkg'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'branch', 'no-pkg'], { encoding: 'utf8' });
+  writeFileSync(join(repo, 'package.json'), BEFORE);
+  spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'commit', '-qm', 'base'], { encoding: 'utf8' });
+
+  function classify(after: string | null, before: string | null = BEFORE): string {
+    const baseRef = before === null ? 'no-pkg' : 'main';
+    spawnSync('git', ['-C', repo, 'checkout', '-q', '-B', 'feature', baseRef], { encoding: 'utf8' });
+    if (after === null) rmSync(join(repo, 'package.json'), { force: true });
+    else writeFileSync(join(repo, 'package.json'), after);
+    spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+    spawnSync('git', ['-C', repo, 'commit', '-qm', 'change'], { encoding: 'utf8' });
+    return packageJsonChange(baseRef, repo);
+  }
+
+  test('a version bump, with or without reformatting, is version-only', () => {
+    expect(classify(BEFORE.replace('1.0.0', '1.0.1'))).toBe('version-only');
+    expect(classify(JSON.stringify(JSON.parse(BEFORE.replace('1.0.0', '2.0.0'))) + '\n')).toBe('version-only');
+  });
+
+  test('dependency, script or other field changes are other', () => {
+    expect(classify(BEFORE.replace('8.20.0', '8.21.0'))).toBe('other');
+    expect(classify(BEFORE.replace('"bun test"', '"bun test tests/"'))).toBe('other');
+    expect(classify(BEFORE.replace('1.0.0', '1.0.1').replace('"x"', '"y"'))).toBe('other');
+  });
+
+  test('an added, deleted or unparseable manifest is other', () => {
+    expect(classify(BEFORE, null)).toBe('other');
+    expect(classify(null)).toBe('other');
+    expect(classify('{ not json')).toBe('other');
+    expect(packageJsonChange('no-such-ref', repo)).toBe('other');
   });
 });
 

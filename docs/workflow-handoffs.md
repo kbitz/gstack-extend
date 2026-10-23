@@ -901,6 +901,7 @@ or input it says is needed is for the user.
 | gstack working-tree fingerprint (`wtree`) | receipt-present | published, labeled apart from the Git tree SHA; consumers ignore it |
 | Completion-matrix location and scope-source SHA-256 | receipt-present | published in the receipt; consumers ignore it |
 | `Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present | published in the receipt; a consumer may show them to the user, and they never authorize a stage or merge |
+| `Test selection:` lines | receipt-present | published in the receipt; each names the lanes or test files a run ran and skipped, and a skipped lane never counts as passed |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.

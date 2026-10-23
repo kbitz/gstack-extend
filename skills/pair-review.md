@@ -275,7 +275,7 @@ pair-review/                                  # <PROJECT_DIR>
 to "passed" filtering — group completion, summary counters, dashboard, resume
 lookahead, per-item table rendering — means both statuses unless explicitly
 narrowed to direct PASSED. Use the phrase `terminal-passed statuses` when
-referring to this set; a `tests/skill-protocols.test.ts` invariant asserts the
+referring to this set; a `tests/skill-protocols-pair-review.test.ts` invariant asserts the
 canonical definition exists and that the phrase appears at multiple filter
 sites (≥4 occurrences), so a future edit that drops it from a filter site
 trips the test.
@@ -879,7 +879,7 @@ Behavior:
 3. **After E3 demotion, the next prompt MUST do a full group re-read. Do not
    use any remembered N+1 item description from the lookahead step before the
    FAIL; demotion changed the UNTESTED set behind lookahead's back.** This
-   sentence is load-bearing — a `tests/skill-protocols.test.ts` invariant
+   sentence is load-bearing — a `tests/skill-protocols-pair-review.test.ts` invariant
    asserts this exact phrasing exists in the FAIL handler section so future
    edits don't accidentally strip it.
 4. Write all edits to disk.

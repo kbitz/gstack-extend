@@ -1,13 +1,337 @@
 {
   "runner": "bun run test -- {files}",
   "dependencies": {
-    "src/secret-dispositions/cli.ts": [
+    ".github/workflows/auto-tag.yml": [
+      "tests/release-manifest.test.ts"
+    ],
+    ".gstack/pregate.json": [
+      "tests/touchfiles.test.ts"
+    ],
+    "CHANGELOG.md": [
+      "tests/release-manifest.test.ts"
+    ],
+    "README.md": [
+      "tests/handoff-contract.test.ts"
+    ],
+    "VERSION": [
+      "tests/release-manifest.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "bin/autoplan-lean": [
+      "tests/autoplan-lean-history.test.ts",
+      "tests/autoplan-lean.test.ts"
+    ],
+    "bin/config": [
+      "tests/setup-hosts.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/update.test.ts"
+    ],
+    "bin/docs-ship": [
+      "tests/docs-ship.test.ts"
+    ],
+    "bin/gstack-extend": [
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/quota.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "bin/gstack-extend-telemetry": [
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "bin/layout-scaffold": [
+      "tests/layout-scaffold.test.ts"
+    ],
+    "bin/lib/install-safety.sh": [
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/lib-install-safety.test.ts",
+      "tests/setup-hosts.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/update.test.ts"
+    ],
+    "bin/lib/projects-registry.sh": [
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-registry.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "bin/lib/quota-cli.py": [
+      "tests/quota.test.ts",
+      "tests/telemetry-contract.test.ts"
+    ],
+    "bin/lib/quota/**": [
+      "tests/quota.test.ts",
+      "tests/telemetry-contract.test.ts"
+    ],
+    "bin/lib/quota/common.py": [
+      "tests/telemetry.test.ts"
+    ],
+    "bin/lib/run-migrations.sh": [
+      "tests/update.test.ts"
+    ],
+    "bin/lib/semver.sh": [
+      "tests/setup-hosts.test.ts",
+      "tests/update.test.ts"
+    ],
+    "bin/lib/session-paths.sh": [
+      "tests/skill-protocols-full-review.test.ts",
+      "tests/skill-protocols-pair-review.test.ts",
+      "tests/skill-protocols.test.ts"
+    ],
+    "bin/lib/source-tag.sh": [
+      "tests/skill-protocols-roadmap.test.ts",
+      "tests/source-tag.test.ts"
+    ],
+    "bin/lib/telemetry*.py": [
+      "tests/quota.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "bin/lib/telemetry.py": [
+      "tests/workflow-metrics.test.ts"
+    ],
+    "bin/lib/workflow_metrics.py": [
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "bin/merge-gate": [
+      "tests/merge-gate.test.ts"
+    ],
+    "bin/outside-review": [
+      "tests/outside-review.test.ts"
+    ],
+    "bin/roadmap-audit": [
+      "tests/audit-cli-contract.test.ts",
+      "tests/audit-snapshots.test.ts",
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/layout-scaffold.test.ts",
+      "tests/setup-init-wire.test.ts"
+    ],
+    "bin/roadmap-pack": [
+      "tests/audit-snapshots.test.ts",
+      "tests/layout-scaffold.test.ts"
+    ],
+    "bin/roadmap-renumber": [
+      "tests/audit-snapshots.test.ts",
+      "tests/layout-scaffold.test.ts",
+      "tests/renumber-cli.test.ts"
+    ],
+    "bin/roadmap-route": [
+      "tests/skill-protocols-roadmap.test.ts",
+      "tests/source-tag.test.ts"
+    ],
+    "bin/roadmap-touches": [
+      "tests/audit-snapshots.test.ts",
+      "tests/layout-scaffold.test.ts"
+    ],
+    "bin/secret-dispositions": [
       "tests/secret-dispositions.test.ts"
     ],
-    "skills/project-spec.md": [
-      "tests/skill-protocols.test.ts",
-      "tests/telemetry.test.ts",
+    "bin/update-check": [
+      "tests/setup-hosts.test.ts",
+      "tests/update.test.ts"
+    ],
+    "bin/update-run": [
+      "tests/update.test.ts"
+    ],
+    "docs/ROADMAP.md": [
+      "tests/parsers-phases.test.ts",
+      "tests/parsers-roadmap.test.ts"
+    ],
+    "docs/docs-ship.md": [
+      "tests/docs-ship.test.ts"
+    ],
+    "docs/installation.md": [
+      "tests/setup-hosts.test.ts"
+    ],
+    "docs/merge-gate.md": [
+      "tests/merge-gate.test.ts"
+    ],
+    "docs/outside-review.md": [
+      "tests/outside-review.test.ts"
+    ],
+    "docs/quota-ledger.md": [
+      "tests/quota.test.ts"
+    ],
+    "docs/roadmap-shipped.md": [
+      "tests/parsers-phases.test.ts",
+      "tests/parsers-roadmap.test.ts"
+    ],
+    "docs/secret-dispositions.md": [
+      "tests/secret-dispositions.test.ts"
+    ],
+    "docs/source-tag-contract.md": [
       "tests/audit-compliance.test.ts"
+    ],
+    "docs/stage-runs.schema.json": [
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "docs/telemetry.md": [
+      "tests/outside-review.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts",
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "docs/workflow-handoffs.md": [
+      "tests/handoff-contract.test.ts"
+    ],
+    "docs/workflow-metrics.schema.json": [
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "migrations/**": [
+      "tests/update.test.ts"
+    ],
+    "package.json": [
+      "tests/release-manifest.test.ts"
+    ],
+    "scripts/extract-changelog-section.sh": [
+      "tests/release-manifest.test.ts"
+    ],
+    "scripts/init-templates/**": [
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/setup-init-wire.test.ts"
+    ],
+    "scripts/init-templates/PROGRESS.md.tmpl": [
+      "tests/skill-protocols-project-spec.test.ts"
+    ],
+    "scripts/scrub-quota-fixture.ts": [
+      "tests/quota.test.ts"
+    ],
+    "setup": [
+      "tests/audit-compliance.test.ts",
+      "tests/setup-hosts.test.ts",
+      "tests/setup-init-wire.test.ts",
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry-contract.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts",
+      "tests/update.test.ts"
+    ],
+    "skills/**": [
+      "tests/audit-compliance.test.ts",
+      "tests/setup-hosts.test.ts",
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry-doctor.test.ts",
+      "tests/telemetry.test.ts"
+    ],
+    "skills/autoplan-lean.md": [
+      "tests/autoplan-lean-history.test.ts",
+      "tests/autoplan-lean.test.ts"
+    ],
+    "skills/docs-ship.md": [
+      "tests/docs-ship.test.ts"
+    ],
+    "skills/full-review.md": [
+      "tests/skill-protocols-full-review.test.ts",
+      "tests/update.test.ts"
+    ],
+    "skills/gstack-extend-upgrade.md": [
+      "tests/update.test.ts"
+    ],
+    "skills/implement.md": [
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-implement.test.ts",
+      "tests/skill-protocols-project-spec.test.ts"
+    ],
+    "skills/pair-review.md": [
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-pair-review.test.ts",
+      "tests/update.test.ts"
+    ],
+    "skills/project-spec.md": [
+      "tests/docs-ship.test.ts",
+      "tests/skill-protocols-project-spec.test.ts"
+    ],
+    "skills/review-and-prep.md": [
+      "tests/handoff-contract.test.ts",
+      "tests/outside-review.test.ts",
+      "tests/secret-dispositions.test.ts",
+      "tests/skill-protocols-project-spec.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "skills/roadmap.md": [
+      "tests/docs-ship.test.ts",
+      "tests/skill-protocols-project-spec.test.ts",
+      "tests/skill-protocols-roadmap.test.ts",
+      "tests/update.test.ts"
+    ],
+    "skills/ship-and-land.md": [
+      "tests/handoff-contract.test.ts",
+      "tests/secret-dispositions.test.ts",
+      "tests/skill-protocols-project-spec.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts",
+      "tests/skill-protocols-ship-and-land.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "src/audit/**": [
+      "tests/audit-cli-contract.test.ts",
+      "tests/audit-locale-safety.test.ts",
+      "tests/audit-no-stray-shellouts.test.ts",
+      "tests/audit-snapshots.test.ts",
+      "tests/init-bin.test.ts",
+      "tests/init-distribution.test.ts",
+      "tests/init-templates.test.ts",
+      "tests/setup-init-wire.test.ts"
+    ],
+    "src/layout-scaffold/**": [
+      "tests/layout-scaffold.test.ts"
+    ],
+    "src/merge-gate/**": [
+      "tests/merge-gate.test.ts"
+    ],
+    "src/secret-dispositions/**": [
+      "tests/secret-dispositions.test.ts"
+    ],
+    "tests/fixtures/autoplan-lean/**": [
+      "tests/autoplan-lean-history.test.ts",
+      "tests/autoplan-lean.test.ts"
+    ],
+    "tests/fixtures/handoffs/**": [
+      "tests/handoff-contract.test.ts"
+    ],
+    "tests/fixtures/quota/**": [
+      "tests/quota.test.ts",
+      "tests/telemetry-contract.test.ts"
+    ],
+    "tests/fixtures/source-tag-hash-corpus.json": [
+      "tests/source-tag.test.ts"
+    ],
+    "tests/quota_cases.py": [
+      "tests/quota.test.ts"
+    ],
+    "tests/roadmap-audit/**": [
+      "tests/audit-invariants.test.ts",
+      "tests/audit-snapshots.test.ts"
+    ],
+    "tests/skill-protocols*.test.ts": [
+      "tests/touchfiles.test.ts"
     ]
   }
 }

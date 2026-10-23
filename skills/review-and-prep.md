@@ -648,6 +648,9 @@ A caller may pre-approve review choices with one line in the invocation prompt:
   re-audit once, after the last fix batch and before Step 6, never after each
   batch and never a third attempt. `full-suite=final` runs targeted lanes
   between fix batches and the pregate and main suite once on the final content.
+  That main-suite run may be a diff selection, which is not the full suite:
+  under this policy `/ship-and-land` runs the full suite once on the final head
+  before merge.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
@@ -1927,14 +1930,19 @@ Keep Git tree IDs and gstack `wtree` fingerprints distinctly
 labeled. Add the implementation summary, settled decisions/rationale, linked
 plan/spec, and finding dispositions/fix commits. Include the `Review default:`
 line, every `Auto-chosen (veto by replying on this PR):` line and the elapsed
-times from Boundaries. List checks that were not run
+times from Boundaries. For each test run, include a `Test selection:` line from
+the runner's or pregate's selection report when one is printed: the lanes or
+test files that ran, those skipped and why, and whether the run was the full
+suite. A skipped lane reads `skipped — <reason>`, never passed, and a selected
+run is never reported as the full suite. List checks that were not run
 or not applicable. Record each `/ship` gate under `Ship gates`, bound to the
 final HEAD, Git tree, `wtree` and base, with the `/ship` section path and content
 hash it followed:
 
 - pregate: raw verdict, separate wrapper verdict, policy source, the record's tree, its durable copy's path
-  and SHA-256, the lanes it ran with counts, and requires-remote obligations
-  with their receipts; when dispositions apply, include the evaluator's exact
+  and SHA-256, the lanes it ran with counts, the lanes its selection skipped,
+  and requires-remote obligations with their receipts; when dispositions apply,
+  include the evaluator's exact
   `secrets: raw fail; N findings dispositioned (entries …)` receipt, matched
   entry references, disposition-file SHA-256, and every stale entry;
 - coverage audit: `coverage_pct`, `coverage_pct_value`, gaps, weak gaps, tests

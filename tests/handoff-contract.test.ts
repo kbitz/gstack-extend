@@ -1153,6 +1153,8 @@ describe('(C) doc and producers agree', () => {
     expect(has(DOC, '`wtree`')).toBe(true);
     expect(has(rp, 'Include the `Review default:` line, every `Auto-chosen (veto by replying on this PR):` line')).toBe(true);
     expect(has(DOC, '`Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present')).toBe(true);
+    expect(has(rp, 'For each test run, include a `Test selection:` line')).toBe(true);
+    expect(has(DOC, '`Test selection:` lines | receipt-present')).toBe(true);
   });
 
   test('producers keep the BLOCKED and PAUSED exits the doc treats as non-handoffs', () => {
