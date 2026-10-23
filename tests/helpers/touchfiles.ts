@@ -447,6 +447,8 @@ function scanTypeOnlyImports(src: string): string[] {
  * this codebase always uses explicit `.ts` so the fallback is mostly
  * defensive.
  */
+const REPO_ROOT_IMPORT_CACHE = new Map<string, string[]>();
+
 export function analyzeTestImports(testFile: string, repoRoot: string = REPO_ROOT_DEFAULT): string[] {
   const visited = new Set<string>();
   const out = new Set<string>();
@@ -454,6 +456,11 @@ export function analyzeTestImports(testFile: string, repoRoot: string = REPO_ROO
     .startsWith(resolve(repoRoot))
     ? resolve(testFile)
     : resolve(repoRoot, testFile);
+  const useCache = resolve(repoRoot) === REPO_ROOT_DEFAULT;
+  if (useCache) {
+    const cached = REPO_ROOT_IMPORT_CACHE.get(root);
+    if (cached) return [...cached];
+  }
   const queue: string[] = [root];
   const transpiler = new Bun.Transpiler({ loader: 'ts' });
 
@@ -501,7 +508,9 @@ export function analyzeTestImports(testFile: string, repoRoot: string = REPO_ROO
     }
   }
 
-  return [...out].sort();
+  const sorted = [...out].sort();
+  if (useCache) REPO_ROOT_IMPORT_CACHE.set(root, sorted);
+  return [...sorted];
 }
 
 // ─── Selection ──────────────────────────────────────────────────────────

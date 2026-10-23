@@ -453,12 +453,13 @@ describe('per-skill selection', () => {
   //   fails_when=a split suite reads (or declares) another skill, or a skill change falls back to the whole suite;
   //   why_new=the monolith selected all 612 protocol tests for any skill edit; seam=none
   test('a change to one skill file selects only that skill\'s suites and the shared-rule suites', () => {
+    const importsByTest = new Map(tests.map(t => [t, analyzeTestImports(t, REPO_ROOT)]));
     for (const name of EXPECTED_SETUP_SKILLS) {
       const file = `skills/${name}.md`;
       const sel = computeTestSelection([file], tests);
       expect([name, sel.reason]).toEqual([name, 'diff']);
       // A suite that imports the skill as text (init-bin reads gstack-extend-init.md) is that skill's suite too.
-      const importers = tests.filter(t => analyzeTestImports(t, REPO_ROOT).includes(file));
+      const importers = tests.filter(t => importsByTest.get(t)!.includes(file));
       expect([name, sel.selected]).toEqual([name, [...new Set([...declaredConsumers(file), ...importers])].sort()]);
       for (const t of sharedRule) expect([name, sel.selected]).toEqual([name, expect.arrayContaining([t])]);
       const otherSkillSuites = sel.selected.filter(t => SPLIT_SUITE_RE.test(t) && !MANUAL_TOUCHFILES[t]!.includes(file));
@@ -786,18 +787,23 @@ describe('packageJsonChange', () => {
     try { rmSync(baseTmp, { recursive: true, force: true }); } catch { /* ignore */ }
   });
   const BEFORE = '{\n  "name": "x",\n  "version": "1.0.0",\n  "scripts": { "test": "bun test" },\n  "devDependencies": { "ajv": "8.20.0" }\n}\n';
+  const repo = makeEmptyRepo(baseTmp);
+  writeFileSync(join(repo, 'other.txt'), 'x\n');
+  spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'commit', '-qm', 'no-pkg'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'branch', 'no-pkg'], { encoding: 'utf8' });
+  writeFileSync(join(repo, 'package.json'), BEFORE);
+  spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
+  spawnSync('git', ['-C', repo, 'commit', '-qm', 'base'], { encoding: 'utf8' });
+
   function classify(after: string | null, before: string | null = BEFORE): string {
-    const repo = makeEmptyRepo(baseTmp);
-    if (before !== null) writeFileSync(join(repo, 'package.json'), before);
-    writeFileSync(join(repo, 'other.txt'), 'x\n');
-    spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
-    spawnSync('git', ['-C', repo, 'commit', '-qm', 'base'], { encoding: 'utf8' });
-    spawnSync('git', ['-C', repo, 'checkout', '-q', '-b', 'feature'], { encoding: 'utf8' });
-    if (after === null) rmSync(join(repo, 'package.json'));
+    const baseRef = before === null ? 'no-pkg' : 'main';
+    spawnSync('git', ['-C', repo, 'checkout', '-q', '-B', 'feature', baseRef], { encoding: 'utf8' });
+    if (after === null) rmSync(join(repo, 'package.json'), { force: true });
     else writeFileSync(join(repo, 'package.json'), after);
     spawnSync('git', ['-C', repo, 'add', '-A'], { encoding: 'utf8' });
     spawnSync('git', ['-C', repo, 'commit', '-qm', 'change'], { encoding: 'utf8' });
-    return packageJsonChange('main', repo);
+    return packageJsonChange(baseRef, repo);
   }
 
   test('a version bump, with or without reformatting, is version-only', () => {
@@ -815,7 +821,7 @@ describe('packageJsonChange', () => {
     expect(classify(BEFORE, null)).toBe('other');
     expect(classify(null)).toBe('other');
     expect(classify('{ not json')).toBe('other');
-    expect(packageJsonChange('no-such-ref', makeEmptyRepo(baseTmp))).toBe('other');
+    expect(packageJsonChange('no-such-ref', repo)).toBe('other');
   });
 });
 
