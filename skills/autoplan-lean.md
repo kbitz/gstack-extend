@@ -6,9 +6,10 @@ description: |
   voices and auto-decisions) from the installed phase skills, keeping the plan
   small, and finish with a copyable /implement prompt for a fresh session. The
   plan holds criteria, Tier, the verify command, accepted settlements, one task
-  list and the GSTACK REVIEW REPORT. The full review record goes to a hashed
-  sidecar file. Reviewers get only the plan, their phase's criteria and earlier
-  settlements, and their prompt sizes are recorded. Use when asked to "autoplan
+  list and the GSTACK REVIEW REPORT, within a budget set by the card's size.
+  The full review record goes to a hashed sidecar file. Reviewers get only
+  their phase's criteria and the plan, a phase's two voices run at the same
+  time, and their prompt sizes are recorded. Use when asked to "autoplan
   lean", "run autoplan with a small plan", or when a caller launches
   /autoplan-lean by name.
 allowed-tools:
@@ -122,15 +123,22 @@ installed upstream skills supply all review behavior. This skill changes only
 what the run carries:
 
 - **A small plan.** The plan proper holds the card text, acceptance criteria,
-  `Tier:` and verify lines, accepted settlements, one consolidated task list and
-  the final `## GSTACK REVIEW REPORT`. Everything else (voice outputs,
-  consensus tables, registries, the decision audit trail, prompt sizes) goes to
-  a sidecar, `<plan-stem>.review-record.md` beside the plan. The plan's
-  `## Review record` section names that file's path and SHA-256.
-- **Smaller reviewer inputs.** Each voice gets its phase's criteria, earlier
-  phases' accepted settlements as a short list and the plan proper. It never
-  gets earlier phases' raw outputs. Each prompt's byte size is recorded; its
+  `Tier:` and verify lines, accepted settlements as one decision line each, one
+  consolidated task list and the final `## GSTACK REVIEW REPORT`. Everything
+  else (voice outputs, consensus tables, registries, the decision audit trail,
+  rationale, evidence, prompt sizes) goes to a sidecar,
+  `<plan-stem>.review-record.md` beside the plan. The plan's `## Review
+  record` section names that file's path and SHA-256. The plan proper stays
+  within a budget of 1.5 × the source's plan-proper bytes + 4096; `prompt`
+  and `seal` refuse a larger one.
+- **Smaller reviewer inputs.** Each voice gets its phase's criteria and the
+  plan proper, which carries every accepted settlement once. It never gets
+  earlier phases' raw outputs. Each prompt's byte size is recorded; its
   content never is.
+- **Voices together.** A phase's native and outside voices run at the same
+  time; the phase review waits for both.
+- **Skill text on demand.** Upstream skill files are read by section, when a
+  step needs them, never whole, and not again while still in context.
 - **Review outputs stay in files.** Voices write their outputs to the run
   directory, and `seal` copies them into the sidecar mechanically. Do not
   re-emit reviewer output through Write or Edit, print it in a fence, or
@@ -190,13 +198,41 @@ Skill tool, read their installed `SKILL.md` files directly:
 phase: report the phase and the setup repair. Never recreate a review from
 memory.
 
+Upstream skill files are large (a host copy can exceed 150 KB), so never read
+one whole. Outline each file before reading any of it:
+
+```bash
+"$_EXTEND_ROOT/bin/autoplan-lean" outline --skill "<skill or section file>" --base "<installed autoplan SKILL.md>"
+```
+
+Each `SECTION:` line gives a line range, its bytes, a status and its heading;
+`(before first heading)` is the body text above the first heading (a file
+with no headings, such as a phase section file, is one such row). Read a range
+with your file-reading tool's offset and limit (or `sed -n 'START,ENDp'`) when
+the step that applies it starts. Do not re-read a range you still hold in
+context; after a compaction, and on every rerun from the final gate, re-read
+the ranges the current step applies. Never read `skip` sections: they are on
+upstream's Section skip list, which autoplan already handles, except where
+this skill names one. A `skip-parent` row is an H3 under a skipped H2: read it
+unless its heading plainly belongs to the skipped topic (an AskUserQuestion
+sub-format, a continuation of the outside voice). When you read one, also read
+the last paragraph of its parent's span, above the first such H3; upstream
+sometimes continues its methodology there without a heading. Read `shared`
+sections (the generic gstack preamble every skill repeats) in the first phase
+skill you load, and skip them in later phases. For the autoplan file itself,
+omit `--base`. Exit 4 with `DRIFT:` means the Section skip list moved: record
+the line in `intake.md` and the report's VERDICT, and apply upstream's skip
+list by heading yourself.
+
 From the installed autoplan `SKILL.md`, read these sections now and apply them
 for the whole run: `## The 6 Decision Principles`, `## Decision
 Classification`, `## Sequential Execution — MANDATORY` (its ordering and
 completion rules), `## What "Auto-Decide" Means`, Phase 0 Step 3's **Section
 skip list**, `## Phase 0.5: Outside reviewer preflight` and `## Pre-Gate
-Verification`. A host copy may inline phase sections that another host keeps
-in `sections/<phase>-phase.md`. Use whichever this installation has. Skip
+Verification`. Read each phase's own autoplan section at that phase's entry
+(§4), and the tasks aggregator and `## Completion: Write Review Logs` at §5. A
+host copy may inline phase sections that another host keeps in
+`sections/<phase>-phase.md`. Use whichever this installation has. Skip
 upstream's preamble, telemetry, publication guard and unattended profile.
 
 Upstream's snapshot tool, accepted-obligation blocks, phase-close packets,
@@ -234,6 +270,10 @@ when `~/.gstack/projects/<slug>/` exists, or else
 `~/scratch/gstack-autoplan-lean/<slug>-<branch>-<datetime>/`. Create it with
 mode 700. Copy `SOURCE_PLAN`'s bytes to `<run>/restore.md` before any write, and
 record its SHA-256. To rerun from the original, copy `restore.md` back over it.
+Its plan proper's size sets the plan budget (§2), so never edit it. A resume
+or a rerun from the final gate keeps the existing `restore.md`. A new
+invocation that finds the run directory already present moves it aside to
+`<run>.<datetime>` first, then copies `SOURCE_PLAN` as above.
 
 Read project instructions (`AGENTS.md` or `CLAUDE.md`), `docs/SPEC.md` when
 present as a product spec (it has an `## Authority` section), `TODOS.md`,
@@ -257,11 +297,11 @@ Verify command: <the source's verify command, verbatim>
 
 ## Accepted decisions
 
-- [ceo] <one accepted settlement: the decision, its conditions and its check>
+- [ceo] d<N>: <the decision and its condition, in one line>
 
 ## Implementation tasks
 
-- [ ] <task> (<files>; surfaced by <phase>)
+- [ ] <change> (<files>; AC<n>, d<N>; check: <test or manual check>; surfaced by <phase>)
 ```
 
 Keep every source acceptance criterion. Changing, adding or dropping one is an
@@ -271,10 +311,27 @@ feature or fix, `novel` for new architecture or a wide blast radius. Record it
 as an auto-decision. If the source gives no verify command, use the project's
 documented test command and record that as an auto-decision. If there is none,
 write `Verify command: none — <how the plan is verified>`. Each `## Accepted
-decisions` bullet is tagged `[ceo]`, `[design]`, `[dx]` or `[eng]` and holds at
-most 500 characters. Split a long obligation into several bullets. Its analysis
-goes in the phase review. There is exactly one `## Implementation tasks` list;
-phases merge into it.
+decisions` bullet is tagged `[ceo]`, `[design]`, `[dx]` or `[eng]`, then
+`d<N>:`, where N is the decision's `#` in `<run>/decisions.md`. After its ID it
+holds at most 200 characters: the decision and its condition only. Its
+rationale, evidence and analysis go in the phase review and its decisions.md
+row. A decision that needs two lines repeats its ID on each bullet. Record
+decisions that change or settle the plan, not restatements of the card. A
+task names its change, its files, the AC and `d<N>` IDs it implements and the
+accepted test or manual check that proves it; it does not restate a
+settlement. Every `d<N>` a task cites must be a settlement bullet, because
+`/implement` reads only the plan. There is exactly one `## Implementation
+tasks` list; phases merge into it.
+
+The plan proper (everything before `## Review record`) may hold at most 1.5 ×
+the plan proper of `<run>/restore.md` + 4096 bytes. On a `PLAN_OVER_BUDGET`
+refusal from `prompt` or `seal`, shorten the settlements and tasks as above,
+moving what you cut to the phase review, and retry. Never shorten the card
+text, the criteria, `Tier:`, the verify line or a task's check to fit, and
+never cut an accepted settlement or task. When every settlement and task is
+already one line and the plan is still over, rerun with `--over-budget
+"<reason>"`, naming the `d<N>` that added card or criteria text or the
+settlement and task counts; the reason is recorded, and you report it in §7.
 
 Detect scope with upstream's tool on the plan proper:
 
@@ -323,74 +380,109 @@ history to get past it. The sidecar includes every archived attempt and the
 current attempt. This history contains raw review content and must never be
 read into reviewer prompts; prompt-size logs remain metadata only.
 
-1. **Load.** Read the installed phase skill and the sections its section index
-   requires, at full depth, applying the section skip list. Then read that
-   phase's autoplan section (`sections/<phase>-phase.md`, or its `## Phase …`
-   heading where sections are inlined). Apply its **Override rules**,
-   **Required execution checklist** and **Mandatory outputs**. Skip its
-   snapshot-tool, dispatch-prompt and close-packet steps. Under HOLD SCOPE, the
-   CEO mode override is HOLD SCOPE.
+1. **Load.** Outline the installed phase skill and each section file it uses
+   (§1). Read that phase's autoplan section (`sections/<phase>-phase.md`, or
+   its `## Phase …` heading's range where sections are inlined) now, and apply
+   its **Override rules**, **Required execution checklist** and **Mandatory
+   outputs**. Skip its snapshot-tool, dispatch-prompt and close-packet steps.
+   Step 5 replaces its native dispatch (`run_in_background: false`, the
+   **Native completion barrier** and "then outside"); keep its outside block
+   and Bash timeout.
+   Read the phase skill's `read` sections when a step needs them: CEO's Step 0
+   and mode sections before its pre-voice work, the rest before or during the
+   phase review (step 6). Every `read` section is loaded, at full depth, before
+   the phase announces. Under HOLD SCOPE, the CEO mode override is HOLD SCOPE.
 2. **Pre-voice work.** CEO only: complete Step 0, including its Spec Review
    Loop and its stop conditions and three-launch cap, before any voice. Give
    the loop's reviewers the CEO scope summary and a current plan-proper export
-   (`autoplan-lean proper --plan … --out <run>/ceo-spec-input.<n>.md`). Apply
-   accepted Step 0 changes to the plan proper, with settlements tagged
-   `[ceo]`, before step 3. Other phases dispatch their voices right after
-   loading, as upstream does.
+   (`autoplan-lean proper --plan … --out <run>/ceo-spec-input.<n>.md`, adding
+   `--previous <run>/ceo-spec-input.<n-1>.md` from the second round). Do not
+   launch another round when the amendments since the previous round changed
+   no requirement, criterion, task or settlement: `CHANGED_LINES: 0` always
+   stops the loop, and wording-only changes count as unchanged. Instead,
+   report the open issues as upstream does at the cap. Apply accepted Step 0
+   changes to the plan proper, with settlements tagged `[ceo]`, before step 3.
+   Other phases dispatch their voices right after loading their autoplan
+   section.
 3. **Build both prompts.** Run it once for each voice:
    ```bash
    "$_EXTEND_ROOT/bin/autoplan-lean" prompt --plan "<ACTIVE_PLAN>" --run "<run>" --phase <phase> --voice native
    ```
    Then run the same command with `--voice outside`. The helper writes
    `<run>/<phase>-<voice>-prompt.md` and records its size. You already hold the
-   plan, so do not Read the prompt file. A `RAW_OUTPUT_IN_PLAN` or
-   `SETTLEMENTS_INVALID` refusal means review material reached the plan proper.
-   Move it to the run directory and rebuild.
-4. **Native voice.** Dispatch one subagent on the host's own model, as
-   upstream does. Do not add a model parameter. Run it in the foreground where
-   the host allows; otherwise await its completion notice. Do not continue this
-   phase's analysis while it is pending. Send exactly:
-   > You are the independent <PHASE> reviewer for this phase. Read `<prompt path>` from line 1 through EOF with your file-reading tool (<BYTES> bytes). Continue until every line is loaded. Execute every criterion in it against all of the plan. Write your complete result, starting with its INPUT line, to `<run>/<phase>-native.md`. Then reply with only that path and your finding count per severity.
+   plan, so do not Read the prompt file. `RAW_OUTPUT_IN_PLAN` means review
+   material reached the plan proper: move it to the run directory and
+   rebuild. For `SETTLEMENTS_INVALID`, follow its message: add a missing
+   `d<N>:` from `decisions.md`, cut an over-long decision to its decision
+   line (keeping it in the plan), give a conflicting ID its own number, or
+   move a table, fence or prose block to the run directory. On
+   `PLAN_OVER_BUDGET`, shorten the settlements and tasks (§2) and rebuild.
+4. **Prepare the outside voice.** Copy the phase's installed
+   outside-invocation bash block to `<run>/<phase>-outside.sh`. Replace
+   `<prepared-prompt-file>` with the shell-quoted path of
+   `<run>/<phase>-outside-prompt.md`. That prompt already follows the block's
+   prompt-writing rule and states the result format upstream's validator
+   reads; do not add to it.
+5. **Run both voices at the same time.** Start both before awaiting either.
+   This departs from upstream's native-then-outside order only in timing:
+   each voice still gets only its own prompt, and the phase review still waits
+   for both.
+   - **Outside, first:** recheck the preflight (§3), then start the script
+     as a background command, with stdout to the output file so its output
+     stays out of the conversation, under the block's Bash timeout (Claude
+     Code: Bash `run_in_background: true`; Codex: a command session you poll
+     later):
+     ```bash
+     bash "<run>/<phase>-outside.sh" > "<run>/<phase>-outside.md" 2> "<run>/<phase>-outside.stderr"; echo "EXIT: $?"; tail -n 1 "<run>/<phase>-outside.md"
+     ```
+   - **Native, then:** dispatch one subagent on the host's own model, as
+     upstream does, and wait for it in the foreground (Claude Code: Agent
+     `run_in_background: false`; Codex: spawn the agent and wait on it). Do
+     not add a model parameter. Send exactly:
+     > You are the independent <PHASE> reviewer for this phase. Read `<prompt path>` from line 1 through EOF with your file-reading tool (<BYTES> bytes). Continue until every line is loaded. Execute every criterion in it against all of the plan. Write your complete result, starting with its INPUT line, to `<run>/<phase>-native.md`. Then reply with only that path and your finding count per severity.
 
-   If the subagent cannot write files, write its returned result to that path
-   yourself. If the result's `INPUT:` line does not match the prompt's phase and
-   plan hash, preserve that rejected output with the `archive-phase` command
-   above for this phase before retrying once with the same prompt. Stop if archival
-   fails. If that retry also fails, or the host has no subagents or
-   the dispatch fails, record the native voice as unavailable and continue with
-   upstream's degradation tags (`[single-model]`, `[<provider>-only]`,
+   If the native dispatch returns a launch receipt instead of a result,
+   await that agent's completion notice; a pending agent is not a failed one.
+   Then await the outside command's completion. Do not read either voice's
+   output or begin the phase's review analysis until both have finished or
+   failed. Where the host cannot run a command in the background, run native
+   first, then outside, as upstream does.
+
+   **Native result.** If the subagent cannot write files, write its returned
+   result to that path yourself. If the result's `INPUT:` line does not match
+   the prompt's phase and plan hash, preserve that rejected output with
+   `archive-phase --run "<run>" --phase <phase> --voice native` before
+   retrying once with the same prompt; the outside result stays current. Stop
+   if archival fails. If that retry also fails, or the host has no subagents
+   or the dispatch fails, record the native voice as unavailable and continue
+   with upstream's degradation tags (`[single-model]`, `[<provider>-only]`,
    `[subagent-only]`, single-reviewer mode). Never substitute your own review
    for a voice.
-5. **Outside voice.** Copy the phase's installed outside-invocation bash block
-   to `<run>/<phase>-outside.sh`. Replace `<prepared-prompt-file>` with the
-   shell-quoted path of `<run>/<phase>-outside-prompt.md`; that prompt already
-   follows the block's prompt-writing rule. Then run the script with stdout to
-   the output file, so its output stays out of the conversation:
-   ```bash
-   bash "<run>/<phase>-outside.sh" > "<run>/<phase>-outside.md" 2> "<run>/<phase>-outside.stderr"; echo "EXIT: $?"; tail -n 1 "<run>/<phase>-outside.md"
-   ```
-   Use the block's Bash timeout. Apply upstream's result rules: only a final
-   `OUTSIDE_STATUS: completed` line counts as coverage. On a failed run, read
-   the stderr file's last lines for the reason. Upstream's "show the full
-   response" display rule is replaced here by reading the file in step 6. On a
-   disabled or unavailable outside voice, delete the empty output file and
-   record the status.
+
+   **Outside result.** Apply upstream's result rules: only a final
+   `OUTSIDE_STATUS: completed` line counts as coverage. On a failed or
+   `unverified` run, read the stderr file's last lines and record the reason
+   (for example `untagged_review`). Upstream's "show the full response"
+   display rule is replaced here by reading the file in step 6. On a disabled
+   or unavailable outside voice, delete the empty output file and record the
+   status.
 6. **Review.** Read `<run>/<phase>-native.md` and `<run>/<phase>-outside.md`
    once each. Complete the phase's remaining checklist at full upstream depth:
    consensus table, every review section, every mandatory output, and the
    Eng test-plan artifact under `~/.gstack/projects/<slug>/`. Auto-decide each
    issue with the principles. Write the phase review to `<run>/<phase>-review.md`.
    It holds the voice statuses with tags, the consensus table, section findings,
-   registries, diagrams, scores and the deferred/NOT-in-scope lists. Append one
-   row per auto-decision to `<run>/decisions.md` using upstream's Decision Audit
-   Trail columns. Add each decision's class (mechanical, taste or User
-   Challenge) and whether it is on the caller's fork list.
+   registries, diagrams, scores, the deferred/NOT-in-scope lists, and each
+   settlement's rationale and evidence. Append one row per auto-decision to
+   `<run>/decisions.md` using upstream's Decision Audit Trail columns; its `#`
+   is the settlement's `d<N>`. Add each decision's class (mechanical, taste or
+   User Challenge) and whether it is on the caller's fork list.
 7. **Amend the plan proper.** Apply accepted changes to the card text,
-   criteria and tasks. Add this phase's settlements as tagged bullets, and
-   merge its tasks into the single task list. Keep User Challenges as
+   criteria and tasks. Add this phase's settlements as `d<N>` decision lines
+   (§2), and merge its tasks into the single task list. Keep User Challenges as
    proposals in the phase review; the plan keeps the original direction until
-   §5 decides. Re-read only the plan proper (a few KB) and reconcile it against
-   the phase's accepted decisions. Fix omissions before announcing.
+   §5 decides. Re-read only the plan proper and reconcile it against the
+   phase's accepted decisions. Fix omissions before announcing.
 8. **Announce** in the conversation, then continue in the same turn:
    **Phase <n> complete.** Outside review: <completed: N concerns / unavailable /
    disabled>. Native subagent: <completed: N issues / unavailable>. Consensus:
@@ -398,17 +490,26 @@ read into reviewer prompts; prompt-size logs remain metadata only.
    Passing to <next phase or the final gate>. For DX, also give the score and
    TTHW line.
 
-Eng's outside voice gets earlier phases only as settlements, never as their
-consensus summaries or findings. Eng's "collect deferred scope from every
-phase" rule writes `TODOS.md` only without the no-edits option. Otherwise it
-writes a `## Deferred` list in `<run>/eng-review.md`.
+Eng's outside voice gets earlier phases only through the plan's settlements,
+never as their consensus summaries or findings. Eng's "collect deferred scope
+from every phase" rule writes `TODOS.md` only without the no-edits option.
+Otherwise it writes a `## Deferred` list in `<run>/eng-review.md`.
 
 ## 5. Final approval gate
 
 Run upstream's Pre-Gate Verification against the run directory files, which
 replace the plan's Review record. Make at most two repair attempts. Run the
 installed tasks-aggregator block, and fold any task it lists that the plan's
-single task list lacks into that list. Never add a second task list.
+single task list lacks into that list as a one-line task (§2). Never add a
+second task list. Then check the budget before building the brief, so the
+gate approves a plan that can seal:
+
+```bash
+"$_EXTEND_ROOT/bin/autoplan-lean" budget --plan "<ACTIVE_PLAN>" --run "<run>"
+```
+
+On `BUDGET: over`, shorten as §2 says, or name the approved growth that
+needs `--over-budget` in the brief.
 
 Build the brief: a 1–3 sentence plan summary, any URGENT security or data-loss
 finding outside this plan, and the numbered decisions with their recommended
@@ -421,7 +522,11 @@ cycles), E reject. Under auto-choose, take A with every default and do not
 ask. A User Challenge's default keeps the stated direction. Otherwise ask once
 with AskUserQuestion (plain text where the host has none), and handle B–E as
 upstream does. Rerun a phase with the §4 procedure: prompts are rebuilt and
-their sizes recorded again.
+their sizes recorded again. Before a D rerun, move the settlements of every
+phase that will rerun (the affected phases and Eng), and the tasks that cite
+them, out of the plan into their phase reviews; they are reopened, and each
+rerun adds back what it accepts. Settlements and tasks of phases that do not
+rerun stay.
 
 Apply the outcome to the plan proper: approved changes, settlements and tasks.
 A rejected User Challenge leaves the original direction. Write `<run>/gate.md`:
@@ -436,7 +541,10 @@ every phase that ran, with `"via":"autoplan-lean"`. Those logs live under
 Append `## GSTACK REVIEW REPORT` as the plan's last section. Follow the
 installed phase skill's **Plan File Review Report** rules (table columns,
 OUTSIDE COVERAGE, CROSS-MODEL, VERDICT, final unresolved-decisions line), using
-this run's statuses and counts. Add to VERDICT the criteria drift lines from
+this run's statuses and counts. The outline marks that H2 `skip` and its
+subsections `skip-parent`; read the H2 and its `### Generate the report`
+subsection from the Eng skill, or from the section file that holds them,
+now. Add to VERDICT the criteria drift lines from
 §1, if any. Then seal:
 
 ```bash
@@ -445,10 +553,17 @@ this run's statuses and counts. Add to VERDICT the criteria drift lines from
 
 `seal` writes the sidecar, puts `## Review record` (path, SHA-256, bytes)
 before the report, and prints `SIDECAR`, `SHA256`, `BYTES`, `PLAN`,
-`PLAN_SHA256`, and `PLAN_BYTES`. It keeps a sidecar it sealed earlier as a
-content-hash archive, and refuses to overwrite any other. Do not edit the
-sidecar after sealing; to change the review record, edit the run files and seal
-again. Then write the final message (§7) to `<run>/final-message.md`, scan it
+`PLAN_SHA256`, `PLAN_BYTES`, and the plan's size against the source's:
+`SOURCE_BYTES`, `PROPER_BYTES`, `BUDGET_BYTES` and `PLAN_RATIO` (the whole
+plan's bytes over the source's). It refuses, before writing anything, a plan
+proper over its budget (`PLAN_OVER_BUDGET`; pass the same `--over-budget`
+reason the prompts used, if any), malformed settlements, or a task citing a
+`d<N>` no settlement carries (`TASK_REF_UNRESOLVED`); fix the plan proper (§2)
+and seal again. It keeps a sidecar it
+sealed earlier as a content-hash archive, and refuses to overwrite any
+other. Do not edit the sidecar after sealing; to change the review record,
+edit the run files and seal again. Then write the final message (§7) to
+`<run>/final-message.md`, scan it
 with `gstack-redact --from-file "<run>/final-message.md"` when available
 (otherwise inspect manually for credentials or token-shaped values and scrub
 any flagged value before checking or emitting), and check both. If redaction
@@ -474,8 +589,9 @@ sealed `## Review record`; and `## GSTACK REVIEW REPORT` as the last section.
 Keep the prose before the fence short: the completion status (`DONE` or
 `DONE_WITH_CONCERNS`), the `<ACTIVE_PLAN>` and sidecar paths, a two-line
 summary, the phase coverage table (host, outside provider and status, native
-completion, finding counts), the prompt-size total from the sidecar, and any
-drift.
+completion, finding counts), the prompt-size total from the sidecar, the
+plan's size against the source's (`PLAN_BYTES`, `SOURCE_BYTES`, `PLAN_RATIO`
+and `PROPER_BYTES` of `BUDGET_BYTES`), and any drift.
 
 Finish with one self-contained, copyable fenced `text` prompt that starts by
 instructing the next session to run `/implement <ACTIVE_PLAN>`. Do not invoke

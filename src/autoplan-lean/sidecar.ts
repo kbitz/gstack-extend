@@ -37,7 +37,9 @@ function raw(phase: Phase, voice: 'native' | 'outside', text: string | undefined
   return [title, '', `<!-- autoplan-lean:raw ${phase} ${voice} -->`, body(text), '<!-- /autoplan-lean:raw -->', ''];
 }
 
-export function assembleSidecar(planPath: string, runDir: string, files: RunFiles, previous?: { path: string; sha256: string }): string {
+export type SealBudget = { proper: number; budget: number; reason: string };
+
+export function assembleSidecar(planPath: string, runDir: string, files: RunFiles, previous?: { path: string; sha256: string }, overBudget?: SealBudget): string {
   const out: string[] = [
     '# /autoplan-lean review record',
     '',
@@ -49,6 +51,7 @@ export function assembleSidecar(planPath: string, runDir: string, files: RunFile
   out.push('## Intake', '', files('intake.md') === undefined ? '_No intake notes recorded._' : body(files('intake.md')!), '');
   const sizes = files('prompt-sizes.jsonl');
   out.push('## Reviewer prompt sizes', '', sizeTable(sizes === undefined ? [] : parseSizeRecords(sizes)).replace(/\n+$/, ''), '');
+  if (overBudget) out.push(`Sealed over budget: ${overBudget.reason} (plan proper ${overBudget.proper} of ${overBudget.budget} bytes).`, '');
   const history = parsePhaseHistory(files(PHASE_HISTORY) ?? '');
   for (const phase of PHASES) {
     const review = files(`${phase}-review.md`);
@@ -62,6 +65,12 @@ export function assembleSidecar(planPath: string, runDir: string, files: RunFile
       continue;
     }
     for (const entry of archived) {
+      if (entry.voice) {
+        // A retried voice: only its rejected output was archived; the rest of
+        // the phase stayed current.
+        out.push(`### Attempt ${entry.attempt} (archived ${entry.voice} output, retried)`, '', ...raw(phase, entry.voice, entry[entry.voice], 4));
+        continue;
+      }
       out.push(`### Attempt ${entry.attempt} (archived)`, '', entry.review === undefined ? '_No phase review file recorded._' : body(entry.review), '');
       out.push(...raw(phase, 'native', entry.native, 4), ...raw(phase, 'outside', entry.outside, 4));
     }

@@ -1,12 +1,14 @@
-import { appendFileSync, closeSync, constants, copyFileSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, constants, copyFileSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { driftReport, UPSTREAM } from './criteria.ts';
 import {
-  PHASES, PlanError, VOICES, rawOutputMarkers, readSeal, recordSection, sha256, splitPlan, withRecord,
+  BUDGET_ALLOWANCE_BYTES, BUDGET_SOURCE_FACTOR, PHASES, PlanError, VOICES, changedLines, parseSettlements, planBudget, properForReview, rawOutputMarkers,
+  readSeal, recordSection, sha256, splitPlan, taskRefs, withRecord,
   type Phase, type Voice,
 } from './plan.ts';
-import { buildPrompt, parseSizeRecords } from './prompt.ts';
+import { buildPrompt, ceoReference, parseSizeRecords } from './prompt.ts';
+import { outline } from './outline.ts';
 import { assembleSidecar } from './sidecar.ts';
 import { PHASE_HISTORY, PHASE_OUTPUTS, parsePhaseHistory, type PhaseAttempt } from './history.ts';
 import { checkMessage, checkPlan, promptBindingForPlan } from './transport.ts';
@@ -28,29 +30,46 @@ export function help(): string {
 Requires Bun >= ${BUN_FLOOR} (--no-env-file --no-install --config=/dev/null).
 
 Usage:
-  autoplan-lean prompt --plan PLAN --run DIR --phase ceo|design|dx|eng --voice native|outside
-  autoplan-lean archive-phase --run DIR --phase ceo|design|dx|eng
-  autoplan-lean proper --plan PLAN --out FILE [--upstream-layout]
-  autoplan-lean seal --plan PLAN --run DIR [--replace]
+  autoplan-lean prompt --plan PLAN --run DIR --phase ceo|design|dx|eng --voice native|outside [--over-budget REASON]
+  autoplan-lean archive-phase --run DIR --phase ceo|design|dx|eng [--voice native]
+  autoplan-lean proper --plan PLAN --out FILE [--upstream-layout] [--previous FILE]
+  autoplan-lean budget --plan PLAN --run DIR
+  autoplan-lean seal --plan PLAN --run DIR [--replace] [--over-budget REASON]
   autoplan-lean check --plan PLAN [--message FILE]
   autoplan-lean drift --snapshot-tool FILE --section PHASE=FILE... [--phases LIST]
+  autoplan-lean outline --skill FILE [--base FILE]
   autoplan-lean --help | -h | --version
 
-prompt   Build one reviewer prompt from the phase's upstream criteria, earlier
-         phases' accepted settlements and the plan proper. Writes
-         DIR/<phase>-<voice>-prompt.md and appends its size (bytes, SHA-256,
-         never content) to DIR/prompt-sizes.jsonl. Refuses a plan proper that
-         carries raw review output (RAW_OUTPUT_IN_PLAN) or malformed
-         settlements (SETTLEMENTS_INVALID).
+Plan budget: the plan proper (everything before "## Review record") may hold
+at most ${BUDGET_SOURCE_FACTOR} x the source's plan-proper bytes + ${BUDGET_ALLOWANCE_BYTES}, the source being
+DIR/restore.md. prompt and seal refuse a larger plan proper (PLAN_OVER_BUDGET)
+unless --over-budget names approved card or criteria growth, and refuse a run
+directory without restore.md (SOURCE_MISSING).
+
+prompt   Build one reviewer prompt from the phase's upstream criteria and the
+         plan proper, whose "## Accepted decisions" carries every accepted
+         settlement once. Writes DIR/<phase>-<voice>-prompt.md and appends its
+         size (bytes, SHA-256, budget and ratio to the latest CEO prompt of
+         the voice; never content) to DIR/prompt-sizes.jsonl. Refuses a plan
+         proper that carries raw review output (RAW_OUTPUT_IN_PLAN) or
+         malformed settlements (SETTLEMENTS_INVALID).
 proper   Write the plan proper to FILE; --upstream-layout wraps it in
          "## Implementation plan" / "## Review record" for upstream scope tools.
+         --previous FILE also prints CHANGED_LINES, the lines added plus
+         removed against FILE (0: the same lines).
 archive-phase
          Preserve the phase's current review/native/outside outputs in
-         DIR/phase-attempts.jsonl, then clear them for a rerun. An empty phase
-         is a no-op. Invalid history refuses before changing current files.
+         DIR/phase-attempts.jsonl, then clear them for a rerun. --voice native
+         preserves and clears only the native output for a retry, so the
+         outside voice's completed result stays current. An empty phase is a
+         no-op. Invalid history refuses before changing current files.
+budget   Print SOURCE_BYTES, PROPER_BYTES, BUDGET_BYTES and BUDGET: ok|over
+         for PLAN against DIR/restore.md, changing nothing. Exit 1 when over.
 seal     Assemble DIR's review files into the sidecar <plan-stem>.review-record.md
          beside PLAN, then write PLAN's "## Review record" section with the
-         sidecar's path, SHA-256 and size. A sidecar already sealed by PLAN is
+         sidecar's path, SHA-256 and size, and print the plan's size against
+         the source's. Refuses a task that cites a d<N> no settlement carries
+         (TASK_REF_UNRESOLVED). A sidecar already sealed by PLAN is
          kept as <plan-stem>.review-record.<sha12>.md; any other existing
          sidecar refuses unless --replace. Validation errors leave the sealed
          pair unchanged; publication failures restore it or report the
@@ -59,6 +78,12 @@ seal     Assemble DIR's review files into the sidecar <plan-stem>.review-record.
 check    Check the transport shape of PLAN (and the copyable /implement prompt in FILE).
 drift    Compare native criteria exactly and check known outside paragraphs
          in installed upstream text. Added outside requirements are not detected.
+outline  Print FILE's H1-H3 sections as "SECTION: START-END BYTES STATUS HEADING"
+         lines; body text before the first heading is its own section. STATUS
+         is skip (on BASE's Section skip list), skip-parent (an H3 under a
+         skipped H2), shared (identical, ignoring whitespace, to a BASE section)
+         or read. BASE is the installed autoplan SKILL.md. Symlinked inputs are
+         read through. With BASE but no skip list found: DRIFT line, exit 4.
 
 Output is KEY: value lines. Errors print "ERROR <CODE>: ..." and "FIX: ..." on
 stderr. Exit codes: 0 ok · 1 check failed · 2 usage · 3 refused · 4 drift or
@@ -163,48 +188,107 @@ export function sidecarPathFor(planPath: string): string {
   return join(dirname(planPath), `${stem}.review-record.md`);
 }
 
+/** The source's bytes, from the copy intake writes to DIR/restore.md before any plan write. */
+function sourceBytes(run: string): number {
+  const path = join(run, 'restore.md');
+  const bytes = readRegular(path, 'source copy');
+  if (!bytes) throw new Refusal('SOURCE_MISSING', `${path} does not exist, so the plan budget is unknown`, "copy SOURCE_PLAN's original bytes to restore.md in the run directory (intake), then retry");
+  // A reviewed source's record and report are not card text; they must not
+  // raise the next run's budget.
+  return Buffer.byteLength(properForReview(splitPlan(bytes.toString('utf8')).proper));
+}
+
+/** A one-line reason, or undefined when the flag was not passed. */
+function overBudgetReason(args: Args): string | undefined {
+  const reason = args['--over-budget']?.[0];
+  if (reason === undefined) return undefined;
+  if (!reason.trim() || /[\r\n]/.test(reason) || reason.length > 200) {
+    throw new Refusal('USAGE', '--over-budget needs a one-line reason of at most 200 characters', 'name the approved card or criteria growth, e.g. --over-budget "d3 and d7 added AC9 and AC10"', EXIT.usage);
+  }
+  return reason.trim();
+}
+
+function measureBudget(proper: string, source: number): { size: number; budget: number; over: boolean } {
+  const size = Buffer.byteLength(properForReview(proper));
+  const budget = planBudget(source);
+  return { size, budget, over: size > budget };
+}
+
+function requireBudget(proper: string, source: number, override?: string): { size: number; budget: number; over: boolean } {
+  const measured = measureBudget(proper, source);
+  if (measured.over && override === undefined) {
+    throw new Refusal('PLAN_OVER_BUDGET',
+      `the plan proper is ${measured.size} bytes; its budget is ${measured.budget} (${BUDGET_SOURCE_FACTOR} x the ${source}-byte source + ${BUDGET_ALLOWANCE_BYTES})`,
+      'cut each settlement to its decision line and each task to its change, files, IDs and check; move rationale and evidence to the phase review in the run directory; then retry. Never cut an accepted settlement or a task to fit: when all are already one line, pass --over-budget "<reason>" naming the approved growth or the settlement and task counts');
+  }
+  return measured;
+}
+
+const budgetLine = (m: { over: boolean }, override?: string) => `BUDGET: ${m.over ? `over (${override})` : 'ok'}\n`;
+
+const ratio = (a: number, b: number) => Math.round((a / b) * 100) / 100;
+
 function promptCmd(argv: string[], io: CliIo): number {
-  const args = parse(argv, { '--plan': 'value', '--run': 'value', '--phase': 'value', '--voice': 'value' });
+  const args = parse(argv, { '--plan': 'value', '--run': 'value', '--phase': 'value', '--voice': 'value', '--over-budget': 'value' });
   const plan = abs(io.cwd, need(args, '--plan'));
   const run = abs(io.cwd, need(args, '--run'));
   const phase = need(args, '--phase') as Phase;
   const voice = need(args, '--voice') as Voice;
+  const override = overBudgetReason(args);
   if (!PHASES.includes(phase)) throw new Refusal('USAGE', `--phase must be one of ${PHASES.join(', ')}`, 'see autoplan-lean --help', EXIT.usage);
   if (!VOICES.includes(voice)) throw new Refusal('USAGE', `--voice must be one of ${VOICES.join(', ')}`, 'see autoplan-lean --help', EXIT.usage);
   requireDir(run);
-  const built = buildPrompt(readPlan(plan), phase, voice);
+  const source = sourceBytes(run);
+  const planText = readPlan(plan);
+  const built = buildPrompt(planText, phase, voice);
+  const measured = requireBudget(splitPlan(planText).proper, source, override);
+  const { budget } = measured;
   const sizesPath = join(run, 'prompt-sizes.jsonl');
   const prior = readRegular(sizesPath, 'size log');
-  const attempt = (prior ? parseSizeRecords(prior.toString('utf8')) : []).filter((r) => r.phase === phase && r.voice === voice).length + 1;
+  const records = prior ? parseSizeRecords(prior.toString('utf8')) : [];
+  const attempt = records.filter((r) => r.phase === phase && r.voice === voice).length + 1;
+  const ceo = phase === 'ceo' ? undefined : ceoReference(records, voice);
+  const ceoRatio = ceo ? ratio(built.record.bytes, ceo.bytes) : null;
   const out = join(run, `${phase}-${voice}-prompt.md`);
   writeAtomic(out, built.text);
-  appendFileSync(sizesPath, `${JSON.stringify({ ...built.record, attempt })}\n`);
-  io.stdout(`PROMPT: ${out}\nBYTES: ${built.record.bytes}\nSHA256: ${built.record.sha256}\nPLAN_BYTES: ${built.record.plan_bytes}\nSETTLEMENTS: ${built.record.settlements}\nATTEMPT: ${attempt}\n`);
+  const overrun = measured.over ? { over_budget_reason: override } : {};
+  appendFileSync(sizesPath, `${JSON.stringify({ ...built.record, source_bytes: source, budget_bytes: budget, ...overrun, ceo_ratio: ceoRatio, attempt })}\n`);
+  io.stdout(`PROMPT: ${out}\nBYTES: ${built.record.bytes}\nSHA256: ${built.record.sha256}\nPLAN_BYTES: ${built.record.plan_bytes}\nBUDGET_BYTES: ${budget}\n${budgetLine(measured, override)}SETTLEMENTS: ${built.record.settlements}\nCEO_RATIO: ${ceoRatio ?? 'none'}\nATTEMPT: ${attempt}\n`);
   return EXIT.ok;
 }
 
 function properCmd(argv: string[], io: CliIo): number {
-  const args = parse(argv, { '--plan': 'value', '--out': 'value', '--upstream-layout': 'flag' });
+  const args = parse(argv, { '--plan': 'value', '--out': 'value', '--upstream-layout': 'flag', '--previous': 'value' });
   const { proper } = splitPlan(readPlan(abs(io.cwd, need(args, '--plan'))));
   const out = abs(io.cwd, need(args, '--out'));
   const text = args['--upstream-layout'] ? `## Implementation plan\n${proper}## Review record\n` : proper;
+  const previousPath = args['--previous']?.[0];
+  let changed = '';
+  if (previousPath !== undefined) {
+    const previous = readRegular(abs(io.cwd, previousPath), 'previous export');
+    if (!previous) throw new Refusal('PREVIOUS_MISSING', `previous export ${previousPath} does not exist`, 'pass the previous round\'s export written by proper --out');
+    changed = `CHANGED_LINES: ${changedLines(previous.toString('utf8'), text)}\n`;
+  }
   writeAtomic(out, text);
-  io.stdout(`PROPER: ${out}\nBYTES: ${Buffer.byteLength(text)}\n`);
+  io.stdout(`PROPER: ${out}\nBYTES: ${Buffer.byteLength(text)}\n${changed}`);
   return EXIT.ok;
 }
 
 function archivePhaseCmd(argv: string[], io: CliIo): number {
-  const args = parse(argv, { '--run': 'value', '--phase': 'value' });
+  const args = parse(argv, { '--run': 'value', '--phase': 'value', '--voice': 'value' });
   const run = abs(io.cwd, need(args, '--run'));
   const phase = need(args, '--phase') as Phase;
+  const voice = args['--voice']?.[0] as 'native' | undefined;
   if (!PHASES.includes(phase)) throw new Refusal('USAGE', `--phase must be one of ${PHASES.join(', ')}`, 'see autoplan-lean --help', EXIT.usage);
+  // Only the native voice is retried; a failed outside voice is recorded unavailable.
+  if (voice !== undefined && voice !== 'native') throw new Refusal('USAGE', '--voice must be native', 'see autoplan-lean --help', EXIT.usage);
   requireDir(run);
   const historyPath = join(run, PHASE_HISTORY);
   const prior = readRegular(historyPath, 'phase history')?.toString('utf8') ?? '';
   const history = parsePhaseHistory(prior);
-  const row: PhaseAttempt = { v: 1, phase, attempt: history.filter((entry) => entry.phase === phase).length + 1 };
+  const row: PhaseAttempt = { v: 1, phase, attempt: history.filter((entry) => entry.phase === phase).length + 1, ...(voice ? { voice } : {}) };
   const current: string[] = [];
-  for (const key of PHASE_OUTPUTS) {
+  for (const key of voice ? [voice] : PHASE_OUTPUTS) {
     const path = join(run, `${phase}-${key}.md`);
     const bytes = readRegular(path, 'phase output');
     if (bytes === undefined) continue;
@@ -219,15 +303,27 @@ function archivePhaseCmd(argv: string[], io: CliIo): number {
   // Publish the complete snapshot first. Even a cleanup failure retains every
   // byte in history; callers must stop on failure before writing a new attempt.
   for (const path of current) rmSync(path);
-  io.stdout(`HISTORY: ${historyPath}\nPHASE: ${phase}\nATTEMPT: ${row.attempt}\nSTATUS: archived\n`);
+  io.stdout(`HISTORY: ${historyPath}\nPHASE: ${phase}\n${voice ? `VOICE: ${voice}\n` : ''}ATTEMPT: ${row.attempt}\nSTATUS: archived\n`);
   return EXIT.ok;
+}
+
+function budgetCmd(argv: string[], io: CliIo): number {
+  const args = parse(argv, { '--plan': 'value', '--run': 'value' });
+  const plan = abs(io.cwd, need(args, '--plan'));
+  const run = abs(io.cwd, need(args, '--run'));
+  requireDir(run);
+  const source = sourceBytes(run);
+  const measured = measureBudget(splitPlan(readPlan(plan)).proper, source);
+  io.stdout(`SOURCE_BYTES: ${source}\nPROPER_BYTES: ${measured.size}\nBUDGET_BYTES: ${measured.budget}\n${budgetLine(measured, 'no reason given')}`);
+  return measured.over ? EXIT.failed : EXIT.ok;
 }
 
 const RUN_FILES = new Set(['intake.md', 'prompt-sizes.jsonl', 'phase-attempts.jsonl', 'decisions.md', 'gate.md',
   ...PHASES.flatMap((p) => [`${p}-review.md`, `${p}-native.md`, `${p}-outside.md`])]);
 
 function sealCmd(argv: string[], io: CliIo): number {
-  const args = parse(argv, { '--plan': 'value', '--run': 'value', '--replace': 'flag' });
+  const args = parse(argv, { '--plan': 'value', '--run': 'value', '--replace': 'flag', '--over-budget': 'value' });
+  const override = overBudgetReason(args);
   const planPath = abs(io.cwd, need(args, '--plan'));
   const run = abs(io.cwd, need(args, '--run'));
   requireDir(run);
@@ -235,6 +331,15 @@ function sealCmd(argv: string[], io: CliIo): number {
   const parts = splitPlan(plan);
   const leaked = rawOutputMarkers(parts.proper);
   if (leaked.length) throw new Refusal('RAW_OUTPUT_IN_PLAN', `the plan proper contains review output (${leaked.join(', ')})`, 'move it to the run directory before sealing');
+  const settled = new Set(parseSettlements(parts.proper).map((x) => x.id));
+  const dangling = taskRefs(parts.proper).filter((id) => !settled.has(id));
+  if (dangling.length) {
+    throw new Refusal('TASK_REF_UNRESOLVED', `implementation tasks cite ${[...new Set(dangling)].join(', ')}, which no settlement in ## Accepted decisions carries`,
+      'add the decision line to ## Accepted decisions; if its decision was reopened and not accepted again, remove the task too; /implement reads only the plan');
+  }
+  const source = sourceBytes(run);
+  const measured = requireBudget(parts.proper, source, override);
+  const { size: properSize, budget } = measured;
   const sidecar = sidecarPathFor(planPath);
   let previous: { path: string; sha256: string } | undefined;
   let archiveMissing = false;
@@ -257,7 +362,7 @@ function sealCmd(argv: string[], io: CliIo): number {
     return readRegular(join(run, name), 'run file')?.toString('utf8');
   };
   // Read and validate every run input before touching the existing sealed pair.
-  const record = assembleSidecar(planPath, run, files, previous);
+  const record = assembleSidecar(planPath, run, files, previous, measured.over ? { proper: properSize, budget, reason: override! } : undefined);
   const hash = sha256(record);
   const size = Buffer.byteLength(record);
   const nextPlan = withRecord(plan, recordSection(sidecar, hash, size));
@@ -310,8 +415,39 @@ function sealCmd(argv: string[], io: CliIo): number {
       }
     }
   }
-  io.stdout(`SIDECAR: ${sidecar}\nSHA256: ${hash}\nBYTES: ${size}\nPLAN: ${planPath}\nPLAN_SHA256: ${planHash}\nPLAN_BYTES: ${planSize}\n${previous ? `PREVIOUS: ${previous.path}\n` : ''}STATUS: sealed\n`);
+  io.stdout(`SIDECAR: ${sidecar}\nSHA256: ${hash}\nBYTES: ${size}\nPLAN: ${planPath}\nPLAN_SHA256: ${planHash}\nPLAN_BYTES: ${planSize}\n`
+    + `SOURCE_BYTES: ${source}\nPROPER_BYTES: ${properSize}\nBUDGET_BYTES: ${budget}\n${budgetLine(measured, override)}PLAN_RATIO: ${source ? ratio(planSize, source) : 'none'}\n`
+    + `${previous ? `PREVIOUS: ${previous.path}\n` : ''}STATUS: sealed\n`);
   return EXIT.ok;
+}
+
+function outlineCmd(argv: string[], io: CliIo): number {
+  const args = parse(argv, { '--skill': 'value', '--base': 'value' });
+  // Inputs are read-only: an installed skill is often a symlink into its
+  // checkout, so resolve it and require only that the target is a regular file.
+  const load = (path: string) => {
+    let real: string;
+    try {
+      real = realpathSync(path);
+    } catch {
+      throw new Refusal('SKILL_MISSING', `${path} does not exist`, 'pass an installed SKILL.md or section file');
+    }
+    const bytes = readRegular(real, 'skill file');
+    if (!bytes) throw new Refusal('SKILL_MISSING', `${path} does not exist`, 'pass an installed SKILL.md or section file');
+    return bytes.toString('utf8');
+  };
+  const skillPath = abs(io.cwd, need(args, '--skill'));
+  const baseArg = args['--base']?.[0];
+  const basePath = baseArg === undefined ? undefined : abs(io.cwd, baseArg);
+  const { rows, skip } = outline(load(skillPath), basePath === undefined ? undefined : load(basePath));
+  const total = (status: string) => rows.filter((r) => r.status === status).reduce((n, r) => n + r.bytes, 0);
+  let out = `OUTLINE: ${skillPath}\nBASE: ${basePath ?? 'none'}\nSKIP_LIST: ${skip.length}\n`;
+  for (const r of rows) out += `SECTION: ${r.start}-${r.end} ${r.bytes} ${r.status} ${r.heading}\n`;
+  out += `READ_BYTES: ${total('read')}\nSHARED_BYTES: ${total('shared')}\nSKIP_BYTES: ${total('skip')}\nSKIP_PARENT_BYTES: ${total('skip-parent')}\n`;
+  const drift = basePath !== undefined && !skip.length;
+  if (drift) out += 'DRIFT: no Section skip list found in BASE; no row is marked skip\n';
+  io.stdout(out);
+  return drift ? EXIT.drift : EXIT.ok;
 }
 
 function checkCmd(argv: string[], io: CliIo): number {
@@ -380,6 +516,8 @@ export function main(argv: string[], io: CliIo): number {
     if (command === 'seal') return sealCmd(rest, io);
     if (command === 'check') return checkCmd(rest, io);
     if (command === 'drift') return driftCmd(rest, io);
+    if (command === 'outline') return outlineCmd(rest, io);
+    if (command === 'budget') return budgetCmd(rest, io);
     throw new Refusal('USAGE', `unknown command ${command}`, 'see autoplan-lean --help', EXIT.usage);
   } catch (error) {
     if (error instanceof Refusal || error instanceof PlanError) {

@@ -14,17 +14,17 @@ Verify command: `bun run test`
 
 ## Accepted decisions
 
-- [ceo] HOLD SCOPE: CSV only; JSON export stays out of scope and is deferred.
-- [ceo] Keep the command under `widget`, not a new top-level verb.
-- [dx] The error message names the failing path and the retry command.
-- [eng] Stream rows as they are read instead of buffering the whole table,
+- [ceo] d1: HOLD SCOPE: CSV only; JSON export stays out of scope and is deferred.
+- [ceo] d2: Keep the command under `widget`, not a new top-level verb.
+- [dx] d3: The error message names the failing path and the retry command.
+- [eng] d4: Stream rows as they are read instead of buffering the whole table,
   so memory stays flat for large stores.
 
 ## Implementation tasks
 
-- [ ] Add the `export` subcommand with a `--csv` flag (src/cli/widget.ts; surfaced by ceo).
-- [ ] Stream rows through the CSV writer (src/export/csv.ts; surfaced by eng).
-- [ ] Add tests for header, rows, quoting and the write-failure path (tests/export.test.ts; surfaced by eng).
+- [ ] Add the `export` subcommand with a `--csv` flag (src/cli/widget.ts; AC1, d2; surfaced by ceo).
+- [ ] Stream rows through the CSV writer (src/export/csv.ts; AC1, d4; surfaced by eng).
+- [ ] Add tests for header, rows, quoting and the write-failure path (tests/export.test.ts; AC1–3, d3; surfaced by eng).
 
 ## GSTACK REVIEW REPORT
 

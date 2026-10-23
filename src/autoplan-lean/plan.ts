@@ -23,8 +23,18 @@ export const REVIEW_RECORD_HEADING = '## Review record';
 export const REPORT_HEADING = '## GSTACK REVIEW REPORT';
 export const DECISIONS_HEADING = '## Accepted decisions';
 export const TASKS_HEADING = '## Implementation tasks';
-/** Longest accepted settlement bullet, matching common transport decision limits. */
-export const SETTLEMENT_CHARS = 500;
+/**
+ * Longest settlement decision text after its ID. A settlement states only the
+ * decision (and its condition); rationale and evidence stay in the sidecar.
+ */
+const SETTLEMENT_CHARS = 200;
+/**
+ * Plan-proper budget: 1.5 × the source card's bytes plus 4 KiB for
+ * settlements, tasks and Tier/verify lines. Reviewer prompts and the sealed
+ * plan both stay inside it, so neither grows phase by phase.
+ */
+export const BUDGET_SOURCE_FACTOR = 1.5;
+export const BUDGET_ALLOWANCE_BYTES = 4096;
 
 export type Line = { text: string; fenced: boolean };
 
@@ -96,7 +106,7 @@ function sectionRange(lines: Line[], heading: string): [number, number] | undefi
   return [start, end];
 }
 
-export type Settlement = { phase: Phase; text: string };
+export type Settlement = { phase: Phase; id: string; text: string };
 
 export class PlanError extends Error {
   constructor(public code: string, message: string, public fix: string) {
@@ -106,12 +116,23 @@ export class PlanError extends Error {
 
 /**
  * Parse `## Accepted decisions`: a bullet list whose bullets start with a
- * `[ceo]`, `[design]`, `[dx]` or `[eng]` tag. Indented lines continue the
- * previous bullet. Anything else (tables, headings, fences, prose) is raw
- * review material and belongs in the sidecar.
+ * `[ceo]`, `[design]`, `[dx]` or `[eng]` tag and a `d<N>:` ID, where N is the
+ * decision's row in the run's decision audit trail. A decision split across
+ * bullets repeats its ID. Indented lines continue the previous bullet.
+ * Anything else (tables, headings, fences, prose) is raw review material and
+ * belongs in the sidecar.
  */
 export function parseSettlements(proper: string): Settlement[] {
   const lines = scanLines(proper);
+  // check counts any heading naming implementation tasks; a variant heading
+  // would hide its section from these exact-heading parsers.
+  for (const [i, line] of lines.entries()) {
+    if (line.fenced || !/^\s*#{1,6}\s+.*(accepted decisions|implementation tasks)/i.test(line.text)) continue;
+    if (!isH2(line, DECISIONS_HEADING) && !isH2(line, TASKS_HEADING)) {
+      throw new PlanError('SECTION_HEADING_INVALID', `line ${i + 1} of the plan is a variant section heading: ${JSON.stringify(line.text.slice(0, 80))}`,
+        `use exactly "${DECISIONS_HEADING}" or "${TASKS_HEADING}"; do not add a second decisions or task section`);
+    }
+  }
   const range = sectionRange(lines, DECISIONS_HEADING);
   if (!range) return [];
   const out: Settlement[] = [];
@@ -121,7 +142,12 @@ export function parseSettlements(proper: string): Settlement[] {
     if (!line.text.trim()) continue;
     const bullet = /^[-*+]\s+\[(ceo|design|dx|eng)\]\s+(\S.*)$/i.exec(line.text);
     if (bullet) {
-      out.push({ phase: bullet[1]!.toLowerCase() as Phase, text: bullet[2]!.trim() });
+      const id = /^(d\d+):\s+(\S.*)$/.exec(bullet[2]!.trim());
+      if (!id) {
+        throw new PlanError('SETTLEMENTS_INVALID', `line ${i + 1} of the plan is a settlement without a d<N>: ID: ${JSON.stringify(line.text.slice(0, 80))}`,
+          'write each settlement as "- [ceo|design|dx|eng] d<N>: <decision>", N being its row in <run>/decisions.md');
+      }
+      out.push({ phase: bullet[1]!.toLowerCase() as Phase, id: id[1]!, text: id[2]! });
       continue;
     }
     if (/^\s+\S/.test(line.text) && out.length && !/^\s*([-*+]|\d+[.)]|\|)\s/.test(line.text)) {
@@ -129,24 +155,74 @@ export function parseSettlements(proper: string): Settlement[] {
       continue;
     }
     throw new PlanError('SETTLEMENTS_INVALID', `line ${i + 1} of the plan is not a tagged settlement bullet: ${JSON.stringify(line.text.slice(0, 80))}`,
-      'write each settlement as "- [ceo|design|dx|eng] <decision>"; move reviewer material to the sidecar');
+      'write each settlement as "- [ceo|design|dx|eng] d<N>: <decision>"; move reviewer material to the sidecar');
   }
+  const tags = new Map<string, Phase>();
   for (const s of out) {
+    const tag = tags.get(s.id);
+    if (tag !== undefined && tag !== s.phase) {
+      throw new PlanError('SETTLEMENTS_INVALID', `${s.id} is tagged both [${tag}] and [${s.phase}]`,
+        'give each decision its own d<N>; a split decision repeats its ID under the same phase tag');
+    }
+    tags.set(s.id, s.phase);
     if (s.text.length > SETTLEMENT_CHARS) {
-      throw new PlanError('SETTLEMENTS_INVALID', `a [${s.phase}] settlement is ${s.text.length} characters (limit ${SETTLEMENT_CHARS})`,
-        'state the decision and its condition in one short sentence; keep its analysis in the sidecar');
+      throw new PlanError('SETTLEMENTS_INVALID', `settlement [${s.phase}] ${s.id} is ${s.text.length} characters (limit ${SETTLEMENT_CHARS})`,
+        'state only the decision and its condition; keep its rationale and evidence in the phase review');
     }
   }
   return out;
 }
 
-/** Plan proper without its `## Accepted decisions` section (settlements are passed separately). */
-export function properWithoutSettlements(proper: string): string {
+/**
+ * `d<N>` IDs cited in `## Implementation tasks`, in order, outside fences and
+ * inline code. A token that is part of a path or word (`src/d3.ts`, `odd3`) is
+ * not an ID.
+ */
+export function taskRefs(proper: string): string[] {
   const lines = scanLines(proper);
-  const range = sectionRange(lines, DECISIONS_HEADING);
-  if (!range) return proper;
-  const raw = proper.split('\n');
-  return [...raw.slice(0, range[0]), ...raw.slice(range[1])].join('\n');
+  const range = sectionRange(lines, TASKS_HEADING);
+  if (!range) return [];
+  const out: string[] = [];
+  for (let i = range[0] + 1; i < range[1]; i++) {
+    const line = lines[i]!;
+    if (line.fenced) continue;
+    // Inline code names tools and packages (`d2`), not decisions.
+    for (const m of line.text.replace(/`[^`]*`/g, ' ').matchAll(/(?<![\w./-])(d\d+)(?![\w/-]|\.\w)/g)) out.push(m[1]!);
+  }
+  return out;
+}
+
+/** The `## Accepted decisions` section text (heading included), or '' when absent. */
+export function settlementsSection(proper: string): string {
+  const range = sectionRange(scanLines(proper), DECISIONS_HEADING);
+  return range ? proper.split('\n').slice(range[0], range[1]).join('\n') : '';
+}
+
+/** The plan proper exactly as a reviewer prompt carries it, and as budgets measure it. */
+export function properForReview(proper: string): string {
+  return proper.replace(/\n+$/, '\n');
+}
+
+export function planBudget(sourceBytes: number): number {
+  return Math.floor(BUDGET_SOURCE_FACTOR * sourceBytes) + BUDGET_ALLOWANCE_BYTES;
+}
+
+/**
+ * Lines added plus lines removed between two texts, compared as multisets:
+ * zero means the same lines, whatever their order.
+ */
+export function changedLines(previous: string, next: string): number {
+  const counts = new Map<string, number>();
+  for (const line of previous.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1);
+  let added = 0;
+  for (const line of next.split('\n')) {
+    const n = counts.get(line) ?? 0;
+    if (n > 0) counts.set(line, n - 1);
+    else added++;
+  }
+  let removed = 0;
+  for (const n of counts.values()) removed += n;
+  return added + removed;
 }
 
 /**
@@ -165,10 +241,6 @@ export const RAW_OUTPUT_MARKERS: Array<{ name: string; re: RegExp }> = [
 export function rawOutputMarkers(proper: string): string[] {
   const unfenced = scanLines(proper).filter((l) => !l.fenced).map((l) => l.text).join('\n');
   return RAW_OUTPUT_MARKERS.filter((m) => m.re.test(unfenced)).map((m) => m.name);
-}
-
-export function phaseIndex(phase: Phase): number {
-  return PHASES.indexOf(phase);
 }
 
 /** Path and hash named by a `## Review record` section. */

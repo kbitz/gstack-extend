@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.43.0.0] - 2026-10-23
+
+### Added
+
+- **`/autoplan-lean`'s outside reviews now count.** Outside voices are given the exact format upstream's validator reads: a `[High]`-style severity at the start of each finding line, a `NO_FINDINGS: none` line when there is nothing to report, and a final `Recommendation: … because …` line. Before, replies that marked severity in bold, as in `**High.**`, were discarded as unverified. In the first real run, all three outside reviews were lost that way.
+
+- **The reviewed plan stays inside a budget set by its card.** The plan proper may hold at most 1.5 × the source's plan proper plus 4096 bytes, and `prompt` and `seal` refuse anything larger.
+  - `autoplan-lean budget` checks the plan before the approval gate.
+  - `--over-budget "<reason>"` lets an approved overrun through and records the reason.
+  - `seal` now reports the plan's size against the source's.
+
+- **A phase's two review voices run at the same time.** The outside voice starts in the background while the native voice runs, and the phase review still waits for both. A native retry archives only the native output (`archive-phase --voice native`), so a finished outside result is kept.
+
+- **Upstream skill text is read section by section.**
+  - `autoplan-lean outline` lists each section of a skill file with its line range.
+  - It marks sections autoplan already handles (`skip`), subsections under a skipped heading (`skip-parent`), and the generic preamble every skill repeats (`shared`).
+  - It reads installed skills through their symlinks, and gives a file with no headings one readable range.
+
+- **The CEO spec loop stops on unchanged input.** `proper --previous` prints `CHANGED_LINES`. A round whose amendments changed no requirement, criterion, task or settlement does not launch another review.
+
+### Changed
+
+- **Each settlement has an ID and appears once.**
+  - An `## Accepted decisions` bullet reads `- [phase] d<N>: <decision>`, with at most 200 characters after the ID; rationale and evidence go to the review record.
+  - Reviewer prompts carry settlements once, inside the plan, instead of repeating them as a list.
+  - Each task cites the acceptance criteria and `d<N>` it implements, plus the check that proves it, and `seal` refuses a task citing an ID that no settlement carries.
+  - A revise rerun from the final gate reopens the settlements, and the tasks citing them, of every phase it reruns.
+  - Prompt-size rows are now `v: 2` and record the budget and each prompt's ratio to the CEO prompt.
+
+- **Plans reviewed by 0.40 or 0.41 need settlement IDs before another review.**
+  - `prompt` and `seal` refuse an `## Accepted decisions` bullet with no `d<N>:` ID or longer than 200 characters (`SETTLEMENTS_INVALID`), and refuse a variant decisions or tasks heading (`SECTION_HEADING_INVALID`).
+  - To review such a plan again, add an ID to each bullet and cut it to its decision line, or rerun from the original card in `restore.md`.
+  - The sealed plan shape that external callers check is unchanged.
+
 ## [0.42.0.0] - 2026-10-23
 
 ### Added
