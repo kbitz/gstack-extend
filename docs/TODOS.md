@@ -2,6 +2,38 @@
 
 ## Unprocessed
 
+### [ship] Harden /autoplan-lean's plan checks, outline and spec-loop guard after 0.43
+
+- **Description:** Review findings deferred at `/ship`, most important first:
+  - **Reordered input counts as unchanged.** `proper --previous` compares lines as an unordered multiset. Moving an unchanged line between sections, such as from a deferred list into the tasks, reports `CHANGED_LINES: 0` and stops the CEO spec loop after a real scope change. Three independent reviewers found it. Use an ordered or section-keyed diff.
+  - **The task-reference check misreads IDs.**
+    - `taskRefs` ignores inline code and is case-sensitive, so a dangling `` `d9` `` or `D9` seals.
+    - A bare tool name such as d3 is refused as a dangling ID.
+    - IDs joined as `d4/d9` escape the check.
+    - Count IDs only in the task's metadata clause.
+  - **Seal's plan pre-checks have gaps.**
+    - A second exact `## Accepted decisions` section escapes settlement validation.
+    - `check` reruns none of seal's plan pre-checks.
+    - A refused `prompt` leaves the previous prompt file in place.
+  - **Outline misreads some files.**
+    - `#` lines in YAML frontmatter become headings.
+    - A skip list with blank lines between bullets is cut off.
+    - Skip-list names match any heading with the same prefix.
+  - **The budget source and timing are unchecked.** The budget is not checked again after the gate outcome is applied, and `restore.md` is not compared with the SHA-256 recorded at intake.
+  - **Settlement IDs can collide.** They can repeat IDs carried by a reviewed source plan, and the gate brief's `d<n>` labels use the same namespace.
+  - **Skill prose and docs:**
+    - `--over-budget "<reason>"` is double-quoted, so backticks in the reason would be expanded by the shell.
+    - `budget` prints "over (no reason given)".
+    - `SECTION_HEADING_INVALID` is missing from `--help` and the skill.
+    - A variant heading in card text is refused.
+    - The `shared` skip rule conflicts with re-reading after a compaction.
+    - Concurrent voices could read each other's output files.
+    - Only an opt-in test checks `OUTSIDE_OUTPUT_FORMAT` against the installed validator.
+- **Effort:** M
+- **Context:** From the final pre-landing review passes and the adversarial review of 0.43.0.0 on 2026-10-23. None was rated critical. Under the owner's stop rule for the final pass, only critical findings were fixed before release. The four untested `seal --replace` state cells (code unchanged) were also left.
+- **Priority:** P2
+- **Revisit when:** The next real `/autoplan-lean` run, or before an external caller relies on the `CHANGED_LINES` guard or the task-reference check.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

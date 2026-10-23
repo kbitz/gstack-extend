@@ -13,8 +13,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { main, sidecarPathFor, type CliIo } from '../src/autoplan-lean/cli.ts';
 import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, UPSTREAM, driftReport } from '../src/autoplan-lean/criteria.ts';
-import { PHASES, parseSettlements, readSeal, sha256, splitPlan } from '../src/autoplan-lean/plan.ts';
-import { buildPrompt, parseSizeRecords } from '../src/autoplan-lean/prompt.ts';
+import { BUDGET_ALLOWANCE_BYTES, BUDGET_SOURCE_FACTOR, PHASES, changedLines, parseSettlements, planBudget, readSeal, settlementsSection, sha256, splitPlan, taskRefs } from '../src/autoplan-lean/plan.ts';
+import { OUTSIDE_OUTPUT_FORMAT, SETTLEMENTS_NOTE, buildPrompt, parseSizeRecords } from '../src/autoplan-lean/prompt.ts';
+import { outline, skipList } from '../src/autoplan-lean/outline.ts';
 import { PROMPT_LABELS, checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
@@ -592,29 +593,41 @@ describe('reviewer prompts exclude earlier phases\' raw outputs', () => {
     }
   });
 
-  test('settlements are earlier phases only, as a short tagged list', () => {
+  // Value: protects=each settlement reaches a reviewer once, inside the plan, for every phase; fails_when=the
+  //   builder re-appends settlements as a separate list or strips them from the plan; why_new=a real run sent
+  //   12 KB of settlements beside a plan that already applied them; seam=none; no_claim=reviewer behavior
+  test('settlements ride in the plan once, as ID-tagged decision lines, for every phase', () => {
     const text = readFileSync(plan, 'utf8');
-    const ceo = buildPrompt(text, 'ceo', 'native');
-    expect(ceo.text).toContain('- none (no earlier phase has accepted a settlement)');
-    expect(ceo.text).not.toContain('HOLD SCOPE: CSV only');
-    expect(ceo.record.settlements).toBe(0);
-
-    const dx = buildPrompt(text, 'dx', 'outside');
-    expect(dx.text).toContain('- [ceo] HOLD SCOPE: CSV only');
-    expect(dx.text).not.toContain('[dx] The error message');
-    expect(dx.text).not.toContain('[eng] Stream rows');
-    expect(dx.record.settlements).toBe(2);
-
-    const eng = buildPrompt(text, 'eng', 'native');
-    expect(eng.record.settlements).toBe(3);
-    expect(eng.text).toContain('- [dx] The error message');
-    expect(eng.text).not.toContain('[eng] Stream rows');
-    // Continuation lines join their bullet.
-    expect(parseSettlements(splitPlan(text).proper).at(-1)!.text).toBe(
-      'Stream rows as they are read instead of buffering the whole table, so memory stays flat for large stores.');
+    const section = settlementsSection(splitPlan(text).proper);
+    for (const phase of PHASES) {
+      for (const voice of ['native', 'outside'] as const) {
+        const built = buildPrompt(text, phase, voice);
+        expect(built.text.split('- [ceo] d1: HOLD SCOPE: CSV only')).toHaveLength(2);
+        expect(built.text.split('- [eng] d4: Stream rows')).toHaveLength(2);
+        expect(built.text).toContain(SETTLEMENTS_NOTE);
+        expect(built.text).not.toContain('Accepted settlements from earlier review phases');
+        expect(built.record.settlements).toBe(4);
+        expect(built.record.settlements_bytes).toBe(Buffer.byteLength(section));
+        expect(built.record.plan_bytes).toBeGreaterThan(built.record.settlements_bytes);
+      }
+    }
+    // Continuation lines join their bullet; the ID is parsed apart from the decision.
+    expect(parseSettlements(splitPlan(text).proper).at(-1)).toEqual({ phase: 'eng', id: 'd4',
+      text: 'Stream rows as they are read instead of buffering the whole table, so memory stays flat for large stores.' });
+    const bare = text.replace(/## Accepted decisions\n[\s\S]*?(?=## Implementation tasks)/, '');
+    const built = buildPrompt(bare, 'eng', 'outside');
+    expect(built.text).not.toContain(SETTLEMENTS_NOTE);
+    expect(built.record).toMatchObject({ settlements: 0, settlements_bytes: 0 });
   });
 
-  test('each voice gets its phase criteria; outside prompts carry the boundary and result contract', () => {
+  test('a settlement may hold 200 characters after its ID, and a split decision repeats its ID', () => {
+    const extra = `- [eng] d4: ${'x'.repeat(200)}\n- [eng] d4: second line of the same decision.\n`;
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('\n## Implementation tasks', `${extra}\n## Implementation tasks`));
+    expect(cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native').code).toBe(0);
+    expect(parseSettlements(splitPlan(readFileSync(plan, 'utf8')).proper).filter((s) => s.id === 'd4')).toHaveLength(3);
+  });
+
+  test('each voice gets its phase criteria; outside prompts carry the boundary and the validator format', () => {
     const text = readFileSync(plan, 'utf8');
     for (const phase of PHASES) {
       const native = buildPrompt(text, phase, 'native').text;
@@ -623,7 +636,10 @@ describe('reviewer prompts exclude earlier phases\' raw outputs', () => {
       expect(native).not.toContain(BOUNDARY);
       const outside = buildPrompt(text, phase, 'outside').text;
       expect(outside.startsWith(BOUNDARY)).toBe(true);
-      expect(outside).toContain(OUTSIDE_RESULT_CONTRACT);
+      // Upstream's contract addresses the prompt's author; the voice gets its validator-readable form.
+      expect(outside).not.toContain(OUTSIDE_RESULT_CONTRACT);
+      expect(outside).toContain(OUTSIDE_OUTPUT_FORMAT);
+      expect(native).not.toContain(OUTSIDE_OUTPUT_FORMAT);
       for (const paragraph of OUTSIDE_CRITERIA[phase]) expect(outside).toContain(paragraph);
       for (const other of PHASES.filter((p) => p !== phase)) expect(native).not.toContain(NATIVE_CRITERIA[other]);
     }
@@ -655,8 +671,10 @@ describe('reviewer prompts exclude earlier phases\' raw outputs', () => {
   const badSettlements: Array<[string, string]> = [
     ['a table row', '| 1 | eng | Stream rows |'],
     ['an untagged bullet', '- Stream rows'],
+    ['a tagged bullet without a d<N> ID', '- [eng] Stream rows'],
+    ['a malformed ID', '- [eng] D4: Stream rows'],
     ['a heading', '### CEO notes'],
-    ['an over-long bullet', `- [eng] ${'x'.repeat(501)}`],
+    ['an over-long bullet', `- [eng] d9: ${'x'.repeat(201)}`],
     // Generated by /ship coverage audit.
     // Value: protects=only plain indented prose continues a settlement; nested lists, tables and fences refuse;
     //   fails_when=the continuation rule accepts any indented line or skips fenced lines; why_new=only a prose
@@ -686,8 +704,10 @@ describe('prompt-size records', () => {
     expect(records.map((r) => (r as { attempt?: number }).attempt)).toEqual([1, 1, 2]);
     for (const record of records) {
       expect(Object.keys(record).sort()).toEqual([
-        'attempt', 'bytes', 'criteria_bytes', 'phase', 'plan_bytes', 'plan_sha256', 'settlements', 'settlements_bytes', 'sha256', 'v', 'voice',
+        'attempt', 'budget_bytes', 'bytes', 'ceo_ratio', 'criteria_bytes', 'phase', 'plan_bytes', 'plan_sha256', 'settlements',
+        'settlements_bytes', 'sha256', 'source_bytes', 'v', 'voice',
       ]);
+      expect(record).toMatchObject({ v: 2, source_bytes: 382, budget_bytes: planBudget(382), ceo_ratio: null });
       const file = readFileSync(join(run, `dx-${record.voice}-prompt.md`));
       expect(record.bytes).toBe(file.byteLength);
       expect(record.sha256).toBe(sha256(file));
@@ -713,6 +733,547 @@ describe('prompt-size records', () => {
     symlinkSync(run, join(temp, 'runlink'));
     expect(cli('prompt', '--plan', plan, '--run', join(temp, 'runlink'), '--phase', 'ceo', '--voice', 'native').stderr).toContain('ERROR UNSAFE_PATH');
     expect(readdirSync(run).filter((f) => f.endsWith('-prompt.md'))).toEqual([]);
+  });
+});
+
+describe('plan budget and size ratios', () => {
+  const grow = (bytes: number) => {
+    const filler = Array.from({ length: Math.ceil(bytes / 60) }, (_, i) => `- [ ] Task ${i} padded to grow the plan proper past budget (src/x.ts).`).join('\n');
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('## Implementation tasks\n\n', `## Implementation tasks\n\n${filler}\n`));
+  };
+
+  // Value: protects=the plan proper cannot outgrow 1.5 x source + 4096 at any prompt build; fails_when=prompt
+  //   writes an over-budget prompt or size row; why_new=a real plan grew to 3.1 x its card; seam=none;
+  //   no_claim=how a parent shortens a plan
+  test('prompt refuses a plan proper over budget and writes nothing', () => {
+    grow(planBudget(382));
+    const r = cli('prompt', '--plan', plan, '--run', run, '--phase', 'dx', '--voice', 'native');
+    expect(r.code).toBe(3);
+    expect(r.stderr).toContain('ERROR PLAN_OVER_BUDGET');
+    expect(r.stderr).toContain(`its budget is ${planBudget(382)} (1.5 x the 382-byte source + 4096)`);
+    expect(existsSync(join(run, 'dx-native-prompt.md'))).toBe(false);
+    expect(existsSync(join(run, 'prompt-sizes.jsonl'))).toBe(false);
+  });
+
+  // Generated by /ship coverage audit.
+  // Value: protects=the documented budget floor(1.5 x source) + 4096 is inclusive and measures the plan as the
+  //   prompt carries it; fails_when=the factor, allowance or floor changes, the limit turns exclusive, or trailing
+  //   blank lines count; why_new=other cases derive limits from planBudget and overshoot by ~4.6 KB; seam=none;
+  //   no_claim=none beyond protects
+  test('the budget is floor(1.5 x source) + 4096, inclusive, and ignores trailing blank lines', () => {
+    expect([planBudget(382), planBudget(383)]).toEqual([4669, 4670]);
+    const text = readFileSync(plan, 'utf8');
+    const room = 4669 - Buffer.byteLength(splitPlan(text).proper);
+    // `extra` bytes of card text, plus two trailing blank lines that the reviewer prompt drops.
+    const fill = (extra: number) => writeFileSync(plan, text
+      .replace('\n## Acceptance criteria', `\n${'x'.repeat(extra - 2)}\n\n## Acceptance criteria`)
+      .replace('\n## GSTACK REVIEW REPORT', '\n\n\n## GSTACK REVIEW REPORT'));
+    fill(room);
+    const at = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native');
+    expect(at.code).toBe(0);
+    expect([field(at.stdout, 'PLAN_BYTES'), field(at.stdout, 'BUDGET_BYTES')]).toEqual(['4669', '4669']);
+    const sealed = cli('seal', '--plan', plan, '--run', run);
+    expect(sealed.code).toBe(0);
+    expect(field(sealed.stdout, 'PROPER_BYTES')).toBe('4669');
+    fill(room + 1);
+    const over = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native');
+    expect(over.code).toBe(3);
+    expect(over.stderr).toContain('ERROR PLAN_OVER_BUDGET: the plan proper is 4670 bytes; its budget is 4669');
+  });
+
+  test('prompt and seal refuse a run directory without restore.md', () => {
+    rmSync(join(run, 'restore.md'));
+    for (const args of [['prompt', '--plan', plan, '--run', run, '--phase', 'ceo', '--voice', 'native'], ['seal', '--plan', plan, '--run', run]]) {
+      const r = cli(...args);
+      expect(r.code).toBe(3);
+      expect(r.stderr).toContain('ERROR SOURCE_MISSING');
+    }
+    expect(existsSync(sidecarPathFor(plan))).toBe(false);
+  });
+
+  test('later prompts record their ratio to the latest CEO prompt of the same voice', () => {
+    expect(field(cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'outside').stdout, 'CEO_RATIO')).toBe('none');
+    const ceo = cli('prompt', '--plan', plan, '--run', run, '--phase', 'ceo', '--voice', 'outside');
+    expect(field(ceo.stdout, 'CEO_RATIO')).toBe('none');
+    const eng = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'outside');
+    const expected = Math.round((Number(field(eng.stdout, 'BYTES')) / Number(field(ceo.stdout, 'BYTES'))) * 100) / 100;
+    expect(Number(field(eng.stdout, 'CEO_RATIO'))).toBe(expected);
+    expect(field(cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native').stdout, 'CEO_RATIO')).toBe('none');
+    const rows = parseSizeRecords(readFileSync(join(run, 'prompt-sizes.jsonl'), 'utf8'));
+    expect(rows.map((r) => r.ceo_ratio)).toEqual([null, null, expected, null]);
+    cli('seal', '--plan', plan, '--run', run);
+    const sidecar = readFileSync(sidecarPathFor(plan), 'utf8');
+    expect(sidecar).toContain(`| ${expected.toFixed(2)} |`);
+    expect(sidecar).toContain(`Plan budget: ${planBudget(382)} bytes for a 382-byte source.`);
+
+    // Generated by /ship coverage audit.
+    // Value: protects=a rebuilt CEO prompt becomes the reference for later ratios ("the latest CEO prompt of the
+    //   voice"); fails_when=ceoReference picks the first CEO row; why_new=this run built one CEO prompt per voice;
+    //   seam=none; no_claim=none beyond protects
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('## Implementation tasks\n\n',
+      `## Implementation tasks\n\n${'- [ ] Pad the CEO rebuild (src/pad.ts; AC1).\n'.repeat(12)}`));
+    const ceo2 = cli('prompt', '--plan', plan, '--run', run, '--phase', 'ceo', '--voice', 'outside');
+    const eng2 = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'outside');
+    const bytesOf = (r: { stdout: string }) => Number(field(r.stdout, 'BYTES'));
+    const latest = Math.round((bytesOf(eng2) / bytesOf(ceo2)) * 100) / 100;
+    expect(latest).not.toBe(Math.round((bytesOf(eng2) / bytesOf(ceo)) * 100) / 100);
+    expect(Number(field(eng2.stdout, 'CEO_RATIO'))).toBe(latest);
+  });
+
+  // Generated by /ship coverage audit.
+  // Value: protects=a size log still holding v1 rows (no ratio or budget fields) seals, and a v1 CEO row still
+  //   serves as the ratio reference; fails_when=the table or ratio assumes v2 fields, or prints a budget line
+  //   with no budget; why_new=every sealed log in the suite is all-v2; seam=none; no_claim=none beyond protects
+  test('a size log with v1 rows from an older run still seals and serves as the CEO reference', () => {
+    const v1 = { v: 1, phase: 'ceo', voice: 'native', bytes: 1234, sha256: 'c'.repeat(64), criteria_bytes: 900,
+      settlements: 0, settlements_bytes: 120, plan_bytes: 300, plan_sha256: 'd'.repeat(64), attempt: 1 };
+    writeFileSync(join(run, 'prompt-sizes.jsonl'), `${JSON.stringify(v1)}\n`);
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+    const legacy = readFileSync(sidecarPathFor(plan), 'utf8');
+    expect(legacy).toContain('| ceo | native | 1234 | 300 | 900 | 0 (120 B) | — | `cccccccccccc` |');
+    expect(legacy).not.toContain('Plan budget:');
+
+    const eng = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native');
+    expect(eng.code).toBe(0);
+    expect(Number(field(eng.stdout, 'CEO_RATIO'))).toBe(Math.round((Number(field(eng.stdout, 'BYTES')) / 1234) * 100) / 100);
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+    expect(readFileSync(sidecarPathFor(plan), 'utf8')).toContain(`Plan budget: ${planBudget(382)} bytes for a 382-byte source.`);
+  });
+
+  test('seal prints the plan against its source and refuses an over-budget or malformed plan proper', () => {
+    const ok = cli('seal', '--plan', plan, '--run', run);
+    expect(ok.code).toBe(0);
+    const proper = Buffer.byteLength(splitPlan(readFileSync(plan, 'utf8')).proper);
+    expect(field(ok.stdout, 'SOURCE_BYTES')).toBe('382');
+    expect(field(ok.stdout, 'PROPER_BYTES')).toBe(String(proper));
+    expect(field(ok.stdout, 'BUDGET_BYTES')).toBe(String(planBudget(382)));
+    expect(Number(field(ok.stdout, 'PLAN_RATIO'))).toBe(Math.round((Number(field(ok.stdout, 'PLAN_BYTES')) / 382) * 100) / 100);
+    const sealed = readFileSync(plan);
+    const sidecar = readFileSync(sidecarPathFor(plan));
+
+    grow(planBudget(382));
+    const over = cli('seal', '--plan', plan, '--run', run);
+    expect(over.code).toBe(3);
+    expect(over.stderr).toContain('ERROR PLAN_OVER_BUDGET');
+    expect(readFileSync(sidecarPathFor(plan))).toEqual(sidecar);
+
+    writeFileSync(plan, sealed.toString('utf8').replace('- [ceo] d2: Keep', '- [ceo] Keep'));
+    const bad = cli('seal', '--plan', plan, '--run', run);
+    expect(bad.code).toBe(3);
+    expect(bad.stderr).toContain('ERROR SETTLEMENTS_INVALID');
+    expect(readFileSync(sidecarPathFor(plan))).toEqual(sidecar);
+  });
+
+  // Value: protects=the parent can check the budget before the gate without writing anything, and an approved
+  //   overrun passes only with a recorded one-line reason; fails_when=budget writes or exits 0 when over, or
+  //   --over-budget is ignored, unrecorded or accepts an empty reason; why_new=overruns surfaced only at seal, after
+  //   approval, with no exit for approved growth; seam=none; no_claim=whether a reason is justified
+  test('budget reports without writing, and --over-budget lets an approved overrun through on the record', () => {
+    const ok = cli('budget', '--plan', plan, '--run', run);
+    expect(ok.code).toBe(0);
+    expect(field(ok.stdout, 'BUDGET')).toBe('ok');
+    expect(field(ok.stdout, 'BUDGET_BYTES')).toBe(String(planBudget(382)));
+    grow(planBudget(382));
+    const before = readdirSync(run).sort();
+    const over = cli('budget', '--plan', plan, '--run', run);
+    expect(over.code).toBe(1);
+    expect(field(over.stdout, 'BUDGET')).toBe('over (no reason given)');
+    expect(readdirSync(run).sort()).toEqual(before);
+
+    for (const bad of ['', '  ', 'two\nlines', 'x'.repeat(201)]) {
+      expect(cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native', '--over-budget', bad).code).toBe(2);
+    }
+    const reason = 'd3 and d7 added AC9 and AC10';
+    const prompt = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native', '--over-budget', reason);
+    expect(prompt.code).toBe(0);
+    expect(field(prompt.stdout, 'BUDGET')).toBe(`over (${reason})`);
+    expect(parseSizeRecords(readFileSync(join(run, 'prompt-sizes.jsonl'), 'utf8')).at(-1)!.over_budget_reason).toBe(reason);
+    const sealed = cli('seal', '--plan', plan, '--run', run, '--over-budget', reason);
+    expect(sealed.code).toBe(0);
+    expect(field(sealed.stdout, 'BUDGET')).toBe(`over (${reason})`);
+    expect(readFileSync(sidecarPathFor(plan), 'utf8')).toContain(`Over budget (eng native, attempt 1): ${reason}`);
+
+    // Generated by /ship coverage audit.
+    // Value: protects=--over-budget accepts a reason of exactly 200 characters, the documented "at most 200";
+    //   fails_when=the length limit turns exclusive; why_new=only a 201-character reason was tested; seam=none;
+    //   no_claim=none beyond protects
+    const longest = 'x'.repeat(200);
+    const edge = cli('prompt', '--plan', plan, '--run', run, '--phase', 'ceo', '--voice', 'native', '--over-budget', longest);
+    expect(edge.code).toBe(0);
+    expect(field(edge.stdout, 'BUDGET')).toBe(`over (${longest})`);
+  });
+
+  // Value: protects=an overrun first approved at seal leaves its reason in the sealed record, and an in-budget
+  //   seal records none; fails_when=seal's --over-budget reason reaches only stdout; why_new=the sidecar's
+  //   over-budget lines came only from prompt rows, so a seal-only overrun left no record; seam=none;
+  //   no_claim=none beyond protects
+  test('a seal-only overrun records its reason in the sidecar; an in-budget seal records none', () => {
+    expect(cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native').code).toBe(0);
+    grow(planBudget(382));
+    const reason = 'gate d5 added AC4';
+    const sealed = cli('seal', '--plan', plan, '--run', run, '--over-budget', reason);
+    expect(sealed.code).toBe(0);
+    const proper = field(sealed.stdout, 'PROPER_BYTES');
+    expect(readFileSync(sidecarPathFor(plan), 'utf8')).toContain(`Sealed over budget: ${reason} (plan proper ${proper} of ${planBudget(382)} bytes).`);
+    cpSync(join(FIXTURES, 'plan.md'), plan);
+    const ok = cli('seal', '--plan', plan, '--run', run, '--replace', '--over-budget', 'not needed');
+    expect(field(ok.stdout, 'BUDGET')).toBe('ok');
+    const sidecar = readFileSync(sidecarPathFor(plan), 'utf8');
+    expect(sidecar).not.toContain('not needed');
+    expect(sidecar).not.toContain('Sealed over budget');
+  });
+
+  test('an in-budget prompt or seal ignores --over-budget and records no reason', () => {
+    const r = cli('prompt', '--plan', plan, '--run', run, '--phase', 'ceo', '--voice', 'outside', '--over-budget', 'not needed');
+    expect(field(r.stdout, 'BUDGET')).toBe('ok');
+    expect(Object.keys(parseSizeRecords(readFileSync(join(run, 'prompt-sizes.jsonl'), 'utf8'))[0]!)).not.toContain('over_budget_reason');
+  });
+
+  // Value: protects=a reviewed plan used as the next run's source sets its budget from its plan proper only;
+  //   fails_when=the record and report raise the budget run after run; why_new=restore.md was measured whole;
+  //   seam=none; no_claim=none beyond protects
+  test('the budget source is restore.md\'s plan proper, not its review record or report', () => {
+    const card = readFileSync(join(run, 'restore.md'), 'utf8');
+    writeFileSync(join(run, 'restore.md'), `${card}\n## Review record\n\n${'- Sidecar: x\n'.repeat(50)}\n## GSTACK REVIEW REPORT\n\n${'| row |\n'.repeat(200)}`);
+    expect(field(cli('budget', '--plan', plan, '--run', run).stdout, 'SOURCE_BYTES')).toBe(String(Buffer.byteLength(card.replace(/\n+$/, '\n'))));
+  });
+
+  // Value: protects=every d<N> a task cites resolves to a settlement /implement can read, and one ID never spans
+  //   two phases; fails_when=seal accepts a dangling or path-like ID or a cross-phase ID; why_new=tasks now cite
+  //   settlements by ID instead of restating them; seam=none; no_claim=that the cited decision is the right one
+  test('seal refuses a task citing a d<N> with no settlement, and an ID under two phase tags', () => {
+    const text = readFileSync(plan, 'utf8');
+    writeFileSync(plan, text.replace('(src/export/csv.ts; AC1, d4; surfaced by eng)', '(src/export/csv.ts; AC1, d9; surfaced by eng)'));
+    const dangling = cli('seal', '--plan', plan, '--run', run);
+    expect(dangling.code).toBe(3);
+    expect(dangling.stderr).toContain('ERROR TASK_REF_UNRESOLVED: implementation tasks cite d9');
+    expect(existsSync(sidecarPathFor(plan))).toBe(false);
+    writeFileSync(plan, text.replace('(src/export/csv.ts; AC1, d4; surfaced by eng)', '(src/d9.ts, lib/odd9; AC1, per d4.; surfaced by eng)'));
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+    writeFileSync(plan, text.replace('- [dx] d3:', '- [dx] d1:'));
+    const tagged = cli('prompt', '--plan', plan, '--run', run, '--phase', 'eng', '--voice', 'native');
+    expect(tagged.code).toBe(3);
+    expect(tagged.stderr).toContain('d1 is tagged both [ceo] and [dx]');
+  });
+
+  // Generated by /ship coverage audit.
+  // Value: protects=seal checks only d<N> cited on unfenced ## Implementation tasks lines, sentence-final and
+  //   multi-digit IDs included; fails_when=the fence skip or section scope is dropped, or the lookahead stops
+  //   counting `d2.` or `d12`; why_new=the seal case covers dangling and path-like tokens only; seam=none;
+  //   no_claim=none beyond protects
+  test('task references come only from unfenced task lines and include sentence-final IDs', () => {
+    const proper = [
+      '# Plan', '', 'Card prose mentions d7.', '',
+      '## Acceptance criteria', '', '1. Behaves as d8 describes.', '',
+      '## Accepted decisions', '', '- [eng] d1: Keep it small.', '',
+      '## Implementation tasks', '',
+      '- [ ] Build it (src/a.ts; AC1, d1; check: unit).',
+      '- [ ] Finish per d2.',
+      '- [ ] Wire (d3) and d12, then d5;',
+      '```text', '- [ ] fenced example citing d6', '```',
+      '- [ ] Leave src/d9.ts, lib/odd9, d9-x, d9/y and v1.d9 alone.',
+      '',
+      '## Notes', '', 'A later section mentions d10.', '',
+    ].join('\n');
+    expect(taskRefs(proper)).toEqual(['d1', 'd2', 'd3', 'd12', 'd5']);
+  });
+
+  // Value: protects=a variant decisions or tasks heading is refused instead of silently hiding its section from
+  //   the settlement and task-reference checks, and a code span such as `d2` is not read as a decision ID;
+  //   fails_when=only the exact headings are parsed with no guard, or backtick spans count as IDs; why_new=a
+  //   renamed tasks heading let a dangling d99 seal and pass check; seam=none; no_claim=none beyond protects
+  test('variant section headings refuse, and inline code is not a decision ID', () => {
+    const text = readFileSync(plan, 'utf8');
+    for (const [from, to] of [['## Implementation tasks', '## Implementation tasks (merged)'], ['## Accepted decisions', '### Accepted decisions']]) {
+      writeFileSync(plan, text.replace(from, to));
+      const r = cli('seal', '--plan', plan, '--run', run);
+      expect(r.code).toBe(3);
+      expect(r.stderr).toContain('ERROR SECTION_HEADING_INVALID');
+    }
+    writeFileSync(plan, text.replace('(src/export/csv.ts; AC1, d4; surfaced by eng)', '(render with `d2` and the `d8` profile; src/export/csv.ts; AC1, d4; surfaced by eng)'));
+    expect(taskRefs(splitPlan(readFileSync(plan, 'utf8')).proper)).toEqual(['d2', 'd4', 'd3']);
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+  });
+
+  // Value: protects=seal's new plan pre-checks run before any sidecar decision, so a refusal never touches a
+  //   foreign sidecar or a taken archive name; fails_when=--replace or the archive path runs before the budget and
+  //   settlement checks; why_new=those pre-checks are new; seam=none; no_claim=none beyond protects
+  test('seal pre-check refusals leave a foreign sidecar and a taken archive name untouched', () => {
+    const foreign = sidecarPathFor(plan);
+    writeFileSync(foreign, 'someone else\n');
+    grow(planBudget(382));
+    const grown = readFileSync(plan);
+    for (const extra of [[], ['--replace']]) {
+      const r = cli('seal', '--plan', plan, '--run', run, ...extra);
+      expect(r.code).toBe(3);
+      expect(r.stderr).toContain('ERROR PLAN_OVER_BUDGET');
+      expect(readFileSync(foreign, 'utf8')).toBe('someone else\n');
+      expect(readFileSync(plan)).toEqual(grown);
+    }
+    rmSync(foreign);
+    cpSync(join(FIXTURES, 'plan.md'), plan);
+    const hash = field(cli('seal', '--plan', plan, '--run', run).stdout, 'SHA256')!;
+    const archive = join(temp, `track-plan.review-record.${hash.slice(0, 12)}.md`);
+    writeFileSync(archive, 'unrelated\n');
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('- [ceo] d2: Keep', '- [ceo] Keep'));
+    const before = { plan: readFileSync(plan), sidecar: readFileSync(foreign) };
+    const r = cli('seal', '--plan', plan, '--run', run);
+    expect(r.stderr).toContain('ERROR SETTLEMENTS_INVALID');
+    expect(readFileSync(archive, 'utf8')).toBe('unrelated\n');
+    expect(readFileSync(foreign)).toEqual(before.sidecar);
+    expect(readFileSync(plan)).toEqual(before.plan);
+  });
+
+  test('proper --previous counts changed lines against the previous round', () => {
+    const first = join(run, 'ceo-spec-input.1.md');
+    expect(cli('proper', '--plan', plan, '--out', first).code).toBe(0);
+    const same = cli('proper', '--plan', plan, '--out', join(run, 'ceo-spec-input.2.md'), '--previous', first);
+    expect(field(same.stdout, 'CHANGED_LINES')).toBe('0');
+    writeFileSync(plan, readFileSync(plan, 'utf8').replace('so memory stays flat for large stores.', 'so memory stays flat.'));
+    const changed = cli('proper', '--plan', plan, '--out', join(run, 'ceo-spec-input.3.md'), '--previous', join(run, 'ceo-spec-input.2.md'));
+    expect(field(changed.stdout, 'CHANGED_LINES')).toBe('2');
+    expect(cli('proper', '--plan', plan, '--out', join(run, 'x.md')).stdout).not.toContain('CHANGED_LINES');
+    const missing = cli('proper', '--plan', plan, '--out', join(run, 'y.md'), '--previous', join(run, 'nope.md'));
+    expect(missing.code).toBe(3);
+    expect(missing.stderr).toContain('ERROR PREVIOUS_MISSING');
+    expect(existsSync(join(run, 'y.md'))).toBe(false);
+    expect(changedLines('a\nb\nb\n', 'b\na\nb\n')).toBe(0);
+    expect(changedLines('a\nb\n', 'a\nc\n')).toBe(2);
+  });
+});
+
+describe('skill outlines', () => {
+  const base = [
+    '# /autoplan',
+    '## Voice',
+    'Be direct.',
+    '## Phase 0',
+    '**Section skip list — when following a loaded skill file, SKIP these sections',
+    '(they are already handled by /autoplan):**',
+    '- Preamble (run first)',
+    '- AskUserQuestion Format',
+    '- Outside Voice — Independent Plan Challenge',
+    '',
+    'Follow ONLY the review-specific methodology.',
+    '',
+  ].join('\n');
+  const skill = [
+    '---',
+    'name: plan-x-review',
+    '---',
+    '## Preamble (after scope gate)',
+    '```bash',
+    '## not a heading inside a fence',
+    '```',
+    '## AskUserQuestion Format',
+    '### Format',
+    'question details',
+    '## Voice',
+    'Be   direct.',
+    '## Review Sections',
+    '### 1. Architecture review',
+    'check the boundaries',
+    '## Outside Voice — Independent Plan Challenge (default-on)',
+    '### Continue after Outside Voice',
+    'go on',
+    '',
+  ].join('\n');
+
+  // Value: protects=parents can load methodology by range and skip what autoplan already handles;
+  //   fails_when=fenced lines become headings, H3s escape a skipped H2, or whitespace breaks shared matches;
+  //   why_new=a real run read 540 KB of skill text whole; seam=none; no_claim=which sections a parent reads
+  test('marks skip-list, shared and read sections with non-overlapping line ranges', () => {
+    expect(skipList(base)).toEqual(['preamble', 'askuserquestion format', 'outside voice — independent plan challenge']);
+    const { rows } = outline(skill, base);
+    expect(rows.map((r) => [r.start, r.end, r.status, r.heading])).toEqual([
+      [4, 7, 'skip', '## Preamble (after scope gate)'],
+      [8, 8, 'skip', '## AskUserQuestion Format'],
+      [9, 10, 'skip-parent', '### Format'],
+      [11, 12, 'shared', '## Voice'],
+      [13, 13, 'read', '## Review Sections'],
+      [14, 15, 'read', '### 1. Architecture review'],
+      [16, 16, 'skip', '## Outside Voice — Independent Plan Challenge (default-on)'],
+      [17, 18, 'skip-parent', '### Continue after Outside Voice'],
+    ]);
+    expect(outline(skill).rows.every((r) => r.status === 'read')).toBe(true);
+    // Rows end at the last real line and cover the file after its frontmatter exactly once.
+    const frontmatter = Buffer.byteLength('---\nname: plan-x-review\n---\n');
+    expect(rows.reduce((n, r) => n + r.bytes, 0)).toBe(Buffer.byteLength(skill) - frontmatter);
+    expect(outline('# A\nx\n## B\ny').rows.map((r) => [r.start, r.end, r.bytes])).toEqual([[1, 2, 6], [3, 4, 6]]);
+
+    // Generated by /ship coverage audit.
+    // Value: protects=an H1 ends a skipped H2's scope, a listed H3 is skipped under a read H2, and H4 never starts
+    //   a row; fails_when=H1 stops resetting the skip scope, the own-name H3 check is dropped, or headings widen
+    //   past H3; why_new=the fixture had no H1 after a skipped H2, listed H3 or H4; seam=none; no_claim=none beyond protects
+    const nested = ['## Preamble', 'setup', '# Plan Review Mode', '### Step 1', '#### Detail', 'method',
+      '## Review Sections', '### AskUserQuestion Format', 'ask', ''].join('\n');
+    expect(outline(nested, base).rows.map((r) => [r.start, r.end, r.status, r.heading])).toEqual([
+      [1, 2, 'skip', '## Preamble'],
+      [3, 3, 'read', '# Plan Review Mode'],
+      [4, 6, 'read', '### Step 1'],
+      [7, 7, 'read', '## Review Sections'],
+      [8, 9, 'skip', '### AskUserQuestion Format'],
+    ]);
+  });
+
+  // Generated by /ship coverage audit.
+  // Value: protects=a skip-list section, or an H3 under one, stays skip/skip-parent even when it matches a base
+  //   section; fails_when=the shared check runs before the skip checks; why_new=no fixture skip row matched a base
+  //   span, yet ~15 KB per installed phase skill does; seam=none; no_claim=none beyond protects
+  test('skip and skip-parent outrank shared when a skipped section also matches the base', () => {
+    const repeated = `${base}## AskUserQuestion Format\n### Format\nquestion details\n`;
+    const status = (b: string) => outline(skill, b).rows.filter((r) => r.start === 8 || r.start === 9).map((r) => [r.heading, r.status]);
+    // Without the skip list both sections are plainly shared, so the overlap is real.
+    expect(status(repeated.replace('**Section skip list', '**Section list'))).toEqual([['## AskUserQuestion Format', 'shared'], ['### Format', 'shared']]);
+    expect(status(repeated)).toEqual([['## AskUserQuestion Format', 'skip'], ['### Format', 'skip-parent']]);
+  });
+
+  // Value: protects=a section file with no H1-H3 heading (upstream's sections/<phase>-phase.md) still gets a
+  //   readable range, and body text before the first heading is never lost; fails_when=outline only emits heading
+  //   rows; why_new=a real installed ceo-phase.md outlined to zero rows; seam=none; no_claim=none beyond protects
+  test('body text before the first heading is a row, so a heading-less file is one readable range', () => {
+    const headingless = '<!-- generated -->\n**Override rules:** keep HOLD SCOPE.\n\n**Mandatory outputs:** a table.\n';
+    expect(outline(headingless).rows).toEqual([
+      { start: 1, end: 4, bytes: Buffer.byteLength(headingless), level: 0, heading: '(before first heading)', status: 'read' },
+    ]);
+    const intro = '---\nname: x\n---\n\nIntro paragraph.\n## A\nbody\n';
+    expect(outline(intro).rows.map((r) => [r.start, r.end, r.heading])).toEqual([[5, 5, '(before first heading)'], [6, 7, '## A']]);
+    expect(outline('---\nname: x\n---\n## A\n').rows.map((r) => r.heading)).toEqual(['## A']);
+  });
+
+  // Value: protects=installed skills reached through the host catalog's symlinks outline normally;
+  //   fails_when=outline applies the write-path symlink refusal to read-only inputs; why_new=every Claude Code
+  //   catalog SKILL.md is a symlink and outline refused it; seam=none; no_claim=none beyond protects
+  test('outline reads symlinked skill and base files through to their targets', () => {
+    writeFileSync(join(temp, 'real-skill.md'), skill);
+    writeFileSync(join(temp, 'real-autoplan.md'), base);
+    symlinkSync(join(temp, 'real-skill.md'), join(temp, 'SKILL.md'));
+    symlinkSync(join(temp, 'real-autoplan.md'), join(temp, 'autoplan.md'));
+    const r = cli('outline', '--skill', 'SKILL.md', '--base', 'autoplan.md');
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'SKIP_LIST')).toBe('3');
+    expect(r.stdout).toContain('SECTION: 14-15 48 read ### 1. Architecture review\n');
+    symlinkSync(join(temp, 'gone.md'), join(temp, 'dangling.md'));
+    expect(cli('outline', '--skill', 'dangling.md').stderr).toContain('ERROR SKILL_MISSING');
+  });
+
+  // Value: protects=a base whose skip list moved is reported as drift instead of silently marking every
+  //   section read; fails_when=outline exits 0 with no skip rows; why_new=the skip-list parse fails open;
+  //   seam=none; no_claim=none beyond protects
+  test('a base with no Section skip list is drift: exit 4 and no row marked skip', () => {
+    writeFileSync(join(temp, 'SKILL.md'), skill);
+    writeFileSync(join(temp, 'autoplan.md'), '# /autoplan\n## Voice\nBe direct.\n');
+    const r = cli('outline', '--skill', 'SKILL.md', '--base', 'autoplan.md');
+    expect(r.code).toBe(4);
+    expect(field(r.stdout, 'SKIP_LIST')).toBe('0');
+    expect(r.stdout).toContain('DRIFT: no Section skip list found in BASE');
+    expect(r.stdout).not.toMatch(/ skip(-parent)? #/);
+  });
+
+  // Generated by /ship coverage audit.
+  // Value: protects=outline finds the installed autoplan's skip list and each phase skill's shared preamble and
+  //   methodology; fails_when=upstream's skip-list label or preamble drifts so outline skips or shares nothing;
+  //   why_new=the other outline cases use synthetic text; seam=none; no_claim=skipped unless GSTACK_OUTSIDE_TEST_ROOT is set
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('installed upstream skills outline into skip, shared and read sections', () => {
+    const root = process.env.GSTACK_OUTSIDE_TEST_ROOT!;
+    const autoplan = readFileSync(join(root, 'autoplan', 'SKILL.md'), 'utf8');
+    expect(skipList(autoplan)).toContain('preamble');
+    for (const name of ['plan-ceo-review', 'plan-design-review', 'plan-devex-review', 'plan-eng-review']) {
+      const statuses = new Set(outline(readFileSync(join(root, name, 'SKILL.md'), 'utf8'), autoplan).rows.map((r) => r.status));
+      for (const status of ['read', 'shared', 'skip'] as const) expect(statuses.has(status), `${name} ${status}`).toBe(true);
+    }
+    // CEO pre-review steps nested under the skipped Prerequisite Skill Offer must stay readable.
+    const ceo = outline(readFileSync(join(root, 'plan-ceo-review', 'SKILL.md'), 'utf8'), autoplan).rows;
+    for (const heading of ['### Retrospective Check', '### Frontend/UI Scope Detection', '### Taste Calibration', '### Landscape Check']) {
+      const row = ceo.find((r) => r.heading.startsWith(heading));
+      expect(row, heading).toBeDefined();
+      expect(row!.status, heading).not.toBe('skip');
+    }
+    for (const phase of ['ceo', 'eng']) {
+      const section = join(root, 'autoplan', 'sections', `${phase}-phase.md`);
+      if (!existsSync(section)) continue;
+      const rows = outline(readFileSync(section, 'utf8')).rows;
+      expect(rows.reduce((n, r) => n + r.bytes, 0), section).toBeGreaterThan(0);
+    }
+  });
+
+  test('the CLI prints sections and byte totals, and refuses a missing file', () => {
+    writeFileSync(join(temp, 'SKILL.md'), skill);
+    writeFileSync(join(temp, 'autoplan.md'), base);
+    const r = cli('outline', '--skill', 'SKILL.md', '--base', 'autoplan.md');
+    expect(r.code).toBe(0);
+    expect(field(r.stdout, 'SKIP_LIST')).toBe('3');
+    expect(r.stdout).toContain('SECTION: 14-15 48 read ### 1. Architecture review\n');
+    const rows = outline(skill, base).rows;
+    const sum = (status: string) => rows.filter((row) => row.status === status).reduce((n, row) => n + row.bytes, 0);
+    expect(Number(field(r.stdout, 'READ_BYTES'))).toBe(sum('read'));
+    expect(Number(field(r.stdout, 'SHARED_BYTES'))).toBe(sum('shared'));
+    expect(Number(field(r.stdout, 'SKIP_BYTES'))).toBe(sum('skip'));
+    expect(Number(field(r.stdout, 'SKIP_PARENT_BYTES'))).toBe(sum('skip-parent'));
+    expect(field(cli('outline', '--skill', 'SKILL.md').stdout, 'BASE')).toBe('none');
+    const missing = cli('outline', '--skill', 'nope.md');
+    expect(missing.code).toBe(3);
+    expect(missing.stderr).toContain('ERROR SKILL_MISSING');
+  });
+});
+
+describe('outside voice output format', () => {
+  // Replies in the label forms of three real plan reviews that upstream's validator rejected as
+  // untagged_review: severities written as bold "**High.**" text. The prose is replaced; numbering,
+  // bullets, bold labels, severity counts and Recommendation lines are kept.
+  const OUTSIDE = join(FIXTURES, 'outside');
+  const cases = [
+    { file: 'numbered-bold-period.md', verdict: 'findings', highest: 'P1', counts: { High: 3, Medium: 5, Low: 2 } },
+    { file: 'outcome-and-bold-recommendation.md', verdict: 'clean', highest: 'P2', counts: { High: 0, Medium: 3, Low: 2 } },
+    { file: 'bulleted-bold-period.md', verdict: 'findings', highest: 'P1', counts: { High: 1, Medium: 5, Low: 8 } },
+  ] as const;
+  /** The same reply written in OUTSIDE_OUTPUT_FORMAT's bracketed severity form. */
+  const bracketed = (text: string) => text.replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\*\*(Critical|High|Medium|Low)\.\s+/gm, '$1**[$2] ');
+  const labels = (text: string) => [...text.matchAll(/^\s*(?:[-*+]|\d+[.)])\s+\*\*\[(Critical|High|Medium|Low)\]/gm)].map((m) => m[1]);
+
+  test('fixtures keep the rejected form, and the requested form labels every finding', () => {
+    for (const c of cases) {
+      const text = readFileSync(join(OUTSIDE, c.file), 'utf8');
+      expect(text).toMatch(/\*\*(High|Medium|Low)\. /);
+      const fixed = bracketed(text);
+      expect(fixed).not.toMatch(/\*\*(Critical|High|Medium|Low)\. /);
+      for (const [severity, n] of Object.entries(c.counts)) expect(labels(fixed).filter((l) => l === severity)).toHaveLength(n);
+    }
+    for (const rule of ['[Critical], [High], [Medium] or [Low]', 'never a heading', '"NO_FINDINGS: none" immediately before the Recommendation line', 'Recommendation: <action> because <specific reason>']) {
+      expect(OUTSIDE_OUTPUT_FORMAT).toContain(rule);
+    }
+  });
+
+  // Value: protects=an outside voice that follows the prompt's format is counted, with each finding's
+  //   severity; fails_when=the requested form drifts from what upstream's validator reads; why_new=three paid
+  //   outside reviews were discarded as untagged_review; seam=installed gstack lib (GSTACK_OUTSIDE_TEST_ROOT);
+  //   no_claim=that a model follows the format
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('installed upstream validator rejects the bold form and reads the requested one', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    const classify = (text: string) => classifyOutsideReview({ text, gate: 'review', stderr: '', exit: 0 });
+    const level = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' } as Record<string, string>;
+    for (const c of cases) {
+      const text = readFileSync(join(OUTSIDE, c.file), 'utf8');
+      expect(classify(text)).toMatchObject({ verdict: 'unverified', reason: 'untagged_review' });
+      const fixed = bracketed(text);
+      expect(classify(fixed)).toMatchObject({ verdict: c.verdict, findings: { highest: c.highest } });
+      for (const line of fixed.split('\n').filter((l) => /\*\*\[(High|Medium|Low)\]/.test(l))) {
+        const severity = /\[(High|Medium|Low)\]/.exec(line)![1]!;
+        expect(classify(`${line}\n\nRecommendation: Revise because of this finding.`).findings.highest).toBe(level[severity]);
+      }
+    }
+    expect(classify('1. [High] The export drops rows. Evidence. Fix.\n\nRecommendation: Revise because rows are dropped.'))
+      .toMatchObject({ verdict: 'findings', findings: { highest: 'P1' } });
+    expect(classify('NO_FINDINGS: the plan covers every path.\n\nRecommendation: Proceed because the plan is complete.'))
+      .toMatchObject({ verdict: 'clean' });
+    // The no-findings form OUTSIDE_OUTPUT_FORMAT requests passes even with contrast words in the reason.
+    expect(classify('Reviewed every criterion.\n\nNO_FINDINGS: none\n\nRecommendation: Approve because each criterion has a task, but only one test covers the export.'))
+      .toMatchObject({ verdict: 'clean' });
+    // The forms the format forbids are discarded, so the instructions stay necessary.
+    for (const text of ['### 1. [High] The export drops rows.', 'NO_FINDINGS: covered; nothing else', 'NO_FINDINGS: covers x, and y',
+      'NO_FINDINGS: covers x. It is fine', 'NO_FINDINGS: it only adds one flag', 'NO_FINDINGS: none\n\nOne more note.']) {
+      expect(classify(`${text}\n\nRecommendation: Revise because x.`), text).toMatchObject({ verdict: 'unverified', reason: 'untagged_review' });
+    }
   });
 });
 
@@ -906,6 +1467,27 @@ describe('launcher and skill contract', () => {
       'Mark each User Challenge `[challenge]` and every other entry `[fork]`.',
       'End the message with this block. Nothing may follow it:',
       '`CHECK: ok` is required.',
+      '"$_EXTEND_ROOT/bin/autoplan-lean" outline --skill',
+      'Do not re-read a range you still hold in context; after a compaction, and on every rerun from the final gate, re-read the ranges the current step applies.',
+      'A `skip-parent` row is an H3 under a skipped H2: read it unless its heading plainly belongs to the skipped topic',
+      'Start both before awaiting either.',
+      'Agent `run_in_background: false`',
+      'Do not read either voice\'s output or begin the phase\'s review analysis until both have finished or failed.',
+      'run native first, then outside, as upstream does',
+      '"$_EXTEND_ROOT/bin/autoplan-lean" budget --plan',
+      'Before a D rerun, move the settlements of every phase that will rerun',
+      '`TASK_REF_UNRESOLVED`',
+      'check: <test or manual check>',
+      '`archive-phase --run "<run>" --phase <phase> --voice native`',
+      '`CHANGED_LINES: 0` always stops the loop',
+      'Never shorten the card text, the criteria, `Tier:`, the verify line or a task\'s check to fit, and never cut an accepted settlement or task.',
+      `within a budget of ${BUDGET_SOURCE_FACTOR} × the source's plan-proper bytes + ${BUDGET_ALLOWANCE_BYTES}`,
+      `may hold at most ${BUDGET_SOURCE_FACTOR} × the plan proper of \`<run>/restore.md\` + ${BUDGET_ALLOWANCE_BYTES} bytes`,
+      'After its ID it holds at most 200 characters',
+      'If the native dispatch returns a launch receipt instead of a result, await that agent\'s completion notice',
+      'and the tasks that cite them, out of the plan into their phase reviews',
+      'subsection from the Eng skill',
+      '`SOURCE_BYTES`, `PROPER_BYTES`, `BUDGET_BYTES` and `PLAN_RATIO`',
     ]) expect(skill).toContain(phrase);
 
     const fenceMatch = /## 7\. Final message[\s\S]*?```text\n([\s\S]*?)\n```/.exec(rawSkill);
