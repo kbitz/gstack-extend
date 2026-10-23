@@ -1,14 +1,18 @@
 /**
  * Reviewer criteria for /autoplan-lean, copied from upstream gstack so the
- * lean prompts ask each voice exactly what upstream /autoplan asks it.
+ * lean prompts ask each voice what upstream /autoplan asks it.
  *
  * Source: garrytan/gstack at UPSTREAM.commit (release UPSTREAM.version).
  *   - NATIVE_CRITERIA: `bin/gstack-autoplan-snapshot.ts`, `NATIVE_REVIEWS`.
  *   - OUTSIDE_CRITERIA: `autoplan/sections/<phase>-phase.md`, the outside-voice
  *     prompt for each phase, without its file placeholder and its paragraph
- *     that inlines prior phases' consensus summaries. The lean prompt replaces
- *     that paragraph with the accepted-settlements list (see prompt.ts).
- *   - OUTSIDE_RESULT_CONTRACT and BOUNDARY: the same phase sections.
+ *     that inlines prior phases' consensus summaries. The lean prompt carries
+ *     earlier decisions only through the plan's own `## Accepted decisions`
+ *     section (see prompt.ts, SETTLEMENTS_NOTE).
+ *   - BOUNDARY: the same phase sections, sent verbatim.
+ *   - OUTSIDE_RESULT_CONTRACT: the same phase sections. It instructs the
+ *     prompt's author, so it is kept only as a `drift` needle; outside voices
+ *     get its validator-readable form, OUTSIDE_OUTPUT_FORMAT (prompt.ts).
  *
  * Only these strings are copied. Phase methodology, decision principles and
  * outside invocations are read from the installed upstream skills at run time.

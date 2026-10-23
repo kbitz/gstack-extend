@@ -32,6 +32,7 @@ beforeEach(() => {
   run = join(temp, 'run');
   cpSync(join(FIXTURES, 'plan.md'), plan);
   mkdirSync(run);
+  cpSync(join(FIXTURES, 'run', 'restore.md'), join(run, 'restore.md'));
 });
 
 afterEach(() => rmSync(temp, { recursive: true, force: true }));
@@ -107,12 +108,63 @@ describe('phase review history', () => {
     expect(history.trim().split('\n').map((line) => JSON.parse(line)).map(({ phase, attempt }) => [phase, attempt])).toEqual([['ceo', 1], ['eng', 1], ['ceo', 2]]);
   });
 
+  // Value: protects=a retried native voice is archived alone, so the outside voice's completed result stays
+  //   current when both ran at the same time; fails_when=--voice archives or clears the other outputs, or the
+  //   sidecar renders the retry as a whole-phase attempt; why_new=voices now overlap, so a native retry can
+  //   follow a finished outside run; seam=none; no_claim=host subagent retry behavior
+  test('archive-phase --voice native keeps the outside result and review current', () => {
+    const [review, native, outside] = outputs('FIRST');
+    const archived = cli('archive-phase', '--run', run, '--phase', 'ceo', '--voice', 'native');
+    expect(archived).toEqual({ code: 0, stdout: `HISTORY: ${join(run, historyName)}\nPHASE: ceo\nVOICE: native\nATTEMPT: 1\nSTATUS: archived\n`, stderr: '' });
+    expect(existsSync(join(run, 'ceo-native.md'))).toBe(false);
+    expect(readFileSync(join(run, 'ceo-outside.md'), 'utf8')).toBe(outside!);
+    expect(readFileSync(join(run, 'ceo-review.md'), 'utf8')).toBe(review!);
+    expect(JSON.parse(readFileSync(join(run, historyName), 'utf8'))).toEqual({ v: 1, phase: 'ceo', attempt: 1, voice: 'native', native });
+    expect(cli('archive-phase', '--run', run, '--phase', 'ceo', '--voice', 'native').stdout).toContain('STATUS: empty');
+
+    writeFileSync(join(run, 'ceo-native.md'), 'RETRY-NATIVE-SENTINEL\n');
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+    const sidecar = readFileSync(sidecarPathFor(plan), 'utf8');
+    const retried = sidecar.split('### Attempt 1 (archived native output, retried)')[1]!.split('### Attempt 2 (current)')[0]!;
+    expect(retried).toContain(native!);
+    expect(retried).not.toContain('Outside voice output');
+    const current = sidecar.split('### Attempt 2 (current)')[1]!;
+    for (const text of [review!, outside!, 'RETRY-NATIVE-SENTINEL']) expect(current).toContain(text);
+    expect(cli('archive-phase', '--run', run, '--phase', 'ceo', '--voice', 'both').code).toBe(2);
+    // Only native is retried; an outside voice that fails is recorded unavailable.
+    expect(cli('archive-phase', '--run', run, '--phase', 'ceo', '--voice', 'outside').code).toBe(2);
+  });
+
+  // Value: protects=a gate rerun after a native retry numbers both attempts and keeps every byte; fails_when=a
+  //   voice row breaks the next whole-phase archive's numbering or rendering; why_new=the skill pairs the native
+  //   retry with gate reruns; seam=none; no_claim=none beyond protects
+  test('a whole-phase rerun after a native voice retry numbers and renders both attempts', () => {
+    const [review, native, outside] = outputs('FIRST');
+    expect(cli('archive-phase', '--run', run, '--phase', 'ceo', '--voice', 'native').code).toBe(0);
+    writeFileSync(join(run, 'ceo-native.md'), 'RETRY-NATIVE-SENTINEL\n');
+    expect(cli('archive-phase', '--run', run, '--phase', 'ceo').stdout).toContain('ATTEMPT: 2');
+    const rows = readFileSync(join(run, historyName), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(rows).toEqual([
+      { v: 1, phase: 'ceo', attempt: 1, voice: 'native', native },
+      { v: 1, phase: 'ceo', attempt: 2, review, native: 'RETRY-NATIVE-SENTINEL\n', outside },
+    ]);
+    expect(cli('seal', '--plan', plan, '--run', run).code).toBe(0);
+    const sidecar = readFileSync(sidecarPathFor(plan), 'utf8');
+    expect(sidecar).toContain('### Attempt 1 (archived native output, retried)');
+    expect(sidecar).toContain('### Attempt 2 (archived)');
+    expect(sidecar).not.toContain('### Attempt 3 (current)');
+  });
+
   test.each([
     'not JSON\n',
     '{"v":1,"phase":"ceo","attempt":1,"native":42}\n',
     '{"v":1,"phase":"ceo","attempt":2,"native":"earlier"}\n',
     '{"v":1,"phase":"other","attempt":1,"native":"earlier"}\n',
     '{"v":1,"phase":"ceo","attempt":1}\n',
+    '{"v":1,"phase":"ceo","attempt":1,"voice":"native","outside":"earlier"}\n',
+    '{"v":1,"phase":"ceo","attempt":1,"voice":"native","native":"a","review":"b"}\n',
+    '{"v":1,"phase":"ceo","attempt":1,"voice":"both","native":"earlier"}\n',
+    '{"v":1,"phase":"ceo","attempt":1,"voice":"outside","outside":"earlier"}\n',
   ])('invalid history refuses archive and seal without changing current outputs: %s', (history) => {
     const current = outputs('CURRENT');
     writeFileSync(join(run, historyName), history);
