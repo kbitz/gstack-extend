@@ -18,6 +18,15 @@
 - **Depends on:** Cut repeated review work in /review-and-prep without changing gstack
 - **Context:** Owner request, 2026-10-20. Measure first on retained review logs: were later-pass accepted findings inside the preceding repair delta? Then run a read-only shadow full re-review (or full cycle 2) on the same head for the first three delta re-reviews and delta cycles, with spend approved in advance, and compare accepted findings by severity and tokens. Proposed bar, set finally by the owner: no accepted critical or high finding missed, at most one medium across the sample. Keep an ongoing escape check: a later accepted finding (Greptile, `/ship-and-land`, post-merge) outside a delta-scoped review's delta.
 - **Revisit when:** Three paired comparisons are recorded, or an accepted finding lands outside a delta-scoped review's delta.
+- **Update 2026-10-22:** The owner opted their own hand-launched runs into delta repair cycles through `review_default=light` (no outside call or Red Team on delta cycles). That is a per-user opt-in, not this wrapper-wide default; use those runs' later accepted findings as the escape check.
+
+### [manual] Load /review-and-prep's rarely used sections on demand
+
+- **Why:** The host loads the whole 121 KB `skills/review-and-prep.md` at invocation, and each parent turn resends it. Measured hand-launched runs read 325–550 KB of skill docs per parent, and a cache-miss turn at 200k–320k tokens took 2–3 minutes. Most runs never reach the Greptile exits and configuration repair, the cycle-cap stop and continuation, or the manual-testing resume.
+- **Effort:** M
+- **Priority:** P3
+- **Context:** Owner request, 2026-10-22, split from the lighter-ceremony change, which only stopped whole-file reads of `docs/telemetry.md` and `docs/workflow-handoffs.md`. Move those procedures into section files read when their situation applies, as upstream `/review` does with `sections/`. Keep every handoff label and marker byte-stable. `setup` must install the section files for every host copy, and the `skill-protocols`, `handoff-contract` and `workflow-metrics` locks that slice this file must follow the sections.
+- **Revisit when:** Track 31A measures parent context per review run, or a host's skill size limit or cache-miss latency blocks a run.
 
 ### [manual] File upstream: gstack-owned review cost levers
 

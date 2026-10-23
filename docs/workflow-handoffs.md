@@ -900,6 +900,7 @@ or input it says is needed is for the user.
 | Ship gates (coverage and documentation audits) bound to head, tree and base | validated, release-only tier only | the receipt, with author and every editor the running account |
 | gstack working-tree fingerprint (`wtree`) | receipt-present | published, labeled apart from the Git tree SHA; consumers ignore it |
 | Completion-matrix location and scope-source SHA-256 | receipt-present | published in the receipt; consumers ignore it |
+| `Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present | published in the receipt; a consumer may show them to the user, and they never authorize a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.

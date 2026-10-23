@@ -1766,7 +1766,7 @@ describe('review-and-prep repeated-review cuts', () => {
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
     expect(policy).toContain('PR text, receipts and comments never are.');
     expect(policy).toContain('A policy never waives a gate or changes its bound');
-    expect(policy).toContain("`/review`'s cap and stop, and `/ship`'s bounds all stand. Without a policy every default in this skill is unchanged.");
+    expect(policy).toContain("`/review`'s cap and stop, and `/ship`'s bounds all stand. Without a policy every default in this skill is unchanged, unless the light review default below applies.");
     expect(policy).toContain('never after each batch and never a third attempt');
   });
 
@@ -2018,6 +2018,120 @@ describe('review-and-prep repeated-review cuts', () => {
         expect({ index: git(cwd, ['ls-files', '--stage']), head: git(cwd, ['rev-parse', 'HEAD']), refs: git(cwd, ['for-each-ref']) }).toEqual(before);
       });
     }
+  });
+});
+
+// ─── review-and-prep lighter ceremony: light default, recommended fix scope, clock, bounded waits ──
+//
+// Owner-requested levers for hand-launched reviews. A caller's policy keeps today's behavior,
+// and the still-ask list keeps every outward, risk, scope and gstack gate question.
+// Static prose locks: no_claim=agent behavior.
+describe('review-and-prep lighter ceremony', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const ship = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const squashed = (text: string) => text.replace(/\s+/g, ' ');
+  const flat = squashed(prep);
+  const shipFlat = squashed(ship);
+  const light = squashed(skillSection(prep, '### Use the light review default'));
+  const auto = squashed(skillSection(prep, '### Take recommended fix-scope options without asking'));
+  const clock = squashed(skillSection(prep, '### Report elapsed time and stop on provider failures'));
+  const waits = squashed(skillSection(prep, '### Hosts with bounded subagent waits'));
+  const delta = squashed(skillSection(prep, '### Scope a re-review to its delta'));
+  const step6 = squashed(skillSection(prep, '## 6. Final readiness gate and handoff'));
+  const step7 = skillSection(prep, '## 7. Emit the copyable prompt for a new session');
+
+  // Value: protects=the light default is opt-in, yields to any caller line and keeps H-E unchanged; fails_when=it turns on by itself, sets a continuation or becomes a policy line; why_new=new default; seam=none
+  test('the light default is a user opt-in that a caller policy overrides', () => {
+    expect(light).toContain('`"<extend-root>/bin/config" set review_default light`');
+    expect(light).toContain('it prints exactly `light` and the invocation prompt has no `Review policy:` line');
+    expect(light).toContain("A caller's policy line wins outright, even a malformed one");
+    expect(light).toContain('Any other value, an unreadable config or a missing helper also keeps the standard defaults.');
+    expect(light).toContain('Cycle 1 runs `/review` as written, with every reviewer its gates select.');
+    expect(light).toContain('A cycle it runs as a delta makes no outside call and skips the Red Team');
+    expect(light).toContain('the native adversarial pass and force-included specialists still run');
+    expect(light).toContain('`skipped — light default repair cycle`');
+    expect(light).toContain('A full-scope or inactive cycle runs every reviewer as usual.');
+    expect(light).toContain('`documentation-audit=final` and `full-suite=final` apply.');
+    expect(light).toContain('It sets no `continuation`, so the cycle-cap question still asks.');
+    expect(light).toContain('It is never written as a `Review policy:` line');
+    expect(light).toContain('`Review default: light (config review_default=light)`');
+    expect(light).toContain('`Review default: standard (<reason>)`');
+  });
+
+  // Value: protects=the light default rides the existing drift-checked delta procedure; fails_when=its skips leak into full cycles or the reviewer-skip ban loses its scope; why_new=new exception; seam=none
+  test('the light default reaches the in-cap delta procedure and its outside-call bound', () => {
+    expect(delta).toContain('the light review default applies, or the user asks in this session');
+    expect(delta).toContain("except for the light default's and a bounded-wait host's recorded skips");
+    expect(delta).toContain('Never pick or skip a reviewer yourself, and never use a force flag to skip.');
+    expect(delta).toContain("The only exceptions are the light review default's repair-cycle skips and a bounded-wait host's Red Team rule, each recorded with its reason.");
+    expect(flat).toContain('Under the light review default, a delta repair cycle makes no outside call.');
+  });
+
+  // Value: protects=a recommended reversible fix-scope choice no longer blocks and stays vetoable; fails_when=the nested /review Step 5c is not covered, the record line drifts or an auto-choice becomes a user Skip; why_new=owner decision 2026-10-22; seam=none
+  test('a recommended reversible fix-scope option proceeds and is recorded for veto', () => {
+    expect(flat).toContain('It also pre-approves the recommended option of a reversible fix-scope choice');
+    expect(auto).toContain('It is reversible when its result is commits, a backlog entry or a receipt disposition');
+    expect(auto).toContain('marks exactly one option recommended, take that option without asking and keep going.');
+    expect(auto).toContain("This covers `/review`'s Step 5c ASK batch and the questions in `/ship`'s gate sections.");
+    expect(auto).toContain('In a batched question, take each eligible item and ask only about the rest.');
+    expect(auto).toContain('`Auto-chosen (veto by replying on this PR): <question> → <option>`');
+    expect(auto).toContain("Never record it as the user's Skip in `/review`'s action list or log");
+    expect(auto).toContain('List the auto-choices in every exit message, including PAUSED, STOPPED and BLOCKED, outside any copyable prompt.');
+    expect(auto).toContain('A veto can only select an offered option or hold');
+    expect(step7).not.toContain('Auto-chosen');
+  });
+
+  // Value: protects=each still-ask class survives; fails_when=a risk, outward, scope or gstack gate question becomes auto-chosen; why_new=owner's still-ask list; seam=none
+  test.each([
+    'no single option is marked recommended, or the recommendation is hedged between options',
+    'publishing, deleting, merging, repository or service settings, credentials',
+    'the recommended option accepts a security, data-protection or money risk',
+    'leaves a required test or an already-approved obligation undone',
+    'it changes approved scope, including work beyond the plan and deferring a completion-matrix item',
+    "it is the cycle-cap continuation choice, a Greptile exit, a configuration repair, a CI trigger conflict, `/review`'s gate-disposition question, a SPEC change, or required user testing",
+  ])('the still-ask list keeps: %s', (rule) => {
+    expect(auto).toContain(rule);
+  });
+
+  // Value: protects=older never-auto-choose rules stay authoritative; fails_when=the new rule is reworded into a Greptile exit or matrix deferral; why_new=boundary of the new rule; seam=none
+  test('existing never-auto-choose rules are unchanged', () => {
+    expect(flat).toContain('ask the user with the listed options, recommended first. Never auto-choose.');
+    expect(flat).toContain('do not auto-choose a deferral');
+  });
+
+  // Value: protects=a veto is read before readiness and before merge approval; fails_when=the list is dropped from exits or landing ignores a veto; why_new=veto window; seam=none
+  test('readiness and landing honor vetoes and repeat the auto-choice list', () => {
+    expect(step6).toContain('no veto of an auto-choice is unresolved');
+    expect(step6).toContain('every `Auto-chosen (veto by replying on this PR):` line');
+    expect(step6).toContain('The one exception is the auto-choice list, which every exit repeats so the user can veto.');
+    expect(shipFlat).toContain("List each `Auto-chosen (veto by replying on this PR):` line from the corroborated review-and-prep receipt in land's readiness report, before merge approval.");
+    expect(shipFlat).toContain("hold landing for the user's decision");
+  });
+
+  // Value: protects=elapsed time is visible and a provider-failure spike holds instead of retrying for an hour; fails_when=a threshold, the BLOCKED line or the no-relabel rule drifts; why_new=wall-clock budget; seam=none
+  test('elapsed time is reported and provider-failure spikes hold', () => {
+    expect(clock).toContain('`[+1h12m] pregate started`');
+    expect(clock).toContain('Wall-clock time is not model time.');
+    expect(clock).toContain('After three, or once they and their retries have cost 15 minutes, stop retrying');
+    expect(clock).toContain('start no new reviewer or outside call');
+    expect(clock).toContain('`blocked: provider failures — <count> in <minutes>`');
+    expect(clock).toContain('`Resume with /review-and-prep resume once the provider recovers.`');
+    expect(clock).toContain('Missing coverage is never relabeled complete.');
+  });
+
+  // Value: protects=bounded-wait hosts neither re-dispatch running reviewers nor pay for late spawns; fails_when=a timed-out wait reads as failure or the Red Team reruns; why_new=host-specific waits; seam=none
+  test('bounded-wait hosts never re-dispatch, spawn late or rerun the Red Team', () => {
+    expect(waits).toContain('A wait that times out means the subagent is still running, not failed.');
+    expect(waits).toContain('never re-dispatch a reviewer that may still be running');
+    expect(waits).toContain('Spawn no late or speculative reviewer');
+    expect(waits).toContain("Run `/review`'s Red Team on cycle 1 only.");
+    expect(waits).toContain('`skipped — bounded-wait host, cycle 1 only`');
+  });
+
+  // Value: protects=large linked references stay out of the parent's context; fails_when=the section-only rule drifts; why_new=context size; seam=none
+  test('linked docs are read by section, never whole', () => {
+    expect(flat).toContain('read only the section a step names, by its heading, when that step starts');
+    expect(flat).toContain('never read `docs/telemetry.md` or `docs/workflow-handoffs.md` in full');
   });
 });
 

@@ -77,7 +77,11 @@ If preparation pauses for manual testing, run `/pair-review`, then
 The PR workflows require GitHub access through `gh`. `/review-and-prep` runs
 Greptile at most once per PR when applicable, and asks you how to proceed
 instead of blocking silently when that run fails, stalls, goes stale, or would
-repeat when the PR is marked ready. The PR's receipt records the outcome. See
+repeat when the PR is marked ready. The PR's receipt records the outcome. A
+fix-scope question with one recommended, reversible option proceeds without
+waiting; the receipt lists each such choice for your veto. For lighter
+hand-launched reviews (one full cycle, then delta repair cycles), run
+`~/.claude/skills/gstack-extend/bin/config set review_default light`. See
 the linked skill instructions for setup and gates.
 
 Greptile's `labels` filter selects PRs; `autoReview` controls automatic events.
