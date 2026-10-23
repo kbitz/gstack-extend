@@ -293,7 +293,7 @@ describe('release-only ship path', () => {
     for (const clause of [
       '| Run tests / Eval Suites (5–6) | No suite runs.',
       "Every required test lane has FRESH ledger evidence under the test gate below, and required evals have reusable recorded results for the prepared tree.",
-      "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, including cleared requires-remote obligations.",
+      "Preparation's full pregate record matches its recorded SHA-256 and policy source, and `gstack-pregate verify --out <that copy>` passes before any release write, or the **Reviewed secret findings** evaluator below satisfies the wrapper gate for that current full record, including cleared requires-remote obligations.",
       "Missing evidence selects the existing FULL path before release writes.",
       "| Test Coverage Audit (7) | Reuse preparation's bound audit or its recorded waiver. |",
       '| TODOs (14) | Edit nothing.',
