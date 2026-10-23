@@ -156,7 +156,7 @@ export function linkTargets(line: string): LinkRef[] {
   }
   // Read attributes in order: a later wrapped value cannot erase an already-complete target.
   const tags = /<(a|img)(?=[\s/>])/gi;
-  const attributes = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/y;
+  const attributes = /[^\s"'<>/=]+/y;
   for (let tag; (tag = tags.exec(masked));) {
     const wanted = tag[1]!.toLowerCase() === 'a' ? 'href' : 'src';
     let i = tags.lastIndex;
@@ -167,10 +167,30 @@ export function linkTargets(line: string): LinkRef[] {
       if (masked.slice(i, i + 2) === '/>') { i += 2; break; }
       attributes.lastIndex = i;
       const attr = attributes.exec(masked);
-      if (!attr) { i = masked.length; break; }
+      if (!attr) {
+        if (masked[i] === '<') break; // Resume at the next tag after a malformed opener.
+        if (masked[i] === '"' || masked[i] === "'") {
+          const end = masked.indexOf(masked[i]!, i + 1);
+          i = end < 0 ? masked.length : end + 1;
+        } else i++;
+        continue;
+      }
       i = attributes.lastIndex;
-      const target = attr[2] ?? attr[3] ?? attr[4];
-      if (!found && attr[1]!.toLowerCase() === wanted && target !== undefined) {
+      while (i < masked.length && /\s/.test(masked[i]!)) i++;
+      if (masked[i] !== '=') continue;
+      for (i++; i < masked.length && /\s/.test(masked[i]!); i++);
+      let target: string;
+      if (masked[i] === '"' || masked[i] === "'") {
+        const end = masked.indexOf(masked[i]!, i + 1);
+        if (end < 0) { i = masked.length; break; }
+        target = masked.slice(i + 1, end);
+        i = end + 1;
+      } else {
+        const start = i;
+        while (i < masked.length && !/[\s>]/.test(masked[i]!)) i++;
+        target = masked.slice(start, i);
+      }
+      if (!found && attr[0].toLowerCase() === wanted) {
         out.push({ target, column: tag.index + 1 });
         found = true;
       }

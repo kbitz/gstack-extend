@@ -521,6 +521,13 @@ describe('continuation review regressions', () => {
       `<a title='example href=README.md' href=missing.md>open</a>`,
       `<a title="a > b" href=missing.md>open</a>`,
     ]) expect(linkTargets(html).map((l) => l.target)).toEqual(['missing.md']);
+    for (const [html, first] of [
+      ['<a href=page.html?x=1>one</a> <a href=missing.md>two</a>', 'page.html?x=1'],
+      ['<img/src=page.png> <img src=missing.md>', 'page.png'],
+      ['<a href="page.md" / title=x>one</a> <a href="missing.md">two</a>', 'page.md'],
+    ]) expect(linkTargets(html!).map((l) => l.target)).toEqual([first, 'missing.md']);
+    expect(linkTargets('<a href=page.html?x=1>').map((l) => l.target)).toEqual(['page.html?x=1']);
+    expect(linkTargets('<img alt="wrapped <a href=missing.md>')).toEqual([]);
     for (const tag of ['a-panel', 'img-preview']) expect(linkTargets(`<${tag} href=missing.md src=missing.md>`)).toEqual([]);
   });
   // Value: protects=valid Markdown destinations and colliding headings resolve;
