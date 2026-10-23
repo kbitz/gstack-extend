@@ -188,7 +188,7 @@ _tombstone: 23_
 
 ### Track 24A: Measure review and release phases without changing their gates ✓ Shipped (v0.36.16.0)
 - 2026-10-20: merged [PR #151](https://github.com/kbitz/gstack-extend/pull/151) (commit `edc5df5`); verified land-time Track 24A, original Group 24. Introduced under this ID on 2026-10-20 by the regeneration squashed into the same commit; no later relabel before landing. The ID had earlier labeled the host-provenance Track (2026-10-17 to 2026-10-19), which landed separately as 26A.
-- The approved plan's completion matrix reports 66 VERIFIED and 0 deferred. The installed two-wrapper smoke, Linux paths and the five-minute first-user target were recorded as evidence limits, not requirements. Reader-cardinality and helper-slimming follow-ups went to TODOS under the owner's stop rule.
+- The approved plan's completion matrix reports 66 VERIFIED and 0 deferred. The installed two-wrapper smoke, Linux paths and the five-minute first-user target were recorded as evidence limits, not requirements. Reader-cardinality follow-ups went to TODOS under the owner's stop rule; the helper-slimming advisories went there because the owner kept the new module unchanged before first use.
 
 ## Individual Track history
 
@@ -200,13 +200,13 @@ _tombstone: 23_
 
 ### Track 26A: Version provenance for both hosts and stable releases ✓ Shipped (v0.37.0.0)
 - 2026-10-21: merged [PR #155](https://github.com/kbitz/gstack-extend/pull/155) (commit `cffe446`); verified land-time Track 26A, original Group 26. Introduced as Track 25A on 2026-10-08 in `5b6e516`, relabeled 24A on 2026-10-17 (`8f79dd2`) and 26A on 2026-10-20 (`edc5df5`).
-- 29 VERIFIED (28 approved plan items plus approved runner exception R1): stage-runs schema v2 with `workspace_host` and `host_agent_id` from explicit Paseo/Conductor markers (default and custom roots in fixtures), a three- or four-part `producer_version`, saved-row retry and reserved `blocked`/`requested` vocabulary. The user explicitly deferred three items to existing Tracks: installed Paseo/Conductor host acceptance (DFR1, Tracks 30B and 30C as of 2026-10-23), the full updater, tagging and three-part transition (DFR2, Track 28A) and the release owner's reader-compatibility check (DFR3, Track 28A). No acceptance checkpoint is awarded.
+- 29 VERIFIED (28 approved plan items plus approved runner exception R1): stage-runs schema v2 with `workspace_host` and `host_agent_id` from explicit Paseo/Conductor markers (default and custom roots in fixtures), a three- or four-part `producer_version`, saved-row retry and reserved `blocked`/`requested` vocabulary. The user explicitly deferred three items: installed Paseo/Conductor host acceptance (DFR1, retained in Tracks 30B and 30C), the full updater, tagging and three-part transition (DFR2, retained in Tracks 28A and 30C) and the release owner's reader-compatibility check and schema publication (DFR3, scheduled in Track 28A by the 2026-10-23 regeneration). No acceptance checkpoint is awarded.
 
 ## Individual Track history
 
 ### Track 26B: Qualify installed planning and adoption behavior ✓ Shipped (v0.40.0.1)
 - 2026-10-22: merged [PR #159](https://github.com/kbitz/gstack-extend/pull/159) (commit `e1b9605`); verified land-time Track 26B, original Group 26. Introduced as Track 25B on 2026-10-08 in `5b6e516`, relabeled 26B on 2026-10-20 (`edc5df5`).
-- `docs/acceptance/planning.md` records 27 operator-executed rows (the 18 recovered PR #126 roadmap cases, TM1–TM7 and PS1–PS2), all passed with no blocking hold. On 2026-10-22 the owner replaced the human comprehension, effort and timing checkpoints with an independent adversarial technical review (DX8, DX9, E5, TM7, PS1 and PS2 deferred by the user); those human measurements stay unmeasured. O2 is not awarded; acceptance stays the owner's decision in PROGRESS.
+- `docs/acceptance/planning.md` records 27 operator-executed rows (the 18 recovered PR #126 roadmap cases, TM1–TM7 and PS1–PS2), all passed with no blocking hold. On 2026-10-22 the owner replaced the human comprehension, effort and timing checkpoints with an independent adversarial technical review (DX8, DX9, E5, TM7, PS1 and PS2 deferred by the user); those human measurements stay unmeasured. PR #159 awarded no O2 acceptance; the owner accepted O2 separately on 2026-10-23 (PROGRESS `## Acceptance`).
 
 ## Individual Track history
 _tombstone: 24, 25, 26_
