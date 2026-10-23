@@ -5,8 +5,8 @@
 This section records achieved stage/checkpoint evidence under [SPEC](SPEC.md).
 Only the owner or an approved `/project-spec` revision adds acceptance entries;
 roadmap and release automation are to update the release-history table only.
-`/project-spec` states this boundary; `/roadmap`'s append step does not name it
-yet, and Track 24C adds explicit instructions and a protocol lock. Entries a
+`/project-spec` states this boundary, and since 0.36.17.0 `/roadmap`'s append step
+names it too, with a protocol lock (Track 25A, introduced as 24C). Entries a
 shipped diff adds here count only after the user confirms them directly. A
 baseline entry earns no version bump. Planned acceptance Tracks are not passing evidence.
 
