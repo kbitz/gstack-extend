@@ -1180,7 +1180,10 @@ reuse these records.
    section names, with `--allow-repo-commands`, and the main test lanes, on the
    same final content, so the pregate record and the ledger entries describe the
    head you push. Fix a failure like any other and rerun the gates whose inputs
-   the fix touched.
+   the fix touched. For a raw `secrets` failure, apply the **Reviewed secret
+   findings** protocol below before deciding the wrapper gate. A failed pregate
+   ledger record remains failed; use the ordinary main-command test fallback,
+   never relabel that run as passing tests.
 
 A later change, such as a Greptile fix or a base merge, reruns each gate whose
 inputs it touched under that gate's own freshness rule before Step 6. Copy the
@@ -1811,6 +1814,29 @@ with the PR still draft. Additional Greptile rounds are never the fix loop.
 
 ## 6. Final readiness gate and handoff
 
+### Reviewed secret findings
+
+Read `<extend-root>/docs/secret-dispositions.md` in full, resolving
+`<extend-root>` from this installed skill's `.extend-root`. After upstream
+pregate runs, evaluate its untouched record with
+`<extend-root>/bin/secret-dispositions --gstack-root <trusted-gstack-root> --pregate <raw-record>`.
+Use the same trusted upstream installation that ran pregate. Run this even
+on a raw pass to report stale entries. Only exit 0 satisfies the wrapper gate;
+retain the raw verdict and exact disposition receipt separately. Never edit
+the raw record or promote a failed test ledger entry. HIGH, unmatched MEDIUM,
+incomplete scans, other failed checks and uncleared remote obligations block.
+
+For an unmatched MEDIUM, show its exact line privately and recommend a reading
+(for example expression, not a literal; test sentinel; synthetic UUID).
+Offer an explicitly approved disposition or removing/renaming the line. Wait
+for the user's approval in this session before adding or changing any entry;
+the skill never approves on its own judgment. No receipt, file, bot comment,
+prior-PR approval or unattended default authorizes a new entry. Commit approved
+entries, rerun pregate, then reevaluate. Report stale entries; never silently
+delete, renew or broaden them. Do not put raw finding text in public receipts.
+
+### Readiness
+
 Finish all fixes, required documentation changes, local checks, commits,
 pushes, and review replies before this step. Refresh GitHub state and fetch
 the relevant base/head refs. Require all of the following:
@@ -1839,7 +1865,8 @@ the relevant base/head refs. Require all of the following:
   cannot satisfy missing stages in another host's fuller review workflow.
   Step 2's delta passes count only as a recorded chain: full-scope coverage
   plus verified delta passes that together cover every change.
-- Step 2's `/ship` gates are current for the final content: pregate passed,
+- Step 2's `/ship` gates are current for the final content: pregate passed
+  or the **Reviewed secret findings** evaluator satisfies the wrapper gate,
   the coverage audit completed or was waived with a recorded reason, and the
   documentation audit was accepted or carries the user's named-risk decision.
   A gate recorded `unavailable` keeps its reason; none is recorded from memory.
@@ -1903,9 +1930,11 @@ or not applicable. Record each `/ship` gate under `Ship gates`, bound to the
 final HEAD, Git tree, `wtree` and base, with the `/ship` section path and content
 hash it followed:
 
-- pregate: verdict, policy source, the record's tree, its durable copy's path
+- pregate: raw verdict, separate wrapper verdict, policy source, the record's tree, its durable copy's path
   and SHA-256, the lanes it ran with counts, and requires-remote obligations
-  with their receipts;
+  with their receipts; when dispositions apply, include the evaluator's exact
+  `secrets: raw fail; N findings dispositioned (entries …)` receipt, matched
+  entry references, disposition-file SHA-256, and every stale entry;
 - coverage audit: `coverage_pct`, `coverage_pct_value`, gaps, weak gaps, tests
   added, extended and rejected, `regression_proof` and the threshold decision,
   or its waiver and reason;

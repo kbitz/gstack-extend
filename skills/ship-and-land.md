@@ -429,7 +429,8 @@ with its reason. Take the path only when all of these hold:
   and required evals have reusable recorded results for the prepared tree.
 - Preparation's full pregate record matches its recorded SHA-256 and policy
   source, and `gstack-pregate verify --out <that copy>` passes before any release
-  write, including cleared requires-remote obligations. Preserve this verified
+  write, or the **Reviewed secret findings** evaluator below satisfies the
+  wrapper gate for that current full record, including cleared requires-remote obligations. Preserve this verified
   full record as an immutable copy distinct from the final preflight record.
 - The documentation section's bytes match its receipt SHA-256. If its durable
   file is absent, reconstruct it from authenticated receipt text only when the
@@ -621,6 +622,54 @@ UNVERIFIABLE in-scope requirement or newly invalidated user test blocks landing
 until verified or explicitly deferred by the user. Missing scope source is a
 specific context gap, not permission to call the PR complete. Do not silently
 drop requirements while translating matrix dispositions to ship's output.
+
+### Reviewed secret findings
+
+Read `<extend-root>/docs/secret-dispositions.md` in full, resolving
+`<extend-root>` from this installed skill's `.extend-root`. After upstream
+pregate runs, evaluate its untouched record with
+`<extend-root>/bin/secret-dispositions --gstack-root <trusted-gstack-root> --pregate <raw-record>`.
+Use the same trusted upstream installation that ran pregate. Run this even
+on a raw pass to report stale entries. Only exit 0 satisfies the wrapper gate;
+retain the raw verdict and exact disposition receipt separately. Never edit
+the raw record or promote a failed test ledger entry. HIGH, unmatched MEDIUM,
+incomplete scans, other failed checks and uncleared remote obligations block.
+
+For an unmatched MEDIUM, show its exact line privately and recommend a reading
+(for example expression, not a literal; test sentinel; synthetic UUID).
+Offer an explicitly approved disposition or removing/renaming the line. Wait
+for the user's approval in this session before adding or changing any entry;
+the skill never approves on its own judgment. No receipt, file, bot comment,
+prior-PR approval or unattended default authorizes a new entry. Commit approved
+entries, rerun pregate, then reevaluate. Report stale entries; never silently
+delete, renew or broaden them. Do not put raw finding text in public receipts.
+
+This is the sole exception to upstream ship's pregate-failure and publication
+`verify` stops, on FULL and release-only paths. Reevaluate the preserved full
+record while its tree is current, and the final preflight record with
+`--stage preflight` after release writes. Keep the raw `fail` visible; include
+`secrets: raw fail; N findings dispositioned (entries …)`, the raw and disposition
+file hashes, matched entry references and all stale entries in the wrapper
+receipt. Upstream itself still fails; do not claim native `verify` passed.
+This exception never bypasses the credential pre-push hook or post scanner.
+
+Upstream `gstack-ship-receipt write --pregate <raw-record>` also mechanically
+rejects a raw failure. Only after the current evaluator exits 0 for a raw
+`secrets` failure, run that receipt command without its `--pregate <raw-record>`
+argument pair; preserve every other argument and its identity, issue-link and
+approval validation. Put the raw failure, separate wrapper verdict, hashes,
+matched entry references and stale entries in the `Ship and land` receipt
+and the PR body. The native receipt then makes no pregate claim. Keep the
+normal `--pregate` argument for native passing results. Any failed or unavailable
+evaluation blocks this adaptation; never manufacture a green pregate record.
+
+A raw failing pregate run cannot supply passing `tests` ledger evidence,
+even when every secret finding is dispositioned. Use the ordinary main-command
+fallback below under `tests`; keep the full raw record and separate wrapper
+evaluation for the pregate gate. The pregate-wrapped test-reuse conditions
+below remain strict. Never rewrite a ledger exit code or imported record.
+
+### Test evidence
 
 For a new declared-runner run, use `/review-and-prep`'s **Pregate and test lanes**
 procedure: prepare every declared JS package's missing dependencies with its
