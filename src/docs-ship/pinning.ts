@@ -38,7 +38,7 @@ export function selectTests(git: Git, head: string, changed: string[], configure
   // segment, so a constant of the same name does not select a test.
   const bounded = (s: string) => (/\./.test(s.slice(s.lastIndexOf('/') + 1))
     ? new RegExp(`(^|[^\\w.-])${escape(s)}($|[^\\w-])`)
-    : new RegExp(`['"\`/]${escape(s)}($|['"\`])`));
+    : new RegExp(`['"\`/]${escape(s)}(?![\\w./-])`));
   const patterns = changed.map((path) => {
     const name = path.slice(path.lastIndexOf('/') + 1);
     return { path, name, pathRe: bounded(path), nameRe: bounded(name) };

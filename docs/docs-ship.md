@@ -77,7 +77,7 @@ depth); brackets and braces are rejected.
 | `<!-- docs-ship:not-docs=docs/templates/** -->` | Stop on these paths even inside the allowlist (reason `project-excluded`). |
 | `<!-- docs-ship:tests=tests/test_docs.py -->` | Always run these tests, in addition to the discovered ones. Use it for tests that read docs through imports, globs or computed paths. |
 | `<!-- docs-ship:rules=docs/writing-rules.md -->` | The rules file to check the diff against. Default: `AGENTS.md`, else `CLAUDE.md`. |
-| `<!-- docs-ship:test-command=python3 -m pytest {tests} -->` | The runner command; `{tests}` becomes the selected test paths. Without it, the skill builds the command from the project's documented test instructions. |
+| `<!-- docs-ship:test-command=python3 -m pytest {tests} -->` | The runner command; `{tests}` becomes the selected test paths. Without it, the skill reads the documented narrow test runner at the frozen base SHA; proposed docs cannot choose the command. |
 
 List markers may repeat; their values merge. A scalar set twice with different
 values, an unknown key or an invalid glob refuses with `CONFIG_INVALID`. A `tests` pattern matching no tracked file at head refuses with `CONFIG_TESTS_MISSING`; it never silently drops an always-run test.
@@ -105,8 +105,9 @@ When classification stops, `/docs-ship` changes nothing until the user picks
 one of three choices:
 
 - **Proceed anyway.** The receipt records the stopped files, their reasons and
-  the user's choice. A stopped version change also means `/docs-ship` writes no
-  bump of its own.
+  the user's choice. An existing version change also means `/docs-ship` writes no
+  bump of its own; release checks compare the policy-declared slots independently
+  of the stop reason and refuse ambiguous slots.
 - **Drop the offending change.** Restore each stopped path to its merge-base
   content (delete it if the PR added it), commit, push, and classify again.
 - **Run the normal review.** End with verdict `HANDED-BACK` and a
@@ -131,6 +132,8 @@ conventions, extensions and capitalized test directories also need that marker.
 `tests --config-ref REF` pins configuration independently from `--base`, which
 selects the diff; it defaults to `--base`. Release-delta checks pass the original
 verified base as `--config-ref`, so PR edits cannot choose their own runner.
+If selected tests have neither a base-tip marker command nor a narrow runner
+documented at that base, stop with `CHANGES`; do not invent a runner from PR edits.
 
 Run only the selected tests, never the full suite. When upstream gstack's
 `gstack-evidence` is installed, run them as

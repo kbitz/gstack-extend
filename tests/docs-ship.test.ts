@@ -493,6 +493,74 @@ describe('GitHub anchors', () => {
 });
 
 describe('continuation review regressions', () => {
+  // Value: protects=version decisions compare metadata values rather than neighboring edits;
+  // fails_when=compact JSON siblings cause false stops or multiline config bumps escape;
+  // why_new=existing version fixtures change a key and value on the same line; seam=none;
+  // no_claim=all metadata languages or execution of a policy bump.
+  test('version metadata distinguishes unchanged JSON values and multiline bumps', () => {
+    for (const opted of [false, true]) for (const bom of ['', '\uFEFF']) {
+      const r = repo({ 'package.json': bom + '{"description":"new","version":"1.2.0"}\n' }, {
+        'package.json': bom + '{"version":"1.2.0","description":"old"}\n',
+        'AGENTS.md': opted ? '<!-- docs-ship:docs=package.json -->\n' : '# Rules\n',
+      });
+      const out = cli(r.dir, 'classify', '--base', r.base);
+      expect(fileLine(out.stdout, 'package.json')?.[opted ? 0 : 3]).toBe(opted ? 'docs' : 'build');
+    }
+    const r = repo({ 'release.yml': 'version:\n  1.2.1\n' }, {
+      'release.yml': 'version:\n  1.2.0\n', 'AGENTS.md': '<!-- docs-ship:docs=release.yml -->\n',
+    });
+    expect(fileLine(cli(r.dir, 'classify', '--base', r.base).stdout, 'release.yml')?.[3]).toBe('version');
+    const toml = repo({ 'release.toml': 'version = [\n"1.2.1"\n]\n' }, {
+      'release.toml': 'version = [\n"1.2.0"\n]\n', 'AGENTS.md': '<!-- docs-ship:docs=release.toml -->\n',
+    });
+    expect(fileLine(cli(toml.dir, 'classify', '--base', toml.base).stdout, 'release.toml')?.[3]).toBe('version');
+    for (const [path, before, after] of [
+      ['docs/config.swift', 'Package(name: "x", version: // release\n"1.2.0")\n', 'Package(name: "x", version: // release\n"1.2.1")\n'],
+      ['docs/config.py', 'setup(name="x", description="A fun CLI", version=(\n"1.2.0"\n))\n', 'setup(name="x", description="A fun CLI", version=(\n"1.2.1"\n))\n'],
+      ['docs/config.ts', 'export default defineConfig({ version: `\n1.2.0\n` });\n', 'export default defineConfig({ version: `\n1.2.1\n` });\n'],
+      ['docs/constants.rs', 'pub(crate) const VERSION: &str =\n    "1.2.0";\n', 'pub(crate) const VERSION: &str =\n    "1.2.1";\n'],
+      ['docs/constants.c', 'static const char *VERSION =\n    "1.2.0";\n', 'static const char *VERSION =\n    "1.2.1";\n'],
+      ['docs/constants.py', '__version__ = ("1.2.0",\n"rc1")\n', '__version__ = ("1.2.0",\n"rc2")\n'],
+      ['docs/constants.py', '__version__ = [\n")",\n"1.2.0",\n]\n', '__version__ = [\n")",\n"1.2.1",\n]\n'],
+      ['release.toml', '[a]\nversion = "1.2.0"\nx = 1\n[b]\ny = 2\n', '[a]\nx = 1\n[b]\nversion = "1.2.0"\ny = 2\n'],
+      ['release.json', '{"a": {\n"version": "1.2.0",\n"x": 1},\n"b": {"y": 2}} // comment\n', '{"a": {"x": 1},\n"b": {\n"version": "1.2.0",\n"y": 2}} // comment\n'],
+      ['docs/constants.rs', 'pub const VERSION: &str =\n    "1.2.0";\n', 'pub const VERSION: &str =\n    "1.2.1";\n'],
+      ['docs/constants.py', '__version__ = (\n"1.2.0"\n)\n', '__version__ = (\n"1.2.1"\n)\n'],
+      ['docs/constants.ts', 'export const version = `\n1.2.0\n`;\n', 'export const version = `\n1.2.1\n`;\n'],
+      ['release.ini', '[a]\nversion = 1.2.0\nx = 1\n[b]\ny = 2\n', '[a]\nx = 1\n[b]\nversion = 1.2.0\ny = 2\n'],
+      ['setup.cfg', '[metadata]\nversion =\n    1.2.0\n', '[metadata]\nversion =\n    1.2.1\n'],
+      ['docs/constants.py', '__version__ = (\n    "1.2.0"\n)\n', '__version__ = (\n    "1.2.1"\n)\n'],
+      ['release.toml', 'version = """\nbuild=1.2.0\n"""\n', 'version = """\nbuild=1.2.1\n"""\n'],
+    ]) {
+      const field = repo({ [path!]: after! }, { [path!]: before!, 'AGENTS.md': `<!-- docs-ship:docs=${path} -->\n` });
+      expect(fileLine(cli(field.dir, 'classify', '--base', field.base).stdout, path!)?.[3]).toBe('version');
+    }
+    for (const header of ['export function render(version: string) {', 'pub fn render(version: &str) {', 'const render = (version: string) => {']) {
+      const fn = repo({ 'docs/example.ts': `${header}\n  return 2;\n}\n` }, {
+        'docs/example.ts': `${header}\n  return 1;\n}\n`, 'AGENTS.md': '<!-- docs-ship:docs=docs/example.ts -->\n',
+      });
+      expect(fileLine(cli(fn.dir, 'classify', '--base', fn.base).stdout, 'docs/example.ts')?.[0]).toBe('docs');
+    }
+    const code = repo({ 'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 2\n' }, {
+      'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 1\n', 'AGENTS.md': '<!-- docs-ship:docs=docs/hook.py -->\n',
+    });
+    expect(fileLine(cli(code.dir, 'classify', '--base', code.base).stdout, 'docs/hook.py')?.[0]).toBe('docs');
+  });
+
+  // Value: protects=absolute instruction symlinks cannot import unrelated repo-root policy;
+  // fails_when=filesystem-absolute symlinks are interpreted like root-relative Markdown URLs;
+  // why_new=existing alias tests use relative in-repository targets; seam=none;
+  // no_claim=host filesystem target access, which this helper must not attempt.
+  test('absolute instruction symlinks do not import repo-relative markers', () => {
+    const r = repo({ 'src/app.ts': 'export const x = 2;\n' }, {
+      'CLAUDE.md': null, 'docs/rules.md': '<!-- docs-ship:docs=src/** -->\n',
+    });
+    git(r.dir, 'checkout', '--quiet', 'main');
+    symlinkSync('/docs/rules.md', join(r.dir, 'CLAUDE.md'));
+    git(r.dir, 'add', 'CLAUDE.md'); git(r.dir, 'commit', '--quiet', '-m', 'absolute link');
+    git(r.dir, 'checkout', '--quiet', 'pr'); git(r.dir, 'rebase', '--quiet', 'main');
+    expect(fileLine(cli(r.dir, 'classify', '--base', r.base).stdout, 'src/app.ts')?.[3]).toBe('code');
+  });
   // Value: protects=ordinary prose and raster metadata do not imply release changes; fails_when=version words suppress a policy bump;
   // why_new=earlier prose fixtures are allowlisted and images contain no metadata; seam=none; no_claim=all binary formats.
   test('version-like prose and image metadata retain their actual classification', () => {
@@ -538,11 +606,17 @@ describe('continuation review regressions', () => {
     const r = repo({
       'docs/guide(v2).md': '# Guide\n',
       'docs/release#notes.md': '# Notes\n',
-      'docs/collision.md': '# A\n# A-1\n# A\n\n[third](#a-2)\n[guide](guide(v2).md)\n[escaped](guide\\(v2\\).md)\n[encoded](release%23notes.md)\n',
+      'docs/collision.md': '# A\n# A-1\n# A\n\n[third](#a-2)\n[guide](guide(v2).md)\n[escaped](guide\\(v2\\).md)\n[encoded](release%23notes.md)\n[source](collision.md?plain=1#L1-L3)\n',
     });
     const out = cli(r.dir, 'check', '--base', r.base);
     expect(lines(out.stdout, 'FINDING')).toEqual([]);
-    expect(field(out.stdout, 'LINKS')).toBe('4');
+    expect(field(out.stdout, 'LINKS')).toBe('5');
+    symlinkSync('/outside', join(r.dir, 'docs', 'alias.md'));
+    write(r.dir, { 'docs/empty.md': '', 'docs/lines.md': '[bad](collision.md?plain=1#L999)\n[reversed](collision.md?plain=1#L3-L1)\n[empty](empty.md?plain=1#L1)\n[link text](alias.md?plain=1#L1)\n' });
+    git(r.dir, 'add', '-A'); git(r.dir, 'commit', '--quiet', '-m', 'invalid line ranges');
+    expect(lines(cli(r.dir, 'check', '--base', r.base).stdout, 'FINDING').map((f) => f[2])).toEqual([
+      'docs/collision.md has no source range #L999', 'docs/collision.md has no source range #L3-L1', 'docs/empty.md has no source range #L1',
+    ]);
   });
 
   // Value: protects=known build files and version metadata cannot default to prose;
@@ -582,14 +656,16 @@ describe('continuation review regressions', () => {
     const r = repo({ 'AGENTS.md': '<!-- docs-ship:test-command=changed {tests} -->\n' }, {
       'AGENTS.md': '<!-- docs-ship:test-command=original {tests} -->\n',
       'tests/docs.test.sh': "cat 'README.md'\n",
+      'tests/version.test.sh': 'cat "$ROOT"/VERSION\nvalue=$(/bin/cat $ROOT/VERSION)\n',
+      'tests/constant.test.sh': 'VERSION=example\necho "$VERSION"\n',
     });
     const before = git(r.dir, 'rev-parse', 'HEAD');
-    write(r.dir, { 'README.md': '# Updated\n' });
+    write(r.dir, { 'README.md': '# Updated\n', 'VERSION': '1.2.1\n' });
     git(r.dir, 'add', '-A'); git(r.dir, 'commit', '--quiet', '-m', 'release delta');
     const out = cli(r.dir, 'tests', '--base', before, '--config-ref', r.base);
     expect(out.code).toBe(0);
-    expect(lines(out.stdout, 'TEST')).toEqual([['tests/docs.test.sh', 'names README.md']]);
-    expect(field(out.stdout, 'COMMAND')).toBe('original tests/docs.test.sh');
+    expect(lines(out.stdout, 'TEST')).toEqual([['tests/docs.test.sh', 'names README.md'], ['tests/version.test.sh', 'names VERSION']]);
+    expect(field(out.stdout, 'COMMAND')).toBe('original tests/docs.test.sh tests/version.test.sh');
   });
 
   // Value: protects=Git binary attributes cannot hide opted-in version changes;

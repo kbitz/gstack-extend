@@ -22,7 +22,7 @@ const TEST_SEGMENTS = new Set(['tests', 'test', '__tests__', 'spec', 'specs']);
 const TEST_NAME = /(\.(test|spec)\.[cm]?[jt]sx?$|^test_.*\.py$|_test\.(py|go)$|_spec\.rb$)/;
 const BUILD_NAME = /^(package(-lock)?\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|Cargo\.(toml|lock)|pyproject\.toml|setup\.(py|cfg)|requirements.*\.txt|poetry\.lock|go\.(mod|sum)|Gemfile(\.lock)?|.*\.gemspec|Makefile|Dockerfile|.*\.gradle(\.kts)?|pom\.xml|tsconfig.*\.json|composer\.(json|lock)|pubspec\.ya?ml|mix\.exs)$/;
 const CODE_EXT = /\.([cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|bash|zsh|pl|lua|scala|sql|ex|exs|vue|svelte)$/i;
-const VERSION_FIELD = /(^|[^\w])(__version__|version)\s*["']?\s*[:=]/i;
+const VERSION_FIELD = /(^|[^\w])(__version__|version)\s*["']?\s*[:=](?!=)/i;
 
 export type Reason =
   | 'version' | 'agent-instructions' | 'classification-config' | 'project-excluded'
@@ -162,23 +162,73 @@ export function classify(git: Git, from: string, to: string, list: Change[], con
     if (basename(path) === 'VERSION') return stop('version', 'VERSION changed');
     if (path === CHANGELOG) return changelog(git, from, to, change, findings);
     // Prose examples are not release fields; Markdown frontmatter is metadata.
-    const frontmatterVersions = (rev: string) => {
-      const body = frontmatterBody(readAt(git, rev, path) ?? '');
+    let structuredJson = /\.json$/i.test(path);
+    const versionFields = (rev: string) => {
+      const text = readAt(git, rev, path) ?? '';
+      if (/\.json$/i.test(path)) {
+        try {
+          const fields: string[] = [];
+          const visit = (value: unknown, keys: string[]) => {
+            if (!value || typeof value !== 'object') return;
+            for (const [key, child] of Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+              const at = [...keys, key];
+              if (VERSION_FIELD.test(`${key}:`)) fields.push(JSON.stringify([at, child]));
+              visit(child, at);
+            }
+          };
+          visit(JSON.parse(text.replace(/^\uFEFF/, '')), []);
+          return fields;
+        } catch {
+          structuredJson = false;
+          // Parent paths cannot be established in invalid JSON. Conservatively
+          // bind all its text when a version field is present.
+          return VERSION_FIELD.test(text) ? [text] : [];
+        }
+      }
+      const body = PROSE_EXT.test(path) ? frontmatterBody(text) : text;
       const fields: string[] = [];
       let fieldIndent: number | undefined;
+      let multilineQuote: string | undefined;
+      let bracketDepth = 0;
+      const syntax = (line: string) => line.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/.*|#.*|\/\*.*?\*\//g, '');
+      const brackets = (line: string) => [...syntax(line)]
+        .reduce((n, c) => n + ('([{'.includes(c) ? 1 : ')]}'.includes(c) ? -1 : 0), 0);
       for (const line of body.split('\n')) {
         const indent = /^\s*/.exec(line)![0].length;
-        if (VERSION_FIELD.test(line)) fieldIndent = indent;
-        else if (fieldIndent !== undefined && indent <= fieldIndent && /^\s*["']?[\w.-]+["']?\s*[:=]/.test(line)) fieldIndent = undefined;
+        if (multilineQuote) {
+          fields.push(line);
+          if (line.includes(multilineQuote)) multilineQuote = undefined;
+          continue;
+        }
+        if (bracketDepth > 0) {
+          fields.push(line);
+          bracketDepth += brackets(line);
+          continue;
+        }
+        const version = VERSION_FIELD.exec(line);
+        const prefix = version ? line.slice(0, version.index + version[1]!.length) : '';
+        // Distinguish parameter types from named arguments and object fields in
+        // calls. This is lexical: ambiguous signatures can conservatively stop.
+        const callValue = (version?.[0].endsWith('=') || brackets(syntax(prefix).replace(/[^{}]/g, '')) > 0 || /:\s*[(\[{`'"]?\s*$/.test(syntax(line)))
+          && !/\b(?:def|function|func|fn|fun)\s/.test(syntax(prefix));
+        const assignment = !CODE_EXT.test(path) || brackets(prefix.replace(/[{}\[\]]/g, '')) <= 0 || callValue;
+        if (version && assignment) fieldIndent = indent;
+        else if (fieldIndent !== undefined && indent <= fieldIndent
+          && (CODE_EXT.test(path) ? line.trim() !== '' : /^\s*["']?[\w.-]+["']?\s*[:=]/.test(line))) fieldIndent = undefined;
         // Include multiline YAML values (and TOML string continuations), not
         // merely the key line. The next sibling field ends the value.
-        if (fieldIndent !== undefined) fields.push(line);
+        if (fieldIndent !== undefined) {
+          fields.push(line);
+          const delimiter = (CODE_EXT.test(path) ? /("""|'''|`)/ : /("""|''')/).exec(line)?.[1];
+          if (delimiter && line.split(delimiter).length % 2 === 0) multilineQuote = delimiter;
+          else bracketDepth = Math.max(0, brackets(line));
+        }
       }
       return fields;
     };
-    const versionChanged = IMAGE_EXT.test(path) ? false : PROSE_EXT.test(path)
-      ? JSON.stringify(frontmatterVersions(from)) !== JSON.stringify(frontmatterVersions(to))
-      : lines().some((line) => VERSION_FIELD.test(line));
+    const versionChanged = !IMAGE_EXT.test(path)
+      && (JSON.stringify(versionFields(from)) !== JSON.stringify(versionFields(to))
+        || (!PROSE_EXT.test(path) && !structuredJson && lines().some((line) => VERSION_FIELD.test(line))));
     if (versionChanged) return stop('version', 'changes a version field');
     if (optedIn(path)) return { path, status, kind: 'docs', why: 'docs-ship:docs' };
     if (isAgentInstructions(path)) return stop('agent-instructions', 'agent instructions are executable');

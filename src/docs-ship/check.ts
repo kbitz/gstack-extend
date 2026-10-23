@@ -42,6 +42,14 @@ function checkLink(git: Git, head: string, file: string, line: number, raw: stri
   }
   if (anchor === undefined || anchor === '') return true;
   if (type !== 'blob' || !MARKDOWN_EXT.test(target)) return true;
+  const sourceLines = /^L([1-9]\d*)(?:-L([1-9]\d*))?$/.exec(anchor);
+  if (new URLSearchParams(pathPart.split('?')[1] ?? '').get('plain') === '1' && sourceLines) {
+    const text = git(['cat-file', 'blob', `${head}:${target}`], true).stdout;
+    const count = !text ? 0 : text.replace(/\n$/, '').split('\n').length;
+    const first = Number(sourceLines[1]), last = Number(sourceLines[2] ?? sourceLines[1]);
+    if (first > last || last > count) findings.push({ file, line, kind: 'anchor', message: `${target} has no source range #${anchor}`, fix: 'use an existing line range' });
+    return true;
+  }
   if (!anchorCache.has(target)) {
     const text = readAt(git, head, target);
     anchorCache.set(target, text === undefined ? undefined : anchors(text));

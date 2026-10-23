@@ -118,6 +118,7 @@ export function readAt(git: Git, rev: string, path: string): string | undefined 
     const r = git(['cat-file', 'blob', `${rev}:${current}`], true);
     if (r.code !== 0) return undefined;
     if (mode !== '120000') return r.stdout;
+    if (r.stdout.trim().startsWith('/')) return undefined;
     const dir = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
     const next = normalizePath(dir, r.stdout.trim());
     if (next === undefined) return undefined;
@@ -134,6 +135,7 @@ export function resolvedPath(git: Git, rev: string, path: string): string | unde
     if (mode === undefined) return undefined;
     if (mode !== '120000') return current;
     const target = git(['cat-file', 'blob', `${rev}:${current}`]).stdout.trim();
+    if (target.startsWith('/')) return undefined;
     const dir = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
     const next = normalizePath(dir, target);
     if (next === undefined) return undefined;
