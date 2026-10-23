@@ -183,6 +183,7 @@ SKILLS=(
   implement
   ship-and-land
   autoplan-lean
+  docs-ship
 )
 
 LEGACY_SKILLS=(

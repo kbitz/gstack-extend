@@ -27,6 +27,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
 | [`/ship-and-land`](skills/ship-and-land.md) | Reuses verified preparation, runs remaining release checks, then merges and verifies deployment through gstack. | New |
+| [`/docs-ship`](skills/docs-ship.md) | Takes a docs-only PR to the merge gate in one session: classifies it, checks scope, claims, rules, links and the tests that read the changed files, writes any bump the release policy asks for, and records a receipt. Never merges. | Beta |
 | [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents and turns approved findings into backlog items. | Stable |
 | [`/gstack-extend-upgrade`](skills/gstack-extend-upgrade.md) | Checks for updates and upgrades the installed checkout. | Stable |
 | [`/gstack-extend-init`](skills/gstack-extend-init.md) | Bootstraps project docs, registers the project, and audits the scaffold. | Beta |
@@ -37,8 +38,8 @@ Requires [Git](https://git-scm.com/), [Bun](https://bun.sh/), and a supported
 agent: Claude Code, Codex, OpenCode, or Cursor. The commands that start Bun with
 `--no-env-file --no-install --config=/dev/null` need Bun 1.3.3 or newer: the
 `/roadmap` audit tools, `gstack-extend init`, the merge gate,
-`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, and `/autoplan-lean`'s
-`bin/autoplan-lean` helper. `setup` only checks that `bun` is installed, not its
+`bin/layout-scaffold`, `bin/outside-review`, `bin/secret-dispositions`, `/autoplan-lean`'s
+`bin/autoplan-lean` helper and `/docs-ship`'s `bin/docs-ship` helper. `setup` only checks that `bun` is installed, not its
 version. Install
 [gstack](https://github.com/garrytan/gstack#install--30-seconds) for the review,
 shipping, and deployment workflows these skills build on.
@@ -71,6 +72,10 @@ smaller reviewed plan), then use a fresh session for each handoff:
 /review-and-prep    # Review, test, prepare the PR
 /ship-and-land      # Version, ship, merge, and verify deployment
 ```
+
+A docs-only PR, including the commit `/roadmap` or `/project-spec` leaves,
+skips that path: run `/docs-ship`, which stops when the user should merge. See
+the [docs-ship contract](docs/docs-ship.md) for what counts as docs-only.
 
 If preparation pauses for manual testing, run `/pair-review`, then
 `/review-and-prep resume`. Versioning and release notes happen during shipping.

@@ -83,6 +83,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/autoplan-lean-history.test.ts': [
     'bin/autoplan-lean', 'skills/autoplan-lean.md', 'tests/fixtures/autoplan-lean/**', 'VERSION',
   ],
+  'tests/docs-ship.test.ts': [
+    'bin/docs-ship', 'skills/docs-ship.md', 'docs/docs-ship.md', 'skills/roadmap.md', 'skills/project-spec.md',
+  ],
   'tests/merge-gate.test.ts': ['bin/merge-gate', 'src/merge-gate/**', 'docs/merge-gate.md', 'VERSION'],
   'tests/merge-gate-review-regressions.test.ts': ['VERSION'],
   'tests/quota.test.ts': [

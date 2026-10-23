@@ -1373,9 +1373,9 @@ changes since the last tag (or VERSION baseline if no tags):
 | Breaking changes, public launch | MAJOR |
 | Doc-only, config, CI | None |
 
-In that fallback, if the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. The recommendation stands until /ship Step 12 confirms.
+In that fallback, if the audit's `## PHASES` section reports a Phase whose final Group just shipped, MINOR is the natural default; mid-Phase ships default to PATCH. `/docs-ship` checks this recommendation against the base tip's release policy.
 
-/roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user the level and its reason, for example: "I recommend a PATCH bump because <reason>. Run `/ship` to assign and write the version." If no bump needed, say so.
+/roadmap only RECOMMENDS. It does NOT write to VERSION. Tell the user the level and its reason, for example: "I recommend a PATCH bump because <reason>. `/docs-ship` applies the release policy and writes the version." If no bump needed, say so. Step 7 carries the recommendation into the handoff.
 
 ## Step 6: Commit
 
@@ -1398,6 +1398,22 @@ Commit message reflects what ran. Examples:
 **Never stage VERSION, CHANGELOG.md, or any code files.**
 
 If no doc changes were written, skip the commit entirely (don't create empty commits).
+
+## Step 7: Hand off to /docs-ship
+
+A roadmap run changes only documentation, so `/docs-ship` reviews, prepares and
+versions it, not `/review-and-prep` and `/ship-and-land`. When Step 6
+committed, end with this copyable handoff for a fresh session in this
+workspace. Do not push, open a PR or run `/docs-ship` here. Skip the handoff
+when nothing was committed. Under `/project-spec` composition, return these
+values to the wrapper, which prints the handoff.
+
+```text
+Run /docs-ship
+Brief: <PROPOSAL_DIR>/proposal-{ts}.md (the approved proposal)
+Allowed files: <every path the Step 6 commit staged>
+Version: <Step 5 level and reason, or "no bump">
+```
 
 ## Output Format (ROADMAP.md template)
 

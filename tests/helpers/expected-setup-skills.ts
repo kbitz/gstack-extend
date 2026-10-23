@@ -11,4 +11,5 @@ export const EXPECTED_SETUP_SKILLS = [
   'implement',
   'ship-and-land',
   'autoplan-lean',
+  'docs-ship',
 ] as const;

@@ -290,13 +290,16 @@ ordinary test gate before push); unaffected coverage stays.
 
 `DOCS` requires authored prose/documentation and supporting static doc assets
 (images or diagrams nothing executes) only. Use the repository's docs
-classification from the base tip when present, but inspect the actual hunks as
-well. Unknown or mixed scope uses `FULL`. Executable example files/fixtures,
+classification from the base tip when present, otherwise the shared
+[docs-only classification](https://github.com/kbitz/gstack-extend/blob/main/docs/docs-ship.md#docs-only-classification) (read `docs/docs-ship.md` under the absolute gstack-extend root recorded in this installed skill directory's `.extend-root`; use that installed version and stop if the pointer or contract is missing) without its `docs-ship:docs` opt-ins, but
+inspect the actual hunks as well. Unknown or mixed scope uses `FULL`. Executable example files/fixtures,
 generated code, configuration, builds, tests, dependencies, active HTML/SVG/MDX
 content, agent instructions, skills and prompts are behavioral even in
 Markdown or a docs directory. Changes to the classification/review policy itself
 use `FULL`. Quoted commands in explanatory prose remain DOCS claims to fact-check.
 Verified release bookkeeping alone does not end `DOCS`.
+A docs-only PR can use `/docs-ship` instead of this skill; it takes the PR to
+the merge gate.
 
 For `DOCS`, require these three pieces of coverage:
 
