@@ -13,10 +13,11 @@ baseline entry earns no version bump. Planned acceptance Tracks are not passing 
 | Checkpoint or stage | Date | Evidence | Recorded by |
 |---|---|---|---|
 | public-beta — baseline | 2026-10-08 | Owner explicitly declared public-beta in this planning session. This records the current stage; independent onboarding, both-host 1.0 workflow and external-consumer acceptance remain pending. | Owner declaration, recorded by project-spec |
+| O2: planning — accepted | 2026-10-23 | Owner accepted O2 on the basis of their repeated real use of `/project-spec` and `/roadmap`, plus the installed qualification in `docs/acceptance/planning.md` (27 of 27 rows passed at `f258db8`, executed on macOS / Paseo / Codex against seed repositories; its inputs are unchanged at `9985560`). The owner waived the human comprehension, effort and timing checkpoints on 2026-10-22 and accepts this real use in place of a separate qualification run with Claude planning on both workspace hosts. Conductor and other harness profiles were not separately qualified. | Owner confirmation in session, 2026-10-23 |
 
-Selected target: public-release 1.0.0. O1–O5 remain **pending**. No acceptance
-checkpoint is awarded by this documentation proposal, the upgrade to 0.36.0.0,
-or the roadmap audit. Existing release rows below retain their historical scope.
+Selected target: public-release 1.0.0. O1 and O3–O5 remain **pending**; the owner
+accepted O2 on 2026-10-23 (row above). No other acceptance checkpoint is awarded
+by this documentation proposal, the upgrade to 0.36.0.0, or the roadmap audit. Existing release rows below retain their historical scope.
 
 
 ## Release history — Gstack parity
