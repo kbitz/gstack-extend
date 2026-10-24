@@ -40,24 +40,25 @@ gh release view "v$RELEASE_VERSION"
 ```
 
 The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the only
-release ordering gate; auto-tag validates syntax only. It compares merged release
-tags with padded numeric equality, rejects any local padded-equal tag unless it
-is exactly `v<VERSION>` merged into HEAD, requires a changed VERSION to exceed
-the base VERSION, keeps four parts while the merge base lacks this marker,
-forbids returning to four parts after a three-part top tag, and makes the first
-three-part release the next MINOR above every fetched tag, with PATCH 0. A
-release branch cut before the marker reached `origin/main` must merge it first.
-It reads `refs/remotes/origin/main`, never a same-named tag or branch, reports
-incomplete tags when only pre-four-part tags are fetched, and needs this marker
-in a regular CLAUDE.md file: a symlinked CLAUDE.md (for example to AGENTS.md)
-fails the gate until the suite changes.
-To amend the marker, change it here and the suite's `FORMAT_MARKER` together;
-any base line starting `Release format:` keeps three parts required. Its policy
-base is `git merge-base HEAD origin/main` (`origin/master` fallback), never local
-main or `TOUCHFILES_BASE`. Fetch full history and tags if the suite reports
-missing inputs. Plain `/ship` runs its tests
-before writing the version, so after a `/ship` release commit run
-`TOUCHFILES_BASE=<pre-bump head> bun run test` before pushing.
+release ordering gate; auto-tag validates syntax only. It compares release tags
+with padded numeric equality, rejects any local padded-equal tag unless it is
+exactly `v<VERSION>` merged into HEAD, and requires a changed VERSION to exceed
+the base VERSION and `origin/main`'s VERSION (merge `origin/main` first when
+behind). It keeps four parts while the merge base lacks this marker, forbids
+returning to four parts after a three-part top tag, and makes the first
+three-part release the next 0.x MINOR above every fetched tag, with PATCH 0; a
+fetched tag outside 0.x fails it until you delete the stray local tag. Against a
+four-part base VERSION it reports incomplete tags (only pre-four-part tags
+fetched) and stray three-part tags. Its policy base is
+`git merge-base HEAD refs/remotes/origin/main` (`refs/remotes/origin/master`
+fallback), never a same-named tag or branch, local main or `TOUCHFILES_BASE`;
+fetch full history and tags if it reports missing inputs. The marker must stay in
+a regular CLAUDE.md file: a symlinked CLAUDE.md (for example to AGENTS.md) fails
+the gate until the suite changes. To amend the marker, change it here and the
+suite's `FORMAT_MARKER` together; any base line starting `Release format:` keeps
+three parts required. Plain `/ship` runs its tests before writing the version, so
+after a `/ship` release commit run `TOUCHFILES_BASE=<pre-bump head> bun run test`
+before pushing.
 
 Upstream gstack `1.91.185.0` was qualified for `classify` (ALREADY_BUMPED across
 cutover; FRESH on a three-part base) and `gstack-next-version` (micro, patch,

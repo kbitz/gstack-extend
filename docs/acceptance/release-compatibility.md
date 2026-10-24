@@ -43,9 +43,10 @@ The release-manifest suite rejects older releases, a changed VERSION that does
 not exceed an untagged base VERSION, padded-equal spelling collisions,
 unmerged exact-tag collisions, missing history/tags/remote base, width
 regression, a three-part release cut from a base without the marker, a release
-branch cut before the marker reached `origin/main`, tag history missing its
-four-part tags, and a first three-part release that is not the next 0.x MINOR
-above every fetched tag with PATCH 0. Its
+branch cut before the marker reached `origin/main` or behind its VERSION, tag
+history missing its four-part tags, a stray local three-part tag, and a first
+three-part release that is not the next 0.x MINOR above every fetched tag with
+PATCH 0. Its
 fixtures include a historical three-part tag below the legacy top, as this
 repository's history does. Base policy activates only from the remote merge
 base (`origin/master` fallback), on any `Release format:` line or a CLAUDE.md
