@@ -13,22 +13,23 @@
  *
  * It is also the release ordering gate (CLAUDE.md#versioning): VERSION stays at
  * or above every merged release tag and above a changed base VERSION, never
- * padded-equals another tag, keeps three parts after a three-part top tag or
- * under the merge base's CLAUDE.md marker (the first such release being the
- * next MINOR with PATCH 0), and that marker stays exact. Those
- * checks read Git state no touchfile can select: fetched tags, full history and
- * origin/main (or origin/master).
+ * padded-equals another tag, keeps four parts while the merge base has no
+ * CLAUDE.md marker, keeps three parts after a three-part top tag or under the
+ * marker (the first such release being the next unused MINOR with PATCH 0), and
+ * HEAD's marker stays exact. Those checks read Git state no touchfile can
+ * select: fetched tags, full history and origin/main (or origin/master).
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
+import { makeBaseTmp } from './helpers/fixture-repo.ts';
 
 const ROOT = join(import.meta.dir, '..');
-const VERSION = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+// ASCII whitespace only, as auto-tag's `tr -d '[:space:]'` strips; a BOM or NBSP must fail the format check.
+const VERSION = readFileSync(join(ROOT, 'VERSION'), 'utf8').replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
 
 describe('release and manifest checks', () => {
   test('VERSION matches the format the auto-tag workflow accepts', () => {
@@ -73,6 +74,9 @@ function compareRelease(a: string, b: string): number {
     if ((left[i] ?? 0n) < (right[i] ?? 0n)) return -1;
   }
   return 0;
+}
+function highest(versions: string[]): string {
+  return versions.reduce((a, b) => (a === '' || compareRelease(b, a) > 0 ? b : a), '');
 }
 function markerViolations(cwd: string, ref: string): string[] {
   const entry = gitAt(cwd, ['ls-tree', ref, '--', 'CLAUDE.md']);
@@ -122,28 +126,34 @@ function releaseViolations(cwd: string, version: string): string[] {
     fail('RELEASE_BASE_MISSING', `VERSION=${version} has no merge base with origin/main or origin/master`, 'fetch the target remote branch; local main and TOUCHFILES_BASE are not policy bases');
     return errors;
   }
-  errors.push(...markerViolations(cwd, base));
   // Tags can lag the base (auto-tag delayed or failed), so a changed VERSION must also pass the base's own.
   const baseRead = spawnSync('git', ['show', `${base}:VERSION`], { cwd, encoding: 'utf8', env: GIT_ENV });
   const baseVersion = baseRead.status === 0 ? baseRead.stdout.trim() : '';
   if (RELEASE_RE.test(baseVersion) && version !== baseVersion && compareRelease(version, baseVersion) <= 0) {
     fail('RELEASE_VERSION_BASE_ORDER', `VERSION=${version} changes base VERSION=${baseVersion} without exceeding it`, 'choose a version above the base VERSION even when its tag is missing');
   }
+  if (version === baseVersion) return errors;
+  // The base's policy sets a changed VERSION's width. HEAD's exact marker is checked separately, so
+  // amending the marker cannot block its own PR, and any base marker line (or a CLAUDE.md that is not
+  // a regular blob) keeps three parts required rather than silently switching the policy off.
   const basePolicy = gitAt(cwd, ['ls-tree', base, '--', 'CLAUDE.md']);
-  if (basePolicy.startsWith('100644 ') || basePolicy.startsWith('100755 ')) {
-    const policy = gitAt(cwd, ['show', `${base}:CLAUDE.md`]);
-    if (policy.split('\n').includes(FORMAT_MARKER) && version !== baseVersion && version.split('.').length !== 3) {
-      fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} differs from base VERSION=${baseVersion} whose policy requires three parts`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
-    } else if (policy.split('\n').includes(FORMAT_MARKER) && version !== baseVersion
-      && baseVersion.split('.').length !== 3 && releases.every(tag => tag.split('.').length !== 3)) {
-      // Cutover: the first three-part release is the next 0.x MINOR with PATCH 0.
-      const prior = [baseVersion, ...releases.map(tag => tag.slice(1))].filter(v => RELEASE_RE.test(v))
-        .reduce((a, b) => (compareRelease(a, b) >= 0 ? a : b), '0.0.0');
-      const [major, minor, patch] = version.split('.').map(Number);
-      const [priorMajor, priorMinor] = prior.split('.').map(Number);
-      if (major !== priorMajor || minor <= priorMinor || patch !== 0) {
-        fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}`, `use the next MINOR with PATCH 0 (${priorMajor}.${priorMinor + 1}.0) and disclose the switch`);
-      }
+  const regular = basePolicy.startsWith('100644 ') || basePolicy.startsWith('100755 ');
+  const active = basePolicy !== '' && (!regular || gitAt(cwd, ['show', `${base}:CLAUDE.md`]).split('\n')
+    .some(line => line.startsWith('Release format: MAJOR.MINOR.PATCH')));
+  const top = highest(releases.map(tag => tag.slice(1)));
+  const legacy = top.split('.').length === 4 && baseVersion.split('.').length !== 3;
+  const parts = version.split('.');
+  if (!active && legacy && parts.length === 3) {
+    fail('RELEASE_FORMAT_LEGACY', `VERSION=${version} is three-part, but base ${base.slice(0, 12)} has no release marker`, 'keep MAJOR.MINOR.PATCH.MICRO until a release cut from a base containing the marker');
+  } else if (active && parts.length !== 3) {
+    fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} differs from base VERSION=${baseVersion} whose policy requires three parts`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
+  } else if (active && legacy) {
+    // Cutover: the first three-part release is the next unused 0.x MINOR with PATCH 0.
+    const [priorMajor, priorMinor] = highest([baseVersion, top].filter(v => RELEASE_RE.test(v))).split('.').map(Number);
+    let next = priorMinor + 1;
+    while (all.some(tag => valid(tag) && compareRelease(tag.slice(1), `${priorMajor}.${next}.0`) === 0)) next++;
+    if (version !== `${priorMajor}.${next}.0`) {
+      fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${top}`, `use the next unused MINOR with PATCH 0, ${priorMajor}.${next}.0, and disclose the switch`);
     }
   }
   return errors;
@@ -159,10 +169,14 @@ test('the release marker is exact and unique in working instructions and a regul
 
 const releaseTmp = makeBaseTmp('release-compatibility-');
 afterAll(() => rmSync(releaseTmp, { recursive: true, force: true }));
-function policyRepo(markerOnBase = false): string {
-  const repo = makeEmptyRepo(releaseTmp);
+function policyRepo(markerOnBase: boolean | string = false): string {
+  const repo = mkdtempSync(join(releaseTmp, 'repo-'));
+  gitAt(repo, ['init', '-q', '--initial-branch=main']);
+  gitAt(repo, ['config', 'user.email', 't@t.com']); gitAt(repo, ['config', 'user.name', 'T']);
+  gitAt(repo, ['commit', '-q', '--allow-empty', '-m', 'init']);
+  gitAt(repo, ['tag', 'v0.18.3']); // pre-four-part history below the legacy top, as in this repository
   writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
-  writeFileSync(join(repo, 'CLAUDE.md'), markerOnBase ? FORMAT_MARKER + '\n' : '# Legacy policy\n');
+  writeFileSync(join(repo, 'CLAUDE.md'), markerOnBase === true ? FORMAT_MARKER + '\n' : `${markerOnBase || '# Legacy policy'}\n`);
   gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'base']);
   gitAt(repo, ['tag', 'v0.46.0.0']);
   gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
@@ -177,6 +191,9 @@ describe('release guard controls in isolated repositories', () => {
     try {
       process.env.TOUCHFILES_BASE = 'HEAD';
       expect(releaseViolations(repo, '0.46.1.0')).toEqual([]);
+      for (const version of ['0.46.1', '1.0.0']) {
+        expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_FORMAT_LEGACY: VERSION=${version}`);
+      }
     } finally {
       if (before === undefined) delete process.env.TOUCHFILES_BASE; else process.env.TOUCHFILES_BASE = before;
     }
@@ -209,13 +226,13 @@ describe('release guard controls in isolated repositories', () => {
   }, 20000);
   test('missing tags, missing remote base, shallow history and non-release tags are explicit', () => {
     const repo = policyRepo();
-    gitAt(repo, ['tag', '-d', 'v0.46.0.0']);
+    gitAt(repo, ['tag', '-d', 'v0.46.0.0', 'v0.18.3']);
     for (const tag of ['foo', 'v1.0.0-rc1']) gitAt(repo, ['tag', tag]);
-    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('RELEASE_TAGS_MISSING');
+    expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_TAGS_MISSING');
     gitAt(repo, ['tag', 'v0.46.0.0']);
-    expect(releaseViolations(repo, '0.47.0')).toEqual([]);
+    expect(releaseViolations(repo, '0.47.0.0')).toEqual([]);
     gitAt(repo, ['update-ref', '-d', 'refs/remotes/origin/main']);
-    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('RELEASE_BASE_MISSING');
+    expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_BASE_MISSING');
     const shallow = join(releaseTmp, 'shallow');
     gitAt(releaseTmp, ['clone', '-q', '--depth=1', `file://${repo}`, shallow]);
     expect(releaseViolations(shallow, '0.47.0').join('\n')).toContain('git fetch --unshallow --tags origin');
@@ -245,7 +262,7 @@ describe('release guard controls in isolated repositories', () => {
   }, 20000);
   test('the first three-part release under the base marker is the next 0.x MINOR', () => {
     const repo = policyRepo(true);
-    for (const version of ['0.46.1', '0.47.1', '1.0.0']) {
+    for (const version of ['0.46.1', '0.47.1', '0.48.0', '1.0.0']) {
       expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_CUTOVER_MINOR: VERSION=${version}`);
     }
     expect(releaseViolations(repo, '0.47.0')).toEqual([]);
@@ -255,6 +272,28 @@ describe('release guard controls in isolated repositories', () => {
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
     gitAt(repo, ['tag', 'v0.47.0']);
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
+  }, 20000);
+  test('the cutover skips a MINOR whose padded-equal tag exists outside HEAD', () => {
+    const repo = policyRepo(true);
+    gitAt(repo, ['checkout', '-qb', 'other']);
+    gitAt(repo, ['commit', '--allow-empty', '-qm', 'outside history']);
+    gitAt(repo, ['tag', 'v0.47.0.0']);
+    gitAt(repo, ['checkout', '-q', 'main']);
+    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('use the next unused MINOR with PATCH 0, 0.48.0');
+    expect(releaseViolations(repo, '0.48.0')).toEqual([]);
+  }, 20000);
+  test('an amended or non-regular base marker keeps three parts required without failing the PR', () => {
+    for (const setup of ['amended', 'symlink'] as const) {
+      const repo = policyRepo(setup === 'amended' ? 'Release format: MAJOR.MINOR.PATCH (three-part; no prefixes or suffixes).' : '# placeholder');
+      if (setup === 'symlink') {
+        rmSync(join(repo, 'CLAUDE.md'));
+        symlinkSync('VERSION', join(repo, 'CLAUDE.md'));
+        gitAt(repo, ['add', '-A']); gitAt(repo, ['commit', '-qm', 'symlinked policy']);
+        gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+      }
+      expect([setup, releaseViolations(repo, '0.46.0.0')]).toEqual([setup, []]);
+      expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
+    }
   }, 20000);
   test('malformed and leading-zero VERSION values fail before any history check', () => {
     const repo = policyRepo();
