@@ -115,6 +115,15 @@
 - **Context:** Raised by the adversarial pass of Track 28A's `/review-and-prep` on 2026-10-24, after the cutover MINOR guard was added.
 - **Revisit when:** Preparing the first three-part (cutover) release.
 
+### [review] Scrub inherited GIT_* at the test-process boundary
+
+- **Description:** Track 28A made `tests/helpers/fixture-repo.ts` drop inherited `GIT_*` and user config from its own setup commands. Suites still run about 127 raw `git` calls on those fixtures with the inherited environment (for example `branch -m main feature` in `tests/touchfiles.test.ts`). Bun children inherit the startup environment, so a preload cannot scrub it. Only the process that starts `bun test` can: `scripts/select-tests.ts` and `test:full`.
+- **Why:** A suite run from a git hook that exports `GIT_DIR` could rename branches or commit fixture files in the real repository or a shared worktree.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Raised by Track 28A's `/review-and-prep` continuation on 2026-10-24; the user chose the backlog. No hook runs the suite today.
+- **Revisit when:** A git hook or wrapper starts running the test suite.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

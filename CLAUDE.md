@@ -47,6 +47,10 @@ the base VERSION, keeps four parts while the merge base lacks this marker,
 forbids returning to four parts after a three-part top tag, and makes the first
 three-part release the next MINOR above every fetched tag, with PATCH 0. A
 release branch cut before the marker reached `origin/main` must merge it first.
+It reads `refs/remotes/origin/main`, never a same-named tag or branch, reports
+incomplete tags when only pre-four-part tags are fetched, and needs this marker
+in a regular CLAUDE.md file: a symlinked CLAUDE.md (for example to AGENTS.md)
+fails the gate until the suite changes.
 To amend the marker, change it here and the suite's `FORMAT_MARKER` together;
 any base line starting `Release format:` keeps three parts required. Its policy
 base is `git merge-base HEAD origin/main` (`origin/master` fallback), never local
