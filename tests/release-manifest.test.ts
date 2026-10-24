@@ -23,7 +23,7 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -357,6 +357,25 @@ describe('release guard controls in isolated repositories', () => {
       }
     }
   }, 30000);
+  // Value: protects=with no valid base VERSION, the top merged tag's width sets the era and the cutover target;
+  //   fails_when=the era stops falling back to tags, or a malformed base VERSION reaches the cutover's version comparison;
+  //   why_new=every other fixture base carries a valid VERSION, so the tag fallback never runs; seam=none;
+  //   no_claim=a missing and a malformed base VERSION are each checked in one era only (Git-only fixtures)
+  test('without a valid base VERSION, the top merged tag sets the era', () => {
+    const missing = policyRepo();
+    gitAt(missing, ['rm', '-q', 'VERSION']); gitAt(missing, ['commit', '-qm', 'base without VERSION']);
+    gitAt(missing, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    expect(releaseViolations(missing, '0.47.0').join('\n')).toContain('RELEASE_FORMAT_LEGACY: VERSION=0.47.0');
+    expect(releaseViolations(missing, '0.46.1.0')).toEqual([]);
+    const malformed = policyRepo(true);
+    writeFileSync(join(malformed, 'VERSION'), '0.46.0.0-rc1\n');
+    gitAt(malformed, ['add', '.']); gitAt(malformed, ['commit', '-qm', 'malformed base VERSION']);
+    gitAt(malformed, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    expect(releaseViolations(malformed, '0.47.0')).toEqual([]);
+    const early = releaseViolations(malformed, '0.46.1').join('\n');
+    expect(early).toContain('RELEASE_CUTOVER_MINOR: VERSION=0.46.1');
+    expect(early).toContain('use the next unused 0.x MINOR with PATCH 0, 0.47.0');
+  }, 30000);
   test('a tag named origin/main cannot stand in for the remote base', () => {
     const repo = policyRepo();
     gitAt(repo, ['tag', 'origin/main', 'HEAD~1']);
@@ -393,12 +412,23 @@ describe('release guard controls in isolated repositories', () => {
       expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
     }
   }, 20000);
-  test('shared fixture repos ignore a GIT_DIR inherited at startup, as under a git hook', () => {
+  // Value (extended): protects=fixture setup ignores the user's global git config as well as an inherited GIT_DIR;
+  //   fails_when=GIT_ENV stops pinning GIT_CONFIG_GLOBAL=/dev/null, so a signing or hook setting breaks fixture commits;
+  //   why_new=the GIT_DIR case left the user-config half of the helper's isolation unexercised; seam=none;
+  //   no_claim=system git config (GIT_CONFIG_NOSYSTEM) and suites' own raw git calls, which docs/TODOS.md defers
+  test('shared fixture repos ignore a GIT_DIR inherited at startup, as under a git hook, and user git config', () => {
     const outer = makeEmptyRepo(releaseTmp);
+    // A global config under which every commit fails to sign; the control proves git reads it here.
+    const home = join(releaseTmp, 'signing-home');
+    mkdirSync(home);
+    writeFileSync(join(home, '.gitconfig'), '[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n');
+    const userConfig = { ...Object.fromEntries(Object.entries(GIT_ENV).filter(([key]) => key !== 'GIT_CONFIG_GLOBAL')), HOME: home };
+    const control = spawnSync('git', ['-C', outer, 'commit', '--allow-empty', '-qm', 'signed'], { encoding: 'utf8', env: userConfig });
+    expect(control.status).not.toBe(0);
     const child = spawnSync(process.execPath, ['--no-env-file', '--config=/dev/null', '--no-install', '-e',
       'const { makeEmptyRepo } = await import(process.argv[1]); console.log(makeEmptyRepo(process.argv[2]));',
       join(import.meta.dir, 'helpers/fixture-repo.ts'), releaseTmp],
-      { encoding: 'utf8', env: { ...process.env, GIT_DIR: join(outer, '.git') } });
+      { encoding: 'utf8', env: { ...process.env, GIT_DIR: join(outer, '.git'), HOME: home } });
     if (child.status !== 0) throw new Error(`fixture child exited ${child.status}: ${child.stderr}`);
     const fixture = child.stdout.trim();
     expect(gitAt(outer, ['rev-list', '--count', 'HEAD'])).toBe('1');
@@ -429,6 +459,71 @@ describe('auto-tag and release notes across formats', () => {
     expect(workflow).toContain('gh release edit $TAG --notes-file');
     expect(workflow).not.toContain('"$NOTES_FILE" 2>/dev/null');
   }, 20000);
+  // Value: protects=auto-tag fails a malformed VERSION with its ::error:: fix and no tag, tags a three-part one, and
+  //   publishes its notes or warns with the edit hint and the extractor's stderr;
+  //   fails_when=a step mis-tags a three-part VERSION, drops the annotation or hint, or hides extractor stderr in any spelling;
+  //   why_new=the check above greps the YAML text and runs only its ERE; seam=none;
+  //   no_claim=the GitHub runner, token permissions and real gh (step bodies run under bash -e with a stub gh and a local bare origin)
+  test('auto-tag steps tag a three-part VERSION and publish its notes, or fail and warn with fixes', () => {
+    const lines = readFileSync(join(ROOT, '.github/workflows/auto-tag.yml'), 'utf8').split('\n');
+    const step = (name: string): string => {
+      const start = lines.findIndex(line => line.trim() === `- name: ${name}`);
+      const run = lines.findIndex((line, i) => start >= 0 && i > start && line.trim() === 'run: |');
+      if (run < 0) throw new Error(`auto-tag step '${name}' has no run block`);
+      const indent = lines[run + 1]!.search(/\S/);
+      const body: string[] = [];
+      for (const line of lines.slice(run + 1)) {
+        if (line.trim() && line.search(/\S/) < indent) break;
+        body.push(line.slice(indent));
+      }
+      return body.join('\n');
+    };
+    const repo = makeEmptyRepo(releaseTmp);
+    const origin = join(releaseTmp, 'auto-tag-origin.git');
+    gitAt(releaseTmp, ['init', '-q', '--bare', origin]);
+    gitAt(repo, ['remote', 'add', 'origin', origin]);
+    mkdirSync(join(repo, 'scripts'));
+    symlinkSync(join(ROOT, 'scripts/extract-changelog-section.sh'), join(repo, 'scripts/extract-changelog-section.sh'));
+    const bin = join(releaseTmp, 'auto-tag-bin'), tmp = join(releaseTmp, 'auto-tag-tmp');
+    const ghLog = join(releaseTmp, 'auto-tag-gh.log'), output = join(releaseTmp, 'auto-tag-output');
+    mkdirSync(bin); mkdirSync(tmp);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\nprintf \'gh %s\\n\' "$*" >> "$GH_LOG"\n[ "$1 $2" = "release view" ] && exit 1\n'
+      + 'while [ $# -gt 0 ]; do [ "$1" = --notes-file ] && cat "$2" >> "$GH_LOG"; shift; done\nexit 0\n', { mode: 0o755 });
+    const env = { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, TMPDIR: tmp, GH_LOG: ghLog, GITHUB_OUTPUT: output, GH_TOKEN: 'stub' };
+    const runStep = (name: string, extra: Record<string, string> = {}) =>
+      spawnSync('bash', ['-e', '-c', step(name)], { cwd: repo, encoding: 'utf8', env: { ...env, ...extra } });
+
+    writeFileSync(join(repo, 'VERSION'), '0.08.0\n');
+    const malformed = runStep('Read version and create tag');
+    expect([malformed.status, gitAt(repo, ['tag', '--list'])]).toEqual([1, '']);
+    expect(malformed.stdout).toContain("::error::Invalid VERSION '0.08.0': expected MAJOR.MINOR.PATCH");
+    expect(malformed.stdout).toContain('Fix VERSION, package.json and CHANGELOG.md');
+
+    writeFileSync(join(repo, 'VERSION'), '0.47.0\n');
+    const tagged = runStep('Read version and create tag');
+    expect(tagged.status).toBe(0);
+    expect(readFileSync(output, 'utf8')).toBe('version=0.47.0\ntag=v0.47.0\ntag_created=true\n');
+    expect(gitAt(origin, ['tag', '--list'])).toBe('v0.47.0');
+
+    const release = { TAG: 'v0.47.0', VERSION: '0.47.0' };
+    writeFileSync(join(repo, 'CHANGELOG.md'), '# Changes\n\n## [0.47.0] - 2026-10-24\nCandidate notes\n\n## [0.46.0.0] - 2026-10-22\nOld notes\n');
+    const notes = runStep('Create GitHub release', release);
+    expect([notes.status, notes.stderr]).toEqual([0, '']);
+    expect(notes.stdout).toContain('Using CHANGELOG.md section for release notes.');
+    const published = readFileSync(ghLog, 'utf8');
+    expect(published).toStartWith('gh release view v0.47.0\ngh release create v0.47.0 --title v0.47.0 --notes-file ');
+    expect(published).toContain('Candidate notes');
+    expect(published).not.toContain('Old notes');
+
+    rmSync(ghLog);
+    writeFileSync(join(repo, 'CHANGELOG.md'), '# Changes\n\n## [0.46.0.0] - 2026-10-22\nOld notes\n');
+    const fallback = runStep('Create GitHub release', release);
+    expect(fallback.status).toBe(0);
+    expect(fallback.stdout).toContain('::warning::No CHANGELOG section for 0.47.0');
+    expect(fallback.stdout).toContain('then run: gh release edit v0.47.0 --notes-file <corrected-notes-file>');
+    expect(fallback.stderr).toContain('No CHANGELOG section found for version 0.47.0');
+    expect(readFileSync(ghLog, 'utf8')).toBe('gh release view v0.47.0\ngh release create v0.47.0 --title v0.47.0 --generate-notes\n');
+  }, 30000);
   test('extractor returns exactly the three-part section and fails for missing notes', () => {
     const repo = policyRepo();
     writeFileSync(join(repo, 'CHANGELOG.md'), '# Changes\n\n## [0.47.0.1] - 2026-10-23\nWrong section\n\n## [0.47.0] - 2026-10-23\nCandidate notes\n\n## [0.46.0.0] - 2026-10-22\nOld notes\n');

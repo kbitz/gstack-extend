@@ -395,6 +395,19 @@ describe('structural invariants', () => {
     expect(sel.selected).toContain('tests/lib-install-safety.test.ts');
     expect(sel.selected).toContain('tests/update.test.ts');
   });
+
+  // Value: protects=a CLAUDE.md release-marker edit runs the release ordering gate, and a docs/installation.md edit
+  //   runs update's rollback-guidance lock, under diff selection;
+  //   fails_when=release-manifest's 'CLAUDE.md' or update's 'docs/installation.md' manual entry is dropped;
+  //   why_new=both suites import helpers, so I1-I3 pass without either entry; release selection covers only VERSION,
+  //   CHANGELOG.md and package.json; seam=none; no_claim=selection only; the marker and rollback checks live in those suites
+  test('a CLAUDE.md or docs/installation.md change selects the suite that locks it', () => {
+    const tests = listTestFiles(REPO_ROOT);
+    for (const [file, suite] of [['CLAUDE.md', 'tests/release-manifest.test.ts'], ['docs/installation.md', 'tests/update.test.ts']] as const) {
+      const sel = computeTestSelection([file], tests);
+      expect([file, sel.reason, sel.selected.includes(suite)]).toEqual([file, 'diff', true]);
+    }
+  });
 });
 
 // ─── Per-skill and release selection (the live map) ─────────────────────
