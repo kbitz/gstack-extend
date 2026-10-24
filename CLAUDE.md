@@ -37,6 +37,8 @@ EVALS_ALL=1 bun run test
 # Run /ship: classify must return ALREADY_BUMPED; keep currentVersion.
 # After authorized merge and auto-tag completion:
 gh release view "v$RELEASE_VERSION"
+# If auto-tag fell back to generated notes, fix CHANGELOG.md, then:
+# gh release edit "v$RELEASE_VERSION" --notes-file <corrected-notes-file>
 ```
 
 The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the only
@@ -101,7 +103,7 @@ A release commit (VERSION, the CHANGELOG entry and package.json's version) selec
 
 `.gstack/pregate.json` `dependencies` is the manual map inverted, so pregate's lane selection reads the same non-import edges. Global inputs are not in it: for a `bun.lock` or `tsconfig.json` change pregate selects less, while `bun run test` runs everything. After editing `MANUAL_TOUCHFILES`, run `bun scripts/sync-pregate-deps.ts`; `tests/touchfiles.test.ts` fails while the copy is stale. Repair a pregate `PREGATE_NO_LANE` finding in `MANUAL_TOUCHFILES`, not in the JSON; a `glob: []` (no lane needed) entry is the exception, belongs in `.gstack/pregate.json`, and the sync keeps it. Pregate reads the base branch's copy, so a change takes effect there after it merges, and a PR that edits it needs `--policy-from head`.
 
-`tests/touchfiles.test.ts` locks the selection contract — units, three structural invariants (every glob matches ≥1 file; every test reachable via import graph or manual map; every manual key resolves), a check that a `bin/lib/install-safety.sh` change selects `tests/lib-install-safety.test.ts` and `tests/update.test.ts`, the per-skill, release and pregate-copy checks above, the selection report, and thirteen wrapper E2E scenarios. When adding a test that consumes a non-TS file (shell bin, fixture tree, markdown), add an entry to `MANUAL_TOUCHFILES`. The I2 invariant catches the omission only for a test with no TypeScript imports; a test that imports any helper stays reachable without the entry, so diff selection can skip it when that file changes.
+`tests/touchfiles.test.ts` locks the selection contract — units, three structural invariants (every glob matches ≥1 file; every test reachable via import graph or manual map; every manual key resolves), a check that a `bin/lib/install-safety.sh` change selects `tests/lib-install-safety.test.ts` and `tests/update.test.ts`, a check that a `CLAUDE.md` change selects `tests/release-manifest.test.ts` (it reads the release-format marker) and a `docs/installation.md` change selects `tests/update.test.ts` (it locks the rollback steps), the per-skill, release and pregate-copy checks above, the selection report, and thirteen wrapper E2E scenarios. When adding a test that consumes a non-TS file (shell bin, fixture tree, markdown), add an entry to `MANUAL_TOUCHFILES`. The I2 invariant catches the omission only for a test with no TypeScript imports; a test that imports any helper stays reachable without the entry, so diff selection can skip it when that file changes.
 
 All tests live in `tests/*.test.ts` using `bun:test`.
 
