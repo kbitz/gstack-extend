@@ -5,6 +5,14 @@ import type { CheckStatus } from '../src/audit/types.ts';
 import { makeCtx, type MakeCtxOpts } from './helpers/audit-ctx.ts';
 
 describe('runCheckVersion', () => {
+  test('three-part candidate passes only its exact tag, not a padded-equal tag', () => {
+    expect(runCheckVersion(makeCtx({ current: '0.47.0', versionInfo: { latestTag: 'v0.47.0' } })).status).toBe('pass');
+    expect(runCheckVersion(makeCtx({ current: '0.47.0', versionInfo: { latestTag: 'v0.47.0.0' } })).status).toBe('fail');
+    for (const current of ['0.47', '0.47.0.0.0', 'v0.47.0', '0.47.0-rc1']) {
+      expect(runCheckVersion(makeCtx({ current, versionInfo: { latestTag: null } })).status).toBe('fail');
+    }
+  });
+
   const cases: Array<{
     name: string;
     opts: MakeCtxOpts;

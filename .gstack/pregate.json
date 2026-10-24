@@ -10,6 +10,9 @@
     "CHANGELOG.md": [
       "tests/release-manifest.test.ts"
     ],
+    "CLAUDE.md": [
+      "tests/release-manifest.test.ts"
+    ],
     "README.md": [
       "tests/handoff-contract.test.ts"
     ],

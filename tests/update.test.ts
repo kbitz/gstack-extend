@@ -2565,3 +2565,66 @@ exec /bin/mv "$@"
     expect(seen.stdout).toContain('freshness=unverified');
   }, 20000);
 });
+
+// Freeze the install-side updater to a named published legacy release. The
+// candidate supplies today's migration helper; no setup/host acceptance claim.
+describe('legacy four-part install to three-part candidate', () => {
+  for (const candidate of ['0.47.0', '0.46.1']) {
+    test(`v0.46.0.0 updater detects and installs ${candidate} with a bounded once-only window`, () => {
+      const name = `legacy-${candidate}`;
+      const repo = createFixtureRepo(name);
+      for (const path of ['bin/update-check', 'bin/update-run', 'bin/config', 'bin/lib/semver.sh']) {
+        const frozen = spawnSync('git', ['show', `v0.46.0.0:${path}`], { cwd: ROOT, encoding: 'utf8' });
+        if (frozen.status !== 0) throw new Error('LEGACY_TAG_MISSING: v0.46.0.0 updater bytes unavailable. Fix: git fetch --tags origin.');
+        mkdirSync(dirname(join(repo, path)), { recursive: true });
+        writeFileSync(join(repo, path), frozen.stdout, { mode: 0o755 });
+      }
+      writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
+      for (const args of [['add', '.'], ['commit', '-qm', 'legacy updater'], ['push', '-q', 'origin', 'main']]) {
+        expect(spawnSync('git', ['-C', repo, ...args]).status).toBe(0);
+      }
+      const scripts: Record<string, string> = {};
+      const names = ['v0.46.0.0.sh', 'v0.46.0.1.sh', 'v0.46.1.sh', 'v0.47.0.sh', 'v0.47.0.0.sh', 'v0.48.0.sh'];
+      for (const script of names) scripts[script] = `#!/bin/sh\nprintf '%s\\n' '${script}' >> "$STATE_DIR/window"\n`;
+      pushNewVersion(`${baseTmp}/${name}-remote`, candidate, migrationPayload(scripts));
+      const home = join(baseTmp, name + '-home'), state = join(home, '.gstack-extend');
+      mkdirSync(state, { recursive: true });
+      const remoteVersion = join(baseTmp, name + '-VERSION');
+      writeFileSync(remoteVersion, candidate + '\n');
+      const opts = { home, gstackExtendDir: repo, gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remoteVersion}` } };
+      const check = runBin(join(repo, 'bin/update-check'), ['--force'], opts);
+      expect(check.exitCode).toBe(0);
+      expect(check.stdout.trim()).toBe(`UPGRADE_AVAILABLE 0.46.0.0 ${candidate}`);
+      expect(check.stderr).toBe('');
+      const upgrade = runBin(join(repo, 'bin/update-run'), [repo], opts);
+      expect(upgrade.exitCode).toBe(0);
+      expect(upgrade.stdout).toContain(`UPGRADE_OK 0.46.0.0 ${candidate}`);
+      expect(upgrade.stdout).not.toContain('MIGRATION_WARN');
+      const expected = candidate === '0.47.0' ? names.slice(1, 5) : names.slice(1, 3);
+      expect(readFileSync(join(state, 'window'), 'utf8').trim().split('\n').sort()).toEqual(expected.sort());
+      expect(readFileSync(join(state, 'migrations-applied'), 'utf8').trim().split('\n').sort()).toEqual(expected.sort());
+      const after = runBin(join(repo, 'bin/update-check'), ['--force'], opts);
+      expect(after.exitCode).toBe(0);
+      expect(after.stdout.trim()).toBe(`JUST_UPGRADED 0.46.0.0 ${candidate}`);
+      const repeat = runBin(join(repo, 'bin/update-run'), [repo], opts);
+      expect(repeat.exitCode).toBe(0);
+      expect(readFileSync(join(state, 'window'), 'utf8').trim().split('\n').sort()).toEqual(expected.sort());
+    });
+  }
+  test('real update-check is silent for padded-equal and malformed remote versions', () => {
+    const repo = createFixtureRepo('candidate-controls');
+    seedUpdateCheckBinaries(repo);
+    writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
+    const home = join(baseTmp, 'candidate-controls-home'), state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    const remote = join(baseTmp, 'candidate-controls-VERSION');
+    for (const version of ['0.46.0', '0.47', '0.47.0.0.0', 'v0.47.0', '0.47.0-rc1', '0.08.0']) {
+      writeFileSync(remote, version + '\n');
+      const result = runBin(join(repo, 'bin/update-check'), ['--force'], { home,
+        gstackExtendDir: repo, gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remote}` } });
+      expect([version, result.exitCode, result.stdout, result.stderr]).toEqual([version, 0, '', '']);
+    }
+  });
+});
