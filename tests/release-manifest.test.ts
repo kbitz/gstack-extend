@@ -10,6 +10,14 @@
  *   - package.json's version is VERSION's MAJOR.MINOR.PATCH;
  *   - CHANGELOG.md's first release heading is VERSION, and the release-notes
  *     extractor the workflow runs finds a non-empty section for it.
+ *
+ * It is also the release ordering gate (CLAUDE.md#versioning): VERSION stays at
+ * or above every merged release tag and above a changed base VERSION, never
+ * padded-equals another tag, keeps three parts after a three-part top tag or
+ * under the merge base's CLAUDE.md marker (the first such release being the
+ * next MINOR with PATCH 0), and that marker stays exact. Those
+ * checks read Git state no touchfile can select: fetched tags, full history and
+ * origin/main (or origin/master).
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -50,9 +58,11 @@ describe('release and manifest checks', () => {
 const FORMAT_MARKER = 'Release format: MAJOR.MINOR.PATCH (three-part; no suffixes).';
 const RELEASE_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$/;
 const GUIDE = 'See CLAUDE.md#versioning.';
+// Inherited GIT_DIR/GIT_WORK_TREE (as in git hooks) would aim fixture commands at another repository.
+const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 function gitAt(cwd: string, args: string[]): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8',
-    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
   return result.stdout.trim();
 }
@@ -105,7 +115,7 @@ function releaseViolations(cwd: string, version: string): string[] {
   }
   let base: string | undefined;
   for (const ref of ['origin/main', 'origin/master']) {
-    const result = spawnSync('git', ['merge-base', 'HEAD', ref], { cwd, encoding: 'utf8' });
+    const result = spawnSync('git', ['merge-base', 'HEAD', ref], { cwd, encoding: 'utf8', env: GIT_ENV });
     if (result.status === 0) { base = result.stdout.trim(); break; }
   }
   if (!base) {
@@ -113,12 +123,27 @@ function releaseViolations(cwd: string, version: string): string[] {
     return errors;
   }
   errors.push(...markerViolations(cwd, base));
+  // Tags can lag the base (auto-tag delayed or failed), so a changed VERSION must also pass the base's own.
+  const baseRead = spawnSync('git', ['show', `${base}:VERSION`], { cwd, encoding: 'utf8', env: GIT_ENV });
+  const baseVersion = baseRead.status === 0 ? baseRead.stdout.trim() : '';
+  if (RELEASE_RE.test(baseVersion) && version !== baseVersion && compareRelease(version, baseVersion) <= 0) {
+    fail('RELEASE_VERSION_BASE_ORDER', `VERSION=${version} changes base VERSION=${baseVersion} without exceeding it`, 'choose a version above the base VERSION even when its tag is missing');
+  }
   const basePolicy = gitAt(cwd, ['ls-tree', base, '--', 'CLAUDE.md']);
   if (basePolicy.startsWith('100644 ') || basePolicy.startsWith('100755 ')) {
     const policy = gitAt(cwd, ['show', `${base}:CLAUDE.md`]);
-    const baseVersion = gitAt(cwd, ['show', `${base}:VERSION`]);
     if (policy.split('\n').includes(FORMAT_MARKER) && version !== baseVersion && version.split('.').length !== 3) {
       fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} differs from base VERSION=${baseVersion} whose policy requires three parts`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
+    } else if (policy.split('\n').includes(FORMAT_MARKER) && version !== baseVersion
+      && baseVersion.split('.').length !== 3 && releases.every(tag => tag.split('.').length !== 3)) {
+      // Cutover: the first three-part release is the next 0.x MINOR with PATCH 0.
+      const prior = [baseVersion, ...releases.map(tag => tag.slice(1))].filter(v => RELEASE_RE.test(v))
+        .reduce((a, b) => (compareRelease(a, b) >= 0 ? a : b), '0.0.0');
+      const [major, minor, patch] = version.split('.').map(Number);
+      const [priorMajor, priorMinor] = prior.split('.').map(Number);
+      if (major !== priorMajor || minor <= priorMinor || patch !== 0) {
+        fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}`, `use the next MINOR with PATCH 0 (${priorMajor}.${priorMinor + 1}.0) and disclose the switch`);
+      }
     }
   }
   return errors;
@@ -155,7 +180,7 @@ describe('release guard controls in isolated repositories', () => {
     } finally {
       if (before === undefined) delete process.env.TOUCHFILES_BASE; else process.env.TOUCHFILES_BASE = before;
     }
-  });
+  }, 20000);
   test('base marker requires three slots only when VERSION changes, with origin/master fallback', () => {
     const repo = policyRepo(true);
     expect(releaseViolations(repo, '0.46.0.0')).toEqual([]);
@@ -164,7 +189,7 @@ describe('release guard controls in isolated repositories', () => {
     gitAt(repo, ['update-ref', 'refs/remotes/origin/master', 'origin/main']);
     gitAt(repo, ['update-ref', '-d', 'refs/remotes/origin/main']);
     expect(releaseViolations(repo, '0.47.0')).toEqual([]);
-  });
+  }, 20000);
   test('regressions, padded equality and an unmerged exact tag fail; exact merged equality passes', () => {
     const repo = policyRepo();
     expect(releaseViolations(repo, '0.45.0').join('\n')).toContain('RELEASE_VERSION_ORDER');
@@ -175,13 +200,13 @@ describe('release guard controls in isolated repositories', () => {
     gitAt(repo, ['tag', 'v0.47.0']);
     gitAt(repo, ['checkout', '-q', 'main']);
     expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('v0.47.0 (merged=false)');
-  });
+  }, 20000);
   test('three-part top tag prevents width regression', () => {
     const repo = policyRepo();
     gitAt(repo, ['tag', 'v0.47.0']);
     expect(releaseViolations(repo, '0.48.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
     expect(releaseViolations(repo, '0.48.0')).toEqual([]);
-  });
+  }, 20000);
   test('missing tags, missing remote base, shallow history and non-release tags are explicit', () => {
     const repo = policyRepo();
     gitAt(repo, ['tag', '-d', 'v0.46.0.0']);
@@ -194,7 +219,7 @@ describe('release guard controls in isolated repositories', () => {
     const shallow = join(releaseTmp, 'shallow');
     gitAt(releaseTmp, ['clone', '-q', '--depth=1', `file://${repo}`, shallow]);
     expect(releaseViolations(shallow, '0.47.0').join('\n')).toContain('git fetch --unshallow --tags origin');
-  });
+  }, 20000);
   test('altered, duplicated and symlink policy markers fail', () => {
     const repo = policyRepo(true);
     for (const text of [FORMAT_MARKER + '\n' + FORMAT_MARKER, 'Release format: changed']) {
@@ -206,7 +231,38 @@ describe('release guard controls in isolated repositories', () => {
     symlinkSync('VERSION', join(repo, 'CLAUDE.md'));
     gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'symlink']);
     expect(markerViolations(repo, 'HEAD').join('\n')).toContain('RELEASE_POLICY_FILE');
-  });
+  }, 20000);
+  test('a changed VERSION must exceed an untagged base VERSION', () => {
+    const repo = policyRepo(true);
+    writeFileSync(join(repo, 'VERSION'), '0.47.0.0\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'untagged release']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    for (const version of ['0.47.0', '0.46.5']) {
+      expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_VERSION_BASE_ORDER: VERSION=${version} changes base VERSION=0.47.0.0`);
+    }
+    expect(releaseViolations(repo, '0.47.0.0')).toEqual([]);
+    expect(releaseViolations(repo, '0.48.0')).toEqual([]);
+  }, 20000);
+  test('the first three-part release under the base marker is the next 0.x MINOR', () => {
+    const repo = policyRepo(true);
+    for (const version of ['0.46.1', '0.47.1', '1.0.0']) {
+      expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_CUTOVER_MINOR: VERSION=${version}`);
+    }
+    expect(releaseViolations(repo, '0.47.0')).toEqual([]);
+    writeFileSync(join(repo, 'VERSION'), '0.47.0\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'untagged cutover']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    expect(releaseViolations(repo, '0.47.1')).toEqual([]);
+    gitAt(repo, ['tag', 'v0.47.0']);
+    expect(releaseViolations(repo, '0.47.1')).toEqual([]);
+  }, 20000);
+  test('malformed and leading-zero VERSION values fail before any history check', () => {
+    const repo = policyRepo();
+    for (const version of ['0.010.0', '00.47.0', '0.47', '0.47.0.0.0', 'v0.47.0', '0.47.0-rc1']) {
+      const errors = releaseViolations(repo, version);
+      expect([version, errors.length, errors[0]?.split(':')[0]]).toEqual([version, 1, 'RELEASE_VERSION_FORMAT']);
+    }
+  }, 20000);
 });
 
 describe('auto-tag and release notes across formats', () => {
@@ -233,5 +289,5 @@ describe('auto-tag and release notes across formats', () => {
       if (result.status === 0) expect(result.stdout.trim()).toBe('Candidate notes');
       else expect(result.stderr).toContain('No CHANGELOG section found');
     }
-  });
+  }, 20000);
 });

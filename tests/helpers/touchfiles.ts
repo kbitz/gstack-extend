@@ -112,6 +112,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // skips are recorded in docs/acceptance/release-compatibility.md. Repeat the
   // probe before changing the format again. Only package.json's version can
   // change without selecting every test, so only suites reading it declare it.
+  // CLAUDE.md holds the exact release-format marker the ordering guards read;
+  // tags and remote refs, their other inputs, cannot select this suite.
   'tests/release-manifest.test.ts': [
     'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml', 'CLAUDE.md',
   ],
@@ -215,6 +217,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
+    // Track 28A locks the rollback block's update-check pause.
+    'docs/installation.md',
   ],
   // Track 12A — gstack-extend init <project>. The bin sources the registry
   // helper, reads templates from scripts/init-templates/, and shells out to
