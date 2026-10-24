@@ -21,11 +21,11 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const ROOT = join(import.meta.dir, '..');
 // ASCII whitespace only, as auto-tag's `tr -d '[:space:]'` strips; a BOM or NBSP must fail the format check.
@@ -320,6 +320,18 @@ describe('release guard controls in isolated repositories', () => {
       expect([setup, releaseViolations(repo, '0.47.0')]).toEqual([setup, []]);
       expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
     }
+  }, 20000);
+  test('shared fixture repos ignore a GIT_DIR inherited at startup, as under a git hook', () => {
+    const outer = makeEmptyRepo(releaseTmp);
+    const child = spawnSync('bun', ['--no-env-file', '--config=/dev/null', '--no-install', '-e',
+      'const { makeEmptyRepo } = await import(process.argv[1]); console.log(makeEmptyRepo(process.argv[2]));',
+      join(import.meta.dir, 'helpers/fixture-repo.ts'), releaseTmp],
+      { encoding: 'utf8', env: { ...process.env, GIT_DIR: join(outer, '.git') } });
+    expect([child.status, child.stderr]).toEqual([0, '']);
+    const fixture = child.stdout.trim();
+    expect(gitAt(outer, ['rev-list', '--count', 'HEAD'])).toBe('1');
+    expect(existsSync(join(fixture, '.git'))).toBe(true);
+    expect(gitAt(fixture, ['rev-list', '--count', 'HEAD'])).toBe('1');
   }, 20000);
   test('malformed and leading-zero VERSION values fail before any history check', () => {
     const repo = policyRepo();
