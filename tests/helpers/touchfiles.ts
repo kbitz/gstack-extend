@@ -106,13 +106,16 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // CHANGELOG entry and package.json's version field) can break on its own.
   // Only this suite and the two telemetry suites declare VERSION. The others
   // that read it (layout-scaffold, autoplan-lean, merge-gate, setup-hosts,
-  // workflow-metrics) only echo it back: full runs on 2026-10-23 with VERSION
-  // set to `not-a-version` or to the next release failed only the telemetry
-  // suites; rerun that probe when VERSION's format changes (SPEC's three-part
-  // transition). Only package.json's version can change without selecting every
-  // test, so only suites that read that field declare package.json.
+  // workflow-metrics) echo it back. Track 28A's full four-part control and
+  // three-part candidate probe (2026-10-23–24) introduced no format failures;
+  // the candidate passed all 76 suites. Control harness corrections and normal
+  // skips are recorded in docs/acceptance/release-compatibility.md. Repeat the
+  // probe before changing the format again. Only package.json's version can
+  // change without selecting every test, so only suites reading it declare it.
+  // CLAUDE.md holds the exact release-format marker the ordering guards read;
+  // tags and remote refs, their other inputs, cannot select this suite.
   'tests/release-manifest.test.ts': [
-    'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml',
+    'VERSION', 'CHANGELOG.md', 'package.json', 'scripts/extract-changelog-section.sh', '.github/workflows/auto-tag.yml', 'CLAUDE.md',
   ],
   'tests/docs-ship.test.ts': [
     'bin/docs-ship', skill('docs-ship'), 'docs/docs-ship.md', skill('roadmap'), skill('project-spec'),
@@ -214,6 +217,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('full-review'),
     'setup',
     'bin/lib/install-safety.sh',
+    // Track 28A locks the rollback block's update-check pause.
+    'docs/installation.md',
   ],
   // Track 12A — gstack-extend init <project>. The bin sources the registry
   // helper, reads templates from scripts/init-templates/, and shells out to

@@ -2,15 +2,14 @@
 #
 # extract-changelog-section.sh — print the CHANGELOG.md section for a version.
 #
-# Used by the backfill (scripts/backfill-releases.sh) and the auto-release CI
-# workflow (.github/workflows/auto-tag.yml) so both share one source of truth
-# for "given this version, what are the release notes?"
+# Used by the auto-release CI workflow (.github/workflows/auto-tag.yml) and the
+# release-manifest suite so both share one source of truth for "given this
+# version, what are the release notes?"
 #
 # Matching:
-#   1. Exact: ## [X.Y.Z.W] - YYYY-MM-DD
+#   1. Exact: ## [X.Y.Z] or legacy ## [X.Y.Z.W] - YYYY-MM-DD
 #   2. Trim trailing .0: 0.18.4.0 falls back to 0.18.4 (CHANGELOG entries
-#      predate the 4-digit format for some versions; tags are always 4-digit
-#      via the auto-tag workflow's regex).
+#      predate the four-part format; auto-tag accepts both three/four parts).
 #
 # Usage:
 #   ./scripts/extract-changelog-section.sh <version>

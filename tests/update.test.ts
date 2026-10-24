@@ -16,7 +16,7 @@
  *   3. semver (4-digit): version_gt for >, ==, <. Tests bin/lib/semver.sh
  *      via bash shell-out — the bash lib stays live until Track 2A cutover.
  *      Independent TS coverage in tests/lib-semver.test.ts.
- *   4. bin/update-check: version regex validation (5 valid + 9 invalid),
+ *   4. bin/update-check: its own version regex (5 valid + 12 invalid),
  *      4-digit upgrade detection, 3-digit ↔ 4-digit-with-.0 up-to-date.
  */
 
@@ -1744,16 +1744,22 @@ describe('semver (4-digit) via bin/lib/semver.sh', () => {
 
 // ─── update-check ───────────────────────────────────────────────────
 
-const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$/;
+// The checker's single remote-version ERE, so these cases test the shipped bytes.
+const UPDATE_CHECK_ERES = [...readFileSync(UPDATE_CHECK, 'utf8').matchAll(/grep -qE '([^']+)'/g)];
+const VERSION_RE = new RegExp(UPDATE_CHECK_ERES[0]?.[1] ?? '(?!)');
 
 describe('update-check version regex', () => {
+  test('bin/update-check has exactly one remote-version ERE', () => {
+    expect(UPDATE_CHECK_ERES).toHaveLength(1);
+  });
+
   for (const ver of ['0.8.9', '0.8.9.0', '1.0.0', '0.8.10', '10.20.30.40']) {
     test(`accepts valid version: ${ver}`, () => {
       expect(VERSION_RE.test(ver)).toBe(true);
     });
   }
 
-  for (const ver of ['1..2', '1.2.', '1.2.3.4.5', '1', 'abc', '1.2', '.1.2.3', '1.2.3.', '1.2.3.4.5.6']) {
+  for (const ver of ['1..2', '1.2.', '1.2.3.4.5', '1', 'abc', '1.2', '.1.2.3', '1.2.3.', '1.2.3.4.5.6', '0.08.0', '00.1.0', '0.47.00']) {
     test(`rejects invalid version: ${ver}`, () => {
       expect(VERSION_RE.test(ver)).toBe(false);
     });
@@ -2563,5 +2569,102 @@ exec /bin/mv "$@"
     expect(seen.stdout).toContain('skill=implement');
     expect(seen.stdout).toContain('reason=preserved_regular');
     expect(seen.stdout).toContain('freshness=unverified');
+  }, 20000);
+});
+
+// Freeze the install-side updater to a named published legacy release. The
+// candidate supplies today's migration helper; no setup/host acceptance claim.
+describe('legacy four-part install to three-part candidate', () => {
+  for (const candidate of ['0.47.0', '0.46.1']) {
+    test(`v0.46.0.0 updater detects and installs ${candidate} with a bounded once-only window`, () => {
+      const name = `legacy-${candidate}`;
+      const repo = createFixtureRepo(name);
+      for (const path of ['bin/update-check', 'bin/update-run', 'bin/config', 'bin/lib/semver.sh']) {
+        const frozen = spawnSync('git', ['show', `v0.46.0.0:${path}`], { cwd: ROOT, encoding: 'utf8' });
+        if (frozen.status !== 0) throw new Error('LEGACY_TAG_MISSING: v0.46.0.0 updater bytes unavailable. Fix: git fetch --tags origin.');
+        mkdirSync(dirname(join(repo, path)), { recursive: true });
+        writeFileSync(join(repo, path), frozen.stdout, { mode: 0o755 });
+      }
+      writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
+      for (const args of [['add', '.'], ['commit', '-qm', 'legacy updater'], ['push', '-q', 'origin', 'main']]) {
+        expect(spawnSync('git', ['-C', repo, ...args]).status).toBe(0);
+      }
+      const legacy = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+      const scripts: Record<string, string> = {};
+      const names = ['v0.46.0.0.sh', 'v0.46.0.1.sh', 'v0.46.1.sh', 'v0.47.0.sh', 'v0.47.0.0.sh', 'v0.48.0.sh'];
+      for (const script of names) scripts[script] = `#!/bin/sh\nprintf '%s\\n' '${script}' >> "$STATE_DIR/window"\n`;
+      pushNewVersion(`${baseTmp}/${name}-remote`, candidate, migrationPayload(scripts));
+      const home = join(baseTmp, name + '-home'), state = join(home, '.gstack-extend');
+      mkdirSync(state, { recursive: true });
+      const remoteVersion = join(baseTmp, name + '-VERSION');
+      writeFileSync(remoteVersion, candidate + '\n');
+      const opts = { home, gstackExtendDir: repo, gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remoteVersion}` } };
+      const check = runBin(join(repo, 'bin/update-check'), ['--force'], opts);
+      expect(check.exitCode).toBe(0);
+      expect(check.stdout.trim()).toBe(`UPGRADE_AVAILABLE 0.46.0.0 ${candidate}`);
+      expect(check.stderr).toBe('');
+      const upgrade = runBin(join(repo, 'bin/update-run'), [repo], opts);
+      expect(upgrade.exitCode).toBe(0);
+      expect(upgrade.stdout).toContain(`UPGRADE_OK 0.46.0.0 ${candidate}`);
+      expect(upgrade.stdout).not.toContain('MIGRATION_WARN');
+      const expected = candidate === '0.47.0' ? names.slice(1, 5) : names.slice(1, 3);
+      // Mixed widths run in version order; only the padded-equal pair may tie.
+      const ran = readFileSync(join(state, 'window'), 'utf8').trim().split('\n');
+      expect(ran.slice(0, 2)).toEqual(names.slice(1, 3));
+      expect(ran.slice(2).sort()).toEqual(expected.slice(2).sort());
+      expect(readFileSync(join(state, 'migrations-applied'), 'utf8').trim().split('\n').sort()).toEqual([...expected].sort());
+      const after = runBin(join(repo, 'bin/update-check'), ['--force'], opts);
+      expect(after.exitCode).toBe(0);
+      expect(after.stdout.trim()).toBe(`JUST_UPGRADED 0.46.0.0 ${candidate}`);
+      const repeat = runBin(join(repo, 'bin/update-run'), [repo], opts);
+      expect(repeat.exitCode).toBe(0);
+      expect(readFileSync(join(state, 'window'), 'utf8').trim().split('\n')).toEqual(ran);
+      // docs/installation.md's rollback: the restored legacy checker offers the
+      // candidate again unless update checks are paused first.
+      expect(spawnSync('git', ['-C', repo, 'checkout', '-q', '--detach', legacy]).status).toBe(0);
+      expect(runBin(join(repo, 'bin/update-check'), ['--force'], opts).stdout).toContain(`UPGRADE_AVAILABLE 0.46.0.0 ${candidate}`);
+      expect(runBin(join(repo, 'bin/config'), ['set', 'update_check', 'false'], opts).exitCode).toBe(0);
+      const paused = runBin(join(repo, 'bin/update-check'), ['--force'], opts);
+      expect([paused.exitCode, paused.stdout, paused.stderr]).toEqual([0, '', '']);
+    }, 30000);
+  }
+  test('rollback guidance pauses update checks before detaching and restores them on resume', () => {
+    const doc = readFileSync(join(ROOT, 'docs/installation.md'), 'utf8');
+    const section = doc.slice(doc.indexOf('To roll back an otherwise clean install'), doc.indexOf('### Preserved installs'));
+    const pause = section.indexOf('./bin/config set update_check false');
+    expect(pause).toBeGreaterThanOrEqual(0);
+    expect(pause).toBeLessThan(section.indexOf('git checkout --detach'));
+    expect(section.indexOf('./bin/config set update_check true')).toBeGreaterThan(section.indexOf('git checkout main'));
+  });
+  test('real update-check offers multi-digit three- and four-part releases', () => {
+    const repo = createFixtureRepo('candidate-positive');
+    seedUpdateCheckBinaries(repo);
+    writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
+    const home = join(baseTmp, 'candidate-positive-home'), state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    const remote = join(baseTmp, 'candidate-positive-VERSION');
+    for (const version of ['0.47.0', '0.46.10', '0.46.0.10']) {
+      writeFileSync(remote, version + '\n');
+      const result = runBin(join(repo, 'bin/update-check'), ['--force'], { home,
+        gstackExtendDir: repo, gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remote}` } });
+      expect([version, result.exitCode, result.stdout.trim(), result.stderr]).toEqual([version, 0, `UPGRADE_AVAILABLE 0.46.0.0 ${version}`, '']);
+    }
+  }, 20000);
+  test('real update-check is silent for padded-equal and malformed remote versions', () => {
+    const repo = createFixtureRepo('candidate-controls');
+    seedUpdateCheckBinaries(repo);
+    writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
+    const home = join(baseTmp, 'candidate-controls-home'), state = join(home, '.gstack-extend');
+    mkdirSync(state, { recursive: true });
+    const remote = join(baseTmp, 'candidate-controls-VERSION');
+    for (const version of ['0.46.0', '0.47', '0.47.0.0.0', 'v0.47.0', '0.47.0-rc1', '0.08.0']) {
+      writeFileSync(remote, version + '\n');
+      const result = runBin(join(repo, 'bin/update-check'), ['--force'], { home,
+        gstackExtendDir: repo, gstackExtendStateDir: state,
+        extraEnv: { GSTACK_EXTEND_REMOTE_URL: `file://${remote}` } });
+      expect([version, result.exitCode, result.stdout, result.stderr]).toEqual([version, 0, '', '']);
+    }
   }, 20000);
 });

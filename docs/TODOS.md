@@ -50,6 +50,71 @@
 - **Priority:** P2
 - **Revisit when:** The next real `/autoplan-lean` run, or before an external caller relies on the `CHANGED_LINES` guard or the task-reference check.
 
+### [plan-ceo-review] Name the stable compatibility surfaces and experimental exclusions (O5.1)
+
+- **Description:** SPEC O5.1 requires naming the stable compatibility surfaces and experimental exclusions and documenting support and recovery. The only list today is the "Stable surfaces" category bullet in SPEC's Release policy. Track 28A cites stage-runs schema v2 against that bullet as one example but builds no catalog.
+- **Why:** This is a required O5.1 acceptance obligation for 1.0. Under SPEC's Deferral policy it remains pending until demonstrated, so it must not read as an optional inbox item.
+- **Effort:** M
+- **Priority:** P1
+- **Depends on:** Track 28A (verified release transition)
+- **Context:** Deferred by the Track 28A planning review on 2026-10-23 under HOLD SCOPE. No Current Plan Track owns it; schedule it in the Current Plan ahead of Group 30.
+- **Revisit when:** The next `/roadmap` run.
+
+### [plan-ceo-review] Upgrade a real legacy install from the first published three-part release
+
+- **Description:** After the first three-part release merges and is tagged, upgrade a real four-part install from that published tag through the default remote URL, not a `file://` candidate. Record the result beside `docs/acceptance/release-compatibility.md`.
+- **Why:** Track 28A proves the transition against a local candidate. SPEC O5.2's evidence is complete only with a real published release, and later acceptance must not count candidate runs as that evidence.
+- **Effort:** S
+- **Priority:** P1
+- **Depends on:** The first three-part release
+- **Context:** Deferred by the Track 28A planning review on 2026-10-23: the Track itself ships under the four-part format and publishes no three-part release.
+- **Revisit when:** The first three-part release merges.
+
+### [plan-ceo-review] Make upgrade detection and installation resolve to one tagged release
+
+- **Description:** `bin/update-check` reads `main`'s VERSION and `bin/update-run` pulls `main`, while `auto-tag.yml` tags asynchronously and docs-only commits such as `f02bc51` carry no tag. An install can receive an untagged commit, or a newer commit than the version it was offered.
+- **Why:** Installing "stable releases" means installing the advertised release. Main-tracking installs prove version compatibility, not release identity.
+- **Effort:** M
+- **Priority:** P2
+- **Context:** Raised by the outside voice in the Track 28A planning review on 2026-10-23. Not a three-part regression. Candidate approaches: install from the latest release tag, or check out the commit the offered VERSION came from.
+- **Revisit when:** Tracks 30B/30C qualify install and upgrade recovery, or before the 1.0 release, whichever comes first.
+
+### [plan-eng-review] Give failed install migrations a recovery path
+
+- **Description:** `bin/lib/run-migrations.sh` reports a failed migration only as `MIGRATION_WARN <script> exit=<n>` while `bin/update-run` still prints `UPGRADE_OK`. A `bad-version` helper exit also clears `migrations-hop-from`, despite the script's own comment that contract failures must leave it, so in-window migrations can be lost.
+- **Why:** SPEC O1.2 needs a working recovery path after an upgrade. An agent that sees `MIGRATION_WARN` gets no fix, recovery class or retry bound.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Raised by both developer-experience voices in the Track 28A planning review on 2026-10-23. Outside the format transition; reachable only with a malformed VERSION on `main`. No production `migrations/v*.sh` exists yet.
+- **Revisit when:** The first production `migrations/v*.sh` is added, or Tracks 30B/30C exercise upgrade recovery.
+
+### [review] Reject leading-zero versions in the remaining version readers
+
+- **Description:** Track 28A tightened only `bin/update-check`'s remote check and auto-tag. `bin/lib/semver.sh` still compares components with Bash arithmetic, so a leading-zero migration name such as `v0.10.08.sh` raises an octal error and is treated as out of window. `bin/lib/run-migrations.sh`'s name and hop-from checks and the manual remote check in `skills/gstack-extend-upgrade.md` still accept leading zeros, and that skill compares spellings rather than padded versions.
+- **Why:** A malformed name would silently skip or misorder an install-state migration. Reach is low: no production migration exists, auto-tag and the release guard reject a leading-zero VERSION, and Track 28A kept the upgrade skill unchanged (d29).
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Raised by the adversarial and red-team passes of Track 28A's `/review-and-prep` on 2026-10-24.
+- **Revisit when:** The first production `migrations/v*.sh` is added, or the upgrade skill's version check is next edited.
+
+### [review] Check new migration names against their release's version window
+
+- **Description:** `bin/lib/run-migrations.sh` runs only scripts named in (OLD, NEW]. Release versions are chosen at release time above every fetched tag, so a migration written as `v0.47.0.sh` that ships in `0.48.0` never runs on installs already at 0.47.x, and nothing warns. The release-manifest guards do not compare added migration names with (base VERSION, VERSION].
+- **Why:** A silently skipped install-state migration is a hard-to-diagnose upgrade defect once production migrations exist.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Raised by the red-team pass of Track 28A's `/review-and-prep` on 2026-10-24. No production migration exists yet.
+- **Revisit when:** The first production `migrations/v*.sh` is added.
+
+### [review] Check the cutover release notes for the required disclosure
+
+- **Description:** The release-manifest guards force the first three-part release to be the next unused MINOR, but nothing checks that its CHANGELOG section discloses the format switch and padded equality and links `docs/installation.md#version-numbers`, as CLAUDE.md's cutover procedure requires.
+- **Why:** The disclosure is the migration guidance SPEC requires for that MINOR. Today only the release owner's review of the notes enforces it.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Raised by the adversarial pass of Track 28A's `/review-and-prep` on 2026-10-24, after the cutover MINOR guard was added.
+- **Revisit when:** Preparing the first three-part (cutover) release.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
