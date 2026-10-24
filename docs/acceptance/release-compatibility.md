@@ -190,7 +190,8 @@ only the separately reproduced harness assumptions above remained.
 
 The source roadmap checks report `DRIFT: pass` and `PACKING: pass`. Audit exit
 0 is advisory: `SIZE: fail` remains the explicitly approved d33 exception,
-20 files against the 16-file cap, for the single PR. Record it in the PR body.
+21 files against the 16-file cap, for the single PR (the 21st, the shared
+fixture helper's GIT_* fix, was approved during review). Record it in the PR body.
 No cap was weakened. The group collision ordering was aligned with accepted
 28A-before-27A scheduling; whichever lands second rebases shared files.
 
