@@ -45,11 +45,13 @@ tags with padded numeric equality, rejects any local padded-equal tag unless it
 is exactly `v<VERSION>` merged into HEAD, requires a changed VERSION to exceed
 the base VERSION, keeps four parts while the merge base lacks this marker,
 forbids returning to four parts after a three-part top tag, and makes the first
-three-part release the next unused MINOR with PATCH 0. To amend the marker,
-change it here and the suite's `FORMAT_MARKER` together; any base line starting
-`Release format: MAJOR.MINOR.PATCH` keeps three parts required. Its policy base is `git merge-base HEAD origin/main`
-(`origin/master` fallback), never local main or `TOUCHFILES_BASE`. Fetch full
-history and tags if the suite reports missing inputs. Plain `/ship` runs its tests
+three-part release the next MINOR above every fetched tag, with PATCH 0. A
+release branch cut before the marker reached `origin/main` must merge it first.
+To amend the marker, change it here and the suite's `FORMAT_MARKER` together;
+any base line starting `Release format:` keeps three parts required. Its policy
+base is `git merge-base HEAD origin/main` (`origin/master` fallback), never local
+main or `TOUCHFILES_BASE`. Fetch full history and tags if the suite reports
+missing inputs. Plain `/ship` runs its tests
 before writing the version, so after a `/ship` release commit run
 `TOUCHFILES_BASE=<pre-bump head> bun run test` before pushing.
 

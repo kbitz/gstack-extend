@@ -42,12 +42,14 @@ ERE tests reject leading zeros; extraction tests distinguish adjacent sections.
 The release-manifest suite rejects older releases, a changed VERSION that does
 not exceed an untagged base VERSION, padded-equal spelling collisions,
 unmerged exact-tag collisions, missing history/tags/remote base, width
-regression, a three-part release cut from a base without the marker, and a first
-three-part release that is not the next unused MINOR with PATCH 0. Its fixtures
-include a historical three-part tag below the legacy top, as this repository's
-history does. The exact instruction marker only activates from the
-remote merge base, with `origin/master` fallback; `TOUCHFILES_BASE`, HEAD-only
-policy and stale local main cannot activate it. auto-tag has syntax checks,
+regression, a three-part release cut from a base without the marker, a release
+branch cut before the marker reached `origin/main`, and a first three-part
+release that is not the next MINOR above every fetched tag with PATCH 0. Its
+fixtures include a historical three-part tag below the legacy top, as this
+repository's history does. Base policy activates only from the remote merge
+base (`origin/master` fallback), on any `Release format:` line or a CLAUDE.md
+that is not a regular blob; HEAD's marker must be exact. `TOUCHFILES_BASE`,
+HEAD-only policy and stale local main cannot activate it. auto-tag has syntax checks,
 not an ordering gate. These are local fixture checks, not GitHub Actions proof.
 
 ## Operator-isolated legacy upgrade
