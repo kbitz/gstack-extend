@@ -21,11 +21,11 @@
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
+import { GIT_ENV, makeBaseTmp, makeEmptyRepo } from './helpers/fixture-repo.ts';
 
 const ROOT = join(import.meta.dir, '..');
 // ASCII whitespace only, as auto-tag's `tr -d '[:space:]'` strips; a BOM or NBSP must fail the format check.
@@ -60,9 +60,6 @@ const MARKER_PREFIX = 'Release format:';
 const FORMAT_MARKER = `${MARKER_PREFIX} MAJOR.MINOR.PATCH (three-part; no suffixes).`;
 const RELEASE_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$/;
 const GUIDE = 'See CLAUDE.md#versioning.';
-// Inherited GIT_DIR/GIT_WORK_TREE (as in git hooks) would aim fixture commands at another repository.
-const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
-  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 function gitAt(cwd: string, args: string[]): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
@@ -123,11 +120,10 @@ function releaseViolations(cwd: string, version: string): string[] {
       fail('RELEASE_PADDED_EQUAL_TAG', `VERSION=${version} collides with ${tag} (merged=${merged.includes(tag)})`, 'choose an unused higher version; keep existing tags intact');
     }
   }
-  if (releases[0]?.slice(1).split('.').length === 3 && version.split('.').length !== 3) {
-    fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} follows three-part top tag ${releases[0]}`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
-  }
+  const top = highest(releases.map(tag => tag.slice(1)));
+  // Full ref names: a tag or branch called origin/main must not stand in for the remote base.
   let base: string | undefined, baseRef = '';
-  for (const ref of ['origin/main', 'origin/master']) {
+  for (const ref of ['refs/remotes/origin/main', 'refs/remotes/origin/master']) {
     const result = spawnSync('git', ['merge-base', 'HEAD', ref], { cwd, encoding: 'utf8', env: GIT_ENV });
     if (result.status === 0) { base = result.stdout.trim(); baseRef = ref; break; }
   }
@@ -141,16 +137,28 @@ function releaseViolations(cwd: string, version: string): string[] {
   if (RELEASE_RE.test(baseVersion) && version !== baseVersion && compareRelease(version, baseVersion) <= 0) {
     fail('RELEASE_VERSION_BASE_ORDER', `VERSION=${version} changes base VERSION=${baseVersion} without exceeding it`, 'choose a version above the base VERSION even when its tag is missing');
   }
+  // Only pre-four-part tags below a four-part base VERSION means the four-part tags were never fetched.
+  if (RELEASE_RE.test(baseVersion) && baseVersion.split('.').length === 4 && top.split('.').length === 3
+    && compareRelease(top, baseVersion) < 0) {
+    fail('RELEASE_TAGS_INCOMPLETE', `merged release tags stop at v${top}, below base VERSION=${baseVersion}`, 'run git fetch --tags origin');
+    return errors;
+  }
+  if (top.split('.').length === 3 && version.split('.').length !== 3) {
+    fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} follows three-part top tag v${top}`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
+  }
   if (version === baseVersion) return errors;
   // The merge base's policy sets a changed VERSION's width; a release branch cut before the marker
   // reached the remote must merge it first rather than follow the older policy's advice.
   const active = policyActive(cwd, base);
   if (!active && policyActive(cwd, baseRef)) {
-    fail('RELEASE_BASE_STALE', `VERSION=${version} is cut from base ${base.slice(0, 12)}, before ${baseRef} gained the release marker`, `merge ${baseRef} and rerun`);
+    const remote = baseRef.replace('refs/remotes/', '');
+    fail('RELEASE_BASE_STALE', `VERSION=${version} is cut from base ${base.slice(0, 12)}, before ${remote} gained the release marker`, `merge ${remote} and rerun`);
     return errors;
   }
-  const top = highest(releases.map(tag => tag.slice(1)));
-  const legacy = top.split('.').length === 4 && baseVersion.split('.').length !== 3;
+  // A merged three-part tag at or above the base VERSION means the cutover already happened; otherwise
+  // the base VERSION's width sets the era, and tags decide only when the base has no valid VERSION.
+  const cutDone = top.split('.').length === 3 && (!RELEASE_RE.test(baseVersion) || compareRelease(top, baseVersion) >= 0);
+  const legacy = !cutDone && (RELEASE_RE.test(baseVersion) ? baseVersion : top).split('.').length === 4;
   const parts = version.split('.');
   if (!active && legacy && parts.length === 3) {
     fail('RELEASE_FORMAT_LEGACY', `VERSION=${version} is three-part, but base ${base.slice(0, 12)} has no release marker`, 'keep MAJOR.MINOR.PATCH.MICRO until a release cut from a base containing the marker');
@@ -161,7 +169,9 @@ function releaseViolations(cwd: string, version: string): string[] {
     // fetched tag, merged or not, with PATCH 0 (CLAUDE.md's cutover procedure).
     const prior = highest([baseVersion, ...all.filter(valid).map(tag => tag.slice(1))].filter(v => RELEASE_RE.test(v)));
     const [priorMajor, priorMinor] = prior.split('.').map(Number);
-    if (version !== `${priorMajor}.${priorMinor + 1}.0`) {
+    if (priorMajor !== 0) {
+      fail('RELEASE_CUTOVER_MINOR', `the cutover must stay in 0.x, but a fetched tag or the base VERSION is ${prior}`, 'inspect git tag --list for stray tags from other remotes');
+    } else if (version !== `${priorMajor}.${priorMinor + 1}.0`) {
       fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}`, `use the next unused MINOR with PATCH 0, ${priorMajor}.${priorMinor + 1}.0, and disclose the switch`);
     }
   }
@@ -179,10 +189,7 @@ test('the release marker is exact and unique in working instructions and a regul
 const releaseTmp = makeBaseTmp('release-compatibility-');
 afterAll(() => rmSync(releaseTmp, { recursive: true, force: true }));
 function policyRepo(markerOnBase: boolean | string = false): string {
-  const repo = mkdtempSync(join(releaseTmp, 'repo-'));
-  gitAt(repo, ['init', '-q', '--initial-branch=main']);
-  gitAt(repo, ['config', 'user.email', 't@t.com']); gitAt(repo, ['config', 'user.name', 'T']);
-  gitAt(repo, ['commit', '-q', '--allow-empty', '-m', 'init']);
+  const repo = makeEmptyRepo(releaseTmp);
   gitAt(repo, ['tag', 'v0.18.3']); // pre-four-part history below the legacy top, as in this repository
   writeFileSync(join(repo, 'VERSION'), '0.46.0.0\n');
   writeFileSync(join(repo, 'CLAUDE.md'), markerOnBase === true ? FORMAT_MARKER + '\n' : `${markerOnBase || '# Legacy policy'}\n`);
@@ -283,17 +290,39 @@ describe('release guard controls in isolated repositories', () => {
     gitAt(repo, ['tag', 'v0.47.0']);
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
   }, 20000);
-  test('the cutover goes above every fetched tag, including tags outside HEAD', () => {
+  test('the cutover goes above every fetched tag, including tags outside HEAD, and stays in 0.x', () => {
+    const repo = policyRepo(true);
+    const outside = gitAt(repo, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'outside history']);
     for (const stray of ['v0.47.0.0', 'v0.47.1', 'v0.47.0.1']) {
-      const repo = policyRepo(true);
-      gitAt(repo, ['checkout', '-qb', 'other']);
-      gitAt(repo, ['commit', '--allow-empty', '-qm', 'outside history']);
-      gitAt(repo, ['tag', stray]);
-      gitAt(repo, ['checkout', '-q', 'main']);
+      gitAt(repo, ['tag', stray, outside]);
       expect([stray, releaseViolations(repo, '0.47.0').join('\n')]).toEqual([stray, expect.stringContaining('use the next unused MINOR with PATCH 0, 0.48.0')]);
       expect([stray, releaseViolations(repo, '0.48.0')]).toEqual([stray, []]);
+      gitAt(repo, ['tag', '-d', stray]);
+    }
+    gitAt(repo, ['tag', 'v1.91.185.0', outside]);
+    for (const version of ['0.47.0', '1.92.0']) {
+      expect(releaseViolations(repo, version).join('\n')).toContain('the cutover must stay in 0.x');
     }
   }, 30000);
+  test('only pre-four-part tags below a four-part base VERSION report incomplete tags', () => {
+    for (const marker of [false, true]) {
+      const repo = policyRepo(marker);
+      gitAt(repo, ['tag', '-d', 'v0.46.0.0']);
+      for (const version of ['0.46.0.0', '0.46.1', '0.47.0', '0.47.0.0']) {
+        expect([marker, version, releaseViolations(repo, version).join('\n')])
+          .toEqual([marker, version, expect.stringContaining('RELEASE_TAGS_INCOMPLETE')]);
+      }
+    }
+  }, 30000);
+  test('a tag named origin/main cannot stand in for the remote base', () => {
+    const repo = policyRepo();
+    gitAt(repo, ['tag', 'origin/main', 'HEAD~1']);
+    writeFileSync(join(repo, 'CLAUDE.md'), FORMAT_MARKER + '\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'marker lands']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
+    expect(releaseViolations(repo, '0.47.0')).toEqual([]);
+  }, 20000);
   test('a release branch cut before the marker reached origin/main must merge it first', () => {
     const repo = policyRepo();
     gitAt(repo, ['checkout', '-qb', 'release']);
@@ -323,11 +352,11 @@ describe('release guard controls in isolated repositories', () => {
   }, 20000);
   test('shared fixture repos ignore a GIT_DIR inherited at startup, as under a git hook', () => {
     const outer = makeEmptyRepo(releaseTmp);
-    const child = spawnSync('bun', ['--no-env-file', '--config=/dev/null', '--no-install', '-e',
+    const child = spawnSync(process.execPath, ['--no-env-file', '--config=/dev/null', '--no-install', '-e',
       'const { makeEmptyRepo } = await import(process.argv[1]); console.log(makeEmptyRepo(process.argv[2]));',
       join(import.meta.dir, 'helpers/fixture-repo.ts'), releaseTmp],
       { encoding: 'utf8', env: { ...process.env, GIT_DIR: join(outer, '.git') } });
-    expect([child.status, child.stderr]).toEqual([0, '']);
+    if (child.status !== 0) throw new Error(`fixture child exited ${child.status}: ${child.stderr}`);
     const fixture = child.stdout.trim();
     expect(gitAt(outer, ['rev-list', '--count', 'HEAD'])).toBe('1');
     expect(existsSync(join(fixture, '.git'))).toBe(true);
