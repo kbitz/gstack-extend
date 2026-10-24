@@ -1,4 +1,5 @@
 # No production migrations yet. Track 15B ships the runner + ledger only.
-# Add migrations/vMAJOR.MINOR.PATCH.MICRO.sh for one-shot install-state hops.
+# Add migrations/vMAJOR.MINOR.PATCH.sh for one-shot install-state hops.
+# Legacy four-part names remain supported.
 # Scripts must be idempotent. They receive INSTALL_DIR, STATE_DIR,
 # OLD_VERSION, and NEW_VERSION. Do not mutate the git checkout.

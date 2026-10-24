@@ -139,16 +139,21 @@ them follows the approved 2026-10-08 scheduling amendment; they remain unshipped
 
 ## Release policy
 
-- Current format: `MAJOR.MINOR.PATCH.MICRO`. It is not strict SemVer. Keep the
-  existing format until the compatibility transition is implemented and verified;
-  do not relabel historical versions or change VERSION during spec adoption.
-- Public-beta normally calls for strict SemVer. This project has explicit
-  transition debt: enable three-part `MAJOR.MINOR.PATCH` before public-release.
+- Current format: `MAJOR.MINOR.PATCH`, without prefixes or suffixes, from the
+  first release cut from a base containing the verified transition. The policy
+  transition itself ships under its base's four-part policy; do not relabel
+  historical versions or tags. Owner confirmation during shipping is required
+  before this amendment counts for releases.
+- Public-beta's three-part transition happens in 0.x so compatibility can be
+  qualified before 1.0. The first cutover is a 0.x MINOR with disclosure, padded
+  equality, unchanged consumer schemes and migration/recovery guidance. Candidate
+  qualification does not complete the required published-release upgrade proof.
   The release workflow selects the next available version from live state.
-- During 0.x: compatible additions use MINOR; fixes use PATCH; documentation-only
-  changes may use MICRO while the legacy format remains. Incompatible public
-  changes require an explicit 0.x MINOR release, disclosure and migration/recovery
-  guidance. Do not silently break an orchestrator consumer in a patch.
+- During 0.x: compatible additions use MINOR; fixes and released documentation
+  use PATCH after cutover. MICRO remains available only under the legacy base
+  policy for the transition's own release. Incompatible public changes require
+  an explicit 0.x MINOR release, disclosure and migration/recovery guidance.
+  Do not silently break an orchestrator consumer in a patch.
 - At 1.0 and later: breaking stable-interface changes use MAJOR, compatible
   additions MINOR, fixes PATCH. Documentation-only releases use PATCH when released.
 - Stable surfaces: documented CLI arguments/exit and JSON semantics, skill names

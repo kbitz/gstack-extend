@@ -76,7 +76,7 @@ VOICE_RE = re.compile(r"(?:[a-z][a-z0-9-]{0,63}|" + UUID_RE.pattern + r")")
 SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 HASH_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
-RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # four-part today; three-part after the SPEC transition
+RELEASE_RE = re.compile(r"[0-9]+(\.[0-9]+){2,3}")  # three-part releases and retained legacy four-part records
 CANDIDATE_KEYS = ("candidate_head", "candidate_tree", "candidate_base", "binding")
 # Why a read summary left something unknown (data.unknown_reasons; docs/telemetry.md#workflow-metrics-unknown).
 UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end",

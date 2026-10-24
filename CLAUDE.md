@@ -6,7 +6,51 @@ Extension skills for gstack.
 
 ## Versioning
 
-Current format: `MAJOR.MINOR.PATCH.MICRO`; the planned three-part transition and compatibility rules are in `docs/SPEC.md`. Until its tooling transition lands, retain the current format. Source of truth: `VERSION`. Release history and acceptance: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+Release format: MAJOR.MINOR.PATCH (three-part; no suffixes).
+
+This applies to gstack-extend's own VERSION from the first release cut from a
+base containing this policy. This policy change itself ships under its base's
+four-part policy. Keep legacy tags and records intact; consumer projects keep
+their own schemes and init defaults. Source: `VERSION`. Release history:
+`CHANGELOG.md`; acceptance: `docs/PROGRESS.md`; policy: `docs/SPEC.md`.
+
+The first three-part release is a **0.x MINOR**, whatever the change type. Its
+notes disclose the format switch, padded equality (`0.47.0 == 0.47.0.0`), unchanged
+consumer schemes, and migration/recovery guidance linked to
+`docs/installation.md#version-numbers`. Do not turn this Track into that release.
+The release owner confirms the SPEC policy amendment directly during shipping
+before this policy counts for subsequent releases.
+
+Cutover procedure (release stage only; choose X.Y.Z above every fetched tag):
+
+```sh
+git fetch --tags origin
+git tag --merged HEAD --sort=-v:refname
+# Inspect all tags too: an unmerged padded-equal tag is also a collision.
+git tag --list
+# Choose the next unused 0.x MINOR as X.Y.Z; replace the example before running.
+RELEASE_VERSION=X.Y.Z
+printf '%s\n' "$RELEASE_VERSION" > VERSION
+bun -e 'const p = await Bun.file("package.json").json(); p.version = process.argv[1]; await Bun.write("package.json", JSON.stringify(p, null, 2) + "\n");' "$RELEASE_VERSION"
+# Prepend ## [X.Y.Z] - YYYY-MM-DD to CHANGELOG.md with disclosure and migration notes.
+EVALS_ALL=1 bun run test
+# Run /ship: classify must return ALREADY_BUMPED; keep currentVersion.
+# After authorized merge and auto-tag completion:
+gh release view "v$RELEASE_VERSION"
+```
+
+The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the only
+release ordering gate; auto-tag validates syntax only. It compares merged release
+tags with padded numeric equality, rejects any local padded-equal tag unless it
+is exactly `v<VERSION>` merged into HEAD, and forbids returning to four parts
+after a three-part top tag. Its policy base is `git merge-base HEAD origin/main`
+(`origin/master` fallback), never local main or `TOUCHFILES_BASE`. Fetch full
+history and tags if the suite reports missing inputs.
+
+Upstream gstack `1.91.185.0` was qualified for `classify` (ALREADY_BUMPED across
+cutover; FRESH on a three-part base) and `gstack-next-version` (micro, patch,
+minor retain three parts). Repeat that isolated probe when installed gstack
+changes; see `docs/acceptance/release-compatibility.md`. No version is reserved.
 
 ## Product scope and releases
 

@@ -191,10 +191,19 @@ checks. Any other `package.json` change still runs everything.
 
 Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
 install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
-[`VERSION`](VERSION) is the version source of truth, using up to four segments:
-`MAJOR.MINOR.PATCH.MICRO`. The [release policy](docs/SPEC.md#release-policy)
-requires a verified three-part transition before 1.0; it has not happened yet. Release history is in [CHANGELOG.md](CHANGELOG.md);
-planned work is in [docs/ROADMAP.md](docs/ROADMAP.md).
+[`VERSION`](VERSION) is the version source of truth. Starting with the first
+release cut from a base containing this policy, gstack-extend uses SemVer core
+`MAJOR.MINOR.PATCH`, without prefixes or suffixes. The first cutover is a 0.x
+MINOR with disclosure and migration guidance; historical four-part tags and
+records stay intact. Consumer projects retain their own schemes and init defaults.
+See the [release policy](docs/SPEC.md#release-policy),
+[cutover procedure](CLAUDE.md#versioning), and
+[qualification evidence](docs/acceptance/release-compatibility.md).
+[Stage-runs schema v2](docs/telemetry.md#producer-version) is one example of the
+versioned provenance schemas in SPEC's [Stable surfaces](docs/SPEC.md#release-policy);
+the full O5.1 catalog remains a required pending obligation in [TODOs](docs/TODOS.md).
+Release history is in [CHANGELOG.md](CHANGELOG.md); planned work is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Acknowledgments
 
