@@ -13,11 +13,13 @@
  *
  * It is also the release ordering gate (CLAUDE.md#versioning): VERSION stays at
  * or above every merged release tag and above a changed base VERSION, never
- * padded-equals another tag, keeps four parts while the merge base has no
- * CLAUDE.md marker, keeps three parts after a three-part top tag or under the
- * marker (the first such release being the next unused MINOR with PATCH 0), and
- * HEAD's marker stays exact. Those checks read Git state no touchfile can
- * select: fetched tags, full history and origin/main (or origin/master).
+ * padded-equals another tag, exceeds the remote tip's VERSION, keeps four parts
+ * while the merge base has no CLAUDE.md marker, keeps three parts after a
+ * three-part top tag or under the marker (the first such release being the next
+ * unused 0.x MINOR with PATCH 0), and HEAD's marker stays exact. It reports
+ * incomplete or stray tags against a four-part base VERSION. Those checks read
+ * Git state no touchfile can select: fetched tags, full history and
+ * refs/remotes/origin/main (or refs/remotes/origin/master).
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -128,7 +130,7 @@ function releaseViolations(cwd: string, version: string): string[] {
     if (result.status === 0) { base = result.stdout.trim(); baseRef = ref; break; }
   }
   if (!base) {
-    fail('RELEASE_BASE_MISSING', `VERSION=${version} has no merge base with origin/main or origin/master`, 'fetch the target remote branch; local main and TOUCHFILES_BASE are not policy bases');
+    fail('RELEASE_BASE_MISSING', `VERSION=${version} has no merge base with refs/remotes/origin/main or refs/remotes/origin/master`, 'run git fetch origin; a same-named local tag or branch, local main and TOUCHFILES_BASE are not policy bases');
     return errors;
   }
   // Tags can lag the base (auto-tag delayed or failed), so a changed VERSION must also pass the base's own.
@@ -137,28 +139,36 @@ function releaseViolations(cwd: string, version: string): string[] {
   if (RELEASE_RE.test(baseVersion) && version !== baseVersion && compareRelease(version, baseVersion) <= 0) {
     fail('RELEASE_VERSION_BASE_ORDER', `VERSION=${version} changes base VERSION=${baseVersion} without exceeding it`, 'choose a version above the base VERSION even when its tag is missing');
   }
-  // Only pre-four-part tags below a four-part base VERSION means the four-part tags were never fetched.
-  if (RELEASE_RE.test(baseVersion) && baseVersion.split('.').length === 4 && top.split('.').length === 3
-    && compareRelease(top, baseVersion) < 0) {
-    fail('RELEASE_TAGS_INCOMPLETE', `merged release tags stop at v${top}, below base VERSION=${baseVersion}`, 'run git fetch --tags origin');
+  // Against a four-part base VERSION, a three-part top tag below it means the four-part tags were never
+  // fetched, and one at or above it is a local tag no release of this history carries.
+  if (RELEASE_RE.test(baseVersion) && baseVersion.split('.').length === 4 && top.split('.').length === 3) {
+    if (compareRelease(top, baseVersion) < 0) {
+      fail('RELEASE_TAGS_INCOMPLETE', `merged release tags stop at v${top}, below base VERSION=${baseVersion}`, 'run git fetch --tags origin');
+    } else {
+      fail('RELEASE_TAG_STRAY', `merged tag v${top} is three-part at or above four-part base VERSION=${baseVersion}`, 'inspect git tag --list and delete the stray local tag');
+    }
     return errors;
   }
   if (top.split('.').length === 3 && version.split('.').length !== 3) {
     fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} follows three-part top tag v${top}`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
   }
   if (version === baseVersion) return errors;
-  // The merge base's policy sets a changed VERSION's width; a release branch cut before the marker
-  // reached the remote must merge it first rather than follow the older policy's advice.
+  // A release branch behind the remote must merge it first: another workspace may have released there,
+  // or the marker may have landed, and the older base's advice would be wrong.
+  const remote = baseRef.replace('refs/remotes/', '');
+  const tipRead = spawnSync('git', ['show', `${baseRef}:VERSION`], { cwd, encoding: 'utf8', env: GIT_ENV });
+  const tipVersion = tipRead.status === 0 ? tipRead.stdout.trim() : '';
+  if (RELEASE_RE.test(tipVersion) && tipVersion !== baseVersion && compareRelease(version, tipVersion) <= 0) {
+    fail('RELEASE_BASE_STALE', `VERSION=${version} does not exceed ${remote}'s VERSION=${tipVersion}`, `merge ${remote} and choose a version above it`);
+    return errors;
+  }
   const active = policyActive(cwd, base);
   if (!active && policyActive(cwd, baseRef)) {
-    const remote = baseRef.replace('refs/remotes/', '');
     fail('RELEASE_BASE_STALE', `VERSION=${version} is cut from base ${base.slice(0, 12)}, before ${remote} gained the release marker`, `merge ${remote} and rerun`);
     return errors;
   }
-  // A merged three-part tag at or above the base VERSION means the cutover already happened; otherwise
-  // the base VERSION's width sets the era, and tags decide only when the base has no valid VERSION.
-  const cutDone = top.split('.').length === 3 && (!RELEASE_RE.test(baseVersion) || compareRelease(top, baseVersion) >= 0);
-  const legacy = !cutDone && (RELEASE_RE.test(baseVersion) ? baseVersion : top).split('.').length === 4;
+  // The base VERSION's width sets the era; tags decide only when the base has no valid VERSION.
+  const legacy = (RELEASE_RE.test(baseVersion) ? baseVersion : top).split('.').length === 4;
   const parts = version.split('.');
   if (!active && legacy && parts.length === 3) {
     fail('RELEASE_FORMAT_LEGACY', `VERSION=${version} is three-part, but base ${base.slice(0, 12)} has no release marker`, 'keep MAJOR.MINOR.PATCH.MICRO until a release cut from a base containing the marker');
@@ -169,10 +179,12 @@ function releaseViolations(cwd: string, version: string): string[] {
     // fetched tag, merged or not, with PATCH 0 (CLAUDE.md's cutover procedure).
     const prior = highest([baseVersion, ...all.filter(valid).map(tag => tag.slice(1))].filter(v => RELEASE_RE.test(v)));
     const [priorMajor, priorMinor] = prior.split('.').map(Number);
+    const source = prior === baseVersion ? 'the base VERSION'
+      : `tag v${prior}${releases.includes(`v${prior}`) ? '' : ' (not merged into HEAD; delete it if stray)'}`;
     if (priorMajor !== 0) {
-      fail('RELEASE_CUTOVER_MINOR', `the cutover must stay in 0.x, but a fetched tag or the base VERSION is ${prior}`, 'inspect git tag --list for stray tags from other remotes');
+      fail('RELEASE_CUTOVER_MINOR', `the cutover must stay in 0.x, but ${source} is ${prior}`, 'inspect git tag --list for stray tags from other remotes');
     } else if (version !== `${priorMajor}.${priorMinor + 1}.0`) {
-      fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}`, `use the next unused MINOR with PATCH 0, ${priorMajor}.${priorMinor + 1}.0, and disclose the switch`);
+      fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}, set by ${source}`, `use the next unused 0.x MINOR with PATCH 0, ${priorMajor}.${priorMinor + 1}.0, and disclose the switch`);
     }
   }
   return errors;
@@ -236,7 +248,10 @@ describe('release guard controls in isolated repositories', () => {
   }, 20000);
   test('three-part top tag prevents width regression', () => {
     const repo = policyRepo();
+    writeFileSync(join(repo, 'VERSION'), '0.47.0\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'release 0.47.0']);
     gitAt(repo, ['tag', 'v0.47.0']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
     expect(releaseViolations(repo, '0.48.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
     expect(releaseViolations(repo, '0.48.0')).toEqual([]);
   }, 20000);
@@ -273,7 +288,7 @@ describe('release guard controls in isolated repositories', () => {
     for (const version of ['0.47.0', '0.46.5']) {
       expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_VERSION_BASE_ORDER: VERSION=${version} changes base VERSION=0.47.0.0`);
     }
-    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('is the first three-part release after 0.47.0.0. Fix: use the next unused MINOR with PATCH 0, 0.48.0');
+    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('is the first three-part release after 0.47.0.0, set by the base VERSION. Fix: use the next unused 0.x MINOR with PATCH 0, 0.48.0');
     expect(releaseViolations(repo, '0.47.0.0')).toEqual([]);
     expect(releaseViolations(repo, '0.48.0')).toEqual([]);
   }, 20000);
@@ -289,13 +304,41 @@ describe('release guard controls in isolated repositories', () => {
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
     gitAt(repo, ['tag', 'v0.47.0']);
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
+    // After the cutover, auto-tag may lag one release behind a three-part base VERSION.
+    writeFileSync(join(repo, 'VERSION'), '0.47.1\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'untagged 0.47.1']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    expect(releaseViolations(repo, '0.47.1')).toEqual([]);
+    expect(releaseViolations(repo, '0.47.2')).toEqual([]);
+    expect(releaseViolations(repo, '0.47.2.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
+  }, 20000);
+  test('a three-part tag on local-only history cannot switch the era', () => {
+    for (const marker of [false, true]) {
+      const repo = policyRepo(marker);
+      gitAt(repo, ['tag', 'v0.48.5']);
+      for (const version of ['0.46.0.0', '0.48.5', '0.49.0']) {
+        expect([marker, version, releaseViolations(repo, version).map(e => e.split(':')[0]).at(-1)])
+          .toEqual([marker, version, 'RELEASE_TAG_STRAY']);
+      }
+    }
+  }, 30000);
+  test('a release behind the remote tip must merge it first', () => {
+    const repo = policyRepo(true);
+    gitAt(repo, ['checkout', '-qb', 'release']);
+    gitAt(repo, ['checkout', '-q', 'main']);
+    writeFileSync(join(repo, 'VERSION'), '0.47.0\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'cutover lands elsewhere']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    gitAt(repo, ['checkout', '-q', 'release']);
+    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain("RELEASE_BASE_STALE: VERSION=0.47.0 does not exceed origin/main's VERSION=0.47.0");
+    expect(releaseViolations(repo, '0.46.0.0')).toEqual([]);
   }, 20000);
   test('the cutover goes above every fetched tag, including tags outside HEAD, and stays in 0.x', () => {
     const repo = policyRepo(true);
     const outside = gitAt(repo, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'outside history']);
     for (const stray of ['v0.47.0.0', 'v0.47.1', 'v0.47.0.1']) {
       gitAt(repo, ['tag', stray, outside]);
-      expect([stray, releaseViolations(repo, '0.47.0').join('\n')]).toEqual([stray, expect.stringContaining('use the next unused MINOR with PATCH 0, 0.48.0')]);
+      expect([stray, releaseViolations(repo, '0.47.0').join('\n')]).toEqual([stray, expect.stringContaining('use the next unused 0.x MINOR with PATCH 0, 0.48.0')]);
       expect([stray, releaseViolations(repo, '0.48.0')]).toEqual([stray, []]);
       gitAt(repo, ['tag', '-d', stray]);
     }
@@ -309,8 +352,8 @@ describe('release guard controls in isolated repositories', () => {
       const repo = policyRepo(marker);
       gitAt(repo, ['tag', '-d', 'v0.46.0.0']);
       for (const version of ['0.46.0.0', '0.46.1', '0.47.0', '0.47.0.0']) {
-        expect([marker, version, releaseViolations(repo, version).join('\n')])
-          .toEqual([marker, version, expect.stringContaining('RELEASE_TAGS_INCOMPLETE')]);
+        expect([marker, version, releaseViolations(repo, version).map(e => e.split(':')[0])])
+          .toEqual([marker, version, ['RELEASE_TAGS_INCOMPLETE']]);
       }
     }
   }, 30000);
@@ -385,7 +428,7 @@ describe('auto-tag and release notes across formats', () => {
     expect(workflow).toContain('expected MAJOR.MINOR.PATCH');
     expect(workflow).toContain('gh release edit $TAG --notes-file');
     expect(workflow).not.toContain('"$NOTES_FILE" 2>/dev/null');
-  });
+  }, 20000);
   test('extractor returns exactly the three-part section and fails for missing notes', () => {
     const repo = policyRepo();
     writeFileSync(join(repo, 'CHANGELOG.md'), '# Changes\n\n## [0.47.0.1] - 2026-10-23\nWrong section\n\n## [0.47.0] - 2026-10-23\nCandidate notes\n\n## [0.46.0.0] - 2026-10-22\nOld notes\n');
