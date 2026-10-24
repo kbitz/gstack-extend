@@ -124,6 +124,15 @@
 - **Context:** Raised by Track 28A's `/review-and-prep` continuation on 2026-10-24; the user chose the backlog. No hook runs the suite today.
 - **Revisit when:** A git hook or wrapper starts running the test suite.
 
+### [review] Tighten the release gate's behind-the-remote advice before the cutover
+
+- **Description:** In `tests/release-manifest.test.ts`, the remote-tip check fires only when a changed VERSION is not above `origin/main`'s VERSION. A release branch behind the remote with a higher VERSION is judged by its stale merge base. It can be told to delete the published tag that set the cutover target, or to use the tip's own version. Make it fail `RELEASE_BASE_STALE` whenever VERSION changes and the tip's VERSION differs from the base's. Restore CLAUDE.md's "merge origin/main first" qualifier on the four-part rule, qualify the suite header's "exceeds the remote tip's VERSION", assert the cutover message's tag-source branches, and give the extended cutover fixture test a 30 s timeout.
+- **Why:** The guard fails closed or is blocked by VERSION/CHANGELOG merge conflicts, so no wrong release lands. But during the cutover window, the release owner can get advice that loops.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** From the third cycle of Track 28A's `/review-and-prep` continuation on 2026-10-24. The user applied the review-tail stop rule instead of starting a fourth review cycle.
+- **Revisit when:** Before preparing the first three-part (cutover) release.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
