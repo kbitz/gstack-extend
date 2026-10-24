@@ -56,7 +56,8 @@ describe('release and manifest checks', () => {
 
 // These guards are deliberately here: /ship-and-land and /docs-ship run this
 // suite before landing. auto-tag only checks syntax and does not enforce order.
-const FORMAT_MARKER = 'Release format: MAJOR.MINOR.PATCH (three-part; no suffixes).';
+const MARKER_PREFIX = 'Release format:';
+const FORMAT_MARKER = `${MARKER_PREFIX} MAJOR.MINOR.PATCH (three-part; no suffixes).`;
 const RELEASE_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$/;
 const GUIDE = 'See CLAUDE.md#versioning.';
 // Inherited GIT_DIR/GIT_WORK_TREE (as in git hooks) would aim fixture commands at another repository.
@@ -84,9 +85,17 @@ function markerViolations(cwd: string, ref: string): string[] {
   if (!entry.startsWith('100644 ') && !entry.startsWith('100755 ')) {
     return [`RELEASE_POLICY_FILE: ${ref}:CLAUDE.md is not a regular blob. Fix: restore a regular instruction file. ${GUIDE}`];
   }
-  const lines = gitAt(cwd, ['show', `${ref}:CLAUDE.md`]).split('\n').filter(line => line.startsWith('Release format:'));
+  const lines = gitAt(cwd, ['show', `${ref}:CLAUDE.md`]).split('\n').filter(line => line.startsWith(MARKER_PREFIX));
   return lines.length > 1 || lines.some(line => line !== FORMAT_MARKER)
     ? [`RELEASE_POLICY_MARKER: ${ref}:CLAUDE.md has a duplicated or altered release marker. Fix: use exactly '${FORMAT_MARKER}'. ${GUIDE}`] : [];
+}
+// Any marker line, or a CLAUDE.md that is not a regular blob, makes a ref's policy three-part: an
+// amended marker cannot silently switch the policy off. HEAD's marker is checked for exactness separately.
+function policyActive(cwd: string, ref: string): boolean {
+  const entry = gitAt(cwd, ['ls-tree', ref, '--', 'CLAUDE.md']);
+  if (!entry) return false;
+  if (!entry.startsWith('100644 ') && !entry.startsWith('100755 ')) return true;
+  return gitAt(cwd, ['show', `${ref}:CLAUDE.md`]).split('\n').some(line => line.startsWith(MARKER_PREFIX));
 }
 function releaseViolations(cwd: string, version: string): string[] {
   const errors: string[] = [];
@@ -117,10 +126,10 @@ function releaseViolations(cwd: string, version: string): string[] {
   if (releases[0]?.slice(1).split('.').length === 3 && version.split('.').length !== 3) {
     fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} follows three-part top tag ${releases[0]}`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
   }
-  let base: string | undefined;
+  let base: string | undefined, baseRef = '';
   for (const ref of ['origin/main', 'origin/master']) {
     const result = spawnSync('git', ['merge-base', 'HEAD', ref], { cwd, encoding: 'utf8', env: GIT_ENV });
-    if (result.status === 0) { base = result.stdout.trim(); break; }
+    if (result.status === 0) { base = result.stdout.trim(); baseRef = ref; break; }
   }
   if (!base) {
     fail('RELEASE_BASE_MISSING', `VERSION=${version} has no merge base with origin/main or origin/master`, 'fetch the target remote branch; local main and TOUCHFILES_BASE are not policy bases');
@@ -133,13 +142,13 @@ function releaseViolations(cwd: string, version: string): string[] {
     fail('RELEASE_VERSION_BASE_ORDER', `VERSION=${version} changes base VERSION=${baseVersion} without exceeding it`, 'choose a version above the base VERSION even when its tag is missing');
   }
   if (version === baseVersion) return errors;
-  // The base's policy sets a changed VERSION's width. HEAD's exact marker is checked separately, so
-  // amending the marker cannot block its own PR, and any base marker line (or a CLAUDE.md that is not
-  // a regular blob) keeps three parts required rather than silently switching the policy off.
-  const basePolicy = gitAt(cwd, ['ls-tree', base, '--', 'CLAUDE.md']);
-  const regular = basePolicy.startsWith('100644 ') || basePolicy.startsWith('100755 ');
-  const active = basePolicy !== '' && (!regular || gitAt(cwd, ['show', `${base}:CLAUDE.md`]).split('\n')
-    .some(line => line.startsWith('Release format: MAJOR.MINOR.PATCH')));
+  // The merge base's policy sets a changed VERSION's width; a release branch cut before the marker
+  // reached the remote must merge it first rather than follow the older policy's advice.
+  const active = policyActive(cwd, base);
+  if (!active && policyActive(cwd, baseRef)) {
+    fail('RELEASE_BASE_STALE', `VERSION=${version} is cut from base ${base.slice(0, 12)}, before ${baseRef} gained the release marker`, `merge ${baseRef} and rerun`);
+    return errors;
+  }
   const top = highest(releases.map(tag => tag.slice(1)));
   const legacy = top.split('.').length === 4 && baseVersion.split('.').length !== 3;
   const parts = version.split('.');
@@ -148,12 +157,12 @@ function releaseViolations(cwd: string, version: string): string[] {
   } else if (active && parts.length !== 3) {
     fail('RELEASE_FORMAT_THREE_PART', `VERSION=${version} differs from base VERSION=${baseVersion} whose policy requires three parts`, 'write MAJOR.MINOR.PATCH in VERSION, package.json and the CHANGELOG.md heading');
   } else if (active && legacy) {
-    // Cutover: the first three-part release is the next unused 0.x MINOR with PATCH 0.
-    const [priorMajor, priorMinor] = highest([baseVersion, top].filter(v => RELEASE_RE.test(v))).split('.').map(Number);
-    let next = priorMinor + 1;
-    while (all.some(tag => valid(tag) && compareRelease(tag.slice(1), `${priorMajor}.${next}.0`) === 0)) next++;
-    if (version !== `${priorMajor}.${next}.0`) {
-      fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${top}`, `use the next unused MINOR with PATCH 0, ${priorMajor}.${next}.0, and disclose the switch`);
+    // Cutover: the first three-part release is the next 0.x MINOR above the base VERSION and every
+    // fetched tag, merged or not, with PATCH 0 (CLAUDE.md's cutover procedure).
+    const prior = highest([baseVersion, ...all.filter(valid).map(tag => tag.slice(1))].filter(v => RELEASE_RE.test(v)));
+    const [priorMajor, priorMinor] = prior.split('.').map(Number);
+    if (version !== `${priorMajor}.${priorMinor + 1}.0`) {
+      fail('RELEASE_CUTOVER_MINOR', `VERSION=${version} is the first three-part release after ${prior}`, `use the next unused MINOR with PATCH 0, ${priorMajor}.${priorMinor + 1}.0, and disclose the switch`);
     }
   }
   return errors;
@@ -163,7 +172,7 @@ test('release ordering and base-policy guards', () => {
   expect(releaseViolations(ROOT, VERSION)).toEqual([]);
 });
 test('the release marker is exact and unique in working instructions and a regular HEAD blob', () => {
-  expect(readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8').split('\n').filter(line => line.startsWith('Release format:'))).toEqual([FORMAT_MARKER]);
+  expect(readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8').split('\n').filter(line => line.startsWith(MARKER_PREFIX))).toEqual([FORMAT_MARKER]);
   expect(markerViolations(ROOT, 'HEAD')).toEqual([]);
 });
 
@@ -257,6 +266,7 @@ describe('release guard controls in isolated repositories', () => {
     for (const version of ['0.47.0', '0.46.5']) {
       expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_VERSION_BASE_ORDER: VERSION=${version} changes base VERSION=0.47.0.0`);
     }
+    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('is the first three-part release after 0.47.0.0. Fix: use the next unused MINOR with PATCH 0, 0.48.0');
     expect(releaseViolations(repo, '0.47.0.0')).toEqual([]);
     expect(releaseViolations(repo, '0.48.0')).toEqual([]);
   }, 20000);
@@ -273,14 +283,29 @@ describe('release guard controls in isolated repositories', () => {
     gitAt(repo, ['tag', 'v0.47.0']);
     expect(releaseViolations(repo, '0.47.1')).toEqual([]);
   }, 20000);
-  test('the cutover skips a MINOR whose padded-equal tag exists outside HEAD', () => {
-    const repo = policyRepo(true);
-    gitAt(repo, ['checkout', '-qb', 'other']);
-    gitAt(repo, ['commit', '--allow-empty', '-qm', 'outside history']);
-    gitAt(repo, ['tag', 'v0.47.0.0']);
+  test('the cutover goes above every fetched tag, including tags outside HEAD', () => {
+    for (const stray of ['v0.47.0.0', 'v0.47.1', 'v0.47.0.1']) {
+      const repo = policyRepo(true);
+      gitAt(repo, ['checkout', '-qb', 'other']);
+      gitAt(repo, ['commit', '--allow-empty', '-qm', 'outside history']);
+      gitAt(repo, ['tag', stray]);
+      gitAt(repo, ['checkout', '-q', 'main']);
+      expect([stray, releaseViolations(repo, '0.47.0').join('\n')]).toEqual([stray, expect.stringContaining('use the next unused MINOR with PATCH 0, 0.48.0')]);
+      expect([stray, releaseViolations(repo, '0.48.0')]).toEqual([stray, []]);
+    }
+  }, 30000);
+  test('a release branch cut before the marker reached origin/main must merge it first', () => {
+    const repo = policyRepo();
+    gitAt(repo, ['checkout', '-qb', 'release']);
     gitAt(repo, ['checkout', '-q', 'main']);
-    expect(releaseViolations(repo, '0.47.0').join('\n')).toContain('use the next unused MINOR with PATCH 0, 0.48.0');
-    expect(releaseViolations(repo, '0.48.0')).toEqual([]);
+    writeFileSync(join(repo, 'CLAUDE.md'), FORMAT_MARKER + '\n');
+    gitAt(repo, ['add', '.']); gitAt(repo, ['commit', '-qm', 'marker lands']);
+    gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+    gitAt(repo, ['checkout', '-q', 'release']);
+    for (const version of ['0.46.1.0', '0.47.0']) {
+      expect(releaseViolations(repo, version).join('\n')).toContain(`RELEASE_BASE_STALE: VERSION=${version}`);
+    }
+    expect(releaseViolations(repo, '0.46.0.0')).toEqual([]);
   }, 20000);
   test('an amended or non-regular base marker keeps three parts required without failing the PR', () => {
     for (const setup of ['amended', 'symlink'] as const) {
@@ -292,6 +317,7 @@ describe('release guard controls in isolated repositories', () => {
         gitAt(repo, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
       }
       expect([setup, releaseViolations(repo, '0.46.0.0')]).toEqual([setup, []]);
+      expect([setup, releaseViolations(repo, '0.47.0')]).toEqual([setup, []]);
       expect(releaseViolations(repo, '0.47.0.0').join('\n')).toContain('RELEASE_FORMAT_THREE_PART');
     }
   }, 20000);
