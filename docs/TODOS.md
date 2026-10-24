@@ -106,6 +106,15 @@
 - **Context:** Raised by the red-team pass of Track 28A's `/review-and-prep` on 2026-10-24. No production migration exists yet.
 - **Revisit when:** The first production `migrations/v*.sh` is added.
 
+### [review] Check the cutover release notes for the required disclosure
+
+- **Description:** The release-manifest guards force the first three-part release to be the next unused MINOR, but nothing checks that its CHANGELOG section discloses the format switch and padded equality and links `docs/installation.md#version-numbers`, as CLAUDE.md's cutover procedure requires.
+- **Why:** The disclosure is the migration guidance SPEC requires for that MINOR. Today only the release owner's review of the notes enforces it.
+- **Effort:** S
+- **Priority:** P2
+- **Context:** Raised by the adversarial pass of Track 28A's `/review-and-prep` on 2026-10-24, after the cutover MINOR guard was added.
+- **Revisit when:** Preparing the first three-part (cutover) release.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

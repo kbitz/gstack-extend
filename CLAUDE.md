@@ -43,8 +43,11 @@ The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the onl
 release ordering gate; auto-tag validates syntax only. It compares merged release
 tags with padded numeric equality, rejects any local padded-equal tag unless it
 is exactly `v<VERSION>` merged into HEAD, requires a changed VERSION to exceed
-the base VERSION, forbids returning to four parts after a three-part top tag,
-and makes the first three-part release the next MINOR with PATCH 0. Its policy base is `git merge-base HEAD origin/main`
+the base VERSION, keeps four parts while the merge base lacks this marker,
+forbids returning to four parts after a three-part top tag, and makes the first
+three-part release the next unused MINOR with PATCH 0. To amend the marker,
+change it here and the suite's `FORMAT_MARKER` together; any base line starting
+`Release format: MAJOR.MINOR.PATCH` keeps three parts required. Its policy base is `git merge-base HEAD origin/main`
 (`origin/master` fallback), never local main or `TOUCHFILES_BASE`. Fetch full
 history and tags if the suite reports missing inputs. Plain `/ship` runs its tests
 before writing the version, so after a `/ship` release commit run
