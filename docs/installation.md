@@ -173,16 +173,21 @@ that actual tag; do this in the installation checkout, never a project worktree:
 git fetch --tags origin
 git status --short
 # Stop and preserve any local changes before continuing.
+./bin/config set update_check false
 git checkout --detach v0.46.0.0
 ./setup --host auto --quiet
 ```
 
+Pause update checks first: the restored checker still offers the newer release,
+and accepting it (or `auto_upgrade=true`) makes `bin/update-run` fast-forward the
+detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
 This leaves detached HEAD. It restores skill files, but does not undo install
 migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
 emitted schema (including stage-runs v2). Inspect warnings and preserve user-owned
-files. To resume upgrades, return to the install's main branch and rerun its
-updater: `git checkout main`, then `./bin/update-run "$PWD"`. If setup failed,
-follow the reported setup recovery before relying on refreshed skills.
+files. To resume upgrades, return to the install's main branch, re-enable checks
+and rerun its updater: `git checkout main`, `./bin/config set update_check true`,
+then `./bin/update-run "$PWD"`. If setup failed, follow the reported setup
+recovery before relying on refreshed skills.
 
 ### Preserved installs
 

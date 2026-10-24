@@ -88,6 +88,24 @@
 - **Context:** Raised by both developer-experience voices in the Track 28A planning review on 2026-10-23. Outside the format transition; reachable only with a malformed VERSION on `main`. No production `migrations/v*.sh` exists yet.
 - **Revisit when:** The first production `migrations/v*.sh` is added, or Tracks 30B/30C exercise upgrade recovery.
 
+### [review] Reject leading-zero versions in the remaining version readers
+
+- **Description:** Track 28A tightened only `bin/update-check`'s remote check and auto-tag. `bin/lib/semver.sh` still compares components with Bash arithmetic, so a leading-zero migration name such as `v0.10.08.sh` raises an octal error and is treated as out of window. `bin/lib/run-migrations.sh`'s name and hop-from checks and the manual remote check in `skills/gstack-extend-upgrade.md` still accept leading zeros, and that skill compares spellings rather than padded versions.
+- **Why:** A malformed name would silently skip or misorder an install-state migration. Reach is low: no production migration exists, auto-tag and the release guard reject a leading-zero VERSION, and Track 28A kept the upgrade skill unchanged (d29).
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Raised by the adversarial and red-team passes of Track 28A's `/review-and-prep` on 2026-10-24.
+- **Revisit when:** The first production `migrations/v*.sh` is added, or the upgrade skill's version check is next edited.
+
+### [review] Check new migration names against their release's version window
+
+- **Description:** `bin/lib/run-migrations.sh` runs only scripts named in (OLD, NEW]. Release versions are chosen at release time above every fetched tag, so a migration written as `v0.47.0.sh` that ships in `0.48.0` never runs on installs already at 0.47.x, and nothing warns. The release-manifest guards do not compare added migration names with (base VERSION, VERSION].
+- **Why:** A silently skipped install-state migration is a hard-to-diagnose upgrade defect once production migrations exist.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Raised by the red-team pass of Track 28A's `/review-and-prep` on 2026-10-24. No production migration exists yet.
+- **Revisit when:** The first production `migrations/v*.sh` is added.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack

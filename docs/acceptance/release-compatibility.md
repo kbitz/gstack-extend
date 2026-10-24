@@ -1,7 +1,8 @@
 # Release compatibility qualification
 
 Track 28A, qualification on 2026-10-23–24. Source revision: `42eacc7b3426643f80f8ca89b9acee52bc22c91b`
-plus this Track's uncommitted implementation. This record covers a local
+plus this Track's implementation, later committed as
+`0691d5c79d531fd3e0af2e72c9714f0165c64aab`. This record covers a local
 candidate, not a published three-part release or installed two-host acceptance.
 No VERSION, package version or CHANGELOG release entry is assigned by this Track.
 Runtime: local macOS 27.0.1, Bun 1.3.10, Git 2.54.0 (Apple Git-157).
@@ -38,9 +39,11 @@ Audit pins exact tag spelling, while ordering guards use padded comparison.
 Real Git version-sort tests cover mixed historical and new-width tags. Workflow
 ERE tests reject leading zeros; extraction tests distinguish adjacent sections.
 
-The release-manifest suite rejects older releases, padded-equal spelling
-collisions, unmerged exact-tag collisions, missing history/tags/remote base,
-and width regression. The exact instruction marker only activates from the
+The release-manifest suite rejects older releases, a changed VERSION that does
+not exceed an untagged base VERSION, padded-equal spelling collisions,
+unmerged exact-tag collisions, missing history/tags/remote base, width
+regression, and a first three-part release that is not the next MINOR with
+PATCH 0. The exact instruction marker only activates from the
 remote merge base, with `origin/master` fallback; `TOUCHFILES_BASE`, HEAD-only
 policy and stale local main cannot activate it. auto-tag has syntax checks,
 not an ordering gate. These are local fixture checks, not GitHub Actions proof.
@@ -157,8 +160,12 @@ the clean three-case four-part rerun supplies that bounded confirmation.
 
 Fourteen functional/policy/test inputs in the clone were byte-compared with
 the source and matched, including the checker, workflow, release guards,
-reader tests and dependency map. Later source edits only complete evidence,
-wrap comments and align roadmap collision metadata. The source's VERSION,
+reader tests and dependency map. The patch applied to the clone matches commit
+`0691d5c` for the checker, workflow, extractor, pregate map and every test
+file; it differs only in documentation and comments. Review fixes after that
+commit tightened tests and release guards and edited documentation; they left
+`bin/update-check`, `auto-tag.yml` and the extractor logic unchanged, and the
+PR head's own full suite covers them. The source's VERSION,
 package.json and CHANGELOG.md remain identical to its base, and all real tag
 refs still match the before-probe snapshot.
 

@@ -17,7 +17,7 @@ their own schemes and init defaults. Source: `VERSION`. Release history:
 The first three-part release is a **0.x MINOR**, whatever the change type. Its
 notes disclose the format switch, padded equality (`0.47.0 == 0.47.0.0`), unchanged
 consumer schemes, and migration/recovery guidance linked to
-`docs/installation.md#version-numbers`. Do not turn this Track into that release.
+`docs/installation.md#version-numbers`. Track 28A, which added this policy, is not that release.
 The release owner confirms the SPEC policy amendment directly during shipping
 before this policy counts for subsequent releases.
 
@@ -42,10 +42,13 @@ gh release view "v$RELEASE_VERSION"
 The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the only
 release ordering gate; auto-tag validates syntax only. It compares merged release
 tags with padded numeric equality, rejects any local padded-equal tag unless it
-is exactly `v<VERSION>` merged into HEAD, and forbids returning to four parts
-after a three-part top tag. Its policy base is `git merge-base HEAD origin/main`
+is exactly `v<VERSION>` merged into HEAD, requires a changed VERSION to exceed
+the base VERSION, forbids returning to four parts after a three-part top tag,
+and makes the first three-part release the next MINOR with PATCH 0. Its policy base is `git merge-base HEAD origin/main`
 (`origin/master` fallback), never local main or `TOUCHFILES_BASE`. Fetch full
-history and tags if the suite reports missing inputs.
+history and tags if the suite reports missing inputs. Plain `/ship` runs its tests
+before writing the version, so after a `/ship` release commit run
+`TOUCHFILES_BASE=<pre-bump head> bun run test` before pushing.
 
 Upstream gstack `1.91.185.0` was qualified for `classify` (ALREADY_BUMPED across
 cutover; FRESH on a three-part base) and `gstack-next-version` (micro, patch,
