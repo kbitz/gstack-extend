@@ -1306,6 +1306,8 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(stopped.outcome).toBe(HOLD);
     expect(stopped.mismatches.map((m) => m.binding)).toEqual(['stopped']);
     expect(FIX.cases['B-STOPPED-NONE-RECORDED'].live?.markers.at(-1).body).toContain('Unresolved: none recorded');
+    // Receipt prose is deliberately not a handoff binding; the corroborated marker owns the hold.
+    expect(run('B-STOPPED-NONE-RECORDED', { live: { markers: [FIX.cases['B-STOPPED-NONE-RECORDED'].live!.markers[0]] } }).outcome).toBe(plain.outcome);
     expect(squash(SKILLS['ship-and-land'])).toContain("If it stopped at `/review`'s cycle cap (`review-and-prep:stopped:`), preserve that stop and use its `/review-and-prep continue` prompt");
   });
 

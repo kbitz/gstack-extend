@@ -1035,7 +1035,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    the prior corroborated row and evidence-comment reference instead; the
    original local file is not required on another host. Never replace that
    base with this invocation's delta candidate. If neither a completed new
-   baseline nor a corroborated carried row is available, write
+   baseline nor, on a continuation or delta re-review, a corroborated carried
+   row is available, write
    `Full-review evidence: unavailable`, say delta
    evidence is unavailable, and print
    `Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`
@@ -1290,6 +1291,9 @@ full-suite failure and its hand-back are outside this rule; this skill and its
 receipt make no claim about them.
 Pause/resume continues the same invocation and retains its consumed allowance;
 read the corroborated repair record before deciding whether it remains unused.
+Missing or uncorroborated allowance history on resume never establishes unused:
+take `interrupted`, conservatively retain `allowance=consumed`, and follow
+today's rule. An intact pause record with no repair history can establish unused.
 
 **Classification.** Read the classification contract from `docs/docs-ship.md`
 under the installed gstack-extend root (this installed skill directory's
@@ -1324,9 +1328,12 @@ on that range. A missing pointer or contract is the fallback
 **Diagnosis before the edit.** Snapshot the failed content as B with the delta
 procedure's snapshot block. Before diagnosis, require a clean index/worktree
 and `tree(B) = tree(HEAD)`, with existing review coverage for that failed
-content. Otherwise return to today's rule without editing (`step=classify;
-reason=source-path; repair=none; allowance=unused`); do not bundle pending
-source changes into the repair. Save this HEAD as the required repair parent.
+content. A dirty or differing snapshot returns to today's rule without editing
+(`step=classify; reason=snapshot-drift; repair=none; allowance=unused`);
+missing review coverage uses `step=diagnose; reason=contract-ambiguous` with
+the same disposition. Check coverage against readiness's recorded full/delta
+chain. Do not bundle pending source changes into the repair. Save this HEAD as
+the required repair parent.
 Before editing, record a diagnosis in the evidence
 directory: the failed test IDs and output (raw output stays in that file),
 whether the test or the code under test is wrong, and why, citing the code
@@ -1381,21 +1388,26 @@ interrupted chain found on resume (`interrupted`), a second failure of the
 gate after the repair commit (`gate-failed-again`), or a later failure once the
 allowance is spent (`already-used`, reported by the refusal line below). Each records in the
 evidence directory and the receipt which step sent the repair back. The receipt
-carries, exactly once and instead of the three success lines below:
+carries, exactly once for this attempt and instead of this attempt's three
+success lines below (never replacing earlier attempt blocks):
 
 `Final-gate repair: fallback; step=<classify|diagnose|targeted-rerun|adversarial|full-gate|once-per-invocation|classification-unreadable>; reason=<code>; repair=<restored (snapshot <S>)|committed <SHA>|kept|none>; allowance=<consumed|unused>; detail=<redacted one-line summary>; evidence=<evidence file reference>`
 
-- A fallback before any edit records `repair=none`. A
-  failed snapshot keeps the edits in the worktree as the start of today's rule
-  (`repair=kept`). A failed commit keeps the uncommitted repair for today's
+- A fallback before any edit, including failure to snapshot B, records
+  `repair=none`. Failure to create S keeps the uncommitted edits
+  (`repair=kept`), because no repair snapshot preserves them.
+  A failed commit keeps the uncommitted repair for today's
   rule (`repair=kept`); it is excluded from restoration below.
 - Once S exists, a fallback before the repair commit, other than `commit-failed`, restores the repair's
   paths to B (the repair stays recoverable in snapshot S): delete the paths the
   repair added, restore the modified or deleted paths from B, then verify the
   worktree equals B's snapshot and record that check. A failed restore stops
-  with `BLOCKED` and the evidence path. Today's rule starts from B.
+  with `BLOCKED` and the evidence path. This includes failure of the precommit
+  freshness snapshot: restore to B only if ownership and restoration can be
+  verified; otherwise stop BLOCKED. Today's rule starts from B.
 - A fallback after the repair commit, including `gate-failed-again`,
-  `snapshot-drift` or an interrupted chain, keeps the commit and any remaining
+  `snapshot-drift`, a failed postcommit freshness snapshot or an interrupted
+  chain, keeps the commit and any remaining
   worktree edits. Record `repair=committed <SHA>` and preserve a snapshot of
   remaining edits when possible. All that content enters today's review
   coverage; the failed chain grants no readiness exception.
@@ -1420,6 +1432,9 @@ Final-gate repair: <repair commit SHA>; paths=<n>; classes=tests|docs|tests,docs
 Final-gate repair rerun: targeted=<ledger reference> pass; gate=<ledger reference> (full|selection) pass
 Final-gate repair review: native adversarial pass <evidence reference> (<n> findings, none blocking); no full review cycle covered this repair
 ```
+
+Retain fallbacks in separate invocation-labeled blocks, since they may have no
+repair commit. A receipt's current outcome never erases prior attempts.
 
 A later gate failure in the same invocation, whether the allowance went to a
 success or a fallback, adds one `Final-gate repair refusal: reason=already-used;

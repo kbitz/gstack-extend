@@ -1105,6 +1105,7 @@ describe('review-and-prep final-gate repair', () => {
     expect(repair).toContain('or of its rerun before Step 6 after Step 5 fixes or a base merge');
     expect(repair).toContain('At most one repair per invocation.');
     expect(repair).toContain('Pause/resume continues the same invocation and retains its consumed allowance;');
+    expect(repair).toContain('Missing or uncorroborated allowance history on resume never establishes unused: take `interrupted`, conservatively retain `allowance=consumed`');
     expect(repair).toContain('A `/ship-and-land` full-suite failure and its hand-back are outside this rule; this skill and its receipt make no claim about them.');
   });
 
@@ -1175,14 +1176,16 @@ describe('review-and-prep final-gate repair', () => {
     for (const code of ['source-path', 'unreadable-path', 'code-wrong', 'contract-ambiguous', 'no-diagnosis', 'snapshot-regeneration', 'targeted-failed', 'adversarial-blocking', 'adversarial-incomplete', 'gate-failed-again', 'already-used', 'contract-missing', 'snapshot-drift', 'snapshot-failed', 'commit-failed', 'restore-failed', 'interrupted', 'empty-repair']) {
       expect(repair).toContain(`\`${code}\``);
     }
-    expect(repair).toContain('A fallback before any edit records `repair=none`.');
+    expect(repair).toContain('A fallback before any edit, including failure to snapshot B, records `repair=none`.');
+    expect(repair).toContain('Failure to create S keeps the uncommitted edits (`repair=kept`)');
+    expect(repair).toContain('This includes failure of the precommit freshness snapshot: restore to B only if ownership and restoration can be verified; otherwise stop BLOCKED.');
     expect(repair).toContain('(`repair=kept`)');
     expect(repair).toContain("restores the repair's paths to B (the repair stays recoverable in snapshot S)");
     expect(repair).toContain('then verify the worktree equals B\'s snapshot and record that check');
     expect(repair).toContain('A failed restore stops with `BLOCKED` and the evidence path.');
     expect(repair).toContain('A failed commit keeps the uncommitted repair for today\'s rule (`repair=kept`); it is excluded from restoration below.');
     expect(repair).toContain('a fallback before the repair commit, other than `commit-failed`, restores');
-    expect(repair).toContain('A fallback after the repair commit, including `gate-failed-again`, `snapshot-drift` or an interrupted chain, keeps the commit and any remaining worktree edits.');
+    expect(repair).toContain('A fallback after the repair commit, including `gate-failed-again`, `snapshot-drift`, a failed postcommit freshness snapshot or an interrupted chain, keeps the commit and any remaining worktree edits.');
     expect(repair).toContain('All that content enters today\'s review coverage; the failed chain grants no readiness exception.');
     expect(repair).toContain('An uncertain commit result is reconciled against the saved parent before choosing the pre- or post-commit recovery.');
     expect(repair).toContain('if ownership or restoration is uncertain, stop BLOCKED with the evidence.');
@@ -1238,7 +1241,7 @@ describe('review-and-prep final-gate repair', () => {
   test('the stop fills the evidence row from the record or writes unavailable with a reason', () => {
     expect(stop).toContain('Fill the row and the evidence comment for a new baseline only from the `cycle-1-baseline` record written above, and only when it says `completed=true`; its B is the first stop\'s delta base.');
     expect(stop).toContain('At a continuation or delta re-review stop, preserve the prior corroborated row and evidence-comment reference instead; the original local file is not required on another host.');
-    expect(stop).toContain('If neither a completed new baseline nor a corroborated carried row is available, write `Full-review evidence: unavailable`');
+    expect(stop).toContain('If neither a completed new baseline nor, on a continuation or delta re-review, a corroborated carried row is available, write `Full-review evidence: unavailable`');
     expect(stop).toContain('`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`');
     expect(stop).toContain("The receipt's portable row and the H-E prompt stay unchanged.");
     expect(stop).toContain('never be inferred from HEAD or filled in after the fact');
