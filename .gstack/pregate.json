@@ -1,5 +1,10 @@
 {
   "runner": "bun run test -- {files}",
+  "strays": {
+    "allow": [
+      "src/upstream-check/probe.ts"
+    ]
+  },
   "dependencies": {
     ".github/workflows/auto-tag.yml": [
       "tests/release-manifest.test.ts"

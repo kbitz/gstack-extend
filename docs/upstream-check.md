@@ -60,8 +60,9 @@ Bun 1.3.3 or newer is required, like the other `bin/` launchers.
 ### Trust and layout
 
 The root is trusted code: the checker imports it. It is never derived from the
-working directory or the repository under review, and a `--gstack-root` whose
-real path is inside the current directory's git repository is a usage error
+working directory or the repository under review. Either `--gstack-root` or
+`--skills-dir` (including its derived default, when the sibling layout is used)
+resolving inside the current directory's git repository is a usage error
 (exit 2). That also rules out a repository-local install such as
 `.agents/skills/gstack`; the check does not support it. Where a host keeps its
 root is defined by upstream and the host, so pass the root of the host whose
@@ -176,9 +177,10 @@ The inventory comes from this extension's own source, never a second copy:
   imported from the root and the export must be a function. Importing runs the
   module's top-level code, as the adapter does.
 - **Classifier cases.** Four golden cases run through the adapter's `recover`
-  against the installed classifier: advisory-only findings with a recommendation
-  are `clean` and credited, and the same text with a last `Verdict: not ready`
-  line is `findings` and credited, for both the `review` and `structured` gates.
+  against the installed classifier: advisory-only findings are `clean` and
+  credited, and the same text with a last `Verdict: not ready` line is `findings`
+  and credited, for both the `review` and `structured` gates. The `review` cases
+  include a recommendation; the `structured` cases omit it.
   The table is qualified at upstream `db87940e` (1.91.198.0) or later.
 - **Criteria.** `driftReport` from `src/autoplan-lean/criteria.ts`, the
   comparison `autoplan-lean drift` uses, over the installed snapshot tool and
@@ -190,9 +192,12 @@ command's stdout and at most 1 MiB is read. A timeout, an early exit, a missing
 or malformed result frame or an output flood is drift, and every check the probe
 could not run still prints a `DRIFT … not run: probe <cause>` line so
 `checks=<n>` does not depend on the cause. A timeout may clear on rerun with a
-larger `--timeout-ms`; content drift does not. Every file the checker reads is
-resolved with `realpath` and must be a regular file of at most 4 MiB. A missing
-root, directory, FIFO, oversized file or malformed inventory source is drift.
+larger `--timeout-ms`; content drift does not. Direct file reads by the checker
+use `realpath` and require a regular file of at most 4 MiB. The file
+type check and bounded read use the same descriptor, including during an upgrade.
+A missing or inaccessible root, directory, FIFO, oversized file or malformed
+inventory source is drift. A deadline exceeded during probe shutdown remains
+drift even if the probe already emitted a result.
 `VERSION` content that is not a dotted version is printed as `unknown`.
 Frames await stream-write callbacks before upstream imports, respecting
 output backpressure, so an upstream
@@ -311,16 +316,16 @@ Bun startup, the child process and every check are included.
 |---|---|
 | Machine | Apple M2 Max, 64 GB |
 | OS | macOS 27.0.1 |
-| Bun | 1.4.4 |
+| Bun | 1.3.10 |
 | Installed upstream | 1.91.216.0, revision `64d82101cac149125d28df888e3f2ea14a444dc5` (nested checkout; sibling revision unknown) |
 | Extension | 0.48.0 (21 checks, all OK, exit 0) |
-| Load during the runs | load average about 5.1 (other sessions were active), not an idle machine |
+| Load during the runs | load average about 8.4 (other sessions were active), not an idle machine |
 | Date | 2026-10-25 |
 
 | Layout | Runs | First run | Warm runs | Observed maximum |
 |---|---|---|---|---|
-| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.077 s | 0.073–0.077 s | 0.077 s |
-| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.070 s | 0.067–0.072 s | 0.072 s |
+| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.122 s | 0.100–0.145 s | 0.145 s |
+| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.104 s | 0.100–0.344 s | 0.344 s |
 
 The first run is the first of each series of 11; the filesystem and Bun caches were
 not purged, so it is not a true cold start. The under-one-second claim covers

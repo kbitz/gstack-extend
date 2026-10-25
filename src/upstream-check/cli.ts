@@ -7,7 +7,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Phase } from '../autoplan-lean/plan.ts';
 import type { ClassifierResult, ExportResult, GoldenCase, ProbeResult } from './probe.ts';
@@ -57,15 +57,28 @@ export const extendRoot = () => resolve(import.meta.dir, '..', '..');
 
 type Read = { ok: true; bytes: Buffer; real: string } | { ok: false; reason: string };
 
-/** Realpath, then require a regular file of at most 4 MiB. Anything else is malformed input. */
+/** Inspect and read the same descriptor, bounded even if an upgrade replaces or grows the file. */
 export function readTrusted(path: string, what: string): Read {
   let real: string;
   try { real = realpathSync(path); } catch { return { ok: false, reason: `${what} not found: ${path}` }; }
-  let stat;
-  try { stat = statSync(real); } catch { return { ok: false, reason: `${what} unreadable: ${real}` }; }
-  if (!stat.isFile()) return { ok: false, reason: `${what} is not a regular file: ${real}` };
-  if (stat.size > MAX_BYTES) return { ok: false, reason: `${what} is larger than 4 MiB: ${real}` };
-  try { return { ok: true, bytes: readFileSync(real), real }; } catch { return { ok: false, reason: `${what} unreadable: ${real}` }; }
+  let fd: number | undefined;
+  try {
+    fd = openSync(real, constants.O_RDONLY | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return { ok: false, reason: `${what} is not a regular file: ${real}` };
+    if (stat.size > MAX_BYTES) return { ok: false, reason: `${what} is larger than 4 MiB: ${real}` };
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total <= MAX_BYTES) {
+      const chunk = Buffer.allocUnsafe(Math.min(65536, MAX_BYTES + 1 - total));
+      const size = readSync(fd, chunk, 0, chunk.length, null);
+      if (!size) return { ok: true, bytes: Buffer.concat(chunks, total), real };
+      chunks.push(chunk.subarray(0, size));
+      total += size;
+    }
+    return { ok: false, reason: `${what} is larger than 4 MiB: ${real}` };
+  } catch { return { ok: false, reason: `${what} unreadable: ${real}` }; }
+  finally { if (fd !== undefined) closeSync(fd); }
 }
 
 const versionOf = (root: string, onRead?: (real: string) => void) => {
@@ -197,7 +210,7 @@ const gitOut = (cwd: string, args: string[]) => {
   return result.status === 0 ? result.stdout.trim() : undefined;
 };
 
-function rejectRootInsideRepo(root: string, cwd: string) {
+function rejectRootInsideRepo(root: string, cwd: string, flag = '--gstack-root') {
   const result = gitQuery(cwd, ['rev-parse', '--show-toplevel']);
   if (result.status !== 0) {
     if (result.status === 128 && /^fatal: not a git repository(?: \(or any of the parent directories\))?: \.git\s*$/.test(result.stderr)) return;
@@ -208,7 +221,7 @@ function rejectRootInsideRepo(root: string, cwd: string) {
   try { real = realpathSync(root); } catch { return; } // Missing roots are reported as drift and never imported.
   const rel = relative(repo, real);
   if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
-    throw new UsageError('--gstack-root is inside the current git repository', 'pass the installed gstack root, not a path under the repository under review');
+    throw new UsageError(`${flag} is inside the current git repository`, 'pass installed upstream paths, not paths under the repository under review');
   }
 }
 
@@ -250,7 +263,10 @@ function runProbe(root: string, timeoutMs: number, helpers: Helpers, goldens: re
     child.on('error', () => finish(null, 'spawn-error'));
     // Settle on exit; allow a short grace for pipe data already in flight.
     child.on('close', (code, signal) => finish(code, signal));
-    child.on('exit', (code, signal) => { grace = setTimeout(() => finish(code, signal), 250); });
+    child.on('exit', (code, signal) => {
+      clearTimeout(deadline);
+      grace = setTimeout(() => finish(code, signal), 250);
+    });
   });
 }
 
@@ -265,7 +281,7 @@ function evaluate(out: string, nonce: string, state: { code: number | null; sign
   }
   const fail = (cause: string): ProbeOutcome => ({ ok: false, cause, last });
   if (state.overflow) return fail('probe output exceeded 1 MiB');
-  if (state.timedOut && frame === undefined) return fail(`probe timed out after ${state.timeoutMs} ms`);
+  if (state.timedOut) return fail(`probe timed out after ${state.timeoutMs} ms`);
   if (internal || state.signal === 'spawn-error' || (last === undefined && state.code !== 0 && frame === undefined)) {
     return { ok: false, cause: 'extension probe failed before producing a result', internal: true };
   }
@@ -292,15 +308,17 @@ function validateResult(frame: string, helpers: Helpers, goldens: readonly Golde
 const credit = (verdict: string, credited: boolean) => `${verdict}/${credited ? 'credited' : 'uncredited'}`;
 
 export async function run(argv: string[], io: CliIo): Promise<number> {
+  const options = parseArgs(argv);
+  if (options === 'help') { io.stdout(help()); return EXIT.ok; }
+  if (options === 'version') { io.stdout(`upstream-check ${versionOf(extendRoot())}\n`); return EXIT.ok; }
+  rejectRootInsideRepo(options.root, io.cwd);
+  const layout = chooseLayout(options.root, options.skillsDir);
+  if (layout.name === 'sibling') rejectRootInsideRepo(options.skillsDir, io.cwd, '--skills-dir');
   // Keep extension-owned loader failures inside main's internal-error boundary.
   const [{ driftReport, UPSTREAM }, { skipList }, { PHASES }, { INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }] = await Promise.all([
     import('../autoplan-lean/criteria.ts'), import('../autoplan-lean/outline.ts'), import('../autoplan-lean/plan.ts'),
     import('../outside-review/cli.ts'), import('./probe.ts'),
   ]);
-  const options = parseArgs(argv);
-  if (options === 'help') { io.stdout(help()); return EXIT.ok; }
-  if (options === 'version') { io.stdout(`upstream-check ${versionOf(extendRoot())}\n`); return EXIT.ok; }
-  rejectRootInsideRepo(options.root, io.cwd);
 
   const infos: string[] = [];
   const info = (key: string, value: string) => infos.push(`INFO ${key} ${oneLine(value, 400)}`);
@@ -319,7 +337,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
 
   // Root.
   let rootOk = false;
-  try { rootOk = statSync(realpathSync(options.root)).isDirectory(); } catch { rootOk = false; }
+  try {
+    rootOk = statSync(realpathSync(options.root)).isDirectory();
+    accessSync(options.root, constants.X_OK);
+  } catch { rootOk = false; }
   info('root', options.root);
   const notRun = rootOk ? undefined : 'not run: gstack root unavailable';
   if (rootOk) {
@@ -331,7 +352,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     try { if (top && realpathSync(top) === real) revision = gitOut(options.root, ['rev-parse', 'HEAD']) ?? 'unknown'; } catch { /* unknown */ }
     info('upstream-revision', /^[0-9a-f]{40}$/.test(revision) ? revision : 'unknown');
   } else {
-    drift('root', 'gstack-root', `gstack root is missing or not a directory: ${options.root}`);
+    drift('root', 'gstack-root', `gstack root is missing, inaccessible or not a directory: ${options.root}`);
     info('upstream-version', 'unknown');
     info('upstream-revision', 'unknown');
   }
@@ -341,7 +362,6 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   if (inv.ok) { ok('inventory', 'review-and-prep.incap'); info('file', `inventory ${inv.file}`); }
   else drift('inventory', 'review-and-prep.incap', `${inv.reason} (${inv.file})`);
 
-  const layout = chooseLayout(options.root, options.skillsDir);
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
   const readOnce = (path: string, what: string, key: string) => {
