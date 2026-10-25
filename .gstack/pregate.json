@@ -157,6 +157,9 @@
     "bin/update-run": [
       "tests/update.test.ts"
     ],
+    "bin/upstream-check": [
+      "tests/upstream-check.test.ts"
+    ],
     "docs/ROADMAP.md": [
       "tests/parsers-phases.test.ts",
       "tests/parsers-roadmap.test.ts"
@@ -172,7 +175,8 @@
       "tests/merge-gate.test.ts"
     ],
     "docs/outside-review.md": [
-      "tests/outside-review.test.ts"
+      "tests/outside-review.test.ts",
+      "tests/upstream-check.test.ts"
     ],
     "docs/quota-ledger.md": [
       "tests/quota.test.ts"
@@ -197,6 +201,9 @@
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/workflow-metrics.test.ts"
+    ],
+    "docs/upstream-check.md": [
+      "tests/upstream-check.test.ts"
     ],
     "docs/workflow-handoffs.md": [
       "tests/handoff-contract.test.ts"
@@ -242,7 +249,8 @@
       "tests/setup-hosts.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry-doctor.test.ts",
-      "tests/telemetry.test.ts"
+      "tests/telemetry.test.ts",
+      "tests/upstream-check.test.ts"
     ],
     "skills/autoplan-lean.md": [
       "tests/autoplan-lean-history.test.ts",
@@ -293,6 +301,9 @@
       "tests/skill-protocols-review-and-prep.test.ts",
       "tests/skill-protocols-ship-and-land.test.ts",
       "tests/workflow-metrics.test.ts"
+    ],
+    "src/**": [
+      "tests/upstream-check.test.ts"
     ],
     "src/audit/**": [
       "tests/audit-cli-contract.test.ts",
