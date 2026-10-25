@@ -74,8 +74,14 @@ export function setupRepo(fixtureDir: string, baseTmp: string): string {
   return repo;
 }
 
+// An inherited GIT_DIR/GIT_WORK_TREE (as under a git hook) would aim these
+// commands at another repository, so the helper's own setup commands never see
+// GIT_* or user config. Callers running git on a fixture must pass GIT_ENV too.
+export const GIT_ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
 function runGit(repo: string, args: string[]): void {
-  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: GIT_ENV });
   if (r.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed (exit ${r.status}): ${r.stderr ?? '(no stderr)'}`);
   }

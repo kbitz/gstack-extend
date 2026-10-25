@@ -31,7 +31,7 @@ _tombstone: 17, 19, 20, 22, 23, 24, 25, 26_
 
 ### Group 27: Paused and resumed workflow segments
 
-_Depends on: none_
+_Depends on: Group 28_
 
 **This group delivers:** Linked, truthful provenance for deliberate holds and later completions across checkouts.
 
@@ -48,7 +48,7 @@ _read-first: 23H, 23I, 26A, docs/telemetry.md_
 
 ### Group 28: Stable release compatibility
 
-_Depends on: Group 27_
+_Depends on: none_
 
 **This group delivers:** A verified legacy-to-three-part upgrade/release path and matching public compatibility guidance.
 
@@ -57,7 +57,7 @@ _1 task . ~180 LOC incl. tests . medium risk_
 **Outcome:** Maintainers can publish and users can install stable SemVer releases through the existing release path.
 **Supports:** [SPEC](SPEC.md) O1/O5 — the four-part instruction and tooling assumptions need an explicit verified transition.
 **Done when:** Upgrading a named legacy install to a three-part candidate passes comparison, migration, audit and tag checks; the stage-runs v2 reader contract is confirmed on the stable-surface list; public instructions declare the new policy without changing old tags or assigning a release during this Track.
-_touches: tests/update.test.ts, tests/checks-version.test.ts, tests/telemetry-contract.test.ts, bin/lib/semver.sh, .github/workflows/auto-tag.yml, CLAUDE.md, README.md, docs/installation.md_
+_touches: tests/update.test.ts, tests/checks-version.test.ts, tests/lib-git.test.ts, tests/release-manifest.test.ts, tests/telemetry-contract.test.ts, tests/helpers/touchfiles.ts, tests/helpers/fixture-repo.ts, tests/touchfiles.test.ts, bin/update-check, .github/workflows/auto-tag.yml, .gstack/pregate.json, CLAUDE.md, README.md, docs/installation.md, docs/SPEC.md, docs/telemetry.md, docs/acceptance/release-compatibility.md, docs/TODOS.md, docs/ROADMAP.md, scripts/extract-changelog-section.sh, migrations/.gitkeep, bin/lib/workflow_metrics.py_
 _blocked-by: Track 26A, Track 23C, Track 23F_
 - **Qualify release compatibility and document the transition** -- Exercise the existing three/four-part readers and change only demonstrated incompatibilities. Verify representative legacy-to-candidate upgrade and malformed-version controls, preserve tag history and schema guarantees, and reconcile this repo's maintained instructions. Carry the two release items the user deferred from Track 26A (PR #155): the full updater, tagging and three-part transition (DFR2), and the release owner's reader-compatibility check for stage-runs schema v2 (DFR3). The v2 writer already shipped in 0.37.0.0 with its reader-first rollback note, so DFR3 is now a post-release compatibility check on the stable surfaces, not a pre-release gate. This does not change consumers' init defaults or reinterpret their versions. VERSION/package assignment belongs to the eventual release workflow. _~180 lines._ (M)
 
@@ -136,11 +136,13 @@ _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-indepe
 
 Groups follow the packer dependency graph. Both hosts retain equal priority.
 The owner-selected measurement and efficiency Tracks are additional work,
-not new stable-release acceptance gates.
+not new stable-release acceptance gates. Track 28A is approved to proceed before
+27A; whichever lands second rebases its shared telemetry files. The dependency
+list below reflects that collision ordering, not a new product prerequisite.
 
 ```
-- Group 27 ← {}
-- Group 28 ← {27}
+- Group 27 ← {28}
+- Group 28 ← {}
 - Group 29 ← {27, 28}
 - Group 30 ← {27, 28, 29}
 - Group 31 ← {30}

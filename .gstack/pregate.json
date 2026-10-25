@@ -10,6 +10,9 @@
     "CHANGELOG.md": [
       "tests/release-manifest.test.ts"
     ],
+    "CLAUDE.md": [
+      "tests/release-manifest.test.ts"
+    ],
     "README.md": [
       "tests/handoff-contract.test.ts"
     ],
@@ -162,7 +165,8 @@
       "tests/docs-ship.test.ts"
     ],
     "docs/installation.md": [
-      "tests/setup-hosts.test.ts"
+      "tests/setup-hosts.test.ts",
+      "tests/update.test.ts"
     ],
     "docs/merge-gate.md": [
       "tests/merge-gate.test.ts"

@@ -6,7 +6,66 @@ Extension skills for gstack.
 
 ## Versioning
 
-Current format: `MAJOR.MINOR.PATCH.MICRO`; the planned three-part transition and compatibility rules are in `docs/SPEC.md`. Until its tooling transition lands, retain the current format. Source of truth: `VERSION`. Release history and acceptance: `docs/PROGRESS.md`. Backlog: `docs/TODOS.md`.
+Release format: MAJOR.MINOR.PATCH (three-part; no suffixes).
+
+This applies to gstack-extend's own VERSION from the first release cut from a
+base containing this policy. This policy change itself ships under its base's
+four-part policy. Keep legacy tags and records intact; consumer projects keep
+their own schemes and init defaults. Source: `VERSION`. Release history:
+`CHANGELOG.md`; acceptance: `docs/PROGRESS.md`; policy: `docs/SPEC.md`.
+
+The first three-part release is a **0.x MINOR**, whatever the change type. Its
+notes disclose the format switch, padded equality (`0.47.0 == 0.47.0.0`), unchanged
+consumer schemes, and migration/recovery guidance linked to
+`docs/installation.md#version-numbers`. Track 28A, which added this policy, is not that release.
+The release owner confirms the SPEC policy amendment directly during shipping
+before this policy counts for subsequent releases.
+
+Cutover procedure (release stage only; choose X.Y.Z above every fetched tag):
+
+```sh
+git fetch --tags origin
+git tag --merged HEAD --sort=-v:refname
+# Inspect all tags too: an unmerged padded-equal tag is also a collision.
+git tag --list
+# Choose the next unused 0.x MINOR as X.Y.Z; replace the example before running.
+RELEASE_VERSION=X.Y.Z
+printf '%s\n' "$RELEASE_VERSION" > VERSION
+bun -e 'const p = await Bun.file("package.json").json(); p.version = process.argv[1]; await Bun.write("package.json", JSON.stringify(p, null, 2) + "\n");' "$RELEASE_VERSION"
+# Prepend ## [X.Y.Z] - YYYY-MM-DD to CHANGELOG.md with disclosure and migration notes.
+EVALS_ALL=1 bun run test
+# Run /ship: classify must return ALREADY_BUMPED; keep currentVersion.
+# After authorized merge and auto-tag completion:
+gh release view "v$RELEASE_VERSION"
+# If auto-tag fell back to generated notes, fix CHANGELOG.md, then:
+# gh release edit "v$RELEASE_VERSION" --notes-file <corrected-notes-file>
+```
+
+The release-manifest suite, run by `/ship-and-land` and `/docs-ship`, is the only
+release ordering gate; auto-tag validates syntax only. It compares release tags
+with padded numeric equality, rejects any local padded-equal tag unless it is
+exactly `v<VERSION>` merged into HEAD, and requires a changed VERSION to exceed
+the base VERSION and `origin/main`'s VERSION (merge `origin/main` first when
+behind). It keeps four parts while the merge base lacks this marker, forbids
+returning to four parts after a three-part top tag, and makes the first
+three-part release the next 0.x MINOR above every fetched tag, with PATCH 0; a
+fetched tag outside 0.x fails it until you delete the stray local tag. Against a
+four-part base VERSION it reports incomplete tags (only pre-four-part tags
+fetched) and stray three-part tags. Its policy base is
+`git merge-base HEAD refs/remotes/origin/main` (`refs/remotes/origin/master`
+fallback), never a same-named tag or branch, local main or `TOUCHFILES_BASE`;
+fetch full history and tags if it reports missing inputs. The marker must stay in
+a regular CLAUDE.md file: a symlinked CLAUDE.md (for example to AGENTS.md) fails
+the gate until the suite changes. To amend the marker, change it here and the
+suite's `FORMAT_MARKER` together; any base line starting `Release format:` keeps
+three parts required. Plain `/ship` runs its tests before writing the version, so
+after a `/ship` release commit run `TOUCHFILES_BASE=<pre-bump head> bun run test`
+before pushing.
+
+Upstream gstack `1.91.185.0` was qualified for `classify` (ALREADY_BUMPED across
+cutover; FRESH on a three-part base) and `gstack-next-version` (micro, patch,
+minor retain three parts). Repeat that isolated probe when installed gstack
+changes; see `docs/acceptance/release-compatibility.md`. No version is reserved.
 
 ## Product scope and releases
 
@@ -44,7 +103,7 @@ A release commit (VERSION, the CHANGELOG entry and package.json's version) selec
 
 `.gstack/pregate.json` `dependencies` is the manual map inverted, so pregate's lane selection reads the same non-import edges. Global inputs are not in it: for a `bun.lock` or `tsconfig.json` change pregate selects less, while `bun run test` runs everything. After editing `MANUAL_TOUCHFILES`, run `bun scripts/sync-pregate-deps.ts`; `tests/touchfiles.test.ts` fails while the copy is stale. Repair a pregate `PREGATE_NO_LANE` finding in `MANUAL_TOUCHFILES`, not in the JSON; a `glob: []` (no lane needed) entry is the exception, belongs in `.gstack/pregate.json`, and the sync keeps it. Pregate reads the base branch's copy, so a change takes effect there after it merges, and a PR that edits it needs `--policy-from head`.
 
-`tests/touchfiles.test.ts` locks the selection contract — units, three structural invariants (every glob matches ≥1 file; every test reachable via import graph or manual map; every manual key resolves), a check that a `bin/lib/install-safety.sh` change selects `tests/lib-install-safety.test.ts` and `tests/update.test.ts`, the per-skill, release and pregate-copy checks above, the selection report, and thirteen wrapper E2E scenarios. When adding a test that consumes a non-TS file (shell bin, fixture tree, markdown), add an entry to `MANUAL_TOUCHFILES`. The I2 invariant catches the omission only for a test with no TypeScript imports; a test that imports any helper stays reachable without the entry, so diff selection can skip it when that file changes.
+`tests/touchfiles.test.ts` locks the selection contract — units, three structural invariants (every glob matches ≥1 file; every test reachable via import graph or manual map; every manual key resolves), a check that a `bin/lib/install-safety.sh` change selects `tests/lib-install-safety.test.ts` and `tests/update.test.ts`, a check that a `CLAUDE.md` change selects `tests/release-manifest.test.ts` (it reads the release-format marker) and a `docs/installation.md` change selects `tests/update.test.ts` (it locks the rollback steps), the per-skill, release and pregate-copy checks above, the selection report, and thirteen wrapper E2E scenarios. When adding a test that consumes a non-TS file (shell bin, fixture tree, markdown), add an entry to `MANUAL_TOUCHFILES`. The I2 invariant catches the omission only for a test with no TypeScript imports; a test that imports any helper stays reachable without the entry, so diff selection can skip it when that file changes.
 
 All tests live in `tests/*.test.ts` using `bun:test`.
 

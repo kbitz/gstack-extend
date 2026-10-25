@@ -21,8 +21,8 @@ jobs:
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
 
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
-            echo "Invalid VERSION format: '$VERSION'"
+          if ! echo "$VERSION" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'; then
+            echo "::error::Invalid VERSION '$VERSION': expected MAJOR.MINOR.PATCH (legacy MAJOR.MINOR.PATCH.MICRO), no suffixes or leading zeros. Fix VERSION, package.json and CHANGELOG.md; see CLAUDE.md#versioning."
             exit 1
           fi
 
@@ -56,10 +56,10 @@ jobs:
           fi
 
           NOTES_FILE=$(mktemp)
-          if ./scripts/extract-changelog-section.sh "$VERSION" > "$NOTES_FILE" 2>/dev/null; then
+          if ./scripts/extract-changelog-section.sh "$VERSION" > "$NOTES_FILE"; then
             echo "Using CHANGELOG.md section for release notes."
             gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
           else
-            echo "::warning::No CHANGELOG section for $VERSION — falling back to auto-generated notes."
+            echo "::warning::No CHANGELOG section for $VERSION — falling back to auto-generated notes. Fix CHANGELOG.md, then run: gh release edit $TAG --notes-file <corrected-notes-file>"
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi

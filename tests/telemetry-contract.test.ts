@@ -791,6 +791,18 @@ describe('docs/stage-runs.schema.json', () => {
     }
   }, 30_000);
 
+  test('v2 three-part producers pass schema and documented reader; malformed widths fail', () => {
+    for (const producer_version of ['0.47.0', '1.0.0', '0.47', '0.47.0.0.0']) {
+      const row = { ...quickstartRow(), producer_version };
+      const valid = ['0.47.0', '1.0.0'].includes(producer_version);
+      expect(verdict(row).ok).toBe(valid);
+      const result = runValidation(JSON.stringify(row));
+      expect(result.status).toBe(valid ? 0 : 1);
+      expect(result.summary).toBe(summaryOf(valid ? { rows: 1, v2: 1 } : { rows: 1, invalid: 1 }));
+      if (!valid) expect(result.stderr).toContain('/producer_version pattern');
+    }
+  });
+
   test('genuine legacy rows validate with route and entrypoint_raw each optional; hybrids are not legacy', () => {
     const v1 = historicalRow();
     const base = legacyOf(v1);
@@ -884,7 +896,8 @@ describe('docs/stage-runs.schema.json', () => {
       const ledger = join(quota.env.GSTACK_EXTEND_STATE_DIR, 'analytics/stage-runs.jsonl');
       mkdirSync(dirname(ledger), { recursive: true });
       writeFileSync(ledger, [{ ...v1, session_id: 'run-v1' }, { ...legacyOf(v1), session_id: 'run-legacy' },
-        { ...v2, session_id: 'run-v2' }]
+        { ...v2, producer_version: '0.47.0', session_id: 'run-v2' },
+        { ...v2, producer_version: '1.0.0', session_id: 'run-v2-stable' }]
         .map(row => JSON.stringify(row)).join('\n') + '\n');
       const enriched = (sid: string) => {
         for (const [phase, at] of [['start', '2026-09-23T12:00:00Z'], ['finish', '2026-09-23T12:01:00Z']]) {
@@ -901,6 +914,7 @@ describe('docs/stage-runs.schema.json', () => {
       const expected = { stage: 'roadmap', agent: 'codex', model: 'gpt-6-astra', effort: 'high', route: 'conductor' };
       expect(enriched('run-v1')).toEqual([expected]);
       expect(enriched('run-v2')).toEqual([expected]);
+      expect(enriched('run-v2-stable')).toEqual([expected]);
       expect(enriched('run-legacy')).toEqual([expected]);
     } finally {
       quota.cleanup();

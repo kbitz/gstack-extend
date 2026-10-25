@@ -146,6 +146,50 @@ pointer naming another checkout does not. Foreign links and regular files are le
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,
 foreign install pointers, and unrelated files are preserved.
 
+### Version numbers
+
+gstack-extend's own VERSION uses `MAJOR.MINOR.PATCH` without prefixes or suffixes
+from the first release cut from a base containing the transition policy.
+Historical four-part tags/records remain valid. Consumer projects keep their
+own version schemes and init defaults. Comparison pads a missing fourth part
+with zero: `0.47.0 == 0.47.0.0`, while `0.47.0 > 0.46.0.0`. An equal or malformed
+remote VERSION produces no upgrade offer. Silence alone does not prove a
+refreshed installation; cache, snooze and offline checks can also be silent.
+
+For example, a legacy install might print `UPGRADE_AVAILABLE 0.47.0.0 0.48.0`,
+then `UPGRADE_OK 0.47.0.0 0.48.0`, then `JUST_UPGRADED 0.47.0.0 0.48.0` on its
+next check. These are illustrative numbers, not a published release promise.
+`UPGRADE_OK` covers the checkout; inspect `SETUP_SKIPPED_HOSTS`, `INSTALL_WARN`
+and `MIGRATION_WARN` separately. The first cutover's release notes disclose
+padded equality and link this recovery guidance. See the
+[qualification record](acceptance/release-compatibility.md) for candidate-only
+proof and the pending real published-tag upgrade.
+
+To roll back an otherwise clean install, first save user work and identify the
+last four-part tag from its release history. Replace the example below with
+that actual tag; do this in the installation checkout, never a project worktree:
+
+```sh
+git fetch --tags origin
+git status --short
+# Stop and preserve any local changes before continuing.
+./bin/config set update_check false
+git checkout --detach v0.46.0.0
+./setup --host auto --quiet
+```
+
+Pause update checks first: the restored checker still offers the newer release,
+and accepting it (or `auto_upgrade=true`) makes `bin/update-run` fast-forward the
+detached checkout back to main. The pause also hides `INSTALL_WARN` lines.
+This leaves detached HEAD. It refreshes the skills that tag's setup knows; a
+skill added after that tag stays installed and may fail until you resume
+upgrades. It does not undo install migrations or rewrite saved telemetry/ledgers. Retain readers capable of every
+emitted schema (including stage-runs v2). Inspect warnings and preserve user-owned
+files. To resume upgrades, return to the install's main branch, re-enable checks
+and rerun its updater: `git checkout main`, `./bin/config set update_check true`,
+then `./bin/update-run "$PWD"`. If setup failed, follow the reported setup
+recovery before relying on refreshed skills.
+
 ### Preserved installs
 
 Setup records associated regular Claude `SKILL.md` files and skipped-host

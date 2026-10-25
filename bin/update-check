@@ -414,7 +414,7 @@ REMOTE="$(curl -sf --max-time 5 "$REMOTE_URL" 2>/dev/null || true)"
 REMOTE="$(echo "$REMOTE" | tr -d '[:space:]')"
 
 # Validate: must look like a version number (reject HTML error pages)
-if ! echo "$REMOTE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+if ! echo "$REMOTE" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'; then
   # Invalid or empty response — assume up to date
   echo "UP_TO_DATE $LOCAL" > "$CACHE_FILE"
   exit 0

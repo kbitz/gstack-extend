@@ -1003,8 +1003,10 @@ non-UTF-8 or malformed files degrade to null. Prefixes, suffixes, non-ASCII digi
 and other component counts are malformed. Debug-only PRODUCER_VERSION_UNKNOWN
 reports a fixed failure class, never contents or private paths. Restore or upgrade
 the normal installation; only newly constructed rows improve. Saved retries retain
-the original producer, including null. These fixtures do not qualify the updater,
-tagging or full stable-release transition (Track 28A).
+the original producer, including null. These reader fixtures cover producer
+grammar. Track 28A separately qualifies the updater, tagging and candidate transition in
+[release compatibility](acceptance/release-compatibility.md); a real published-tag
+upgrade remains pending.
 
 | Row branch | Required shape | Producer grammar |
 |---|---|---|
@@ -1031,7 +1033,10 @@ SPEC's existing 0.x MINOR disclosure/migration policy; no release number is
 reserved here. An old reader reports v2 unsupported and keeps it. Roll back the
 writer while retaining a reader capable of every emitted version, including v2,
 and retain all ledger rows. Never delete, rewrite, backfill or re-stamp them.
-Installed two-host and release acceptance remain with Tracks 30B/30C and 28A.
+Track 28A records the post-release in-repo v2 reader compatibility check,
+including three-part producers, against SPEC's stable provenance surface.
+Installed two-host acceptance remains with Tracks 30B/30C; the real
+published-release upgrade and owner-confirmed O5 acceptance remain pending.
 
 **Acquisition and unknowns.** Existing detectors read harness markers and
 session logs for the stage window; unavailable values remain null:

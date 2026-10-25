@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -287,6 +287,22 @@ describe('createGitGateway — real subprocess (smoke)', () => {
     execSync('git tag v0.1.0 && git tag v0.18.5 && git tag v0.2.0', { cwd: tmp });
     const git = createGitGateway({ cwd: tmp });
     expect(git.tagsLatest()).toBe('v0.18.5');
+  });
+
+  test('real version sort orders three-part and legacy tags together', () => {
+    for (const tag of ['v0.16.2', 'v0.46.0.0', 'v0.47.0']) {
+      expect(spawnSync('git', ['tag', tag], { cwd: tmp }).status).toBe(0);
+    }
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = createGitGateway({ cwd: tmp, spawn: args => {
+      const r = spawnSync('git', args, { cwd: tmp, env, encoding: 'utf8' });
+      return { ok: r.status === 0, stdout: r.stdout, stderr: r.stderr };
+    } });
+    expect(git.tagsLatest()).toBe('v0.47.0');
+    expect(spawnSync('git', ['tag', 'v0.47.0.0'], { cwd: tmp }).status).toBe(0);
+    expect(git.tagsLatest()).toBe('v0.47.0.0');
+    expect(spawnSync('git', ['tag', 'v1.0.0'], { cwd: tmp }).status).toBe(0);
+    expect(git.tagsLatest()).toBe('v1.0.0');
   });
 
   test('tags on empty repo (no tags) returns []', () => {
