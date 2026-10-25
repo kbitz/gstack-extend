@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.49.0] - 2026-10-25
+
+### Added
+
+- **Check an installed gstack for drift before a stage depends on it.** `bin/upstream-check --gstack-root <absolute-install-root>` reads the installed upstream and reports `OK` or `DRIFT` for each contract the wrappers rely on: source anchors, helper exports, the classifier goldens and the lean reviewer criteria. Each drift line names the effect on the affected stage and the fix. The report starts with a versioned line, prints the checked upstream and extension versions, and ends with a `RESULT` line. Exit 0 means every check is OK, 4 means drift or a missing or malformed input, 2 is a usage error and 1 is an internal failure. The check is advisory, read-only and caller-controlled: nothing runs it automatically, and it does not pin, hold or upgrade anything. It supports both the nested and sibling skill layouts and bounds every file read and child process. Supported layouts, the trust boundary, the exit table and the measured startup profile are in [docs/upstream-check.md](docs/upstream-check.md).
+
+### Changed
+
+- **The outside-review adapter and the checker share one list of upstream modules.** The adapter now takes its import list from a single exported constant, so the checker covers exactly what the adapter loads. Adapter behavior is unchanged.
+
 ## [0.48.0] - 2026-10-25
 
 ### Changed

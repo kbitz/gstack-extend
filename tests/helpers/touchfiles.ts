@@ -92,6 +92,9 @@ function skill(name: string): string {
 export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/secret-dispositions.test.ts': ['bin/secret-dispositions', 'src/secret-dispositions/**', skill('review-and-prep'), skill('ship-and-land'), 'docs/secret-dispositions.md'],
   'tests/outside-review.test.ts': ['bin/outside-review', skill('review-and-prep'), 'docs/outside-review.md', 'docs/telemetry.md'],
+  // The checker's completeness scan reads every skill and src file, and its
+  // docs lock reads both docs; a launcher or src change reruns the suite.
+  'tests/upstream-check.test.ts': ['bin/upstream-check', 'skills/**', 'src/**', 'docs/upstream-check.md', 'docs/outside-review.md'],
   'tests/layout-scaffold.test.ts': [
     'bin/layout-scaffold', 'src/layout-scaffold/**',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',

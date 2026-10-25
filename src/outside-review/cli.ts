@@ -5,6 +5,21 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { snapshotDiff, type Request } from './prompt';
 import { run, measurement } from './run';
+import type { Classifier } from './recovery';
+
+/**
+ * The upstream helpers this adapter loads before any dispatch: the single list
+ * that both the adapter and `bin/upstream-check` read. The module is a file
+ * under `<gstack-root>/lib/`.
+ */
+export const UPSTREAM_HELPERS = [
+  { module: 'claude-code', name: 'runClaudeCode' },
+  { module: 'claude-bin', name: 'resolveClaudeCommand' },
+  { module: 'outside-review-result', name: 'classifyOutsideReview' },
+] as const;
+
+/** Installed upstream this adapter was last re-inspected against (see docs/outside-review.md). */
+export const INSPECTED_UPSTREAM = { revision: 'e2fffee3114e90ce2a7d165f09d3efce3555e252', version: '1.91.208.0' } as const;
 
 /** Adapter, not a fork: preserve upstream supervision, transport and validator. */
 export function restrictedArgs(args: string[], prefixFile: string) {
@@ -31,12 +46,16 @@ async function main(args: string[]) {
   const [requestFile, root, directory] = args as [string, string, string];
   const request: Request = JSON.parse(readFileSync(requestFile, 'utf8'));
   const load = (name: string) => import(pathToFileURL(join(resolve(root), 'lib', name + '.ts')).href);
-  const { runClaudeCode } = await load('claude-code');
-  const { resolveClaudeCommand } = await load('claude-bin');
-  const { classifyOutsideReview } = await load('outside-review-result');
-  if ([runClaudeCode, resolveClaudeCommand, classifyOutsideReview].some(helper => typeof helper !== 'function')) {
+  const loaded: Record<string, unknown> = {};
+  for (const { module, name } of UPSTREAM_HELPERS) loaded[name] = (await load(module))[name];
+  if (UPSTREAM_HELPERS.some(({ name }) => typeof loaded[name] !== 'function')) {
     throw new Error('Incompatible installed helpers; no outside call made');
   }
+  const { runClaudeCode, resolveClaudeCommand, classifyOutsideReview } = loaded as {
+    runClaudeCode: (options: object) => Promise<any>;
+    resolveClaudeCommand: (env: NodeJS.ProcessEnv) => { command: string; argsPrefix: string[] } | null;
+    classifyOutsideReview: Classifier;
+  };
   const command = resolveClaudeCommand(process.env);
   if (!command) throw new Error('Claude Code unavailable; no outside call made');
   const diff = snapshotDiff(request);

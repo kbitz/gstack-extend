@@ -7,13 +7,25 @@ authentication, model selection, provider errors and severity interpretation
 remain upstream responsibilities. Direct `/review`, autoplan and other outside
 providers are unchanged.
 
-The integration was inspected against gstack commit
-`d8753130710de2647f7ea3bdd19ffa793f3d5c6d`: `lib/claude-code.ts`
+## Upstream revision
+
+The integration was re-inspected against gstack commit
+`e2fffee3114e90ce2a7d165f09d3efce3555e252` (1.91.208.0, 2026-10-25): `lib/claude-code.ts`
 (`runClaudeCode`), `lib/claude-bin.ts` (`resolveClaudeCommand`),
 `lib/outside-review-result.ts` (`classifyOutsideReview`) and the rendered Codex
-review challenge/structured dispatch. Missing exports fail before dispatch.
-Upstream upgrades need the adapter tests and an installed-call check; a fixture
-does not establish provider cache reuse or installed-host acceptance.
+review challenge/structured dispatch. It was previously inspected against
+`d8753130710de2647f7ea3bdd19ffa793f3d5c6d`; the only change to those three files
+since (and none to `review/SKILL.md`) is `db87940e` (1.91.198.0): a reviewer's own last `Verdict: not ready`
+line now makes advisory-only findings a `findings` verdict. The adapter's call
+shapes and the recovery code are unchanged by it, and recovery still credits a
+completed voice only when the classifier does. The imported helpers are listed
+once, in `UPSTREAM_HELPERS` in `src/outside-review/cli.ts`; the adapter and
+[`bin/upstream-check`](upstream-check.md) both read that list. Missing exports
+fail before dispatch. Upstream upgrades need the adapter tests and an
+installed-call check; a fixture does not establish provider cache reuse or
+installed-host acceptance, and a passing `upstream-check` is not that check.
+Re-inspect the adapter against the installed upstream before changing the
+revision above.
 
 ## Invocation and scope
 

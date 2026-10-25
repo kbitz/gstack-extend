@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { prepare, snapshotDiff, TASKS, type Request } from '../src/outside-review/prompt';
 import { recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
-import { restrictedArgs } from '../src/outside-review/cli';
+import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
+import { GOLDEN_CASES } from '../src/upstream-check/probe';
 
 const request: Request = { repo: '.', base: 'a'.repeat(40), candidate: 'b'.repeat(40), scope: 'full',
   criteria: 'Retain duplicate-entry detection 🦊', instructions: 'Review all severities', context: '', structured: true };
@@ -218,6 +219,42 @@ test('a corrupt earlier result cannot hide a later saved paid finding or start n
   expect(replay[1]!.dispatched_at).toBeNull();
   expect(replay[1]!.returned_at).toBeNull();
 }));
+
+// Upstream db87940e (1.91.198.0): advisory-only findings do not block, but the reviewer's own last
+// `Verdict: not ready` line does. The fixture below mirrors that rule; the installed classifier runs the same table below.
+const notReadyFloor: Classifier = ({ text, gate, exit }) => {
+  const highest = text.match(/\[(P[0-3])\]/)?.[1] ?? null;
+  const last = [...text.matchAll(/^Verdict:\s*(.*)$/gim)].at(-1)?.[1] ?? '';
+  const blocking = highest === 'P0' || highest === 'P1' || /^not\s+ready\b/i.test(last.trim());
+  const execution = { state: exit ? 'unavailable' : 'ran' };
+  if (gate === 'review' && !/^Recommendation: .+ because .+/m.test(text)) return { execution, findings: { highest }, verdict: 'unavailable', reason: 'missing_markers' };
+  return { execution, findings: { highest }, verdict: blocking ? 'findings' : 'clean' };
+};
+
+describe('advisory findings and a not-ready verdict', () => {
+  test.each(GOLDEN_CASES.map(g => [g.id, g] as const))('%s is classified and credited as the golden table says', (_id, golden) => {
+    const result = recover(golden.text, golden.gate, 0, '', notReadyFloor);
+    expect(result.classification.verdict).toBe(golden.verdict);
+    expect(result.classification.findings.highest).toBe('P2');
+    expect(result.credited).toBe(golden.credited);
+    expect(result.parse).toBe('valid');
+  });
+  test('the table pairs each gate with an advisory case and a not-ready case', () => {
+    expect(GOLDEN_CASES.map(g => `${g.gate}:${g.verdict}`).sort()).toEqual(
+      ['review:clean', 'review:findings', 'structured:clean', 'structured:findings']);
+  });
+  test('the adapter loads exactly the helpers the launch check inventories', () => {
+    expect(UPSTREAM_HELPERS.map(h => h.name)).toEqual(['runClaudeCode', 'resolveClaudeCommand', 'classifyOutsideReview']);
+    expect(readFileSync(join(import.meta.dir, '../src/outside-review/cli.ts'), 'utf8')).toContain('for (const { module, name } of UPSTREAM_HELPERS)');
+  });
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier gives the golden verdicts through recovery', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const golden of GOLDEN_CASES) {
+      const result = recover(golden.text, golden.gate, 0, '', classifyOutsideReview);
+      expect([golden.id, result.classification.verdict, result.credited]).toEqual([golden.id, golden.verdict, golden.credited]);
+    }
+  });
+});
 
 test('adapter retains restricted transport and replaces default prompt without changing model', () => {
   const args = restrictedArgs(['-p', '--tools', '', '--strict-mcp-config', '--settings', '{"disableAllHooks":true}',
