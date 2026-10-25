@@ -639,6 +639,8 @@ A caller may pre-approve review choices with one line in the invocation prompt:
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
+Redact diagnostic values and keep this phase-status line outside the eventual
+copyable handoff; the handoff and receipt retain their own exact policy label.
 
 - Keys after the version are optional and unordered. `max-continuations`
   defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.
@@ -955,15 +957,23 @@ paragraph's inventory already covers this one). A missing anchor writes
 - **Scope.** Only a full-scope cycle 1 of a non-continuation invocation writes
   `completed=true`. A `continue` invocation, delta or full, never writes a new
   baseline; it carries the newest corroborated base forward unchanged, as the
-  cap section requires.
-- **Write point.** When cycle 1 finishes Steps 3–5 with every reviewer its gates
-  selected completed, and before any cycle 1 fix is applied, write
+  cap section requires. A non-continuation delta re-review also carries the
+  prior corroborated full-review row; without one it has no baseline
+  (`record-missing`), never a new full-review claim.
+- **Write point.** At the end of cycle 1's review collection, after every
+  selected reader has returned or is confirmed stopped and before Step 5
+  applies any fix, write
   `cycle-1-baseline` to the invocation's evidence directory: B, T
   (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree
   equals T, each stage's result, the `gstack-review-read` row when `/review`
   writes one (not required for `completed=true`), and
-  `completed=true|false`. Allowed skips are scope or adaptive-gate skips only;
-  an unavailable, failed or bounded-wait reviewer is `reviewer-incomplete`.
+  `completed=true|false`. Set true only when the installed review's completion
+  conditions hold: every selected reviewer completed and every required
+  Step 4.7 probe has current passing evidence. Write false for a failed,
+  blocked, inconclusive or unrun required probe, or an unavailable, failed or
+  bounded-wait reviewer, with reason `reviewer-incomplete`. Allowed skips are
+  scope or adaptive-gate skips only. A failed reader still gets this false
+  record once it is confirmed stopped; it is not mistaken for a missing record.
 - **Unavailable.** A snapshot tree that differs from T (reviewed uncommitted or
   untracked content) is `tree-differs`; a missing record is `record-missing`.
   Each, with `anchor-changed` and `reviewer-incomplete`, makes the baseline
@@ -1019,9 +1029,14 @@ shapes the prompt below, so the continuation starts in a fresh session.
    B, tree T, `scope: full`, `completed: true`, and the original review-record
    reference and per-stage results. These must come from the actual completed
    pass, never be inferred from HEAD or filled in after the fact. Fill the row
-   and the evidence comment only from the `cycle-1-baseline` record written
-   above, and only when it says `completed=true`; its B is the first stop's
-   delta base. Otherwise write `Full-review evidence: unavailable`, say delta
+   and the evidence comment for a new baseline only from the `cycle-1-baseline`
+   record written above, and only when it says `completed=true`; its B is the
+   first stop's delta base. At a continuation or delta re-review stop, preserve
+   the prior corroborated row and evidence-comment reference instead; the
+   original local file is not required on another host. Never replace that
+   base with this invocation's delta candidate. If neither a completed new
+   baseline nor a corroborated carried row is available, write
+   `Full-review evidence: unavailable`, say delta
    evidence is unavailable, and print
    `Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`
    in the STOPPED chat output and the record. The receipt's portable row and
@@ -1263,7 +1278,8 @@ whose inputs the fix touched", and readiness requires review coverage of every
 change (full scope plus recorded delta passes). So an agent runs the fix through
 another `/review` fix cycle or a delta re-review, and a third fix cycle ends in
 the cycle-cap stop. This section replaces that path for one narrow case, and
-every fallback below returns to exactly that path.
+every fallback below returns to exactly that path unless safe restoration
+cannot be verified, which stops BLOCKED as specified below.
 
 **When it applies.** Only when the review policy carries
 `final-gate-repair=tests-docs`, and only to a failure of item 4's pregate and
@@ -1272,6 +1288,8 @@ selection `full-suite=final` allows) or of its rerun before Step 6 after Step 5
 fixes or a base merge. At most one repair per invocation. A `/ship-and-land`
 full-suite failure and its hand-back are outside this rule; this skill and its
 receipt make no claim about them.
+Pause/resume continues the same invocation and retains its consumed allowance;
+read the corroborated repair record before deciding whether it remains unused.
 
 **Classification.** Read the classification contract from `docs/docs-ship.md`
 under the installed gstack-extend root (this installed skill directory's
@@ -1304,7 +1322,12 @@ on that range. A missing pointer or contract is the fallback
   behavioral content.
 
 **Diagnosis before the edit.** Snapshot the failed content as B with the delta
-procedure's snapshot block. Before editing, record a diagnosis in the evidence
+procedure's snapshot block. Before diagnosis, require a clean index/worktree
+and `tree(B) = tree(HEAD)`, with existing review coverage for that failed
+content. Otherwise return to today's rule without editing (`step=classify;
+reason=source-path; repair=none; allowance=unused`); do not bundle pending
+source changes into the repair. Save this HEAD as the required repair parent.
+Before editing, record a diagnosis in the evidence
 directory: the failed test IDs and output (raw output stays in that file),
 whether the test or the code under test is wrong, and why, citing the code
 under test and the requirement or contract the test encodes. Three outcomes
@@ -1326,8 +1349,12 @@ consumes the invocation's one allowance.
 4. With no blocking finding, commit the repair and rerun the full gate once
    under item 4's existing ledger procedure. On pass, continue to readiness.
 
-The repair commit's tree must equal tree(S); check it after the targeted rerun,
-after the commit and after the gate rerun. Any drift is
+After the targeted rerun and after the gate rerun, capture a fresh worktree
+snapshot with the same delta procedure and require its tree to equal tree(S).
+After committing, require the repair commit's tree to equal tree(S), its sole
+parent to be the saved HEAD, and that parent's tree to equal tree(B). Require
+the worktree and index to match the commit too, so hooks cannot leave unseen
+edits. Any drift is
 `step=classify; reason=snapshot-drift`, never a silent update of S.
 
 **Adversarial pass.** Send the native adversarial reviewer, first, the failed
@@ -1340,7 +1367,8 @@ changed to hide the failure, a raised timeout without a cause, "the code is
 wrong", or disagreement with the diagnosis. Record its result like any reviewer
 attempt (a `voices.jsonl` row and a per-review evidence file).
 
-**Fallbacks.** Any of these keeps today's rule, with the reason code in
+**Fallbacks.** Except for `restore-failed`, which stops BLOCKED, each of these
+returns to today's rule, with the reason code in
 parentheses: a source path (`source-path`), a path the classification cannot
 read (`unreadable-path`), a missing classification contract (`contract-missing`),
 a failed diagnosis (`code-wrong`, `contract-ambiguous`, `no-diagnosis` or
@@ -1357,21 +1385,35 @@ carries, exactly once and instead of the three success lines below:
 
 `Final-gate repair: fallback; step=<classify|diagnose|targeted-rerun|adversarial|full-gate|once-per-invocation|classification-unreadable>; reason=<code>; repair=<restored (snapshot <S>)|committed <SHA>|kept|none>; allowance=<consumed|unused>; detail=<redacted one-line summary>; evidence=<evidence file reference>`
 
-- A fallback before any edit, or before S exists, records `repair=none`. A
+- A fallback before any edit records `repair=none`. A
   failed snapshot keeps the edits in the worktree as the start of today's rule
   (`repair=kept`). A failed commit keeps the uncommitted repair for today's
-  rule.
-- Once S exists, a fallback before the repair commit restores the repair's
+  rule (`repair=kept`); it is excluded from restoration below.
+- Once S exists, a fallback before the repair commit, other than `commit-failed`, restores the repair's
   paths to B (the repair stays recoverable in snapshot S): delete the paths the
   repair added, restore the modified or deleted paths from B, then verify the
   worktree equals B's snapshot and record that check. A failed restore stops
   with `BLOCKED` and the evidence path. Today's rule starts from B.
-- A fallback after the repair commit (`gate-failed-again`) keeps the commit,
-  which enters today's review coverage.
+- A fallback after the repair commit, including `gate-failed-again`,
+  `snapshot-drift` or an interrupted chain, keeps the commit and any remaining
+  worktree edits. Record `repair=committed <SHA>` and preserve a snapshot of
+  remaining edits when possible. All that content enters today's review
+  coverage; the failed chain grants no readiness exception.
+- Map `contract-missing` to `step=classification-unreadable`, `empty-repair`
+  and `snapshot-drift` to `step=classify`, and `commit-failed` to
+  `step=full-gate`. A `snapshot-failed` uses `step=diagnose` for B and
+  `step=classify` for S or a freshness snapshot. `interrupted` uses the last
+  recorded step, or `classify` if unknown; `restore-failed` retains the
+  triggering step and records the failed restore in detail. An uncertain
+  commit result is reconciled against the saved parent before choosing the
+  pre- or post-commit recovery. Never undo another actor's edits to restore B;
+  if ownership or restoration is uncertain, stop BLOCKED with the evidence.
 - Raw test output stays in the evidence file; the receipt carries only a
   redacted summary.
 
-**Receipt.** A successful chain records each of these exactly once:
+**Receipt.** A successful chain records each of these exactly once per repair
+commit. Preserve earlier chains in separate commit-labeled blocks when a later
+authorized invocation adds another; never erase earlier coverage or disclosure:
 
 ```text
 Final-gate repair: <repair commit SHA>; paths=<n>; classes=tests|docs|tests,docs; failed=<failed test IDs or files>; evidence=<evidence file reference>

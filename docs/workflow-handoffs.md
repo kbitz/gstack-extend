@@ -829,7 +829,7 @@ Review policy: review-and-prep-policy/v1; full-suite=final; final-gate-repair=te
 Final-gate repair: 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432; paths=2; classes=tests; failed=tests/export.test.ts; evidence=https://github.com/example-org/example-repo/pull/42#issuecomment-1000002
 Final-gate repair rerun: targeted=ledger:repair-targeted-1 pass; gate=ledger:tests-1 (full) pass
 Final-gate repair review: native adversarial pass reviews/adversarial-b-s.md (0 findings, none blocking); no full review cycle covered this repair
-Final-gate repair: fallback; step=adversarial; reason=adversarial-blocking; repair=restored (snapshot 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432); allowance=consumed; detail=assertion removed without cause; evidence=reviews/repair-fallback.md
+Final-gate repair: fallback; step=adversarial; reason=adversarial-blocking; repair=restored (snapshot 1234567890abcdef1234567890abcdef12345678); allowance=consumed; detail=assertion removed without cause; evidence=reviews/repair-fallback.md
 ```
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`

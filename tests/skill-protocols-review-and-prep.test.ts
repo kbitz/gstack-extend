@@ -1104,6 +1104,7 @@ describe('review-and-prep final-gate repair', () => {
     expect(repair).toContain("item 4's pregate and main-suite run on the final content as configured (the full run, or the selection `full-suite=final` allows)");
     expect(repair).toContain('or of its rerun before Step 6 after Step 5 fixes or a base merge');
     expect(repair).toContain('At most one repair per invocation.');
+    expect(repair).toContain('Pause/resume continues the same invocation and retains its consumed allowance;');
     expect(repair).toContain('A `/ship-and-land` full-suite failure and its hand-back are outside this rule; this skill and its receipt make no claim about them.');
   });
 
@@ -1148,7 +1149,11 @@ describe('review-and-prep final-gate repair', () => {
     ].map((s) => repair.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(repair).toContain("The repair commit's tree must equal tree(S); check it after the targeted rerun, after the commit and after the gate rerun.");
+    expect(repair).toContain('Before diagnosis, require a clean index/worktree and `tree(B) = tree(HEAD)`, with existing review coverage for that failed content.');
+    expect(repair).toContain('Save this HEAD as the required repair parent.');
+    expect(repair).toContain('After the targeted rerun and after the gate rerun, capture a fresh worktree snapshot with the same delta procedure and require its tree to equal tree(S).');
+    expect(repair).toContain("After committing, require the repair commit's tree to equal tree(S), its sole parent to be the saved HEAD, and that parent's tree to equal tree(B).");
+    expect(repair).toContain('Require the worktree and index to match the commit too, so hooks cannot leave unseen edits.');
     expect(repair).toContain('`step=classify; reason=snapshot-drift`, never a silent update of S');
     expect(repair).toContain('An empty B..S is outside this rule (`empty-repair`).');
   });
@@ -1170,12 +1175,17 @@ describe('review-and-prep final-gate repair', () => {
     for (const code of ['source-path', 'unreadable-path', 'code-wrong', 'contract-ambiguous', 'no-diagnosis', 'snapshot-regeneration', 'targeted-failed', 'adversarial-blocking', 'adversarial-incomplete', 'gate-failed-again', 'already-used', 'contract-missing', 'snapshot-drift', 'snapshot-failed', 'commit-failed', 'restore-failed', 'interrupted', 'empty-repair']) {
       expect(repair).toContain(`\`${code}\``);
     }
-    expect(repair).toContain('A fallback before any edit, or before S exists, records `repair=none`.');
+    expect(repair).toContain('A fallback before any edit records `repair=none`.');
     expect(repair).toContain('(`repair=kept`)');
     expect(repair).toContain("restores the repair's paths to B (the repair stays recoverable in snapshot S)");
     expect(repair).toContain('then verify the worktree equals B\'s snapshot and record that check');
     expect(repair).toContain('A failed restore stops with `BLOCKED` and the evidence path.');
-    expect(repair).toContain('A fallback after the repair commit (`gate-failed-again`) keeps the commit, which enters today\'s rule.'.replace("today's rule", "today's review coverage"));
+    expect(repair).toContain('A failed commit keeps the uncommitted repair for today\'s rule (`repair=kept`); it is excluded from restoration below.');
+    expect(repair).toContain('a fallback before the repair commit, other than `commit-failed`, restores');
+    expect(repair).toContain('A fallback after the repair commit, including `gate-failed-again`, `snapshot-drift` or an interrupted chain, keeps the commit and any remaining worktree edits.');
+    expect(repair).toContain('All that content enters today\'s review coverage; the failed chain grants no readiness exception.');
+    expect(repair).toContain('An uncertain commit result is reconciled against the saved parent before choosing the pre- or post-commit recovery.');
+    expect(repair).toContain('if ownership or restoration is uncertain, stop BLOCKED with the evidence.');
     expect(repair).toContain('Raw test output stays in the evidence file; the receipt carries only a redacted summary.');
     expect(repair).toContain('`Final-gate repair refusal: reason=already-used; detail=<redacted summary>; evidence=<reference>`');
     expect(repair).toContain('an interrupted chain found on resume (`interrupted`)');
@@ -1192,6 +1202,8 @@ describe('review-and-prep final-gate repair', () => {
     expect(repair).toContain('It is not a `/review` invocation or cycle, writes no `/review` log row, does not count toward the three-cycle cap and needs no further review cycle.');
     expect(repair).toContain("a docs repair spends the documentation audit's re-audit");
     expect(repair).toContain('Write every repair path with its class to the evidence directory.');
+    expect(repair).toContain('A successful chain records each of these exactly once per repair commit.');
+    expect(repair).toContain('Preserve earlier chains in separate commit-labeled blocks');
     expect(flat).toContain('the `Final-gate repair` lines when a repair ran');
   });
 
@@ -1210,9 +1222,13 @@ describe('review-and-prep final-gate repair', () => {
     expect(baseline).toContain('Whenever the anchor is present, take cycle 1\'s candidate snapshot with the delta procedure above, whether or not `in-cap=delta` applies.');
     expect(baseline).toContain('Only a full-scope cycle 1 of a non-continuation invocation writes `completed=true`.');
     expect(baseline).toContain('A `continue` invocation, delta or full, never writes a new baseline; it carries the newest corroborated base forward unchanged');
-    expect(baseline).toContain('When cycle 1 finishes Steps 3–5 with every reviewer its gates selected completed, and before any cycle 1 fix is applied, write `cycle-1-baseline`');
+    expect(baseline).toContain("At the end of cycle 1's review collection, after every selected reader has returned or is confirmed stopped and before Step 5 applies any fix, write `cycle-1-baseline`");
+    expect(baseline).toContain('A non-continuation delta re-review also carries the prior corroborated full-review row; without one it has no baseline (`record-missing`), never a new full-review claim.');
     expect(baseline).toContain('B, T (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree equals T, each stage\'s result, the `gstack-review-read` row when `/review` writes one (not required for `completed=true`)');
-    expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only; an unavailable, failed or bounded-wait reviewer is `reviewer-incomplete`.');
+    expect(baseline).toContain("Set true only when the installed review's completion conditions hold: every selected reviewer completed and every required Step 4.7 probe has current passing evidence.");
+    expect(baseline).toContain('Write false for a failed, blocked, inconclusive or unrun required probe, or an unavailable, failed or bounded-wait reviewer, with reason `reviewer-incomplete`.');
+    expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only.');
+    expect(baseline).toContain('A failed reader still gets this false record once it is confirmed stopped');
     expect(baseline).toContain('A snapshot tree that differs from T (reviewed uncommitted or untracked content) is `tree-differs`; a missing record is `record-missing`.');
     expect(baseline).toContain('internal to the evidence directory and provisional');
     expect(baseline).toContain('Never infer a baseline from HEAD or the stop commit.');
@@ -1220,8 +1236,9 @@ describe('review-and-prep final-gate repair', () => {
 
   // Value: protects=a cap stop fills its portable row only from the cycle 1 record and otherwise says unavailable with a reason; fails_when=the row is filled from HEAD or the reasons drift; why_new=continuation guard producer gap; seam=none
   test('the stop fills the evidence row from the record or writes unavailable with a reason', () => {
-    expect(stop).toContain('Fill the row and the evidence comment only from the `cycle-1-baseline` record written above, and only when it says `completed=true`; its B is the first stop\'s delta base.');
-    expect(stop).toContain('Otherwise write `Full-review evidence: unavailable`');
+    expect(stop).toContain('Fill the row and the evidence comment for a new baseline only from the `cycle-1-baseline` record written above, and only when it says `completed=true`; its B is the first stop\'s delta base.');
+    expect(stop).toContain('At a continuation or delta re-review stop, preserve the prior corroborated row and evidence-comment reference instead; the original local file is not required on another host.');
+    expect(stop).toContain('If neither a completed new baseline nor a corroborated carried row is available, write `Full-review evidence: unavailable`');
     expect(stop).toContain('`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`');
     expect(stop).toContain("The receipt's portable row and the H-E prompt stay unchanged.");
     expect(stop).toContain('never be inferred from HEAD or filled in after the fact');
