@@ -112,6 +112,27 @@ external orchestrators without requiring a particular orchestrator.
    steps and links to sanitized evidence. No unresolved blocker may be hidden by
    a version bump. The owner confirms acceptance before the release uses it.
 
+## Selected priority outside the 1.0 gates
+
+### P1: Bounded, measured stage effort
+
+Each stage skill spends bounded, measured wall time and model usage, and an
+external orchestrator can see where it went. This owner-selected efficiency
+priority supplements O1–O5; it does not gate 1.0 or award a checkpoint.
+Prioritize recurring model-work and wall-time savings. After the initial
+timing and upstream checks, deliver test savings, then paused/resumed,
+requested-model and usage telemetry, then audit and review optimizations.
+Supporting contracts and broad acceptance follow; preserve necessary safety
+and measurement prerequisites.
+Record work, waits, reuse and rework when they happen. Report unavailable usage
+as unknown and distinguish wall time from model consumption. Measure the
+before/after effect and retained review quality before enforcing an optimization.
+Public defaults need evidence across the supported conditions; caller-specific
+behavior uses a documented option or versioned review-policy value and preserves
+today's default. Keep the published handoffs, receipt formats, approval rules and
+review stop conditions compatible. The [efficiency program](designs/workflow-efficiency-program.md)
+records the selected work and evidence limits; ROADMAP owns scheduling.
+
 ## Constraints and accepted limitations
 
 Skills compose with upstream gstack; this project does not replace workspace
@@ -134,7 +155,8 @@ No new UI, hosted service, orchestration engine or billing entitlement is implie
 
 Internal capability-table/template refactors, telemetry dashboard expansion and
 helper adoption are not gates unless a concrete supported workflow fails without
-them. Their complete commitments and revisit triggers remain in Future; moving
+them. P1 explicitly selects bounded efficiency work without making it a gate.
+Their complete commitments and revisit triggers remain in Future; moving
 them follows the approved 2026-10-08 scheduling amendment; they remain unshipped.
 
 ## Release policy
@@ -182,7 +204,8 @@ obligation remains pending until demonstrated or separately amended by the owner
 | Document | Bounded role |
 |---|---|
 | [README](../README.md), [installation](installation.md) | User entry point, setup and recovery |
-| [ROADMAP](ROADMAP.md) | Scheduled work toward this target; IDs are recyclable |
+| [ROADMAP](ROADMAP.md) | Scheduled target and selected-priority work; IDs are recyclable |
+| [Efficiency program](designs/workflow-efficiency-program.md) | P1 scope, measurement rules and upstream evidence limits; no independent release policy |
 | [PROGRESS](PROGRESS.md), [CHANGELOG](../CHANGELOG.md) | Acceptance evidence and historical releases |
 | [Future](roadmap-future.md), [shipped receipts](roadmap-shipped.md) | Deferred scope and frozen completion evidence |
 | [Project-spec implementation](designs/project-spec.md) | Existing skill requirements, not this project's product vision |
