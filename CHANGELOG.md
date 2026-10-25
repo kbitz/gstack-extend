@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.48.0] - 2026-10-25
+
+### Changed
+
+- **gstack-extend's own versions now use three parts.** This is the first release cut from a base that contains the versioning marker, so it is a 0.x minor with patch 0 whatever the change type, including released documentation. Padded equality treats a missing part as zero (`0.47.0 == 0.47.0.0`). Historical tags and records stay as they are. Consumer projects keep their own version schemes and init defaults. Rollback to a four-part tag pauses update checks first. Migration and recovery guidance is in [Version numbers](docs/installation.md#version-numbers).
+
+### Added
+
+- **Workflow efficiency is a selected priority outside the 1.0 gates.** SPEC P1 asks for bounded, measured stage wall time and model usage, and it does not add a checkpoint. The roadmap schedules timing and upstream drift checks, test savings, telemetry, bounded audits, review concurrency, docs-only and release-only paths, planning artifacts, then supporting contracts, both-host acceptance, and a final assessment. O1–O5, the audience, the target, and the release policy are unchanged. No Acceptance entry is added.
+
 ## [0.47.0.0] - 2026-10-24
 
 ### Added
