@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.50.0] - 2026-10-25
+
+### Added
+
+- **Opt in to one tests-or-docs repair when the final test gate fails.** Put `final-gate-repair=tests-docs` on a `Review policy:` line. `/review-and-prep` can then repair that failure when every changed path is tests or docs, rerun the failed tests, run one native adversarial pass, and rerun the gate once. A source change, a repair that hides a real failure, or a second failure returns to the existing review path and records which step stopped it. The receipt records a successful repair. The light review default does not enable the key. An install that does not recognize the key treats the whole policy line as unset, so check for the key before sending it.
+
+- **Record the full-review baseline a later repair-only continuation reads.** When cycle 1 finishes a full review, `/review-and-prep` writes that baseline from the review itself, before any fix. A missing baseline keeps a stopped draft held, including when the stopped receipt says nothing is unresolved. `/ship-and-land` still will not ship that draft.
+
+### Changed
+
+- **The upstream drift check skips the new capability grep.** `bin/upstream-check` treats this skill's lookup for `final-gate-repair=tests-docs` as a check of its own copy, not as installed upstream text.
+
 ## [0.49.0] - 2026-10-25
 
 ### Added
