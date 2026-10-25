@@ -642,7 +642,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
-  'documentation-audit': /^final$/, 'full-suite': /^final$/, 'max-continuations': /^[0-9]$/,
+  'documentation-audit': /^final$/, 'full-suite': /^final$/, 'final-gate-repair': /^tests-docs$/, 'max-continuations': /^[0-9]$/,
 };
 /** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
 function parsePolicy(value: string): Map<string, string> | null {
@@ -1192,3 +1192,156 @@ function fill(kind: string, tpl: string): string {
   if (kind === 'H-B') out = out.replace(/\nSave before shipping:[\s\S]*$/, '\n');
   return out;
 }
+
+// ─── (D) Track 30A: the final-gate repair key and cycle 1's baseline ───
+
+/** The stopped receipt's `Full-review evidence:` row as a guard input; null for `unavailable` or anything malformed. */
+function parseEvidenceRow(receipt: string): Record<string, unknown> | null {
+  const rows = receipt.split('\n').filter((l) => l.startsWith('Full-review evidence: '));
+  if (rows.length !== 1) return null;
+  const value = rows[0].slice('Full-review evidence: '.length);
+  if (value === 'unavailable') return null;
+  const pairs = value.split('; ').map((p) => /^([a-z]+)=(\S+)$/.exec(p));
+  if (pairs.some((m) => !m)) return null;
+  const kv = new Map(pairs.map((m) => [m![1], m![2]]));
+  if ([...kv.keys()].sort().join() !== 'commit,completed,scope,source,tree') return null;
+  return { commit: kv.get('commit'), tree: kv.get('tree'), scope: kv.get('scope'),
+    completed: kv.get('completed') === 'true', sourceRecordRef: kv.get('source') };
+}
+
+/** The guard run on a receipt's row: the evidence object comes from the receipt text, never from the defaults. */
+function guardFromReceipt(receipt: string): Verdict {
+  return run('E-CONTINUE', { live: { reviewedDeltaBaseEvidence: parseEvidenceRow(receipt) } });
+}
+
+interface Cycle1 {
+  continuation: boolean; scope: 'full' | 'delta'; anchor: boolean; reviewers: 'complete' | 'incomplete'; snapshotTree: string; baseTree: string;
+}
+const UNAVAILABLE_REASONS = ['anchor-changed', 'tree-differs', 'reviewer-incomplete', 'record-missing'];
+/** The skill's rules: which row a cap stop may print for a cycle 1 record. */
+function rowFor(record: Cycle1 | null, carried: string | null): { row: string; reason?: string } {
+  if (record?.continuation || (record === null && carried !== null)) {
+    return carried ? { row: carried } : { row: 'Full-review evidence: unavailable', reason: 'record-missing' };
+  }
+  const unavailable = (reason: string) => ({ row: 'Full-review evidence: unavailable', reason });
+  if (record === null) return unavailable('record-missing');
+  if (!record.anchor) return unavailable('anchor-changed');
+  if (record.reviewers !== 'complete' || record.scope !== 'full') return unavailable('reviewer-incomplete');
+  if (record.snapshotTree !== record.baseTree) return unavailable('tree-differs');
+  return { row: '' };
+}
+
+describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const stopSection = SKILLS['review-and-prep'].split('### When /review stops at its cycle cap')[1].split('\n## ')[0];
+  const templateRow = stopSection.split('\n').find((l) => l.startsWith('Full-review evidence: commit='))!;
+  const completedRow = templateRow
+    .replace('<full SHA>', FIX.vars.BASE).replace('<Git tree SHA>', FIX.vars.TREE)
+    .replace('<durable reference>', 'https://github.com/example-org/example-repo/pull/42#issuecomment-1000007');
+  const receipt = (edits: Array<[string, string]> = []): string => fixtureText({ text: 'e-stopped-receipt.txt', edits });
+  const prior = completedRow;
+
+  // Value: protects=the H-E consumer accepts the one new key and nothing else; fails_when=the key regex loosens or a repeat parses; why_new=new policy key; seam=none
+  test('the policy parser accepts the key and rejects an unknown value or a repeat', () => {
+    const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+    expect(parsePolicy(line('continuation=repair-only; final-gate-repair=tests-docs'))?.get('final-gate-repair')).toBe('tests-docs');
+    expect(parsePolicy(line('final-gate-repair=tests'))).toBeNull();
+    expect(parsePolicy(line('final-gate-repair=all'))).toBeNull();
+    expect(parsePolicy(line('final-gate-repair=tests-docs; final-gate-repair=tests-docs'))).toBeNull();
+    expect(parsePolicy(line('final-gate-repair=Tests-Docs'))).toBeNull();
+  });
+
+  // Value: protects=a policy carrying the key reaches the same continuation outcome as one without it; fails_when=the key breaks the H-E path; why_new=new key through the consumer; seam=none
+  test('an H-E prompt whose policy carries the key still continues', () => {
+    const policy = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; final-gate-repair=tests-docs; max-continuations=1';
+    const v = run('E-CONTINUE', { edits: [['review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1', policy]], live: { callerPolicy: policy } });
+    expect(v.mismatches).toEqual([]);
+    const bad = run('E-CONTINUE', { edits: [['review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1', policy.replace('tests-docs', 'all')]], live: { callerPolicy: policy } });
+    expect(bad.mismatches.map((m) => m.binding)).toContain('policy-malformed');
+  });
+
+  // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
+  test('skill and doc publish the same key, capability check and rollout order', () => {
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; final-gate-repair=tests-docs; max-continuations=<0-9>`';
+    expect(has(prep, grammarLine)).toBe(true);
+    const doc = squash(DOC);
+    expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
+    const check = `grep -F 'final-gate-repair=tests-docs' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check)).toBe(true);
+    expect(has(doc, check)).toBe(true);
+    for (const phrase of [
+      'An older H-E parser classifies a returned policy that carries it as `policy-malformed` (`HOLD`).',
+      'An installation without the key reads the whole line as `none supplied`',
+      'A caller lacking support on either side sends the same line without the key, keeping its other keys.',
+      'The key never authorizes a continuation.',
+      'Omitted, today\'s rule stands.',
+    ]) expect(has(doc, phrase), phrase).toBe(true);
+    const order = ['Update the caller\'s own H-E parser', 'Update the `/review-and-prep` install', 'Check the loaded copy, then send the key'].map((p) => doc.indexOf(p));
+    expect(order.every((i) => i >= 0) && order[0] < order[1] && order[1] < order[2]).toBe(true);
+  });
+
+  // Value: protects=the doc's copy-paste example uses the producer's exact receipt labels; fails_when=the example drifts from the skill's receipt lines; why_new=new example; seam=none
+  test('the doc example carries the policy line, the three success lines and a fallback line', () => {
+    const example = [...DOC.matchAll(/^```text\n(Review policy: review-and-prep-policy\/v1[^\n]*final-gate-repair=tests-docs[\s\S]*?)\n```$/gm)];
+    expect(example).toHaveLength(1);
+    const lines = example[0][1].split('\n');
+    expect(parsePolicy(lines[0].replace('Review policy: ', ''))?.get('final-gate-repair')).toBe('tests-docs');
+    const producer = SKILLS['review-and-prep'].split('**Receipt.**')[1].split('```text\n')[1].split('\n```')[0].split('\n');
+    expect(lines.slice(1, 4).map((l) => l.split(': ')[0])).toEqual(producer.map((l) => l.split(': ')[0]));
+    expect(lines[4]).toMatch(/^Final-gate repair: fallback; step=\w[\w-]*; reason=[a-z-]+; repair=.+; allowance=(?:consumed|unused); detail=.+; evidence=\S+$/);
+  });
+
+  // Value: protects=a successful repair chain still hands /ship-and-land a trusted head, and a stopped draft stays stopped whatever its receipt says; fails_when=the doc rows or fixtures stop saying so; why_new=H-B contract for a repaired head; seam=none
+  test('a repaired head stays trusted and a stopped draft is still refused', () => {
+    const plain = run('B-TRUSTED');
+    const repaired = run('B-REPAIRED-HEAD');
+    expect(repaired.outcome).toBe(plain.outcome);
+    expect(repaired.mismatches).toEqual(plain.mismatches);
+    expect(squash(DOC)).toContain('still emits `review: COMPLETE` in its H-B handoff');
+    const stopped = run('B-STOPPED-NONE-RECORDED');
+    expect(stopped.outcome).toBe(HOLD);
+    expect(stopped.mismatches.map((m) => m.binding)).toEqual(['stopped']);
+    expect(fixtureText(FIX.cases['B-STOPPED-NONE-RECORDED'])).toContain('Unresolved: none recorded');
+    expect(squash(SKILLS['ship-and-land'])).toContain("If it stopped at `/review`'s cycle cap (`review-and-prep:stopped:`), preserve that stop and use its `/review-and-prep continue` prompt");
+  });
+
+  // Value: protects=the fixture receipt row is the producer's own template line; fails_when=the template line or the fixture row changes shape; why_new=the guard fixture used to inject an evidence object; seam=none
+  test('the receipt fixture row is built from the skill template and the guard reads the parsed row', () => {
+    expect(templateRow).toBe('Full-review evidence: commit=<full SHA>; tree=<Git tree SHA>; scope=full; completed=true; source=<durable reference>');
+    expect(receipt().split('\n')).toContain(completedRow);
+    const parsed = parseEvidenceRow(receipt());
+    expect(parsed).toEqual({ commit: FIX.vars.BASE, tree: FIX.vars.TREE, scope: 'full', completed: true,
+      sourceRecordRef: 'https://github.com/example-org/example-repo/pull/42#issuecomment-1000007' });
+    // The default object's permalink differs, so passing proves the guard consumed the receipt's row.
+    expect(withVars(FIX.defaults.live.E.reviewedDeltaBaseEvidence).sourceRecordRef).not.toBe(parsed!.sourceRecordRef);
+    const stopLabels = ['Stopped at', 'Delta base', 'Review policy', 'Review policy source', 'Full-review evidence'];
+    for (const l of stopLabels) expect(stopSection, l).toContain(`${l}: `);
+    expect(receipt()).toContain(`Delta base: ${FIX.vars.BASE}`);
+  });
+
+  // Value: protects=a cap after a completed cycle 1 continues under repair-only and every unavailable baseline holds with delta-base; fails_when=the producer's rules or the guard's binding drift; why_new=the continuation path was dead for lack of a producer record; seam=none
+  test.each([
+    { name: 'a completed full-scope cycle 1', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: false },
+    { name: 'a continuation carrying the prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: prior, hold: false },
+    { name: 'a continuation with no prior row', record: { continuation: true, scope: 'delta', anchor: true, reviewers: 'complete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
+    { name: 'a reviewer that did not complete', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'incomplete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
+    { name: 'a snapshot tree that differs from B', record: { continuation: false, scope: 'full', anchor: true, reviewers: 'complete', snapshotTree: 'U', baseTree: 'T' } as Cycle1, carried: null, hold: true },
+    { name: 'a changed /review anchor', record: { continuation: false, scope: 'full', anchor: false, reviewers: 'complete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
+    { name: 'a delta-scope cycle 1', record: { continuation: false, scope: 'delta', anchor: true, reviewers: 'complete', snapshotTree: 'T', baseTree: 'T' } as Cycle1, carried: null, hold: true },
+    { name: 'no record', record: null, carried: null, hold: true },
+  ])('$name', ({ record, carried, hold }) => {
+    const decided = rowFor(record, carried);
+    const row = decided.row === '' ? completedRow : decided.row;
+    const v = guardFromReceipt(receipt([[completedRow, row]]));
+    expect(v.mismatches.map((m) => m.binding)).toEqual(hold ? ['delta-base'] : []);
+    if (decided.reason) expect(UNAVAILABLE_REASONS).toContain(decided.reason);
+  });
+
+  // Value: protects=the four unavailable reasons the skill prints are the ones the model knows; fails_when=a reason is added, renamed or dropped on one side; why_new=new STOPPED output; seam=none
+  test('the skill and the model name the same unavailable reasons', () => {
+    const m = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(prep);
+    expect(m?.[1].split('|')).toEqual(UNAVAILABLE_REASONS);
+    expect(has(squash(DOC), 'the H-E prompt is unchanged')).toBe(true);
+    expect(has(prep, 'Full-review evidence: unavailable')).toBe(true);
+  });
+});

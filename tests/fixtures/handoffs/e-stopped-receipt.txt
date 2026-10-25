@@ -1,0 +1,10 @@
+## Review and prep
+
+STOPPED — review cycle cap
+
+Stopped at: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+Delta base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+Review policy: review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1
+Review policy source: caller prompt
+Full-review evidence: commit=c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3; tree=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; scope=full; completed=true; source=https://github.com/example-org/example-repo/pull/42#issuecomment-1000007
+Unresolved: F2 high, F5 medium
