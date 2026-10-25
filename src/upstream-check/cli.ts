@@ -125,7 +125,7 @@ function describe(check: Check): { effect: string; fix: string } {
     case 'export':
       return { effect: STAGE.outside, fix: withDocs(UPGRADE_FIX) };
     case 'classifier':
-      return { effect: check.id.endsWith('not-ready') ? STAGE.notReady : STAGE.classifier, fix: withDocs(UPGRADE_FIX) };
+      return { effect: STAGE.classifier, fix: withDocs(UPGRADE_FIX) };
     case 'criteria':
       return { effect: `/autoplan-lean: the ${check.id.split('.').slice(1).join(' ')} voice is not upstream-identical for this run`, fix: withDocs(UPGRADE_FIX) };
   }
@@ -190,7 +190,7 @@ function parseArgs(argv: string[]): 'help' | 'version' | Options {
 const gitQuery = (cwd: string, args: string[]) => {
   // Discover the filesystem checkout, never an inherited hook/wrapper selection.
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  return spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, env: { ...env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' } });
+  return spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, env: { ...env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0', GIT_DISCOVERY_ACROSS_FILESYSTEM: '1' } });
 };
 const gitOut = (cwd: string, args: string[]) => {
   const result = gitQuery(cwd, args);
@@ -386,7 +386,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       const transient = /timed out/.test(probe.cause);
       const own = probe.last === path;
       drift('export', id, own ? `${probe.cause} while importing ${path}` : `not run: ${probe.cause}`,
-        { effect: 'the export contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
+        { effect: 'bin/outside-review: the export contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
     } else {
       const result = probe.result.exports.find((e) => e.name === name)!;
       if (result.status === 'ok') ok('export', id);
@@ -400,12 +400,13 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     else if (!probe.ok) {
       const transient = /timed out/.test(probe.cause);
       drift('classifier', id, probe.last === 'classifier' ? `${probe.cause} while running the classifier cases` : `not run: ${probe.cause}`,
-        { effect: 'the classifier contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
+        { effect: 'bin/outside-review: the classifier contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
     } else {
       const got = probe.result.classifier.find((c) => c.id === golden.id)!;
-      if (got.error) drift('classifier', id, `expected=${expected} got=${got.error}`, { effect: 'the classifier contract is unverified because the classifier could not run', fix: UPGRADE_FIX });
+      if (got.error) drift('classifier', id, `expected=${expected} got=${got.error}`, { effect: 'bin/outside-review: the classifier contract is unverified because the classifier could not run', fix: UPGRADE_FIX });
       else if (got.verdict === golden.verdict && got.credited === golden.credited) ok('classifier', id);
-      else drift('classifier', id, `expected=${expected} got=${credit(got.verdict, got.credited)}`);
+      else drift('classifier', id, `expected=${expected} got=${credit(got.verdict, got.credited)}`,
+        golden.verdict === 'findings' && got.verdict === 'clean' && got.credited ? { effect: STAGE.notReady, fix: UPGRADE_FIX } : {});
     }
   }
 

@@ -272,6 +272,7 @@ describe('drift', () => {
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 1}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
+    expect(r.out).not.toContain('is credited clean');
   }, 30000);
 
   test('criteria: a changed native criterion, a missing paragraph and a missing section are drift', async () => {
@@ -356,6 +357,7 @@ describe('upstream probe', () => {
     ['a never-settling top-level await', 'setInterval(() => {}, 1000);\nawait new Promise(() => {});\n', 'probe timed out after 200 ms while importing'],
     ['a synchronous infinite loop', 'for (;;) {}\n', 'probe timed out after 200 ms while importing'],
     ['process.exit(0) at import', 'process.exit(0);\n', 'probe exited 0 without a result'],
+    ['process.exit(1) at import', 'process.exit(1);\n', 'probe exited 1 without a result'],
     ['a flood over 1 MiB', "process.stdout.write('x'.repeat(2 * 1024 * 1024));\nsetInterval(() => {}, 1000);\n", 'probe output exceeded 1 MiB'],
     ['a result frame without the nonce', 'process.stdout.write(\'forged result {"exports":[],"classifier":[]}\\n\');\nprocess.exit(0);\n', 'probe exited 0 without a result'],
   ])('%s is drift with a stable check count', async (_name, body, cause) => {
@@ -371,6 +373,8 @@ describe('upstream probe', () => {
     expect(exportLines.some((l) => l.includes(cause))).toBe(true);
     expect(drifts(r.lines).filter((l) => l.startsWith('DRIFT classifier'))).toHaveLength(GOLDEN_CASES.length);
     expect(r.out).not.toContain('xxxxxxxx');
+    expect(r.out).toContain('effect: bin/outside-review: the export contract is unverified');
+    expect(r.out).toContain('effect: bin/outside-review: the classifier contract is unverified');
     if (cause.includes('timed out')) {
       expect(exportLines.find((l) => l.includes('resolveClaudeCommand'))).toContain(`while importing ${BIN(f)}`);
       expect(r.lines.some((l) => l.includes('fix: rerun with a larger --timeout-ms'))).toBe(true);
@@ -424,6 +428,25 @@ describe('classifier golden table', () => {
     expect(drifts(r.lines)).toHaveLength(GOLDEN_CASES.length);
     expect(r.out).toContain('got=threw RangeError');
     expect(r.out).not.toContain('secret detail');
+  }, 30000);
+
+  test('uncredited results do not claim the reviewer was credited clean', async () => {
+    const f = upstream('nested');
+    writeFileSync(join(f.root, 'lib', 'outside-review-result.ts'), 'export function classifyOutsideReview() { return { execution: { state: "ran" }, findings: { highest: null }, verdict: "unverified" }; }\n');
+    const r = await check(rootArgs(f));
+    expect(r.code).toBe(4);
+    expect(r.out).toContain('got=unverified/uncredited');
+    expect(r.out).not.toContain('is credited clean');
+  }, 30000);
+
+  test('a throwing upstream error-name accessor remains redacted drift', async () => {
+    const f = upstream('nested');
+    writeFileSync(join(f.root, 'lib', 'claude-bin.ts'), 'const error = new Error("private message"); Object.defineProperty(error, "name", { get() { throw new Error("private getter"); } }); throw error;\n');
+    const r = await check(rootArgs(f));
+    expect(r.code).toBe(4);
+    expect(r.out).toContain('import failed (Error)');
+    expect(r.out + r.err).not.toContain('private message');
+    expect(r.out + r.err).not.toContain('private getter');
   }, 30000);
 });
 
@@ -504,6 +527,19 @@ describe('usage errors', () => {
     } finally { process.env.PATH = oldPath; }
   }, 30000);
 
+  test('repository discovery crosses mount boundaries before deciding there is no repository', async () => {
+    const git = fresh('mount-boundary-git');
+    put(join(git, 'git'), '#!/bin/sh\nif [ "${GIT_DISCOVERY_ACROSS_FILESYSTEM:-}" = 1 ]; then\n  printf "fatal: not a git repository (or any of the parent directories): .git\\n" >&2\nelse\n  printf "fatal: not a git repository (or any parent up to mount point /fixture)\\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\\n" >&2\nfi\nexit 128\n');
+    chmodSync(join(git, 'git'), 0o755);
+    const old = process.env.PATH;
+    try {
+      process.env.PATH = git;
+      const r = await check(rootArgs(upstream('nested')));
+      expect(r.code).toBe(0);
+      expectAgreement(r);
+    } finally { process.env.PATH = old; }
+  }, 30000);
+
   test('inherited Git selection cannot redirect containment or installed revision', async () => {
     const repo = fresh('git-env-repo');
     const foreign = fresh('git-env-foreign');
@@ -533,6 +569,16 @@ describe('usage errors', () => {
     expect(err).toContain(`upstream-check ${readFileSync(join(REPO, 'VERSION'), 'utf8').trim()} bun `);
     expect(err.trimEnd().split('\n').at(-1)).toBe('FIX: rerun once; if it repeats, report this output');
     expect(err.split('\n').filter((l) => /^\s+at /.test(l)).length).toBeLessThanOrEqual(5);
+  }, 30000);
+
+  test('a failed stdout flush is attempted once and reports an internal error', async () => {
+    let calls = 0, err = '';
+    const code = await main(rootArgs(upstream('nested')), {
+      stdout: () => { calls++; throw new Error('output closed'); }, stderr: (t) => { err += t; }, cwd,
+    });
+    expect(code).toBe(1);
+    expect(calls).toBe(1);
+    expect(err).toStartWith('ERROR INTERNAL: output closed\n');
   }, 30000);
 });
 
@@ -607,6 +653,24 @@ describe('launcher', () => {
     expect(r.stderr).toContain('upstream-check unknown bun ');
     expect(r.stderr).toContain('FIX: re-run ./setup');
   }, 30000);
+
+  test.each(['startup', 'owned-catch'] as const)('a child-only %s fault remains internal with no report', (where) => {
+    const copy = fresh('child-owned-fault');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
+    put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'VERSION'), '9.9.9\n');
+    const probePath = join(copy, 'src', 'upstream-check', 'probe.ts');
+    const source = readFileSync(probePath, 'utf8');
+    writeFileSync(probePath, where === 'startup'
+      ? 'if (import.meta.main) throw new Error("child-only fault");\n' + source
+      : source.replace('await probe(resolve(root)', 'throw new Error("child-only fault");\n    await probe(resolve(root)'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('ERROR INTERNAL: extension probe failed before producing a result');
+    expect(r.stderr).not.toContain('child-only fault');
+  }, 40000);
 
   test('a relative symlinked launcher resolves the extension installation', () => {
     const dir = fresh('launcher-link');

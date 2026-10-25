@@ -66,7 +66,9 @@ real path is inside the current directory's git repository is a usage error
 `.agents/skills/gstack`; the check does not support it. Where a host keeps its
 root is defined by upstream and the host, so pass the root of the host whose
 stage you are about to launch. Git discovery ignores inherited `GIT_*`
-repository selectors. Unavailable or failed discovery is an internal error;
+repository selectors and crosses filesystem boundaries while discovering the
+innermost work tree containing the current directory (the submodule itself
+when invoked in a submodule). Unavailable or failed discovery is an internal error;
 only Git's explicit not-a-repository result permits a non-repository cwd.
 
 For the installed `/review` used during qualification, root selection is:
@@ -134,8 +136,10 @@ A missing launcher source or a launcher symlink failure exits 1 with
 `ERROR INTERNAL`, version context (extension version `unknown` before the
 source is available), and the specific installation repair in `FIX`.
 
-Output is buffered and written after every check finishes, so a crash never
-leaves a partial report. The command never prints environment values, and an
+Output is buffered and written after every check finishes, so an internal
+check failure produces no report. A failure while writing the output stream
+can leave incomplete output; without the final `RESULT` it is not a passing
+report. The command never prints environment values, and an
 upstream exception message is never printed: a failure names the error class,
 the module path and a reason the checker owns. To see the raw message run
 `bun <root>/lib/<module>.ts` yourself.
@@ -190,6 +194,9 @@ larger `--timeout-ms`; content drift does not. Every file the checker reads is
 resolved with `realpath` and must be a regular file of at most 4 MiB. A missing
 root, directory, FIFO, oversized file or malformed inventory source is drift.
 `VERSION` content that is not a dotted version is printed as `unknown`.
+Frames are written synchronously before upstream imports, so an upstream
+nonzero early exit remains drift. An extension-owned child startup or internal
+failure is instead exit 1, with no report.
 
 ### Drift kinds, by consequence
 
@@ -202,14 +209,17 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   launched.
 
 <a id="drift-export"></a>
-- **`export`.** `bin/outside-review` refuses before any dispatch, so
-  `/review-and-prep` has no outside coverage. A probe timeout also lands here.
+- **`export`.** A confirmed missing or non-function helper makes
+  `bin/outside-review` refuse before dispatch, leaving `/review-and-prep`
+  without outside coverage. An incomplete probe only establishes that the
+  `bin/outside-review` export contract is unverified; it does not prove refusal.
 
 <a id="drift-classifier"></a>
-- **`classifier`.** The installed classifier no longer returns the golden
-  verdict or credit. For the `not-ready` cases this means a reviewer's own
-  not-ready verdict with only advisory findings is credited clean, so the stage
-  may proceed past it.
+- **`classifier`.** The `bin/outside-review` classifier contract differs or
+  could not be verified. Only an observed `clean/credited` result for a
+  `not-ready` case establishes that the reviewer's not-ready verdict is credited
+  clean and the stage may proceed past it. Unrun, throwing and uncredited cases
+  do not establish that behavior.
 
 <a id="drift-anchor"></a>
 - **`anchor`.** For the three `/review` anchors, the in-cap delta is inactive
@@ -303,13 +313,13 @@ Bun startup, the child process and every check are included.
 | Bun | 1.4.4 |
 | Installed upstream | 1.91.216.0, revision `64d82101cac149125d28df888e3f2ea14a444dc5` (nested checkout; sibling revision unknown) |
 | Extension | 0.48.0 (21 checks, all OK, exit 0) |
-| Load during the runs | load average about 8.7 (other sessions were active), not an idle machine |
+| Load during the runs | load average about 2.6 (other sessions were active), not an idle machine |
 | Date | 2026-10-25 |
 
 | Layout | Runs | First run | Warm runs | Observed maximum |
 |---|---|---|---|---|
-| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.086 s | 0.083–0.089 s | 0.089 s |
-| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.095 s | 0.075–0.098 s | 0.098 s |
+| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.082 s | 0.075–0.077 s | 0.082 s |
+| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.072 s | 0.069–0.073 s | 0.073 s |
 
 The first run is the first of each series of 11; the filesystem and Bun caches were
 not purged, so it is not a true cold start. The under-one-second claim covers

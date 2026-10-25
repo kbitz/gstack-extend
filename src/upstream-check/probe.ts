@@ -7,6 +7,7 @@
  * `<nonce> result <json>` line at the end. Everything else is drained.
  */
 import { join, resolve } from 'node:path';
+import { writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { recover, type Classifier } from '../outside-review/recovery.ts';
 
@@ -40,8 +41,10 @@ export interface ProbeResult { exports: ExportResult[]; classifier: ClassifierRe
 
 /** Error class name only; upstream messages are never reported. */
 const errorClass = (error: unknown) => {
-  const name = error instanceof Error ? error.name : '';
-  return /^[A-Za-z0-9_$.]{1,64}$/.test(name) ? name : 'Error';
+  try {
+    const name = error instanceof Error ? error.name : '';
+    return /^[A-Za-z0-9_$.]{1,64}$/.test(name) ? name : 'Error';
+  } catch { return 'Error'; }
 };
 
 export async function probe(root: string, helpers: readonly { module: string; name: string }[], nonce: string, write: (line: string) => void) {
@@ -80,9 +83,10 @@ export async function probe(root: string, helpers: readonly { module: string; na
 if (import.meta.main) {
   const [nonce, root, helpersJson] = process.argv.slice(2) as [string, string, string];
   try {
-    await probe(resolve(root), JSON.parse(helpersJson), nonce, (line) => process.stdout.write(`\n${line}\n`));
+    // Flush each attribution frame before importing code that may exit abruptly.
+    await probe(resolve(root), JSON.parse(helpersJson), nonce, (line) => { writeSync(1, `\n${line}\n`); });
   } catch {
-    process.stdout.write(`\n${nonce} internal\n`);
+    writeSync(1, `\n${nonce} internal\n`);
     process.exitCode = 1;
   }
   // Flush the result frame before exiting: an import may have left handles open.
