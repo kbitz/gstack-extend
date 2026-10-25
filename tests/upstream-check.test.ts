@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -66,12 +66,13 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
 
 const cwd = fresh('cwd');
 async function check(args: string[], where = cwd) {
+  if (args.includes('--gstack-root') && !args.includes('--timeout-ms')) args = [...args, '--timeout-ms', '20000'];
   let out = '', err = '';
   const code = await main(args, { stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, cwd: where });
   const lines = out.split('\n').filter(Boolean);
   return { code, out, err, lines, result: lines.at(-1) ?? '' };
 }
-const rootArgs = (f: Fixture, ...more: string[]) => ['--gstack-root', f.root, ...more];
+const rootArgs = (f: Fixture, ...more: string[]) => ['--gstack-root', f.root, ...(more.includes('--timeout-ms') ? [] : ['--timeout-ms', '20000']), ...more];
 const drifts = (lines: string[]) => lines.filter((l) => l.startsWith('DRIFT '));
 /** Exit status, RESULT line and stderr always agree. */
 function expectAgreement(r: Awaited<ReturnType<typeof check>>) {
@@ -139,7 +140,7 @@ describe('a healthy installation', () => {
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
-  }, 20000);
+  }, 30000);
 
   test('two installed roots at once each check only their own files', async () => {
     const nested = upstream('nested', 'a');
@@ -147,13 +148,13 @@ describe('a healthy installation', () => {
     const [a, b] = [await check(rootArgs(nested)), await check(rootArgs(sibling))];
     for (const [r, f] of [[a, nested], [b, sibling]] as const) {
       expect(r.code).toBe(0);
-      const files = r.lines.filter((l) => l.startsWith('INFO file ')).map((l) => l.split(' ').slice(3).join(' '));
+      const files = r.lines.filter((l) => l.startsWith('INFO file ') && !/^INFO file (extend-version|inventory) /.test(l)).map((l) => l.split(' ').slice(3).join(' '));
       expect(files.length).toBeGreaterThan(0);
       for (const path of files) expect(path.startsWith(realpathSync(f.skills))).toBe(true);
     }
     expect(a.lines.filter((l) => l.startsWith('INFO file ')).join()).not.toContain(realpathSync(sibling.skills));
     expect(b.lines.filter((l) => l.startsWith('INFO file ')).join()).not.toContain(realpathSync(nested.skills));
-  }, 20000);
+  }, 30000);
 
   test('a root path with spaces and an explicit skills directory work', async () => {
     const f = upstream('sibling', 'with space');
@@ -163,7 +164,7 @@ describe('a healthy installation', () => {
     expect(r.code).toBe(0);
     expect(r.lines).toContain(`INFO root ${moved}`);
     expectAgreement(r);
-  }, 20000);
+  }, 30000);
 
   test('a symlinked nested layout reports OK', async () => {
     const f = upstream('nested', 'real');
@@ -173,7 +174,7 @@ describe('a healthy installation', () => {
     const r = await check(['--gstack-root', join(linked, 'gstack')]);
     expect(r.code).toBe(0);
     expect(r.lines.some((l) => l.startsWith('INFO file review ') && l.includes(f.root))).toBe(true);
-  }, 20000);
+  }, 30000);
 
   test('a multiline VERSION prints unknown and one RESULT', async () => {
     const f = upstream('nested');
@@ -181,7 +182,41 @@ describe('a healthy installation', () => {
     const r = await check(rootArgs(f));
     expect(r.lines).toContain('INFO upstream-version unknown');
     expectAgreement(r);
-  }, 20000);
+  }, 30000);
+
+  test('nested inlined autoplan and CRLF anchors retain byte matches', async () => {
+    const f = upstream('nested');
+    rmSync(join(f.root, 'autoplan', 'sections'), { recursive: true });
+    writeFileSync(f.files.autoplan!, SKIP + PHASES.map(sectionText).join('\n'));
+    writeFileSync(f.files.review!, reviewText().replaceAll('\n', '\r\n'));
+    expect((await check(rootArgs(f))).code).toBe(0);
+  }, 30000);
+
+  test('nested precedence never borrows healthy sibling files', async () => {
+    const f = upstream('nested');
+    put(join(f.skills, 'gstack-review', 'SKILL.md'), reviewText());
+    put(join(f.skills, 'gstack-autoplan', 'SKILL.md'), SKIP + PHASES.map(sectionText).join('\n'));
+    writeFileSync(f.files.review!, '# changed nested review\n');
+    rmSync(join(f.root, 'autoplan', 'sections', 'eng-phase.md'));
+    const r = await check(rootArgs(f));
+    expect(r.code).toBe(4);
+    expect(r.lines).toContain('INFO layout nested');
+    expect(drifts(r.lines).filter((line) => line.includes('review-and-prep.incap.'))).toHaveLength(3);
+    expect(drifts(r.lines).some((line) => line.includes('criteria.eng.outside'))).toBe(true);
+    expect(r.lines.filter((line) => line.startsWith('INFO file ')).join('\n')).not.toContain(`${realpathSync(f.skills)}/gstack-autoplan/`);
+  }, 30000);
+
+  test('only an exact checkout root reports its own revision', async () => {
+    const f = upstream('nested');
+    const git = (dir: string, args: string[]) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', timeout: 20000 });
+    expect(git(f.skills, ['init', '-q']).status).toBe(0);
+    expect(git(f.skills, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'enclosing']).status).toBe(0);
+    expect((await check(rootArgs(f))).lines).toContain('INFO upstream-revision unknown');
+    expect(git(f.root, ['init', '-q']).status).toBe(0);
+    expect(git(f.root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'installed']).status).toBe(0);
+    const revision = git(f.root, ['rev-parse', 'HEAD']).stdout.trim();
+    expect((await check(rootArgs(f))).lines).toContain(`INFO upstream-revision ${revision}`);
+  }, 40000);
 });
 
 describe('drift', () => {
@@ -199,14 +234,14 @@ describe('drift', () => {
     expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
     expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
     expect(r.lines).toContain('OK anchor review-and-prep.incap.1');
-  }, 20000);
+  }, 30000);
 
   test('anchors compare raw bytes: a normalized lookalike does not match', async () => {
     const f = upstream('nested');
     writeFileSync(f.files.review!, reviewText().replace('Steps 3–5', 'Steps 3-5'));
     const r = await check(rootArgs(f));
     expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(['review-and-prep.incap.1']);
-  }, 20000);
+  }, 30000);
 
   test('a missing skip list is tied to skipList() returning nothing and says the heading fallback', async () => {
     const f = upstream('nested');
@@ -217,7 +252,7 @@ describe('drift', () => {
     expect(at).toBeGreaterThan(-1);
     expect(r.lines[at + 1]).toContain('marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself');
     expect(skipList(readFileSync(upstream('nested').files.autoplan!, 'utf8')).length).toBeGreaterThan(0);
-  }, 20000);
+  }, 30000);
 
   test('missing review file in sibling layout names the nested path too', async () => {
     const f = upstream('sibling');
@@ -227,7 +262,7 @@ describe('drift', () => {
     const line = drifts(r.lines).find((l) => l.includes('review-and-prep.incap.1'))!;
     expect(line).toContain(f.files.review!);
     expect(line).toContain(join(f.root, 'review', 'SKILL.md'));
-  }, 20000);
+  }, 30000);
 
   test('a missing root is drift, never a pass, and every later check says not run', async () => {
     const r = await check(['--gstack-root', join(scratch, 'does-not-exist')]);
@@ -237,7 +272,7 @@ describe('drift', () => {
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 1}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
-  }, 20000);
+  }, 30000);
 
   test('criteria: a changed native criterion, a missing paragraph and a missing section are drift', async () => {
     const f = upstream('nested');
@@ -252,14 +287,14 @@ describe('drift', () => {
     ]);
     expect(drifts(r.lines).find((l) => l.includes('criteria.dx.outside'))).toContain('unreadable');
     expect(r.lines).toContain('  effect: /autoplan-lean: the ceo native voice is not upstream-identical for this run');
-  }, 20000);
+  }, 30000);
 
   test('an unreadable snapshot tool makes every native criterion drift', async () => {
     const f = upstream('nested');
     rmSync(join(f.root, 'bin', 'gstack-autoplan-snapshot.ts'));
     const r = await check(rootArgs(f));
     expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(PHASES.map((p) => `criteria.${p}.native`));
-  }, 20000);
+  }, 30000);
 });
 
 describe('bounded reads', () => {
@@ -277,7 +312,7 @@ describe('bounded reads', () => {
     expect(text).toContain(`review skill is not a regular file: ${realpathSync(f.files.review!)}`);
     expect(text).toContain(`autoplan skill is not a regular file: ${realpathSync(f.files.autoplan!)}`);
     expect(text).toContain('snapshot tool is larger than 4 MiB');
-  }, 20000);
+  }, 30000);
 });
 
 describe('upstream probe', () => {
@@ -299,7 +334,7 @@ describe('upstream probe', () => {
     // Without the classifier the golden cases cannot run.
     expect(lines.filter((l) => l.startsWith('DRIFT classifier ')).every((l) => l.includes('classifyOutsideReview unavailable'))).toBe(true);
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${lines.length}`);
-  }, 20000);
+  }, 30000);
 
   test('an import that throws reports the class, never the message', async () => {
     process.env.UPSTREAM_CHECK_SENTINEL = 'sentinel-8c1f';
@@ -315,7 +350,7 @@ describe('upstream probe', () => {
     } finally {
       delete process.env.UPSTREAM_CHECK_SENTINEL;
     }
-  }, 20000);
+  }, 30000);
 
   test.each([
     ['a never-settling top-level await', 'setInterval(() => {}, 1000);\nawait new Promise(() => {});\n', 'probe timed out after 200 ms while importing'],
@@ -325,7 +360,9 @@ describe('upstream probe', () => {
     ['a result frame without the nonce', 'process.stdout.write(\'forged result {"exports":[],"classifier":[]}\\n\');\nprocess.exit(0);\n', 'probe exited 0 without a result'],
   ])('%s is drift with a stable check count', async (_name, body, cause) => {
     const f = noisy(body);
-    const r = await check(rootArgs(f, '--timeout-ms', '200'));
+    // ENG-7: only hang probes use 200ms. Other cases test failure semantics,
+    // not startup speed; forced regressions failed 9/9 before and after this correction.
+    const r = await check(rootArgs(f, '--timeout-ms', cause.includes('timed out') ? '200' : '20000'));
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${UPSTREAM_HELPERS.length + GOLDEN_CASES.length}`);
@@ -346,7 +383,16 @@ describe('upstream probe', () => {
     expect(r.code).toBe(0);
     expect(r.out).not.toContain('NOISE');
     expect(r.err).not.toContain('NOISE');
-  }, 20000);
+  }, 30000);
+
+  test('unterminated classifier output cannot hide the result frame', async () => {
+    const f = upstream('nested');
+    writeFileSync(join(f.root, 'lib', 'outside-review-result.ts'), CLASSIFIER(true).replace('  const highest', "  process.stdout.write('partial-noise');\n  const highest"));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain('partial-noise');
+  }, 30000);
 });
 
 describe('classifier golden table', () => {
@@ -368,7 +414,7 @@ describe('classifier golden table', () => {
     const at = r.lines.findIndex((l) => l.startsWith('DRIFT classifier classifier.review-not-ready '));
     expect(r.lines[at]).toBe('DRIFT classifier classifier.review-not-ready expected=findings/credited got=clean/credited');
     expect(r.lines[at + 1]).toBe('  effect: bin/outside-review: a reviewer\'s own not-ready verdict with only advisory findings is credited clean, so the stage may proceed past it');
-  }, 20000);
+  }, 30000);
 
   test('a classifier that throws is drift naming the class', async () => {
     const f = upstream('nested');
@@ -378,7 +424,7 @@ describe('classifier golden table', () => {
     expect(drifts(r.lines)).toHaveLength(GOLDEN_CASES.length);
     expect(r.out).toContain('got=threw RangeError');
     expect(r.out).not.toContain('secret detail');
-  }, 20000);
+  }, 30000);
 });
 
 describe('usage errors', () => {
@@ -412,12 +458,74 @@ describe('usage errors', () => {
     expect(r.err).toContain('inside the current git repository');
     expect(r.out).toBe('');
     expect((await check(rootArgs(f), repo)).code).toBe(0);
-  }, 20000);
+  }, 30000);
+
+  test('two-dot repository children and links to them are rejected before import', async () => {
+    const repo = fresh('dot-child-repo');
+    expect(spawnSync('git', ['init', '-q'], { cwd: repo }).status).toBe(0);
+    const f = upstream('nested');
+    const root = join(repo, '..installed', 'gstack');
+    cpSync(f.root, root, { recursive: true });
+    const marker = join(scratch, `import-marker-${counter++}`);
+    writeFileSync(join(root, 'lib', 'claude-code.ts'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function runClaudeCode() {}\n`);
+    const link = join(fresh('external-link'), 'gstack');
+    symlinkSync(root, link);
+    for (const path of [root, link]) {
+      const r = await check(['--gstack-root', path], repo);
+      expect(r.code).toBe(2);
+      expect(r.out).toBe('');
+      expect(existsSync(marker)).toBe(false);
+    }
+    expect((await check(rootArgs(f), repo)).code).toBe(0);
+  }, 30000);
+
+  test('failed Git discovery cannot authorize upstream imports', async () => {
+    const repo = fresh('git-failure-repo');
+    expect(spawnSync('git', ['init', '-q'], { cwd: repo }).status).toBe(0);
+    const f = upstream('nested');
+    const root = join(repo, 'gstack');
+    cpSync(f.root, root, { recursive: true });
+    const marker = join(scratch, `git-failure-marker-${counter++}`);
+    writeFileSync(join(root, 'lib', 'claude-code.ts'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'imported'); export function runClaudeCode() {}\n`);
+    const missing = fresh('missing-git');
+    const broken = fresh('broken-git');
+    put(join(broken, 'git'), '#!/bin/sh\nprintf "fatal: cannot inspect repository\\n" >&2\nexit 128\n');
+    chmodSync(join(broken, 'git'), 0o755);
+    const oldPath = process.env.PATH;
+    try {
+      for (const path of [missing, broken]) {
+        process.env.PATH = path;
+        const r = await check(['--gstack-root', root], repo);
+        expect(r.code).toBe(1);
+        expect(r.out).toBe('');
+        expect(r.err).toContain('ERROR INTERNAL:');
+        expect(existsSync(marker)).toBe(false);
+      }
+    } finally { process.env.PATH = oldPath; }
+  }, 30000);
+
+  test('inherited Git selection cannot redirect containment or installed revision', async () => {
+    const repo = fresh('git-env-repo');
+    const foreign = fresh('git-env-foreign');
+    for (const path of [repo, foreign]) expect(spawnSync('git', ['init', '-q'], { cwd: path }).status).toBe(0);
+    expect(spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'fixture'], { cwd: foreign }).status).toBe(0);
+    const f = upstream('nested');
+    const root = join(repo, 'gstack');
+    cpSync(f.root, root, { recursive: true });
+    const old = process.env.GIT_DIR;
+    try {
+      process.env.GIT_DIR = join(foreign, '.git');
+      expect((await check(['--gstack-root', root], repo)).code).toBe(2);
+      const outside = await check(rootArgs(f));
+      expect(outside.code).toBe(0);
+      expect(outside.lines).toContain('INFO upstream-revision unknown');
+    } finally { if (old === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = old; }
+  }, 30000);
 
   test('an internal failure prints the contract on stderr and nothing on stdout', async () => {
     let out = '', err = '';
     const code = await main(rootArgs(upstream('nested')), {
-      stdout: () => { throw new Error('disk\nfull'); }, stderr: (t) => { err += t; }, cwd,
+      stdout: (t) => { out += t; }, stderr: (t) => { err += t; }, get cwd() { throw new Error('disk\nfull'); },
     });
     expect(code).toBe(1);
     expect(out).toBe('');
@@ -425,7 +533,7 @@ describe('usage errors', () => {
     expect(err).toContain(`upstream-check ${readFileSync(join(REPO, 'VERSION'), 'utf8').trim()} bun `);
     expect(err.trimEnd().split('\n').at(-1)).toBe('FIX: rerun once; if it repeats, report this output');
     expect(err.split('\n').filter((l) => /^\s+at /.test(l)).length).toBeLessThanOrEqual(5);
-  }, 20000);
+  }, 30000);
 });
 
 describe('launcher', () => {
@@ -452,11 +560,11 @@ describe('launcher', () => {
   }, 60000);
 
   test('without Bun on an absolute PATH it exits 5 with ERROR bun_missing and a FIX', () => {
-    const r = spawnSync('/bin/sh', [LAUNCHER, '--help'], { encoding: 'utf8', env: { PATH: '/nonexistent:relative' } });
+    const r = spawnSync('/bin/sh', [LAUNCHER, '--help'], { encoding: 'utf8', timeout: 20000, env: { PATH: '/nonexistent:relative' } });
     expect(r.status).toBe(5);
     expect(r.stdout).toBe('');
     expect(r.stderr).toMatch(/^ERROR bun_missing: .+\nFIX: install Bun >= 1\.3\.3; see upstream-check --help\n$/);
-  });
+  }, 30000);
 
   test('a copied tree with a reworded in-cap paragraph reports DRIFT inventory and exits 4', () => {
     const copy = fresh('copy');
@@ -473,6 +581,41 @@ describe('launcher', () => {
     expect(r.stdout).toContain('INFO extend-version 9.9.9');
     expect(r.stdout).toContain(`INFO extend-root ${realpathSync(copy)}`);
     expect(r.stdout.trimEnd().split('\n').at(-1)).toMatch(/^RESULT drift /);
+  }, 40000);
+
+  test('a missing extension dependency uses the internal-error contract before output', () => {
+    const copy = fresh('missing-local-module');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    put(join(copy, 'VERSION'), '9.9.9\n');
+    rmSync(join(copy, 'src', 'autoplan-lean', 'criteria.ts'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/^ERROR INTERNAL: /);
+    expect(r.stderr).toContain('upstream-check 9.9.9 bun ');
+    expect(r.stderr.trimEnd().split('\n').at(-1)).toBe('FIX: rerun once; if it repeats, report this output');
+  }, 40000);
+
+  test('a missing launcher source is an internal installation failure, not missing Bun', () => {
+    const copy = fresh('missing-launcher-source');
+    put(join(copy, 'bin', 'upstream-check'), readFileSync(LAUNCHER, 'utf8'));
+    const r = launch(['--help'], {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/^ERROR INTERNAL: source_missing:/);
+    expect(r.stderr).toContain('upstream-check unknown bun ');
+    expect(r.stderr).toContain('FIX: re-run ./setup');
+  }, 30000);
+
+  test('a relative symlinked launcher resolves the extension installation', () => {
+    const dir = fresh('launcher-link');
+    const link = join(dir, 'upstream-check');
+    symlinkSync(relative(realpathSync(dir), realpathSync(LAUNCHER)), link);
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, link);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`INFO extend-root ${realpathSync(REPO)}`);
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT ok checks=${CHECKS} drift=0`);
   }, 40000);
 });
 
@@ -496,7 +639,11 @@ function scanGates(repo: string) {
     }
   };
   scan('skills', /\.md$/, /byte for byte|grep -F/);
-  scan('src', /\.ts$/, /\bimport\((?!\s*['"`]\.{1,2}\/)/);
+  scan('src', /\.ts$/, /\bimport\s*\((?!\s*['"`]\.{1,2}\/)/);
+  const adapter = 'src/outside-review/cli.ts';
+  readFileSync(join(repo, adapter), 'utf8').split('\n').forEach((text, i) => {
+    if (/\bload\s*\(/.test(text)) hits.push({ file: adapter, line: i + 1, text });
+  });
   return hits;
 }
 /** Hits covered by the runtime inventory: the anchor paragraph, and the two readers of the helper list. */
@@ -508,7 +655,12 @@ function unlisted(repo: string) {
   while (end < skill.length && skill[end]!.trim() !== '') end++;
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.line > start && hit.line <= end) return false;
-    if (hit.file === 'src/outside-review/cli.ts' || hit.file === 'src/upstream-check/probe.ts') return false;
+    // Only the reviewed list-driven loader sites are covered; a new import or
+    // load() call in either existing file must produce its own diagnostic.
+    const adapter = hit.file === 'src/outside-review/cli.ts';
+    if (adapter && hit.text.trim() === "const load = (name: string) => import(pathToFileURL(join(resolve(root), 'lib', name + '.ts')).href);") return false;
+    if (adapter && hit.text.trim() === 'for (const { module, name } of UPSTREAM_HELPERS) loaded[name] = (await load(module))[name];') return false;
+    if (hit.file === 'src/upstream-check/probe.ts' && hit.text.trim() === 'const imported = await import(pathToFileURL(path).href);') return false;
     return !EXEMPTIONS.some((e) => e.file === hit.file && hit.text.includes(e.includes) && e.reason.trim());
   });
 }
@@ -536,18 +688,37 @@ describe('completeness of the inventory', () => {
     expect(message).toContain('src/added/cli.ts:1: add it to the runtime inventory source');
     expect(message).toContain('or add it to EXEMPTIONS in src/upstream-check/cli.ts with a reason');
   });
+
+  test('new imports and loader calls in existing readers are not silently exempted', () => {
+    const copy = fresh('existing-reader-gates');
+    cpSync(join(REPO, 'skills'), join(copy, 'skills'), { recursive: true });
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    for (const file of ['src/outside-review/cli.ts', 'src/upstream-check/probe.ts']) {
+      const original = readFileSync(join(copy, file), 'utf8');
+      writeFileSync(join(copy, file), `${original}\nawait import(join(root, 'lib', 'new-helper.ts'));\n`);
+      expect(guidance(unlisted(copy))).toContain(`${file}:${original.split('\n').length + 1}:`);
+      writeFileSync(join(copy, file), original);
+    }
+    const file = 'src/outside-review/cli.ts';
+    const original = readFileSync(join(copy, file), 'utf8');
+    writeFileSync(join(copy, file), `${original}\nawait load('new-helper');\n`);
+    expect(guidance(unlisted(copy))).toContain(`${file}:${original.split('\n').length + 1}:`);
+  });
 });
 
 describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+    .map((m) => [m[1], m[2], m[3]]);
+  const expectedRevisions = [
+    ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
+    ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
+    ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
+  ];
   test('the documents state the same inspected revisions as the constants', () => {
-    for (const text of [docs]) {
-      expect(text).toContain(ANCHORS_QUALIFIED.revision);
-      expect(text).toContain(UPSTREAM.commit);
-      expect(text).toContain(INSPECTED_UPSTREAM.revision);
-    }
+    expect(revisions(docs)).toEqual(expectedRevisions);
     expect(outside).toContain(INSPECTED_UPSTREAM.revision);
     expect(outside).toContain('UPSTREAM_HELPERS');
     expect(outside).toContain('(upstream-check.md)');
@@ -556,13 +727,20 @@ describe('docs and wiring', () => {
     for (const sha of outside.match(/\b[0-9a-f]{40}\b/g) ?? []) expect(allowed.has(sha)).toBe(true);
   });
 
-  test('the lease limit is stated without claiming an observed mid-run upgrade', () => {
+  test('one wrong contract revision is detected even when its SHA still appears elsewhere', () => {
+    const changed = docs.replace(`| \`${ANCHORS_QUALIFIED.revision}\` |`, `| \`${'0'.repeat(40)}\` |`);
+    expect(changed).toContain(ANCHORS_QUALIFIED.revision);
+    expect(revisions(changed)).not.toEqual(expectedRevisions);
+  });
+
+  test('the lease limit distinguishes initial qualification from a later observed version change', () => {
     expect(docs).toContain('120 minutes');
     expect(docs).toContain('gstack-skill-start');
     expect(docs).toContain('gstack-lease touch');
     expect(docs).toContain('No mid-run upgrade has been observed.');
     expect(docs).toContain('"not\nobserved" is not evidence that none happened');
-    expect(docs).not.toMatch(/\bwas observed\b|\bhas been observed\b(?!\.)/);
+    expect(docs).toContain('Initial qualification recorded');
+    expect(docs).toContain('does not establish lease expiry as its cause');
   });
 
   test('the docs define OK narrowly, list every drift kind and record a timing profile', () => {

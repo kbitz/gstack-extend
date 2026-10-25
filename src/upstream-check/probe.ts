@@ -79,8 +79,13 @@ export async function probe(root: string, helpers: readonly { module: string; na
 
 if (import.meta.main) {
   const [nonce, root, helpersJson] = process.argv.slice(2) as [string, string, string];
-  await probe(resolve(root), JSON.parse(helpersJson), nonce, (line) => process.stdout.write(`${line}\n`));
+  try {
+    await probe(resolve(root), JSON.parse(helpersJson), nonce, (line) => process.stdout.write(`\n${line}\n`));
+  } catch {
+    process.stdout.write(`\n${nonce} internal\n`);
+    process.exitCode = 1;
+  }
   // Flush the result frame before exiting: an import may have left handles open.
   await new Promise<void>((done) => process.stdout.write('', () => done()));
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 }

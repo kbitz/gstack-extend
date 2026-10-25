@@ -65,7 +65,23 @@ real path is inside the current directory's git repository is a usage error
 (exit 2). That also rules out a repository-local install such as
 `.agents/skills/gstack`; the check does not support it. Where a host keeps its
 root is defined by upstream and the host, so pass the root of the host whose
-stage you are about to launch.
+stage you are about to launch. Git discovery ignores inherited `GIT_*`
+repository selectors. Unavailable or failed discovery is an internal error;
+only Git's explicit not-a-repository result permits a non-repository cwd.
+
+For the installed `/review` used during qualification, root selection is:
+
+1. **Codex:** an existing `GSTACK_ROOT` with `bin/` and `lib/`; otherwise
+   `<git toplevel>/.agents/skills/gstack` when its `bin/` exists; otherwise
+   `${CODEX_HOME:-~/.codex}/skills/gstack` when its `bin/` exists. No matching
+   installation is an upstream setup error.
+2. **Claude Code:** the installed `/review` invokes its helpers at
+   `~/.claude/skills/gstack` directly.
+
+Check the host's installed skill if that resolver changes. If Codex selects a
+repository-local root, this checker rejects it: do not substitute a different
+user-wide root and present that result as coverage of the selected install.
+These are upstream host rules, not automatic discovery by this command.
 
 The layout is chosen once per run. It is **nested** when `<root>/review/SKILL.md`
 exists: review is `<root>/review/SKILL.md`, autoplan is
@@ -76,7 +92,8 @@ phase when that directory is absent). Otherwise it is **sibling**:
 which inlines the phase sections. In both layouts the snapshot tool is
 `<root>/bin/gstack-autoplan-snapshot.ts` and helper modules are
 `<root>/lib/<name>.ts`. No run mixes layouts, and an `INFO file` line names the
-real path of every file used (symlinks are followed, so a symlinked layout
+real path of each checked contract file, inventory source, VERSION and helper
+module (not every transitive module import; symlinks are followed, so a symlinked layout
 reports OK).
 
 ## Output
@@ -111,7 +128,11 @@ Within v1 new kinds and `INFO` keys may appear; consume the exit status, the
 | 4 | a check drifted, or an input is missing or malformed (`RESULT drift`) | report | empty |
 | 2 | usage error, decided before any work | empty | `ERROR USAGE: …` and `FIX: …` |
 | 1 | internal failure; wins over drift | empty | `ERROR INTERNAL: …`, a short trace, versions, `FIX: …` |
-| 5 | Bun missing (launcher) | empty | `ERROR bun_missing: …` and `FIX: …` |
+| 5 | Bun missing or not absolute (launcher) | empty | `ERROR bun_missing: …` or `ERROR bun_not_absolute: …`, then `FIX: …` |
+
+A missing launcher source or a launcher symlink failure exits 1 with
+`ERROR INTERNAL`, version context (extension version `unknown` before the
+source is available), and the specific installation repair in `FIX`.
 
 Output is buffered and written after every check finishes, so a crash never
 leaves a partial report. The command never prints environment values, and an
@@ -226,7 +247,11 @@ that can have its installation upgraded under it with no lease to block it. A
 launch check describes the installation only at the moment it ran, so rerun it
 before each later stage and again at the end of a long one.
 
-No mid-run upgrade has been observed. Nothing currently records one, so "not
+Initial qualification recorded: "No mid-run upgrade has been observed."
+The subsequent review on 2026-10-25 saw the installed version change from
+1.91.208.0 to 1.91.216.0 between checks; the inspected helper and review files
+were unchanged. That observation does not establish lease expiry as its cause.
+There is no persistent upgrade-observation record, so "not
 observed" is not evidence that none happened.
 
 ## Related tools
@@ -275,16 +300,16 @@ Bun startup, the child process and every check are included.
 |---|---|
 | Machine | Apple M2 Max, 64 GB |
 | OS | macOS 27.0.1 |
-| Bun | 1.3.10 |
-| Installed upstream | 1.91.208.0, revision `e2fffee3114e90ce2a7d165f09d3efce3555e252` |
+| Bun | 1.4.4 |
+| Installed upstream | 1.91.216.0, revision `64d82101cac149125d28df888e3f2ea14a444dc5` (nested checkout; sibling revision unknown) |
 | Extension | 0.48.0 (21 checks, all OK, exit 0) |
-| Load during the runs | load average about 16 (other sessions were active), not an idle machine |
+| Load during the runs | load average about 8.7 (other sessions were active), not an idle machine |
 | Date | 2026-10-25 |
 
 | Layout | Runs | First run | Warm runs | Observed maximum |
 |---|---|---|---|---|
-| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.356 s | 0.242–0.415 s | 0.415 s |
-| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.273 s | 0.236–0.329 s | 0.329 s |
+| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.086 s | 0.083–0.089 s | 0.089 s |
+| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.095 s | 0.075–0.098 s | 0.098 s |
 
 The first run is the first of each series of 11; the filesystem and Bun caches were
 not purged, so it is not a true cold start. The under-one-second claim covers

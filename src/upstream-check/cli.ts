@@ -8,12 +8,9 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { driftReport, UPSTREAM } from '../autoplan-lean/criteria.ts';
-import { skipList } from '../autoplan-lean/outline.ts';
-import { PHASES, type Phase } from '../autoplan-lean/plan.ts';
-import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../outside-review/cli.ts';
-import { GOLDEN_CASES, type ClassifierResult, type ExportResult, type ProbeResult } from './probe.ts';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import type { Phase } from '../autoplan-lean/plan.ts';
+import type { ClassifierResult, ExportResult, GoldenCase, ProbeResult } from './probe.ts';
 
 export const FORMAT = 'upstream-check/v1';
 export const EXIT = { ok: 0, internal: 1, usage: 2, drift: 4, bun: 5 } as const;
@@ -71,9 +68,10 @@ export function readTrusted(path: string, what: string): Read {
   try { return { ok: true, bytes: readFileSync(real), real }; } catch { return { ok: false, reason: `${what} unreadable: ${real}` }; }
 }
 
-const versionOf = (root: string) => {
+const versionOf = (root: string, onRead?: (real: string) => void) => {
   const read = readTrusted(join(root, 'VERSION'), 'VERSION');
   if (!read.ok) return 'unknown';
+  onRead?.(read.real);
   const value = read.bytes.toString('utf8').replace(/\r?\n$/, '');
   return VERSION_PATTERN.test(value) ? value : 'unknown';
 };
@@ -101,7 +99,7 @@ export function inventory(extendRootPath: string): Inventory {
   if (!spans.length) return { ok: false, file, reason: 'anchor list has no backtick spans' };
   if (region.replace(/`[^`]*`/g, '').includes('`')) return { ok: false, file, reason: 'anchor list has an unbalanced backtick' };
   if (spans.some((s) => !s.length || /[\r\n]/.test(s))) return { ok: false, file, reason: 'anchor list has an empty span or a span containing a newline' };
-  return { ok: true, file, anchors: spans };
+  return { ok: true, file: read.real, anchors: spans };
 }
 
 const STAGE = {
@@ -189,35 +187,45 @@ function parseArgs(argv: string[]): 'help' | 'version' | Options {
   return { root: resolved, skillsDir: seen.has('--skills-dir') ? resolve(seen.get('--skills-dir')!) : dirname(resolved), timeoutMs };
 }
 
+const gitQuery = (cwd: string, args: string[]) => {
+  // Discover the filesystem checkout, never an inherited hook/wrapper selection.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  return spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, env: { ...env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' } });
+};
 const gitOut = (cwd: string, args: string[]) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+  const result = gitQuery(cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
 };
 
 function rejectRootInsideRepo(root: string, cwd: string) {
-  const top = gitOut(cwd, ['rev-parse', '--show-toplevel']);
-  if (!top) return;
-  let repo: string, real: string;
-  try { repo = realpathSync(top); real = realpathSync(root); } catch { return; }
+  const result = gitQuery(cwd, ['rev-parse', '--show-toplevel']);
+  if (result.status !== 0) {
+    if (result.status === 128 && /^fatal: not a git repository(?: \(or any of the parent directories\))?: \.git\s*$/.test(result.stderr)) return;
+    throw new Error('cannot establish the current repository boundary: Git discovery failed');
+  }
+  const repo = realpathSync(result.stdout.trim());
+  let real: string;
+  try { real = realpathSync(root); } catch { return; } // Missing roots are reported as drift and never imported.
   const rel = relative(repo, real);
-  if (!rel || (!rel.startsWith('..') && !isAbsolute(rel))) {
+  if (!rel || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
     throw new UsageError('--gstack-root is inside the current git repository', 'pass the installed gstack root, not a path under the repository under review');
   }
 }
 
-type ProbeOutcome = { ok: true; result: ProbeResult } | { ok: false; cause: string; last?: string };
+type Helpers = readonly { module: string; name: string }[];
+type ProbeOutcome = { ok: true; result: ProbeResult } | { ok: false; cause: string; last?: string; internal?: boolean };
 
 /** One child Bun process, a hard deadline, bounded output, settled on exit. */
-function runProbe(root: string, timeoutMs: number): Promise<ProbeOutcome> {
+function runProbe(root: string, timeoutMs: number, helpers: Helpers, goldens: readonly GoldenCase[]): Promise<ProbeOutcome> {
   const nonce = randomBytes(12).toString('hex');
   const probePath = join(import.meta.dir, 'probe.ts');
   return new Promise((settle) => {
     let child;
     try {
-      child = spawn(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', probePath, nonce, root, JSON.stringify(UPSTREAM_HELPERS)],
-        { stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(process.execPath, ['--no-env-file', '--no-install', '--config=/dev/null', probePath, nonce, root, JSON.stringify(helpers)],
+        { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch {
-      settle({ ok: false, cause: 'probe could not start' });
+      settle({ ok: false, cause: 'probe could not start', internal: true });
       return;
     }
     let out = '', total = 0, timedOut = false, overflow = false, finished = false;
@@ -229,7 +237,7 @@ function runProbe(root: string, timeoutMs: number): Promise<ProbeOutcome> {
       clearTimeout(grace);
       child.stdout!.destroy();
       child.stderr!.destroy();
-      settle(evaluate(out, nonce, { code, signal, timedOut, overflow, timeoutMs }));
+      settle(evaluate(out, nonce, { code, signal, timedOut, overflow, timeoutMs }, helpers, goldens));
     };
     const deadline = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     const take = (retain: boolean) => (chunk: string) => {
@@ -246,32 +254,37 @@ function runProbe(root: string, timeoutMs: number): Promise<ProbeOutcome> {
   });
 }
 
-function evaluate(out: string, nonce: string, state: { code: number | null; signal: string | null; timedOut: boolean; overflow: boolean; timeoutMs: number }): ProbeOutcome {
+function evaluate(out: string, nonce: string, state: { code: number | null; signal: string | null; timedOut: boolean; overflow: boolean; timeoutMs: number }, helpers: Helpers, goldens: readonly GoldenCase[]): ProbeOutcome {
   let last: string | undefined;
   let frame: string | undefined;
+  let internal = false;
   for (const line of out.split('\n')) {
     if (line.startsWith(`${nonce} begin `)) last = line.slice(nonce.length + 7).trim();
     else if (line.startsWith(`${nonce} result `)) frame = line.slice(nonce.length + 8);
+    else if (line === `${nonce} internal`) internal = true;
   }
   const fail = (cause: string): ProbeOutcome => ({ ok: false, cause, last });
   if (state.overflow) return fail('probe output exceeded 1 MiB');
   if (state.timedOut && frame === undefined) return fail(`probe timed out after ${state.timeoutMs} ms`);
+  if (internal || state.signal === 'spawn-error' || (last === undefined && state.code !== 0 && frame === undefined)) {
+    return { ok: false, cause: 'extension probe failed before producing a result', internal: true };
+  }
   if (frame === undefined) return fail(`probe exited ${state.code ?? state.signal ?? 'unknown'} without a result`);
-  const parsed = validateResult(frame);
+  const parsed = validateResult(frame, helpers, goldens);
   return parsed ? { ok: true, result: parsed } : fail('probe result malformed');
 }
 
-function validateResult(frame: string): ProbeResult | undefined {
+function validateResult(frame: string, helpers: Helpers, goldens: readonly GoldenCase[]): ProbeResult | undefined {
   let value: any;
   try { value = JSON.parse(frame); } catch { return undefined; }
   const isText = (v: unknown): v is string => typeof v === 'string' && v.length < 500;
   if (!value || !Array.isArray(value.exports) || !Array.isArray(value.classifier)) return undefined;
-  if (value.exports.length !== UPSTREAM_HELPERS.length || value.classifier.length !== GOLDEN_CASES.length) return undefined;
+  if (value.exports.length !== helpers.length || value.classifier.length !== goldens.length) return undefined;
   for (const [i, e] of (value.exports as ExportResult[]).entries()) {
-    if (!e || e.name !== UPSTREAM_HELPERS[i]!.name || !isText(e.module) || !isText(e.reason) || (e.status !== 'ok' && e.status !== 'drift')) return undefined;
+    if (!e || e.name !== helpers[i]!.name || !isText(e.module) || !isText(e.reason) || (e.status !== 'ok' && e.status !== 'drift')) return undefined;
   }
   for (const [i, c] of (value.classifier as ClassifierResult[]).entries()) {
-    if (!c || c.id !== GOLDEN_CASES[i]!.id || !isText(c.verdict) || typeof c.credited !== 'boolean' || (c.error !== undefined && !isText(c.error))) return undefined;
+    if (!c || c.id !== goldens[i]!.id || !isText(c.verdict) || typeof c.credited !== 'boolean' || (c.error !== undefined && !isText(c.error))) return undefined;
   }
   return value as ProbeResult;
 }
@@ -279,6 +292,11 @@ function validateResult(frame: string): ProbeResult | undefined {
 const credit = (verdict: string, credited: boolean) => `${verdict}/${credited ? 'credited' : 'uncredited'}`;
 
 export async function run(argv: string[], io: CliIo): Promise<number> {
+  // Keep extension-owned loader failures inside main's internal-error boundary.
+  const [{ driftReport, UPSTREAM }, { skipList }, { PHASES }, { INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }] = await Promise.all([
+    import('../autoplan-lean/criteria.ts'), import('../autoplan-lean/outline.ts'), import('../autoplan-lean/plan.ts'),
+    import('../outside-review/cli.ts'), import('./probe.ts'),
+  ]);
   const options = parseArgs(argv);
   if (options === 'help') { io.stdout(help()); return EXIT.ok; }
   if (options === 'version') { io.stdout(`upstream-check ${versionOf(extendRoot())}\n`); return EXIT.ok; }
@@ -292,7 +310,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const drift = (kind: Kind, id: string, reason: string, extra: Partial<Check> = {}) => add({ kind, id, ok: false, reason: oneLine(reason), ...extra });
 
   const extend = extendRoot();
-  info('extend-version', versionOf(extend));
+  info('extend-version', versionOf(extend, (real) => info('file', `extend-version ${real}`)));
   info('extend-root', extend);
   info('inspected', `anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
@@ -306,7 +324,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const notRun = rootOk ? undefined : 'not run: gstack root unavailable';
   if (rootOk) {
     ok('root', 'gstack-root');
-    info('upstream-version', versionOf(options.root));
+    info('upstream-version', versionOf(options.root, (real) => info('file', `upstream-version ${real}`)));
     const real = realpathSync(options.root);
     const top = gitOut(options.root, ['rev-parse', '--show-toplevel']);
     let revision = 'unknown';
@@ -320,7 +338,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
 
   // Inventory (this extension's own source).
   const inv = inventory(extend);
-  if (inv.ok) ok('inventory', 'review-and-prep.incap');
+  if (inv.ok) { ok('inventory', 'review-and-prep.incap'); info('file', `inventory ${inv.file}`); }
   else drift('inventory', 'review-and-prep.incap', `${inv.reason} (${inv.file})`);
 
   const layout = chooseLayout(options.root, options.skillsDir);
@@ -355,7 +373,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   else drift('anchor', 'autoplan-lean.skip-list', `**Section skip list label or its bullets not found in ${autoplan.real}`);
 
   // Exports and classifier cases, in one bounded child process.
-  const probe: ProbeOutcome | undefined = rootOk ? await runProbe(options.root, options.timeoutMs) : undefined;
+  if (rootOk) for (const { module } of UPSTREAM_HELPERS) {
+    try { info('file', `module.${module} ${realpathSync(join(options.root, 'lib', `${module}.ts`))}`); } catch { /* The probe reports the missing module. */ }
+  }
+  const probe: ProbeOutcome | undefined = rootOk ? await runProbe(options.root, options.timeoutMs, UPSTREAM_HELPERS, GOLDEN_CASES) : undefined;
+  if (probe && !probe.ok && probe.internal) throw new Error(probe.cause);
   for (const { module, name } of UPSTREAM_HELPERS) {
     const id = `outside-review.${name}`;
     const path = join(options.root, 'lib', `${module}.ts`);
@@ -364,7 +386,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       const transient = /timed out/.test(probe.cause);
       const own = probe.last === path;
       drift('export', id, own ? `${probe.cause} while importing ${path}` : `not run: ${probe.cause}`,
-        transient ? { effect: STAGE.outside, fix: 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' } : {});
+        { effect: 'the export contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
     } else {
       const result = probe.result.exports.find((e) => e.name === name)!;
       if (result.status === 'ok') ok('export', id);
@@ -378,10 +400,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     else if (!probe.ok) {
       const transient = /timed out/.test(probe.cause);
       drift('classifier', id, probe.last === 'classifier' ? `${probe.cause} while running the classifier cases` : `not run: ${probe.cause}`,
-        transient ? { effect: STAGE.classifier, fix: 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' } : {});
+        { effect: 'the classifier contract is unverified because the probe did not complete', fix: transient ? 'rerun with a larger --timeout-ms; a timeout may clear on rerun, content drift does not' : UPGRADE_FIX });
     } else {
       const got = probe.result.classifier.find((c) => c.id === golden.id)!;
-      if (got.error) drift('classifier', id, `expected=${expected} got=${got.error}`);
+      if (got.error) drift('classifier', id, `expected=${expected} got=${got.error}`, { effect: 'the classifier contract is unverified because the classifier could not run', fix: UPGRADE_FIX });
       else if (got.verdict === golden.verdict && got.credited === golden.credited) ok('classifier', id);
       else drift('classifier', id, `expected=${expected} got=${credit(got.verdict, got.credited)}`);
     }

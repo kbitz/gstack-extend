@@ -2,8 +2,14 @@
 # Resolve installed symlinks without depending on dirname or a broad PATH.
 set -eu
 _fail() {
-  printf 'ERROR %s: %s\nFIX: %s\n' "$1" "$2" "$3" >&2
-  exit 5
+  case "$1" in
+    bun_missing|bun_not_absolute)
+      printf 'ERROR %s: %s\nFIX: %s\n' "$1" "$2" "$3" >&2
+      exit 5 ;;
+    *)
+      printf 'ERROR INTERNAL: %s: %s\nupstream-check unknown bun %s\nFIX: %s\n' "$1" "$2" "$("$_bun" --version)" "$3" >&2
+      exit 1 ;;
+  esac
 }
 # Some shells return an absolute `command -v` result even for PATH=.; do not
 # let a repository-local bun qualify that way.
