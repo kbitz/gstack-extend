@@ -7,7 +7,6 @@
  * `<nonce> result <json>` line at the end. Everything else is drained.
  */
 import { join, resolve } from 'node:path';
-import { writeSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { recover, type Classifier } from '../outside-review/recovery.ts';
 
@@ -47,12 +46,12 @@ const errorClass = (error: unknown) => {
   } catch { return 'Error'; }
 };
 
-export async function probe(root: string, helpers: readonly { module: string; name: string }[], nonce: string, write: (line: string) => void) {
+export async function probe(root: string, helpers: readonly { module: string; name: string }[], nonce: string, write: (line: string) => void | Promise<void>) {
   const result: ProbeResult = { exports: [], classifier: [] };
   const loaded: Record<string, unknown> = {};
   for (const { module, name } of helpers) {
     const path = join(root, 'lib', `${module}.ts`);
-    write(`${nonce} begin ${path}`);
+    await write(`${nonce} begin ${path}`);
     try {
       const imported = await import(pathToFileURL(path).href);
       loaded[name] = imported[name];
@@ -63,7 +62,7 @@ export async function probe(root: string, helpers: readonly { module: string; na
       result.exports.push({ module: path, name, status: 'drift', reason: `import failed (${errorClass(error)})` });
     }
   }
-  write(`${nonce} begin classifier`);
+  await write(`${nonce} begin classifier`);
   const classify = loaded.classifyOutsideReview;
   for (const golden of GOLDEN_CASES) {
     if (typeof classify !== 'function') {
@@ -77,19 +76,21 @@ export async function probe(root: string, helpers: readonly { module: string; na
       result.classifier.push({ id: golden.id, verdict: 'none', credited: false, error: `threw ${errorClass(error)}` });
     }
   }
-  write(`${nonce} result ${JSON.stringify(result)}`);
+  await write(`${nonce} result ${JSON.stringify(result)}`);
 }
 
 if (import.meta.main) {
   const [nonce, root, helpersJson] = process.argv.slice(2) as [string, string, string];
+  const write = (line: string) => new Promise<void>((done, reject) => {
+    process.stdout.write(`\n${line}\n`, (error) => error ? reject(error) : done());
+  });
   try {
     // Flush each attribution frame before importing code that may exit abruptly.
-    await probe(resolve(root), JSON.parse(helpersJson), nonce, (line) => { writeSync(1, `\n${line}\n`); });
+    await probe(resolve(root), JSON.parse(helpersJson), nonce, write);
   } catch {
-    writeSync(1, `\n${nonce} internal\n`);
+    try { await write(`${nonce} internal`); } catch { /* A broken pipe cannot carry a diagnostic. */ }
     process.exitCode = 1;
   }
-  // Flush the result frame before exiting: an import may have left handles open.
-  await new Promise<void>((done) => process.stdout.write('', () => done()));
+  // Frames have flushed; an import may still have left handles open.
   process.exit(process.exitCode ?? 0);
 }

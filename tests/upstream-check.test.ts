@@ -381,12 +381,16 @@ describe('upstream probe', () => {
     }
   }, 30000);
 
-  test('a noisy import that still exports correctly passes and its output stays off stdout', async () => {
-    const f = noisy("console.log('NOISE-OUT'); console.error('NOISE-ERR');\nexport function resolveClaudeCommand() { return null; }\n");
+  test.each([
+    "console.log('NOISE-OUT'); console.error('NOISE-ERR');",
+    "process.stdout.write('x'.repeat(128 * 1024));",
+  ])('a noisy import that still exports correctly passes and its output stays off stdout: %s', async (noise) => {
+    const f = noisy(`${noise}\nexport function resolveClaudeCommand() { return null; }\n`);
     const r = await check(rootArgs(f));
     expect(r.code).toBe(0);
     expect(r.out).not.toContain('NOISE');
     expect(r.err).not.toContain('NOISE');
+    expect(r.out).not.toContain('xxxxxxxx');
   }, 30000);
 
   test('unterminated classifier output cannot hide the result frame', async () => {

@@ -194,7 +194,8 @@ larger `--timeout-ms`; content drift does not. Every file the checker reads is
 resolved with `realpath` and must be a regular file of at most 4 MiB. A missing
 root, directory, FIFO, oversized file or malformed inventory source is drift.
 `VERSION` content that is not a dotted version is printed as `unknown`.
-Frames are written synchronously before upstream imports, so an upstream
+Frames await stream-write callbacks before upstream imports, respecting
+output backpressure, so an upstream
 nonzero early exit remains drift. An extension-owned child startup or internal
 failure is instead exit 1, with no report.
 
@@ -313,13 +314,13 @@ Bun startup, the child process and every check are included.
 | Bun | 1.4.4 |
 | Installed upstream | 1.91.216.0, revision `64d82101cac149125d28df888e3f2ea14a444dc5` (nested checkout; sibling revision unknown) |
 | Extension | 0.48.0 (21 checks, all OK, exit 0) |
-| Load during the runs | load average about 2.6 (other sessions were active), not an idle machine |
+| Load during the runs | load average about 5.1 (other sessions were active), not an idle machine |
 | Date | 2026-10-25 |
 
 | Layout | Runs | First run | Warm runs | Observed maximum |
 |---|---|---|---|---|
-| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.082 s | 0.075–0.077 s | 0.082 s |
-| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.072 s | 0.069–0.073 s | 0.073 s |
+| Nested (`~/.claude/skills/gstack`) | 11 (1 first + 10 warm) | 0.077 s | 0.073–0.077 s | 0.077 s |
+| Sibling (`~/.codex/skills/gstack`) | 11 (1 first + 10 warm) | 0.070 s | 0.067–0.072 s | 0.072 s |
 
 The first run is the first of each series of 11; the filesystem and Bun caches were
 not purged, so it is not a true cold start. The under-one-second claim covers
