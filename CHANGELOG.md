@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.47.0.0] - 2026-10-24
+
+### Added
+
+- **A release of this repo is rejected when its version is out of order.** The test suite fails a VERSION that is malformed, has a leading zero, sits below a merged tag, matches another tag once a missing part is treated as zero, or changes without rising above the base version. Four parts stay required until a release is cut from a base that contains the versioning marker. The first three-part release has to be the next unused 0.x minor, with patch 0.
+
+### Changed
+
+- **This project's own version can move to three parts, and this release stays four-part.** `0.47.0.0` is a compatible addition under the current policy. The owner confirmed that policy during this ship, so later releases use it. The first three-part cutover is a later 0.x minor (`0.48.0`, because `0.47.0` is the same number as this release). Historical tags stay as they are. Consumer projects keep their own version schemes. Rollback to a four-part tag pauses update checks first, so the restored checker does not fast-forward the checkout back to the newer release. Cutover steps and that rollback are in the versioning and installation docs.
+- **Stage-runs v2 readers already accept a three-part producer version.** The telemetry doc points at the qualification record. A real published-tag upgrade is still pending.
+
+### Fixed
+
+- **An update check no longer crashes on a remote version such as `0.08.0`.** Leading-zero, malformed, and padded-equal remote versions stay silent instead of raising a Bash octal error. The release workflow rejects the same VERSION, names the format and the fix, keeps the changelog extractor's error, and prints the `gh release edit` command when it has to publish generated notes.
+
 ## [0.46.0.0] - 2026-10-23
 
 ### Added

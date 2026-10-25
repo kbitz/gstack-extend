@@ -171,8 +171,9 @@ reader tests and dependency map. The patch applied to the clone matches commit
 file; it differs only in documentation and comments. Review fixes after that
 commit tightened tests and release guards and edited documentation; they left
 `bin/update-check`, `auto-tag.yml` and the extractor logic unchanged, and the
-PR head's own full suite covers them. The source's VERSION,
-package.json and CHANGELOG.md remain identical to its base, and all real tag
+PR head's own full suite covers them. At qualification the source's VERSION,
+package.json and CHANGELOG.md were identical to its base. This 0.47.0.0
+release assigns those three files under the base four-part policy. All real tag
 refs still match the before-probe snapshot.
 
 The six normal skips comprise two negative telemetry sentinel cases (actual
@@ -204,8 +205,8 @@ The full O5.1 stable-surface catalog, a real legacy install upgraded from the
 first published three-part tag/default remote, tagged-release identity, and
 failed-migration recovery remain in the four preserved Unprocessed TODOs.
 Candidate runs cannot satisfy the published-release upgrade obligation.
-The release owner must confirm this SPEC policy amendment directly when
-shipping; the transition's own release uses the base's four-part policy.
+The release owner confirmed this SPEC policy amendment for the 0.47.0.0 ship;
+that release uses the base's four-part policy.
 The subsequent cutover must be an unused 0.x MINOR above all tags, disclose
 padded equality and unchanged consumer schemes, link migration/rollback guidance,
 and pass the full suite on its actual release head. Verify the resulting
