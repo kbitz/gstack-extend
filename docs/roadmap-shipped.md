@@ -212,3 +212,11 @@ _tombstone: 23_
 _tombstone: 24, 25, 26_
 
 - 2026-10-23: every original Group 24 (24A), Group 25 (25A) and Group 26 (26A, 26B) Track has an individual landed receipt; no active pin is declared. Prefixes 24, 25 and 26 are retired. Owner acceptance obligations stay with their named qualification work.
+
+## Individual Track history
+_tombstone: 28_
+
+### Track 28A: Verify the three-part release and upgrade transition ✓ Shipped (v0.47.0.0)
+- 2026-10-24: merged PR #168, commit `36546193f1957bd4c58e563ad09f607b3b154e35`; verified land-time Track 28A, Group 28. Introduced as the release-compatibility Track in the 2026-10-08 spec adoption (`5b6e516`), relabeled 28A in the 2026-10-23 regeneration (`f02bc51`).
+- Approved candidate-only scope: legacy upgrade/migration/rollback, version and tag controls, stable-surface v2 reader check and policy instructions. The prepared receipt covers T1–T8, AC1–AC3 and U1/U2 (13 VERIFIED), corroborated by merged code and `docs/acceptance/release-compatibility.md`. The source record distinguishes isolated candidate/fixture proof from live publication and host acceptance.
+- The owner confirmed the policy during shipping. The final full-suite run timed out under load and the owner directed the merge, as the merge commit records; this receipt does not relabel that run as passed. The published three-part upgrade, full O5.1 catalog and O1/O3/O4 host acceptance remain scheduled. O5 is not awarded. Historical version/tag records stay intact.
