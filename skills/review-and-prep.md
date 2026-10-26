@@ -1034,8 +1034,10 @@ each cycle as `full` or `delta from <snapshot>` and put
 
 ### Record cycle 1's full-review baseline
 
-A cap stop can only report a completed full-review baseline that was recorded
-while cycle 1 ran. Write the record only while the installed `/review` read in
+Two records back a new baseline: `cycle-1-baseline` (written by cycle 1) and
+`cycle-1-fix-review` (written by cycle 2). A cap stop can only report a
+completed full-review baseline that was recorded while those cycles ran. Write
+the baseline record only while the installed `/review` read in
 Step 1 still contains the anchor `A pass covers Steps 3–5, including all
 reviewers before fixes.`, checked as `in-cap=delta` checks its anchors (that
 paragraph's inventory already covers this one). A missing anchor writes
@@ -1048,33 +1050,138 @@ paragraph's inventory already covers this one). A missing anchor writes
   snapshot with the delta procedure above, whether or not `in-cap=delta`
   applies.
 - **Scope.** Only a full-scope cycle 1 of a non-continuation invocation writes
-  `completed=true`. A `continue` invocation, delta or full, never writes a new
-  baseline; it carries the newest corroborated base forward unchanged, as the
-  cap section requires. A non-continuation delta re-review also carries the
-  prior corroborated full-review row; without one it has no baseline
-  (`record-missing`), never a new full-review claim.
+  `completed=true` or `completed=pending-fix-review`. A `continue` invocation,
+  delta or full, never writes a new baseline; it carries the newest
+  corroborated base forward unchanged, as the cap section requires. A
+  non-continuation delta re-review also carries the prior corroborated
+  full-review row; without one it has no baseline (`record-missing`), never a
+  new full-review claim.
+- **Gate skips.** A gate skip is a reviewer that `/review`'s own selection
+  gates did not select: its small-diff, simplification, Red Team and
+  structured-review size gates and its scope signals (see "Scope a re-review to
+  its delta"). That includes a structured review that `/review` logs as
+  size-gated (`gate: skipped`, `completed:false`). A gate skip is never an
+  incomplete reviewer. This defines "adaptive-gate skips" below, for both
+  cycles.
+- **Required probes.** The record lists each required Step 4.7 probe once. Its
+  key is its contract plus its native command or request as the evidence tool
+  records it (the annotation's `command`), without the guard wrapper, capture
+  IDs, the deadline and timeout flags and evidence paths. Its probe ID is the
+  first 12 hex digits of the key's SHA-256; both records and the evidence
+  comment use the ID, so the cycle 1 and cycle 2 entries match explicitly while
+  the commands stay local. A minimized replay is evidence only, never the key,
+  and a defect fingerprint never keys a probe, because its line shifts after
+  fixes. A changed probe command is a different probe, as in Step 4.7's own
+  rerun rule, so the original probe counts as `not-run` (fail closed by
+  design).
+- **Probe outcomes.** Each probe gets exactly one outcome, taken as known at
+  the record's write point from Step 4.7's provisional results, never from the
+  final materialized verdict:
+  - `pass` → `passed`
+  - `product-defect`, or `fail`/`failed` classified as a product defect with a
+    replay and a Fix-First fingerprint → `reproduced` (record the fingerprint
+    as evidence)
+  - `setup-blocked`, `blocked`, or `fail`/`failed` classified as setup →
+    `blocked`
+  - `inconclusive` → `inconclusive`
+  - `not run`/`not-run`, or `superseded` without a current rerun of the same
+    key → `not-run`
+  - `not applicable` with a reason → not a required probe
+  - any other label or classification → `inconclusive (unmapped: <label or
+    classification>)`, recorded with its check key, sensitive values redacted
+
+  A reproduced defect is a probe result: a `reproduced` probe has run to a
+  result and is never an incomplete probe. A browser check that Step 4.7
+  reports as current passing evidence is `passed`, so `completed=true` stays as
+  reachable as before. The `/review` anchor check does not cover Step 4.7's
+  outcome labels, classifications or Fix-First return shape; if upstream
+  renames or changes them, the result maps to `inconclusive` and the baseline
+  is unavailable, never misread.
 - **Write point.** At the end of cycle 1's review collection, after every
   selected reader has returned or is confirmed stopped and before Step 5
   applies any fix, write
   `cycle-1-baseline` to the invocation's evidence directory: B, T
   (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree
-  equals T, each stage's result, the `gstack-review-read` row when `/review`
-  writes one (not required for `completed=true`), and
-  `completed=true|false`. Set true only when the installed review's completion
-  conditions hold: every selected reviewer completed and every required
-  Step 4.7 probe has current passing evidence. Write false for a failed,
-  blocked, inconclusive or unrun required probe, or an unavailable, failed or
-  bounded-wait reviewer, with reason `reviewer-incomplete`. Allowed skips are
-  scope or adaptive-gate skips only. A failed reader still gets this false
+  equals T, each stage's result, each required probe's ID, key and outcome,
+  the `gstack-review-read` row when `/review` writes one (not required for
+  `completed=true`), and `completed=true|pending-fix-review|false` with the
+  cause of every non-`true` value.
+- **Completion values.** `completed=true`: every selected reviewer completed
+  and every required probe is `passed`. `completed=pending-fix-review`: every
+  selected reviewer completed, every required probe is `passed` or
+  `reproduced`, and at least one is `reproduced`. `completed=false` with reason
+  `reviewer-incomplete`: an unavailable, failed or bounded-wait reviewer (a
+  reviewer still running or stalled when the provider-failure budget expired on
+  a bounded-wait host), or a `blocked`, `inconclusive` or `not-run` required
+  probe. The cause names the reviewer or probe and its outcome. Allowed skips
+  are scope or adaptive-gate skips only. A failed reader still gets this false
   record once it is confirmed stopped; it is not mistaken for a missing record.
+  Only the exact value `true` in `completed` (cycle 1) and in `fix-reviewed`
+  (cycle 2) makes a record usable: any other value, `pending-fix-review` alone
+  included, is not a baseline.
+- **Fix-review record.** When cycle 1's record says
+  `completed=pending-fix-review` and cycle 2 of the same invocation runs as the
+  in-cap delta from cycle 1's snapshot (recorded `delta from <cycle 1
+  snapshot>` with `SCOPE_DELTA: covered`), cycle 2 writes a separate record,
+  `cycle-1-fix-review`, to the same evidence directory. Write it at the end of
+  cycle 2's review collection, after every selected reader has returned or is
+  confirmed stopped and before Step 5 applies any cycle 2 fix. Before that
+  write point, cycle 2's Step 4.7 reruns each cycle-1-reproduced probe by its
+  key, with its exact recorded command or request, as revalidation of an
+  affected check, which upstream runs even after the smoke limit, not as a
+  smoke recheck. A probe has a cycle 2 result when it was rerun by its key on
+  cycle 2's inputs, or when `/review`'s unchanged-input reuse rule keeps its
+  result current; it is `not-run (no exact rerun)` only when neither holds.
+  Fields: cycle 1's snapshot (equal to the one in `cycle-1-baseline`), cycle
+  2's snapshot, the scope line, each stage's result with every recorded skip
+  and its reason, the ID, key and outcome of every probe in the union (cycle
+  2's own required list plus each cycle-1-reproduced key) with a reference to
+  the evidence behind any reused current result, and `fix-reviewed=true|false`
+  with the cause of a `false`. Set true only when every selected reviewer
+  completed and every probe in the union has a result on cycle 2's inputs
+  (`passed` or `reproduced`). A cycle-1-reproduced probe without such a
+  result, including one marked not applicable in cycle 2, is `not-run`. Allowed
+  cycle 2 skips are gate skips plus the recorded
+  `skipped — light default repair cycle` and
+  `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host
+  rule that runs the Red Team on cycle 1 only, not a stalled reviewer).
+  Otherwise write false with reason `reviewer-incomplete`, naming the reviewer
+  or probe. `fix-reviewed=true` means cycle 2 reviewed cycle 1's fixes, not
+  that they hold; a defect still open at the stop stays in the receipt's
+  unresolved findings and its `Unresolved:` line. A full-scope or inactive
+  cycle 2 writes no fix-review record.
+- **Files and write-once.** Write the records as `cycle-1-baseline.json` and
+  `cycle-1-fix-review.json`, each with a `schema` field
+  (`review-and-prep-cycle-1-baseline/v1`,
+  `review-and-prep-cycle-1-fix-review/v1`) and the fields above. Create each
+  file with an exclusive create (`set -C` before a shell redirect, or Bun's
+  `{flag: 'wx'}`), so no duplicate can exist. Write each record once, with the
+  outcomes known at its write point; never edit, rewrite or replace a written
+  record, including on a same-run resume, and never let a later relabel (for
+  example `superseded`) change it. A record not written at its write point is
+  never written later. A parse failure, or a missing or invalid required field,
+  makes a record unreadable; an unreadable or duplicate record counts as no
+  record of that kind. A `continue` invocation writes neither record. The
+  records belong to the invocation's first `/review` run; a later `/review` run
+  in the same invocation (Step 5's delta re-review, or a full-scope fallback)
+  writes neither.
 - **Unavailable.** A snapshot tree that differs from T (reviewed uncommitted or
   untracked content) is `tree-differs`; a missing record is `record-missing`.
   Each, with `anchor-changed` and `reviewer-incomplete`, makes the baseline
   unavailable.
-- **Scope of the record.** The file is internal to the evidence directory and
+- **Scope of the record.** The files are internal to the evidence directory and
   provisional pending the portable evidence envelope. The only portable
   contract stays the `Full-review evidence:` row and its dedicated comment.
   Never infer a baseline from HEAD or the stop commit.
+
+Worked example, with placeholders: one `reproduced` probe, then a cycle 2 that
+reviewed its fix.
+
+```markdown
+cycle-1-baseline: B=<B>; T=<T>; snapshot=<S1> (tree equals T); probe <id1> reproduced (fingerprint <path:line:category>); completed=pending-fix-review (cause: <id1> reproduced)
+cycle-1-fix-review: cycle-1-snapshot=<S1>; cycle-2-snapshot=<S2>; scope=delta from <S1>; probe <id1> passed (rerun by its key); fix-reviewed=true
+Full-review evidence: commit=<B>; tree=<T>; scope=full; completed=true; source=<durable reference>
+```
 
 ### When /review stops at its cycle cap
 
@@ -1122,19 +1229,54 @@ shapes the prompt below, so the continuation starts in a fresh session.
    B, tree T, `scope: full`, `completed: true`, and the original review-record
    reference and per-stage results. These must come from the actual completed
    pass, never be inferred from HEAD or filled in after the fact. Fill the row
-   and the evidence comment for a new baseline only from the `cycle-1-baseline`
-   record written above, and only when it says `completed=true`; its B is the
-   first stop's delta base. At a continuation or delta re-review stop, preserve
-   the prior corroborated row and evidence-comment reference instead; the
-   original local file is not required on another host. Never replace that
-   base with this invocation's delta candidate. If neither a completed new
+   and the evidence comment for a new baseline only from the records written
+   above, before the receipt: from `cycle-1-baseline` when it says
+   `completed=true`, or when it says `completed=pending-fix-review` and a
+   `cycle-1-fix-review` record names the same cycle 1 snapshot and says
+   `fix-reviewed=true`. In both cases the snapshot-tree check (`tree-differs`)
+   must pass: cycle 1's snapshot tree equals T. The row names cycle 1's B and T
+   with `scope=full; completed=true`, and in both paths B is the first stop's
+   delta base and the row's `commit=`. In this row `completed=true` records
+   coverage: every selected reviewer completed and every required probe ran to
+   a result on B, and cycle 2's delta reviewed the fixes for any reproduced
+   defect. It never claims a clean review; reviewer findings never made a pass
+   incomplete, only probe outcomes did. At a continuation or delta re-review
+   stop, preserve the prior corroborated row and evidence-comment reference
+   instead; the original local file is not required on another host. Never
+   replace that base with this invocation's delta candidate. If neither a completed new
    baseline nor, on a continuation or delta re-review, a corroborated carried
    row is available, write
    `Full-review evidence: unavailable`, say delta
    evidence is unavailable, and print
    `Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`
-   in the STOPPED chat output and the record. The receipt's portable row and
-   the H-E prompt stay unchanged. A consumer reads this row from the stopped
+   in the STOPPED chat output and the record. Choose the reason with the first
+   applicable condition in this order: no cycle 1 record, `record-missing`;
+   `anchor-changed`; an incomplete cycle 1, `reviewer-incomplete`;
+   `tree-differs`; a pending record without a matching `fix-reviewed=true`
+   fix-review record, `reviewer-incomplete`. For a non-continuation,
+   full-scope cycle 1, this table decides the stop row:
+
+   | `cycle-1-baseline` | `cycle-1-fix-review` | Stop row |
+   |---|---|---|
+   | no record | any | unavailable `record-missing` |
+   | `completed=false` (`anchor-changed`) | any | unavailable `anchor-changed` |
+   | `completed=false` (`reviewer-incomplete`) | any | unavailable `reviewer-incomplete` |
+   | `completed=true`, snapshot tree differs from T | not read | unavailable `tree-differs` |
+   | `completed=true`, snapshot tree equals T | not read | the row |
+   | `completed=pending-fix-review`, snapshot tree differs from T | any | unavailable `tree-differs` |
+   | `completed=pending-fix-review`, tree equals T | no readable record, one for another snapshot, or `fix-reviewed=false` | unavailable `reviewer-incomplete` |
+   | `completed=pending-fix-review`, tree equals T | same snapshot, `fix-reviewed=true` | the row |
+
+   An unreadable or duplicate record counts as no record of that kind, and a
+   record not written at its write point is never written later. The stop's
+   own record, the one that carries the printed unavailable line, names which
+   table row applied and its cause; the stop never writes into
+   `cycle-1-baseline` or `cycle-1-fix-review`. The dedicated evidence comment
+   carries each probe's contract label, ID, outcome and, for `reproduced`, its
+   fingerprint, plus cycle 2's fix-review results and a statement that
+   `completed=true` records coverage, not a clean review; the exact probe
+   commands and requests stay in the local records. The receipt's portable row
+   and the H-E prompt stay unchanged. A consumer reads this row from the stopped
    receipt through the same author/edit-history checks; independently,
    `git rev-parse "B^{tree}"` must equal T (fetch the pushed commit if needed).
    Missing, incomplete, mismatched or unverifiable evidence holds repair-only continuation.
