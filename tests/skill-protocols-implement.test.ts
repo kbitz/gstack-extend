@@ -308,6 +308,12 @@ describe('implement review regressions', () => {
         env: { ...process.env, RUN_DIR: dir, RUN_BOUND: '1' }, stdout: 'pipe', stderr: 'pipe', timeout: 5000,
       });
       expect(r.stdout.toString()).toMatch(/^RUN: lost /);
+      rmSync(join(dir,'t0'));
+      const missingTime=Bun.spawnSync(['bash','-c',BLOCKS[1]], {env:{...process.env,RUN_DIR:dir,RUN_BOUND:'0'},stdout:'pipe',stderr:'pipe',timeout:5000});
+      expect(missingTime.stdout.toString()).toMatch(/^RUN: lost /);
+      const refused=Bun.spawnSync(['bash','-c',BLOCKS[2]], {env:{...process.env,RUN_DIR:dir},stdout:'pipe',stderr:'pipe',timeout:5000});
+      expect(refused.exitCode).toBe(1);
+      expect(readFileSync(join(dir,'resolution'),'utf8').trim()).toBe('blocked');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -390,6 +396,20 @@ describe('implement wait blocks', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   }, 40000);
 
+  test('missing job-control isolation refuses before any self-group signal', () => {
+    const h=home();
+    // This mutation replaces destructive signals with markers, so even a missing guard is harmless.
+    const script=launch('echo UNSAFE_COMMAND').replace("bash -c 'set -m;", "bash -c 'set +m;")
+      .replace('kill -TERM 0; sleep 2', 'echo attempted > "$RUN_DIR/would-signal"')
+      .replace('kill -KILL 0', 'echo finished > "$RUN_DIR/mutation-finished"');
+    const r=sh('bash',script,h);
+    const dir=/^RUN_DIR=(.+)$/m.exec(r.out)![1];
+    const end=Date.now()+5000;
+    while (!existsSync(join(dir,'refused')) && !existsSync(join(dir,'mutation-finished')) && Date.now()<end) Bun.sleepSync(25);
+    expect(existsSync(join(dir,'refused'))).toBe(true);
+    expect(existsSync(join(dir,'would-signal'))).toBe(false);
+  },10000);
+
   for (const { shell, path, only } of shells) {
     const t = (name: string, fn: () => void) => {
       if (only && !only.includes(name)) return;
@@ -425,6 +445,42 @@ describe('implement wait blocks', () => {
         expect(readFileSync(join(dir, 'log'), 'utf8')).toContain('hello');
         expect(readFileSync(join(dir, 'killing'), 'utf8')).toBe(readFileSync(join(dir, 'token'), 'utf8'));
       }
+    });
+    t('empty commands are refused before a run can report success', () => {
+      const h = home();
+      const r = sh(shell,launch('   '),h);
+      const dir = /^RUN_DIR=(.+)$/m.exec(r.out)?.[1];
+      if (dir) { awaitFile(join(dir,'id')); runs.push({shell,home:h,dir,cwd:ROOT,identity:readFileSync(join(dir,'id'),'utf8')}); }
+      expect(r.out).toBe('START: empty command');
+      expect(r.code).toBe(1);
+    });
+    t('commands keep caller permissions and start at the canonical repo root', () => {
+      const h = home();
+      const r = sh(shell,`umask 022\n${launch('umask; pwd')}\n${BLOCKS[1]}`,h,{RUN_BOUND:'15'},join(ROOT,'tests'));
+      const dir = /^RUN_DIR=(.+)$/m.exec(r.out)![1];
+      runs.push({shell,home:h,dir,cwd:join(ROOT,'tests'),identity:readFileSync(join(dir,'id'),'utf8')});
+      const lines = readFileSync(join(dir,'log'),'utf8').trim().split('\n');
+      expect([parseInt(lines[0],8),lines[1]]).toEqual([0o22,ROOT]);
+      expect(wait(shell,h,dir).code).toBe(0);
+    });
+    t('a retry in a fresh shell must execute the recorded original command', () => {
+      const h = home();
+      const cmd = 'sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi';
+      const original = start(shell,h,cmd);
+      expect(wait(shell,h,original).out).toMatch(/^RUN: lost /);
+      expect(stop(shell,h,original).code).toBe(0);
+      const wrong = sh(shell,launch('echo unrelated'),h,{RUN_RETRY_OF:original});
+      const accidental = /^RUN_DIR=(.+)$/m.exec(wrong.out)?.[1];
+      if (accidental) { awaitFile(join(accidental,'id')); runs.push({shell,home:h,dir:accidental,cwd:ROOT,identity:readFileSync(join(accidental,'id'),'utf8')}); }
+      expect(wrong.out).toBe('START: retry refused');
+      const retry = start(shell,h,cmd,{RUN_RETRY_OF:original});
+      expect(wait(shell,h,retry).code).toBe(0);
+      expect(readFileSync(join(retry,'command'),'utf8')).toBe(cmd);
+    });
+    t('watchdog survives loss of the command wrapper', () => {
+      const h=home(), dir=start(shell,h,'kill -KILL "$PPID"; sleep 30',{RUN_LIMIT:'3'});
+      expect(wait(shell,h,dir).out).toMatch(/^RUN: lost /);
+      expect(readFileSync(join(dir,'cleanup'),'utf8')).toContain(' limit');
     });
     t('outlasting one wait continues with wait-only calls', () => {
       const h = home(), dir = start(shell, h, 'sleep 3; echo late');
@@ -470,6 +526,9 @@ describe('implement wait blocks', () => {
       const id = readFileSync(join(stranger,'id'),'utf8').trim();
       // Simulated PID reuse: a stale directory names the live stranger, but has its old token.
       writeFileSync(join(old,'id'), `${readFileSync(join(old,'token'),'utf8').trim()} ${id.split(' ')[1]}\n`);
+      expect(wait(shell,h,old,0).out).toMatch(/^RUN: done /); // historical completion survives numeric group reuse
+      expect(stop(shell,h,old).out).toMatch(/^STOP: finished /);
+      rmSync(join(old,'resolution')); // simulate a lost completion receipt for the stale-identity safety case
       expect(stop(shell,h,old).out).toBe('STOP: refused or survivor');
       expect(wait(shell,h,stranger,0).out).toMatch(/^RUN: running /);
       for (const bad of ['0','1','x1']) {
@@ -491,10 +550,11 @@ describe('implement wait blocks', () => {
       expect(readFileSync(join(dir,'cleanup'),'utf8')).toContain(' limit');
     });
     t('retry claims persist through success, exhaustion and an interrupted claim', () => {
-      const h = home(), original = start(shell,h,'sleep 1; kill -KILL 0');
+      const retryCommand='sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi';
+      const h = home(), original = start(shell,h,retryCommand);
       expect(wait(shell,h,original).out).toMatch(/^RUN: lost /);
       expect(stop(shell,h,original).code).toBe(0);
-      const retry = start(shell,h,'echo replacement',{RUN_RETRY_OF:original});
+      const retry = start(shell,h,retryCommand,{RUN_RETRY_OF:original});
       expect(wait(shell,h,retry).code).toBe(0);
       expect(readFileSync(join(original,'retry-claim','replacement'),'utf8').trim()).toBe(retry);
       expect(sh(shell,launch('echo forbidden'),h,{RUN_RETRY_OF:original}).out).toBe('START: retry refused');

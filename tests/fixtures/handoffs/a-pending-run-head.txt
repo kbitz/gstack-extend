@@ -1,3 +1,3 @@
 Implementation stopped: a check was lost and its rerun is pending.
 Branch: feature/handoff-demo; target base: origin/main; HEAD: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
-RUN: lost exit= elapsed=412 bound=100 log=/home/example/.gstack/projects/example-repo/implement/runs/feature/handoff-demo/20260101T000000Z-1234/log
+RUN: lost exit= elapsed=412 bound=100 log=/home/example/.gstack/projects/example-repo/implement/runs/0123456789abcdef/run.ABCDEFGH/log

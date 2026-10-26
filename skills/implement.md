@@ -124,6 +124,8 @@ shell's job control. The group supervisor retains an immutable identity token.
 The controller sends a token-checked stop request through the run directory;
 only the supervisor signals **its own group**, using group zero. Neither the
 controller nor a test ever signals a remembered numeric PID or needs `ps`.
+The supervisor first proves that a group numbered by its own live PID exists,
+and refuses before spawning the check if job-control isolation failed.
 A token file alone is not proof of a live process: fresh heartbeat, completion
 witness and group disappearance are checked separately. PID reuse can cause a
 safe refusal, never a signal to the new process or the waiter's own group.
@@ -132,33 +134,47 @@ Run start and wait in one call, setting its timeout and `RUN_BOUND` together.
 The private `owner.bash` below is generated per run, not an installed helper.
 The blocks are deliberately longer than the original sketch to keep ownership,
 cleanup and recovery explicit. Leave `RUN_RETRY_OF` empty for a new check; set
-it to the original run directory only for the single authorized retry.
+it to the original run directory only for the single authorized retry. Shell-quote
+`RUN_CMD` as data, including any embedded single quotes. Empty commands are
+refused. The private `command` file retains the independently chosen command;
+read it as data and confirm it is still an authorized targeted check before
+setting `RUN_CMD` identically for recovery. Retry admission compares the exact
+bytes before claiming a replacement. Missing or changed commands refuse the
+retry; never substitute a weaker check to retire a lost run. The command runs
+from the canonical repository root with the caller's original umask.
 
 ```bash
 RUN_CMD='<one targeted command, run from the repo root>'
-RUN_SLUG='<slug>'; RUN_BRANCH=$(git symbolic-ref --short HEAD); RUN_WORKSPACE=$(pwd -P)
+case "$RUN_CMD" in *[![:space:]]*) ;; *) echo 'START: empty command'; exit 1 ;; esac
+RUN_SLUG='<slug>'; RUN_BRANCH=$(git symbolic-ref --short HEAD)
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+cd "$RUN_WORKSPACE" || exit 1
 RUN_ROOT="$HOME/.gstack/projects/$RUN_SLUG/implement/runs"
 [ -d "$HOME/.gstack/projects/$RUN_SLUG" ] || RUN_ROOT="$HOME/scratch/gstack-implement/runs/$RUN_SLUG"
 RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$RUN_BRANCH")
-RUN_SCOPE=$(printf '%s' "$RUN_OWNER" | shasum -a 256 | cut -c1-16)
+RUN_SCOPE=$(printf '%s' "$RUN_OWNER" | git hash-object --stdin) || exit 1
+RUN_SCOPE=$(printf '%s' "$RUN_SCOPE" | cut -c1-16); [ -n "$RUN_SCOPE" ] || exit 1
 RUN_LIMIT="${RUN_LIMIT:-1800}"; RUN_RETRY_OF="${RUN_RETRY_OF:-}"
 case "$RUN_LIMIT" in ''|*[!0-9]*|0) echo 'START: invalid limit'; exit 1 ;; esac
-umask 077; mkdir -p "$RUN_ROOT/$RUN_SCOPE" || exit 1
+RUN_UMASK=$(umask); umask 077; mkdir -p "$RUN_ROOT/$RUN_SCOPE" || exit 1
 if [ -n "$RUN_RETRY_OF" ]; then
   [ "$(cat "$RUN_RETRY_OF/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ ! -f "$RUN_RETRY_OF/retry-of" ] &&
-    [ "$(cat "$RUN_RETRY_OF/resolution" 2>/dev/null)" = stopped ] && mkdir "$RUN_RETRY_OF/retry-claim" 2>/dev/null || { echo 'START: retry refused'; exit 1; }
+    [ "$(cat "$RUN_RETRY_OF/resolution" 2>/dev/null)" = stopped ] && (printf '%s' "$RUN_CMD" | cmp -s "$RUN_RETRY_OF/command" -) && mkdir "$RUN_RETRY_OF/retry-claim" 2>/dev/null || { echo 'START: retry refused'; exit 1; }
 fi
 RUN_DIR=$(mktemp -d "$RUN_ROOT/$RUN_SCOPE/run.XXXXXXXX") || exit 1
 RUN_TOKEN=${RUN_DIR##*/}; printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/token"
 printf '%s\n' "$RUN_OWNER" >"$RUN_DIR/owner"; date +%s >"$RUN_DIR/t0"
 printf '%s\n' "$RUN_LIMIT" >"$RUN_DIR/limit"
+printf '%s' "$RUN_CMD" >"$RUN_DIR/command"
 if [ -n "$RUN_RETRY_OF" ]; then
   printf '%s\n' "$RUN_RETRY_OF" >"$RUN_DIR/retry-of"
   printf '%s\n' "$RUN_DIR" >"$RUN_RETRY_OF/retry-claim/replacement"
 fi
-export RUN_CMD RUN_DIR RUN_LIMIT RUN_TOKEN
+export RUN_CMD RUN_DIR RUN_LIMIT RUN_TOKEN RUN_UMASK
 cat >"$RUN_DIR/owner.bash" <<'RUN_SUPERVISOR'
-RUN_GROUP=$$; trap ':' TERM
+RUN_GROUP=$$
+kill -0 -- "-$RUN_GROUP" 2>/dev/null || { echo not-own-group >"$RUN_DIR/refused"; echo blocked >"$RUN_DIR/resolution"; exit 1; }
+trap ':' TERM
 printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/id.tmp"; mv "$RUN_DIR/id.tmp" "$RUN_DIR/id"
 ( trap '' TERM; RUN_REASON=limit; RUN_END=$((SECONDS + RUN_LIMIT))
   while [ "$SECONDS" -lt "$RUN_END" ]; do
@@ -169,15 +185,17 @@ printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/id.tmp"; mv "$RUN_DIR/id.t
     sleep 1
   done
   printf '%s %s\n' "$RUN_TOKEN" "$RUN_REASON" >"$RUN_DIR/cleanup"
+  kill -0 -- "-$RUN_GROUP" 2>/dev/null || exit 1
   kill -TERM 0; sleep 2
   printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/killing"
   kill -KILL 0
 ) &
-bash -c "$RUN_CMD" >"$RUN_DIR/log" 2>&1
+(umask "$RUN_UMASK"; bash -c "$RUN_CMD") >"$RUN_DIR/log" 2>&1
 printf '%s\n' "$?" >"$RUN_DIR/status.tmp"; mv "$RUN_DIR/status.tmp" "$RUN_DIR/status"
 wait
 RUN_SUPERVISOR
 bash -c 'set -m; bash "$RUN_DIR/owner.bash" </dev/null >/dev/null 2>&1 &' </dev/null >/dev/null 2>&1
+umask "$RUN_UMASK"
 printf 'RUN_DIR=%s\n' "$RUN_DIR"
 ```
 
@@ -193,15 +211,17 @@ case "$RUN_BOUND" in ''|*[!0-9]*) RUN_BOUND=100 ;; esac
 RUN_BAD_META=0; RUN_T0=$(cat "$RUN_DIR/t0" 2>/dev/null)
 case "$RUN_T0" in ''|*[!0-9]*) RUN_BAD_META=1; RUN_T0=$(date +%s) ;; esac
 RUN_END=$(( $(date +%s) + RUN_BOUND )); RUN_EXIT=''; RUN_STATE=lost
-RUN_OWNER=$(printf '%s\n%s' "$(pwd -P)" "$(git symbolic-ref --short HEAD)")
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
 while [ "$RUN_BAD_META" = 0 ] && [ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ]; do
+  [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" != blocked ] || break
   RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
   [ -n "$RUN_TOKEN" ] || break
   if [ -z "$RUN_ID" ]; then
     [ "$(( $(date +%s) - RUN_T0 ))" -lt 5 ] || break
   elif [ "$RUN_ID" != "$RUN_TOKEN $RUN_GROUP" ]; then break
   elif case "$RUN_GROUP" in ''|*[!0-9]*|0|1) true ;; *) false ;; esac; then break
-  elif ! kill -0 -- "-$RUN_GROUP" 2>/dev/null; then
+  elif [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" = finished ] || ! kill -0 -- "-$RUN_GROUP" 2>/dev/null; then
     if [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
       RUN_EXIT=$(cat "$RUN_DIR/status" 2>/dev/null)
       case "$RUN_EXIT" in 0) RUN_STATE=done ;; ''|*[!0-9]*) RUN_EXIT='' ;; *) RUN_STATE=failed ;; esac
@@ -215,6 +235,7 @@ while [ "$RUN_BAD_META" = 0 ] && [ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN
   [ "$(date +%s)" -lt "$RUN_END" ] || { RUN_STATE=running; break; }
   sleep 1
 done
+case "$RUN_STATE" in done|failed) printf 'finished\n' >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution" ;; esac
 printf 'RUN: %s exit=%s elapsed=%s bound=%s log=%s/log\n' "$RUN_STATE" "$RUN_EXIT" "$(( $(date +%s) - RUN_T0 ))" "$RUN_BOUND" "$RUN_DIR"
 [ "$RUN_STATE" = done ]
 ```
@@ -231,18 +252,26 @@ between its TERM and KILL.
 
 ```bash
 RUN_DIR="${RUN_DIR:-<run dir the launcher printed>}"
-RUN_OWNER=$(printf '%s\n%s' "$(pwd -P)" "$(git symbolic-ref --short HEAD)")
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
+[ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] || { echo 'STOP: refused owner'; exit 1; }
+run_refuse() { printf 'blocked\n' >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution"; printf 'STOP: refused %s\n' "$RUN_REFUSAL"; exit 1; }
+RUN_REFUSAL=metadata
 RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
-case "$RUN_TOKEN:$RUN_GROUP" in :*|*:|*:*[!0-9]*|*:0|*:1) echo 'STOP: refused metadata'; exit 1 ;; esac
-[ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ "$RUN_ID" = "$RUN_TOKEN $RUN_GROUP" ] && [ "$RUN_GROUP" != "$$" ] || { echo 'STOP: refused identity or own group'; exit 1; }
+case "$RUN_TOKEN:$RUN_GROUP" in :*|*:|*:*[!0-9]*|*:0|*:1) run_refuse ;; esac
+[ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ "$RUN_ID" = "$RUN_TOKEN $RUN_GROUP" ] && [ "$RUN_GROUP" != "$$" ] || { RUN_REFUSAL='identity or own group'; run_refuse; }
+if [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" = finished ] && [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
+  RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
+  case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) printf 'STOP: finished pgid=%s\n' "$RUN_GROUP"; exit 0 ;; esac
+fi
 printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
 RUN_END=$(( $(date +%s) + 8 ))
 while kill -0 -- "-$RUN_GROUP" 2>/dev/null; do
-  [ "$(date +%s)" -lt "$RUN_END" ] || { echo 'STOP: refused or survivor'; exit 1; }
+  [ "$(date +%s)" -lt "$RUN_END" ] || { RUN_REFUSAL='or survivor'; run_refuse; }
   sleep 1
 done
 RUN_RESOLUTION=stopped; [ ! -f "$RUN_DIR/retry-of" ] || RUN_RESOLUTION=exhausted
-if [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
+if [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
   RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
   case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) RUN_RESOLUTION=finished ;; esac
 fi
@@ -252,6 +281,13 @@ printf 'STOP: stopped pgid=%s\n' "$RUN_GROUP"
 
 A successful stop records `resolution=stopped` (or `exhausted` for a lost retry);
 a completed result keeps `resolution=finished`, including a successful retry.
+Refusals for a matching owner persist `resolution=blocked`; reconciliation
+reports that recorded blocker without repeatedly stopping or retrying. An
+interrupted claim without a replacement is likewise recorded as blocked.
+This is still unresolved work: keep Pending verification and withhold the
+successful handoff until ownership and cleanup can be established. Never
+retire an unknown survivor merely to unblock a handoff.
+
 The retry launcher atomically claims `retry-claim` before starting and records
 its `replacement` path; the replacement records `retry-of`. Reconciliation
 follows that link instead of relaunching the original. An interrupted claim
@@ -330,10 +366,16 @@ explicitly selected subset of a larger plan, and record that boundary. Do not
 drop items because of priority labels, unchecked boxes, or a checklist length
 limit.
 
-Reconcile earlier runs before any new check. Inspect only this workspace and
-branch's namespace and require an exact `owner` match. Follow a recorded
+Reconcile earlier runs before any new check. Inspect this workspace and
+branch's namespace under both the project and scratch roots, so creating a
+project directory does not hide older fallback runs; require an exact `owner`
+match. A `blocked` resolution stays a reported blocker, without another stop
+or retry. A `finished` resolution preserves the recorded terminal result even
+if its old group number is reused. It is historical evidence only: run the
+independently selected checks for current changes; never credit an older
+run as current verification. Follow a recorded
 `retry-claim/replacement` first; never retry the original again. A claim missing
-its replacement is Pending verification. A stopped original may claim its one
+its replacement is recorded as `resolution=blocked`, with Pending verification. A stopped original may claim its one
 retry; an exhausted retry is finished `not completed`, with Pending verification.
 For all other runs, use the wait block, then stop and retry once if lost. A
 `done` or `failed` run is a finished result only after group cleanup. A durably
