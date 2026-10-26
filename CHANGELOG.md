@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.0] - 2026-10-26
+
+### Added
+
+- **See where `/review-and-prep` and `/ship-and-land` actually spent their time.** Both wrappers record a local workflow span at each boundary they already own: the run, each phase they execute, review voices, fixes, and waits. The recorder stamps UTC wall time when the record is written. A disabled, unavailable, or unconfirmed recorder does not change the workflow, and a span never authorizes readiness, landing, or another Greptile run. Fixtures do not prove live host timing; that check stays on the first real wrapper runs after this release.
+
+- **Read untimed work as unknown.** A reader pairs a decision with the step that has the same id and phase. A `RUN` decision with no matching interval adds to that phase's unknown duration and shows unrecorded work, with a null duration. Ledgers written before this release can show that count; stored rows, the schema, the enums, and the envelope stay as they are. A `tests` decision may pair with the enclosing pregate interval. A decision that names the run step does not pair.
+
+### Changed
+
+- **Shared test stores keep both guard policies.** When the upstream and extension state roots are the same directory, the real-store guard retains both policies. A smoke run publishes destinations only after its prerequisites pass. An enabled capture that fails stays unavailable rather than skipped, and a missing interval boundary stays missing.
+
+### Fixed
+
+- **The roadmap Future count matches the retained entries.** After the current base merge, `docs/ROADMAP.md` reports 52 Future items, including the Track 31A follow-up.
+
 ## [0.50.0] - 2026-10-25
 
 ### Added

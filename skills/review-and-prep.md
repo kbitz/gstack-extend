@@ -68,18 +68,22 @@ Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
 with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
 `session_id`, a fresh lowercase UUID `event_id` you keep stable for that
-event; `uuidgen | tr A-Z a-z`) on stdin. Every ID you mint is lowercase.
+event) on stdin. Every ID you mint is lowercase and random (below).
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
 state and preserve the wrapped work's own exit status separately. A
 disabled, unavailable, conflicting or unconfirmed capture is recorded as
 capture state only — it never changes a review finding, a gate, Greptile
 applicability, readiness, or any outward action, and never delays the fresh
 checks that precede one. Never rerun completed work to manufacture telemetry.
-For `unconfirmed` or a missing envelope, keep the exact payload and
-`event_id`, run `metrics read --session-id <id> --event-id <event_id>`, and
-replay that identical payload at most once when the read reports the event
-present or safely absent; on conflict/partial/unknown stop and leave capture
-unknown. Never mint a fresh `event_id` for a replay.
+For an `unconfirmed` or missing envelope of a `decision`, `pass` or
+`correction`, keep the exact payload and `event_id`, run
+`metrics read --session-id <id> --event-id <event_id>`, and replay that
+identical payload at most once when the read reports the event present or
+safely absent; on conflict/partial/unknown stop and leave capture unknown. A
+`begin` or `end` is never replayed later: the span library reconciles it once
+in its own call (`match` counts it as written; `absent` leaves the boundary
+missing), and no interval is derived from a `decision`, `pass` or `correction`
+timestamp. Never mint a fresh `event_id` for a replay.
 
 Issue metrics calls one at a time from this session, never as parallel tool
 calls or from subagents: the run lock never waits, so concurrent calls drop
@@ -91,27 +95,107 @@ shares a tool call with other work, capture that work's exit first
 (`rc=$?`), report it, and use it for the step's `outcome`; the launcher's own
 exit is always 0.
 
-Emit, batched into existing tool calls where practical:
+Emit each record at its boundary, never afterward. The rules, the shell
+library and both call forms are in
+[docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics-span):
 
+- Boundary: a step's `begin` goes in the tool call that starts its work, ahead of
+  that work's first command. Its `end` goes in the same call right after the
+  command returns, or in the first tool call after a subagent, background command
+  or external result returns. Work with no command of its own (completion audit,
+  scope reading, triage) gets its `begin` and `end` in short dedicated calls,
+  immediately before the work starts and right after its result is decided. When
+  several voices are dispatched together, their `begin` records go one after
+  another in a single Bash call immediately before the one dispatch message,
+  never inside it. Each voice's `end` goes in the first tool call after that
+  voice's own result arrives; voices whose results arrive together end together,
+  parent-observed. A pass `started` precedes the dispatch of its voices. Each
+  `attempt` and `voice-complete` is emitted as that voice's result is consumed,
+  and `completed` when the round closes. Every phase visit this workflow
+  executes gets a span, except a `tests` lane inside a pregate run. A RUN-decided
+  visit with no span reads unknown by design.
+- Never backfill: never write a `begin` or `end` for a boundary that has already
+  passed or has not happened yet. A missed `begin` leaves only the phase's
+  `decision`; if a step's `begin` was not `recorded`, `replayed` or reconciled,
+  emit no `end` for it. A missed `end` leaves the step open. A wait is ended
+  `paused` only at an actual pause. A command that fails, or hits its own
+  timeout inside the call, ends `failed` in that call; work the user stops ends
+  `cancelled`. If the host kills the tool call so the same-call `end` never runs,
+  the step stays open.
+- Mint IDs at random: mint each new `event_id`, `step_id`, `pass_id` and
+  `attempt_id` from a random generator
+  (`python3 -B -I -c 'import uuid;print(uuid.uuid4())'` or `uuidgen | tr A-Z a-z`) in
+  the tool call that first uses it, and print it for later reference. Never
+  derive an ID from the session ID, a counter, another ID or a typed pattern.
+  Never reuse an ID for a different event or entity: a step keeps its `step_id`
+  across its `begin`, `end` and governing `decision`; a pass and an attempt keep
+  theirs; a replay keeps its `event_id`.
+- Spans use `bin/lib/workflow-span.sh`, resolved once by the call that records
+  the run `begin` (below). Same-call form, for a foreground command; the shell is
+  new every call, so set the retained values first:
+
+  ```bash
+  GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1; GX_LIB='<retained library path>'; GX_RUN='<run step_id>'
+  [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
+  gx_span_begin PHASE "$GX_RUN" phase
+  GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
+  gx_span_end "${GX_STEP:-}" "$rc"
+  (exit "$rc")
+  ```
+
+  Cross-call form, for a background command, a subagent return, work with no
+  command of its own or any command that may outlast the host's tool-call
+  timeout (the table marks the long sites): the first call runs the first three
+  lines, `gx_span_begin PHASE "$GX_RUN" phase`, and prints a `SPAN` line, then
+  ends; the first call after the result arrives sets the same first two lines and
+  runs `gx_span_end 'STEP-FROM-THE-SPAN-LINE' "$rc" 'BEGIN-FROM-THE-SPAN-LINE'`.
+  Set `rc` explicitly from the observed completion result in that new shell
+  (0 for success, nonzero for failure); if the result is unknown, leave the span
+  open. An empty or nonnumeric `rc` emits no end. Never use the same-call form under background execution: its `end` would race
+  the run lock and drop. `GX_CAPTURE` is `1` only when the run `begin` was
+  `recorded` or `replayed`, else `0`, and the work still runs with no launcher
+  call. `WORK` is written inline, never through `eval`; it runs in a subshell,
+  so a variable or `cd` it makes does not persist. `gx_span_begin_wait CATEGORY
+  "$GX_RUN"` opens a wait and emits no decision; a fourth argument to
+  `gx_span_end` sets the outcome to `paused` or `cancelled`; `NODECISION=1` skips the
+  decision for a second step in the same phase visit. Quote the `SPAN` lines
+  in later calls; any `begin=`, `end=` or `decision=` value other than
+  `recorded`, `replayed`, `match`, `pending` or `skipped` makes the receipt carry
+  `capture=partial (<reason>)`.
 - Once, before other metrics: `begin` with `kind:"run"`, `phase:"run"`, a fresh
-  run `step_id`, `parent_step_id:null`, and `context` carrying the candidate
-  HEAD/tree/base you already observed (or null — never run `git write-tree` or
-  create an index for metrics), `binding` clean/dirty/unknown, the SHA-256 of
-  the installed copy of this skill, and `parent_session_id:null` unless the
-  spawning stage handed you its exact ID. Once the candidate changes (you
-  first observe it, a base merge, a fix commit), every later step `begin` and
-  pass `started` carries a `context` override with the new HEAD/tree/base;
-  their ends, attempts and voice records inherit it.
-- One `decision` per visited phase below (`RUN`, `REUSE`, or `N/A` with its
-  controlled reason), recorded under the phase of the work decided about,
-  with a fresh `step_id` per phase visit (or the `step_id` of the execution
-  it governs);
-  `begin`/`end` only around work actually executed, so a reused phase has a
-  decision and no new interval. Reached-but-inapplicable phases are `N/A`;
-  unreached phases emit nothing and stay unknown. Each execution uses a fresh
-  `step_id`; phase names are labels only. Parent review intervals enclose
+  run `step_id` (retain it as `GX_RUN`), `parent_step_id:null`, and `context`
+  carrying the candidate HEAD/tree/base you already observed (or null — never run
+  `git write-tree` or create an index for metrics), `binding` clean/dirty/unknown,
+  the SHA-256 of the installed copy of this skill, and `parent_session_id:null`
+  unless the spawning stage handed you its exact ID. In the same call, after the
+  telemetry start block's launcher resolution, print the library path to retain
+  as `GX_LIB`:
+
+  ```bash
+  GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
+  [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
+  ```
+
+  An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
+  unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
+  or missing-span)` in the receipt and continue the workflow.
+  Once the candidate changes (you first observe it, a base merge, a fix commit),
+  every later step `begin` and pass `started` carries a `context` override with
+  the new HEAD/tree/base (the fourth argument of `gx_span_begin`); their ends,
+  attempts and voice records inherit it.
+- One governing `decision` per executed phase visit, recorded under the phase of
+  the work decided about: `gx_span_begin` emits it (`RUN`, reason `required`
+  unless `GX_REASON` names another controlled reason) and shares its `step_id`
+  with the step's `begin`. A reused phase records a `REUSE` decision, and a
+  reached-but-inapplicable phase `N/A` with its controlled reason, through the
+  raw `decision` producer with a fresh `step_id` and no interval; unreached
+  phases emit nothing and stay unknown. A `tests` decision made inside a pregate
+  run carries the enclosing `pregate` step's `step_id` (send it with the raw
+  `decision` producer in the call that begins the pregate span, using
+  `$GX_STEP`). Each execution has its own `step_id`; phase names are labels only. Parent review intervals enclose
   their parallel voice intervals (`parent_step_id`); under parallel dispatch
-  those are parent-observed, not per-voice runtime.
+  those are parent-observed, not per-voice runtime, and a voice step sets
+  `NODECISION=1`.
 - Local review as `pass` records: one pass is one review round over one
   candidate, with its required voices declared at `state:"started"`, each
   attempt recorded separately (a completed attempt carries its findings —
@@ -134,11 +218,11 @@ Emit, batched into existing tool calls where practical:
   the new `attempt_id` when a voice attempt is retried or replaced; and
   `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
   batch closes.
-- Waits as `kind:"wait"` steps with `wait_category` (`human` at the manual
-  testing checkpoint and while a question to the user is open,
-  `external-review` while awaiting Greptile), ended
-  `paused` at a pause rather than inventing a finish (its duration then reads
-  unknown). Unlabeled time stays unclassified; elapsed wall time is never
+- Waits as `kind:"wait"` steps (`gx_span_begin_wait`) with `wait_category`
+  (`human` at the manual testing checkpoint and while a question to the user is
+  open, `external-review` from the Greptile request's submission until its
+  results are observed), ended `paused` only at an actual pause rather than
+  inventing a finish (its duration then reads unknown). Unlabeled time stays unclassified; elapsed wall time is never
   model/inference time, and every duration is clock-sensitive
   (`clock_basis=utc-wall`).
 - Receipts: immediately before writing each receipt this workflow already
@@ -159,27 +243,36 @@ Emit, batched into existing tool calls where practical:
   authorize readiness. An interrupted run that produces no receipt needs none
   for metrics.
 
-Phase mapping (stable metric phase IDs, anchored to this file's headings —
-the owner of a wrapper change updates this mapping in the same change):
+Phase mapping and span sites (stable metric phase IDs, anchored to this file's
+headings — the owner of a wrapper change updates this mapping in the same
+change). The Spans column is the closed list of span sites: a phase visit at an
+anchor not listed there is a change to this table first. `(cross-call)` marks
+the long sites that use the cross-call form. A `none` row supplies guidance
+only: it emits no separate `RUN` decision or span; the executing site owns both. At a cycle-cap stop, close the existing
+`local-pass` span and span each stop-only commit, publication and handoff visit.
 
-| Anchor in this skill | Metric phases |
-|---|---|
-| `Take recommended fix-scope options without asking` | `local-pass`, `fix` |
-| `Report elapsed time and stop on provider failures`, `Hosts with bounded subagent waits` | `local-pass`, `voice` |
-| `1. Establish the branch, PR, and review inputs` | `evidence`, `scope` |
-| `Read an optional review policy`, `Use the light review default` | `scope` |
-| `2. Review and verify locally`, `Merge the latest base before review` | `base-integration`, `local-pass`, `voice` |
-| `Bound Claude Code outside calls`, `Scope a re-review to its delta` | `local-pass`, `voice` |
-| `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` |
-| `Enforce completion, beyond /review's informational audit` | `completion` |
-| `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` |
-| `Capture evidence and commit` | `evidence`, `commit` |
-| `3. Push and create or update the draft` | `publication` |
-| `Manual testing checkpoint and resume` | wait `human` |
-| `4. Trigger once and await Greptile` | `external-review`, wait `external-review` |
-| `5. Triage, fix, and verify locally` | `triage`, `fix` |
-| `6. Final readiness gate and handoff` | `readiness`, `handoff` |
-| `7. Emit the copyable prompt for a new session` | `handoff` |
+| Anchor in this skill | Metric phases | Spans |
+|---|---|---|
+| `Take recommended fix-scope options without asking` | `local-pass`, `fix` | none |
+| `Report elapsed time and stop on provider failures`, `Hosts with bounded subagent waits` | `local-pass`, `voice` | none |
+| `1. Establish the branch, PR, and review inputs` | `evidence`, `scope` | `evidence`, `scope` |
+| `Read an optional review policy`, `Use the light review default` | `scope` | none |
+| `2. Review and verify locally` | `local-pass`, `voice`, `fix` | `local-pass`, `voice`, `fix` |
+| `Merge the latest base before review` | `base-integration` | `base-integration` |
+| `Bound Claude Code outside calls` | `local-pass`, `voice` | none |
+| `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
+| `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
+| `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
+| `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` | `pregate` (cross-call), `coverage`, `documentation`, `tests` (cross-call) |
+| `Repair a test-only final-gate failure` | `pregate`, `tests` | `pregate` (cross-call), `tests` (cross-call) |
+| `Capture evidence and commit` | `evidence`, `commit` | `evidence`, `commit` |
+| `3. Push and create or update the draft` | `publication` | `publication` |
+| `Manual testing checkpoint and resume` | wait `human` | wait `human` |
+| `4. Trigger once and await Greptile` | `external-review`, wait `external-review` | `external-review` (cross-call), wait `external-review` (cross-call) |
+| `5. Triage, fix, and verify locally` | `triage`, `fix`, `completion`, `pregate`, `tests` | `triage`, `fix`, `completion`, `pregate` (cross-call), `tests` (cross-call) |
+| `Reviewed secret findings` | `pregate` | `pregate` (cross-call) |
+| `6. Final readiness gate and handoff` | `readiness`, `handoff` | `readiness` |
+| `7. Emit the copyable prompt for a new session` | `handoff` | `handoff` |
 
 Own the interval between implementation and `/ship-and-land`:
 

@@ -85,6 +85,11 @@ UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missin
 # The subset that means the stored records contradict or orphan each other: the read is partial.
 INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
                      "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
+# Reads pair a RUN decision with a begun step by step_id. A record written by the last
+# pre-span release, 0.50.0, or earlier (or with no readable producer_version) may be offset by an unpaired
+# top-level same-phase step, because those producers gave decisions fresh IDs; any later
+# producer must match step_id exactly (docs/telemetry.md#workflow-metrics-untimed).
+LEGACY_PAIRING_MAX = (0, 50, 0, 0)
 
 
 class Fail(Exception):
@@ -831,6 +836,13 @@ def mutate(op, req):
 
 # --- read projection: raw observations in, qualified summaries out ---
 
+def _legacy_pairing(version):
+    if not isinstance(version, str) or not RELEASE_RE.fullmatch(version):
+        return True
+    parts = tuple(int(part) for part in version.split("."))
+    return parts + (0,) * (4 - len(parts)) <= LEGACY_PAIRING_MAX
+
+
 def _union_ms(intervals):
     if not intervals:
         return None
@@ -1014,16 +1026,48 @@ def _steps(effective, run_context, unknown):
             slot["unknown"] += 1
     # One decision per (step_id, phase): distinct-ID repeats of the same choice count once;
     # differing choices for the same decision are a conflict and count as none.
-    choices = {}
+    choices, legacy = {}, {}
     for record in decisions:
         req = record["request"]
-        choices.setdefault((req["step_id"], req["phase"]), set()).add((req["decision"], req["reason"]))
-    for (_step_id, phase), made in choices.items():
+        key = (req["step_id"], req["phase"])
+        choices.setdefault(key, set()).add((req["decision"], req["reason"]))
+        legacy.setdefault(key, _legacy_pairing(record["producer_version"]))
+    # A RUN decision is timed by the begun step that shares its step_id and phase (a `tests`
+    # decision may also name its enclosing `pregate` step). The run step never times a decision.
+    first_of = {step_id: recs[0]["request"] for step_id, recs in begins.items()}
+    paired, unpaired = {}, {}
+    for (step_id, phase), made in choices.items():
         slot = _phase_slot(phase_data, phase)
         if len(made) != 1:
             unknown.add("conflicting-terminal")
             continue
-        slot["decisions"][next(iter(made))[0]] += 1
+        choice = next(iter(made))[0]
+        slot["decisions"][choice] += 1
+        if choice != "RUN":
+            continue
+        step = first_of.get(step_id)
+        if (step is not None and step.get("kind") != "run"
+                and (step.get("phase") == phase or (phase == "tests" and step.get("phase") == "pregate"))):
+            paired.setdefault(phase, set()).add(step_id)
+        else:
+            unpaired.setdefault(phase, []).append(legacy[(step_id, phase)]
+                                                 and (step is None or step.get("kind") != "run"))
+    # Older producers minted fresh decision IDs: an unpaired older decision is covered by one
+    # unpaired top-level step of its phase (a step nested under a same-phase step never covers).
+    untimed = 0
+    for phase, flags in unpaired.items():
+        spare = 0
+        if any(flags):
+            spare = sum(1 for step_id, step in first_of.items()
+                        if step.get("kind") != "run" and step.get("phase") == phase
+                        and step_id not in paired.get(phase, ())
+                        and first_of.get(step.get("parent_step_id"), {}).get("phase") != phase)
+        left = len(flags) - min(sum(flags), spare)
+        if left:
+            phase_data[phase]["unknown"] += left
+            untimed += left
+    if untimed:
+        unknown.add("unrecorded-work")
     phases = [{"phase": phase, "decisions": slot["decisions"], "steps_started": slot["started"],
                "steps_completed": slot["completed"],
                "observed_wall_duration_ms": None if slot["unknown"] else _union_ms(slot["intervals"]),

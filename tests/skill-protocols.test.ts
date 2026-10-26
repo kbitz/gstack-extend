@@ -1353,7 +1353,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(flat).toContain('`end` the run step just before the legacy telemetry finish');
       expect(flat).toContain('kind:"fix"');
       expect(flat).toContain('correction_kind:"finding"');
-      expect(flat).toContain('fresh `step_id` per phase visit');
+      expect(flat).toContain('One governing `decision` per executed phase visit');
       expect(flat).toContain('`rc=$?`');
       // The mapping table: every left-hand anchor is a real heading (inline code stripped), every
       // required anchor is mapped, and every right-hand token is a controlled phase, wait category
@@ -1378,6 +1378,145 @@ describe('Track 24A workflow metrics drift-locks', () => {
       expect(new Set(tablePhases).size).toBeGreaterThanOrEqual(5);
     });
   }
+  // Track 31A: the consolidated at-boundary rules, the canonical span pattern and the closed site tables.
+  const DOCS = readFileSync(join(ROOT, 'docs/telemetry.md'), 'utf8');
+  const spanDocs = DOCS.slice(DOCS.indexOf('<a id="workflow-metrics-span"></a>'), DOCS.indexOf('### Diagnostic reasons'));
+  const strip = (text: string) => text.replace(/`/g, '').trim();
+  const metricsOf = (skill: string) => {
+    const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+    const at = content.indexOf('### Workflow metrics (optional, local)');
+    return content.slice(at, content.indexOf('<!-- SHARED:telemetry-finish -->'));
+  };
+  const siteRows = (skill: string) => {
+    const body = metricsOf(skill);
+    const tableAt = body.indexOf('| Anchor in this skill | Metric phases | Spans |');
+    expect(tableAt, `${skill}: the mapping table needs a Spans column; a wrapper change updates the mapping in the same change`).toBeGreaterThan(-1);
+    return body.slice(tableAt, body.indexOf('\n\n', tableAt)).split('\n').slice(2).map(row => {
+      const [, left, phases, spans] = row.split('|');
+      return { anchors: [...left.matchAll(/`([^`]+)`/g)].map(m => strip(m[1])), phases, spans, row };
+    });
+  };
+  const spanBlock = (text: string, marker: string) => {
+    const at = text.indexOf(marker);
+    expect(at, `missing ${marker}`).toBeGreaterThan(-1);
+    const lines = /(?:~~~sh|```bash)\n([\s\S]*?)(?:~~~|```)\n/.exec(text.slice(at))![1].split('\n');
+    const indent = Math.min(...lines.filter(l => l.trim()).map(l => l.match(/^ */)![0].length)); // a bullet indents its copy
+    return lines.map(l => l.slice(indent)).join('\n');
+  };
+  const requiredSites: Record<string, Record<string, string[]>> = {
+    'review-and-prep': {
+      commit: ['When /review stops at its cycle cap'],
+      publication: ['When /review stops at its cycle cap'],
+      handoff: ['When /review stops at its cycle cap'],
+      completion: ["Enforce completion, beyond /review's informational audit", '5. Triage, fix, and verify locally'],
+      pregate: ["Prove /ship's release gates on this head", 'Repair a test-only final-gate failure', '5. Triage, fix, and verify locally', 'Reviewed secret findings'],
+      coverage: ["Prove /ship's release gates on this head"],
+      documentation: ["Prove /ship's release gates on this head"],
+      tests: ["Prove /ship's release gates on this head", 'Repair a test-only final-gate failure', '5. Triage, fix, and verify locally'],
+      'external-review': ['4. Trigger once and await Greptile'],
+    },
+    'ship-and-land': {
+      completion: ['Project release policy'],
+      pregate: ['Test evidence', 'Release-only path', 'Reviewed secret findings'],
+      tests: ['Test evidence', 'Release-only path', 'Docs test policy'],
+      coverage: ['Shared review execution (DOCS and FULL)'],
+      documentation: ['Shared review execution (DOCS and FULL)'],
+      'external-review': ['Greptile and new feedback'],
+    },
+  };
+  const longSites: Record<string, Record<string, string[]>> = {
+    'review-and-prep': {
+      pregate: ["Prove /ship's release gates on this head", 'Repair a test-only final-gate failure', '5. Triage, fix, and verify locally', 'Reviewed secret findings'],
+      tests: ["Prove /ship's release gates on this head", 'Repair a test-only final-gate failure', '5. Triage, fix, and verify locally'],
+      'external-review': ['4. Trigger once and await Greptile'],
+    },
+    'ship-and-land': {
+      pregate: ['Test evidence', 'Release-only path', 'Reviewed secret findings'],
+      tests: ['Test evidence', 'Release-only path'],
+      'external-review': ['Greptile and new feedback'],
+    },
+  };
+  for (const skill of Object.keys(wrappers)) {
+    test(`${skill} states the consolidated at-boundary rules and drops the batching sentence`, () => {
+      const flat = metricsOf(skill).replace(/\s+/g, ' ');
+      expect(flat, `${skill}: the old batching sentence must stay replaced`).not.toContain('Emit, batched into existing tool calls where practical');
+      for (const phrase of [
+        'Emit each record at its boundary, never afterward',
+        "a step's `begin` goes in the tool call that starts its work, ahead of that work's first command",
+        'Its `end` goes in the same call right after the command returns, or in the first tool call after a subagent, background command or external result returns',
+        'Work with no command of its own (completion audit, scope reading, triage) gets its `begin` and `end` in short dedicated calls',
+        'their `begin` records go one after another in a single Bash call immediately before the one dispatch message, never inside it',
+        "Each voice's `end` goes in the first tool call after that voice's own result arrives",
+        'A pass `started` precedes the dispatch of its voices',
+        'A RUN-decided visit with no span reads unknown by design',
+        'Never backfill: never write a `begin` or `end` for a boundary that has already passed or has not happened yet',
+        "if a step's `begin` was not `recorded`, `replayed` or reconciled, emit no `end` for it",
+        'A wait is ended `paused` only at an actual pause',
+        'If the host kills the tool call so the same-call `end` never runs, the step stays open',
+        'Mint IDs at random',
+        'Never derive an ID from the session ID, a counter, another ID or a typed pattern',
+        'Never reuse an ID for a different event or entity',
+        'Never use the same-call form under background execution',
+        '`WORK` is written inline, never through `eval`',
+        'One governing `decision` per executed phase visit',
+        'A `tests` decision made inside a pregate run carries the enclosing `pregate` step\'s `step_id`',
+        'A `begin` or `end` is never replayed later',
+      ]) expect(flat, `${skill}: missing rule text "${phrase}"`).toContain(phrase);
+    });
+    test(`${skill} carries the canonical span pattern and library lookup byte for byte`, () => {
+      const body = metricsOf(skill);
+      const wrapperSame = spanBlock(body, 'Same-call form').replace(/GX_STAGE='[a-z-]+'/, "GX_STAGE='review-and-prep'");
+      expect(wrapperSame, `${skill}: the same-call pattern differs from docs/telemetry.md#workflow-metrics-span-same-call; update both in the same change`)
+        .toBe(spanBlock(spanDocs, 'workflow-metrics-span-same-call').replace(/GX_STAGE='[a-z-]+'/, "GX_STAGE='review-and-prep'"));
+      expect(wrapperSame).toContain("GX_LIB='<retained library path>'; GX_RUN='<run step_id>'");
+      expect(wrapperSame).toContain(`GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac`);
+      expect(wrapperSame.trimEnd().endsWith('(exit "$rc")')).toBe(true);
+      expect(spanBlock(body, 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)
+        .toBe(spanBlock(spanDocs, 'To obtain the retained library path'));
+      const flat = body.replace(/\s+/g, ' ');
+      expect(flat).toContain("gx_span_end 'STEP-FROM-THE-SPAN-LINE' \"$rc\" 'BEGIN-FROM-THE-SPAN-LINE'");
+      expect(spanDocs.replace(/\s+/g, ' ')).toContain("gx_span_end 'STEP-FROM-THE-SPAN-LINE' \"$rc\" 'BEGIN-FROM-THE-SPAN-LINE'");
+    });
+    test(`${skill}'s Spans column is a closed list: every required site is mapped and every phase has a span site`, () => {
+      const rows = siteRows(skill);
+      const phasesOf = (text: string) => [...text.replace(/wait `[a-z-]+`/g, '').matchAll(/`([a-z][a-z-]*)`/g)].map(m => m[1]).filter(p => schemaPhases.includes(p));
+      const spanned = new Set(rows.flatMap(r => phasesOf(r.spans)));
+      for (const row of rows) for (const phase of phasesOf(row.phases)) {
+        expect(spanned.has(phase), `${skill}: phase ${phase} (row ${row.anchors.join(', ')}) has no span site; add its anchor to the Spans column in the same change`).toBe(true);
+      }
+      for (const [phase, anchors] of Object.entries(requiredSites[skill])) {
+        for (const anchor of anchors) {
+          const hit = rows.find(r => r.anchors.includes(anchor) && phasesOf(r.spans).includes(phase));
+          expect(hit, `${skill}: ${phase} needs a span under "${anchor}"`).toBeTruthy();
+        }
+      }
+      for (const [phase, anchors] of Object.entries(longSites[skill])) {
+        for (const anchor of anchors) {
+          const hit = rows.find(r => r.anchors.includes(anchor) && r.spans.includes(`\`${phase}\` (cross-call)`));
+          expect(hit, `${skill}: ${phase} under "${anchor}" is a long site and must be marked (cross-call)`).toBeTruthy();
+        }
+      }
+      expect(rows.some(r => r.anchors.includes(skill === 'review-and-prep' ? '4. Trigger once and await Greptile' : 'Greptile and new feedback')
+        && r.spans.includes('wait `external-review` (cross-call)')), `${skill}: the Greptile wait needs its span`).toBe(true);
+      for (const row of rows) for (const anchor of row.anchors) {
+        const headings = [...readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8').matchAll(/^#{2,4} (.+)$/gm)].map(m => strip(m[1]));
+        expect(headings, `${skill}: Spans row anchor ${anchor}`).toContain(anchor);
+      }
+    });
+  }
+  test('docs/telemetry.md states the span rules the wrappers point to, with stable anchors', () => {
+    for (const anchor of ['workflow-metrics-span', 'workflow-metrics-boundary', 'workflow-metrics-no-backfill', 'workflow-metrics-replay',
+      'workflow-metrics-ids', 'workflow-metrics-untimed', 'workflow-metrics-read-semantics', 'workflow-metrics-span-same-call',
+      'workflow-metrics-span-cross-call', 'workflow-metrics-pregate-time', 'workflow-metrics-voice-begin',
+      'workflow-metrics-isolation', 'workflow-metrics-id-shape', 'workflow-metrics-guard',
+      ...['prefix-rewrite', 'appended-id', 'named-file', 'escaped-root', 'unexpected'].map(code => `workflow-metrics-guard-${code}`)]) {
+      expect(DOCS, `docs/telemetry.md anchor ${anchor}`).toContain(`<a id="${anchor}"></a>`);
+    }
+    const flat = spanDocs.replace(/\s+/g, ' ');
+    for (const phrase of ['Never write a `begin` or `end` for a boundary that has already passed or has not happened yet',
+      "an ID's shape alone never classifies a row as synthetic", 'pregate\'s own `stage2_ms` and per-check `ms`',
+      'consumers keyed on the old zero will see that change', 'The launcher has no `--version`']) expect(flat).toContain(phrase);
+  });
   test('no other skill gained a workflow-metrics section', () => {
     for (const skill of EXPECTED_SETUP_SKILLS) {
       if (skill === 'review-and-prep' || skill === 'ship-and-land') continue;

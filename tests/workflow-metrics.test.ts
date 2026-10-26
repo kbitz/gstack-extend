@@ -6,7 +6,8 @@ import { chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv from 'ajv';
-import { HELPER_BIN, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
+import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
+import { appendFileSync, realpathSync, truncateSync } from 'node:fs';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
@@ -74,12 +75,12 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 /** Write stored records directly (imported-fixture path): controlled timestamps, correct digests. */
-function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at: number; request: any }>) {
+function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at: number; request: any }>, producerVersion: string | null = '0.36.13.0') {
   const file = ledgerFile(fix, sid);
   mkdirSync(join(file, '..'), { recursive: true });
   const lines = rows.map(({ op, at, request }) => {
     const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
-    const record = { v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: '0.36.13.0', request };
+    const record = { v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: producerVersion, request };
     expect(validRecord(record), `${op} ${JSON.stringify(validRecord.errors)}`).toBe(true); // helper and schema agree
     return JSON.stringify(record);
   });
@@ -1122,6 +1123,126 @@ describe('review fixes: unknown is never zero, pauses stay open, candidates inhe
   }, 30_000);
 });
 
+describe('Track 31A untimed visits: RUN decisions pair with begun steps by step_id', () => {
+  const NEW = '0.51.0', OLD = '0.50.0';
+  const span = (sid: string, phase: string, id: string, at: number, parent: string | null = null, outcome = 'completed') => [
+    { op: 'begin', at, request: { ...base(sid), step_id: id, parent_step_id: parent, kind: 'phase', phase } },
+    { op: 'end', at: at + 40, request: { ...base(sid), step_id: id, outcome } },
+  ];
+  const decide = (sid: string, phase: string, id: string, at: number, decision = 'RUN') =>
+    ({ op: 'decision', at, request: { ...base(sid), step_id: id, phase, decision, reason: decision === 'RUN' ? 'required' : 'matching-evidence' } });
+  const phaseOf = (data: any, name: string) => data.phases.find((p: any) => p.phase === name);
+  const readCrafted = (rows: (sid: string, runStep: string) => any[], version: string | null) => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid, 0);
+    craft(fix, sid, [...run.rows, ...rows(sid, run.step)], version);
+    return read(fix, sid).envelope.data;
+  };
+
+  test('a RUN-only phase and a timed plus an untimed visit read unknown, never zero; REUSE-only is unchanged', () => {
+    const only = readCrafted(sid => [decide(sid, 'scope', u(), 10)], NEW);
+    expect(phaseOf(only, 'scope')).toEqual({ phase: 'scope', decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 0, steps_completed: 0, observed_wall_duration_ms: null, unknown_durations: 1 });
+    expect(only.unknown_reasons).toContain('unrecorded-work');
+    expect(only.receipt_text).toContain('unrecorded-work'); // the receipt's unknown= list names it
+    expect(only.capture).toBe('ok');
+    const timed = u();
+    const mixed = readCrafted(sid => [decide(sid, 'scope', timed, 10), ...span(sid, 'scope', timed, 11), decide(sid, 'scope', u(), 100)], NEW);
+    expect(phaseOf(mixed, 'scope')).toMatchObject({ decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, steps_started: 1, steps_completed: 1, observed_wall_duration_ms: null, unknown_durations: 1 });
+    const reuse = readCrafted(sid => [decide(sid, 'tests', u(), 10, 'REUSE')], NEW);
+    expect(phaseOf(reuse, 'tests')).toMatchObject({ steps_started: 0, observed_wall_duration_ms: null, unknown_durations: 0 });
+    expect(reuse.unknown_reasons).not.toContain('unrecorded-work');
+  }, 60_000);
+
+  test('a spanned visit reads timed; a stray extra fresh-ID RUN decision beside it reads one unknown', () => {
+    const step = u();
+    const clean = readCrafted(sid => [decide(sid, 'coverage', step, 10), ...span(sid, 'coverage', step, 11)], NEW);
+    expect(phaseOf(clean, 'coverage')).toMatchObject({ steps_started: 1, observed_wall_duration_ms: 40, unknown_durations: 0 });
+    expect(clean.unknown_reasons).not.toContain('unrecorded-work');
+    const stray = readCrafted(sid => [decide(sid, 'coverage', step, 10), ...span(sid, 'coverage', step, 11), decide(sid, 'coverage', u(), 60)], NEW);
+    expect(phaseOf(stray, 'coverage')).toMatchObject({ decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, observed_wall_duration_ms: null, unknown_durations: 1 });
+    expect(stray.unknown_reasons).toContain('unrecorded-work');
+  }, 60_000);
+
+  test('the two-visit counterexample in a new-version ledger reads one unknown', () => {
+    // Visit A has a span and a dropped decision; visit B has a decision and a dropped begin.
+    const data = readCrafted(sid => [...span(sid, 'documentation', u(), 11), decide(sid, 'documentation', u(), 100)], NEW);
+    expect(phaseOf(data, 'documentation')).toMatchObject({ decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 1, observed_wall_duration_ms: null, unknown_durations: 1 });
+    expect(data.unknown_reasons).toContain('unrecorded-work');
+  }, 60_000);
+
+  test('the legacy fresh-ID offset still pairs in an old-version ledger, and offsets only older records', () => {
+    const legacy = readCrafted(sid => [decide(sid, 'documentation', u(), 10), ...span(sid, 'documentation', u(), 11)], OLD);
+    expect(phaseOf(legacy, 'documentation')).toMatchObject({ steps_started: 1, observed_wall_duration_ms: 40, unknown_durations: 0 });
+    expect(legacy.unknown_reasons).not.toContain('unrecorded-work');
+    const unlabelled = readCrafted(sid => [decide(sid, 'documentation', u(), 10), ...span(sid, 'documentation', u(), 11)], '0.40.0.0');
+    expect(phaseOf(unlabelled, 'documentation').unknown_durations).toBe(0); // four-part history compares padded
+    // A mixed-version ledger offsets its older decision with the one step, never the newer one.
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid, 0);
+    craft(fix, sid, [...run.rows, decide(sid, 'documentation', u(), 10), ...span(sid, 'documentation', u(), 11)], OLD);
+    const file = ledgerFile(fix, sid);
+    const newer = [decide(sid, 'documentation', u(), 200)].map(({ op, at, request }) => {
+      const digest = createHash('sha256').update(canonical({ op, request })).digest('hex');
+      return JSON.stringify({ v: 1, op, event_id: request.event_id, request_digest: digest, captured_at_ms: at, producer_version: NEW, request });
+    });
+    writeFileSync(file, readFileSync(file, 'utf8') + newer.join('\n') + '\n');
+    const mixed = read(fix, sid).envelope.data;
+    expect(phaseOf(mixed, 'documentation')).toMatchObject({ decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, steps_started: 1, observed_wall_duration_ms: null, unknown_durations: 1 });
+    // Records with no readable producer version are older by definition.
+    const none = readCrafted(sid2 => [decide(sid2, 'documentation', u(), 10), ...span(sid2, 'documentation', u(), 11)], null);
+    expect(phaseOf(none, 'documentation').unknown_durations).toBe(0);
+  }, 60_000);
+
+  test('a nested same-phase step never offsets: one timed visit with a nested step plus a second untimed visit reads one unknown', () => {
+    const outer = u();
+    for (const version of [NEW, OLD]) {
+      const data = readCrafted(sid => [decide(sid, 'triage', outer, 10), ...span(sid, 'triage', outer, 11), ...span(sid, 'triage', u(), 20, outer), decide(sid, 'triage', u(), 100)], version);
+      expect(phaseOf(data, 'triage')).toMatchObject({ decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, steps_started: 2, observed_wall_duration_ms: null, unknown_durations: 1 });
+      expect(data.unknown_reasons).toContain('unrecorded-work');
+    }
+  }, 60_000);
+
+  test('a tests decision that carries its enclosing pregate step reads covered; a pregate step never covers another phase', () => {
+    const pregate = u();
+    const covered = readCrafted(sid => [decide(sid, 'pregate', pregate, 10), decide(sid, 'tests', pregate, 11), ...span(sid, 'pregate', pregate, 12)], NEW);
+    expect(phaseOf(covered, 'tests')).toEqual({ phase: 'tests', decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 0, steps_completed: 0, observed_wall_duration_ms: null, unknown_durations: 0 });
+    expect(phaseOf(covered, 'pregate')).toMatchObject({ steps_started: 1, observed_wall_duration_ms: 40, unknown_durations: 0 });
+    expect(covered.unknown_reasons).not.toContain('unrecorded-work');
+    const other = readCrafted(sid => [decide(sid, 'coverage', pregate, 11), ...span(sid, 'pregate', pregate, 12)], NEW);
+    expect(phaseOf(other, 'coverage').unknown_durations).toBe(1);
+  }, 60_000);
+
+  test('a RUN decision carrying the run step\'s ID is never covered', () => {
+    for (const version of [NEW, OLD]) {
+      const data = readCrafted((sid, runStep) => [decide(sid, 'run', runStep, 10),
+        { op: 'end', at: 500, request: { ...base(sid), step_id: runStep, outcome: 'completed' } }], version);
+      // The closed run step has its own interval, yet the decision naming it stays untimed.
+      expect(phaseOf(data, 'run')).toMatchObject({ decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 1, steps_completed: 1, unknown_durations: 1, observed_wall_duration_ms: null });
+      expect(data.unknown_reasons).toContain('unrecorded-work');
+      // An unrelated spare phase span must not rescue a decision naming the run, even in legacy ledgers.
+      const spare = readCrafted((sid, runStep) => [decide(sid, 'scope', runStep, 10),
+        ...span(sid, 'scope', u(), 20, runStep)], version);
+      expect(phaseOf(spare, 'scope')).toMatchObject({ steps_started: 1, unknown_durations: 1, observed_wall_duration_ms: null });
+      expect(spare.unknown_reasons).toContain('unrecorded-work');
+    }
+  }, 60_000);
+
+  test('a pre-change ledger reads identically apart from the untimed fields', () => {
+    // Fresh decision IDs everywhere, as every producer before this release wrote them.
+    const rows = (sid: string) => [decide(sid, 'evidence', u(), 5), ...span(sid, 'evidence', u(), 6),
+      decide(sid, 'tests', u(), 50, 'REUSE'), decide(sid, 'commit', u(), 60), decide(sid, 'commit', u(), 61)];
+    const data = readCrafted(sid => rows(sid), OLD);
+    expect(phaseOf(data, 'evidence')).toEqual({ phase: 'evidence', decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 1, steps_completed: 1, observed_wall_duration_ms: 40, unknown_durations: 0 });
+    expect(phaseOf(data, 'tests')).toEqual({ phase: 'tests', decisions: { RUN: 0, REUSE: 1, 'N/A': 0 }, steps_started: 0, steps_completed: 0, observed_wall_duration_ms: null, unknown_durations: 0 });
+    // Pre-change this read observed null with zero unknowns; now two untimed RUN visits are named.
+    expect(phaseOf(data, 'commit')).toEqual({ phase: 'commit', decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, steps_started: 0, steps_completed: 0, observed_wall_duration_ms: null, unknown_durations: 2 });
+    expect(data).toMatchObject({ capture: 'ok', records: 7, union_observed_wall_ms: 40, qualified_elapsed_ms: null, local_passes: 0, fix_cycles: 0 });
+    expect(data.unknown_reasons).toEqual(['missing-end', 'unrecorded-work']); // the open run step is unchanged
+  }, 60_000);
+});
+
 describe('review fixes: stdin, stored-line and confirmation edges', () => {
   test('closed stdin is invalid-input, and an inherited pipe keeps its blocking mode', () => {
     const fix = makeTelemetryFixture('community');
@@ -1239,4 +1360,483 @@ describe('review fixes: stdin, stored-line and confirmation edges', () => {
     expect(envelope.status).toBe('ok');
     expect(envelope.data.run.producer_version).toBe('1.0.0');
   }, 30_000);
+});
+
+// Track 31A: the real-store guard in tests/helpers/telemetry-env.ts, exercised against a temporary STAND-IN store
+// (never the real one). The core functions take explicit store specs; the suite-wide afterAll above runs the guard
+// on the real stores for this file.
+describe('Track 31A real-store guard', () => {
+  const SUITE = 'tests/workflow-metrics.test.ts';
+  const HELPER_MODULE = join(ROOT, 'tests/helpers/telemetry-env.ts');
+  const OPTS = { suite: SUITE, home: '' };
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const fresh = () => `extend-${randomUUID()}`;
+  const row = (id: string) => JSON.stringify({ session_id: id, stage: 'review-and-prep' }) + '\n';
+  type Stand = { dir: string; extend: string; upstream: string; specs: StoreSpec[]; ledger: string; skillUsage: string; existing: string; dispose: () => void };
+
+  function standIn(): Stand {
+    const dir = mkdtempSync(join(tmpdir(), 'gx-guard-standin-'));
+    const extend = join(dir, 'extend');
+    const upstream = join(dir, 'upstream');
+    const key = sha('repo+skill');
+    const existing = fresh();
+    for (const sub of ['analytics/workflow-metrics', `telemetry/${key}`, `telemetry-completed/${key}`, 'telemetry-locks', 'workflow-metrics-locks']) mkdirSync(join(extend, sub), { recursive: true });
+    mkdirSync(join(upstream, 'analytics'), { recursive: true });
+    const ledger = join(extend, 'analytics/stage-runs.jsonl');
+    writeFileSync(ledger, row(existing) + row(fresh()));
+    writeFileSync(join(extend, 'analytics/workflow-metrics', sha(existing) + '.jsonl'), row(existing));
+    writeFileSync(join(extend, 'telemetry', key, sha(existing) + '.json'), JSON.stringify({ session_id: existing, root: '/work/repo' }));
+    writeFileSync(join(extend, 'telemetry-completed', key, sha(existing) + '.json'), JSON.stringify({ session_id: existing, root: '/work/repo', done: [] }));
+    writeFileSync(join(extend, 'telemetry-locks', key + '.lock'), '');
+    const skillUsage = join(upstream, 'analytics/skill-usage.jsonl');
+    writeFileSync(skillUsage, JSON.stringify({ skill: 'qa', ts: '2026-01-01T00:00:00Z' }) + '\n' + JSON.stringify({ skill: 'ship', ts: '2026-01-02T00:00:00Z' }) + '\n');
+    const specs: StoreSpec[] = [
+      { label: 'stand-in extend store', root: extend, kind: 'extend' },
+      { label: 'stand-in upstream store', root: upstream, kind: 'upstream' },
+    ];
+    const dispose = () => {
+      for (const root of [extend, upstream]) chmodSync(root, 0o755);
+      rmSync(dir, { recursive: true, force: true });
+    };
+    return { dir, extend, upstream, specs, ledger, skillUsage, existing, dispose };
+  }
+  function withStand(body: (s: Stand) => void | Promise<void>) {
+    return async () => {
+      const s = standIn();
+      try {
+        await body(s);
+      } finally {
+        s.dispose();
+      }
+    };
+  }
+  const codes = (r: { findings: Array<{ code: string }> }) => r.findings.map(f => f.code).sort();
+  const summaryOf = (lines: string[]) => lines[lines.length - 1]!;
+  const SUMMARY = /^REAL-STORE-GUARD: (verified|unverified|failed) \(\d+ files, \d+ ms\)/;
+
+  // Value: protects=the guard watches each inherited absolute state sink once and ignores relative overrides;
+  // fails_when=a resolver variable is omitted, a relative root is accepted or canonical roots are duplicated;
+  // why_new=existing guard cases supply explicit specs and spawned cases use default HOME only; seam=none;
+  // no_claim=real-store contents or installed resolver precedence (temporary root discovery only).
+  test('store discovery includes every absolute override, excludes relative paths and deduplicates canonical roots', withStand(s => {
+    const home = join(s.dir, 'home');
+    const sources = [
+      ['GSTACK_EXTEND_STATE_DIR', 'extend'], ['GSTACK_STATE_ROOT', 'upstream'], ['GSTACK_STATE_DIR', 'upstream'],
+      ['GSTACK_HOME', 'upstream'], ['CLAUDE_PLUGIN_DATA', 'upstream'], ['CLAUDE_PLUGIN_ROOT', 'upstream'],
+    ] as const;
+    const defaults: StoreSpec[] = [
+      { label: '~/.gstack-extend', root: join(home, '.gstack-extend'), kind: 'extend' },
+      { label: '~/.gstack', root: join(home, '.gstack'), kind: 'upstream' },
+    ];
+    const env = Object.fromEntries(sources.map(([name]) => [name, join(s.dir, name)]));
+    // Half the roots exist; missing absolute roots must remain watched because they may appear later.
+    for (const [name] of sources.slice(0, 3)) mkdirSync(env[name]!);
+    expect(realStoreSpecs(env, home)).toEqual([
+      ...defaults, ...sources.map(([name, kind]) => ({ label: `$${name}`, root: env[name]!, kind })),
+    ]);
+    for (const [name] of sources) {
+      expect(realStoreSpecs({ [name]: 'relative/state' }, home), name).toEqual(defaults);
+      expect(realStoreSpecs({ [name]: '' }, home), name).toEqual(defaults);
+    }
+    expect(realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: s.extend, GSTACK_STATE_ROOT: s.extend + '/.', GSTACK_STATE_DIR: s.extend }, home))
+      .toEqual([...defaults, { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'shared' }]);
+  }), 60_000);
+
+  // Value: protects=co-located sinks retain both ledger rewrite policies after canonical-root deduplication;
+  // fails_when=an extend rewrite passes or an upstream rotation becomes a corruption failure;
+  // why_new=existing discovery tests only assert path deduplication; seam=none;
+  // no_claim=real-store acceptance (stand-in stores only).
+  test('co-located stores fail extend rewrites while upstream rotation remains unverified', withStand(s => {
+    const home = join(s.dir, 'shared-home');
+    const shared = join(home, '.gstack');
+    mkdirSync(join(shared, 'analytics/workflow-metrics'), { recursive: true });
+    const specs = realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: shared + '/.' }, home);
+    expect(specs.map(spec => spec.root)).toEqual([join(home, '.gstack-extend'), shared]);
+    for (const rel of ['analytics/stage-runs.jsonl', 'analytics/workflow-metrics/session.jsonl', 'analytics/skill-usage.jsonl']) {
+      const file = join(shared, rel);
+      writeFileSync(file, row(fresh()));
+      const snap = snapshotRealStores(specs, { ...OPTS, home });
+      writeFileSync(file, 'rewritten\n');
+      const result = compareRealStores(snap, [], { ...OPTS, home });
+      expect(result.status, rel).toBe(rel.endsWith('skill-usage.jsonl') ? 'unverified' : 'failed');
+      expect(codes(result), rel).toEqual(rel.endsWith('skill-usage.jsonl') ? [] : ['prefix-rewrite']);
+      expect(result.files, rel).toBe(readdirSync(join(shared, 'analytics'), { recursive: true }).filter(name => String(name).endsWith('.jsonl')).length);
+    }
+  }), 60_000);
+
+  // Value: protects=large-ledger scans detect split session IDs and escaped roots only in appended bytes;
+  // fails_when=chunk carry is removed or a pre-snapshot prefix is scanned as a new escaped root;
+  // why_new=current planted-ID and escaped-root fixtures fit inside one read chunk; seam=none;
+  // no_claim=all concurrent filesystem races (deterministic large temporary ledgers only).
+  test('large-ledger scans find split IDs and escaped roots without rescanning the old prefix', withStand(s => {
+    const chunk = 1024 * 1024;
+    const id = fresh();
+    const escaped = join(tmpdir(), 'gx-tel-chunk-fixture');
+    const splitAt = (value: string, start: number, split: number) => ' '.repeat(chunk - start - split) + value + '\n';
+    // The old prefix has a suspicious path but no appended bytes: it is not a fresh escape.
+    const prefix = JSON.stringify({ root: escaped }) + '\n';
+    writeFileSync(s.ledger, prefix);
+    const snap = snapshotRealStores(s.specs, OPTS);
+    expect(compareRealStores(snap, [id], OPTS).status).toBe('verified');
+    appendFileSync(s.ledger, splitAt(id, Buffer.byteLength(prefix), 12));
+    const leaked = compareRealStores(snap, [id], OPTS);
+    expect(codes(leaked)).toEqual(['appended-id']);
+    expect(leaked.findings[0]!.ids).toEqual([id]);
+    expect([...harvestSessionIds(join(s.extend, 'analytics'))]).toContain(id);
+    // Start with a fresh short ledger and put the root needle across the next read boundary.
+    writeFileSync(s.ledger, row(s.existing));
+    const rootSnap = snapshotRealStores(s.specs, OPTS);
+    const rootPrefixSize = Buffer.byteLength(readFileSync(s.ledger));
+    const split = Buffer.byteLength(join(tmpdir(), 'gx-tel-')) - 3;
+    appendFileSync(s.ledger, splitAt(escaped, rootPrefixSize, split));
+    const rooted = compareRealStores(rootSnap, [], OPTS);
+    expect(codes(rooted)).toEqual(['escaped-root']);
+    expect(rooted.status).toBe('failed');
+  }), 60_000);
+
+  test('a planted harvested id in an appended range fails with appended-id and a complete message', withStand(s => {
+    const snap = snapshotRealStores(s.specs, OPTS);
+    const id = fresh();
+    appendFileSync(s.ledger, row(id));
+    const r = compareRealStores(snap, [id], OPTS);
+    expect(r.status).toBe('failed');
+    expect(codes(r)).toEqual(['appended-id']);
+    for (const line of r.lines.slice(0, -1)) expect(line).toStartWith('REAL-STORE-GUARD:appended-id ');
+    const line = r.lines[0]!;
+    for (const part of [
+      'what: store=stand-in extend store path=stand-in extend store/analytics/stage-runs.jsonl size=', `suite=${SUITE}`, `session-id=${id}`, 'inherited-vars=',
+      `fix: find the spawn in ${SUITE} that escaped isolation and run it through \`makeTelemetryFixture\` or the isolation prelude`,
+      'recovery: side effects are complete; never edit, move or delete the real rows; report them to the owner and rerun after the fix',
+      'docs: docs/telemetry.md#workflow-metrics-guard-appended-id',
+    ]) expect(line).toContain(part);
+    expect(r.lines.join('\n')).not.toContain(s.dir); // roots outside HOME print as labels, never absolute paths
+    expect(summaryOf(r.lines)).toMatch(/^REAL-STORE-GUARD: failed \(\d+ files, \d+ ms\)$/);
+    expect(() => assertRealStoresUntouched(snap, [id], OPTS)).toThrow('REAL-STORE-GUARD:appended-id');
+    // A new file holding the id fails the same way; an id already in the pre-snapshot store is excluded.
+    writeFileSync(join(s.extend, 'analytics/late.jsonl'), row(id));
+    expect(codes(compareRealStores(snap, [id], OPTS))).toEqual(['appended-id', 'appended-id']);
+    expect(compareRealStores(snapshotRealStores(s.specs, OPTS), [s.existing], OPTS).status).toBe('verified');
+    appendFileSync(s.ledger, row(s.existing));
+    expect(compareRealStores(snap, [s.existing], OPTS).findings).toEqual([]);
+  }), 60_000);
+
+  test('unrelated appended bytes and new unrelated files pass', withStand(s => {
+    const snap = snapshotRealStores(s.specs, OPTS);
+    appendFileSync(s.ledger, row(fresh()));
+    appendFileSync(s.skillUsage, JSON.stringify({ skill: 'qa' }) + '\n');
+    writeFileSync(join(s.extend, 'analytics/workflow-metrics', sha('someone-else') + '.jsonl'), row(fresh()));
+    const r = compareRealStores(snap, [fresh()], OPTS);
+    expect(r.status).toBe('verified');
+    expect(r.lines).toHaveLength(1);
+    expect(summaryOf(r.lines)).toMatch(SUMMARY);
+  }), 60_000);
+
+  test('a rewritten, shrunk or removed gstack-extend ledger fails with prefix-rewrite; an upstream rewrite reads unverified', () => {
+    const mutate: Record<string, (s: Stand) => void> = {
+      'same-length rewrite': s => writeFileSync(s.ledger, readFileSync(s.ledger, 'utf8').replace('"session_id"', '"sessionXid"')),
+      shrink: s => truncateSync(s.ledger, 10),
+      removal: s => rmSync(s.ledger),
+      'workflow-metrics ledger': s => writeFileSync(join(s.extend, 'analytics/workflow-metrics', sha(s.existing) + '.jsonl'), 'rewritten\n'),
+    };
+    for (const [name, change] of Object.entries(mutate)) {
+      const s = standIn();
+      try {
+        const snap = snapshotRealStores(s.specs, OPTS);
+        change(s);
+        const r = compareRealStores(snap, [], OPTS);
+        expect([name, r.status]).toEqual([name, 'failed']);
+        expect(codes(r)).toEqual(['prefix-rewrite']);
+        expect(r.lines[0]).toStartWith('REAL-STORE-GUARD:prefix-rewrite ');
+      } finally {
+        s.dispose();
+      }
+    }
+    const s = standIn();
+    try {
+      const snap = snapshotRealStores(s.specs, OPTS);
+      writeFileSync(s.skillUsage, 'rotated\n');
+      const r = compareRealStores(snap, [], OPTS);
+      expect(r.status).toBe('unverified');
+      expect(r.findings).toEqual([]);
+      expect(summaryOf(r.lines)).toContain('upstream ledger shrank or was rewritten');
+      const strict = compareRealStores(snap, [], { ...OPTS, strict: true });
+      expect(strict.status).toBe('failed');
+      expect(codes(strict)).toEqual(['unexpected']);
+      expect(strict.lines[0]).toContain('GSTACK_EXTEND_STORE_GUARD=strict');
+    } finally {
+      s.dispose();
+    }
+  }, 60_000);
+
+  test('a deleted or rewritten unrelated handoff, marker or lock passes', withStand(s => {
+    const snap = snapshotRealStores(s.specs, OPTS);
+    const key = readdirSync(join(s.extend, 'telemetry'))[0]!;
+    rmSync(join(s.extend, 'telemetry', key), { recursive: true });
+    writeFileSync(join(s.extend, 'telemetry-completed', key, sha(s.existing) + '.json'), JSON.stringify({ session_id: s.existing, root: '/elsewhere/repo', done: ['usage'] }));
+    rmSync(join(s.extend, 'telemetry-locks', key + '.lock'));
+    const r = compareRealStores(snap, [fresh()], OPTS);
+    expect(r.status).toBe('verified');
+  }), 60_000);
+
+  test('a file named for a harvested id fails with named-file in every name-keyed tree', () => {
+    for (const rel of ['telemetry/k/H.json', 'telemetry-completed/k/H.json', 'telemetry-locks/H.lock', 'analytics/workflow-metrics/H.jsonl', 'workflow-metrics-locks/H.lock']) {
+      const s = standIn();
+      try {
+        const snap = snapshotRealStores(s.specs, OPTS);
+        const id = fresh();
+        const target = join(s.extend, rel.replace('H', sha(id)));
+        mkdirSync(join(target, '..'), { recursive: true });
+        writeFileSync(target, '');
+        // Another session's hash does not match.
+        expect(compareRealStores(snap, [fresh()], OPTS).status).toBe('verified');
+        const r = compareRealStores(snap, [id], OPTS);
+        expect([rel, r.status, codes(r)]).toEqual([rel, 'failed', ['named-file']]);
+        expect(r.lines[0]).toStartWith('REAL-STORE-GUARD:named-file ');
+        expect(r.lines[0]).toContain(`session-id=${id}`);
+        expect(r.lines[0]).toContain(`path=stand-in extend store/${rel.replace('H', sha(id))}`);
+      } finally {
+        s.dispose();
+      }
+    }
+  }, 60_000);
+
+  test('an unreadable store reads unverified with a warning naming the path, fails under strict, and a missing store passes', withStand(s => {
+    if (process.getuid?.() === 0) return; // root ignores permission bits
+    const snap = snapshotRealStores(s.specs, OPTS);
+    chmodSync(s.upstream, 0o000);
+    const r = compareRealStores(snap, [fresh()], OPTS);
+    expect(r.status).toBe('unverified');
+    expect(r.lines.some(line => line.startsWith('REAL-STORE-GUARD: warning unverified store=stand-in upstream store path=stand-in upstream store cause=unreadable store (EACCES) fix=restore read access and rerun'))).toBe(true);
+    expect(summaryOf(r.lines)).toMatch(/^REAL-STORE-GUARD: unverified \(\d+ files, \d+ ms\): unreadable store \(EACCES\); fix: restore read access and rerun$/);
+    const strict = compareRealStores(snap, [fresh()], { ...OPTS, strict: true });
+    expect(strict.status).toBe('failed');
+    expect(strict.lines[0]).toStartWith('REAL-STORE-GUARD:unexpected ');
+    expect(strict.lines[0]).toContain('fix: restore read access and rerun');
+    const before = process.env.GSTACK_EXTEND_STORE_GUARD;
+    process.env.GSTACK_EXTEND_STORE_GUARD = 'strict';
+    try {
+      expect(compareRealStores(snap, [fresh()], OPTS).status).toBe('failed');
+    } finally {
+      if (before === undefined) delete process.env.GSTACK_EXTEND_STORE_GUARD;
+      else process.env.GSTACK_EXTEND_STORE_GUARD = before;
+    }
+    chmodSync(s.upstream, 0o755);
+    const missing: StoreSpec[] = [{ label: 'missing store', root: join(s.dir, 'never-created'), kind: 'extend' }];
+    const absent = compareRealStores(snapshotRealStores(missing, OPTS), [fresh()], OPTS);
+    expect([absent.status, absent.files]).toEqual(['verified', 0]);
+  }), 60_000);
+
+  function escapingChild(s: Stand, finishToo: boolean) {
+    const fix = makeTelemetryFixture('off');
+    const repo = join(fix.home, 'repo');
+    mkdirSync(repo, { recursive: true });
+    expect(spawnSync('git', ['init', '-q', repo], { env: fix.env }).status).toBe(0);
+    // The child inherits a state override pointing at the stand-in store, so its writes leave nothing in its fixture home.
+    const env = { ...fix.env, GSTACK_EXTEND_STATE_DIR: s.extend };
+    const started = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:review-and-prep'], { env, cwd: repo, encoding: 'utf8', timeout: 30_000 });
+    expect(started.stdout).toMatch(/session=extend-/);
+    if (finishToo) {
+      const done = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], { env, cwd: repo, encoding: 'utf8', timeout: 30_000 });
+      expect(done.status).toBe(0);
+    }
+    expect(harvestSessionIds(fix.home).size).toBe(0);
+    return { fix, repo };
+  }
+  test('a child that inherits GSTACK_EXTEND_STATE_DIR pointing at the store fails with escaped-root', withStand(s => {
+    const snap = snapshotRealStores(s.specs, OPTS);
+    escapingChild(s, false);
+    const r = compareRealStores(snap, [], OPTS);
+    expect(r.status).toBe('failed');
+    expect(codes(r)).toEqual(['escaped-root']);
+    expect(r.lines[0]).toStartWith('REAL-STORE-GUARD:escaped-root ');
+    expect(r.lines[0]).toContain('handoff binds a root under a path under the runner\'s temp directory (gx-tel-)');
+    expect(r.lines.join('\n')).not.toContain(s.dir);
+  }), 90_000);
+
+  test('an escaping child that runs start and finish from a git repository still fails through its completion marker (realpath)', withStand(s => {
+    const snap = snapshotRealStores(s.specs, OPTS);
+    const { fix } = escapingChild(s, true);
+    const r = compareRealStores(snap, [], OPTS);
+    expect(r.status).toBe('failed');
+    expect(r.findings.map(f => f.path).some(path => path.includes('/telemetry-completed/'))).toBe(true);
+    expect(codes(r)).toContain('escaped-root');
+    expect(r.lines.some(line => line.includes('completion marker binds a root'))).toBe(true);
+    // macOS reports /private/var/... for a /var/... temp directory: the marker's root is the realpath form.
+    const roots = readdirSync(join(s.extend, 'telemetry-completed'), { recursive: true }).map(String).filter(name => name.endsWith('.json'))
+      .map(name => JSON.parse(readFileSync(join(s.extend, 'telemetry-completed', name), 'utf8')).root as string);
+    expect(roots.filter(root => root.startsWith(realpathSync(fix.home)))).toHaveLength(1);
+  }), 90_000);
+
+  test('a session that exists only in a crafted ledger is harvested, and its id fails when it reaches a store', withStand(s => {
+    const fix = makeTelemetryFixture('off');
+    const crafted = fresh();
+    const dir = join(fix.home, '.gstack-extend/analytics/workflow-metrics');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, sha(crafted) + '.jsonl'), JSON.stringify({ v: 1, session_id: crafted, kind: 'run' }) + '\n');
+    expect([...harvestSessionIds(fix.home)]).toEqual([crafted]);
+    const repo = join(fix.home, 'repo');
+    mkdirSync(repo, { recursive: true });
+    spawnSync('git', ['init', '-q', repo], { env: fix.env });
+    const sid = /session=(extend-[0-9a-f-]{36})/.exec(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:review-and-prep'], { env: fix.env, cwd: repo, encoding: 'utf8', timeout: 30_000 }).stdout)?.[1];
+    expect(sid).toBeTruthy();
+    expect([...harvestSessionIds(fix.home)].sort()).toEqual([crafted, sid!].sort()); // handoff and crafted ledger
+    const snap = snapshotRealStores(s.specs, OPTS);
+    appendFileSync(s.ledger, row(crafted));
+    expect(codes(compareRealStores(snap, harvestSessionIds(fix.home), OPTS))).toEqual(['appended-id']);
+  }), 90_000);
+
+  test('a symlink in a store is skipped, reported by path and never followed', withStand(s => {
+    const outside = join(s.dir, 'outside.jsonl');
+    const id = fresh();
+    writeFileSync(outside, row(id));
+    const snap = snapshotRealStores(s.specs, OPTS);
+    symlinkSync(outside, join(s.extend, 'analytics/linked.jsonl'));
+    symlinkSync(join(s.dir, 'extend'), join(s.upstream, 'analytics/dirlink'));
+    const r = compareRealStores(snap, [id], OPTS);
+    expect(r.findings).toEqual([]);
+    expect(r.status).toBe('unverified');
+    for (const path of ['stand-in extend store/analytics/linked.jsonl', 'stand-in upstream store/analytics/dirlink']) {
+      expect(r.lines.some(line => line.includes(`path=${path} cause=skipped symlink`))).toBe(true);
+    }
+    expect(r.lines.join('\n')).not.toContain(s.dir);
+  }), 60_000);
+
+  // Value: protects=the guard skips a symlinked store root and reports unverified or strict failure;
+  // fails_when=a root symlink is followed and its target is scanned or reported verified;
+  // why_new=the existing symlink case covers links inside a store only; seam=none;
+  // no_claim=real-store acceptance (temporary store root and symlink only).
+  test('a symlinked store root is skipped before scanning its target and fails under strict', withStand(s => {
+    const link = join(s.dir, 'linked-root');
+    symlinkSync(s.extend, link);
+    for (const suffix of ['', '/', '/.', '/./', '/.//.']) {
+      const root = link + suffix;
+      // Discovery must keep the refused link even when its real target is already watched.
+      expect(realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: s.extend, GSTACK_STATE_ROOT: root }, '')).toEqual([
+        { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'extend' },
+        { label: '$GSTACK_STATE_ROOT', root, kind: 'upstream' },
+      ]);
+      const specs: StoreSpec[] = [{ label: 'linked stand-in store', root, kind: 'extend' }];
+      const snap = snapshotRealStores(specs, OPTS);
+      const result = compareRealStores(snap, [s.existing], OPTS);
+      expect(result.status, suffix).toBe('unverified');
+      expect(result.findings).toEqual([]);
+      expect(result.files).toBe(0);
+      expect(snap.files).toBe(0);
+      expect(snap.tokens).toEqual([]);
+      expect(result.lines.some(line => line.includes('path=linked stand-in store cause=skipped symlink'))).toBe(true);
+      const strict = compareRealStores(snap, [s.existing], { ...OPTS, strict: true });
+      expect(strict.status).toBe('failed');
+      expect(codes(strict)).toEqual(['unexpected']);
+      expect(readFileSync(s.ledger, 'utf8')).toContain(s.existing);
+    }
+  }), 60_000);
+
+  test('a concurrent append between stat and hash never reads as a prefix rewrite', withStand(s => {
+    let appended = 0;
+    const late = (abs: string) => {
+      if (abs.endsWith('stage-runs.jsonl') && appended++ === 0) appendFileSync(abs, row(fresh()));
+    };
+    // Snapshot side: the append lands after the stat, so the recorded size and hash stop short of it.
+    const snap = snapshotRealStores(s.specs, { ...OPTS, hooks: { afterStat: late } });
+    expect(appended).toBe(1);
+    expect(snap.stores[0]!.ledgers['analytics/stage-runs.jsonl']!.size).toBeLessThan(readFileSync(s.ledger).length);
+    expect(compareRealStores(snap, [fresh()], OPTS).status).toBe('verified');
+    // Compare side: the later prefix is compared over the snapshot's length, and the read stops at the stat'd size.
+    appended = 0;
+    const r = compareRealStores(snap, [fresh()], { ...OPTS, hooks: { afterStat: (abs, phase) => phase === 'compare' && late(abs) } });
+    expect(appended).toBe(1);
+    expect(r.status).toBe('verified');
+  }), 60_000);
+
+  test('an internal failure reports unexpected with the error class and a compact trace', () => {
+    const r = compareRealStores({} as never, [], OPTS);
+    expect(r.status).toBe('failed');
+    expect(r.lines[0]).toStartWith('REAL-STORE-GUARD:unexpected ');
+    expect(r.lines[0]).toMatch(/what: store=real stores path=unknown — \w*Error: .* @ /);
+    expect(r.lines[0]).toContain('docs: docs/telemetry.md#workflow-metrics-guard-unexpected');
+    expect(summaryOf(r.lines)).toMatch(/^REAL-STORE-GUARD: failed \(\d+ files, \d+ ms\)$/);
+  });
+
+  function spawnedBunTest(plant: boolean) {
+    const dir = mkdtempSync(join(tmpdir(), 'gx-guard-spawn-')); // outside the repo directory
+    const home = join(dir, 'home');
+    const childTmp = join(dir, 'tmp');
+    mkdirSync(join(home, '.gstack-extend/analytics'), { recursive: true });
+    mkdirSync(childTmp);
+    const store = join(home, '.gstack-extend/analytics/stage-runs.jsonl');
+    writeFileSync(store, row(fresh()));
+    const fixtureNote = join(dir, 'fixture-home.txt');
+    const file = join(dir, 'planted.test.ts');
+    writeFileSync(file, [
+      "import { afterAll, test } from 'bun:test';",
+      "import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';",
+      "import { join } from 'node:path';",
+      `import { cleanupTelemetryFixtures, makeTelemetryFixture } from ${JSON.stringify(HELPER_MODULE)};`,
+      'afterAll(cleanupTelemetryFixtures);',
+      "test('mints a session id and lets it escape into the real store', () => {",
+      "  const fix = makeTelemetryFixture('off');",
+      `  writeFileSync(${JSON.stringify(fixtureNote)}, fix.home);`,
+      "  const id = 'extend-' + crypto.randomUUID();",
+      "  mkdirSync(join(fix.home, '.gstack-extend/analytics'), { recursive: true });",
+      "  writeFileSync(join(fix.home, '.gstack-extend/analytics/stage-runs.jsonl'), JSON.stringify({ session_id: id }) + '\\n');",
+      `  if (${plant}) appendFileSync(join(process.env.HOME!, '.gstack-extend/analytics/stage-runs.jsonl'), JSON.stringify({ session_id: id }) + '\\n');`,
+      '});',
+    ].join('\n'));
+    // HOME is the stand-in: to the child's helper it is the runner's real HOME. No state override is inherited.
+    const r = spawnSync(process.execPath, ['test', file], { cwd: dir, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TMPDIR: childTmp }, encoding: 'utf8', timeout: 120_000 });
+    const out = (r.stdout ?? '') + (r.stderr ?? '');
+    const leftovers = readdirSync(childTmp).filter(name => name.startsWith('gx-tel-'));
+    const fixtureHome = readFileSync(fixtureNote, 'utf8');
+    rmSync(dir, { recursive: true, force: true });
+    return { status: r.status, out, leftovers, fixtureHomeExists: existsSync(fixtureHome) };
+  }
+  test('a spawned bun test with a planted id exits nonzero, prints the guard line and still removes the fixture home', () => {
+    const r = spawnedBunTest(true);
+    expect(r.status).not.toBe(0);
+    expect(r.out).toMatch(/^REAL-STORE-GUARD:appended-id /m);
+    expect(r.out).toContain('docs/telemetry.md#workflow-metrics-guard-appended-id');
+    expect(r.out).toMatch(/^REAL-STORE-GUARD: failed \(\d+ files, \d+ ms\)/m);
+    expect(r.fixtureHomeExists).toBe(false);
+    expect(r.leftovers).toEqual([]);
+  }, 180_000);
+  test('a spawned bun test that stays isolated exits zero and records a verified summary', () => {
+    const r = spawnedBunTest(false);
+    expect(r.status).toBe(0);
+    expect(r.out).toMatch(/^REAL-STORE-GUARD: verified \(\d+ files, \d+ ms\)/m);
+    expect(r.out).not.toContain('REAL-STORE-GUARD:appended-id');
+    expect(r.fixtureHomeExists).toBe(false);
+  }, 180_000);
+
+  test('the smoke CLI snapshots and compares without writing content into the snapshot file', withStand(s => {
+    const home = join(s.dir, 'home');
+    mkdirSync(join(home, '.gstack-extend/analytics'), { recursive: true });
+    const secret = 'CONTENT-MUST-NOT-LEAK';
+    const store = join(home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const old = fresh();
+    writeFileSync(store, JSON.stringify({ session_id: old, note: secret }) + '\n');
+    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home };
+    const run = (args: string[]) => spawnSync(process.execPath, [HELPER_MODULE, ...args], { env, encoding: 'utf8', timeout: 60_000 });
+    const snapFile = join(s.dir, 'real.snapshot.json');
+    const snapped = run(['--snapshot', snapFile]);
+    expect(snapped.status).toBe(0);
+    expect(snapped.stdout).toMatch(/^REAL-STORE-GUARD: snapshot written \(\d+ files, \d+ ms\)$/m);
+    const text = readFileSync(snapFile, 'utf8');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain(old); // pre-existing session ids are stored as hashes
+    expect(text).toContain(sha(old));
+    expect(run(['--compare', snapFile]).stdout).toMatch(/^REAL-STORE-GUARD: verified \(\d+ files, \d+ ms\)$/m);
+    const id = fresh();
+    appendFileSync(store, row(id));
+    const isolated = join(s.dir, 'isolated-state');
+    mkdirSync(isolated);
+    writeFileSync(join(isolated, 'stage-runs.jsonl'), row(id)); // the smoke's own isolated additions
+    const failed = run(['--compare', snapFile, '--harvest', isolated]);
+    expect(failed.status).toBe(1);
+    expect(failed.stderr).toMatch(/^REAL-STORE-GUARD:appended-id /m);
+    const idsFile = join(s.dir, 'ids.txt');
+    writeFileSync(idsFile, `# smoke ids\n${id}\n`);
+    expect(run(['--compare', snapFile, '--ids', idsFile]).status).toBe(1);
+    expect(run(['--compare', join(s.dir, 'missing.json')]).status).toBe(2);
+    expect(run([]).status).toBe(2);
+  }), 120_000);
 });

@@ -115,6 +115,9 @@
     "bin/lib/telemetry.py": [
       "tests/workflow-metrics.test.ts"
     ],
+    "bin/lib/workflow-span.sh": [
+      "tests/telemetry-contract.test.ts"
+    ],
     "bin/lib/workflow_metrics.py": [
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
