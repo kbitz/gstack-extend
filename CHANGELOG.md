@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.51.1] - 2026-10-26
+
+### Fixed
+
+- **Keep a full review usable after its probes reproduce defects.** When `/review-and-prep` finishes a full first cycle and those probes reproduce defects, a later fix review that matches the cycle can use that result. A reviewer or probe that was unavailable, blocked, inconclusive, or never run stays incomplete. The existing repair-only checks on author, tree, count, and anchor stay as they are.
+
+### Changed
+
+- **The follow-ups from that repair are on the roadmap.** They are recorded in `docs/roadmap-future.md` with a revisit condition, and `docs/ROADMAP.md` counts 53 Future items.
+
 ## [0.51.0] - 2026-10-26
 
 ### Added

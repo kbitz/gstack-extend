@@ -1219,17 +1219,17 @@ describe('review-and-prep final-gate repair', () => {
 
   // Value: protects=cycle 1 writes its baseline from its own record, behind the anchor, at the right moment; fails_when=the anchor gate, B, write point, scope, tree rule or reason set drifts; why_new=producer record the continuation guard needs; seam=none
   test("cycle 1 records its full-review baseline from its own pass", () => {
-    expect(baseline).toContain('Write the record only while the installed `/review` read in Step 1 still contains the anchor `A pass covers Steps 3–5, including all reviewers before fixes.`, checked as `in-cap=delta` checks its anchors');
+    expect(baseline).toContain('Write the baseline record only while the installed `/review` read in Step 1 still contains the anchor `A pass covers Steps 3–5, including all reviewers before fixes.`, checked as `in-cap=delta` checks its anchors');
     expect(baseline).toContain('A missing anchor writes `completed=false` with reason `anchor-changed`.');
     expect(baseline).toContain('B is the HEAD that cycle 1 reviews: capture it at cycle 1\'s Step 3, after Step 2\'s base merge and after "Commit pending intended work before invoking `/review`". B must be an ancestor of the pushed stop commit.');
     expect(baseline).toContain('Whenever the anchor is present, take cycle 1\'s candidate snapshot with the delta procedure above, whether or not `in-cap=delta` applies.');
-    expect(baseline).toContain('Only a full-scope cycle 1 of a non-continuation invocation writes `completed=true`.');
+    expect(baseline).toContain('Only a full-scope cycle 1 of a non-continuation invocation writes `completed=true` or `completed=pending-fix-review`.');
     expect(baseline).toContain('A `continue` invocation, delta or full, never writes a new baseline; it carries the newest corroborated base forward unchanged');
     expect(baseline).toContain("At the end of cycle 1's review collection, after every selected reader has returned or is confirmed stopped and before Step 5 applies any fix, write `cycle-1-baseline`");
     expect(baseline).toContain('A non-continuation delta re-review also carries the prior corroborated full-review row; without one it has no baseline (`record-missing`), never a new full-review claim.');
-    expect(baseline).toContain('B, T (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree equals T, each stage\'s result, the `gstack-review-read` row when `/review` writes one (not required for `completed=true`)');
-    expect(baseline).toContain("Set true only when the installed review's completion conditions hold: every selected reviewer completed and every required Step 4.7 probe has current passing evidence.");
-    expect(baseline).toContain('Write false for a failed, blocked, inconclusive or unrun required probe, or an unavailable, failed or bounded-wait reviewer, with reason `reviewer-incomplete`.');
+    expect(baseline).toContain('B, T (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree equals T, each stage\'s result, each required probe\'s ID, key and outcome, the `gstack-review-read` row when `/review` writes one (not required for `completed=true`), and `completed=true|pending-fix-review|false` with the cause of every non-`true` value.');
+    expect(baseline).toContain('`completed=true`: every selected reviewer completed and every required probe is `passed`.');
+    expect(baseline).toContain('`completed=false` with reason `reviewer-incomplete`: an unavailable, failed or bounded-wait reviewer');
     expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only.');
     expect(baseline).toContain('A failed reader still gets this false record once it is confirmed stopped');
     expect(baseline).toContain('A snapshot tree that differs from T (reviewed uncommitted or untracked content) is `tree-differs`; a missing record is `record-missing`.');
@@ -1239,13 +1239,173 @@ describe('review-and-prep final-gate repair', () => {
 
   // Value: protects=a cap stop fills its portable row only from the cycle 1 record and otherwise says unavailable with a reason; fails_when=the row is filled from HEAD or the reasons drift; why_new=continuation guard producer gap; seam=none
   test('the stop fills the evidence row from the record or writes unavailable with a reason', () => {
-    expect(stop).toContain('Fill the row and the evidence comment for a new baseline only from the `cycle-1-baseline` record written above, and only when it says `completed=true`; its B is the first stop\'s delta base.');
+    expect(stop).toContain('Fill the row and the evidence comment for a new baseline only from the records written above, before the receipt: from `cycle-1-baseline` when it says `completed=true`, or when it says `completed=pending-fix-review` and a `cycle-1-fix-review` record names the same cycle 1 snapshot and says `fix-reviewed=true`.');
     expect(stop).toContain('At a continuation or delta re-review stop, preserve the prior corroborated row and evidence-comment reference instead; the original local file is not required on another host.');
     expect(stop).toContain('If neither a completed new baseline nor, on a continuation or delta re-review, a corroborated carried row is available, write `Full-review evidence: unavailable`');
     expect(stop).toContain('`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`');
     expect(stop).toContain("The receipt's portable row and the H-E prompt stay unchanged.");
     expect(stop).toContain('never be inferred from HEAD or filled in after the fact');
     expect(stop).toContain('`git rev-parse "B^{tree}"` must equal T');
-    expect(stop.indexOf('record written above')).toBeLessThan(stop.indexOf('Use these exact single-line labels'));
+    expect(stop.indexOf('records written above')).toBeLessThan(stop.indexOf('Use these exact single-line labels'));
+  });
+
+  // Track 32A. The stop's decision table, the printed four-reason list and the
+  // worked example are read from the skill, never copied into a second list here.
+  const baselineRaw = skillSection(prep, "### Record cycle 1's full-review baseline");
+  const stopRaw = skillSection(prep, '### When /review stops at its cycle cap');
+  const reasonList = /`Full-review evidence unavailable: <([a-z|-]+)>`/.exec(prep)?.[1]?.split('|') ?? [];
+  const tableCells = (line: string): string[] => line.trim().slice(1, -1).split('|').map((c) => c.trim());
+  const tableLines = stopRaw.split('\n').filter((l) => /^\s*\|/.test(l));
+  const tableHeader = tableCells(tableLines[0] ?? '');
+  const tableRows = tableLines.slice(2).map(tableCells);
+
+  // Value: protects=a cycle 1 whose probes reproduced a defect is a completed review once cycle 2's delta reviewed the fixes, and the stop names cycle 1's B and T; fails_when=a reproduced probe is again an incomplete probe, the pending or fix-review conditions drift, or the row is filled without a matching fix-reviewed=true record; why_new=Track 32A reproduced-defects baseline; seam=none; no_claim=installed-agent execution
+  test('a reproduced defect is a probe result, so cycle 2 can confirm the fixes and the stop names cycle 1', () => {
+    expect(baseline).toContain('Two records back a new baseline: `cycle-1-baseline` (written by cycle 1) and `cycle-1-fix-review` (written by cycle 2).');
+    expect(baseline).toContain('A reproduced defect is a probe result: a `reproduced` probe has run to a result and is never an incomplete probe.');
+    expect(baseline).toContain('`completed=pending-fix-review`: every selected reviewer completed, every required probe is `passed` or `reproduced`, and at least one is `reproduced`.');
+    expect(baseline).toContain("When cycle 1's record says `completed=pending-fix-review` and cycle 2 of the same invocation runs as the in-cap delta from cycle 1's snapshot (recorded `delta from <cycle 1 snapshot>` with `SCOPE_DELTA: covered`), cycle 2 writes a separate record, `cycle-1-fix-review`, to the same evidence directory.");
+    expect(baseline).toContain("Write it at the end of cycle 2's review collection, after every selected reader has returned or is confirmed stopped and before Step 5 applies any cycle 2 fix.");
+    expect(baseline).toContain("Fields: cycle 1's snapshot (equal to the one in `cycle-1-baseline`), cycle 2's snapshot, the scope line, each stage's result with every recorded skip and its reason");
+    expect(baseline).toContain("Set true only when every selected reviewer completed and every probe in the union has a result on cycle 2's inputs (`passed` or `reproduced`).");
+    expect(baseline).toContain("`fix-reviewed=true` means cycle 2 reviewed cycle 1's fixes, not that they hold; a defect still open at the stop stays in the receipt's unresolved findings and its `Unresolved:` line.");
+    expect(baseline).toContain('A full-scope or inactive cycle 2 writes no fix-review record.');
+    expect(baseline).toContain('Write each record once, with the outcomes known at its write point; never edit, rewrite or replace a written record, including on a same-run resume, and never let a later relabel (for example `superseded`) change it.');
+    expect(baseline).toContain('A `continue` invocation writes neither record.');
+    expect(stop).toContain("The row names cycle 1's B and T with `scope=full; completed=true`, and in both paths B is the first stop's delta base and the row's `commit=`.");
+    expect(stop).toContain('In this row `completed=true` records coverage: every selected reviewer completed and every required probe ran to a result on B, and cycle 2\'s delta reviewed the fixes for any reproduced defect.');
+    expect(stop).toContain('It never claims a clean review; reviewer findings never made a pass incomplete, only probe outcomes did.');
+    expect(stop).toContain('Choose the reason with the first applicable condition in this order: no cycle 1 record, `record-missing`; `anchor-changed`; an incomplete cycle 1, `reviewer-incomplete`; `tree-differs`; a pending record without a matching `fix-reviewed=true` fix-review record, `reviewer-incomplete`.');
+    expect(stop).toContain('the snapshot-tree check (`tree-differs`) must pass: cycle 1\'s snapshot tree equals T.');
+    expect(stop).toContain('never be inferred from HEAD or filled in after the fact');
+    expect(baseline).toContain('Never infer a baseline from HEAD or the stop commit.');
+    expect(stop.indexOf('Choose the reason with the first applicable condition')).toBeLessThan(stop.indexOf('this table decides the stop row'));
+  });
+
+  // Value: protects=the stop's decision table has exactly the eight rows, only two fill the row and every other row ends in a reason from the printed four-reason list; fails_when=a row is added, dropped or retargeted, a pending row fills without a same-snapshot fix-reviewed=true record, or the worked example stops matching the eligible pending row; why_new=Track 32A paired-record eligibility; seam=none; no_claim=installed-agent execution
+  test('the stop table has the eight rows and fills the row only for the two eligible records', () => {
+    expect(reasonList).toEqual(['anchor-changed', 'tree-differs', 'reviewer-incomplete', 'record-missing']);
+    expect(tableHeader).toEqual(['`cycle-1-baseline`', '`cycle-1-fix-review`', 'Stop row']);
+    expect(tableRows).toHaveLength(8);
+    for (const row of tableRows) expect(row).toHaveLength(3);
+    const filling = tableRows.filter((r) => r[2] === 'the row');
+    expect(filling.map((r) => r.slice(0, 2))).toEqual([
+      ['`completed=true`, snapshot tree equals T', 'not read'],
+      ['`completed=pending-fix-review`, tree equals T', 'same snapshot, `fix-reviewed=true`'],
+    ]);
+    for (const row of tableRows.filter((r) => r[2] !== 'the row')) {
+      const reason = /^unavailable `([a-z-]+)`$/.exec(row[2]!)?.[1];
+      expect(reasonList).toContain(reason);
+    }
+    expect(tableRows).toEqual([
+      ['no record', 'any', 'unavailable `record-missing`'],
+      ['`completed=false` (`anchor-changed`)', 'any', 'unavailable `anchor-changed`'],
+      ['`completed=false` (`reviewer-incomplete`)', 'any', 'unavailable `reviewer-incomplete`'],
+      ['`completed=true`, snapshot tree differs from T', 'not read', 'unavailable `tree-differs`'],
+      ['`completed=true`, snapshot tree equals T', 'not read', 'the row'],
+      ['`completed=pending-fix-review`, snapshot tree differs from T', 'any', 'unavailable `tree-differs`'],
+      ['`completed=pending-fix-review`, tree equals T', 'no readable record, one for another snapshot, or `fix-reviewed=false`', 'unavailable `reviewer-incomplete`'],
+      ['`completed=pending-fix-review`, tree equals T', 'same snapshot, `fix-reviewed=true`', 'the row'],
+    ]);
+    const pendingEquals = tableRows.filter((r) => r[0] === '`completed=pending-fix-review`, tree equals T');
+    expect(pendingEquals).toHaveLength(2);
+    const [pendingReject, pendingAccept] = pendingEquals;
+    for (const reject of ['no readable record', 'one for another snapshot', '`fix-reviewed=false`']) expect(pendingReject![1]).toContain(reject);
+    expect(pendingReject![2]).toBe('unavailable `reviewer-incomplete`');
+    // A Track 31A-shaped stop: reproduced probes, cycle 2 delta over the same snapshot, fix-reviewed=true.
+    expect(pendingAccept).toEqual(['`completed=pending-fix-review`, tree equals T', 'same snapshot, `fix-reviewed=true`', 'the row']);
+    expect(tableRows.filter((r) => r[0].includes('pending-fix-review') && r[0].includes('differs'))[0]![2]).toBe('unavailable `tree-differs`');
+
+    // The worked example is the eligible pending row, with placeholders only.
+    const example = baselineRaw.split('```markdown\n')[1]?.split('\n```')[0]?.split('\n') ?? [];
+    expect(example).toHaveLength(3);
+    const [cycle1, cycle2, row] = example as [string, string, string];
+    expect(cycle1).toContain('snapshot=<S1> (tree equals T)');
+    expect(cycle1).toContain('reproduced (fingerprint <path:line:category>)');
+    expect(cycle1).toContain('completed=pending-fix-review');
+    expect(cycle2).toContain('cycle-1-snapshot=<S1>');
+    expect(cycle2).toContain('scope=delta from <S1>');
+    expect(cycle2).toContain('fix-reviewed=true');
+    expect(row).toBe('Full-review evidence: commit=<B>; tree=<T>; scope=full; completed=true; source=<durable reference>');
+    expect(cycle1).toContain('B=<B>; T=<T>');
+    expect(example.join('\n')).not.toMatch(/\b[0-9a-f]{40}\b/);
+  });
+
+  // Value: protects=a genuinely incomplete cycle 1 still writes completed=false with reviewer-incomplete and still holds repair-only; fails_when=an unavailable, failed or bounded-wait reviewer or a blocked, inconclusive or not-run probe stops being incomplete, or the hold sentence drifts; why_new=Track 32A must not loosen incompleteness; seam=none; no_claim=installed-agent execution
+  test('a genuinely incomplete cycle 1 still writes completed=false and holds repair-only', () => {
+    expect(baseline).toContain('`completed=false` with reason `reviewer-incomplete`: an unavailable, failed or bounded-wait reviewer (a reviewer still running or stalled when the provider-failure budget expired on a bounded-wait host), or a `blocked`, `inconclusive` or `not-run` required probe.');
+    const pendingStart = baseline.indexOf('`completed=pending-fix-review`: every');
+    const pendingEnd = baseline.indexOf('`completed=false` with reason', pendingStart);
+    expect(pendingStart).toBeGreaterThanOrEqual(0);
+    expect(pendingEnd).toBeGreaterThan(pendingStart);
+    const pendingCondition = baseline.slice(pendingStart, pendingEnd);
+    for (const incomplete of ['blocked', 'inconclusive', 'not-run', 'unavailable', 'failed', 'bounded-wait']) expect(pendingCondition).not.toContain(incomplete);
+    expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only.');
+    expect(baseline).toContain('A failed reader still gets this false record once it is confirmed stopped; it is not mistaken for a missing record.');
+    expect(baseline).toContain('The cause names the reviewer or probe and its outcome.');
+    expect(baseline).toContain('Otherwise write false with reason `reviewer-incomplete`, naming the reviewer or probe.');
+    expect(stop).toContain('Missing, incomplete, mismatched or unverifiable evidence holds repair-only continuation.');
+    expect(stop.split('Missing, incomplete, mismatched or unverifiable evidence holds repair-only continuation.').length - 1).toBe(1);
+    expect(tableRows.filter((r) => r[0].startsWith('`completed=false`')).map((r) => r[2])).toEqual([
+      'unavailable `anchor-changed`',
+      'unavailable `reviewer-incomplete`',
+    ]);
+    expect(baseline).toContain('A missing anchor writes `completed=false` with reason `anchor-changed`.');
+  });
+
+  // Value: protects=probes are keyed, identified, mapped and recorded the same way in both cycles and the records cannot be rewritten; fails_when=a mapped label, the key's exclusions, the probe-ID rule, the rerun timing, the file mechanics or the first-run rule drifts; why_new=Track 32A record mechanics; seam=none; no_claim=installed-agent execution
+  test('probe keys, outcome mapping, reruns and record mechanics are pinned', () => {
+    expect(baseline).toContain("Its key is its contract plus its native command or request as the evidence tool records it (the annotation's `command`), without the guard wrapper, capture IDs, the deadline and timeout flags and evidence paths.");
+    expect(baseline).toContain("Its probe ID is the first 12 hex digits of the key's SHA-256; both records and the evidence comment use the ID");
+    expect(baseline).toContain('A minimized replay is evidence only, never the key, and a defect fingerprint never keys a probe, because its line shifts after fixes.');
+    expect(baseline).toContain("A changed probe command is a different probe, as in Step 4.7's own rerun rule, so the original probe counts as `not-run` (fail closed by design).");
+    expect(baseline).toContain("taken as known at the record's write point from Step 4.7's provisional results, never from the final materialized verdict");
+    for (const mapped of [
+      '- `pass` → `passed`',
+      '- `product-defect`, or `fail`/`failed` classified as a product defect with a replay and a Fix-First fingerprint → `reproduced` (record the fingerprint as evidence)',
+      '- `setup-blocked`, `blocked`, or `fail`/`failed` classified as setup → `blocked`',
+      '- `inconclusive` → `inconclusive`',
+      '- `not run`/`not-run`, or `superseded` without a current rerun of the same key → `not-run`',
+      '- `not applicable` with a reason → not a required probe',
+      '- any other label or classification → `inconclusive (unmapped: <label or classification>)`, recorded with its check key, sensitive values redacted',
+    ]) expect(baseline).toContain(mapped);
+    expect(baseline).toContain('A browser check that Step 4.7 reports as current passing evidence is `passed`, so `completed=true` stays as reachable as before.');
+    expect(baseline).toContain("The `/review` anchor check does not cover Step 4.7's outcome labels, classifications or Fix-First return shape; if upstream renames or changes them, the result maps to `inconclusive` and the baseline is unavailable, never misread.");
+    expect(baseline).toContain("Before that write point, cycle 2's Step 4.7 reruns each cycle-1-reproduced probe by its key, with its exact recorded command or request, as revalidation of an affected check, which upstream runs even after the smoke limit, not as a smoke recheck.");
+    expect(baseline).toContain("A probe has a cycle 2 result when it was rerun by its key on cycle 2's inputs, or when `/review`'s unchanged-input reuse rule keeps its result current; it is `not-run (no exact rerun)` only when neither holds.");
+    expect(baseline).toContain("the ID, key and outcome of every probe in the union (cycle 2's own required list plus each cycle-1-reproduced key) with a reference to the evidence behind any reused current result");
+    expect(baseline).toContain('A cycle-1-reproduced probe without such a result, including one marked not applicable in cycle 2, is `not-run`.');
+    expect(baseline).toContain('Allowed cycle 2 skips are gate skips plus the recorded `skipped — light default repair cycle` and `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host rule that runs the Red Team on cycle 1 only, not a stalled reviewer).');
+    expect(baseline).toContain('Write the records as `cycle-1-baseline.json` and `cycle-1-fix-review.json`, each with a `schema` field (`review-and-prep-cycle-1-baseline/v1`, `review-and-prep-cycle-1-fix-review/v1`)');
+    expect(baseline).toContain("Create each file with an exclusive create (`set -C` before a shell redirect, or `node:fs.writeFileSync(path, contents, {flag: 'wx'})` under Bun), so no duplicate can exist.");
+    expect(baseline).toContain('A record not written at its write point is never written later. A parse failure, or a missing or invalid required field, makes a record unreadable; an unreadable or duplicate record counts as no record of that kind.');
+    expect(baseline).toContain("The records belong to the invocation's first `/review` run; a later `/review` run in the same invocation (Step 5's delta re-review, or a full-scope fallback) writes neither.");
+    expect(baseline).toContain("A gate skip is a reviewer that `/review`'s own selection gates did not select: its small-diff, simplification, Red Team and structured-review size gates and its scope signals");
+    expect(baseline).toContain('That includes a structured review that `/review` logs as size-gated (`gate: skipped`, `completed:false`). A gate skip is never an incomplete reviewer.');
+    expect(baseline).toContain('Only the exact value `true` in `completed` (cycle 1) and in `fix-reviewed` (cycle 2) makes a record usable: any other value, `pending-fix-review` alone included, is not a baseline.');
+    // The retired camel-case spelling of `fix-reviewed`, built so that no spelling remains in this file either.
+    expect(prep).not.toContain('fix' + 'Reviewed');
+  });
+
+  // Value: protects=the stop's own decision record, evidence comment content and unavailable reasons stay as specified, and the guard and in-cap text this Track must not touch stay unchanged; fails_when=a record is rewritten at the stop, the placeholder repeats, the reason list changes, or a guard or in-cap sentence drifts; why_new=Track 32A unchanged-guard lock; seam=none; no_claim=installed-agent execution
+  test('the stop record, evidence comment and unchanged guards stay pinned', () => {
+    expect(stop).toContain("The stop's own record, the one that carries the printed unavailable line, names which table row applied and its cause; the stop never writes into `cycle-1-baseline` or `cycle-1-fix-review`.");
+    expect(stop).toContain("An unreadable or duplicate record counts as no record of that kind, and a record not written at its write point is never written later.");
+    expect(stop).toContain("The dedicated evidence comment carries each probe's contract label, ID, outcome and, for `reproduced`, its fingerprint, plus cycle 2's fix-review results and a statement that `completed=true` records coverage, not a clean review; the exact probe commands and requests stay in the local records.");
+    // The printed placeholder occurs once, because the handoff contract reads its first occurrence.
+    expect(flat.split('`Full-review evidence unavailable: <').length - 1).toBe(1);
+    expect(reasonList.join('|')).toBe('anchor-changed|tree-differs|reviewer-incomplete|record-missing');
+    expect(stop).toContain("The receipt's portable row and the H-E prompt stay unchanged.");
+    expect(stop).toContain('A consumer reads this row from the stopped receipt through the same author/edit-history checks; independently, `git rev-parse "B^{tree}"` must equal T (fetch the pushed commit if needed).');
+    expect(stop).toContain("Recompute `k` from the live stopped records, deduplicated by stop SHA, and require the prompt's count to match");
+    expect(stop).toContain('A missing stopped record, unreadable/foreign edit history or invalid ancestry holds for the user');
+    expect(stop).toContain('Before selecting any delta, require `Delta base` to match the newest corroborated stopped record and its completed-review evidence, including the reviewed content fingerprint.');
+    expect(baseline).toContain('`A pass covers Steps 3–5, including all reviewers before fixes.`');
+    // The in-cap paragraph is inventoried by bin/upstream-check: no baseline wording enters it.
+    const inCap = prep.slice(prep.indexOf("**`/review`'s own repeat cycles (`in-cap=delta`).**")).split('\n\n')[0] ?? '';
+    expect(inCap).toContain('`A pass covers Steps 3–5, including all reviewers before fixes.`');
+    expect(inCap).toContain('`Allow at most 3 fix cycles`');
+    expect(inCap).toContain('`DIFF_BASE=$(git merge-base origin/<base> HEAD)`');
+    for (const added of ['cycle-1-fix-review', 'cycle-1-baseline', 'pending-fix-review', 'fix-reviewed']) expect(inCap).not.toContain(added);
   });
 });
