@@ -1297,15 +1297,15 @@ describe('review-and-prep final-gate repair', () => {
       const reason = /^unavailable `([a-z-]+)`$/.exec(row[2]!)?.[1];
       expect(reasonList).toContain(reason);
     }
-    expect(tableRows.map((r) => r[2])).toEqual([
-      'unavailable `record-missing`',
-      'unavailable `anchor-changed`',
-      'unavailable `reviewer-incomplete`',
-      'unavailable `tree-differs`',
-      'the row',
-      'unavailable `tree-differs`',
-      'unavailable `reviewer-incomplete`',
-      'the row',
+    expect(tableRows).toEqual([
+      ['no record', 'any', 'unavailable `record-missing`'],
+      ['`completed=false` (`anchor-changed`)', 'any', 'unavailable `anchor-changed`'],
+      ['`completed=false` (`reviewer-incomplete`)', 'any', 'unavailable `reviewer-incomplete`'],
+      ['`completed=true`, snapshot tree differs from T', 'not read', 'unavailable `tree-differs`'],
+      ['`completed=true`, snapshot tree equals T', 'not read', 'the row'],
+      ['`completed=pending-fix-review`, snapshot tree differs from T', 'any', 'unavailable `tree-differs`'],
+      ['`completed=pending-fix-review`, tree equals T', 'no readable record, one for another snapshot, or `fix-reviewed=false`', 'unavailable `reviewer-incomplete`'],
+      ['`completed=pending-fix-review`, tree equals T', 'same snapshot, `fix-reviewed=true`', 'the row'],
     ]);
     const pendingEquals = tableRows.filter((r) => r[0] === '`completed=pending-fix-review`, tree equals T');
     expect(pendingEquals).toHaveLength(2);
@@ -1334,7 +1334,11 @@ describe('review-and-prep final-gate repair', () => {
   // Value: protects=a genuinely incomplete cycle 1 still writes completed=false with reviewer-incomplete and still holds repair-only; fails_when=an unavailable, failed or bounded-wait reviewer or a blocked, inconclusive or not-run probe stops being incomplete, or the hold sentence drifts; why_new=Track 32A must not loosen incompleteness; seam=none; no_claim=installed-agent execution
   test('a genuinely incomplete cycle 1 still writes completed=false and holds repair-only', () => {
     expect(baseline).toContain('`completed=false` with reason `reviewer-incomplete`: an unavailable, failed or bounded-wait reviewer (a reviewer still running or stalled when the provider-failure budget expired on a bounded-wait host), or a `blocked`, `inconclusive` or `not-run` required probe.');
-    const pendingCondition = baseline.slice(baseline.indexOf('`completed=pending-fix-review`: every'), baseline.indexOf('`completed=false` with reason'));
+    const pendingStart = baseline.indexOf('`completed=pending-fix-review`: every');
+    const pendingEnd = baseline.indexOf('`completed=false` with reason', pendingStart);
+    expect(pendingStart).toBeGreaterThanOrEqual(0);
+    expect(pendingEnd).toBeGreaterThan(pendingStart);
+    const pendingCondition = baseline.slice(pendingStart, pendingEnd);
     for (const incomplete of ['blocked', 'inconclusive', 'not-run', 'unavailable', 'failed', 'bounded-wait']) expect(pendingCondition).not.toContain(incomplete);
     expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only.');
     expect(baseline).toContain('A failed reader still gets this false record once it is confirmed stopped; it is not mistaken for a missing record.');
@@ -1373,7 +1377,7 @@ describe('review-and-prep final-gate repair', () => {
     expect(baseline).toContain('A cycle-1-reproduced probe without such a result, including one marked not applicable in cycle 2, is `not-run`.');
     expect(baseline).toContain('Allowed cycle 2 skips are gate skips plus the recorded `skipped — light default repair cycle` and `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host rule that runs the Red Team on cycle 1 only, not a stalled reviewer).');
     expect(baseline).toContain('Write the records as `cycle-1-baseline.json` and `cycle-1-fix-review.json`, each with a `schema` field (`review-and-prep-cycle-1-baseline/v1`, `review-and-prep-cycle-1-fix-review/v1`)');
-    expect(baseline).toContain("Create each file with an exclusive create (`set -C` before a shell redirect, or Bun's `{flag: 'wx'}`), so no duplicate can exist.");
+    expect(baseline).toContain("Create each file with an exclusive create (`set -C` before a shell redirect, or `node:fs.writeFileSync(path, contents, {flag: 'wx'})` under Bun), so no duplicate can exist.");
     expect(baseline).toContain('A record not written at its write point is never written later. A parse failure, or a missing or invalid required field, makes a record unreadable; an unreadable or duplicate record counts as no record of that kind.');
     expect(baseline).toContain("The records belong to the invocation's first `/review` run; a later `/review` run in the same invocation (Step 5's delta re-review, or a full-scope fallback) writes neither.");
     expect(baseline).toContain("A gate skip is a reviewer that `/review`'s own selection gates did not select: its small-diff, simplification, Red Team and structured-review size gates and its scope signals");

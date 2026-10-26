@@ -1154,8 +1154,9 @@ paragraph's inventory already covers this one). A missing anchor writes
   `cycle-1-fix-review.json`, each with a `schema` field
   (`review-and-prep-cycle-1-baseline/v1`,
   `review-and-prep-cycle-1-fix-review/v1`) and the fields above. Create each
-  file with an exclusive create (`set -C` before a shell redirect, or Bun's
-  `{flag: 'wx'}`), so no duplicate can exist. Write each record once, with the
+  file with an exclusive create (`set -C` before a shell redirect, or
+  `node:fs.writeFileSync(path, contents, {flag: 'wx'})` under Bun), so no
+  duplicate can exist. Write each record once, with the
   outcomes known at its write point; never edit, rewrite or replace a written
   record, including on a same-run resume, and never let a later relabel (for
   example `superseded`) change it. A record not written at its write point is
