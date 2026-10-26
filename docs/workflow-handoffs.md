@@ -328,6 +328,8 @@ classifier reports, with the expected and actual values.
 | <a id="e-review-source-local-path"></a>`E-REVIEW-SOURCE-LOCAL-PATH` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="e-review-source-file-uri"></a>`E-REVIEW-SOURCE-FILE-URI` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="e-review-source-whitespace"></a>`E-REVIEW-SOURCE-WHITESPACE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
+| <a id="b-repaired-head"></a>`B-REPAIRED-HEAD` | H-B | `Final-gate repair review:` | ADVANCE_TRUSTED | none; a receipt that records a successful final-gate repair chain still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 
 ## Worked caller flow
 
@@ -786,7 +788,8 @@ runs only on an open draft (`pr-state`, `pr-ready`: `HOLD`). Fixed text a produc
 The policy grammar is `/review-and-prep`'s "Read an optional review policy": a version
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
-`documentation-audit` (`final`), `full-suite` (`final`) and `max-continuations` (`0` to
+`documentation-audit` (`final`), `full-suite` (`final`), `final-gate-repair`
+(`tests-docs`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -798,6 +801,50 @@ a foreign author is `stop-author`: `HOLD`; unread or foreign edit history is
 and a policy mismatch is `policy`: `HOLD`. A missing or duplicate policy/count label
 also carries `malformed`, but its authorization failure promotes the outcome to
 `HOLD`; the generic malformed-label rule never permits continuing here.
+
+`final-gate-repair=tests-docs` is the one optional key that changes how a
+preparation handles a failed final test run: with it, a test-only or docs-only
+repair of that failure runs outside `/review`'s cycle cap under the recorded
+chain in `/review-and-prep`'s "Repair a test-only final-gate failure". Omitted,
+today's rule stands. The light review default never sets it, and no public
+default changes without the evidence SPEC P1 asks for. The key never authorizes
+a continuation. Rollout order, because the grammar is v1 with fixed keys:
+
+1. Update the caller's own H-E parser to accept the key. An older H-E parser
+   classifies a returned policy that carries it as `policy-malformed` (`HOLD`).
+2. Update the `/review-and-prep` install. An installation without the key reads
+   the whole line as `none supplied`: every key is lost, standard defaults
+   apply and the reason is recorded.
+3. Check the loaded copy, then send the key:
+   `grep -F 'final-gate-repair=tests-docs' "<installed skill dir>/SKILL.md"`
+   exits 0 when supported.
+
+A caller lacking support on either side sends the same line without the key,
+keeping its other keys. One complete example: a policy line with the key, the
+three success lines a prepared receipt then carries and, as the alternative
+outcome that replaces those three lines, one fallback line:
+
+```text
+Review policy: review-and-prep-policy/v1; full-suite=final; final-gate-repair=tests-docs
+Final-gate repair: 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432; paths=2; classes=tests; failed=tests/export.test.ts; evidence=https://github.com/example-org/example-repo/pull/42#issuecomment-1000002
+Final-gate repair rerun: targeted=ledger:repair-targeted-1 pass; gate=ledger:tests-1 (full) pass
+Final-gate repair review: native adversarial pass reviews/adversarial-b-s.md (0 findings, none blocking); no full review cycle covered this repair
+Final-gate repair: fallback; step=adversarial; reason=adversarial-blocking; repair=restored (snapshot 1234567890abcdef1234567890abcdef12345678); allowance=consumed; detail=assertion removed without cause; evidence=reviews/repair-fallback.md
+```
+
+A prepared receipt with a successful repair chain still emits `review: COMPLETE`
+in its H-B handoff: the repair commit's coverage is the recorded chain, which
+says that no full review cycle covered it, and `/ship-and-land` reuses it as
+trusted preparation (`B-REPAIRED-HEAD`). A `/ship-and-land` full-suite failure
+and its hand-back are outside the rule. A stopped draft stays stopped whatever
+its receipt says: a newer corroborated stopped record holds as `stopped` even
+when the receipt reads `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`).
+
+When a cap stop cannot report a completed full-review baseline, the producer
+names why in its STOPPED output and its internal record
+(`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`).
+The stopped receipt's portable row stays `Full-review evidence: unavailable` and
+the H-E prompt is unchanged, so this adds no binding for a consumer.
 
 When invoking the next session, the caller adds exactly one direct provenance
 instruction outside the unchanged relayed H-E prompt:

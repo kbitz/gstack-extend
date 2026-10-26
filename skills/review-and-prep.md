@@ -635,7 +635,12 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; final-gate-repair=tests-docs; max-continuations=<0-9>`
+
+Print the parsed policy, or `Review policy: none supplied (<offending pair or
+reason>)`, before any review work, so a typo that drops every key is visible.
+Redact diagnostic values and keep this phase-status line outside the eventual
+copyable handoff; the handoff and receipt retain their own exact policy label.
 
 - Keys after the version are optional and unordered. `max-continuations`
   defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.
@@ -651,6 +656,16 @@ A caller may pre-approve review choices with one line in the invocation prompt:
   That main-suite run may be a diff selection, which is not the full suite:
   under this policy `/ship-and-land` runs the full suite once on the final head
   before merge.
+- `final-gate-repair=tests-docs` (its only value) lets Step 2's **Repair a
+  test-only final-gate failure** run, once per invocation. Omitted, every
+  final-gate failure takes today's rule, which that section names. An older
+  installation without the key reads the whole line as `none supplied` (every
+  key lost, standard defaults, reason recorded), so a caller first checks the
+  loaded copy with `grep -F 'final-gate-repair=tests-docs' "<installed skill
+  dir>/SKILL.md"` (exit 0 means supported) and omits the key otherwise, keeping
+  its other keys. The key waives no gate: it swaps a review cycle for one
+  recorded repair chain that readiness still checks, and it never authorizes a
+  continuation.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
@@ -680,6 +695,9 @@ Under the light default:
   `skipped — light default repair cycle`. A full-scope or inactive cycle runs
   every reviewer as usual.
 - `documentation-audit=final` and `full-suite=final` apply.
+- It never sets `final-gate-repair`: a test-editing exception needs an explicit
+  caller opt-in, and no evidence for a public default change is recorded (SPEC
+  P1).
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -921,6 +939,50 @@ code the delta cannot bound runs full scope. The cap, the stop,
 each cycle as `full` or `delta from <snapshot>` and put
 `in-cap: delta (cycles 2–3)` in the receipt.
 
+### Record cycle 1's full-review baseline
+
+A cap stop can only report a completed full-review baseline that was recorded
+while cycle 1 ran. Write the record only while the installed `/review` read in
+Step 1 still contains the anchor `A pass covers Steps 3–5, including all
+reviewers before fixes.`, checked as `in-cap=delta` checks its anchors (that
+paragraph's inventory already covers this one). A missing anchor writes
+`completed=false` with reason `anchor-changed`.
+
+- **B.** B is the HEAD that cycle 1 reviews: capture it at cycle 1's Step 3,
+  after Step 2's base merge and after "Commit pending intended work before
+  invoking `/review`". B must be an ancestor of the pushed stop commit.
+- **Snapshot.** Whenever the anchor is present, take cycle 1's candidate
+  snapshot with the delta procedure above, whether or not `in-cap=delta`
+  applies.
+- **Scope.** Only a full-scope cycle 1 of a non-continuation invocation writes
+  `completed=true`. A `continue` invocation, delta or full, never writes a new
+  baseline; it carries the newest corroborated base forward unchanged, as the
+  cap section requires. A non-continuation delta re-review also carries the
+  prior corroborated full-review row; without one it has no baseline
+  (`record-missing`), never a new full-review claim.
+- **Write point.** At the end of cycle 1's review collection, after every
+  selected reader has returned or is confirmed stopped and before Step 5
+  applies any fix, write
+  `cycle-1-baseline` to the invocation's evidence directory: B, T
+  (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree
+  equals T, each stage's result, the `gstack-review-read` row when `/review`
+  writes one (not required for `completed=true`), and
+  `completed=true|false`. Set true only when the installed review's completion
+  conditions hold: every selected reviewer completed and every required
+  Step 4.7 probe has current passing evidence. Write false for a failed,
+  blocked, inconclusive or unrun required probe, or an unavailable, failed or
+  bounded-wait reviewer, with reason `reviewer-incomplete`. Allowed skips are
+  scope or adaptive-gate skips only. A failed reader still gets this false
+  record once it is confirmed stopped; it is not mistaken for a missing record.
+- **Unavailable.** A snapshot tree that differs from T (reviewed uncommitted or
+  untracked content) is `tree-differs`; a missing record is `record-missing`.
+  Each, with `anchor-changed` and `reviewer-incomplete`, makes the baseline
+  unavailable.
+- **Scope of the record.** The file is internal to the evidence directory and
+  provisional pending the portable evidence envelope. The only portable
+  contract stays the `Full-review evidence:` row and its dedicated comment.
+  Never infer a baseline from HEAD or the stop commit.
+
 ### When /review stops at its cycle cap
 
 `/review` allows three fix cycles. Only a verified three-cycle cap enters this exit.
@@ -966,9 +1028,20 @@ shapes the prompt below, so the continuation starts in a fresh session.
    Include a portable full-review evidence row for delta base B when available: reviewed commit
    B, tree T, `scope: full`, `completed: true`, and the original review-record
    reference and per-stage results. These must come from the actual completed
-   pass, never be inferred from HEAD or filled in after the fact. Preserve that
-   pass's candidate and results before its fixes; if no such row exists, say
-   delta evidence is unavailable. A consumer reads this row from the stopped
+   pass, never be inferred from HEAD or filled in after the fact. Fill the row
+   and the evidence comment for a new baseline only from the `cycle-1-baseline`
+   record written above, and only when it says `completed=true`; its B is the
+   first stop's delta base. At a continuation or delta re-review stop, preserve
+   the prior corroborated row and evidence-comment reference instead; the
+   original local file is not required on another host. Never replace that
+   base with this invocation's delta candidate. If neither a completed new
+   baseline nor, on a continuation or delta re-review, a corroborated carried
+   row is available, write
+   `Full-review evidence: unavailable`, say delta
+   evidence is unavailable, and print
+   `Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`
+   in the STOPPED chat output and the record. The receipt's portable row and
+   the H-E prompt stay unchanged. A consumer reads this row from the stopped
    receipt through the same author/edit-history checks; independently,
    `git rev-parse "B^{tree}"` must equal T (fetch the pushed commit if needed).
    Missing, incomplete, mismatched or unverifiable evidence holds repair-only continuation.
@@ -1185,7 +1258,9 @@ reuse these records.
    section names, with `--allow-repo-commands`, and the main test lanes, on the
    same final content, so the pregate record and the ledger entries describe the
    head you push. Fix a failure like any other and rerun the gates whose inputs
-   the fix touched. For a raw `secrets` failure, apply the **Reviewed secret
+   the fix touched; under `final-gate-repair=tests-docs`, a failure of this run
+   first takes **Repair a test-only final-gate failure** below. For a raw
+   `secrets` failure, apply the **Reviewed secret
    findings** protocol below before deciding the wrapper gate. A failed pregate
    ledger record remains failed; use the ordinary main-command test fallback,
    never relabel that run as passing tests.
@@ -1196,6 +1271,183 @@ final pregate record, the audit's post-child snapshot and its documentation
 section to an existing `~/.gstack/projects/<slug>/review-and-prep/`, otherwise
 `~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
 receipt. Never record a gate as passed from memory or a partial run.
+
+### Repair a test-only final-gate failure
+
+**Today's rule.** Item 4 says "Fix a failure like any other and rerun the gates
+whose inputs the fix touched", and readiness requires review coverage of every
+change (full scope plus recorded delta passes). So an agent runs the fix through
+another `/review` fix cycle or a delta re-review, and a third fix cycle ends in
+the cycle-cap stop. This section replaces that path for one narrow case, and
+every fallback below returns to exactly that path unless safe restoration
+cannot be verified, which stops BLOCKED as specified below.
+
+**When it applies.** Only when the review policy carries
+`final-gate-repair=tests-docs`, and only to a failure of item 4's pregate and
+main-suite run on the final content as configured (the full run, or the
+selection `full-suite=final` allows) or of its rerun before Step 6 after Step 5
+fixes or a base merge. At most one repair per invocation. A `/ship-and-land`
+full-suite failure and its hand-back are outside this rule; this skill and its
+receipt make no claim about them.
+Pause/resume continues the same invocation and retains its consumed allowance;
+read the corroborated repair record before deciding whether it remains unused.
+Missing or uncorroborated allowance history on resume never establishes unused:
+take `interrupted`, conservatively retain `allowance=consumed`, and follow
+today's rule. An intact pause record with no repair history can establish unused.
+
+**Classification.** Read the classification contract from `docs/docs-ship.md`
+under the installed gstack-extend root (this installed skill directory's
+`.extend-root`), as the Greptile docs-only rule does, and the project's own
+docs-only rules and `docs-ship:` markers from the base tip, without
+`docs-ship:docs` opt-ins. Apply the contract's rules to each path of
+`git diff --no-renames --name-status B S`; do not run `bin/docs-ship classify`
+on that range. A missing pointer or contract is the fallback
+`classification-unreadable`, not a stop.
+
+- A path qualifies as tests only if its basename matches the classification's
+  test-file name pattern, or it is a non-code data file (fixture, snapshot,
+  golden output) under a test directory segment.
+- A path qualifies as docs only if the classification says `docs` and no
+  runtime reader loads it. Inspect the repository for readers; a project's
+  `docs-ship:not-docs` entries count as source.
+- Everything else is source: every other classification reason (`code`,
+  `build`, `agent-instructions`, `version`, `classification-config`,
+  `special-file`, `project-excluded`, `outside-allowlist`), a symlink, a
+  submodule, a path the classification cannot read, a deleted or renamed test
+  file, a test helper (a code-extension file under a test segment that is not
+  test-named), a `conftest.py` or other config or setup file, a product `spec/`
+  file, a doc a runtime loads, any file a non-test path reads or imports, and
+  any file that decides which tests run or how (test selection maps, runner or
+  lane configuration, shared test setup every suite loads). An unknown path
+  counts as source, and uncertain role keeps today's rule.
+- Path classification is necessary, not sufficient: also inspect the content
+  diff `git diff --no-renames B S` for the content rules (version fields,
+  `CHANGELOG.md` version headings, `docs-ship:` marker lines) and for
+  behavioral content.
+
+**Diagnosis before the edit.** Snapshot the failed content as B with the delta
+procedure's snapshot block. Before diagnosis, require a clean index/worktree
+and `tree(B) = tree(HEAD)`, with existing review coverage for that failed
+content. A dirty or differing snapshot returns to today's rule without editing
+(`step=classify; reason=snapshot-drift; repair=none; allowance=unused`);
+missing review coverage uses `step=diagnose; reason=contract-ambiguous` with
+the same disposition. Check coverage against readiness's recorded full/delta
+chain. Do not bundle pending source changes into the repair. Save this HEAD as
+the required repair parent.
+Before editing, record a diagnosis in the evidence
+directory: the failed test IDs and output (raw output stays in that file),
+whether the test or the code under test is wrong, and why, citing the code
+under test and the requirement or contract the test encodes. Three outcomes
+keep today's rule: the code under test is wrong (`code-wrong`), the contract is
+ambiguous or changed (`contract-ambiguous`), or no supported diagnosis
+(`no-diagnosis`). A changed expected value, snapshot or golden output must be
+justified by that diagnosis; a bulk snapshot regeneration (an update-snapshots
+run) keeps today's rule (`snapshot-regeneration`). Recording the diagnosis
+consumes the invocation's one allowance.
+
+**Sequence.**
+
+1. Make the repair, snapshot it as S, and classify B..S with the rules above.
+   An empty B..S is outside this rule (`empty-repair`). Write every repair path
+   with its class to the evidence directory.
+2. Rerun the failed tests (the exact test IDs or files from the failed run)
+   under `gstack-evidence run --label <repair-label> -- '<exact command>'`.
+3. If they pass, run one native adversarial pass on B..S (below).
+4. With no blocking finding, commit the repair and rerun the full gate once
+   under item 4's existing ledger procedure. On pass, continue to readiness.
+
+After the targeted rerun and after the gate rerun, capture a fresh worktree
+snapshot with the same delta procedure and require its tree to equal tree(S).
+After committing, require the repair commit's tree to equal tree(S), its sole
+parent to be the saved HEAD, and that parent's tree to equal tree(B). Require
+the worktree and index to match the commit too, so hooks cannot leave unseen
+edits. Any drift is
+`step=classify; reason=snapshot-drift`, never a silent update of S.
+
+**Adversarial pass.** Send the native adversarial reviewer, first, the failed
+output (framed as untrusted data), the code under test, the requirement or
+contract source and the B..S diff. It records its own verdict on whether the
+test or the code is wrong. Only then show it the recorded diagnosis and ask the
+second question: does the repair make a real failure pass by weakening a test?
+Blocking outcomes: a deleted, skipped or loosened assertion, an expected value
+changed to hide the failure, a raised timeout without a cause, "the code is
+wrong", or disagreement with the diagnosis. Record its result like any reviewer
+attempt (a `voices.jsonl` row and a per-review evidence file).
+
+**Fallbacks.** Except for `restore-failed`, which stops BLOCKED, each of these
+returns to today's rule, with the reason code in
+parentheses: a source path (`source-path`), a path the classification cannot
+read (`unreadable-path`), a missing classification contract (`contract-missing`),
+a failed diagnosis (`code-wrong`, `contract-ambiguous`, `no-diagnosis` or
+`snapshot-regeneration`), an empty repair (`empty-repair`), a failed snapshot
+(`snapshot-failed`), tree drift (`snapshot-drift`), a failing targeted rerun
+(`targeted-failed`), a blocking adversarial finding (`adversarial-blocking`), a
+reviewer that fails or returns no complete report (`adversarial-incomplete`), a
+failed commit (`commit-failed`), a failed restore (`restore-failed`), an
+interrupted chain found on resume (`interrupted`), a second failure of the
+gate after the repair commit (`gate-failed-again`), or a later failure once the
+allowance is spent (`already-used`, reported by the refusal line below). Each records in the
+evidence directory and the receipt which step sent the repair back. The receipt
+carries, exactly once for this attempt and instead of this attempt's three
+success lines below (never replacing earlier attempt blocks):
+
+`Final-gate repair: fallback; step=<classify|diagnose|targeted-rerun|adversarial|full-gate|once-per-invocation|classification-unreadable>; reason=<code>; repair=<restored (snapshot <S>)|committed <SHA>|kept|none>; allowance=<consumed|unused>; detail=<redacted one-line summary>; evidence=<evidence file reference>`
+
+- A fallback before any edit, including failure to snapshot B, records
+  `repair=none`. Failure to create S keeps the uncommitted edits
+  (`repair=kept`), because no repair snapshot preserves them.
+  A failed commit keeps the uncommitted repair for today's
+  rule (`repair=kept`); it is excluded from restoration below.
+- Once S exists, a fallback before the repair commit, other than `commit-failed`, restores the repair's
+  paths to B (the repair stays recoverable in snapshot S): delete the paths the
+  repair added, restore the modified or deleted paths from B, then verify the
+  worktree equals B's snapshot and record that check. A failed restore stops
+  with `BLOCKED` and the evidence path. This includes failure of the precommit
+  freshness snapshot: restore to B only if ownership and restoration can be
+  verified; otherwise stop BLOCKED. Today's rule starts from B.
+- A fallback after the repair commit, including `gate-failed-again`,
+  `snapshot-drift`, a failed postcommit freshness snapshot or an interrupted
+  chain, keeps the commit and any remaining
+  worktree edits. Record `repair=committed <SHA>` and preserve a snapshot of
+  remaining edits when possible. All that content enters today's review
+  coverage; the failed chain grants no readiness exception.
+- Map `contract-missing` to `step=classification-unreadable`, `empty-repair`
+  and `snapshot-drift` to `step=classify`, and `commit-failed` to
+  `step=full-gate`. A `snapshot-failed` uses `step=diagnose` for B and
+  `step=classify` for S or a freshness snapshot. `interrupted` uses the last
+  recorded step, or `classify` if unknown; `restore-failed` retains the
+  triggering step and records the failed restore in detail. An uncertain
+  commit result is reconciled against the saved parent before choosing the
+  pre- or post-commit recovery. Never undo another actor's edits to restore B;
+  if ownership or restoration is uncertain, stop BLOCKED with the evidence.
+- Raw test output stays in the evidence file; the receipt carries only a
+  redacted summary.
+
+**Receipt.** A successful chain records each of these exactly once per repair
+commit. Preserve earlier chains in separate commit-labeled blocks when a later
+authorized invocation adds another; never erase earlier coverage or disclosure:
+
+```text
+Final-gate repair: <repair commit SHA>; paths=<n>; classes=tests|docs|tests,docs; failed=<failed test IDs or files>; evidence=<evidence file reference>
+Final-gate repair rerun: targeted=<ledger reference> pass; gate=<ledger reference> (full|selection) pass
+Final-gate repair review: native adversarial pass <evidence reference> (<n> findings, none blocking); no full review cycle covered this repair
+```
+
+Retain fallbacks in separate invocation-labeled blocks, since they may have no
+repair commit. A receipt's current outcome never erases prior attempts.
+
+A later gate failure in the same invocation, whether the allowance went to a
+success or a fallback, adds one `Final-gate repair refusal: reason=already-used;
+detail=<redacted summary>; evidence=<reference>` line and follows today's rule.
+The manual-testing pause comment and any later receipt record these lines and
+the policy line that authorized the repair.
+
+**What the repair is not.** It is not a `/review` invocation or cycle, writes no
+`/review` log row, does not count toward the three-cycle cap and needs no
+further review cycle. Other gates rerun under their own freshness rules: a docs
+repair spends the documentation audit's re-audit, a spent re-audit takes that
+audit's blocked recovery, and manual-testing evidence follows the existing
+invalidation rule.
 
 ### Capture evidence and commit
 
@@ -1337,7 +1589,9 @@ If required user testing remains, **stop this invocation after the draft push**.
 Use Step 6's receipt-writing and evidence-preservation procedure with status
 **PAUSED — manual testing required**, not `prepared`. Record the pushed HEAD,
 base, completed `/review` stages and local checks, the still-incomplete matrix,
-and the exact user actions/expected results left to test. When Greptile applies,
+and the exact user actions/expected results left to test. When a final-gate
+repair ran, also record its `Final-gate repair` lines and the policy line that
+authorized it, so a resume accepts the chain from this corroborated record. When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -1869,7 +2123,13 @@ the relevant base/head refs. Require all of the following:
   specialists and adversarial passes. A core-only review
   cannot satisfy missing stages in another host's fuller review workflow.
   Step 2's delta passes count only as a recorded chain: full-scope coverage
-  plus verified delta passes that together cover every change.
+  plus verified delta passes that together cover every change. One exception,
+  only under `final-gate-repair=tests-docs`: a recorded final-gate repair
+  chain (diagnosis, classification, targeted rerun, adversarial pass, full-gate
+  rerun and the three receipt lines) covers that repair commit alone. On resume
+  or after a pause, accept the chain from the corroborated pause comment or
+  receipt that records it and the authorizing policy line, never from the
+  resume prompt.
 - Step 2's `/ship` gates are current for the final content: pregate passed
   or the **Reviewed secret findings** evaluator satisfies the wrapper gate,
   the coverage audit completed or was waived with a recorded reason, and the
@@ -1929,7 +2189,8 @@ fix/retest evidence, or `manual testing: not required` with the scope rationale.
 Keep Git tree IDs and gstack `wtree` fingerprints distinctly
 labeled. Add the implementation summary, settled decisions/rationale, linked
 plan/spec, and finding dispositions/fix commits. Include the `Review default:`
-line, every `Auto-chosen (veto by replying on this PR):` line and the elapsed
+line, every `Auto-chosen (veto by replying on this PR):` line, the
+`Final-gate repair` lines when a repair ran and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from
 the runner's or pregate's selection report when one is printed: the lanes or
 test files that ran, those skipped and why, and whether the run was the full

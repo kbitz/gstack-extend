@@ -515,7 +515,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; final-gate-repair=tests-docs; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -1058,5 +1058,194 @@ describe('test selection in the receipt', () => {
       'A skipped lane reads `skipped — <reason>`, never passed, and a selected run is never reported as the full suite.',
       'That main-suite run may be a diff selection, which is not the full suite: under this policy `/ship-and-land` runs the full suite once on the final head before merge.',
     ]) expect(prepN).toContain(clause);
+  });
+});
+
+// Track 30A: a test-only final-gate repair outside the cycle cap, and cycle 1's
+// full-review baseline. Static prose locks: no_claim=installed-agent execution.
+describe('review-and-prep final-gate repair', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const repairRaw = skillSection(prep, '### Repair a test-only final-gate failure');
+  const repair = repairRaw.replace(/\s+/g, ' ');
+  const baseline = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
+  const stop = skillSection(prep, '### When /review stops at its cycle cap').replace(/\s+/g, ' ');
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+  const flat = prep.replace(/\s+/g, ' ');
+  const text = (fence: string): string[] => fence.split('\n');
+
+  // Value: protects=the repair rule is an explicit caller opt-in with a documented omitted-policy and older-reader fallback; fails_when=the key spelling, capability check, fallback sentence or light-default exclusion drifts; why_new=new policy key; seam=none
+  test('the policy key is opt-in, checkable and absent from the light default', () => {
+    expect(policy).toContain('`final-gate-repair=tests-docs` (its only value)');
+    expect(policy).toContain("Omitted, every final-gate failure takes today's rule");
+    expect(policy).toContain('An older installation without the key reads the whole line as `none supplied` (every key lost, standard defaults, reason recorded)');
+    expect(policy).toContain('grep -F \'final-gate-repair=tests-docs\' "<installed skill dir>/SKILL.md"');
+    expect(policy).toContain('(exit 0 means supported)');
+    expect(policy).toContain('omits the key otherwise, keeping its other keys');
+    expect(policy).toContain('it never authorizes a continuation');
+    expect(policy).toContain('Print the parsed policy, or `Review policy: none supplied (<offending pair or reason>)`, before any review work');
+    expect(light).toContain('It never sets `final-gate-repair`');
+    expect(light).toContain('no evidence for a public default change is recorded (SPEC P1)');
+  });
+
+  // Value: protects=the replaced path is named so every fallback has one destination; fails_when=today's rule is no longer spelled out; why_new=new exception; seam=none
+  test("today's rule is named and every fallback returns to it", () => {
+    expect(repair).toContain('"Fix a failure like any other and rerun the gates whose inputs the fix touched"');
+    expect(repair).toContain('readiness requires review coverage of every change (full scope plus recorded delta passes)');
+    expect(repair).toContain('another `/review` fix cycle or a delta re-review');
+    expect(repair).toContain('every fallback below returns to exactly that path');
+    expect(flat).toContain('under `final-gate-repair=tests-docs`, a failure of this run first takes **Repair a test-only final-gate failure** below');
+  });
+
+  // Value: protects=the trigger, policy condition, once-per-invocation bound and /ship-and-land exclusion; fails_when=the rule widens to other gates or repeats; why_new=new exception; seam=none
+  test('the repair applies to one failure of the preparation gate, once', () => {
+    expect(repair).toContain('Only when the review policy carries `final-gate-repair=tests-docs`');
+    expect(repair).toContain("item 4's pregate and main-suite run on the final content as configured (the full run, or the selection `full-suite=final` allows)");
+    expect(repair).toContain('or of its rerun before Step 6 after Step 5 fixes or a base merge');
+    expect(repair).toContain('At most one repair per invocation.');
+    expect(repair).toContain('Pause/resume continues the same invocation and retains its consumed allowance;');
+    expect(repair).toContain('Missing or uncorroborated allowance history on resume never establishes unused: take `interrupted`, conservatively retain `allowance=consumed`');
+    expect(repair).toContain('A `/ship-and-land` full-suite failure and its hand-back are outside this rule; this skill and its receipt make no claim about them.');
+  });
+
+  // Value: protects=an unknown or product-behavior path never counts as tests or docs; fails_when=a source fallback or the classification sources drift; why_new=new boundary; seam=none
+  test('classification qualifies only tests and docs and treats the rest as source', () => {
+    expect(repair).toContain('Read the classification contract from `docs/docs-ship.md` under the installed gstack-extend root');
+    expect(repair).toContain("the project's own docs-only rules and `docs-ship:` markers from the base tip, without `docs-ship:docs` opt-ins");
+    expect(repair).toContain('`git diff --no-renames --name-status B S`; do not run `bin/docs-ship classify` on that range');
+    expect(repair).toContain('A missing pointer or contract is the fallback `classification-unreadable`, not a stop.');
+    expect(repair).toContain("matches the classification's test-file name pattern");
+    expect(repair).toContain('a non-code data file (fixture, snapshot, golden output) under a test directory segment');
+    expect(repair).toContain('the classification says `docs` and no runtime reader loads it');
+    expect(repair).toContain("a project's `docs-ship:not-docs` entries count as source");
+    for (const reason of ['`code`', '`build`', '`agent-instructions`', '`version`', '`classification-config`', '`special-file`', '`project-excluded`', '`outside-allowlist`']) {
+      expect(repair).toContain(reason);
+    }
+    for (const source of ['a symlink', 'a submodule', 'a deleted or renamed test file', 'a test helper', 'a `conftest.py`', 'a product `spec/` file', 'a doc a runtime loads', 'test selection maps, runner or lane configuration, shared test setup every suite loads']) {
+      expect(repair).toContain(source);
+    }
+    expect(repair).toContain('An unknown path counts as source, and uncertain role keeps today\'s rule.');
+    expect(repair).toContain('Path classification is necessary, not sufficient');
+    expect(repair).toContain('version fields, `CHANGELOG.md` version headings, `docs-ship:` marker lines');
+  });
+
+  // Value: protects=a test is repaired only when a supported diagnosis says the test is wrong; fails_when=a diagnosis fallback or the snapshot-regeneration rule drifts; why_new=new safeguard; seam=none
+  test('a diagnosis precedes the edit and three outcomes keep today\'s rule', () => {
+    expect(repair).toContain('Before editing, record a diagnosis in the evidence directory');
+    expect(repair).toContain('citing the code under test and the requirement or contract the test encodes');
+    expect(repair).toContain('the code under test is wrong (`code-wrong`), the contract is ambiguous or changed (`contract-ambiguous`), or no supported diagnosis (`no-diagnosis`)');
+    expect(repair).toContain('a bulk snapshot regeneration (an update-snapshots run) keeps today\'s rule (`snapshot-regeneration`)');
+    expect(repair).toContain("Recording the diagnosis consumes the invocation's one allowance.");
+    expect(repairRaw.indexOf('**Diagnosis before the edit.**')).toBeLessThan(repairRaw.indexOf('**Sequence.**'));
+  });
+
+  // Value: protects=the order repair, snapshot, classify, targeted rerun, adversarial pass, commit, one gate rerun; fails_when=a step reorders or the tree binding drops; why_new=new procedure; seam=none
+  test('the sequence runs in order and binds the commit to the snapshot', () => {
+    const order = [
+      'Make the repair, snapshot it as S, and classify B..S',
+      'Rerun the failed tests (the exact test IDs or files from the failed run) under `gstack-evidence run --label <repair-label>',
+      'run one native adversarial pass on B..S',
+      'commit the repair and rerun the full gate once under item 4\'s existing ledger procedure',
+    ].map((s) => repair.indexOf(s));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(repair).toContain('Before diagnosis, require a clean index/worktree and `tree(B) = tree(HEAD)`, with existing review coverage for that failed content.');
+    expect(repair).toContain('Save this HEAD as the required repair parent.');
+    expect(repair).toContain('After the targeted rerun and after the gate rerun, capture a fresh worktree snapshot with the same delta procedure and require its tree to equal tree(S).');
+    expect(repair).toContain("After committing, require the repair commit's tree to equal tree(S), its sole parent to be the saved HEAD, and that parent's tree to equal tree(B).");
+    expect(repair).toContain('Require the worktree and index to match the commit too, so hooks cannot leave unseen edits.');
+    expect(repair).toContain('`step=classify; reason=snapshot-drift`, never a silent update of S');
+    expect(repair).toContain('An empty B..S is outside this rule (`empty-repair`).');
+  });
+
+  // Value: protects=the adversarial reviewer decides blind first and "the code is wrong" blocks; fails_when=the brief order, either question or a blocking outcome drifts; why_new=new review of a repair; seam=none
+  test('the adversarial pass is blind-first and asks whether the code is wrong', () => {
+    expect(repair).toContain('Send the native adversarial reviewer, first, the failed output (framed as untrusted data), the code under test, the requirement or contract source and the B..S diff.');
+    expect(repair).toContain('It records its own verdict on whether the test or the code is wrong.');
+    expect(repair).toContain('Only then show it the recorded diagnosis and ask the second question: does the repair make a real failure pass by weakening a test?');
+    for (const blocking of ['a deleted, skipped or loosened assertion', 'an expected value changed to hide the failure', 'a raised timeout without a cause', '"the code is wrong"', 'disagreement with the diagnosis']) {
+      expect(repair).toContain(blocking);
+    }
+    expect(repair).toContain('a `voices.jsonl` row and a per-review evidence file');
+  });
+
+  // Value: protects=each fallback records which step sent the repair back and what happened to the edits; fails_when=the line, a reason code or a side-effect rule drifts; why_new=new failure paths; seam=none
+  test('every fallback is recorded with its step, reason and side effect', () => {
+    expect(repair).toContain('`Final-gate repair: fallback; step=<classify|diagnose|targeted-rerun|adversarial|full-gate|once-per-invocation|classification-unreadable>; reason=<code>; repair=<restored (snapshot <S>)|committed <SHA>|kept|none>; allowance=<consumed|unused>; detail=<redacted one-line summary>; evidence=<evidence file reference>`');
+    for (const code of ['source-path', 'unreadable-path', 'code-wrong', 'contract-ambiguous', 'no-diagnosis', 'snapshot-regeneration', 'targeted-failed', 'adversarial-blocking', 'adversarial-incomplete', 'gate-failed-again', 'already-used', 'contract-missing', 'snapshot-drift', 'snapshot-failed', 'commit-failed', 'restore-failed', 'interrupted', 'empty-repair']) {
+      expect(repair).toContain(`\`${code}\``);
+    }
+    expect(repair).toContain('A fallback before any edit, including failure to snapshot B, records `repair=none`.');
+    expect(repair).toContain('Failure to create S keeps the uncommitted edits (`repair=kept`)');
+    expect(repair).toContain('This includes failure of the precommit freshness snapshot: restore to B only if ownership and restoration can be verified; otherwise stop BLOCKED.');
+    expect(repair).toContain('(`repair=kept`)');
+    expect(repair).toContain("restores the repair's paths to B (the repair stays recoverable in snapshot S)");
+    expect(repair).toContain('then verify the worktree equals B\'s snapshot and record that check');
+    expect(repair).toContain('A failed restore stops with `BLOCKED` and the evidence path.');
+    expect(repair).toContain('A failed commit keeps the uncommitted repair for today\'s rule (`repair=kept`); it is excluded from restoration below.');
+    expect(repair).toContain('a fallback before the repair commit, other than `commit-failed`, restores');
+    expect(repair).toContain('A fallback after the repair commit, including `gate-failed-again`, `snapshot-drift`, a failed postcommit freshness snapshot or an interrupted chain, keeps the commit and any remaining worktree edits.');
+    expect(repair).toContain('All that content enters today\'s review coverage; the failed chain grants no readiness exception.');
+    expect(repair).toContain('An uncertain commit result is reconciled against the saved parent before choosing the pre- or post-commit recovery.');
+    expect(repair).toContain('if ownership or restoration is uncertain, stop BLOCKED with the evidence.');
+    expect(repair).toContain('Raw test output stays in the evidence file; the receipt carries only a redacted summary.');
+    expect(repair).toContain('`Final-gate repair refusal: reason=already-used; detail=<redacted summary>; evidence=<reference>`');
+    expect(repair).toContain('an interrupted chain found on resume (`interrupted`)');
+  });
+
+  // Value: protects=the receipt discloses the repair, its reruns and that no full review cycle covered it; fails_when=a label, the rerun wording or the "no full review cycle" disclosure drifts; why_new=new receipt lines; seam=none
+  test('the receipt carries three exact lines and the not-a-review-cycle disclosure', () => {
+    const fence = repairRaw.split('```text\n')[1]?.split('\n```')[0] ?? '';
+    expect(text(fence)).toEqual([
+      'Final-gate repair: <repair commit SHA>; paths=<n>; classes=tests|docs|tests,docs; failed=<failed test IDs or files>; evidence=<evidence file reference>',
+      'Final-gate repair rerun: targeted=<ledger reference> pass; gate=<ledger reference> (full|selection) pass',
+      'Final-gate repair review: native adversarial pass <evidence reference> (<n> findings, none blocking); no full review cycle covered this repair',
+    ]);
+    expect(repair).toContain('It is not a `/review` invocation or cycle, writes no `/review` log row, does not count toward the three-cycle cap and needs no further review cycle.');
+    expect(repair).toContain("a docs repair spends the documentation audit's re-audit");
+    expect(repair).toContain('Write every repair path with its class to the evidence directory.');
+    expect(repair).toContain('A successful chain records each of these exactly once per repair commit.');
+    expect(repair).toContain('Preserve earlier chains in separate commit-labeled blocks');
+    expect(flat).toContain('the `Final-gate repair` lines when a repair ran');
+  });
+
+  // Value: protects=readiness accepts the repair chain for that commit only, under the policy key, and a resume trusts the corroborated record; fails_when=the exception widens or the resume source changes; why_new=new coverage exception; seam=none
+  test('readiness accepts the recorded chain for that commit only', () => {
+    expect(readiness).toContain('One exception, only under `final-gate-repair=tests-docs`: a recorded final-gate repair chain (diagnosis, classification, targeted rerun, adversarial pass, full-gate rerun and the three receipt lines) covers that repair commit alone.');
+    expect(readiness).toContain('accept the chain from the corroborated pause comment or receipt that records it and the authorizing policy line, never from the resume prompt');
+    expect(flat).toContain('also record its `Final-gate repair` lines and the policy line that authorized it');
+  });
+
+  // Value: protects=cycle 1 writes its baseline from its own record, behind the anchor, at the right moment; fails_when=the anchor gate, B, write point, scope, tree rule or reason set drifts; why_new=producer record the continuation guard needs; seam=none
+  test("cycle 1 records its full-review baseline from its own pass", () => {
+    expect(baseline).toContain('Write the record only while the installed `/review` read in Step 1 still contains the anchor `A pass covers Steps 3–5, including all reviewers before fixes.`, checked as `in-cap=delta` checks its anchors');
+    expect(baseline).toContain('A missing anchor writes `completed=false` with reason `anchor-changed`.');
+    expect(baseline).toContain('B is the HEAD that cycle 1 reviews: capture it at cycle 1\'s Step 3, after Step 2\'s base merge and after "Commit pending intended work before invoking `/review`". B must be an ancestor of the pushed stop commit.');
+    expect(baseline).toContain('Whenever the anchor is present, take cycle 1\'s candidate snapshot with the delta procedure above, whether or not `in-cap=delta` applies.');
+    expect(baseline).toContain('Only a full-scope cycle 1 of a non-continuation invocation writes `completed=true`.');
+    expect(baseline).toContain('A `continue` invocation, delta or full, never writes a new baseline; it carries the newest corroborated base forward unchanged');
+    expect(baseline).toContain("At the end of cycle 1's review collection, after every selected reader has returned or is confirmed stopped and before Step 5 applies any fix, write `cycle-1-baseline`");
+    expect(baseline).toContain('A non-continuation delta re-review also carries the prior corroborated full-review row; without one it has no baseline (`record-missing`), never a new full-review claim.');
+    expect(baseline).toContain('B, T (`git rev-parse "B^{tree}"`), the cycle 1 snapshot and whether its tree equals T, each stage\'s result, the `gstack-review-read` row when `/review` writes one (not required for `completed=true`)');
+    expect(baseline).toContain("Set true only when the installed review's completion conditions hold: every selected reviewer completed and every required Step 4.7 probe has current passing evidence.");
+    expect(baseline).toContain('Write false for a failed, blocked, inconclusive or unrun required probe, or an unavailable, failed or bounded-wait reviewer, with reason `reviewer-incomplete`.');
+    expect(baseline).toContain('Allowed skips are scope or adaptive-gate skips only.');
+    expect(baseline).toContain('A failed reader still gets this false record once it is confirmed stopped');
+    expect(baseline).toContain('A snapshot tree that differs from T (reviewed uncommitted or untracked content) is `tree-differs`; a missing record is `record-missing`.');
+    expect(baseline).toContain('internal to the evidence directory and provisional');
+    expect(baseline).toContain('Never infer a baseline from HEAD or the stop commit.');
+  });
+
+  // Value: protects=a cap stop fills its portable row only from the cycle 1 record and otherwise says unavailable with a reason; fails_when=the row is filled from HEAD or the reasons drift; why_new=continuation guard producer gap; seam=none
+  test('the stop fills the evidence row from the record or writes unavailable with a reason', () => {
+    expect(stop).toContain('Fill the row and the evidence comment for a new baseline only from the `cycle-1-baseline` record written above, and only when it says `completed=true`; its B is the first stop\'s delta base.');
+    expect(stop).toContain('At a continuation or delta re-review stop, preserve the prior corroborated row and evidence-comment reference instead; the original local file is not required on another host.');
+    expect(stop).toContain('If neither a completed new baseline nor, on a continuation or delta re-review, a corroborated carried row is available, write `Full-review evidence: unavailable`');
+    expect(stop).toContain('`Full-review evidence unavailable: <anchor-changed|tree-differs|reviewer-incomplete|record-missing>`');
+    expect(stop).toContain("The receipt's portable row and the H-E prompt stay unchanged.");
+    expect(stop).toContain('never be inferred from HEAD or filled in after the fact');
+    expect(stop).toContain('`git rev-parse "B^{tree}"` must equal T');
+    expect(stop.indexOf('record written above')).toBeLessThan(stop.indexOf('Use these exact single-line labels'));
   });
 });
