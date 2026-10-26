@@ -138,7 +138,9 @@ it to the original run directory only for the single authorized retry. Shell-quo
 `RUN_CMD` as data, including any embedded single quotes. Empty commands are
 refused. The private `command` file retains the independently chosen command;
 read it as data and confirm it is still an authorized targeted check before
-setting `RUN_CMD` identically for recovery. Retry admission compares the exact
+setting `RUN_CMD` identically for recovery. Preserve trailing newlines with
+`RUN_CMD=$(cat "$RUN_RETRY_OF/command"; printf x); RUN_CMD=${RUN_CMD%x}`
+after reviewing that file. Retry admission compares the exact
 bytes before claiming a replacement. Missing or changed commands refuse the
 retry; never substitute a weaker check to retire a lost run. The command runs
 from the canonical repository root with the caller's original umask.
@@ -179,7 +181,7 @@ printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/id.tmp"; mv "$RUN_DIR/id.t
 ( trap '' TERM; RUN_REASON=limit; RUN_END=$((SECONDS + RUN_LIMIT))
   while [ "$SECONDS" -lt "$RUN_END" ]; do
     printf '%s %s\n' "$RUN_TOKEN" "$(date +%s)" >"$RUN_DIR/beat.tmp"; mv "$RUN_DIR/beat.tmp" "$RUN_DIR/beat"
-    [ "$(cat "$RUN_DIR/stop" 2>/dev/null)" != "$RUN_TOKEN $RUN_GROUP" ] || { RUN_REASON=stop; break; }
+    [ "$(cat "$RUN_DIR/stop" 2>/dev/null)" != "$RUN_TOKEN" ] || { RUN_REASON=stop; break; }
     RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
     case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) RUN_REASON=complete; break ;; esac
     sleep 1
@@ -190,8 +192,10 @@ printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/id.tmp"; mv "$RUN_DIR/id.t
   printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/killing"
   kill -KILL 0
 ) &
-(umask "$RUN_UMASK"; bash -c "$RUN_CMD") >"$RUN_DIR/log" 2>&1
-printf '%s\n' "$?" >"$RUN_DIR/status.tmp"; mv "$RUN_DIR/status.tmp" "$RUN_DIR/status"
+if [ "$(cat "$RUN_DIR/stop" 2>/dev/null)" != "$RUN_TOKEN" ]; then
+  (umask "$RUN_UMASK"; exec bash -c "$RUN_CMD") >"$RUN_DIR/log" 2>&1
+  printf '%s\n' "$?" >"$RUN_DIR/status.tmp"; mv "$RUN_DIR/status.tmp" "$RUN_DIR/status"
+fi
 wait
 RUN_SUPERVISOR
 bash -c 'set -m; bash "$RUN_DIR/owner.bash" </dev/null >/dev/null 2>&1 &' </dev/null >/dev/null 2>&1
@@ -214,7 +218,6 @@ RUN_END=$(( $(date +%s) + RUN_BOUND )); RUN_EXIT=''; RUN_STATE=lost
 RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
 RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
 while [ "$RUN_BAD_META" = 0 ] && [ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ]; do
-  [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" != blocked ] || break
   RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
   [ -n "$RUN_TOKEN" ] || break
   if [ -z "$RUN_ID" ]; then
@@ -258,13 +261,17 @@ RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
 run_refuse() { printf 'blocked\n' >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution"; printf 'STOP: refused %s\n' "$RUN_REFUSAL"; exit 1; }
 RUN_REFUSAL=metadata
 RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
+if [ -n "$RUN_TOKEN" ] && [ -z "$RUN_ID" ]; then
+  printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
+  run_refuse
+fi
 case "$RUN_TOKEN:$RUN_GROUP" in :*|*:|*:*[!0-9]*|*:0|*:1) run_refuse ;; esac
 [ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ "$RUN_ID" = "$RUN_TOKEN $RUN_GROUP" ] && [ "$RUN_GROUP" != "$$" ] || { RUN_REFUSAL='identity or own group'; run_refuse; }
 if [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" = finished ] && [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
   RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
   case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) printf 'STOP: finished pgid=%s\n' "$RUN_GROUP"; exit 0 ;; esac
 fi
-printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
+printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
 RUN_END=$(( $(date +%s) + 8 ))
 while kill -0 -- "-$RUN_GROUP" 2>/dev/null; do
   [ "$(date +%s)" -lt "$RUN_END" ] || { RUN_REFUSAL='or survivor'; run_refuse; }
@@ -281,9 +288,13 @@ printf 'STOP: stopped pgid=%s\n' "$RUN_GROUP"
 
 A successful stop records `resolution=stopped` (or `exhausted` for a lost retry);
 a completed result keeps `resolution=finished`, including a successful retry.
-Refusals for a matching owner persist `resolution=blocked`; reconciliation
-reports that recorded blocker without repeatedly stopping or retrying. An
-interrupted claim without a replacement is likewise recorded as blocked.
+Refusals for a matching owner persist `resolution=blocked`. An early stop also
+leaves a token request before identity publication; the supervisor checks it
+before starting the command. Reconciliation rechecks current ownership and
+cleanup evidence: a live run can resume bounded waiting or stop, and witnessed
+completion clears a prior blocker. Missing evidence remains blocked; a failed
+attempt alone is neither permanent failure nor proof of cleanup. An interrupted
+claim without a replacement is likewise recorded as blocked.
 This is still unresolved work: keep Pending verification and withhold the
 successful handoff until ownership and cleanup can be established. Never
 retire an unknown survivor merely to unblock a handoff.
@@ -369,8 +380,9 @@ limit.
 Reconcile earlier runs before any new check. Inspect this workspace and
 branch's namespace under both the project and scratch roots, so creating a
 project directory does not hide older fallback runs; require an exact `owner`
-match. A `blocked` resolution stays a reported blocker, without another stop
-or retry. A `finished` resolution preserves the recorded terminal result even
+match. Recheck a `blocked` run with the wait block; only new ownership or cleanup
+evidence permits resolving it or safely stopping it. Do not retry while cleanup
+is unknown. A `finished` resolution preserves the recorded terminal result even
 if its old group number is reused. It is historical evidence only: run the
 independently selected checks for current changes; never credit an older
 run as current verification. Follow a recorded

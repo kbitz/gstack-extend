@@ -351,7 +351,7 @@ describe('implement wait blocks', () => {
   const quote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
   const dirs: string[] = [];
   const runs: Array<{ shell: string; home: string; dir: string; cwd: string; identity?: string }> = [];
-  const systemOnly = ['done and failed are terminal only after cleanup', 'stop kills a ready TERM-ignoring child', 'watchdog bounds a hanging run'];
+  const systemOnly = ['done and failed are terminal only after cleanup', 'stop kills a ready TERM-ignoring child', 'watchdog bounds a hanging run', 'watchdog survives loss of the command wrapper'];
   const shells = [
     { shell: 'bash', path: process.env.PATH!, only: undefined as string[] | undefined },
     { shell: 'zsh', path: process.env.PATH!, only: undefined as string[] | undefined },
@@ -446,6 +446,26 @@ describe('implement wait blocks', () => {
         expect(readFileSync(join(dir, 'killing'), 'utf8')).toBe(readFileSync(join(dir, 'token'), 'utf8'));
       }
     });
+    t('an early stop is delivered after delayed identity publication', () => {
+      const h=home();
+      const script=launch('echo started > "$RUN_DIR/command-started"; sleep 20').replace('RUN_GROUP=$$', () => 'sleep 2\nRUN_GROUP=$$');
+      const r=sh(shell,script,h,{RUN_LIMIT:'6'});
+      const dir=/^RUN_DIR=(.+)$/m.exec(r.out)![1];
+      const owned={shell,home:h,dir,cwd:ROOT,identity:undefined as string|undefined};runs.push(owned);
+      expect(stop(shell,h,dir).code).toBe(1);
+      awaitFile(join(dir,'id'));owned.identity=readFileSync(join(dir,'id'),'utf8');
+      expect(readFileSync(join(dir,'stop'),'utf8').trim()).toBe(readFileSync(join(dir,'token'),'utf8').trim());
+      expect(wait(shell,h,dir).out).toMatch(/^RUN: lost /);
+      expect(stop(shell,h,dir).code).toBe(0);
+      expect(existsSync(join(dir,'command-started'))).toBe(false);
+      expect(readFileSync(join(dir,'resolution'),'utf8').trim()).toBe('stopped');
+    });
+    t('later cleanup evidence resolves a previously blocked stop', () => {
+      const h=home(), dir=start(shell,h,'echo completed');
+      writeFileSync(join(dir,'resolution'),'blocked\n');
+      expect(wait(shell,h,dir).out).toMatch(/^RUN: done /);
+      expect(readFileSync(join(dir,'resolution'),'utf8').trim()).toBe('finished');
+    });
     t('empty commands are refused before a run can report success', () => {
       const h = home();
       const r = sh(shell,launch('   '),h);
@@ -465,7 +485,7 @@ describe('implement wait blocks', () => {
     });
     t('a retry in a fresh shell must execute the recorded original command', () => {
       const h = home();
-      const cmd = 'sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi';
+      const cmd = 'sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi\n\n';
       const original = start(shell,h,cmd);
       expect(wait(shell,h,original).out).toMatch(/^RUN: lost /);
       expect(stop(shell,h,original).code).toBe(0);
@@ -473,6 +493,8 @@ describe('implement wait blocks', () => {
       const accidental = /^RUN_DIR=(.+)$/m.exec(wrong.out)?.[1];
       if (accidental) { awaitFile(join(accidental,'id')); runs.push({shell,home:h,dir:accidental,cwd:ROOT,identity:readFileSync(join(accidental,'id'),'utf8')}); }
       expect(wrong.out).toBe('START: retry refused');
+      const recovered = sh(shell, `RUN_RETRY_OF=${quote(original)}\nRUN_CMD=$(cat "$RUN_RETRY_OF/command"; printf x); RUN_CMD=\${RUN_CMD%x}\nprintf '%s' "$RUN_CMD" | cmp -s "$RUN_RETRY_OF/command" -`, h);
+      expect(recovered.code).toBe(0);
       const retry = start(shell,h,cmd,{RUN_RETRY_OF:original});
       expect(wait(shell,h,retry).code).toBe(0);
       expect(readFileSync(join(retry,'command'),'utf8')).toBe(cmd);
