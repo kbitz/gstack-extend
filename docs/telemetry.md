@@ -543,7 +543,9 @@ their sources; anything else is null with a controlled reason). Launcher
 configuration is a requested source only: a reported value needs
 `reported_source:"tool-result"`, and an `unavailable` source carries null
 values. Nothing here
-scans transcripts, credentials, process tables or vendor usage services.
+scans transcripts, credentials, process tables or vendor usage services. The
+one carve-out is the manual installed smoke below, which may read only tool-call
+IDs and timestamps from its own session's local log, never content.
 
 ### Caller identity
 
@@ -564,7 +566,7 @@ Producers send metrics calls one at a time from the invocation's own session:
 the per-run lock never waits, so parallel tool calls or subagents drop events
 as `lock-busy`. Voice intervals under parallel dispatch are therefore
 parent-observed, not per-voice runtime. Every ID is lowercase
-(`uuidgen | tr A-Z a-z` on macOS). If the run `begin` is not `recorded` or
+(see [IDs](#workflow-metrics-ids)). If the run `begin` is not `recorded` or
 `replayed`, the invocation emits nothing further and its receipts carry the
 literal status line. Context compaction that loses the retained IDs or a
 pending payload leaves the affected capture unknown; IDs are never guessed.
@@ -602,10 +604,12 @@ without appending); conflicting, partial or unreadable snapshots stop replay.
 - `decision`: `RUN|REUSE|N/A` plus a controlled reason, one per visited phase,
   under the phase of the work decided about (a reused test run is
   `phase:"tests"`, not `reuse`). Reuse is a decision with no new work
-  interval. Each decision carries a fresh `step_id` per phase visit (or the
-  `step_id` of the execution it governs); revisiting a phase uses a new one.
-  Repeats of the same choice for one `step_id` and phase count once;
-  differing choices are a conflict and count as none.
+  interval. A decision carries the `step_id` of the execution it governs (a
+  span's decision shares its step's); a `REUSE`, `N/A` or unspanned visit uses
+  a fresh one, and revisiting a phase uses a new one. Repeats of the same
+  choice for one `step_id` and phase count once; differing choices are a
+  conflict and count as none. A `RUN` decision no begun step of its phase
+  carries is an [untimed visit](#workflow-metrics-untimed).
 - `pass`: a review round (`scope: local|greptile`) over one candidate.
   `started` declares the nonempty required-voice set; each `attempt` is a
   distinct try (retries/fallback link their predecessor; a completed attempt
@@ -701,7 +705,7 @@ phase) leave it `ok`.
 | `incomplete-pass` | A pass has not closed every required voice, or has not completed. |
 | `clock-invalid` | A step's end is earlier than its begin. |
 | `open-wait` | A wait ended `paused`; its duration is unknown. |
-| `unrecorded-work` | A `local-pass`, `external-review` or `fix` phase ran with no pass or fix record. |
+| `unrecorded-work` | A phase ran with work recorded only as a decision (an [untimed visit](#workflow-metrics-untimed)), or a `local-pass`, `external-review` or `fix` phase ran with no pass or fix record. |
 
 The envelope reasons `clock-invalid` and `candidate-changed` are reserved in
 v1: reads report clock problems through `unknown_reasons` and candidate drift
@@ -709,38 +713,45 @@ through `mixed_candidate_steps` and `cross-candidate`.
 
 ### Quickstart (isolated, copyable)
 
-Prerequisites: an installed gstack-extend checkout on PATH
-(`gstack-extend-telemetry`), `git`, `python3` 3.9+, and Bun only for this
-repo's tests. The exercise uses a temporary HOME and state root and no
-upstream tier, so nothing uploads and no real ledger is touched:
+Prerequisites: an installed gstack-extend checkout whose `gstack-extend-telemetry`
+is on PATH (if it is not, follow [Installation](installation.md#installation)
+first), `git`, `python3` 3.9+, and Bun only for this repo's tests. The block runs
+in a subshell with a temporary HOME and state root, no inherited state override
+and no upstream tier, so nothing uploads, no real ledger is touched, and your
+shell keeps its HOME, environment and working directory. The temporary state is
+removed on exit unless you set `KEEP=1`:
 
 ~~~sh
-export WM_HOME="$(mktemp -d)"
-export HOME="$WM_HOME" GSTACK_EXTEND_STATE_DIR="$WM_HOME/.gstack-extend"
-unset GSTACK_STATE_DIR GSTACK_DIR CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
-mkdir "$WM_HOME/repo" && git init -q "$WM_HOME/repo" && cd "$WM_HOME/repo"
-SID="$(gstack-extend-telemetry start --skill 'extend:review-and-prep' \
-  | sed -n 's/.*session=\(extend-[0-9a-f-]*\).*/\1/p')"
-RUN_STEP="$(uuidgen | tr 'A-Z' 'a-z')"   # or: python3 -c 'import uuid;print(uuid.uuid4())'
-EV() { uuidgen | tr 'A-Z' 'a-z'; }
-gstack-extend-telemetry metrics begin <<JSON
+(
+  WM_HOME="$(mktemp -d)" || exit 1
+  trap '[ "${KEEP:-}" = 1 ] || { [ -n "$WM_HOME" ] && [ -d "$WM_HOME" ] && rm -rf "$WM_HOME"; }' EXIT
+  GXT="$(command -v gstack-extend-telemetry)" || { echo 'gstack-extend-telemetry is not on PATH' >&2; exit 1; }
+  export HOME="$WM_HOME" GSTACK_EXTEND_STATE_DIR="$WM_HOME/.gstack-extend"
+  unset GSTACK_STATE_ROOT GSTACK_HOME GSTACK_STATE_DIR GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
+  mkdir "$WM_HOME/repo" && git init -q "$WM_HOME/repo" && cd "$WM_HOME/repo" || exit 1
+  SID="$("$GXT" start --skill 'extend:review-and-prep' \
+    | sed -n 's/.*session=\(extend-[0-9a-f-]*\).*/\1/p')"
+  RUN_STEP="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+  EV() { python3 -c 'import uuid;print(uuid.uuid4())'; }
+  "$GXT" metrics begin <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$RUN_STEP","parent_step_id":null,"kind":"run","phase":"run","context":{"candidate_head":null,"candidate_tree":null,"candidate_base":null,"binding":"unknown","skill_sha256":null,"parent_session_id":null}}
 JSON
-PHASE_STEP="$(EV)"
-gstack-extend-telemetry metrics begin <<JSON
+  PHASE_STEP="$(EV)"
+  "$GXT" metrics begin <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$PHASE_STEP","parent_step_id":"$RUN_STEP","kind":"phase","phase":"evidence"}
 JSON
-gstack-extend-telemetry metrics decision <<JSON
+  "$GXT" metrics decision <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$(EV)","phase":"tests","decision":"REUSE","reason":"matching-evidence"}
 JSON
-gstack-extend-telemetry metrics end <<JSON
+  "$GXT" metrics end <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$PHASE_STEP","outcome":"completed"}
 JSON
-gstack-extend-telemetry metrics end <<JSON
+  "$GXT" metrics end <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$RUN_STEP","outcome":"completed"}
 JSON
-gstack-extend-telemetry metrics read --session-id "$SID"
-gstack-extend-telemetry finish --skill 'extend:review-and-prep' --outcome success
+  "$GXT" metrics read --session-id "$SID"
+  "$GXT" finish --skill 'extend:review-and-prep' --outcome success
+)
 ~~~
 
 Expected reading: each producer prints `status:"recorded"`; the read prints
@@ -751,6 +762,332 @@ clock-sensitive), and a `receipt_text` restating those counts. With
 `status:"disabled"` and writes nothing; deleting the handoff first (or running
 `finish` before the first `begin`) prints `unavailable`/`identity-missing`.
 Missing data always reads as unknown — never as zero work.
+
+<a id="workflow-metrics-isolation"></a>
+
+### Isolating examples and fixtures
+
+Anything that runs the launcher writes state: `start` and `finish` write a
+handoff, a stage-runs row and an upstream usage row, and `metrics` writes a
+ledger. A test or a copied example must therefore never reach your real stores.
+Two preludes cover the two cases.
+
+**Test and example prelude.** A temporary HOME and state directory, and no
+inherited override of the resolver chain (`GSTACK_STATE_ROOT`, `GSTACK_HOME`,
+`GSTACK_STATE_DIR`, `GSTACK_DIR`, `CLAUDE_PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`). Run it in a subshell so your
+shell keeps its HOME and working directory, resolve the launcher to an absolute
+path before changing HOME, and remove the temporary state on exit unless
+`KEEP=1`:
+
+~~~sh
+(
+  GX_TMP="$(mktemp -d)" || exit 1
+  trap '[ "${KEEP:-}" = 1 ] || { [ -n "$GX_TMP" ] && [ -d "$GX_TMP" ] && rm -rf "$GX_TMP"; }' EXIT
+  GXT="$(command -v gstack-extend-telemetry)" || { echo 'gstack-extend-telemetry is not on PATH' >&2; exit 1; }
+  export HOME="$GX_TMP" GSTACK_EXTEND_STATE_DIR="$GX_TMP/.gstack-extend"
+  unset GSTACK_STATE_ROOT GSTACK_HOME GSTACK_STATE_DIR GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
+  mkdir "$GX_TMP/repo" && git init -q "$GX_TMP/repo" && cd "$GX_TMP/repo" || exit 1
+  # the examples that write go here, calling "$GXT" instead of gstack-extend-telemetry
+)
+~~~
+
+A launcher that is not on PATH is covered by [Installation](installation.md#installation).
+The workflow-metrics quickstart above and the legacy start/finish examples in this
+document use this form. The one exception is recovering a real older run (the
+`finish --session-id extend-ORIGINAL` command in Handoff adoption), which exists to
+write the real store.
+
+<a id="workflow-metrics-guard"></a>
+
+### Real-store guard (this repository's tests)
+
+Every telemetry test file registers `cleanupTelemetryFixtures` in `afterAll`. A
+`beforeAll` hook in the shared fixture module takes a read-only snapshot of your
+real stores before the first test (outside any per-test timeout; the first
+`makeTelemetryFixture()` takes it if the hook did not); cleanup harvests the `extend-<uuid>` session IDs the suite's fixture homes
+minted (from their handoffs, stage-runs rows and workflow-metrics ledger
+records; the launcher mints them at random), compares, clears the snapshot and
+removes the fixture homes even when the comparison fails. A failure fails the
+test run. The guard follows no symbolic link (a symlink in a store is skipped and
+reported by path) and changes nothing in a real store.
+
+Stores are your HOME's `.gstack-extend/` and `.gstack/analytics/`, plus any state
+root an inherited `GSTACK_EXTEND_STATE_DIR`, `GSTACK_STATE_ROOT`,
+`GSTACK_STATE_DIR`, `GSTACK_HOME`, `CLAUDE_PLUGIN_DATA` or `CLAUDE_PLUGIN_ROOT`
+points to. It checks three things:
+
+- **Append-only ledgers** (`*.jsonl` under a store's `analytics/`): path, size
+  and the SHA-256 of exactly the stat'd byte length, with no size cap. A
+  pre-existing gstack-extend ledger must keep its byte prefix (a real session may
+  append concurrently, which is allowed), and an appended range or a new file must
+  not contain a harvested ID. A shrink or rewrite of upstream's `skill-usage.jsonl`
+  reads `unverified` rather than failing.
+- **Name-keyed trees**: for each harvested ID, no file named with the SHA-256 of
+  the full `extend-<uuid>` string may exist under `telemetry/` (including its
+  per-checkout subdirectories), `telemetry-completed/`, `telemetry-locks/`,
+  `analytics/workflow-metrics/` or `workflow-metrics-locks/`. Real sessions
+  legitimately rewrite and delete other files in those trees, which are not
+  checked.
+- **Escaped roots**: a new or changed handoff or completion marker whose `root`
+  lies under the runner's temporary directory (compared by plain path and by
+  realpath, since macOS reports `/private/var/...`), or an appended or new row that
+  names such a path, means a child inherited a state override and left nothing to
+  harvest in its fixture home.
+
+A store missing before and after passes. An unreadable store reads `unverified`
+with a warning naming the path. Every failure line starts
+`REAL-STORE-GUARD:<code>` and gives what (the store label, a `~/`-relative path and
+size), the context (the suite file, the matched synthetic session ID, and the
+names, never values, of inherited state variables), the fix (find the spawn in
+that suite that escaped isolation and run it through `makeTelemetryFixture` or the
+[isolation prelude](#workflow-metrics-isolation)) and the recovery (side effects
+are complete; never edit, move or delete the real rows; report them to the owner;
+rerun after the fix). Each comparison ends with one summary line,
+`REAL-STORE-GUARD: verified|unverified|failed (<files> files, <ms> ms)`;
+`unverified` names its cause (an unreadable store, a skipped symlink, or a
+rewritten upstream ledger) and its fix (restore read access, replace the link or
+confirm the rotation, and rerun). `GSTACK_EXTEND_STORE_GUARD=strict` makes
+`unverified` fail. There is no off switch.
+
+| Code | Meaning |
+|---|---|
+| <a id="workflow-metrics-guard-prefix-rewrite"></a>`prefix-rewrite` | A pre-existing gstack-extend ledger lost or changed its byte prefix. |
+| <a id="workflow-metrics-guard-appended-id"></a>`appended-id` | An appended range or a new file in a real store contains a session ID a fixture minted. |
+| <a id="workflow-metrics-guard-named-file"></a>`named-file` | A file named for a fixture session ID exists in a real store's keyed trees. |
+| <a id="workflow-metrics-guard-escaped-root"></a>`escaped-root` | A real store records a state root under the runner's temporary directory. |
+| <a id="workflow-metrics-guard-unexpected"></a>`unexpected` | The guard itself raised (the line carries the error class and a compact trace), or strict mode turned an `unverified` result into a failure. |
+
+For a suite that cannot use the fixtures, or for the manual smoke, the same
+module has a shell entry (`bun tests/helpers/telemetry-env.ts --snapshot <file>`
+and `--compare <file> [--ids <file>] [--harvest <dir>]...`).
+
+Evidence level: the guard detects fixture-minted session IDs reaching the real
+stores and rewrites of gstack-extend's append-only ledgers. A writer outside the
+fixtures is covered by the entry-point inventory and its isolation repairs, not
+by the guard. As of Track 31A that inventory is: every test that runs the
+launcher's `start`, `finish` or `metrics` (the telemetry, telemetry-contract,
+telemetry-doctor and workflow-metrics suites, and the skill telemetry blocks
+they execute) does so through `makeTelemetryFixture`, whose child environment is
+only a temporary `HOME` and `PATH`; the setup, update and init suites run with
+their own temporary HOME and state directory and never call those operations; and
+the documented examples that write follow the
+[isolation prelude](#workflow-metrics-isolation).
+
+<a id="workflow-metrics-span"></a>
+
+### Recording a span at its boundary
+
+The helper stamps each record with the UTC wall time at which it is appended;
+a caller supplies no time. A span is therefore exactly as truthful as the moment
+its two records are written, and a record written after the work reads as a
+burst. These rules are stage-agnostic so a later stage can adopt them by
+reference; `/review-and-prep` and `/ship-and-land` carry them in their own
+"Workflow metrics" sections. Fixtures cannot observe agent timing, so the
+rules are pinned by drift-locks and helper tests, and boundary truth is
+confirmed only by the manual smoke below. Where upstream measures a duration
+itself (pregate stage and lane times, upstream autoplan timing), that
+measurement is authoritative: wrapper spans are orchestration boundaries.
+
+<a id="workflow-metrics-boundary"></a>
+
+**Boundary.** A step's `begin` is emitted in the tool call that starts its
+work, ahead of the work's first command. Its `end` is emitted in the same call
+right after the command returns, or, for work that returns later (a subagent, a
+background command or an external result), in the first tool call after the
+result arrives. Work with no command of its own (a completion audit, scope
+reading, triage) gets a short dedicated call for its `begin` immediately before
+the work and another for its `end` right after its result is decided. When
+several voices are dispatched together, their `begin` records go one after
+another in a single Bash call immediately before the one dispatch message,
+never inside it; each voice's `end` goes in the first tool call after that
+voice's own result arrives, and voices whose results arrive together end
+together (parent-observed). A pass `started` precedes the dispatch of its
+voices; each `attempt` and `voice-complete` is emitted as that voice's result is
+consumed, and `completed` when the round closes. Every phase visit a stage
+executes gets a span, except a `tests` lane inside a pregate run (see
+[test time](#workflow-metrics-pregate-time)). A command that may outlast the
+host's tool-call timeout, any background command and any subagent use the
+[cross-call form](#workflow-metrics-span-cross-call): a same-call `end` that
+runs in a backgrounded process would race the non-waiting run lock and drop as
+`lock-busy`.
+
+<a id="workflow-metrics-no-backfill"></a>
+
+**No backfill.** Never write a `begin` or `end` for a boundary that has already
+passed or has not happened yet. A missed `begin` leaves only the phase's
+`decision`; if a step's `begin` was not `recorded`, `replayed` or reconciled
+(`match`), emit no `end` for it. A missed `end` leaves the step open
+(`missing-end`). A wait is ended `paused` only at an actual pause. A command
+that fails, or hits its own timeout inside the call, ends `failed` in that call;
+work the user stops ends `cancelled`; if the host kills the tool call so the
+same-call `end` never runs, the step stays open.
+
+<a id="workflow-metrics-replay"></a>
+
+**Replay.** When a `begin` or `end` call returns `unconfirmed` or no envelope,
+reconcile it once with `metrics read --event-id`. A `match` counts the record as
+written and appends nothing; `absent` (or an unreadable snapshot) leaves the
+boundary missing, because replaying later would stamp a later time. `decision`,
+`pass` and `correction` keep the one-replay rule above, since no interval is
+ever derived from their timestamps. The span library does this inside the same
+call.
+
+<a id="workflow-metrics-ids"></a>
+
+**IDs.** Mint each new `event_id`, `step_id`, `pass_id` and `attempt_id` from a
+random generator (`python3 -c 'import uuid;print(uuid.uuid4())'`, or
+`uuidgen | tr A-Z a-z`) in the tool call that first uses it, and print it for
+later reference. Never derive an ID from the session ID, a counter, another ID
+or a typed pattern, and never reuse an ID for a different event or entity: a
+step keeps its `step_id` across its `begin`, `end` and governing `decision`; a
+pass and an attempt keep theirs; a replay keeps its `event_id`. Ledgers written
+before this rule can hold hand-patterned IDs (for example one repeated digit or
+a zero-padded counter) from real sessions. Those rows are real observations,
+retained unchanged, and an ID's shape alone never classifies a row as
+synthetic.
+
+<a id="workflow-metrics-id-shape"></a>
+
+The shape criterion used to select ledgers worth tracing, which selects and
+never attributes: a ledger row is selected when any UUID-formatted value in its
+request satisfies at least one of (A) the first 8-hex group is one repeated hex
+digit; (B) the last 12-hex group is a zero-padded counter (at least seven
+leading zeros, then one to five hex digits); (C) it copies segments of the run's
+own session UUID (the first or last group equals the session's group at the same
+position, or at least two of the three middle groups do). The 2026-10-25 trace
+applied it to every local ledger: 39 scanned, 3 selected, and each selected
+ledger traced to a real wrapper session (a published preparation receipt, its
+evidence copies and a stage-runs row), none to a test or example. That is why
+the fix is the random-ID rule above. Revisit trigger: the criterion matches a
+ledger whose records carry a `producer_version` above the release that ships
+that rule; check it per record whenever the criterion is next run.
+
+**Decisions.** The governing `RUN` decision of an executed phase visit is
+emitted by the span's `begin` and shares its `step_id`. A second step in the
+same visit (for example the full pregate run after its `--explain` probe) sets
+`NODECISION=1`. A reused or inapplicable phase records a `REUSE` or `N/A`
+decision with a fresh `step_id` and no span. A `tests` decision made inside a
+pregate run carries the enclosing `pregate` step's `step_id`: it governs that
+execution, so it reads as covered.
+
+<a id="workflow-metrics-untimed"></a>
+
+**Untimed visits.** A `RUN` decision is timed when a begun step of the same
+phase has its `step_id` (a `tests` decision is also timed by a begun `pregate`
+step it names). A decision that carries the `kind:"run"` step's ID is never
+covered. Each remaining `RUN` decision is an untimed visit: the read adds it to
+that phase's `unknown_durations`, `observed_wall_duration_ms` is `null` while
+`unknown_durations` is above zero, and the run-level `unrecorded-work` reason
+names it in the receipt's `unknown=` list. `REUSE` and `N/A` decisions add
+nothing, and no stored row or schema value changes. A phase with `RUN` above
+zero, `unknown_durations: 0` and a `null` duration was timed elsewhere (a
+`tests` decision covered by its pregate step) or reused.
+
+For records written by producer 0.50.0 or earlier, which gave decisions fresh
+IDs, a decision may instead be offset by one unpaired top-level step of the
+same phase (a step nested under a step of its own phase never offsets); a
+mixed-version ledger offsets only its older records.
+
+<a id="workflow-metrics-read-semantics"></a>
+
+Reads by this release and later pair decisions this way and count untimed
+visits, so reads of old ledgers with untimed `RUN` visits now show a nonzero
+`unknown_durations`, a `null` duration and `unrecorded-work`; consumers keyed on
+the old zero will see that change. Stored rows are untouched. The launcher has
+no `--version`: read the installed checkout's `VERSION` file for the reader's
+version, and the release notes name the release that first counts untimed
+visits.
+
+<a id="workflow-metrics-span-same-call"></a>
+
+**Same-call form.** `bin/lib/workflow-span.sh` is sourced into each Bash call
+(the shell is new every call, so set the retained values first). It keeps the
+launcher's always-exit-0 contract and the work's own exit status separate. Each
+site writes three lines: begin, the work block, end.
+
+~~~sh
+GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
+[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_end() { :; }; }
+gx_span_begin PHASE "$GX_RUN" phase
+GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
+gx_span_end "${GX_STEP:-}" "$rc"
+(exit "$rc")
+~~~
+
+`GX_SID`, `GX_LIB` (the library's path) and `GX_RUN` (the run step's `step_id`)
+are retained values; set `GX_CAPTURE=1` only when the run `begin` was `recorded`
+or `replayed`, otherwise `0`, and the work still runs with no launcher call.
+`PHASE` is a controlled phase; `phase` is the step kind (`phase`, `fix` or
+`voice`; `gx_span_begin_wait CATEGORY "$GX_RUN"` opens a wait and emits no
+decision). A fourth argument is a candidate `context` override object, and a
+fourth argument to `gx_span_end` sets its outcome to `paused` or `cancelled`. `WORK` is
+written inline, never through `eval`; it runs in a subshell with `errexit` and
+`pipefail`, so a command that fails early in a list stops the list and yields
+its nonzero status, and variables or `cd` made inside it do not persist (put any
+later line that needs them inside the block). The call ends with
+`(exit "$rc")` so its status equals the work's; a bare `exit` would end the
+call's shell. The function prints `SPAN step=<id> phase=<phase> begin=<status>
+end=pending`, then `SPAN step=<id> phase=<phase> begin=<status> end=<status|skipped>
+rc=<n>`. Quote those lines in later calls. Any `begin=`, `end=` or `decision=`
+value other than `recorded`, `replayed`, `match`, `pending` or `skipped`
+makes the receipt carry `capture=partial (<reason>)`. The pattern is valid in
+bash and zsh and avoids zsh's reserved `status` and `path`.
+
+To obtain the retained library path, run once (with the run `begin`) the
+telemetry start block's launcher resolution, then:
+
+~~~sh
+GX_LIB=$(python3 -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
+[ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
+~~~
+
+An empty `GX_LIB` (an older checkout) leaves span capture unavailable; the
+workflow continues.
+
+<a id="workflow-metrics-span-cross-call"></a>
+
+**Cross-call form.** For a background command, a subagent return, commandless
+work or any command that may outlast the host's tool-call timeout, the first call
+emits the decision and `begin` and prints the `SPAN` line (`end=pending`); the
+later call, in the first tool call after the result arrives, takes the step and
+begin status from that line and emits only the `end`:
+
+~~~sh
+GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
+[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_end() { :; }; }
+gx_span_begin PHASE "$GX_RUN" phase
+# ... start the work (run it in the background) and end this call.
+# First call after the completion notice, with the same first two lines:
+gx_span_end 'STEP-FROM-THE-SPAN-LINE' "$rc" 'BEGIN-FROM-THE-SPAN-LINE'
+~~~
+
+A begin reconciled in a later call, or whose `begin=` is not `recorded`,
+`replayed` or `match`, never gets an `end`.
+
+<a id="workflow-metrics-pregate-time"></a>
+
+**Test time inside pregate.** A pregate run that executes the tests lane is one
+`pregate` span; no `tests` child spans the whole run. The `tests` decision
+carries the `pregate` step's `step_id`, so it reads covered. The authoritative
+test-execution time for that run is pregate's own `stage2_ms` and per-check
+`ms`, in the pregate record the wrappers already preserve with its path and
+SHA-256:
+
+~~~sh
+python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print("stage2_ms",r.get("stage2_ms"));[print(c["id"],c.get("ms")) for c in r["checks"] if c.get("stage")=="tests"]' PREGATE_RECORD
+~~~
+
+A `tests` span is the wrapper's span wherever it runs a test command directly: a
+fallback main-suite run after a pregate run, and any run without a pregate
+runner, gets its own `tests` span.
+
+<a id="workflow-metrics-voice-begin"></a>
+
+**Voice timing.** A voice `begin`, emitted in the Bash call before the one
+dispatch message, includes the time spent writing that dispatch; its `end` is
+parent-observed when the voice's result arrives. The manual smoke records the
+delta between each voice `begin` and its dispatch tool call's own timestamp.
 
 ### Diagnostic reasons
 
@@ -790,6 +1127,11 @@ handoff (machine, OS/Python/filesystem, revision, per-scenario p50/p95 and
 peak RSS, and unchanged legacy start/finish timings on base versus branch);
 rerun the exercise on your machine before quoting any number as yours.
 
+A span adds records, not turns, where it can: a command step's records share
+its own call; commandless steps and subagent-return ends add one short call each;
+each helper record costs the measured launcher time reported below. The installed
+smoke records the added calls and turns.
+
 One measured run (macOS 27 arm64, Python 3.15.0, APFS, revision 6f94155 plus
 the uncommitted Track 24A change; real launcher subprocess per sample, so
 every figure includes Python and `telemetry.py` startup): disabled producer
@@ -821,6 +1163,63 @@ metrics calls shared an existing tool call; where a comparable enabled/disabled
 run is not practical, mark end-to-end overhead unqualified. File the result
 with host, harness and gstack-extend versions beside the workflow's other
 acceptance evidence; no part of this smoke is a release or 1.0 gate.
+
+Run the smoke with isolated destinations for both gstack-extend and upstream
+state, and bracket it with the [real-store guard](#workflow-metrics-guard)'s
+snapshot and compare. The host smoke prelude keeps your real HOME, so the host
+keeps its configuration, sign-in and installed skills; it moves only the state
+directories. Run it from the gstack-extend checkout, in the shell that launches
+the host:
+
+~~~sh
+SNAP="$(mktemp -d)/real-stores.snapshot" && bun tests/helpers/telemetry-env.ts --snapshot "$SNAP"
+EXT_ISO="$(mktemp -d)" UP_ISO="$(mktemp -d)"
+export GSTACK_EXTEND_STATE_DIR="$EXT_ISO" GSTACK_STATE_ROOT="$UP_ISO" GSTACK_STATE_DIR="$UP_ISO"
+unset GSTACK_HOME GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
+# Seed the isolated upstream directory with copies (never links) of its config and first-run prompt markers, so the
+# host shows no extra onboarding prompt. Never copy credentials, profiles or caches.
+cp "$HOME/.gstack/config.yaml" "$UP_ISO/" 2>/dev/null
+for f in "$HOME"/.gstack/.*-prompted "$HOME"/.gstack/.*-seen "$HOME"/.gstack/.*-shown; do [ -f "$f" ] && cp "$f" "$UP_ISO/"; done
+# Verify both upstream sinks before launching the host: each must name the isolated directory.
+"$HOME/.claude/skills/gstack/bin/gstack-paths" --get GSTACK_STATE_ROOT   # the modern logger's sink
+printf 'legacy logger sink: %s\n' "$GSTACK_STATE_DIR"                       # the legacy logger's sink
+~~~
+
+Launch the host from that shell and run each wrapper once. A host that cannot
+pass these variables through reports its smoke as unverified and is not run
+against the real stores. Afterwards compare, with the overrides removed so the
+guard reads your real stores (the run's session IDs are harvested from the
+isolated directories, and none may appear in a real store):
+
+~~~sh
+( unset GSTACK_EXTEND_STATE_DIR GSTACK_STATE_ROOT GSTACK_STATE_DIR
+  bun tests/helpers/telemetry-env.ts --compare "$SNAP" --harvest "$EXT_ISO" --harvest "$UP_ISO" )
+~~~
+
+On a host whose local session log carries tool-call timestamps (Claude Code),
+also compare each span's `begin` and `end` with the timestamps of the tool calls
+that contain them, and each voice `begin` with its dispatch tool call's own
+timestamp ([voice timing](#workflow-metrics-voice-begin)). Read only the smoke
+session's own tool-call IDs and timestamps; this field-only command prints
+nothing else and never content:
+
+~~~sh
+python3 -c 'import json,sys
+for line in open(sys.argv[1]):
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    content = (entry.get("message") or {}).get("content")
+    for item in content if isinstance(content, list) else []:
+        if isinstance(item, dict) and item.get("type") in ("tool_use", "tool_result"):
+            print(item["type"], item.get("id") or item.get("tool_use_id"), entry.get("timestamp"))' SMOKE_SESSION_LOG
+~~~
+
+Report the deltas and any missing span. Other hosts' boundary timing stays
+unvalidated. Fixtures cannot observe agent timing, so this smoke, the
+drift-locked rules and the helper tests are the whole evidence for boundary
+truth, and the report says so.
 
 ## Reviewer join file
 
@@ -1481,13 +1880,26 @@ wrappers update their phase mapping in the same change. See
 [Workflow metrics](#workflow-metrics).
 
 ~~~sh
-gstack-extend-telemetry start --skill "extend:roadmap"
-gstack-extend-telemetry finish --skill "extend:roadmap" --outcome success
+(
+  GX_TMP="$(mktemp -d)" || exit 1
+  trap '[ "${KEEP:-}" = 1 ] || { [ -n "$GX_TMP" ] && [ -d "$GX_TMP" ] && rm -rf "$GX_TMP"; }' EXIT
+  GXT="$(command -v gstack-extend-telemetry)" || exit 1
+  export HOME="$GX_TMP" GSTACK_EXTEND_STATE_DIR="$GX_TMP/.gstack-extend"
+  unset GSTACK_STATE_ROOT GSTACK_HOME GSTACK_STATE_DIR GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
+  mkdir "$GX_TMP/repo" && git init -q "$GX_TMP/repo" && cd "$GX_TMP/repo" || exit 1
+  "$GXT" start --skill "extend:roadmap"
+  "$GXT" finish --skill "extend:roadmap" --outcome success
+  tail -n 1 "$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl"
+)
 gstack-extend doctor telemetry --days 30
 ~~~
 
+This block follows the [isolation prelude](#workflow-metrics-isolation), so the
+smoke start and finish touch only a temporary HOME. The doctor reads your real
+sinks and writes nothing.
+
 Start prints GE_TELEMETRY: session=extend-<uuid> start=<epoch>. Finish needs neither
-value copied. The newest stage-runs row is:
+value copied. Reading your real newest stage-runs row writes nothing:
 
 ~~~sh
 tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/analytics/stage-runs.jsonl"
@@ -1586,13 +1998,14 @@ true
 ~~~sh
 gstack-extend doctor telemetry --days 30
 gstack-extend doctor telemetry --days 30 --json
-GSTACK_EXTEND_TELEMETRY_DEBUG=1 gstack-extend-telemetry start --skill "extend:roadmap"
 ~~~
 
 Run the doctor first. A manual `start` adds an open handoff that a later start-less
 finish may pair, and a manual `finish` can adopt and consume one, so never run another
 start for the run being diagnosed. To debug a real run, export `GSTACK_EXTEND_TELEMETRY_DEBUG=1` before
-launching the harness. Run synthetic smoke checks in a scratch repository.
+launching the harness. Run a synthetic debug start only inside the
+[isolation prelude](#workflow-metrics-isolation), replacing its example lines with
+`GSTACK_EXTEND_TELEMETRY_DEBUG=1 "$GXT" start --skill "extend:roadmap"`.
 The adoption reasons are defined in [Handoff adoption](#handoff-adoption).
 Conductor Cursor model and route diagnosis is in [Cursor and quota](#cursor-and-quota).
 Doctor pairing is not model coverage. For that harness, prefix the first normal

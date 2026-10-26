@@ -7,7 +7,7 @@
 import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
@@ -1610,26 +1610,230 @@ describe('workflow metrics contract (Track 24A)', () => {
   test('the documented quickstart runs verbatim to a receipt', () => {
     const body = section(docText(), '## Workflow metrics');
     const block = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
-    const fix = makeTelemetryFixture('off');
-    const script = join(fix.home, 'quickstart.sh');
-    // The quickstart must really isolate: HOME is the fresh temporary directory, never empty.
-    writeFileSync(script, block + '\necho "QS_HOME=$HOME QS_WM=$WM_HOME"\n');
-    const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home }, encoding: 'utf8', timeout: 30_000 });
+    const run = (keep: boolean) => {
+      const fix = makeTelemetryFixture('off');
+      // Canary state locations: every resolver variable the documentation unsets points here, so any write
+      // that escapes the temporary HOME lands in a directory this test can see.
+      const canary = join(fix.home, 'canary');
+      const callerDir = join(fix.home, 'caller');
+      mkdirSync(canary);
+      mkdirSync(callerDir);
+      const proof = join(fix.home, 'isolation-proof.txt');
+      // The block writes its own isolation proof from inside its subshell, where HOME has changed.
+      const withProof = block.replace(/\n\)\n?$/, `\n  printf 'HOME=%s STATE=%s\\n' "$HOME" "$GSTACK_EXTEND_STATE_DIR" > '${proof}'\n)\n`);
+      expect(withProof).not.toBe(block);
+      const canaries = Object.fromEntries(['GSTACK_STATE_ROOT', 'GSTACK_HOME', 'GSTACK_STATE_DIR', 'GSTACK_EXTEND_STATE_DIR', 'GSTACK_DIR',
+        'CLAUDE_PLUGIN_DATA', 'CLAUDE_PLUGIN_ROOT'].map(name => [name, canary]));
+      const script = join(fix.home, 'quickstart.sh');
+      writeFileSync(script, `cd '${callerDir}'\n${withProof}\nrc=$?\necho "AFTER rc=$rc pwd=$PWD home=$HOME state=$GSTACK_EXTEND_STATE_DIR root=$GSTACK_STATE_ROOT"\n`);
+      const r = spawnSync('bash', [script], { env: { PATH: join(ROOT, 'bin') + ':/usr/bin:/bin', HOME: fix.home, ...canaries, ...(keep ? { KEEP: '1' } : {}) }, encoding: 'utf8', timeout: 30_000 });
+      return { fix, canary, callerDir, proof, r };
+    };
+    const { fix, canary, callerDir, proof, r } = run(false);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('"status":"recorded"');
     expect(r.stdout).toContain('"status":"ok"');
     expect(r.stdout).toContain('capture=ok; clock=utc-wall clock-sensitive');
-    const isolation = /QS_HOME=(\S*) QS_WM=(\S*)/.exec(r.stdout)!;
+    // The block's own proof: a fresh temporary HOME with the state directory beneath it, removed on exit.
+    const isolation = /HOME=(\S+) STATE=(\S+)/.exec(readFileSync(proof, 'utf8'))!;
     expect(isolation[1]).not.toBe('');
-    expect(isolation[1]).toBe(isolation[2]);
     expect(isolation[1]).not.toBe(fix.home);
+    expect(isolation[2]).toBe(`${isolation[1]}/.gstack-extend`);
+    expect(existsSync(isolation[1])).toBe(false);
+    // Nothing reached the canary locations or the runner's HOME, and the caller's shell is unchanged.
+    expect(readdirSync(canary)).toEqual([]);
+    expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
+    expect(existsSync(join(fix.home, '.gstack'))).toBe(true); // the fixture's own config only
+    expect(readdirSync(join(fix.home, '.gstack'))).toEqual(['config.yaml']);
+    expect(r.stdout).toContain(`AFTER rc=0 pwd=${callerDir} home=${fix.home} state=${canary} root=${canary}`);
+    for (const name of ['GSTACK_STATE_ROOT', 'GSTACK_HOME', 'GSTACK_STATE_DIR', 'GSTACK_DIR', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'GROK_HOME']) {
+      expect(block, `the quickstart must unset ${name}`).toMatch(new RegExp(`unset [^\\n]*\\b${name}\\b`));
+    }
     // The documented reading: evidence ran and completed; tests were reused with no work interval.
     const summary = r.stdout.split('\n').filter(l => l.startsWith('{')).map(l => JSON.parse(l)).find(e => e.status === 'ok')!.data;
     const phase = (name: string) => summary.phases.find((p: any) => p.phase === name);
     expect(phase('evidence')).toMatchObject({ steps_started: 1, steps_completed: 1 });
     expect(phase('tests')).toMatchObject({ decisions: { RUN: 0, REUSE: 1, 'N/A': 0 }, steps_started: 0, observed_wall_duration_ms: null });
     expect(summary.qualified_elapsed_ms).toBeNull();
+    // KEEP=1 keeps the temporary state for inspection.
+    const kept = run(true);
+    expect(kept.r.status).toBe(0);
+    const keptHome = /HOME=(\S+) STATE=/.exec(readFileSync(kept.proof, 'utf8'))![1];
+    expect(existsSync(join(keptHome, '.gstack-extend'))).toBe(true);
+    expect(readdirSync(kept.canary)).toEqual([]);
+    rmSync(keptHome, { recursive: true, force: true });
   }, 60_000);
+
+  test('every runnable example that writes follows the isolation prelude', () => {
+    const doc = docText();
+    const blocks = [...doc.matchAll(/~~~sh\n([\s\S]*?)~~~/g)].map(m => m[1]);
+    const writers = blocks.filter(b => /^[^#\n]*(gstack-extend-telemetry|"\$GXT")\s+(start|finish|metrics\s+(begin|end|decision|pass|correction))\b/m.test(b));
+    expect(writers.length).toBeGreaterThanOrEqual(3); // the quickstart, the prelude example, the author quickstart, plus recovery commands
+    for (const block of writers) {
+      // Recovering a real older run is the one documented write to real state.
+      if (/extend-ORIGINAL|SESSION --start START/.test(block)) continue;
+      expect(block, `a writing example needs the isolation prelude:\n${block}`).toMatch(/^\($/m);
+      expect(block).toContain('export HOME="$');
+      expect(block).toMatch(/unset GSTACK_STATE_ROOT GSTACK_HOME GSTACK_STATE_DIR GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME/);
+      expect(block).toContain('GSTACK_EXTEND_STATE_DIR=');
+      expect(block).toContain('trap ');
+      expect(block).toContain('KEEP');
+    }
+  });
+
+  // Track 31A: the host smoke prelude exports both upstream sink variables; prove each logger generation honours them,
+  // against stand-in stores, so the smoke cannot reach a real ~/.gstack.
+  for (const mode of ['stub', 'real'] as const) {
+    test.if(mode === 'stub' || HAS_GSTACK)(`the host smoke prelude steers the ${mode === 'stub' ? 'legacy' : 'modern'} logger sink and the extend state into stand-in stores`, () => {
+      const fix = makeTelemetryFixture('community', mode);
+      const repo = initCheckout(fix.home, fix.env, 'smoke-repo', 'git@github.com:acme/widget.git');
+      const upstream = join(fix.home, 'standin-upstream');
+      const extendState = join(fix.home, 'standin-extend');
+      mkdirSync(upstream);
+      mkdirSync(extendState);
+      writeFileSync(join(upstream, 'config.yaml'), 'telemetry: community\n');
+      // The smoke prelude: both upstream variables at one directory, the extend state elsewhere, the rest unset.
+      const env = { ...fix.env, GSTACK_STATE_ROOT: upstream, GSTACK_STATE_DIR: upstream, GSTACK_EXTEND_STATE_DIR: extendState };
+      const started = runTelemetry(env, repo, ['start', '--skill', 'extend:review-and-prep']);
+      expect(started.status).toBe(0);
+      expect(runTelemetry(env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
+      const rows = join(upstream, 'analytics', 'skill-usage.jsonl');
+      expect(existsSync(rows), `${mode} logger wrote its sink under the isolated upstream directory`).toBe(true);
+      expect(readFileSync(rows, 'utf8')).toContain('review-and-prep');
+      expect(existsSync(join(extendState, 'analytics', 'stage-runs.jsonl'))).toBe(true);
+      // Nothing reached the runner's HOME stores (the fixture HOME stands in for the real one).
+      expect(existsSync(join(fix.home, '.gstack', 'analytics', 'skill-usage.jsonl'))).toBe(false);
+      expect(existsSync(join(fix.home, '.gstack-extend'))).toBe(false);
+    }, 30_000);
+  }
+
+  test('the smoke timestamp command prints only tool-call IDs and timestamps, never content', () => {
+    const doc = docText();
+    const at = doc.indexOf('this field-only command prints');
+    const command = /~~~sh\n([\s\S]*?)~~~/.exec(doc.slice(at))![1];
+    const fix = makeTelemetryFixture('off');
+    const log = join(fix.home, 'smoke-session.jsonl');
+    const secret = 'SECRET-CONTENT-MUST-NOT-PRINT';
+    writeFileSync(log, [
+      { type: 'assistant', timestamp: '2026-10-26T01:00:00.000Z', message: { content: [{ type: 'text', text: secret }, { type: 'tool_use', id: 'toolu_a', name: 'Bash', input: { command: secret } }] } },
+      { type: 'user', timestamp: '2026-10-26T01:00:02.500Z', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: secret }] } },
+      { type: 'user', timestamp: '2026-10-26T01:00:03.000Z', message: { content: secret } },
+    ].map(entry => JSON.stringify(entry)).join('\n') + '\nnot json\n');
+    const r = spawnSync('bash', ['-c', command.replace('SMOKE_SESSION_LOG', `'${log}'`)], { env: fix.env, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(r.stdout).not.toContain(secret);
+    expect(r.stdout.trim().split('\n')).toEqual(['tool_use toolu_a 2026-10-26T01:00:00.000Z', 'tool_result toolu_a 2026-10-26T01:00:02.500Z']);
+  });
+
+  // Track 31A: the documented same-call span pattern, extracted verbatim, keeps the work's exit status
+  // whatever the capture does, in every shell the hosts use, with errexit on and off.
+  describe('the documented same-call span pattern', () => {
+    const block = () => {
+      const body = section(docText(), '## Workflow metrics');
+      const at = body.indexOf('<a id="workflow-metrics-span-same-call"></a>');
+      return /~~~sh\n([\s\S]*?)~~~/.exec(body.slice(at))![1];
+    };
+    const shells = [...new Set(['bash', '/bin/bash', 'zsh'].filter(sh => spawnSync(sh, ['-c', 'exit 0']).status === 0))];
+    type Case = { name: string; work: string; capture?: number; lib?: 'real' | 'missing' | 'no-launcher' | 'garbage' | 'unconfirmed'; rc: number; end: 'recorded' | 'skipped' | 'match'; begin?: string; outcome?: 'completed' | 'failed' };
+    const cases: Case[] = [
+      { name: 'enabled, passing command', work: 'echo worked', rc: 0, end: 'recorded', outcome: 'completed' },
+      { name: 'enabled, failing command', work: 'echo before; false; echo after', rc: 1, end: 'recorded', outcome: 'failed' },
+      { name: 'enabled, failing command inside a pipe', work: 'false | cat; echo after', rc: 1, end: 'recorded', outcome: 'failed' },
+      { name: 'capture disabled', work: 'echo worked; exit 7', capture: 0, rc: 7, end: 'skipped', begin: 'skipped' },
+      { name: 'no launcher beside the library', work: 'echo worked; exit 3', lib: 'no-launcher', rc: 3, end: 'skipped', begin: 'skipped' },
+      { name: 'library not found', work: 'echo worked; exit 4', lib: 'missing', rc: 4, end: 'skipped', begin: 'none' },
+      { name: 'malformed envelope', work: 'echo worked; exit 5', lib: 'garbage', rc: 5, end: 'skipped', begin: 'missing' },
+      { name: 'unconfirmed write the read finds', work: 'false', lib: 'unconfirmed', rc: 1, end: 'match', begin: 'match', outcome: 'failed' },
+    ];
+    for (const shell of shells) {
+      test(`${shell}: exit status, SPAN line and records in ${cases.length} cases, errexit on and off`, () => {
+        for (const errexit of [false, true]) for (const c of cases) {
+          const label = `${shell} errexit=${errexit} ${c.name}`;
+          const fix = makeTelemetryFixture('off');
+          const repo = join(fix.home, 'repo');
+          mkdirSync(repo);
+          expect(spawnSync('git', ['init', '-q', repo], { env: fix.env }).status).toBe(0);
+          const sid = /session=(extend-[0-9a-f-]{36})/.exec(runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']).stdout)![1];
+          const run = randomUUID();
+          const begun = spawnSync(WRAPPER, ['metrics', 'begin'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000, input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: run, parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null, candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }) });
+          expect(JSON.parse(begun.stdout).status).toBe('recorded');
+          // The library finds its launcher as a sibling, so each case builds the checkout it wants.
+          const checkout = join(fix.home, 'checkout', 'bin');
+          mkdirSync(join(checkout, 'lib'), { recursive: true });
+          writeFileSync(join(checkout, 'lib', 'workflow-span.sh'), readFileSync(join(ROOT, 'bin/lib/workflow-span.sh'), 'utf8'));
+          const stub = (body: string) => { writeFileSync(join(checkout, 'gstack-extend-telemetry'), `#!/bin/sh\n${body}\n`); chmodSync(join(checkout, 'gstack-extend-telemetry'), 0o755); };
+          if (c.lib === 'garbage') stub('echo "not an envelope"');
+          else if (c.lib === 'unconfirmed') stub(`case "$2" in\n  begin|end) ${JSON.stringify(WRAPPER)} "$@" >/dev/null; echo '{"v":1,"status":"unconfirmed","reason":"io-error"}' ;;\n  *) exec ${JSON.stringify(WRAPPER)} "$@" ;;\nesac`);
+          else if (c.lib !== 'no-launcher' && c.lib !== 'missing') symlinkSync(WRAPPER, join(checkout, 'gstack-extend-telemetry'));
+          const lib = c.lib === 'missing' ? join(fix.home, 'nowhere', 'bin', 'lib', 'workflow-span.sh') : join(checkout, 'lib', 'workflow-span.sh');
+          const pattern = block().replace('<session ID the start printed>', sid).replace('GX_CAPTURE=1', `GX_CAPTURE=${c.capture ?? 1}`)
+            .replace('PHASE', 'pregate').replace('WORK', c.work);
+          const script = `${errexit ? 'set -e\n' : ''}GX_LIB=${JSON.stringify(lib)}\nGX_RUN=${run}\n${pattern}`;
+          const r = spawnSync(shell, ['-c', script], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 45_000 });
+          expect(r.status, `${label}: the call's exit status must equal the work's\n${r.stdout}${r.stderr}`).toBe(c.rc);
+          if (c.work.includes('echo worked')) expect(r.stdout, label).toContain('worked');
+          if (c.work.includes('after')) expect(r.stdout, `${label}: the block stops at the first failure`).not.toContain('after');
+          const spans = r.stdout.split('\n').filter(l => l.startsWith('SPAN '));
+          if (c.begin === 'none') {
+            expect(spans, label).toEqual([]);
+          } else {
+            const last = spans[spans.length - 1];
+            expect(spans.length, label).toBe(2);
+            expect(spans[0], label).toMatch(new RegExp(`^SPAN step=\\S+ phase=pregate begin=${c.begin ?? 'recorded'} end=pending`));
+            expect(last, label).toMatch(new RegExp(`phase=pregate begin=${c.begin ?? 'recorded'} end=${c.end} rc=${c.rc}$`));
+          }
+          const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
+          const data = JSON.parse(read.stdout).data;
+          const pregate = data.phases.find((p: any) => p.phase === 'pregate');
+          if (c.end === 'skipped') {
+            // No lone end: nothing of this span reaches the ledger, and the open run step is the only unknown.
+            expect(pregate, label).toBeUndefined();
+            expect(data.unknown_reasons, label).not.toContain('missing-begin');
+          } else {
+            expect(pregate, label).toMatchObject({ steps_started: 1, steps_completed: c.outcome === 'completed' ? 1 : 0, decisions: { RUN: 1 }, unknown_durations: 0 });
+            expect(typeof pregate.observed_wall_duration_ms, label).toBe('number');
+          }
+        }
+      }, 300_000);
+    }
+
+    test('the cross-call form ends a step begun in an earlier call, and never ends an unconfirmed begin', () => {
+      const body = section(docText(), '## Workflow metrics');
+      const lookup = /~~~sh\n([\s\S]*?)~~~/.exec(body.slice(body.indexOf('To obtain the retained library path')))![1];
+      const fix = makeTelemetryFixture('off');
+      const repo = join(fix.home, 'repo');
+      mkdirSync(repo);
+      expect(spawnSync('git', ['init', '-q', repo], { env: fix.env }).status).toBe(0);
+      const sid = /session=(extend-[0-9a-f-]{36})/.exec(runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']).stdout)![1];
+      const run = randomUUID();
+      spawnSync(WRAPPER, ['metrics', 'begin'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000, input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: run, parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null, candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }) });
+      // The lookup resolves a symlinked launcher to the checkout's own library, as the start block's _GE_BIN may be one.
+      const link = join(fix.home, 'launcher-link');
+      symlinkSync(WRAPPER, link);
+      const found = spawnSync('bash', ['-c', lookup], { env: { ...fix.env, _GE_BIN: link }, encoding: 'utf8' });
+      const lib = /^GX_LIB=(.+)$/m.exec(found.stdout)![1];
+      expect(realpathSync(lib)).toBe(realpathSync(join(ROOT, 'bin/lib/workflow-span.sh')));
+      const missing = spawnSync('bash', ['-c', lookup], { env: { ...fix.env, _GE_BIN: join(fix.home, 'absent') }, encoding: 'utf8' });
+      expect(missing.stdout.trim()).toBe('GX_LIB=');
+      const head = `GX_STAGE='review-and-prep'; GX_SID='${sid}'; GX_CAPTURE=1; GX_LIB='${lib}'; GX_RUN='${run}'\n. "$GX_LIB"\n`;
+      const first = spawnSync('bash', ['-c', head + 'gx_span_begin tests "$GX_RUN" phase'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });
+      const line = /^SPAN step=(\S+) phase=tests begin=(\S+) end=pending$/m.exec(first.stdout)!;
+      expect(line[2]).toBe('recorded');
+      // A new shell (a later tool call) knows the step only from the quoted SPAN line.
+      const later = (step: string, bstat: string) => spawnSync('bash', ['-c', head + `gx_span_end '${step}' 0 '${bstat}'`], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });
+      expect(later(line[1], 'unconfirmed').stdout).toContain('end=skipped');
+      expect(later(line[1], line[2]).stdout).toContain(`SPAN step=${line[1]} phase=- begin=recorded end=recorded rc=0`);
+      const data = JSON.parse(spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8' }).stdout).data;
+      expect(data.phases.find((p: any) => p.phase === 'tests')).toMatchObject({ steps_started: 1, steps_completed: 1, unknown_durations: 0 });
+      // A wait opens without a decision and ends paused only on request: its duration then reads unknown.
+      const waitOut = spawnSync('bash', ['-c', head + 'gx_span_begin_wait human "$GX_RUN"'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 }).stdout;
+      const wait = /^SPAN step=(\S+) phase=human begin=recorded end=pending$/m.exec(waitOut)!;
+      expect(spawnSync('bash', ['-c', head + `gx_span_end '${wait[1]}' 0 recorded paused`], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 }).stdout).toContain('end=recorded');
+      const after = JSON.parse(spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8' }).stdout).data;
+      expect(after.waits).toEqual([{ wait_category: 'human', count: 1, observed_wall_duration_ms: null, unknown_durations: 1 }]);
+      expect(after.unknown_reasons).toContain('open-wait');
+    }, 60_000);
+  });
 });
 
 

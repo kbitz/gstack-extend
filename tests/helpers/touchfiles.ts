@@ -301,6 +301,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/gstack-extend',
     'bin/lib/telemetry*.py',
     'bin/lib/workflow_metrics.py',
+    // Track 31A: the span pattern test sources the library next to a stand-in launcher.
+    'bin/lib/workflow-span.sh',
     'docs/workflow-metrics.schema.json',
     // The v1 quota-reader fixture runs `gstack-extend quota runs`.
     'bin/lib/install-safety.sh',
