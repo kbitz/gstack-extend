@@ -24,6 +24,8 @@
 # Each call prints one SPAN line to quote later:
 #   SPAN step=<id> phase=<phase> begin=<status> end=pending
 #   SPAN step=<id> phase=<phase> begin=<status> end=<status|skipped> rc=<n>
+# An empty or nonnumeric RC emits no end and prints end=missing rc=unknown.
+# Even an explicit OUTCOME requires RC (use 0 for an observed pause/cancel).
 # Statuses are recorded, replayed, match (an unconfirmed write the read found), unconfirmed,
 # missing, disabled, unavailable, conflict, partial or skipped. A decision that was not
 # recorded appends decision=<status>. Variables start with _gx_/GX_ and avoid zsh's reserved
@@ -38,11 +40,7 @@ _gx_event_status() {
 }
 
 _gx_mint() {
-  python3 -c 'import uuid;print(*[uuid.uuid4() for _ in range(3)])' 2>/dev/null
-}
-
-_gx_ok() {
-  case "$_GX_RES" in recorded|replayed|match) return 0 ;; *) return 1 ;; esac
+  python3 -B -I -c 'import uuid;print(*[uuid.uuid4() for _ in range(3)])' 2>/dev/null
 }
 
 # _gx_emit OP EVENT_ID PAYLOAD REPLAY: sends one producer record and sets _GX_RES. An unconfirmed
@@ -140,7 +138,7 @@ gx_span_begin_wait() {
 gx_span_end() {
   _gx_sv=$-
   set +e
-  _gx_step=${1:-} _gx_rc=${2:-0} _gx_bstat=${3:-} _gx_outcome=${4:-}
+  _gx_step=${1:-} _gx_rc=${2:-} _gx_bstat=${3:-} _gx_outcome=${4:-}
   _gx_label=-
   _gx_reg=${GX_BEGUN:-}
   _gx_known=${_gx_reg#*" $_gx_step="}
@@ -150,6 +148,14 @@ gx_span_end() {
     _gx_label=${_gx_known#*:}
   fi
   [ -n "$_gx_bstat" ] || _gx_bstat=unknown
+  # A new shell has no prior rc: without the observed result, leave the span open.
+  case "$_gx_rc" in
+    ""|*[!0-9]*)
+      printf 'SPAN step=%s phase=%s begin=%s end=missing rc=unknown\n' "${_gx_step:--}" "$_gx_label" "$_gx_bstat"
+      case "$_gx_sv" in *e*) set -e ;; esac
+      return 0
+      ;;
+  esac
   _gx_endstat=skipped
   case "$_gx_bstat" in
     recorded|replayed|match)

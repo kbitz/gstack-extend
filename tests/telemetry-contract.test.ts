@@ -1707,6 +1707,27 @@ describe('workflow metrics contract (Track 24A)', () => {
     }, 30_000);
   }
 
+  test('the host smoke prelude preserves custom profiles and tolerates unmatched marker globs', () => {
+    const at = docText().indexOf('### Installed two-wrapper smoke');
+    const command = /~~~sh\n([\s\S]*?)~~~/.exec(docText().slice(at))![1];
+    for (const shell of ['bash', 'zsh']) {
+      if (spawnSync(shell, ['-c', 'exit 0']).status !== 0) continue;
+      const fix = makeTelemetryFixture('off');
+      const source = join(fix.home, 'upstream-source');
+      mkdirSync(source);
+      writeFileSync(join(source, 'config.yaml'), 'telemetry: off\n');
+      writeFileSync(join(source, '.test-seen'), 'seen'); // the other two globs deliberately have no matches
+      const paths = join(fix.home, 'gstack-paths');
+      writeFileSync(paths, `#!/bin/sh\nprintf '%s\\n' "\${GSTACK_STATE_ROOT:-${source}}"\n`);
+      chmodSync(paths, 0o755);
+      const profiles = { CLAUDE_CONFIG_DIR: '/synthetic/claude-profile', CODEX_HOME: '/synthetic/codex-profile', GROK_HOME: '/synthetic/grok-profile' };
+      const script = `${command}\n[ "$CLAUDE_CONFIG_DIR" = '${profiles.CLAUDE_CONFIG_DIR}' ] && [ "$CODEX_HOME" = '${profiles.CODEX_HOME}' ] && [ "$GROK_HOME" = '${profiles.GROK_HOME}' ] || exit 91\n[ -f "$UP_ISO/.test-seen" ] && [ -f "$UP_ISO/config.yaml" ] || exit 92\n[ "$GSTACK_STATE_ROOT" = "$UP_ISO" ] && [ "$GSTACK_STATE_DIR" = "$UP_ISO" ] || exit 93\n`;
+      const r = spawnSync(shell, ['-c', script], { cwd: ROOT, env: { ...fix.env, ...profiles, GSP: paths, TMPDIR: fix.home }, encoding: 'utf8', timeout: 30_000 });
+      expect(r.status, r.stdout + r.stderr).toBe(0);
+      expect(r.stderr).not.toContain('no matches found');
+    }
+  }, 60_000);
+
   test('the smoke timestamp command prints only tool-call IDs and timestamps, never content', () => {
     const doc = docText();
     const at = doc.indexOf('this field-only command prints');
@@ -1734,7 +1755,151 @@ describe('workflow metrics contract (Track 24A)', () => {
       return /~~~sh\n([\s\S]*?)~~~/.exec(body.slice(at))![1];
     };
     const shells = [...new Set(['bash', '/bin/bash', 'zsh'].filter(sh => spawnSync(sh, ['-c', 'exit 0']).status === 0))];
-    type Case = { name: string; work: string; capture?: number; lib?: 'real' | 'missing' | 'no-launcher' | 'garbage' | 'unconfirmed'; rc: number; end: 'recorded' | 'skipped' | 'match'; begin?: string; outcome?: 'completed' | 'failed' };
+    test('UUID minting ignores checkout and PYTHONPATH modules', () => {
+      const fix = makeTelemetryFixture('off');
+      const marker = join(fix.home, 'imported');
+      const shadow = `from pathlib import Path\nPath(${JSON.stringify(marker)}).write_text('unexpected import')\nraise RuntimeError('synthetic shadow module')\n`;
+      writeFileSync(join(fix.home, 'uuid.py'), shadow);
+      for (const cwd of [fix.home, ROOT]) {
+        const r = spawnSync('/bin/bash', ['-c', '. "$1"; _gx_mint', 'probe', join(ROOT, 'bin/lib/workflow-span.sh')],
+          { cwd, env: { ...fix.env, PYTHONPATH: fix.home }, encoding: 'utf8' });
+        expect(r.status).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+        expect(r.stdout.trim().split(' ')).toHaveLength(3);
+        for (const id of r.stdout.trim().split(' ')) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      }
+    });
+    test('a missing library preserves wait work and its status in every supported shell', () => {
+      const fix = makeTelemetryFixture('off');
+      const fallback = block().split('\n').find(line => line.startsWith('[ -f "$GX_LIB" ]'))!;
+      for (const shell of shells) for (const errexit of [false, true]) {
+        const r = spawnSync(shell, ['-c', `${errexit ? 'set -e\n' : ''}GX_LIB=''; GX_RUN='run'\n${fallback}\ngx_span_begin_wait human "$GX_RUN"\necho work-ran\n(exit 7)`], { env: fix.env, encoding: 'utf8' });
+        expect(r.status).toBe(7);
+        expect(r.stdout).toContain('work-ran');
+        expect(r.stderr).toBe('');
+      }
+    });
+    // Value: protects=span options preserve governing decisions, parent and candidate attribution and explicit outcomes;
+    // fails_when=NODECISION is ignored or a reason, context, parent or cancelled outcome is dropped;
+    // why_new=the existing same-call matrix uses only default phase options; seam=none;
+    // no_claim=agent boundary timing (real launcher in temporary fixture repositories only).
+    test('span options preserve one governing decision and carry candidate and parent context', () => {
+      for (const shell of shells) {
+        const fix = makeTelemetryFixture('off');
+        const repo = join(fix.home, 'span-options');
+        mkdirSync(repo);
+        expect(spawnSync('git', ['init', '-q', repo], { env: fix.env }).status).toBe(0);
+        const sid = /session=(extend-[0-9a-f-]{36})/.exec(runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']).stdout)![1];
+        const run = randomUUID();
+        const opened = spawnSync(WRAPPER, ['metrics', 'begin'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000,
+          input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: run,
+            parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null,
+              candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }) });
+        expect(JSON.parse(opened.stdout).status).toBe('recorded');
+        const context = { candidate_head: 'e'.repeat(40), candidate_tree: 'f'.repeat(40), binding: 'dirty' };
+        const script = [
+          '. "$GX_LIB"',
+          "gx_span_begin scope '' phase",
+          'GX_REASON=candidate-changed',
+          'gx_span_begin coverage "$GX_RUN" phase "$GX_CTX"',
+          'PARENT_STEP=$GX_STEP',
+          'NODECISION=1',
+          'gx_span_begin coverage "$PARENT_STEP" voice "$GX_CTX"',
+          'gx_span_end "$GX_STEP" 0 recorded cancelled',
+          'NODECISION=0',
+          'gx_span_begin_wait human "$GX_RUN" "$GX_CTX"',
+        ].join('\n');
+        const result = spawnSync(shell, ['-c', script], { cwd: repo, env: { ...fix.env, GX_LIB: join(ROOT, 'bin/lib/workflow-span.sh'),
+          GX_STAGE: 'review-and-prep', GX_SID: sid, GX_CAPTURE: '1', GX_RUN: run, GX_CTX: JSON.stringify(context) }, encoding: 'utf8', timeout: 60_000 });
+        expect(result.status, `${shell}: ${result.stdout}${result.stderr}`).toBe(0);
+        const file = join(fix.home, '.gstack-extend/analytics/workflow-metrics', createHash('sha256').update(sid).digest('hex') + '.jsonl');
+        const records = readFileSync(file, 'utf8').trim().split('\n').map(line => JSON.parse(line)).slice(1);
+        expect(records.map(row => row.op), shell).toEqual(['decision', 'begin', 'decision', 'begin', 'begin', 'end', 'begin']);
+        const [defaultDecision, defaultBegin, decision, begin, voice, end, wait] = records.map(row => row.request);
+        expect(defaultDecision).toMatchObject({ phase: 'scope', decision: 'RUN', reason: 'required', step_id: defaultBegin.step_id });
+        expect(defaultBegin).toMatchObject({ parent_step_id: null, kind: 'phase', phase: 'scope' });
+        expect(defaultBegin).not.toHaveProperty('context');
+        expect(decision).toMatchObject({ phase: 'coverage', decision: 'RUN', reason: 'candidate-changed', step_id: begin.step_id });
+        expect(begin).toMatchObject({ parent_step_id: run, kind: 'phase', context });
+        expect(voice).toMatchObject({ parent_step_id: begin.step_id, kind: 'voice', phase: 'coverage', context });
+        expect(end).toMatchObject({ step_id: voice.step_id, outcome: 'cancelled' });
+        expect(wait).toMatchObject({ parent_step_id: run, kind: 'wait', wait_category: 'human', context });
+        expect(wait).not.toHaveProperty('phase');
+        expect(new Set([defaultBegin.step_id, begin.step_id, voice.step_id, wait.step_id]).size).toBe(4);
+        expect(new Set(records.map(row => row.event_id)).size).toBe(records.length);
+      }
+    }, 60_000);
+
+    // Value: protects=terminal capture replies never retry and uncertain decisions replay once unchanged only after absence;
+    // fails_when=terminal or unknown replies retry, absent decisions lose their retry, or replay payload/ID changes;
+    // why_new=the existing uncertain-reply matrix intercepts begin/end, not the governing decision; seam=none;
+    // no_claim=real storage failures or agent timing (a recording launcher stub supplies reply envelopes).
+    test('capture reply matrix bounds decision replay and preserves the work exit status', () => {
+      type Reply = { terminal?: string; first?: string; event?: string; retry?: string };
+      const rows: Array<{ name: string; reply: Reply; ops: string[]; begin: string; end: string; decision?: string }> = [
+        ...['recorded', 'replayed', 'disabled', 'unavailable', 'conflict', 'partial'].map(status => ({
+          name: status, reply: { terminal: status }, ops: ['decision', 'begin', ...(['recorded', 'replayed'].includes(status) ? ['end'] : [])],
+          begin: status, end: ['recorded', 'replayed'].includes(status) ? status : 'skipped',
+          ...(['recorded', 'replayed'].includes(status) ? {} : { decision: status }),
+        })),
+        { name: 'unconfirmed absent', reply: { first: 'unconfirmed', event: 'absent', retry: 'recorded' }, ops: ['decision', 'read', 'decision', 'begin', 'end'], begin: 'recorded', end: 'recorded' },
+        { name: 'missing absent', reply: { first: '', event: 'absent', retry: 'replayed' }, ops: ['decision', 'read', 'decision', 'begin', 'end'], begin: 'recorded', end: 'recorded' },
+        { name: 'unconfirmed matched', reply: { first: 'unconfirmed', event: 'match' }, ops: ['decision', 'read', 'begin', 'end'], begin: 'recorded', end: 'recorded' },
+        { name: 'unconfirmed unknown', reply: { first: 'unconfirmed', event: 'unknown' }, ops: ['decision', 'read', 'begin', 'end'], begin: 'recorded', end: 'recorded', decision: 'unconfirmed' },
+        { name: 'retry unavailable', reply: { first: 'unconfirmed', event: 'absent', retry: 'unavailable' }, ops: ['decision', 'read', 'decision', 'begin', 'end'], begin: 'recorded', end: 'recorded', decision: 'missing' },
+        { name: 'retry unconfirmed', reply: { first: 'unconfirmed', event: 'absent', retry: 'unconfirmed' }, ops: ['decision', 'read', 'decision', 'begin', 'end'], begin: 'recorded', end: 'recorded', decision: 'unconfirmed' },
+      ];
+      for (const shell of shells) for (const row of rows) {
+        const fix = makeTelemetryFixture('off');
+        const checkout = join(fix.home, 'checkout/bin');
+        mkdirSync(join(checkout, 'lib'), { recursive: true });
+        const lib = join(checkout, 'lib/workflow-span.sh');
+        writeFileSync(lib, readFileSync(join(ROOT, 'bin/lib/workflow-span.sh'), 'utf8'));
+        const log = join(fix.home, 'capture-calls.jsonl');
+        const launcher = join(checkout, 'gstack-extend-telemetry');
+        writeFileSync(launcher, [
+          '#!/usr/bin/env python3', 'import json, os, sys', 'from pathlib import Path',
+          'log = Path(os.environ["CAPTURE_CALL_LOG"])',
+          'prior = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []',
+          'reply = json.loads(os.environ["CAPTURE_REPLY"])', 'op = sys.argv[2]',
+          'entry = {"op": op, "input": sys.stdin.read() if op != "read" else None, "argv": sys.argv[3:]}',
+          'with log.open("a") as stream: stream.write(json.dumps(entry) + "\\n")',
+          'if op == "read":',
+          '    print(json.dumps({"status": "ok", "data": {"event": {"status": reply["event"]}}}))',
+          'else:',
+          '    status = reply.get("terminal", "recorded")',
+          '    if op == "decision" and "first" in reply:',
+          '        status = reply["retry"] if any(item["op"] == "decision" for item in prior) else reply["first"]',
+          '    if status: print(json.dumps({"status": status}))',
+        ].join('\n') + '\n');
+        chmodSync(launcher, 0o755);
+        const sid = 'extend-' + randomUUID();
+        const pattern = block().replace('<session ID the start printed>', sid).replace('PHASE', 'coverage').replace('WORK', 'echo work-ran; exit 7');
+        const result = spawnSync(shell, ['-c', 'set -e\n' + pattern], { env: { ...fix.env, GX_LIB: lib, GX_RUN: randomUUID(),
+          CAPTURE_CALL_LOG: log, CAPTURE_REPLY: JSON.stringify(row.reply) }, encoding: 'utf8', timeout: 30_000 });
+        const label = `${shell}: ${row.name}`;
+        expect(result.status, `${label}\n${result.stdout}${result.stderr}`).toBe(7);
+        expect(result.stdout, label).toContain('work-ran');
+        expect(result.stderr, label).toBe('');
+        const calls = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(calls.map(call => call.op), label).toEqual(row.ops);
+        const decisions = calls.filter(call => call.op === 'decision');
+        if (decisions.length === 2) expect(decisions[1].input, label).toBe(decisions[0].input);
+        const decision = JSON.parse(decisions[0].input);
+        const read = calls.find(call => call.op === 'read');
+        if (read) expect(read.argv, label).toEqual(['--session-id', sid, '--event-id', decision.event_id]);
+        const begin = JSON.parse(calls.find(call => call.op === 'begin').input);
+        expect(begin.step_id, label).toBe(decision.step_id);
+        const spans = result.stdout.split('\n').filter(line => line.startsWith('SPAN '));
+        expect(spans, label).toHaveLength(2);
+        expect(spans[0], label).toContain(`begin=${row.begin} end=pending`);
+        expect(spans[0].includes(' decision='), label).toBe(row.decision !== undefined);
+        if (row.decision) expect(spans[0], label).toEndWith(` decision=${row.decision}`);
+        expect(spans[1], label).toEndWith(`begin=${row.begin} end=${row.end} rc=7`);
+      }
+    }, 60_000);
+
+    type Case = { name: string; work: string; capture?: number; lib?: 'real' | 'missing' | 'no-launcher' | 'garbage' | 'unconfirmed' | 'absent-begin' | 'absent-end'; rc: number; end: 'recorded' | 'skipped' | 'match' | 'unconfirmed'; begin?: string; outcome?: 'completed' | 'failed' };
     const cases: Case[] = [
       { name: 'enabled, passing command', work: 'echo worked', rc: 0, end: 'recorded', outcome: 'completed' },
       { name: 'enabled, failing command', work: 'echo before; false; echo after', rc: 1, end: 'recorded', outcome: 'failed' },
@@ -1744,6 +1909,8 @@ describe('workflow metrics contract (Track 24A)', () => {
       { name: 'library not found', work: 'echo worked; exit 4', lib: 'missing', rc: 4, end: 'skipped', begin: 'none' },
       { name: 'malformed envelope', work: 'echo worked; exit 5', lib: 'garbage', rc: 5, end: 'skipped', begin: 'missing' },
       { name: 'unconfirmed write the read finds', work: 'false', lib: 'unconfirmed', rc: 1, end: 'match', begin: 'match', outcome: 'failed' },
+      { name: 'unconfirmed begin the read finds absent', work: 'echo worked; exit 6', lib: 'absent-begin', rc: 6, end: 'skipped', begin: 'unconfirmed' },
+      { name: 'unconfirmed end the read finds absent', work: 'echo worked; exit 7', lib: 'absent-end', rc: 7, end: 'unconfirmed' },
     ];
     for (const shell of shells) {
       test(`${shell}: exit status, SPAN line and records in ${cases.length} cases, errexit on and off`, () => {
@@ -1764,6 +1931,7 @@ describe('workflow metrics contract (Track 24A)', () => {
           const stub = (body: string) => { writeFileSync(join(checkout, 'gstack-extend-telemetry'), `#!/bin/sh\n${body}\n`); chmodSync(join(checkout, 'gstack-extend-telemetry'), 0o755); };
           if (c.lib === 'garbage') stub('echo "not an envelope"');
           else if (c.lib === 'unconfirmed') stub(`case "$2" in\n  begin|end) ${JSON.stringify(WRAPPER)} "$@" >/dev/null; echo '{"v":1,"status":"unconfirmed","reason":"io-error"}' ;;\n  *) exec ${JSON.stringify(WRAPPER)} "$@" ;;\nesac`);
+          else if (c.lib?.startsWith('absent-')) stub(`printf '%s\\n' "$2" >> '${checkout}/calls'\ncase "$2" in\n  ${c.lib.slice(7)}) cat >/dev/null; echo '{"v":1,"status":"unconfirmed","reason":"io-error"}' ;;\n  *) exec ${JSON.stringify(WRAPPER)} "$@" ;;\nesac`);
           else if (c.lib !== 'no-launcher' && c.lib !== 'missing') symlinkSync(WRAPPER, join(checkout, 'gstack-extend-telemetry'));
           const lib = c.lib === 'missing' ? join(fix.home, 'nowhere', 'bin', 'lib', 'workflow-span.sh') : join(checkout, 'lib', 'workflow-span.sh');
           const pattern = block().replace('<session ID the start printed>', sid).replace('GX_CAPTURE=1', `GX_CAPTURE=${c.capture ?? 1}`)
@@ -1785,7 +1953,15 @@ describe('workflow metrics contract (Track 24A)', () => {
           const read = spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000 });
           const data = JSON.parse(read.stdout).data;
           const pregate = data.phases.find((p: any) => p.phase === 'pregate');
-          if (c.end === 'skipped') {
+          if (c.lib?.startsWith('absent-')) {
+            const calls = readFileSync(join(checkout, 'calls'), 'utf8').trim().split('\n');
+            expect(calls.filter(op => op === 'begin'), label).toHaveLength(1);
+            expect(calls.filter(op => op === 'end'), label).toHaveLength(c.lib === 'absent-begin' ? 0 : 1);
+            expect(calls.filter(op => op === 'read'), label).toHaveLength(1);
+            expect(pregate, label).toMatchObject({ steps_started: c.lib === 'absent-begin' ? 0 : 1, steps_completed: 0,
+              decisions: { RUN: 1 }, unknown_durations: 1, observed_wall_duration_ms: null });
+            expect(data.unknown_reasons, label).not.toContain('missing-begin');
+          } else if (c.end === 'skipped') {
             // No lone end: nothing of this span reaches the ledger, and the open run step is the only unknown.
             expect(pregate, label).toBeUndefined();
             expect(data.unknown_reasons, label).not.toContain('missing-begin');
@@ -1820,8 +1996,15 @@ describe('workflow metrics contract (Track 24A)', () => {
       const line = /^SPAN step=(\S+) phase=tests begin=(\S+) end=pending$/m.exec(first.stdout)!;
       expect(line[2]).toBe('recorded');
       // A new shell (a later tool call) knows the step only from the quoted SPAN line.
-      const later = (step: string, bstat: string) => spawnSync('bash', ['-c', head + `gx_span_end '${step}' 0 '${bstat}'`], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });
+      const later = (step: string, bstat: string, rc = '0') => spawnSync('bash', ['-c', head + `gx_span_end '${step}' '${rc}' '${bstat}'`], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });
       expect(later(line[1], 'unconfirmed').stdout).toContain('end=skipped');
+      for (const rc of ['', 'unknown']) {
+        const missingResult = later(line[1], line[2], rc);
+        expect(missingResult.status).toBe(0);
+        expect(missingResult.stdout).toContain('end=missing rc=unknown');
+        const stillOpen = JSON.parse(spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8' }).stdout).data;
+        expect(stillOpen.phases.find((p: any) => p.phase === 'tests')).toMatchObject({ steps_completed: 0, unknown_durations: 1 });
+      }
       expect(later(line[1], line[2]).stdout).toContain(`SPAN step=${line[1]} phase=- begin=recorded end=recorded rc=0`);
       const data = JSON.parse(spawnSync(WRAPPER, ['metrics', 'read', '--session-id', sid], { cwd: repo, env: fix.env, encoding: 'utf8' }).stdout).data;
       expect(data.phases.find((p: any) => p.phase === 'tests')).toMatchObject({ steps_started: 1, steps_completed: 1, unknown_durations: 0 });

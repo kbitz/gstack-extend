@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv from 'ajv';
-import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
+import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
 import { appendFileSync, realpathSync, truncateSync } from 'node:fs';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
@@ -75,7 +75,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 /** Write stored records directly (imported-fixture path): controlled timestamps, correct digests. */
-function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at: number; request: any }>, producerVersion = '0.36.13.0') {
+function craft(fix: TelemetryFixture, sid: string, rows: Array<{ op: string; at: number; request: any }>, producerVersion: string | null = '0.36.13.0') {
   const file = ledgerFile(fix, sid);
   mkdirSync(join(file, '..'), { recursive: true });
   const lines = rows.map(({ op, at, request }) => {
@@ -1132,7 +1132,7 @@ describe('Track 31A untimed visits: RUN decisions pair with begun steps by step_
   const decide = (sid: string, phase: string, id: string, at: number, decision = 'RUN') =>
     ({ op: 'decision', at, request: { ...base(sid), step_id: id, phase, decision, reason: decision === 'RUN' ? 'required' : 'matching-evidence' } });
   const phaseOf = (data: any, name: string) => data.phases.find((p: any) => p.phase === name);
-  const readCrafted = (rows: (sid: string, runStep: string) => any[], version: string) => {
+  const readCrafted = (rows: (sid: string, runStep: string) => any[], version: string | null) => {
     const fix = makeTelemetryFixture('community');
     const sid = 'extend-' + u();
     const run = runRows(sid, 0);
@@ -1191,7 +1191,7 @@ describe('Track 31A untimed visits: RUN decisions pair with begun steps by step_
     const mixed = read(fix, sid).envelope.data;
     expect(phaseOf(mixed, 'documentation')).toMatchObject({ decisions: { RUN: 2, REUSE: 0, 'N/A': 0 }, steps_started: 1, observed_wall_duration_ms: null, unknown_durations: 1 });
     // Records with no readable producer version are older by definition.
-    const none = readCrafted(sid2 => [decide(sid2, 'documentation', u(), 10), ...span(sid2, 'documentation', u(), 11)], '0.1.0');
+    const none = readCrafted(sid2 => [decide(sid2, 'documentation', u(), 10), ...span(sid2, 'documentation', u(), 11)], null);
     expect(phaseOf(none, 'documentation').unknown_durations).toBe(0);
   }, 60_000);
 
@@ -1221,6 +1221,11 @@ describe('Track 31A untimed visits: RUN decisions pair with begun steps by step_
       // The closed run step has its own interval, yet the decision naming it stays untimed.
       expect(phaseOf(data, 'run')).toMatchObject({ decisions: { RUN: 1, REUSE: 0, 'N/A': 0 }, steps_started: 1, steps_completed: 1, unknown_durations: 1, observed_wall_duration_ms: null });
       expect(data.unknown_reasons).toContain('unrecorded-work');
+      // An unrelated spare phase span must not rescue a decision naming the run, even in legacy ledgers.
+      const spare = readCrafted((sid, runStep) => [decide(sid, 'scope', runStep, 10),
+        ...span(sid, 'scope', u(), 20, runStep)], version);
+      expect(phaseOf(spare, 'scope')).toMatchObject({ steps_started: 1, unknown_durations: 1, observed_wall_duration_ms: null });
+      expect(spare.unknown_reasons).toContain('unrecorded-work');
     }
   }, 60_000);
 
@@ -1408,6 +1413,64 @@ describe('Track 31A real-store guard', () => {
   const codes = (r: { findings: Array<{ code: string }> }) => r.findings.map(f => f.code).sort();
   const summaryOf = (lines: string[]) => lines[lines.length - 1]!;
   const SUMMARY = /^REAL-STORE-GUARD: (verified|unverified|failed) \(\d+ files, \d+ ms\)/;
+
+  // Value: protects=the guard watches each inherited absolute state sink once and ignores relative overrides;
+  // fails_when=a resolver variable is omitted, a relative root is accepted or canonical roots are duplicated;
+  // why_new=existing guard cases supply explicit specs and spawned cases use default HOME only; seam=none;
+  // no_claim=real-store contents or installed resolver precedence (temporary root discovery only).
+  test('store discovery includes every absolute override, excludes relative paths and deduplicates canonical roots', withStand(s => {
+    const home = join(s.dir, 'home');
+    const sources = [
+      ['GSTACK_EXTEND_STATE_DIR', 'extend'], ['GSTACK_STATE_ROOT', 'upstream'], ['GSTACK_STATE_DIR', 'upstream'],
+      ['GSTACK_HOME', 'upstream'], ['CLAUDE_PLUGIN_DATA', 'upstream'], ['CLAUDE_PLUGIN_ROOT', 'upstream'],
+    ] as const;
+    const defaults: StoreSpec[] = [
+      { label: '~/.gstack-extend', root: join(home, '.gstack-extend'), kind: 'extend' },
+      { label: '~/.gstack', root: join(home, '.gstack'), kind: 'upstream' },
+    ];
+    const env = Object.fromEntries(sources.map(([name]) => [name, join(s.dir, name)]));
+    // Half the roots exist; missing absolute roots must remain watched because they may appear later.
+    for (const [name] of sources.slice(0, 3)) mkdirSync(env[name]!);
+    expect(realStoreSpecs(env, home)).toEqual([
+      ...defaults, ...sources.map(([name, kind]) => ({ label: `$${name}`, root: env[name]!, kind })),
+    ]);
+    for (const [name] of sources) {
+      expect(realStoreSpecs({ [name]: 'relative/state' }, home), name).toEqual(defaults);
+      expect(realStoreSpecs({ [name]: '' }, home), name).toEqual(defaults);
+    }
+    expect(realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: s.extend, GSTACK_STATE_ROOT: s.extend + '/.', GSTACK_STATE_DIR: s.extend }, home))
+      .toEqual([...defaults, { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'extend' }]);
+  }), 60_000);
+
+  // Value: protects=large-ledger scans detect split session IDs and escaped roots only in appended bytes;
+  // fails_when=chunk carry is removed or a pre-snapshot prefix is scanned as a new escaped root;
+  // why_new=current planted-ID and escaped-root fixtures fit inside one read chunk; seam=none;
+  // no_claim=all concurrent filesystem races (deterministic large temporary ledgers only).
+  test('large-ledger scans find split IDs and escaped roots without rescanning the old prefix', withStand(s => {
+    const chunk = 1024 * 1024;
+    const id = fresh();
+    const escaped = join(tmpdir(), 'gx-tel-chunk-fixture');
+    const splitAt = (value: string, start: number, split: number) => ' '.repeat(chunk - start - split) + value + '\n';
+    // The old prefix has a suspicious path but no appended bytes: it is not a fresh escape.
+    const prefix = JSON.stringify({ root: escaped }) + '\n';
+    writeFileSync(s.ledger, prefix);
+    const snap = snapshotRealStores(s.specs, OPTS);
+    expect(compareRealStores(snap, [id], OPTS).status).toBe('verified');
+    appendFileSync(s.ledger, splitAt(id, Buffer.byteLength(prefix), 12));
+    const leaked = compareRealStores(snap, [id], OPTS);
+    expect(codes(leaked)).toEqual(['appended-id']);
+    expect(leaked.findings[0]!.ids).toEqual([id]);
+    expect([...harvestSessionIds(join(s.extend, 'analytics'))]).toContain(id);
+    // Start with a fresh short ledger and put the root needle across the next read boundary.
+    writeFileSync(s.ledger, row(s.existing));
+    const rootSnap = snapshotRealStores(s.specs, OPTS);
+    const rootPrefixSize = Buffer.byteLength(readFileSync(s.ledger));
+    const split = Buffer.byteLength(join(tmpdir(), 'gx-tel-')) - 3;
+    appendFileSync(s.ledger, splitAt(escaped, rootPrefixSize, split));
+    const rooted = compareRealStores(rootSnap, [], OPTS);
+    expect(codes(rooted)).toEqual(['escaped-root']);
+    expect(rooted.status).toBe('failed');
+  }), 60_000);
 
   test('a planted harvested id in an appended range fails with appended-id and a complete message', withStand(s => {
     const snap = snapshotRealStores(s.specs, OPTS);
@@ -1614,6 +1677,36 @@ describe('Track 31A real-store guard', () => {
       expect(r.lines.some(line => line.includes(`path=${path} cause=skipped symlink`))).toBe(true);
     }
     expect(r.lines.join('\n')).not.toContain(s.dir);
+  }), 60_000);
+
+  // Value: protects=the guard skips a symlinked store root and reports unverified or strict failure;
+  // fails_when=a root symlink is followed and its target is scanned or reported verified;
+  // why_new=the existing symlink case covers links inside a store only; seam=none;
+  // no_claim=real-store acceptance (temporary store root and symlink only).
+  test('a symlinked store root is skipped before scanning its target and fails under strict', withStand(s => {
+    const link = join(s.dir, 'linked-root');
+    symlinkSync(s.extend, link);
+    for (const suffix of ['', '/', '/.', '/./', '/.//.']) {
+      const root = link + suffix;
+      // Discovery must keep the refused link even when its real target is already watched.
+      expect(realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: s.extend, GSTACK_STATE_ROOT: root }, '')).toEqual([
+        { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'extend' },
+        { label: '$GSTACK_STATE_ROOT', root, kind: 'upstream' },
+      ]);
+      const specs: StoreSpec[] = [{ label: 'linked stand-in store', root, kind: 'extend' }];
+      const snap = snapshotRealStores(specs, OPTS);
+      const result = compareRealStores(snap, [s.existing], OPTS);
+      expect(result.status, suffix).toBe('unverified');
+      expect(result.findings).toEqual([]);
+      expect(result.files).toBe(0);
+      expect(snap.files).toBe(0);
+      expect(snap.tokens).toEqual([]);
+      expect(result.lines.some(line => line.includes('path=linked stand-in store cause=skipped symlink'))).toBe(true);
+      const strict = compareRealStores(snap, [s.existing], { ...OPTS, strict: true });
+      expect(strict.status).toBe('failed');
+      expect(codes(strict)).toEqual(['unexpected']);
+      expect(readFileSync(s.ledger, 'utf8')).toContain(s.existing);
+    }
   }), 60_000);
 
   test('a concurrent append between stat and hash never reads as a prefix rewrite', withStand(s => {

@@ -239,6 +239,10 @@ const MAX_LISTED = 20;
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const errCode = (error: unknown) => (error as NodeJS.ErrnoException)?.code ?? (error instanceof Error ? error.name : 'ERR');
 
+// A trailing slash or '/.' makes lstat follow the final link. Remove only these suffixes,
+// preserving '/' and every other component (including '..') without resolving any link.
+const rootEntryPath = (root: string) => root.replace(/(?:\/\.?)+$/, '') || '/';
+
 /** The stores the guard watches for this runner: its real HOME, then every inherited state root (absolute only). */
 export function realStoreSpecs(env: NodeJS.ProcessEnv = process.env, home: string = REAL_HOME): StoreSpec[] {
   const specs: StoreSpec[] = [];
@@ -247,7 +251,7 @@ export function realStoreSpecs(env: NodeJS.ProcessEnv = process.env, home: strin
     if (!root || !isAbsolute(root)) return; // the launcher ignores a relative override too
     let key = root;
     try {
-      key = realpathSync(root);
+      if (!lstatSync(rootEntryPath(root)).isSymbolicLink()) key = realpathSync(root);
     } catch {
       // A missing store is still watched (it can appear); key by the given path.
     }
@@ -304,9 +308,9 @@ function walkDir(walkRoot: string, rel: string, out: Walked) {
 type Opened = { state: 'present'; walkRoot: string } | { state: 'absent' } | { state: 'unreadable'; code: string };
 function openStore(spec: StoreSpec): Opened {
   try {
-    const info = lstatSync(spec.root);
-    if (!info.isSymbolicLink() && !info.isDirectory()) return { state: 'unreadable', code: 'ENOTDIR' };
-    // The owner's own symlinked store root (for example a dotfiles layout) is resolved once; nothing inside it is followed.
+    const info = lstatSync(rootEntryPath(spec.root));
+    if (info.isSymbolicLink()) return { state: 'unreadable', code: 'ELOOP' };
+    if (!info.isDirectory()) return { state: 'unreadable', code: 'ENOTDIR' };
     const walkRoot = realpathSync(spec.root);
     readdirSync(walkRoot);
     return { state: 'present', walkRoot };
@@ -400,7 +404,7 @@ function snapStore(spec: StoreSpec, snap: RealStoreSnapshot, tokens: Set<string>
   const out: StoreSnap = { spec, state: 'absent', ledgers: {}, tree: {} };
   const opened = openStore(spec);
   out.state = opened.state;
-  if (opened.state === 'unreadable') snap.unverified.push(unverifiedFor(spec, '', snap.home, 'unreadable', opened.code));
+  if (opened.state === 'unreadable') snap.unverified.push(unverifiedFor(spec, '', snap.home, opened.code === 'ELOOP' ? 'symlink' : 'unreadable', opened.code));
   if (opened.state !== 'present') return out;
   const walked = walkStore(opened.walkRoot);
   noteProblems(spec, walked, snap.home, snap.unverified);
@@ -574,7 +578,7 @@ function compareStores(snap: RealStoreSnapshot, idIterable: Iterable<string>, op
     const spec = ss.spec;
     const opened = openStore(spec);
     if (opened.state === 'unreadable') {
-      unverified.push(unverifiedFor(spec, '', home, 'unreadable', opened.code));
+      unverified.push(unverifiedFor(spec, '', home, opened.code === 'ELOOP' ? 'symlink' : 'unreadable', opened.code));
       continue;
     }
     const walked = opened.state === 'present' ? walkStore(opened.walkRoot) : { files: [], symlinks: [], errors: [] } as Walked;

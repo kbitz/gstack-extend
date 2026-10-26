@@ -85,8 +85,8 @@ UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missin
 # The subset that means the stored records contradict or orphan each other: the read is partial.
 INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
                      "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
-# Reads pair a RUN decision with a begun step by step_id. A record written by this release
-# or earlier (or with no readable producer_version) may instead be offset by an unpaired
+# Reads pair a RUN decision with a begun step by step_id. A record written by the last
+# pre-span release, 0.50.0, or earlier (or with no readable producer_version) may be offset by an unpaired
 # top-level same-phase step, because those producers gave decisions fresh IDs; any later
 # producer must match step_id exactly (docs/telemetry.md#workflow-metrics-untimed).
 LEGACY_PAIRING_MAX = (0, 50, 0, 0)
@@ -1050,7 +1050,8 @@ def _steps(effective, run_context, unknown):
                 and (step.get("phase") == phase or (phase == "tests" and step.get("phase") == "pregate"))):
             paired.setdefault(phase, set()).add(step_id)
         else:
-            unpaired.setdefault(phase, []).append(legacy[(step_id, phase)])
+            unpaired.setdefault(phase, []).append(legacy[(step_id, phase)]
+                                                 and (step is None or step.get("kind") != "run"))
     # Older producers minted fresh decision IDs: an unpaired older decision is covered by one
     # unpaired top-level step of its phase (a step nested under a same-phase step never covers).
     untimed = 0

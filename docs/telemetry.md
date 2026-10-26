@@ -731,8 +731,8 @@ removed on exit unless you set `KEEP=1`:
   mkdir "$WM_HOME/repo" && git init -q "$WM_HOME/repo" && cd "$WM_HOME/repo" || exit 1
   SID="$("$GXT" start --skill 'extend:review-and-prep' \
     | sed -n 's/.*session=\(extend-[0-9a-f-]*\).*/\1/p')"
-  RUN_STEP="$(python3 -c 'import uuid;print(uuid.uuid4())')"
-  EV() { python3 -c 'import uuid;print(uuid.uuid4())'; }
+  RUN_STEP="$(python3 -B -I -c 'import uuid;print(uuid.uuid4())')"
+  EV() { python3 -B -I -c 'import uuid;print(uuid.uuid4())'; }
   "$GXT" metrics begin <<JSON
 {"v":1,"stage":"review-and-prep","session_id":"$SID","event_id":"$(EV)","step_id":"$RUN_STEP","parent_step_id":null,"kind":"run","phase":"run","context":{"candidate_head":null,"candidate_tree":null,"candidate_base":null,"binding":"unknown","skill_sha256":null,"parent_session_id":null}}
 JSON
@@ -809,8 +809,12 @@ real stores before the first test (outside any per-test timeout; the first
 minted (from their handoffs, stage-runs rows and workflow-metrics ledger
 records; the launcher mints them at random), compares, clears the snapshot and
 removes the fixture homes even when the comparison fails. A failure fails the
-test run. The guard follows no symbolic link (a symlink in a store is skipped and
-reported by path) and changes nothing in a real store.
+test run. After a successful comparison, cleanup takes the next suite's snapshot
+outside any test body. The guard follows no symbolic link: a symlinked store root
+or a link inside a store is skipped and reported by path. A symlinked root remains
+`unverified` (or fails in strict mode), even when its target is watched separately;
+point an override at the real directory to verify that store. The guard changes
+nothing in a real store.
 
 Stores are your HOME's `.gstack-extend/` and `.gstack/analytics/`, plus any state
 root an inherited `GSTACK_EXTEND_STATE_DIR`, `GSTACK_STATE_ROOT`,
@@ -936,7 +940,7 @@ call.
 <a id="workflow-metrics-ids"></a>
 
 **IDs.** Mint each new `event_id`, `step_id`, `pass_id` and `attempt_id` from a
-random generator (`python3 -c 'import uuid;print(uuid.uuid4())'`, or
+random generator (`python3 -B -I -c 'import uuid;print(uuid.uuid4())'`, or
 `uuidgen | tr A-Z a-z`) in the tool call that first uses it, and print it for
 later reference. Never derive an ID from the session ID, a counter, another ID
 or a typed pattern, and never reuse an ID for a different event or entity: a
@@ -985,9 +989,10 @@ zero, `unknown_durations: 0` and a `null` duration was timed elsewhere (a
 `tests` decision covered by its pregate step) or reused.
 
 For records written by producer 0.50.0 or earlier, which gave decisions fresh
-IDs, a decision may instead be offset by one unpaired top-level step of the
-same phase (a step nested under a step of its own phase never offsets); a
-mixed-version ledger offsets only its older records.
+IDs, or with no readable `producer_version`, a decision may instead be offset
+by one unpaired top-level step of the same phase (a step nested under a step of
+its own phase never offsets); a mixed-version ledger offsets only its older
+records.
 
 <a id="workflow-metrics-read-semantics"></a>
 
@@ -1008,7 +1013,7 @@ site writes three lines: begin, the work block, end.
 
 ~~~sh
 GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
-[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_end() { :; }; }
+[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
 gx_span_begin PHASE "$GX_RUN" phase
 GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
 gx_span_end "${GX_STEP:-}" "$rc"
@@ -1038,7 +1043,7 @@ To obtain the retained library path, run once (with the run `begin`) the
 telemetry start block's launcher resolution, then:
 
 ~~~sh
-GX_LIB=$(python3 -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
+GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
 [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
 ~~~
 
@@ -1055,15 +1060,19 @@ begin status from that line and emits only the `end`:
 
 ~~~sh
 GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
-[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_end() { :; }; }
+[ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
 gx_span_begin PHASE "$GX_RUN" phase
 # ... start the work (run it in the background) and end this call.
 # First call after the completion notice, with the same first two lines:
+# Set rc from the observed result in this new shell (0 for success, nonzero for failure).
+# If the result is unknown, leave the span open; do not call gx_span_end.
 gx_span_end 'STEP-FROM-THE-SPAN-LINE' "$rc" 'BEGIN-FROM-THE-SPAN-LINE'
 ~~~
 
 A begin reconciled in a later call, or whose `begin=` is not `recorded`,
-`replayed` or `match`, never gets an `end`.
+`replayed` or `match`, never gets an `end`. An empty or nonnumeric `rc` also
+leaves the span open and prints `end=missing rc=unknown`; never infer success
+from an unset variable in a new shell.
 
 <a id="workflow-metrics-pregate-time"></a>
 
@@ -1075,7 +1084,7 @@ test-execution time for that run is pregate's own `stage2_ms` and per-check
 SHA-256:
 
 ~~~sh
-python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print("stage2_ms",r.get("stage2_ms"));[print(c["id"],c.get("ms")) for c in r["checks"] if c.get("stage")=="tests"]' PREGATE_RECORD
+python3 -B -I -c 'import json,sys;r=json.load(open(sys.argv[1]));print("stage2_ms",r.get("stage2_ms"));[print(c["id"],c.get("ms")) for c in r["checks"] if c.get("stage")=="tests"]' PREGATE_RECORD
 ~~~
 
 A `tests` span is the wrapper's span wherever it runs a test command directly: a
@@ -1169,20 +1178,29 @@ state, and bracket it with the [real-store guard](#workflow-metrics-guard)'s
 snapshot and compare. The host smoke prelude keeps your real HOME, so the host
 keeps its configuration, sign-in and installed skills; it moves only the state
 directories. Run it from the gstack-extend checkout, in the shell that launches
-the host:
+the host. First set `GSP` to the absolute path of `bin/gstack-paths` in the
+active host's installed gstack checkout; use that installation even for a custom
+host profile. The prelude verifies it before changing the destinations:
 
 ~~~sh
+if [ -x "$GSP" ] && UP_SOURCE="$("$GSP" --get GSTACK_STATE_ROOT)" && [ -d "$UP_SOURCE" ]; then
 SNAP="$(mktemp -d)/real-stores.snapshot" && bun tests/helpers/telemetry-env.ts --snapshot "$SNAP"
 EXT_ISO="$(mktemp -d)" UP_ISO="$(mktemp -d)"
 export GSTACK_EXTEND_STATE_DIR="$EXT_ISO" GSTACK_STATE_ROOT="$UP_ISO" GSTACK_STATE_DIR="$UP_ISO"
-unset GSTACK_HOME GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
+# Preserve host profile variables (CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME).
+# The explicit state overrides above take precedence; clear the other sink overrides.
+unset GSTACK_HOME GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT
 # Seed the isolated upstream directory with copies (never links) of its config and first-run prompt markers, so the
 # host shows no extra onboarding prompt. Never copy credentials, profiles or caches.
-cp "$HOME/.gstack/config.yaml" "$UP_ISO/" 2>/dev/null
-for f in "$HOME"/.gstack/.*-prompted "$HOME"/.gstack/.*-seen "$HOME"/.gstack/.*-shown; do [ -f "$f" ] && cp "$f" "$UP_ISO/"; done
+cp "$UP_SOURCE/config.yaml" "$UP_ISO/" 2>/dev/null || :
+# Bash leaves unmatched globs literal; this works when the launching shell is zsh too.
+bash -c 'for f in "$1"/.*-prompted "$1"/.*-seen "$1"/.*-shown; do [ ! -f "$f" ] || cp "$f" "$2/"; done' smoke "$UP_SOURCE" "$UP_ISO"
 # Verify both upstream sinks before launching the host: each must name the isolated directory.
-"$HOME/.claude/skills/gstack/bin/gstack-paths" --get GSTACK_STATE_ROOT   # the modern logger's sink
+"$GSP" --get GSTACK_STATE_ROOT   # the modern logger's sink
 printf 'legacy logger sink: %s\n' "$GSTACK_STATE_DIR"                       # the legacy logger's sink
+else
+  printf 'GSP must resolve the active gstack state directory before the smoke.\n'
+fi
 ~~~
 
 Launch the host from that shell and run each wrapper once. A host that cannot
@@ -1204,7 +1222,7 @@ session's own tool-call IDs and timestamps; this field-only command prints
 nothing else and never content:
 
 ~~~sh
-python3 -c 'import json,sys
+python3 -B -I -c 'import json,sys
 for line in open(sys.argv[1]):
     try:
         entry = json.loads(line)

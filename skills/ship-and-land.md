@@ -121,7 +121,7 @@ library and both call forms are in
   the step stays open.
 - Mint IDs at random: mint each new `event_id`, `step_id`, `pass_id` and
   `attempt_id` from a random generator
-  (`python3 -c 'import uuid;print(uuid.uuid4())'` or `uuidgen | tr A-Z a-z`) in
+  (`python3 -B -I -c 'import uuid;print(uuid.uuid4())'` or `uuidgen | tr A-Z a-z`) in
   the tool call that first uses it, and print it for later reference. Never
   derive an ID from the session ID, a counter, another ID or a typed pattern.
   Never reuse an ID for a different event or entity: a step keeps its `step_id`
@@ -133,7 +133,7 @@ library and both call forms are in
 
   ```bash
   GX_STAGE='ship-and-land'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
-  [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_end() { :; }; }
+  [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
   gx_span_begin PHASE "$GX_RUN" phase
   GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
   gx_span_end "${GX_STEP:-}" "$rc"
@@ -146,7 +146,9 @@ library and both call forms are in
   lines, `gx_span_begin PHASE "$GX_RUN" phase`, and prints a `SPAN` line, then
   ends; the first call after the result arrives sets the same first two lines and
   runs `gx_span_end 'STEP-FROM-THE-SPAN-LINE' "$rc" 'BEGIN-FROM-THE-SPAN-LINE'`.
-  Never use the same-call form under background execution: its `end` would race
+  Set `rc` explicitly from the observed completion result in that new shell
+  (0 for success, nonzero for failure); if the result is unknown, leave the span
+  open. An empty or nonnumeric `rc` emits no end. Never use the same-call form under background execution: its `end` would race
   the run lock and drop. `GX_CAPTURE` is `1` only when the run `begin` was
   `recorded` or `replayed`, else `0`, and the work still runs with no launcher
   call. `WORK` is written inline, never through `eval`; it runs in a subshell,
@@ -167,7 +169,7 @@ library and both call forms are in
   as `GX_LIB`:
 
   ```bash
-  GX_LIB=$(python3 -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
+  GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
   [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
   ```
 
