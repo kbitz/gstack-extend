@@ -220,3 +220,17 @@ _tombstone: 28_
 - 2026-10-24: merged PR #168, commit `36546193f1957bd4c58e563ad09f607b3b154e35`; verified land-time Track 28A, Group 28. Introduced as the release-compatibility Track in the 2026-10-08 spec adoption (`5b6e516`), relabeled 28A in the 2026-10-23 regeneration (`f02bc51`).
 - Approved candidate-only scope: legacy upgrade/migration/rollback, version and tag controls, stable-surface v2 reader check and policy instructions. The prepared receipt covers T1–T8, AC1–AC3 and U1/U2 (13 VERIFIED), corroborated by merged code and `docs/acceptance/release-compatibility.md`. The source record distinguishes isolated candidate/fixture proof from live publication and host acceptance.
 - The owner confirmed the policy during shipping. The final full-suite run timed out under load and the owner directed the merge, as the merge commit records; this receipt does not relabel that run as passed. The published three-part upgrade, full O5.1 catalog and O1/O3/O4 host acceptance remain scheduled. O5 is not awarded. Historical version/tag records stay intact.
+
+## Individual Track history
+_tombstone: 29_
+
+### Track 29A: Check installed upstream contracts at launch ✓ Shipped (v0.49.0)
+- 2026-10-25: merged [PR #171](https://github.com/kbitz/gstack-extend/pull/171) (commit `02ecf9d`); verified land-time Track 29A, Group 29. Introduced under this ID in the 2026-10-25 efficiency-program regeneration (`3cd166c`) and unchanged through `18abba7`; declared In Progress by the owner on 2026-10-25.
+- The preparation receipt reconciled 58 rows of the approved plan with no deferred scope: 56 VERIFIED and 2 PARTIAL, both waiting only on the head-policy pregate run, which the ship record shows ran (`--policy-from head`, `gstack-pregate verify` ok). `bin/upstream-check` reports OK/DRIFT for wrapper anchors, helper exports, classifier goldens and lean criteria with a documented exit table, a measured startup profile and the 120-minute lease limit (`docs/upstream-check.md`). Final full suite on the release head: 4220 passed, 0 failed. The check is advisory and caller-run; no skill invokes it yet.
+
+## Individual Track history
+_tombstone: 30_
+
+### Track 30A: Repair a test-only final-gate failure without capping the review ✓ Shipped (v0.50.0)
+- 2026-10-26: merged [PR #172](https://github.com/kbitz/gstack-extend/pull/172) (commit `669ce6b`); verified land-time Track 30A, Group 30. Introduced under this ID on 2026-10-25 (`18abba7`); no later relabel before landing.
+- The preparation receipt's completion matrix reports 39/39 VERIFIED, 0 deferred by the user. The repair ships behind `final-gate-repair=tests-docs` on the `Review policy:` line (the light default does not enable it), with the older-producer fallback documented; cycle 1 records the full-review baseline the repair-only continuation guard reads, and `/ship-and-land` still refuses a stopped draft. Final full suite: 4252 passed, 0 failed. Installed-agent behavior and public-default evidence were excluded from scope and are not claimed.
