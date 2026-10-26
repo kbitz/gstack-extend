@@ -584,9 +584,11 @@ every case — inspect `status`; a missing or invalid envelope after a crash is
 unavailable/unknown, never success. Identical replay of an `event_id` returns
 the original persisted timestamp without appending; the same ID with changed
 content is `conflict`. For `unconfirmed` or a missing envelope, reconcile with
-`metrics read --session-id <id> --event-id <event_id>` and replay the exact
-same payload at most once (a visible record's durability is re-confirmed
-without appending); conflicting, partial or unreadable snapshots stop replay.
+`metrics read --session-id <id> --event-id <event_id>`. For `decision`, `pass`
+and `correction`, replay the exact same payload at most once; conflicting,
+partial or unreadable snapshots stop replay. A `begin` or `end` instead follows
+the [boundary reconciliation rule](#workflow-metrics-replay): a visible record
+counts without another append, and an absent boundary stays missing.
 
 - `begin`/`end`: one observed boundary of a `run|phase|voice|wait|fix` step.
   `begin` carries a controlled phase (or a `wait_category`:
@@ -819,7 +821,10 @@ nothing in a real store.
 Stores are your HOME's `.gstack-extend/` and `.gstack/analytics/`, plus any state
 root an inherited `GSTACK_EXTEND_STATE_DIR`, `GSTACK_STATE_ROOT`,
 `GSTACK_STATE_DIR`, `GSTACK_HOME`, `CLAUDE_PLUGIN_DATA` or `CLAUDE_PLUGIN_ROOT`
-points to. It checks three things:
+points to. Canonical roots are watched once, retaining both owners when the
+upstream and extension roots coincide: extension ledgers still fail on a prefix
+rewrite; only upstream's `analytics/skill-usage.jsonl` may read `unverified`.
+It checks three things:
 
 - **Append-only ledgers** (`*.jsonl` under a store's `analytics/`): path, size
   and the SHA-256 of exactly the stat'd byte length, with no size cap. A
@@ -831,8 +836,9 @@ points to. It checks three things:
   the full `extend-<uuid>` string may exist under `telemetry/` (including its
   per-checkout subdirectories), `telemetry-completed/`, `telemetry-locks/`,
   `analytics/workflow-metrics/` or `workflow-metrics-locks/`. Real sessions
-  legitimately rewrite and delete other files in those trees, which are not
-  checked.
+  legitimately rewrite and delete unrelated handoffs, completion markers and
+  locks. Those mutations are not checked by name; JSONL ledgers remain subject
+  to the append-only check above, including `analytics/workflow-metrics/`.
 - **Escaped roots**: a new or changed handoff or completion marker whose `root`
   lies under the runner's temporary directory (compared by plain path and by
   realpath, since macOS reports `/private/var/...`), or an appended or new row that
@@ -1012,7 +1018,7 @@ launcher's always-exit-0 contract and the work's own exit status separate. Each
 site writes three lines: begin, the work block, end.
 
 ~~~sh
-GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
+GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1; GX_LIB='<retained library path>'; GX_RUN='<run step_id>'
 [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
 gx_span_begin PHASE "$GX_RUN" phase
 GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
@@ -1047,8 +1053,9 @@ GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.p
 [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
 ~~~
 
-An empty `GX_LIB` (an older checkout) leaves span capture unavailable; the
-workflow continues.
+An empty `GX_LIB` (an older checkout) or a missing expected `SPAN` line leaves
+span capture unavailable; with `GX_CAPTURE=1`, record `capture=partial
+(library-unavailable or missing-span)` in the receipt and continue the workflow.
 
 <a id="workflow-metrics-span-cross-call"></a>
 
@@ -1059,7 +1066,7 @@ later call, in the first tool call after the result arrives, takes the step and
 begin status from that line and emits only the `end`:
 
 ~~~sh
-GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
+GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1; GX_LIB='<retained library path>'; GX_RUN='<run step_id>'
 [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
 gx_span_begin PHASE "$GX_RUN" phase
 # ... start the work (run it in the background) and end this call.
@@ -1112,7 +1119,7 @@ Each reason has one fixed action; messages contain no copied user text.
 | <a id="workflow-metrics-ambiguous-binding"></a>`ambiguous-binding` | Run the first metrics call from the same git checkout as the legacy start, or continue unavailable. |
 | <a id="workflow-metrics-capture-missing"></a>`capture-missing` | No bound run exists for that ID; continue without capture. |
 | <a id="workflow-metrics-unsafe-path"></a>`unsafe-path` | Inspect the configured state root yourself; the helper never chmods, moves or deletes. |
-| <a id="workflow-metrics-io-error"></a>`io-error` | Inspect the configured state root; continue the workflow without this capture (an `unconfirmed` write reconciles by targeted read + one identical replay). |
+| <a id="workflow-metrics-io-error"></a>`io-error` | Inspect the configured state root; continue the workflow without this capture. Reconcile an `unconfirmed` write by [targeted read](#workflow-metrics-replay); absent `begin`/`end` boundaries stay missing, while `decision`/`pass`/`correction` allow one identical replay. |
 | <a id="workflow-metrics-lock-busy"></a>`lock-busy` | Drop this capture attempt; do not retry it. |
 | <a id="workflow-metrics-capacity"></a>`capacity` | Mark capture partial and continue; do not truncate the run file. |
 | <a id="workflow-metrics-malformed-record"></a>`malformed-record` | Mark capture partial and continue; do not repair the run file in place. A read also returns it when stored records contradict or orphan each other; `data.unknown_reasons` names which. |
@@ -1183,27 +1190,38 @@ active host's installed gstack checkout; use that installation even for a custom
 host profile. The prelude verifies it before changing the destinations:
 
 ~~~sh
-if [ -x "$GSP" ] && UP_SOURCE="$("$GSP" --get GSTACK_STATE_ROOT)" && [ -d "$UP_SOURCE" ]; then
-SNAP="$(mktemp -d)/real-stores.snapshot" && bun tests/helpers/telemetry-env.ts --snapshot "$SNAP"
-EXT_ISO="$(mktemp -d)" UP_ISO="$(mktemp -d)"
-export GSTACK_EXTEND_STATE_DIR="$EXT_ISO" GSTACK_STATE_ROOT="$UP_ISO" GSTACK_STATE_DIR="$UP_ISO"
-# Preserve host profile variables (CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME).
-# The explicit state overrides above take precedence; clear the other sink overrides.
-unset GSTACK_HOME GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT
-# Seed the isolated upstream directory with copies (never links) of its config and first-run prompt markers, so the
-# host shows no extra onboarding prompt. Never copy credentials, profiles or caches.
-cp "$UP_SOURCE/config.yaml" "$UP_ISO/" 2>/dev/null || :
-# Bash leaves unmatched globs literal; this works when the launching shell is zsh too.
-bash -c 'for f in "$1"/.*-prompted "$1"/.*-seen "$1"/.*-shown; do [ ! -f "$f" ] || cp "$f" "$2/"; done' smoke "$UP_SOURCE" "$UP_ISO"
-# Verify both upstream sinks before launching the host: each must name the isolated directory.
-"$GSP" --get GSTACK_STATE_ROOT   # the modern logger's sink
-printf 'legacy logger sink: %s\n' "$GSTACK_STATE_DIR"                       # the legacy logger's sink
+gx_prepare_smoke() {
+  local _gx_source _gx_snapdir _gx_ext _gx_up _gx_dir _gx_resolved
+  [ -x "$GSP" ] && _gx_source="$("$GSP" --get GSTACK_STATE_ROOT)" && [ -d "$_gx_source" ] || return 1
+  _gx_snapdir="$(mktemp -d)" || return 1
+  _gx_ext="$(mktemp -d)" || return 1
+  _gx_up="$(mktemp -d)" || return 1
+  for _gx_dir in "$_gx_snapdir" "$_gx_ext" "$_gx_up"; do
+    case "$_gx_dir" in /*) [ -d "$_gx_dir" ] || return 1 ;; *) return 1 ;; esac
+  done
+  [ "$_gx_ext" != "$_gx_up" ] && [ "$_gx_ext" != "$_gx_source" ] && [ "$_gx_up" != "$_gx_source" ] || return 1
+  bun tests/helpers/telemetry-env.ts --snapshot "$_gx_snapdir/real-stores.snapshot" && [ -s "$_gx_snapdir/real-stores.snapshot" ] || return 1
+  # Copy only configuration and first-run prompt markers, never credentials, profiles or caches.
+  if [ -f "$_gx_source/config.yaml" ]; then cp "$_gx_source/config.yaml" "$_gx_up/" || return 1; fi
+  # Bash leaves unmatched globs literal, including when the launching shell is zsh.
+  bash -c 'for f in "$1"/.*-prompted "$1"/.*-seen "$1"/.*-shown; do if [ -f "$f" ]; then cp "$f" "$2/" || exit 1; fi; done' smoke "$_gx_source" "$_gx_up" || return 1
+  _gx_resolved="$(GSTACK_STATE_ROOT="$_gx_up" GSTACK_STATE_DIR="$_gx_up" "$GSP" --get GSTACK_STATE_ROOT)" || return 1
+  [ "$_gx_resolved" = "$_gx_up" ] || return 1
+  # Publish destinations only after every prerequisite succeeds. Preserve host profile variables.
+  SNAP="$_gx_snapdir/real-stores.snapshot" EXT_ISO="$_gx_ext" UP_ISO="$_gx_up"
+  export GSTACK_EXTEND_STATE_DIR="$EXT_ISO" GSTACK_STATE_ROOT="$UP_ISO" GSTACK_STATE_DIR="$UP_ISO"
+  unset GSTACK_HOME GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT
+}
+if gx_prepare_smoke; then
+  printf 'SMOKE_READY: isolated state prepared; launch the host from this shell.\n'
 else
-  printf 'GSP must resolve the active gstack state directory before the smoke.\n'
+  printf 'Smoke setup failed; do not launch the host. State destinations were not changed.\n' >&2
+  false
 fi
 ~~~
 
-Launch the host from that shell and run each wrapper once. A host that cannot
+Only after `SMOKE_READY`, launch the host from that shell and run each wrapper
+once. If setup fails, fix the reported prerequisite and rerun it first. A host that cannot
 pass these variables through reports its smoke as unverified and is not run
 against the real stores. Afterwards compare, with the overrides removed so the
 guard reads your real stores (the run's session IDs are harvested from the

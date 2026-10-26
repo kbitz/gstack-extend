@@ -1405,6 +1405,9 @@ describe('Track 24A workflow metrics drift-locks', () => {
   };
   const requiredSites: Record<string, Record<string, string[]>> = {
     'review-and-prep': {
+      commit: ['When /review stops at its cycle cap'],
+      publication: ['When /review stops at its cycle cap'],
+      handoff: ['When /review stops at its cycle cap'],
       completion: ["Enforce completion, beyond /review's informational audit", '5. Triage, fix, and verify locally'],
       pregate: ["Prove /ship's release gates on this head", 'Repair a test-only final-gate failure', '5. Triage, fix, and verify locally', 'Reviewed secret findings'],
       coverage: ["Prove /ship's release gates on this head"],
@@ -1465,6 +1468,7 @@ describe('Track 24A workflow metrics drift-locks', () => {
       const wrapperSame = spanBlock(body, 'Same-call form').replace(/GX_STAGE='[a-z-]+'/, "GX_STAGE='review-and-prep'");
       expect(wrapperSame, `${skill}: the same-call pattern differs from docs/telemetry.md#workflow-metrics-span-same-call; update both in the same change`)
         .toBe(spanBlock(spanDocs, 'workflow-metrics-span-same-call').replace(/GX_STAGE='[a-z-]+'/, "GX_STAGE='review-and-prep'"));
+      expect(wrapperSame).toContain("GX_LIB='<retained library path>'; GX_RUN='<run step_id>'");
       expect(wrapperSame).toContain(`GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac`);
       expect(wrapperSame.trimEnd().endsWith('(exit "$rc")')).toBe(true);
       expect(spanBlock(body, 'print the library path to retain'), `${skill}: the library lookup differs from docs/telemetry.md`)

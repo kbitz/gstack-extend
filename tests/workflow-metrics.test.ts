@@ -1439,7 +1439,29 @@ describe('Track 31A real-store guard', () => {
       expect(realStoreSpecs({ [name]: '' }, home), name).toEqual(defaults);
     }
     expect(realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: s.extend, GSTACK_STATE_ROOT: s.extend + '/.', GSTACK_STATE_DIR: s.extend }, home))
-      .toEqual([...defaults, { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'extend' }]);
+      .toEqual([...defaults, { label: '$GSTACK_EXTEND_STATE_DIR', root: s.extend, kind: 'shared' }]);
+  }), 60_000);
+
+  // Value: protects=co-located sinks retain both ledger rewrite policies after canonical-root deduplication;
+  // fails_when=an extend rewrite passes or an upstream rotation becomes a corruption failure;
+  // why_new=existing discovery tests only assert path deduplication; seam=none;
+  // no_claim=real-store acceptance (stand-in stores only).
+  test('co-located stores fail extend rewrites while upstream rotation remains unverified', withStand(s => {
+    const home = join(s.dir, 'shared-home');
+    const shared = join(home, '.gstack');
+    mkdirSync(join(shared, 'analytics/workflow-metrics'), { recursive: true });
+    const specs = realStoreSpecs({ GSTACK_EXTEND_STATE_DIR: shared + '/.' }, home);
+    expect(specs.map(spec => spec.root)).toEqual([join(home, '.gstack-extend'), shared]);
+    for (const rel of ['analytics/stage-runs.jsonl', 'analytics/workflow-metrics/session.jsonl', 'analytics/skill-usage.jsonl']) {
+      const file = join(shared, rel);
+      writeFileSync(file, row(fresh()));
+      const snap = snapshotRealStores(specs, { ...OPTS, home });
+      writeFileSync(file, 'rewritten\n');
+      const result = compareRealStores(snap, [], { ...OPTS, home });
+      expect(result.status, rel).toBe(rel.endsWith('skill-usage.jsonl') ? 'unverified' : 'failed');
+      expect(codes(result), rel).toEqual(rel.endsWith('skill-usage.jsonl') ? [] : ['prefix-rewrite']);
+      expect(result.files, rel).toBe(readdirSync(join(shared, 'analytics'), { recursive: true }).filter(name => String(name).endsWith('.jsonl')).length);
+    }
   }), 60_000);
 
   // Value: protects=large-ledger scans detect split session IDs and escaped roots only in appended bytes;

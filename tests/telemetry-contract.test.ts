@@ -1720,11 +1720,41 @@ describe('workflow metrics contract (Track 24A)', () => {
       const paths = join(fix.home, 'gstack-paths');
       writeFileSync(paths, `#!/bin/sh\nprintf '%s\\n' "\${GSTACK_STATE_ROOT:-${source}}"\n`);
       chmodSync(paths, 0o755);
+      symlinkSync(process.execPath, join(fix.home, 'bun'));
       const profiles = { CLAUDE_CONFIG_DIR: '/synthetic/claude-profile', CODEX_HOME: '/synthetic/codex-profile', GROK_HOME: '/synthetic/grok-profile' };
       const script = `${command}\n[ "$CLAUDE_CONFIG_DIR" = '${profiles.CLAUDE_CONFIG_DIR}' ] && [ "$CODEX_HOME" = '${profiles.CODEX_HOME}' ] && [ "$GROK_HOME" = '${profiles.GROK_HOME}' ] || exit 91\n[ -f "$UP_ISO/.test-seen" ] && [ -f "$UP_ISO/config.yaml" ] || exit 92\n[ "$GSTACK_STATE_ROOT" = "$UP_ISO" ] && [ "$GSTACK_STATE_DIR" = "$UP_ISO" ] || exit 93\n`;
-      const r = spawnSync(shell, ['-c', script], { cwd: ROOT, env: { ...fix.env, ...profiles, GSP: paths, TMPDIR: fix.home }, encoding: 'utf8', timeout: 30_000 });
+      const r = spawnSync(shell, ['-c', script], { cwd: ROOT, env: { ...fix.env, ...profiles, PATH: `${fix.home}:${fix.env.PATH}`, GSP: paths, TMPDIR: fix.home }, encoding: 'utf8', timeout: 30_000 });
       expect(r.status, r.stdout + r.stderr).toBe(0);
       expect(r.stderr).not.toContain('no matches found');
+      expect(r.stdout).toContain('SMOKE_READY');
+    }
+  }, 60_000);
+
+  // Value: protects=host setup stops before state exports when allocation or snapshot preparation fails;
+  // fails_when=setup reports success or mutates inherited destinations after a failed prerequisite;
+  // why_new=the existing host smoke case exercises successful preparation only; seam=PATH command stand-ins;
+  // no_claim=installed host acceptance (document-extracted shell against a disposable HOME).
+  test('the host smoke prelude fails closed before exporting any destinations', () => {
+    const at = docText().indexOf('### Installed two-wrapper smoke');
+    const command = /~~~sh\n([\s\S]*?)~~~/.exec(docText().slice(at))![1];
+    for (const shell of ['bash', '/bin/bash', 'zsh']) for (const failure of ['allocation-1', 'allocation-2', 'allocation-3', 'snapshot']) {
+      if (spawnSync(shell, ['-c', 'exit 0']).status !== 0) continue;
+      const fix = makeTelemetryFixture('off');
+      const source = join(fix.home, 'source');
+      const mockBin = join(fix.home, 'mock-bin');
+      mkdirSync(source); mkdirSync(mockBin);
+      writeFileSync(join(source, 'config.yaml'), 'telemetry: off\n');
+      const scripts = {
+        'gstack-paths': '#!/bin/sh\nprintf "%s\\n" "${GSTACK_STATE_ROOT:-$PROBE_SOURCE}"\n',
+        bun: '#!/bin/sh\n[ "$PROBE_FAILURE" != snapshot ] || exit 41\nprintf snapshot > "$3"\n',
+        mktemp: '#!/bin/sh\nn=0; [ ! -f "$PROBE_COUNT" ] || read -r n < "$PROBE_COUNT"\nn=$((n+1)); printf "%s\\n" "$n" > "$PROBE_COUNT"\n[ "$PROBE_FAILURE" != "allocation-$n" ] || exit 42\nexec /usr/bin/mktemp -d "$TMPDIR/owned.XXXXXX"\n',
+      };
+      for (const [name, text] of Object.entries(scripts)) { writeFileSync(join(mockBin, name), text); chmodSync(join(mockBin, name), 0o755); }
+      const script = `${command}\nprep_rc=$?\n[ "$prep_rc" -ne 0 ] || exit 91\n[ -z "\${GSTACK_EXTEND_STATE_DIR:-}" ] && [ -z "\${GSTACK_STATE_ROOT:-}" ] && [ -z "\${GSTACK_STATE_DIR:-}" ] || exit 92\n`;
+      const r = spawnSync(shell, ['-c', script], { cwd: ROOT, env: { ...fix.env, PATH: `${mockBin}:${fix.env.PATH}`, GSP: join(mockBin, 'gstack-paths'),
+        PROBE_SOURCE: source, PROBE_FAILURE: failure, PROBE_COUNT: join(fix.home, 'allocations'), TMPDIR: fix.home }, encoding: 'utf8', timeout: 30_000 });
+      expect(r.status, `${shell} ${failure}: ${r.stdout}${r.stderr}`).toBe(0);
+      expect(r.stdout).not.toContain('SMOKE_READY');
     }
   }, 60_000);
 
@@ -1779,6 +1809,27 @@ describe('workflow metrics contract (Track 24A)', () => {
         expect(r.stderr).toBe('');
       }
     });
+    // Value: protects=enabled capture failures remain visible without changing the work result;
+    // fails_when=missing launchers or failed UUID mints report intentional skipping;
+    // why_new=the span matrix lacks mint failures and previously accepted silent skipping; seam=launcher stub;
+    // no_claim=installed host timing.
+    test('enabled capture reports unavailable when the launcher or UUID mint fails', () => {
+      for (const shell of shells) for (const failure of ['launcher', 'begin-mint', 'end-mint']) {
+        const fix = makeTelemetryFixture('off');
+        const bin = join(fix.home, 'span-bin');
+        mkdirSync(join(bin, 'lib'), { recursive: true });
+        const lib = join(bin, 'lib/workflow-span.sh');
+        writeFileSync(lib, readFileSync(join(ROOT, 'bin/lib/workflow-span.sh'), 'utf8'));
+        const launcher = join(bin, 'gstack-extend-telemetry');
+        if (failure !== 'launcher') { writeFileSync(launcher, '#!/bin/sh\ncat >/dev/null\nprintf \'{"status":"recorded"}\\n\'\n'); chmodSync(launcher, 0o755); }
+        const script = `. "$GX_LIB"\n${failure === 'begin-mint' ? '_gx_mint() { return 1; }' : ''}\ngx_span_begin scope "$GX_RUN" phase\n${failure === 'end-mint' ? '_gx_mint() { return 1; }' : ''}\necho work-ran\ngx_span_end "$GX_STEP" 0\n`;
+        const r = spawnSync(shell, ['-c', script], { env: { ...fix.env, GX_LIB: lib, GX_STAGE: 'review-and-prep', GX_SID: 'extend-' + randomUUID(), GX_CAPTURE: '1', GX_RUN: randomUUID() }, encoding: 'utf8', timeout: 15_000 });
+        expect(r.status, `${shell} ${failure}: ${r.stderr}`).toBe(0);
+        expect(r.stdout).toContain('work-ran');
+        expect(r.stdout).toContain(failure === 'end-mint' ? 'end=unavailable' : 'begin=unavailable');
+      }
+    });
+
     // Value: protects=span options preserve governing decisions, parent and candidate attribution and explicit outcomes;
     // fails_when=NODECISION is ignored or a reason, context, parent or cancelled outcome is dropped;
     // why_new=the existing same-call matrix uses only default phase options; seam=none;
@@ -1874,8 +1925,8 @@ describe('workflow metrics contract (Track 24A)', () => {
         ].join('\n') + '\n');
         chmodSync(launcher, 0o755);
         const sid = 'extend-' + randomUUID();
-        const pattern = block().replace('<session ID the start printed>', sid).replace('PHASE', 'coverage').replace('WORK', 'echo work-ran; exit 7');
-        const result = spawnSync(shell, ['-c', 'set -e\n' + pattern], { env: { ...fix.env, GX_LIB: lib, GX_RUN: randomUUID(),
+        const pattern = block().replace('<session ID the start printed>', sid).replace('<retained library path>', lib).replace('<run step_id>', randomUUID()).replace('PHASE', 'coverage').replace('WORK', 'echo work-ran; exit 7');
+        const result = spawnSync(shell, ['-c', 'set -e\n' + pattern], { env: { ...fix.env,
           CAPTURE_CALL_LOG: log, CAPTURE_REPLY: JSON.stringify(row.reply) }, encoding: 'utf8', timeout: 30_000 });
         const label = `${shell}: ${row.name}`;
         expect(result.status, `${label}\n${result.stdout}${result.stderr}`).toBe(7);
@@ -1905,7 +1956,7 @@ describe('workflow metrics contract (Track 24A)', () => {
       { name: 'enabled, failing command', work: 'echo before; false; echo after', rc: 1, end: 'recorded', outcome: 'failed' },
       { name: 'enabled, failing command inside a pipe', work: 'false | cat; echo after', rc: 1, end: 'recorded', outcome: 'failed' },
       { name: 'capture disabled', work: 'echo worked; exit 7', capture: 0, rc: 7, end: 'skipped', begin: 'skipped' },
-      { name: 'no launcher beside the library', work: 'echo worked; exit 3', lib: 'no-launcher', rc: 3, end: 'skipped', begin: 'skipped' },
+      { name: 'no launcher beside the library', work: 'echo worked; exit 3', lib: 'no-launcher', rc: 3, end: 'skipped', begin: 'unavailable' },
       { name: 'library not found', work: 'echo worked; exit 4', lib: 'missing', rc: 4, end: 'skipped', begin: 'none' },
       { name: 'malformed envelope', work: 'echo worked; exit 5', lib: 'garbage', rc: 5, end: 'skipped', begin: 'missing' },
       { name: 'unconfirmed write the read finds', work: 'false', lib: 'unconfirmed', rc: 1, end: 'match', begin: 'match', outcome: 'failed' },
@@ -1934,9 +1985,9 @@ describe('workflow metrics contract (Track 24A)', () => {
           else if (c.lib?.startsWith('absent-')) stub(`printf '%s\\n' "$2" >> '${checkout}/calls'\ncase "$2" in\n  ${c.lib.slice(7)}) cat >/dev/null; echo '{"v":1,"status":"unconfirmed","reason":"io-error"}' ;;\n  *) exec ${JSON.stringify(WRAPPER)} "$@" ;;\nesac`);
           else if (c.lib !== 'no-launcher' && c.lib !== 'missing') symlinkSync(WRAPPER, join(checkout, 'gstack-extend-telemetry'));
           const lib = c.lib === 'missing' ? join(fix.home, 'nowhere', 'bin', 'lib', 'workflow-span.sh') : join(checkout, 'lib', 'workflow-span.sh');
-          const pattern = block().replace('<session ID the start printed>', sid).replace('GX_CAPTURE=1', `GX_CAPTURE=${c.capture ?? 1}`)
+          const pattern = block().replace('<session ID the start printed>', sid).replace('<retained library path>', lib).replace('<run step_id>', run).replace('GX_CAPTURE=1', `GX_CAPTURE=${c.capture ?? 1}`)
             .replace('PHASE', 'pregate').replace('WORK', c.work);
-          const script = `${errexit ? 'set -e\n' : ''}GX_LIB=${JSON.stringify(lib)}\nGX_RUN=${run}\n${pattern}`;
+          const script = `${errexit ? 'set -e\n' : ''}${pattern}`;
           const r = spawnSync(shell, ['-c', script], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 45_000 });
           expect(r.status, `${label}: the call's exit status must equal the work's\n${r.stdout}${r.stderr}`).toBe(c.rc);
           if (c.work.includes('echo worked')) expect(r.stdout, label).toContain('worked');

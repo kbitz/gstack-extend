@@ -93,8 +93,10 @@ _gx_begin() {
     _gx_ids=
   fi
   if [ -z "$_gx_ids" ]; then
-    GX_BEGUN="${GX_BEGUN:-} -=skipped:$_gx_label"
-    printf 'SPAN step=- phase=%s begin=skipped end=pending\n' "$_gx_label"
+    _gx_missing=skipped
+    [ "${GX_CAPTURE:-0}" != 1 ] || _gx_missing=unavailable
+    GX_BEGUN="${GX_BEGUN:-} -=$_gx_missing:$_gx_label"
+    printf 'SPAN step=- phase=%s begin=%s end=pending\n' "$_gx_label" "$_gx_missing"
     case "$_gx_sv" in *e*) set -e ;; esac
     return 0
   fi
@@ -159,6 +161,7 @@ gx_span_end() {
   _gx_endstat=skipped
   case "$_gx_bstat" in
     recorded|replayed|match)
+      [ "${GX_CAPTURE:-0}" != 1 ] || _gx_endstat=unavailable
       if [ -n "$_gx_step" ] && [ "$_gx_step" != - ] && _gx_ready; then
         case "$_gx_outcome" in
           completed|failed|paused|cancelled) ;;

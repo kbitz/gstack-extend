@@ -135,7 +135,7 @@ library and both call forms are in
   new every call, so set the retained values first:
 
   ```bash
-  GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1
+  GX_STAGE='review-and-prep'; GX_SID='<session ID the start printed>'; GX_CAPTURE=1; GX_LIB='<retained library path>'; GX_RUN='<run step_id>'
   [ -f "$GX_LIB" ] && . "$GX_LIB" 2>/dev/null || { gx_span_begin() { :; }; gx_span_begin_wait() { :; }; gx_span_end() { :; }; }
   gx_span_begin PHASE "$GX_RUN" phase
   GX_E=$-; set +e; ( set -e -o pipefail; WORK ); rc=$?; case "$GX_E" in *e*) set -e ;; esac
@@ -176,7 +176,9 @@ library and both call forms are in
   [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
   ```
 
-  An empty `GX_LIB` leaves span capture unavailable; the workflow continues.
+  An empty `GX_LIB` or a missing expected `SPAN` line leaves span capture
+  unavailable; with `GX_CAPTURE=1`, record `capture=partial (library-unavailable
+  or missing-span)` in the receipt and continue the workflow.
   Once the candidate changes (you first observe it, a base merge, a fix commit),
   every later step `begin` and pass `started` carries a `context` override with
   the new HEAD/tree/base (the fourth argument of `gx_span_begin`); their ends,
@@ -245,7 +247,9 @@ Phase mapping and span sites (stable metric phase IDs, anchored to this file's
 headings — the owner of a wrapper change updates this mapping in the same
 change). The Spans column is the closed list of span sites: a phase visit at an
 anchor not listed there is a change to this table first. `(cross-call)` marks
-the long sites that use the cross-call form.
+the long sites that use the cross-call form. A `none` row supplies guidance
+only: it emits no separate `RUN` decision or span; the executing site owns both. At a cycle-cap stop, close the existing
+`local-pass` span and span each stop-only commit, publication and handoff visit.
 
 | Anchor in this skill | Metric phases | Spans |
 |---|---|---|
@@ -257,7 +261,7 @@ the long sites that use the cross-call form.
 | `Merge the latest base before review` | `base-integration` | `base-integration` |
 | `Bound Claude Code outside calls` | `local-pass`, `voice` | none |
 | `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
-| `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | none |
+| `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
 | `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` | `pregate` (cross-call), `coverage`, `documentation`, `tests` (cross-call) |
 | `Repair a test-only final-gate failure` | `pregate`, `tests` | `pregate` (cross-call), `tests` (cross-call) |

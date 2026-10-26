@@ -181,7 +181,7 @@ with (sink / 'skill-usage.jsonl').open('a') as f:
 
 const GUARD = 'REAL-STORE-GUARD';
 export type GuardCode = 'prefix-rewrite' | 'appended-id' | 'named-file' | 'escaped-root' | 'unexpected';
-export type StoreKind = 'extend' | 'upstream';
+export type StoreKind = 'extend' | 'upstream' | 'shared';
 export type StoreSpec = { label: string; root: string; kind: StoreKind };
 type LedgerState = { size: number; sha256: string };
 type StoreSnap = {
@@ -246,7 +246,7 @@ const rootEntryPath = (root: string) => root.replace(/(?:\/\.?)+$/, '') || '/';
 /** The stores the guard watches for this runner: its real HOME, then every inherited state root (absolute only). */
 export function realStoreSpecs(env: NodeJS.ProcessEnv = process.env, home: string = REAL_HOME): StoreSpec[] {
   const specs: StoreSpec[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, StoreSpec>();
   const add = (label: string, root: string, kind: StoreKind) => {
     if (!root || !isAbsolute(root)) return; // the launcher ignores a relative override too
     let key = root;
@@ -255,9 +255,14 @@ export function realStoreSpecs(env: NodeJS.ProcessEnv = process.env, home: strin
     } catch {
       // A missing store is still watched (it can appear); key by the given path.
     }
-    if (seen.has(key)) return;
-    seen.add(key);
-    specs.push({ label, root, kind });
+    const prior = seen.get(key);
+    if (prior) {
+      if (prior.kind !== kind) prior.kind = 'shared';
+      return;
+    }
+    const spec = { label, root, kind };
+    seen.set(key, spec);
+    specs.push(spec);
   };
   if (home) {
     add('~/.gstack-extend', join(home, '.gstack-extend'), 'extend');
@@ -593,7 +598,8 @@ function compareStores(snap: RealStoreSnapshot, idIterable: Iterable<string>, op
     for (const [rel, prev] of Object.entries(ss.ledgers)) {
       const file = now.get(rel);
       const rewritten = (size: number | null, why: string, scanned: Set<string>) => {
-        if (spec.kind === 'extend') flag('prefix-rewrite', spec, rel, size, `— gstack-extend ledger ${why} (was ${prev.size}B)`, matched(scanned));
+        // Co-located stores retain extend's strict policy; only the upstream usage ledger may rotate.
+        if (spec.kind === 'extend' || (spec.kind === 'shared' && rel !== 'analytics/skill-usage.jsonl')) flag('prefix-rewrite', spec, rel, size, `— gstack-extend ledger ${why} (was ${prev.size}B)`, matched(scanned));
         else unverified.push(unverifiedFor(spec, rel, home, 'rotated'));
       };
       if (!file) {
