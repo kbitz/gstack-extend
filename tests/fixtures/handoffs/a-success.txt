@@ -16,12 +16,13 @@ Plan: docs/plans/example-plan.md; approved scope: Track 7 only, approved by the 
 Read the full plan and accepted revisions, project instructions, and current diff.
 
 Implementation: Added the exporter module and its tests.
-Coverage: 3 items, one row each below
+Coverage: 0 DEFERRED BY USER, 0 BLOCKED; 3 items, one row each below
   T1 BUILT: src/export.ts writes the report; tests/export.test.ts covers it.
   T2 BUILT: src/cli.ts passes the new flag through.
   T3 ADAPTED: reused the shared formatter instead of adding a second one.
 Decisions/deviations: T3 reuses the shared formatter; the required outcome is unchanged.
 Checks run: bun test tests/export.test.ts, cwd /home/example/work/example-repo, exit 0
+- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: none
 Risks/context: none
 Preserve: none

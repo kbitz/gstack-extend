@@ -1,16 +1,15 @@
 ---
 name: autoplan-lean
 description: |
-  Beta (less battle-tested — review its output carefully). Run upstream
-  /autoplan's review pipeline (CEO, design, DX and eng phases with both review
-  voices and auto-decisions) from the installed phase skills, keeping the plan
-  small, and finish with a copyable /implement prompt for a fresh session. The
-  plan holds criteria, Tier, the verify command, accepted settlements, one task
-  list and the GSTACK REVIEW REPORT, within a budget set by the card's size.
-  The full review record goes to a hashed sidecar file. Reviewers get only
-  their phase's criteria and the plan, a phase's two voices run at the same
-  time, and their prompt sizes are recorded. Use when asked to "autoplan
-  lean", "run autoplan with a small plan", or when a caller launches
+  Run upstream /autoplan's review pipeline (CEO, design, DX and eng phases
+  with both review voices and auto-decisions) from the installed phase skills,
+  keeping the plan small, and finish with a copyable /implement prompt for a
+  fresh session. The plan holds criteria, Tier, the verify command, accepted
+  settlements, one task list and the GSTACK REVIEW REPORT, within a budget set
+  by the card's size. The full review record goes to a hashed sidecar file.
+  Reviewers get only their phase's criteria and the plan, a phase's two voices
+  run at the same time, and their prompt sizes are recorded. Use when asked to
+  "autoplan lean", "run autoplan with a small plan", or when a caller launches
   /autoplan-lean by name.
 allowed-tools:
   - Bash
@@ -24,10 +23,6 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
 ---
-
-> **⚠️ Beta skill.** Newer and less battle-tested than gstack-extend's stable
-> skills. Before substantive work, tell the user this skill is beta and that its
-> output warrants closer review than usual. Note any rough edges so it can be hardened.
 
 ## Preamble (run first)
 

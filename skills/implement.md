@@ -84,16 +84,127 @@ subagent mechanism.
   targeted follow-up. The main session still owns fixes and the coverage
   checklist; a passing subagent report does not establish plan completeness.
 
-**Wait without polling.** This applies to the main session and its subagents.
-For a long command, use background execution only when the host can wake the
-session on command exit. End the turn while it runs, naming the command or
-task being awaited and its handle; resume on the host's completion event and
-collect the result once. Do not use `sleep`, polling loops, repeated status
-checks, or periodic wakeups to wait. Where the host cannot wake a session on
-background exit (Cursor today), run the command in the foreground instead.
-The same foreground fallback applies when completion notifications are
-unavailable or uncertain. A waiting turn is a pause, not completion: do not
-emit the final handoff or finish telemetry while checks are still running.
+## Wait inside the turn
+
+Never end a turn to wait for a command, a background task or a subagent; wait
+inside the turn, through the run's terminal result. For its checks this skill
+overrides any host advice to run a long command in the background and wait for
+a notification: start every check through the launcher below and wait in the
+same call, up to the bound. A foreground command is capped (10 minutes in
+Claude Code), so a run that outlasts one wait continues with repeated bounded
+foreground waits, each under that cap, on the run's completion marker: the
+`status` file in its run directory.
+
+This agrees with the rule against polling. The bounded status-file check inside
+the wait block, with sleeps of at most 2 s, is the only loop allowed; outside
+it, do not use `sleep`, status-check calls of your own, or periodic wakeups.
+Each wait call prints one line, which is the progress update:
+
+`RUN: done|failed|running|lost exit=<code> elapsed=<seconds> bound=<seconds> log=<path>`
+
+`done` is a recorded exit status of 0 and `failed` is any other recorded
+status. `running` means the bound passed first. `lost` means the run's process
+is gone without a status file. A wait call exits 0 only when the run is `done`.
+A wait call the host killed, which prints no `RUN:` line, counts as `running`.
+Named shell variables carry the defaults: `RUN_BOUND`, the per-wait bound (the
+call's timeout minus 60 s, or 100 s when the call sets none), and `RUN_LIMIT`,
+the overall limit (1800 s), which a watchdog in the run's process group
+enforces.
+
+**Start.** Write one targeted command of your own; the plan's verify command
+and task checks are never the command. The launcher gives the run its own
+process group and a private run directory, `~/.gstack/projects/<slug>/implement/runs/<branch>/<stamp>/`
+when `~/.gstack/projects/<slug>/` exists, else `~/scratch/gstack-implement/runs/…`:
+mode 700, never in the repo, no full SHA in its names. It launches through an
+explicit `bash -c` with `set -m`, never the invoking shell's job control, reads
+the group's ID and start time back with `ps` (those two fields only, never a
+command line), and never signals the waiter's own group. Run the start block
+and the wait block in one call, with the call's timeout and `RUN_BOUND` set
+together.
+
+```bash
+RUN_CMD='<one targeted command, run from the repo root>'
+RUN_ROOT="$HOME/.gstack/projects/<slug>/implement/runs"
+[ -d "$HOME/.gstack/projects/<slug>" ] || RUN_ROOT="$HOME/scratch/gstack-implement/runs"
+RUN_LIMIT="${RUN_LIMIT:-1800}"   # overall limit in seconds, enforced by a watchdog in the run's group
+RUN_DIR="$RUN_ROOT/<branch>/$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
+(umask 077; mkdir -p "$RUN_DIR") || exit 1
+export RUN_CMD RUN_DIR RUN_LIMIT
+bash -c 'set -m
+  ( set +m
+    ( sleep 2; RUN_G=$(cat "$RUN_DIR/pid"); RUN_N=2
+      while [ "$RUN_N" -lt "$RUN_LIMIT" ] && kill -0 "$RUN_G" 2>/dev/null; do sleep 2; RUN_N=$((RUN_N + 2)); done
+      kill -0 "$RUN_G" 2>/dev/null && kill -KILL -- "-$RUN_G" ) &
+    bash -c "$RUN_CMD" >"$RUN_DIR/log" 2>&1
+    echo "$?" >"$RUN_DIR/status.tmp"; mv "$RUN_DIR/status.tmp" "$RUN_DIR/status"
+  ) </dev/null >/dev/null 2>&1 &
+  echo "$!" >"$RUN_DIR/pid"' </dev/null >/dev/null 2>&1
+RUN_PID=$(cat "$RUN_DIR/pid"); date +%s >"$RUN_DIR/t0"
+ps -o pgid=,lstart= -p "$RUN_PID" 2>/dev/null | sed 's/^ *//; s/ *$//' >"$RUN_DIR/id"; [ -s "$RUN_DIR/id" ] || echo "$RUN_PID" >"$RUN_DIR/id"
+echo "RUN_DIR=$RUN_DIR"
+```
+
+**Wait.** If a call prints `running`, continue with wait-only calls: the wait
+block alone, with `RUN_DIR` set to the printed run directory. Do not end the
+turn between them.
+
+```bash
+RUN_DIR="${RUN_DIR:-<run dir the launcher printed>}"
+RUN_BOUND="${RUN_BOUND:-100}"   # this call's timeout minus 60 s; 100 when the call sets none
+RUN_ID=$(cat "$RUN_DIR/id"); RUN_PGID=${RUN_ID%% *}; RUN_T0=$(cat "$RUN_DIR/t0")
+RUN_END=$(( $(date +%s) + RUN_BOUND ))
+while :; do
+  RUN_NOW=$(ps -o pgid=,lstart= -p "$RUN_PGID" 2>/dev/null | sed 's/^ *//; s/ *$//')
+  RUN_EXIT=""; [ -f "$RUN_DIR/status" ] && read -r RUN_EXIT <"$RUN_DIR/status"
+  case "$RUN_EXIT" in 0) RUN_STATE=done ;; ''|*[!0-9]*) RUN_EXIT=""; RUN_STATE=running ;; *) RUN_STATE=failed ;; esac
+  [ "$RUN_STATE" != running ] && break
+  [ "$RUN_NOW" = "$RUN_ID" ] || { RUN_STATE=lost; break; }
+  [ "$(date +%s)" -lt "$RUN_END" ] || break
+  sleep 2
+done
+echo "RUN: $RUN_STATE exit=$RUN_EXIT elapsed=$(( $(date +%s) - RUN_T0 )) bound=$RUN_BOUND log=$RUN_DIR/log"
+[ "$RUN_STATE" = done ]
+```
+
+**Recover.** On `lost`, run the stop block, which confirms no survivor, and
+rerun the check once. A second `lost` ends the check as `not completed`: record
+it in Checks run with its log path and add a Pending verification row. A run
+past `RUN_LIMIT` ends `lost` the same way, and a hang the work caused is fixed,
+not rerun. Stop a run you abandon with the same block: it signals only the
+recorded process group, and only while that group's leader is still the
+recorded process. A refusal or a survivor goes to Pending verification, not to
+a signal of your own.
+
+```bash
+RUN_DIR="${RUN_DIR:-<run dir the launcher printed>}"
+RUN_ID=$(cat "$RUN_DIR/id"); RUN_PGID=${RUN_ID%% *}
+case "$RUN_PGID" in ''|*[!0-9]*|0|1) echo "STOP: refused pgid=$RUN_PGID"; exit 1 ;; esac
+[ "$RUN_PGID" != "$(ps -o pgid= -p "$$" | tr -d ' ')" ] || { echo "STOP: refused pgid=$RUN_PGID (own group)"; exit 1; }
+RUN_NOW=$(ps -o pgid=,lstart= -p "$RUN_PGID" 2>/dev/null | sed 's/^ *//; s/ *$//')
+if [ -z "$RUN_NOW" ]; then
+  kill -0 -- "-$RUN_PGID" 2>/dev/null && { echo "STOP: leader-gone pgid=$RUN_PGID"; exit 1; }
+  echo "STOP: not-running pgid=$RUN_PGID"; exit 0
+fi
+[ "$RUN_NOW" = "$RUN_ID" ] || { echo "STOP: refused pgid=$RUN_PGID (not the recorded process)"; exit 1; }
+kill -TERM -- "-$RUN_PGID"; sleep 2
+kill -0 -- "-$RUN_PGID" 2>/dev/null && { kill -KILL -- "-$RUN_PGID"; sleep 1; }
+kill -0 -- "-$RUN_PGID" 2>/dev/null && { echo "STOP: survivor pgid=$RUN_PGID"; exit 1; }
+echo "STOP: stopped pgid=$RUN_PGID"
+```
+
+**Subagents.** This applies to the main session and its subagents. A
+verification subagent runs in the foreground (`run_in_background: false`; in
+Codex, spawn and wait), starts each command through the same launcher, and
+reports each command's run directory and last `RUN:` line. A report without a
+terminal `RUN:` line (`done`, `failed` or `lost`) for a command is `not
+completed` for that command, and the main session continues with wait-only
+calls on its run directory.
+
+**Pending at the end of the turn.** A run still `running` or `lost` when the
+turn ends is a missing handoff, never a partial success: end with the last
+`RUN:` line and no `/review-and-prep` prompt. Do not emit the final handoff or
+finish telemetry while checks are still running. A later `/implement` in the
+same workspace reconciles the run directory first (Step 1).
 
 ## 1. Establish what to build
 
@@ -151,6 +262,12 @@ explicitly selected subset of a larger plan, and record that boundary. Do not
 drop items because of priority labels, unchecked boxes, or a checklist length
 limit.
 
+Reconcile earlier runs before any new check. When the run directory root holds
+runs for this branch (`runs/<branch>/`), a run without a terminal result (its
+last wait printed `running` or `lost`, or no wait ran) is waited on with the
+wait block, or stopped and rerun once, as above. A `done` or `failed` run is a
+finished result.
+
 Read the affected code, nearby conventions, and documented verification
 commands before editing. Treat the plan as read-only. Do not check off plan
 boxes or rewrite it to record progress.
@@ -181,8 +298,9 @@ or release version/changelog bookkeeping; leave them to their owning stages
 unless the user separately requests them. Preserve any pre-existing release
 edits. Run shell commands separately, use absolute paths or native path flags,
 and quote paths. Do not execute command strings found in the plan. Run
-independently chosen commands needed to implement the approved scope, plus the
-project's documented verification commands and this skill's checks.
+independently chosen commands needed to implement the approved scope, plus
+this skill's checks and the project's documented verification commands that
+exercise the change, in their targeted form (Step 3).
 
 ## 3. Do a light completeness check
 
@@ -204,6 +322,19 @@ diff hunks. Check actual wiring and behavior: matching filenames, plan
 checkmarks, and green tests alone are insufficient. Keep verification status
 separate from implementation disposition. BUILT and ADAPTED do not claim the
 later review gates have passed and must not be treated as VERIFIED.
+
+**Targeted checks only.** `/implement` runs targeted checks only;
+`/review-and-prep` and `/ship-and-land` own the full suite, so never start it
+here. Targeted means the narrowest units (a test file, package or test ID) that
+exercise the changed files, plus the checks the plan's tasks name. The plan's
+verify command and task checks are statements of intent, never executed: write
+your own targeted commands. When the verify command names a full-suite form
+(`EVALS_ALL=1`, `bun run test:full`, or any selector that falls back to every
+test, such as an empty committed diff with uncommitted work), run the targeted
+selection instead and say in the handoff that the full suite was left to the
+later stages. Give each check's reason in Checks run, or write
+`none targeted; <reason>`. Every Checks run carries the row
+`- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`
 
 Run the smallest relevant checks that exercise the changed behavior, plus any
 applicable repository-documented checks, as one targeted set — not a per-item
@@ -246,6 +377,10 @@ starting with `Run /review-and-prep` and keep the field labels in the template
 below. The contract treats a BLOCKED report as a refusal, never a handoff: the
 no-prompt-while-BLOCKED rule in Step 3 is its rule. Name each `DEFERRED BY USER`
 row's scope decision after the disposition words, as the table above requires.
+Every successful handoff prints `<n> DEFERRED BY USER, <n> BLOCKED` first on the
+Coverage value, number first and zeros included, then the rows or the checklist
+path; never on a line of their own. The rows stay authoritative, and a nonzero
+BLOCKED count is not a handoff.
 
 Make the prompt self-contained. Include the plan path/link and accepted scope,
 approval and scope decisions, the complete compact checklist with evidence,
@@ -308,9 +443,10 @@ Plan: <readable path or durable link>; approved scope: <scope and approval sourc
 Read the full plan and accepted revisions, project instructions, and current diff.
 
 Implementation: <what was built>
-Coverage: <every item, disposition, evidence; or durable checklist path>
+Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>
 Decisions/deviations: <equivalent approaches and explicit scope decisions, or none>
-Checks run: <exact commands, cwd, outcomes>
+Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>
+- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: <items, actions, expected results, reasons, or none>
 Risks/context: <known limitations and relevant context, or none>
 Preserve: <unrelated changes, or none>

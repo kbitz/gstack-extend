@@ -22,15 +22,15 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 |-------|-------------|--------|
 | [`/project-spec`](skills/project-spec.md) | Establishes users, MVP outcomes, audience limits and release policy for a new or existing project, then runs roadmap. | New |
 | [`/roadmap`](skills/roadmap.md) | Admits work against the selected product target and produces an execution plan with visible outcomes, audits and dependency-aware grouping. | Stable |
-| [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | Beta |
+| [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | New |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
 | [`/ship-and-land`](skills/ship-and-land.md) | Reuses verified preparation, runs remaining release checks, then merges and verifies deployment through gstack. | New |
-| [`/docs-ship`](skills/docs-ship.md) | Takes a docs-only PR to the merge gate in one session: classifies it, checks scope, claims, rules, links and the tests that read the changed files, writes any bump the release policy asks for, and records a receipt. Never merges. | Beta |
+| [`/docs-ship`](skills/docs-ship.md) | Takes a docs-only PR to the merge gate in one session: classifies it, checks scope, claims, rules, links and the tests that read the changed files, writes any bump the release policy asks for, and records a receipt. Never merges. | New |
 | [`/full-review`](skills/full-review.md) | Reviews the codebase with three specialist agents and turns approved findings into backlog items. | Stable |
 | [`/gstack-extend-upgrade`](skills/gstack-extend-upgrade.md) | Checks for updates and upgrades the installed checkout. | Stable |
-| [`/gstack-extend-init`](skills/gstack-extend-init.md) | Bootstraps project docs, registers the project, and audits the scaffold. | Beta |
+| [`/gstack-extend-init`](skills/gstack-extend-init.md) | Bootstraps project docs, registers the project, and audits the scaffold. | New |
 
 ## Installation
 

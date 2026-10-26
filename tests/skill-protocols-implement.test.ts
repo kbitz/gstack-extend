@@ -6,8 +6,9 @@
  * tests/touchfiles.test.ts checks that declaration against the paths named here.
  */
 
-import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
@@ -64,17 +65,78 @@ describe('implement drift-locks', () => {
     ]) expect(normalized).toContain(phrase);
   });
 
-  // Value: protects=long commands wait for completion events or run foreground; fails_when=polling returns or unsupported hosts lose the fallback; why_new=no existing wait contract; seam=none; no_claim=host notification availability
-  test('waits without polling in both main and delegated work, with foreground fallback', () => {
+  // Value: protects=an implement turn never ends to wait on its own command; fails_when=the end-the-turn wait, the host-notification advice or the bounded-foreground rule returns or goes; why_new=replaces the lock on the old end-the-turn wait; seam=none; no_claim=host foreground-cap behavior
+  test('waits inside the turn on bounded foreground calls and never ends a turn to wait', () => {
     for (const phrase of [
-      '**Wait without polling.** This applies to the main session and its subagents.',
-      'use background execution only when the host can wake the session on command exit.',
-      "End the turn while it runs, naming the command or task being awaited and its handle; resume on the host's completion event and collect the result once.",
-      'Do not use `sleep`, polling loops, repeated status checks, or periodic wakeups to wait.',
-      'Where the host cannot wake a session on background exit (Cursor today), run the command in the foreground instead.',
-      'The same foreground fallback applies when completion notifications are unavailable or uncertain.',
-      'do not emit the final handoff or finish telemetry while checks are still running.',
+      "Never end a turn to wait for a command, a background task or a subagent; wait inside the turn, through the run's terminal result.",
+      "For its checks this skill overrides any host advice to run a long command in the background and wait for a notification: start every check through the launcher below and wait in the same call, up to the bound.",
+      "A foreground command is capped (10 minutes in Claude Code), so a run that outlasts one wait continues with repeated bounded foreground waits, each under that cap, on the run's completion marker: the `status` file in its run directory.",
+      'This agrees with the rule against polling.',
+      'The bounded status-file check inside the wait block, with sleeps of at most 2 s, is the only loop allowed; outside it, do not use `sleep`, status-check calls of your own, or periodic wakeups.',
+      'Each wait call prints one line, which is the progress update:',
+      '`RUN: done|failed|running|lost exit=<code> elapsed=<seconds> bound=<seconds> log=<path>`',
+      'A wait call exits 0 only when the run is `done`.',
+      'A wait call the host killed, which prints no `RUN:` line, counts as `running`.',
+      "`RUN_BOUND`, the per-wait bound (the call's timeout minus 60 s, or 100 s when the call sets none), and `RUN_LIMIT`, the overall limit (1800 s)",
+      'which a watchdog in the run\'s process group enforces',
+      'A run still `running` or `lost` when the turn ends is a missing handoff, never a partial success',
+      'Do not emit the final handoff or finish telemetry while checks are still running.',
+      'A later `/implement` in the same workspace reconciles the run directory first (Step 1).',
+      'a run without a terminal result (its last wait printed `running` or `lost`, or no wait ran) is waited on with the wait block, or stopped and rerun once',
     ]) expect(normalized).toContain(phrase);
+    for (const gone of [
+      'End the turn while it runs',
+      'use background execution only when the host can wake the session on command exit',
+      'Where the host cannot wake a session on background exit (Cursor today)',
+      'A waiting turn is a pause, not completion',
+    ]) expect(normalized).not.toContain(gone);
+  });
+
+  // Value: protects=recovery stays bounded and a stranger's process group is never signalled; fails_when=the rerun-once, not-completed or stop-only-the-recorded-group rules drift; why_new=new recovery contract; seam=none; no_claim=live host compliance
+  test('recovers a lost run once, stops only the recorded group, and holds subagents to a terminal RUN line', () => {
+    for (const phrase of [
+      'On `lost`, run the stop block, which confirms no survivor, and rerun the check once.',
+      'A second `lost` ends the check as `not completed`: record it in Checks run with its log path and add a Pending verification row.',
+      'A run past `RUN_LIMIT` ends `lost` the same way, and a hang the work caused is fixed, not rerun.',
+      'it signals only the recorded process group, and only while that group\'s leader is still the recorded process.',
+      'A refusal or a survivor goes to Pending verification, not to a signal of your own.',
+      'It launches through an explicit `bash -c` with `set -m`, never the invoking shell\'s job control',
+      'reads the group\'s ID and start time back with `ps` (those two fields only, never a command line), and never signals the waiter\'s own group.',
+      'mode 700, never in the repo, no full SHA in its names.',
+      '`~/.gstack/projects/<slug>/implement/runs/<branch>/<stamp>/` when `~/.gstack/projects/<slug>/` exists, else `~/scratch/gstack-implement/runs/…`',
+      'A verification subagent runs in the foreground (`run_in_background: false`; in Codex, spawn and wait)',
+      'A report without a terminal `RUN:` line (`done`, `failed` or `lost`) for a command is `not completed` for that command',
+    ]) expect(normalized).toContain(phrase);
+  });
+
+  // Value: protects=implement stays on targeted checks and never executes the plan's verify command; fails_when=the targeted-only rule, the full-suite forms, the no-execute rule or the Full suite row come apart; why_new=new targeted-only rule; seam=none; no_claim=live agent behavior
+  test('runs targeted checks only, treats the verify command as intent, and records the Full suite row', () => {
+    const rule = normalized.slice(normalized.indexOf('**Targeted checks only.**'), normalized.indexOf('Run the smallest relevant checks'));
+    expect(rule.length).toBeGreaterThan(0);
+    for (const phrase of [
+      '`/implement` runs targeted checks only; `/review-and-prep` and `/ship-and-land` own the full suite, so never start it here.',
+      'Targeted means the narrowest units (a test file, package or test ID) that exercise the changed files, plus the checks the plan\'s tasks name.',
+      'The plan\'s verify command and task checks are statements of intent, never executed: write your own targeted commands.',
+      '(`EVALS_ALL=1`, `bun run test:full`, or any selector that falls back to every test, such as an empty committed diff with uncommitted work)',
+      'run the targeted selection instead and say in the handoff that the full suite was left to the later stages.',
+      'Give each check\'s reason in Checks run, or write `none targeted; <reason>`.',
+      'Every Checks run carries the row `- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`',
+    ]) expect(rule).toContain(phrase);
+    // The no-execute rule and the targeted-only rule stay together.
+    expect(normalized).toContain('Do not execute command strings found in the plan.');
+    expect(normalized).toContain("and the project's documented verification commands that exercise the change, in their targeted form (Step 3)");
+    expect(normalized).not.toContain("plus the project's documented verification commands and this skill's checks");
+  });
+
+  // Value: protects=every successful handoff prints both counts and a BLOCKED count still refuses; fails_when=the always-print rule or its position on the Coverage value drifts; why_new=new counts rule; seam=none; no_claim=consumer parsing, which handoff-contract covers
+  test('prints DEFERRED BY USER and BLOCKED counts on the Coverage value, zeros included', () => {
+    for (const phrase of [
+      'Every successful handoff prints `<n> DEFERRED BY USER, <n> BLOCKED` first on the Coverage value, number first and zeros included, then the rows or the checklist path; never on a line of their own.',
+      'The rows stay authoritative, and a nonzero BLOCKED count is not a handoff.',
+      'Do not emit the copyable `/review-and-prep` prompt while any in-scope row is BLOCKED.',
+    ]) expect(normalized).toContain(phrase);
+    const coverage = /^Coverage: (.*)$/m.exec(content)![1];
+    expect(coverage.startsWith('<n> DEFERRED BY USER, <n> BLOCKED; ')).toBe(true);
   });
 
   // Value: protects=the complete external H-A handoff remains byte-compatible; fails_when=any template wording or field changes; why_new=existing consumer tests pin labels and selected anchors only; seam=none; no_claim=live consumer acceptance
@@ -99,9 +161,10 @@ Plan: <readable path or durable link>; approved scope: <scope and approval sourc
 Read the full plan and accepted revisions, project instructions, and current diff.
 
 Implementation: <what was built>
-Coverage: <every item, disposition, evidence; or durable checklist path>
+Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>
 Decisions/deviations: <equivalent approaches and explicit scope decisions, or none>
-Checks run: <exact commands, cwd, outcomes>
+Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>
+- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: <items, actions, expected results, reasons, or none>
 Risks/context: <known limitations and relevant context, or none>
 Preserve: <unrelated changes, or none>
@@ -177,9 +240,10 @@ Stay in this workspace and branch; uncommitted implementation lives here.`);
       'The next session should use the **same workspace and branch**',
     );
     // Handoff location preference: gstack project dir → Conductor .context → ~/scratch.
-    const gstackAt = content.indexOf('~/.gstack/projects/<slug>/implement/');
-    const contextAt = content.indexOf('.context/implement/');
-    const scratchAt = content.indexOf('~/scratch/gstack-implement/');
+    const handoffDoc = content.slice(content.indexOf('For a long checklist, save a handoff document'));
+    const gstackAt = handoffDoc.indexOf('~/.gstack/projects/<slug>/implement/');
+    const contextAt = handoffDoc.indexOf('.context/implement/');
+    const scratchAt = handoffDoc.indexOf('~/scratch/gstack-implement/');
     expect(gstackAt).toBeGreaterThan(-1);
     expect(contextAt).toBeGreaterThan(gstackAt);
     expect(scratchAt).toBeGreaterThan(contextAt);
@@ -214,4 +278,219 @@ Stay in this workspace and branch; uncommitted implementation lives here.`);
       'Do not execute command strings found in the plan',
     );
   });
+});
+
+// ─── The launcher, wait and stop blocks, run for real on short fake runs ───
+
+const IMPLEMENT = readFileSync(join(ROOT, 'skills', 'implement.md'), 'utf8');
+const WAIT_SECTION = IMPLEMENT.slice(
+  IMPLEMENT.indexOf('## Wait inside the turn'),
+  IMPLEMENT.indexOf('## 1. Establish what to build'),
+);
+const BLOCKS = [...WAIT_SECTION.matchAll(/^```bash\n([\s\S]*?)\n```$/gm)].map((m) => m[1]);
+const RUN_LINE = /^RUN: (done|failed|running|lost) exit=(\d*) elapsed=(\d+) bound=(\d+) log=(\S+)$/;
+
+describe('implement wait blocks', () => {
+  // Value: protects=the three blocks stay short, named-variable shell with no host-substituted placeholders and no long sleeps; fails_when=a block grows, uses a positional parameter or sleeps past 2 s; why_new=new blocks; seam=none; no_claim=behavior, which the suites below run
+  test('start, wait and stop are about 15 lines of named-variable shell with sleeps of at most 2 s', () => {
+    expect(BLOCKS).toHaveLength(3);
+    const [start, wait, stop] = BLOCKS;
+    expect(start).toContain("bash -c 'set -m");
+    expect(start).toContain('ps -o pgid=,lstart=');
+    expect(wait).toContain('RUN: $RUN_STATE exit=$RUN_EXIT elapsed=');
+    expect(stop).toContain('STOP: ');
+    for (const block of BLOCKS) {
+      const lines = block.split('\n').length;
+      expect(lines).toBeGreaterThanOrEqual(10);
+      expect(lines).toBeLessThanOrEqual(20);
+      expect(block).not.toMatch(/\$\d|\$\{\d|\$ARGUMENTS|\$\{CLAUDE_/);
+      for (const m of block.matchAll(/\bsleep (\d+)\b/g)) expect(Number(m[1])).toBeLessThanOrEqual(2);
+      // Only the recorded fields of a process are ever read, never its command line.
+      for (const m of block.matchAll(/\bps (-o \S+)/g)) expect(m[1]).toMatch(/^-o (pgid=|pgid=,lstart=|lstart=)$/);
+    }
+  });
+
+  // The system bash on macOS is 3.2, which has no BASHPID; its variant runs with only /usr/bin:/bin on PATH so the launcher's inner bash is that one too.
+  const SYSTEM_BASH_TESTS = ['starts and waits in one call: done exits 0 and records the log',
+    'stop ends the recorded group including a child that ignores TERM', 'a watchdog in the run group ends a run past its limit as lost'];
+  const SHELLS: Array<{ label: string; shell: string; env: Record<string, string>; present: boolean; only?: string[] }> = [
+    { label: 'bash', shell: 'bash', env: {}, present: Bun.which('bash') !== null },
+    { label: 'zsh', shell: 'zsh', env: {}, present: Bun.which('zsh') !== null },
+    { label: 'system bash', shell: '/bin/bash', env: { PATH: '/usr/bin:/bin' }, present: existsSync('/bin/bash'), only: SYSTEM_BASH_TESTS },
+  ];
+  const live: number[] = [];
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const pgid of live.splice(0)) {
+      try { if (pgid > 1) process.kill(-pgid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  const quote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
+  const launcher = (cmd: string): string =>
+    BLOCKS[0]
+      .replace(/^RUN_CMD='.*'$/m, () => `RUN_CMD=${quote(cmd)}`)
+      .replaceAll('<slug>', 'slug-x')
+      .replaceAll('<branch>', 'feature/x');
+
+  function home(withProject = true): string {
+    const h = mkdtempSync(join(tmpdir(), 'implement-wait-'));
+    dirs.push(h);
+    if (withProject) mkdirSync(join(h, '.gstack', 'projects', 'slug-x'), { recursive: true });
+    return h;
+  }
+
+  let shellEnv: Record<string, string> = {};
+  function sh(shell: string, script: string, env: Record<string, string>) {
+    const r = Bun.spawnSync([shell, '-c', script], {
+      env: { ...process.env, ...env, ...shellEnv, ZDOTDIR: tmpdir() }, stdout: 'pipe', stderr: 'pipe',
+    });
+    return { code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
+  }
+
+  const runDirOf = (out: string): string => /^RUN_DIR=(.+)$/m.exec(out)![1];
+  const pgidOf = (dir: string): number => Number(readFileSync(join(dir, 'id'), 'utf8').split(' ')[0]);
+  const alive = (pgid: number): boolean => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
+
+  /** Start a fake run and track its group for cleanup. */
+  function start(shell: string, h: string, cmd: string, env: Record<string, string> = {}) {
+    const r = sh(shell, launcher(cmd), { HOME: h, ...env });
+    expect(r.code, r.err).toBe(0);
+    const dir = runDirOf(r.out);
+    live.push(pgidOf(dir));
+    return dir;
+  }
+  const wait = (shell: string, h: string, dir: string, bound: number) =>
+    sh(shell, BLOCKS[1], { HOME: h, RUN_DIR: dir, RUN_BOUND: String(bound) });
+  const stop = (shell: string, h: string, dir: string) => sh(shell, BLOCKS[2], { HOME: h, RUN_DIR: dir });
+
+  for (const { label, shell, env, present, only } of SHELLS) {
+    const t = (name: string, fn: () => void) => {
+      if (only && !only.includes(name)) return;
+      test.skipIf(!present)(`${label}: ${name}`, () => { shellEnv = env; try { fn(); } finally { shellEnv = {}; } }, 60_000);
+    };
+
+    // Value: protects=the run directory is private, outside the repo, under the gstack project when it exists and scratch otherwise; fails_when=the location, mode or naming rule drifts; why_new=new launcher; seam=none; no_claim=other hosts' home layouts
+    t('puts the run in a private directory outside the repo with no full SHA in its names', () => {
+      const h = home();
+      const dir = start(shell, h, 'echo hello');
+      expect(dir.startsWith(join(h, '.gstack', 'projects', 'slug-x', 'implement', 'runs', 'feature', 'x') + '/')).toBe(true);
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+      expect(dir.startsWith(ROOT)).toBe(false);
+      expect(dir).not.toMatch(/[0-9a-f]{40}/);
+      const bare = home(false);
+      const fallback = start(shell, bare, 'echo hello');
+      expect(fallback.startsWith(join(bare, 'scratch', 'gstack-implement', 'runs', 'feature', 'x') + '/')).toBe(true);
+      expect(statSync(fallback).mode & 0o777).toBe(0o700);
+    });
+
+    // Value: protects=a finished command is `done` with exit 0 in the same call that started it; fails_when=the start and first wait stop composing or done stops meaning exit 0; why_new=new launcher and wait; seam=none; no_claim=none
+    t('starts and waits in one call: done exits 0 and records the log', () => {
+      const h = home();
+      const r = sh(shell, `${launcher('echo hello')}\n${BLOCKS[1]}`, { HOME: h, RUN_BOUND: '15' });
+      live.push(pgidOf(runDirOf(r.out)));
+      expect(r.code, r.err).toBe(0);
+      const line = r.out.split('\n').find((l) => l.startsWith('RUN: '))!;
+      const m = RUN_LINE.exec(line)!;
+      expect(m[1]).toBe('done');
+      expect(m[2]).toBe('0');
+      expect(readFileSync(m[5], 'utf8')).toContain('hello');
+      expect(readFileSync(join(runDirOf(r.out), 'status'), 'utf8').trim()).toBe('0');
+    });
+
+    t('failed records the exit status and exits nonzero', () => {
+      const h = home();
+      const dir = start(shell, h, 'echo oops; exit 3');
+      const r = wait(shell, h, dir, 15);
+      const m = RUN_LINE.exec(r.out)!;
+      expect(m[1]).toBe('failed');
+      expect(m[2]).toBe('3');
+      expect(r.code).toBe(1);
+    });
+
+    t('a run that outlasts one wait is running, then done on a wait-only call', () => {
+      const h = home();
+      const dir = start(shell, h, 'sleep 3; echo late');
+      const first = wait(shell, h, dir, 1);
+      expect(RUN_LINE.exec(first.out)![1]).toBe('running');
+      expect(first.code).toBe(1);
+      const second = wait(shell, h, dir, 20);
+      expect(RUN_LINE.exec(second.out)![1]).toBe('done');
+      expect(second.code).toBe(0);
+    });
+
+    t('a run whose process is gone without a status file is lost', () => {
+      const h = home();
+      const dir = start(shell, h, 'sleep 300');
+      process.kill(-pgidOf(dir), 'SIGKILL');
+      const r = wait(shell, h, dir, 10);
+      const m = RUN_LINE.exec(r.out)!;
+      expect(m[1]).toBe('lost');
+      expect(m[2]).toBe('');
+      expect(r.code).toBe(1);
+      expect(existsSync(join(dir, 'status'))).toBe(false);
+    });
+
+    // Value: protects=a partial or garbled status file is never read as a result; fails_when=an empty or non-numeric status is taken as done or failed; why_new=new completion marker; seam=none; no_claim=none
+    t('a partial status file is not a result, while the run lives or after it is stopped', () => {
+      const h = home();
+      const dir = start(shell, h, 'sleep 300');
+      for (const partial of ['', '0x', '\n']) {
+        writeFileSync(join(dir, 'status'), partial);
+        const r = wait(shell, h, dir, 1);
+        expect(RUN_LINE.exec(r.out)![1], JSON.stringify(partial)).toBe('running');
+      }
+      expect(stop(shell, h, dir).out).toMatch(/^STOP: stopped pgid=\d+$/);
+      expect(RUN_LINE.exec(wait(shell, h, dir, 5).out)![1]).toBe('lost');
+    });
+
+    // Value: protects=stop kills the whole recorded group, even a child that ignores TERM, and confirms no survivor; fails_when=the escalation or the survivor check goes; why_new=new stop block; seam=none; no_claim=none
+    t('stop ends the recorded group including a child that ignores TERM', () => {
+      const h = home();
+      const dir = start(shell, h, `sh -c 'trap "" TERM; sleep 300 & wait'`);
+      const pgid = pgidOf(dir);
+      expect(alive(pgid)).toBe(true);
+      const r = stop(shell, h, dir);
+      expect(r.out).toBe(`STOP: stopped pgid=${pgid}`);
+      expect(r.code).toBe(0);
+      expect(alive(pgid)).toBe(false);
+      expect(RUN_LINE.exec(wait(shell, h, dir, 5).out)![1]).toBe('lost');
+    });
+
+    // Value: protects=stop never signals a process group it cannot identify; fails_when=a changed start time, pgid 0 or 1, or the waiter's own group is signalled; why_new=PID-reuse and own-group guards; seam=none; no_claim=real PID reuse, simulated by a changed start time
+    t('stop refuses a reused PID, a changed identity and the groups it must never signal', () => {
+      const h = home();
+      const dir = start(shell, h, 'sleep 300');
+      const pgid = pgidOf(dir);
+      const recorded = readFileSync(join(dir, 'id'), 'utf8').trim();
+      writeFileSync(join(dir, 'id'), `${pgid} Thu Jan  1 00:00:00 1970\n`);
+      const refused = stop(shell, h, dir);
+      expect(refused.out).toBe(`STOP: refused pgid=${pgid} (not the recorded process)`);
+      expect(refused.code).toBe(1);
+      expect(alive(pgid)).toBe(true);
+      expect(RUN_LINE.exec(wait(shell, h, dir, 5).out)![1]).toBe('lost');
+      for (const pgidText of ['0', '1', 'x1']) {
+        writeFileSync(join(dir, 'id'), `${pgidText} Thu Jan  1 00:00:00 1970\n`);
+        const r = stop(shell, h, dir);
+        expect(r.out, pgidText).toContain('STOP: refused');
+        expect(r.code).toBe(1);
+      }
+      writeFileSync(join(dir, 'id'), `${recorded}\n`);
+      expect(stop(shell, h, dir).out).toBe(`STOP: stopped pgid=${pgid}`);
+    });
+
+    // Value: protects=the overall limit is enforced from inside the run's group; fails_when=the watchdog stops killing the group at RUN_LIMIT; why_new=new watchdog; seam=none; no_claim=a 1800 s limit, shortened here to 3 s
+    t('a watchdog in the run group ends a run past its limit as lost', () => {
+      const h = home();
+      const dir = start(shell, h, 'sleep 300', { RUN_LIMIT: '3' });
+      const pgid = pgidOf(dir);
+      const r = wait(shell, h, dir, 20);
+      expect(RUN_LINE.exec(r.out)![1]).toBe('lost');
+      for (let i = 0; i < 20 && alive(pgid); i++) Bun.sleepSync(100);
+      expect(alive(pgid)).toBe(false);
+      expect(existsSync(join(dir, 'status'))).toBe(false);
+    });
+  }
 });

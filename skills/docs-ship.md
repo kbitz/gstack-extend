@@ -1,16 +1,15 @@
 ---
 name: docs-ship
 description: |
-  Beta (less battle-tested — review its output carefully). Take a docs-only
-  PR from review to the merge gate in one session, replacing /review-and-prep
-  and /ship-and-land for it. Classify the change with the shared docs-only
-  rule and hand anything else back, check scope against the brief, claims,
-  project doc rules, links and the tests that read the changed files, write
-  the version bump when the release policy asks for one, record a compact
-  receipt in the PR body, mark it ready and stop with the head to approve. No
-  subagents, outside voices or full suite; never merges. Use when asked to
-  "docs ship", "ship this docs PR", "review this docs-only PR", or when
-  /roadmap or /project-spec hands off a docs-only change.
+  Take a docs-only PR from review to the merge gate in one session, replacing
+  /review-and-prep and /ship-and-land for it. Classify the change with the
+  shared docs-only rule and hand anything else back, check scope against the
+  brief, claims, project doc rules, links and the tests that read the changed
+  files, write the version bump when the release policy asks for one, record a
+  compact receipt in the PR body, mark it ready and stop with the head to
+  approve. No subagents, outside voices or full suite; never merges. Use when
+  asked to "docs ship", "ship this docs PR", "review this docs-only PR", or
+  when /roadmap or /project-spec hands off a docs-only change.
 allowed-tools:
   - Bash
   - Read
@@ -22,10 +21,6 @@ allowed-tools:
 ---
 
 # /docs-ship
-
-> **⚠️ Beta skill.** Newer and less battle-tested than gstack-extend's stable
-> skills. Before substantive work, tell the user this skill is beta and that its
-> output warrants closer review than usual. Note any rough edges so it can be hardened.
 
 ## Preamble (run first)
 
