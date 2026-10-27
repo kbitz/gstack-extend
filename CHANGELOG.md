@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.52.0] - 2026-10-26
+
+### Added
+
+- **Finish a targeted implement check before the turn ends.** `/implement` runs the check it chose, waits only until that check's own deadline, and does not end the turn while the check is still running. Stop, watchdog, and recovery apply to that owned check. A lost wrapper, a reused id, or a cleanup that did not finish stays incomplete.
+
+- **Deferred and blocked counts are always printed, including zero.** An older handoff that omits the counts still reads. The rows stay authoritative.
+
+### Changed
+
+- **`/autoplan-lean`, `/docs-ship`, and `/gstack-extend-init` have left beta.** README, the skill pages, and the routing note mark them New. Their workflows are unchanged.
+
 ## [0.51.1] - 2026-10-26
 
 ### Fixed
