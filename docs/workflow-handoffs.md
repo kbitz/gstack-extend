@@ -608,10 +608,15 @@ older producer prints it, as valid. A nonzero `BLOCKED` count is never a handoff
 
 Fixed text a producer keeps: `Do not treat BUILT or ADAPTED as VERIFIED.` and, under
 `Checks run`, the row `- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`
+The Full suite row is a current producer obligation, not consumer validation:
+older H-A handoffs without that row or the counts remain valid context.
 Rows in another shape are not enumerated, so a consumer cannot see deferrals inside a
 checklist file.
 H-A is context, not a receipt: the next stage reads the live plan and diff and
 rebuilds its completion matrix. `BUILT` and `ADAPTED` are not `VERIFIED`.
+A producer must withhold H-A while a run is pending. Consumers do not interpret
+arbitrary `RUN:` lines as a new status signal; H-A always requires the full live
+check, even if a producer incorrectly appends a pending-run line.
 
 ```text fixture=a-success.txt
 Run /review-and-prep for the implementation below. Use the installed skill

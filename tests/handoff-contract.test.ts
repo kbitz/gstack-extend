@@ -925,6 +925,11 @@ describe('(B2) classifier rules beyond one fixture per case', () => {
     expect(run('A-DEFERRED').deferrals).toHaveLength(1);
     expect(run('A-COUNTLESS').outcome).toBe(FULL);
     expect(run('A-COUNTLESS').mismatches).toEqual([]);
+    const legacyDef={...FIX.cases['A-COUNTLESS'],edits:[...FIX.cases['A-COUNTLESS'].edits!,['- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.',''] as [string,string]]};
+    expect(fixtureText(legacyDef)).not.toMatch(/\d+ (DEFERRED BY USER|BLOCKED)|- Full suite:/);
+    const legacy=run('A-COUNTLESS',legacyDef);
+    expect(legacy.outcome).toBe(FULL);
+    expect(legacy.mismatches).toEqual([]);
     expect(fixtureText(FIX.cases['A-COUNTLESS'])).not.toMatch(/\d+ (DEFERRED BY USER|BLOCKED)/);
     expect(run('A-BLOCKED-LEAD-COUNT').outcome).toBe(REFUSE);
     expect(run('A-BLOCKED-COUNT').outcome).toBe(REFUSE);

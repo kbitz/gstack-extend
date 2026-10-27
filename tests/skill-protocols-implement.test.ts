@@ -95,7 +95,8 @@ describe('implement drift-locks', () => {
   // Value: protects=recovery stays bounded and a stranger's process group is never signalled; fails_when=the rerun-once, not-completed or stop-only-the-recorded-group rules drift; why_new=new recovery contract; seam=none; no_claim=live host compliance
   test('recovers a lost run once, stops only the recorded group, and holds subagents to a terminal RUN line', () => {
     for (const phrase of [
-      'On `lost`, run the stop block, which confirms no survivor, and rerun the check once.',
+      'On `lost`, run the stop block, which confirms the owned group is gone, and rerun the check once.',
+      'Only an explicit no-such-process probe establishes disappearance; permission failures remain blocked.',
       'A second `lost` ends the check as `not completed`: record it in Checks run with its log path and add a Pending verification row.',
       'A run past `RUN_LIMIT` ends `lost` the same way, and a hang the work caused is fixed, not rerun.',
       'no caller sends TERM or KILL to a numeric group.',
@@ -328,7 +329,8 @@ describe('implement review regressions', () => {
         env: { ...process.env, HOME: h, RUN_LIMIT: '3' }, stdout: 'pipe', stderr: 'pipe', timeout: 5000,
       });
       expect(r.exitCode).toBe(0);
-      Bun.sleepSync(6500); // finite fixture lifetime also cleans up the original buggy launcher
+      // gstack-timing-ok: absence is observable only after this finite orphan's 5 s write deadline; also cleans the pre-fix fixture.
+      Bun.sleepSync(6500);
       expect(existsSync(marker)).toBe(false);
     } finally { rmSync(h, { recursive: true, force: true }); }
   }, 15000);
@@ -351,7 +353,7 @@ describe('implement wait blocks', () => {
   const quote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
   const dirs: string[] = [];
   const runs: Array<{ shell: string; home: string; dir: string; cwd: string; identity?: string }> = [];
-  const systemOnly = ['done and failed are terminal only after cleanup', 'stop kills a ready TERM-ignoring child', 'watchdog bounds a hanging run', 'watchdog survives loss of the command wrapper'];
+  const systemOnly = ['done and failed are terminal only after cleanup', 'stop kills a ready TERM-ignoring child', 'watchdog bounds a hanging run', 'watchdog survives loss of the command wrapper', 'decimal limits and wait bounds accept leading zeros', 'denied group probes keep recovery blocked', 'commands do not inherit supervisor control variables'];
   const shells = [
     { shell: 'bash', path: process.env.PATH!, only: undefined as string[] | undefined },
     { shell: 'zsh', path: process.env.PATH!, only: undefined as string[] | undefined },
@@ -370,7 +372,9 @@ describe('implement wait blocks', () => {
     if (project) mkdirSync(join(h, '.gstack', 'projects', 'slug-x'), { recursive: true });
     return h;
   };
-  const launch = (cmd: string) => BLOCKS[0].replace(/^RUN_CMD='.*'$/m, () => `RUN_CMD=${quote(cmd)}`).replaceAll('<slug>', 'slug-x');
+  // Test-only marker channel, independent of the production control environment.
+  const launch = (cmd: string) => BLOCKS[0].replace(/^RUN_CMD='.*'$/m, () => `RUN_CMD=${quote(cmd)}`).replaceAll('<slug>', 'slug-x')
+    .replace("bash -c 'set -m;", "export FIXTURE_RUN_DIR=\"$RUN_DIR\"\nbash -c 'set -m;");
   const wait = (shell: string, h: string, dir: string, bound = 20, cwd = ROOT) => sh(shell, BLOCKS[1], h, { RUN_DIR: dir, RUN_BOUND: String(bound) }, cwd);
   const stop = (shell: string, h: string, dir: string, cwd = ROOT) => sh(shell, BLOCKS[2], h, { RUN_DIR: dir }, cwd);
   const awaitFile = (path: string, timeout = 4000) => {
@@ -448,17 +452,54 @@ describe('implement wait blocks', () => {
     });
     t('an early stop is delivered after delayed identity publication', () => {
       const h=home();
-      const script=launch('echo started > "$RUN_DIR/command-started"; sleep 20').replace('RUN_GROUP=$$', () => 'sleep 2\nRUN_GROUP=$$');
+      const script=launch('echo started > "$FIXTURE_RUN_DIR/command-started"; sleep 20').replace('RUN_GROUP=$$', () => 'echo ready > "$RUN_DIR/publish-ready"\nRUN_PUBLISH_END=$((SECONDS + 8))\nwhile [ ! -f "$RUN_DIR/publish" ]; do [ "$SECONDS" -lt "$RUN_PUBLISH_END" ] || exit 1; sleep 0.05; done\nRUN_GROUP=$$');
       const r=sh(shell,script,h,{RUN_LIMIT:'6'});
       const dir=/^RUN_DIR=(.+)$/m.exec(r.out)![1];
       const owned={shell,home:h,dir,cwd:ROOT,identity:undefined as string|undefined};runs.push(owned);
-      expect(stop(shell,h,dir).code).toBe(1);
+      awaitFile(join(dir,'publish-ready'));
+      let early;
+      try { early=stop(shell,h,dir); }
+      finally { writeFileSync(join(dir,'publish'),'release\n'); }
       awaitFile(join(dir,'id'));owned.identity=readFileSync(join(dir,'id'),'utf8');
+      expect(early.code).toBe(1);
       expect(readFileSync(join(dir,'stop'),'utf8').trim()).toBe(readFileSync(join(dir,'token'),'utf8').trim());
       expect(wait(shell,h,dir).out).toMatch(/^RUN: lost /);
       expect(stop(shell,h,dir).code).toBe(0);
       expect(existsSync(join(dir,'command-started'))).toBe(false);
       expect(readFileSync(join(dir,'resolution'),'utf8').trim()).toBe('stopped');
+    });
+    // Value: protects=decimal timeout inputs keep the watchdog and wait operational; fails_when=08 is interpreted as octal; why_new=review found unhandled leading zeros; seam=none; no_claim=unbounded numeric inputs
+    t('decimal limits and wait bounds accept leading zeros', () => {
+      const h=home(), dir=start(shell,h,'echo done',{RUN_LIMIT:'08'});
+      const result=sh(shell,BLOCKS[1],h,{RUN_DIR:dir,RUN_BOUND:'08'});
+      expect(result.err).toBe('');
+      expect(result.out).toMatch(/^RUN: done exit=0 /);
+      expect(result.code).toBe(0);
+      for (const limit of ['00','999999999999999999999']) expect(sh(shell,launch('echo forbidden'),h,{RUN_LIMIT:limit}).out).toBe('START: invalid limit');
+    });
+    // Value: protects=unknown signal permission cannot authorize a retry; fails_when=EPERM persists stopped; why_new=kill-zero error was conflated with absence; seam=none; no_claim=host privilege transitions
+    t('denied group probes keep recovery blocked', () => {
+      const h=home(), dir=start(shell,h,'sleep 20',{RUN_LIMIT:'25'});
+      const deny='kill() { echo "kill: Operation not permitted" >&2; return 1; }\n';
+      const result=sh(shell,deny+BLOCKS[2],h,{RUN_DIR:dir});
+      expect(result.code).toBe(1);
+      expect(result.out).toBe('STOP: refused probe');
+      expect(readFileSync(join(dir,'resolution'),'utf8').trim()).toBe('blocked');
+      // End all real metadata writers before planting a completion witness for the denied wait.
+      expect(stop(shell,h,dir).code).toBe(0);
+      const token=readFileSync(join(dir,'token'),'utf8').trim();
+      writeFileSync(join(dir,'killing'),token+'\n');
+      writeFileSync(join(dir,'cleanup'),token+' complete\n');
+      writeFileSync(join(dir,'status'),'0\n');
+      try { expect(sh(shell,deny+BLOCKS[1],h,{RUN_DIR:dir,RUN_BOUND:'0'}).out).toMatch(/^RUN: lost /); }
+      finally { for (const file of ['killing','cleanup','status','resolution']) if (existsSync(join(dir,file))) rmSync(join(dir,file)); }
+    });
+    // Value: protects=check environment cannot accidentally overwrite supervision status; fails_when=exported RUN_DIR makes a killed check pass; why_new=review reproduced metadata environment collision; seam=none; no_claim=hostile same-user filesystem isolation
+    t('commands do not inherit supervisor control variables', () => {
+      const h=home(), dir=start(shell,h,'if [ -n "${RUN_DIR:-}" ]; then trap "" TERM; echo 0 > "$RUN_DIR/status"; sleep 7; fi; exit 7');
+      const result=wait(shell,h,dir);
+      expect(result.out).toMatch(/^RUN: failed exit=7 /);
+      expect(result.code).toBe(1);
     });
     t('later cleanup evidence resolves a previously blocked stop', () => {
       const h=home(), dir=start(shell,h,'echo completed');
@@ -485,7 +526,7 @@ describe('implement wait blocks', () => {
     });
     t('a retry in a fresh shell must execute the recorded original command', () => {
       const h = home();
-      const cmd = 'sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi\n\n';
+      const cmd = 'sleep 1; if [ -f "$FIXTURE_RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi\n\n';
       const original = start(shell,h,cmd);
       expect(wait(shell,h,original).out).toMatch(/^RUN: lost /);
       expect(stop(shell,h,original).code).toBe(0);
@@ -522,7 +563,7 @@ describe('implement wait blocks', () => {
     });
     t('stop kills a ready TERM-ignoring child', () => {
       const h = home();
-      const dir = start(shell,h,'trap "" TERM; echo ready > "$RUN_DIR/ready"; sleep 30 & wait');
+      const dir = start(shell,h,'trap "" TERM; echo ready > "$FIXTURE_RUN_DIR/ready"; sleep 30 & wait');
       awaitFile(join(dir,'ready'));
       expect(stop(shell,h,dir).out).toMatch(/^STOP: stopped pgid=\d+$/);
       expect(wait(shell,h,dir).out).toMatch(/^RUN: lost /);
@@ -531,7 +572,7 @@ describe('implement wait blocks', () => {
     t('the ready TERM-resistant fixture detects missing KILL escalation', () => {
       const h = home();
       // The owned fixture self-cleans at 12 s even with the supervisor's KILL removed.
-      const cmd = 'trap "" TERM; (sleep 12; kill -KILL 0) & echo ready > "$RUN_DIR/ready"; sleep 30 & wait';
+      const cmd = 'trap "" TERM; (sleep 12; kill -KILL 0) & echo ready > "$FIXTURE_RUN_DIR/ready"; sleep 30 & wait';
       const r = sh(shell, launch(cmd).replace('  kill -KILL 0', '  : # mutation: no escalation'), h);
       expect(r.code).toBe(0);
       const dir = /^RUN_DIR=(.+)$/m.exec(r.out)![1];
@@ -572,7 +613,7 @@ describe('implement wait blocks', () => {
       expect(readFileSync(join(dir,'cleanup'),'utf8')).toContain(' limit');
     });
     t('retry claims persist through success, exhaustion and an interrupted claim', () => {
-      const retryCommand='sleep 1; if [ -f "$RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi';
+      const retryCommand='sleep 1; if [ -f "$FIXTURE_RUN_DIR/retry-of" ]; then echo replacement; else kill -KILL 0; fi';
       const h = home(), original = start(shell,h,retryCommand);
       expect(wait(shell,h,original).out).toMatch(/^RUN: lost /);
       expect(stop(shell,h,original).code).toBe(0);
