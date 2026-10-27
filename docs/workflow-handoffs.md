@@ -75,8 +75,10 @@ classifier reports, with the expected and actual values.
 |---|---|---|---|---|---|---|
 | <a id="a-success"></a>`A-SUCCESS` | H-A | `Run /review-and-prep` | FULL_CHECK_REQUIRED | none; H-A never reaches ADVANCE_TRUSTED | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
 | <a id="a-counts"></a>`A-COUNTS` | H-A | `Count the items and each disposition.` | FULL_CHECK_REQUIRED | none; a `0 BLOCKED` count, a qualified `Checks run (...)` label and `Approved scope:` in any letter case are all valid | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
+| <a id="a-countless"></a>`A-COUNTLESS` | H-A | `<n> DEFERRED BY USER, <n> BLOCKED` | FULL_CHECK_REQUIRED | none; a Coverage value with no counts, as an older producer prints it, stays valid and its rows decide | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
+| <a id="a-blocked-lead-count"></a>`A-BLOCKED-LEAD-COUNT` | H-A | `<n> DEFERRED BY USER, <n> BLOCKED` | REFUSE | `blocked-row`: a nonzero BLOCKED count leading the Coverage value | Stop; send the user back to `/implement`; the producer must not emit a handoff with a BLOCKED row | yes |
 | <a id="a-pending"></a>`A-PENDING` | H-A | `Pending verification` | FULL_CHECK_REQUIRED | none; each pending row is listed in `pending` | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff, and carry the pending rows to its testing checkpoint | yes |
-| <a id="a-deferred"></a>`A-DEFERRED` | H-A | `DEFERRED BY USER` | FULL_CHECK_REQUIRED | none; each row is listed in `deferrals` | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; keep every deferral as a named row | yes |
+| <a id="a-deferred"></a>`A-DEFERRED` | H-A | `DEFERRED BY USER` | FULL_CHECK_REQUIRED | none; each row is listed in `deferrals` and the count reads `1 DEFERRED BY USER` | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; keep every deferral as a named row | yes |
 | <a id="a-deferred-noref"></a>`A-DEFERRED-NOREF` | H-A | `DEFERRED BY USER` | FULL_CHECK_REQUIRED | `deferral-reference`: the row names no scope decision | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff and records the user's scope decision for the row before readiness | yes |
 | <a id="a-deferred-moved"></a>`A-DEFERRED-MOVED` | H-A | `DEFERRED BY USER` | FULL_CHECK_REQUIRED | `head`: prompt HEAD differs from live HEAD | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; deferrals annotate the outcome, they do not change it | yes |
 | <a id="a-blocked-report"></a>`A-BLOCKED-REPORT` | H-A | `BLOCKED` | REFUSE | `blocked`: status word with no handoff prompt | Stop; give the user the report's stated next action or needed input; do not start `/review-and-prep` | yes |
@@ -103,7 +105,7 @@ classifier reports, with the expected and actual values.
 | <a id="a-short-sha-wrong-branch"></a>`A-SHORT-SHA-WRONG-BRANCH` | H-A | `HEAD: <full SHA>` | REFUSE | `malformed`, `branch`: a malformed HEAD never hides a wrong branch | Stop; the prompt is for another branch; ask the user which one is meant | yes |
 | <a id="a-empty-head-wrong-branch"></a>`A-EMPTY-HEAD-WRONG-BRANCH` | H-A | `HEAD: <full SHA>` | REFUSE | `malformed`, `branch`: an empty HEAD never hides a wrong branch | Stop; the prompt is for another branch; ask the user which one is meant | yes |
 | <a id="a-duplicate-label"></a>`A-DUPLICATE-LABEL` | H-A | `Branch: <current branch>; target base: <base ref>; HEAD: <full SHA>` | FULL_CHECK_REQUIRED | `malformed`: duplicate `Branch` label | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; do not pick the first or last duplicate | yes |
-| <a id="a-missing-field"></a>`A-MISSING-FIELD` | H-A | `Checks run: <exact commands, cwd, outcomes>` | FULL_CHECK_REQUIRED | `malformed`: required `Checks run` label missing | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; treat the checks as not run | yes |
+| <a id="a-missing-field"></a>`A-MISSING-FIELD` | H-A | `Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>` | FULL_CHECK_REQUIRED | `malformed`: required `Checks run` label missing | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff; treat the checks as not run | yes |
 | <a id="b-trusted"></a>`B-TRUSTED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; every validated binding matches | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-trusted-base-moved"></a>`B-TRUSTED-BASE-MOVED` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; the reviewed base is an ancestor of the moved base tip; `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-gates-unbound"></a>`B-GATES-UNBOUND` | H-B | `review-and-prep/v1` | ADVANCE_TRUSTED | none; the coverage audit is not bound, so `releaseOnlyEligible` is false | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
@@ -240,6 +242,8 @@ classifier reports, with the expected and actual values.
 | <a id="d-unknown-status"></a>`D-UNKNOWN-STATUS` | H-D | `STATUS: BLOCKED \| NEEDS_CONTEXT` | HOLD | `unknown-status`: a status word this contract does not know | Show the text to the user; new producer words default to hold | yes |
 | <a id="d-release-only-handback"></a>`D-RELEASE-ONLY-HANDBACK` | H-D | `/ship-and-land stopped on the release-only path; it made no change for this finding.` | HOLD | `release-only-handback`: preparation work is needed | Tell the user to convert the PR to draft and run `/review-and-prep` to fix the finding, then use its new handoff | yes |
 | <a id="d-stopped"></a>`D-STOPPED` | H-D | `STOPPED — review cycle cap` | HOLD | `stopped`: preparation stopped at `/review`'s cycle cap and no continuation prompt came with it | Ask the user how to continue; the stopped receipt on the PR names the options; keep the PR draft | yes |
+| <a id="a-pending-run"></a>`A-PENDING-RUN` | H-D | `is a missing handoff, never a partial success` | REFUSE | `bare-summary`: a trailing `RUN: running` or `RUN: lost` line is no handoff, and the text names no PR or full SHA | Stop; the implementation turn ended with a run pending; continue or rerun `/implement` in the same workspace, which reconciles the run directory first; do not start `/review-and-prep` | yes |
+| <a id="a-pending-run-head"></a>`A-PENDING-RUN-HEAD` | H-D | `is a missing handoff, never a partial success` | HOLD | `bare-summary`: a trailing `RUN: lost` line with a full SHA is a summary worth asking about, never a handoff | Show the user the pending run and ask which stage to run; continue or rerun `/implement` in the same workspace, which reconciles the run directory first; a summary never starts a stage | yes |
 | <a id="e-continue"></a>`E-CONTINUE` | H-E | `Run /review-and-prep continue` | FULL_CHECK_REQUIRED | none; the policy is the one the caller supplied and the count is within it | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
 | <a id="e-user-policy"></a>`E-USER-POLICY` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | FULL_CHECK_REQUIRED | none; the caller supplied no policy, and the prompt exactly matches the corroborated stopped record's user decision | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
 | <a id="e-policy-mismatch"></a>`E-POLICY-MISMATCH` | H-E | `Review policy: <the policy line's value verbatim, or "none supplied">` | HOLD | `policy`: the prompt's policy differs from the one the caller supplied | Show the user both policies; continue only on their decision | yes |
@@ -588,17 +592,31 @@ Rules for every handoff:
 | `Work state` | yes | single | prose naming committed, staged, unstaged, untracked work | a value that starts with `uncommitted`, or names a nonzero count of modified, staged, unstaged or untracked files, claims uncommitted work and needs a dirty live workspace | `work-state`: `FULL_CHECK_REQUIRED` |
 | `Plan` | yes | single | `<path or link>`, then `approved scope:` in any letter case and its source | none; consumers rebuild from the live plan, so plan drift is accepted | `malformed` |
 | `Implementation` | yes | prose | prose | none | `malformed` |
-| `Coverage` | yes | list | rows `<ID> <DISPOSITION>: <evidence>`, counts such as `33 BUILT, 0 BLOCKED`, or a durable checklist path | a `BLOCKED` row anywhere in the handoff, or a nonzero `BLOCKED` count, refuses; `0 BLOCKED` does not; a `DEFERRED BY USER` row names its scope decision after the words | `blocked-row`: `REFUSE`; `deferral-reference`: `FULL_CHECK_REQUIRED` |
+| `Coverage` | yes | list | `<n> DEFERRED BY USER, <n> BLOCKED;` first, then rows `<ID> <DISPOSITION>: <evidence>` or a durable checklist path; counts are comma-separated `<n> <DISPOSITION>` such as `33 BUILT, 0 BLOCKED` | a `BLOCKED` row anywhere in the handoff, or a nonzero `BLOCKED` count, refuses; `0 BLOCKED` does not; a `DEFERRED BY USER` row names its scope decision after the words; counts never override rows | `blocked-row`: `REFUSE`; `deferral-reference`: `FULL_CHECK_REQUIRED` |
 | `Decisions/deviations` | yes | prose | prose or `none` | none | `malformed` |
 | `Checks run` | yes | list | commands, working directory, outcomes | none; absent means not run | `malformed` |
 | `Pending verification` | yes | list | `none` or one row per item | a value that starts with `none` has no rows; otherwise each row is listed in `pending` | none |
 | `Risks/context` | yes | prose | prose or `none` | none | `malformed` |
 | `Preserve` | yes | prose | paths or `none` | none | `malformed` |
 
-Fixed text a producer keeps: `Do not treat BUILT or ADAPTED as VERIFIED.` Rows in another
-shape are not enumerated, so a consumer cannot see deferrals inside a checklist file.
+Counts are additive to H-A version 1, with no new label. A successful handoff prints
+`<n> DEFERRED BY USER, <n> BLOCKED` first on the Coverage value, number first, zeros
+included, so `0 BLOCKED` shows a checked zero; it never prints them on a line of their
+own. Rows stay authoritative: a consumer decides from the rows and a nonzero `BLOCKED`
+count, reads the other counts for display only, and treats a handoff with no counts, as an
+older producer prints it, as valid. A nonzero `BLOCKED` count is never a handoff.
+
+Fixed text a producer keeps: `Do not treat BUILT or ADAPTED as VERIFIED.` and, under
+`Checks run`, the row `- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`
+The Full suite row is a current producer obligation, not consumer validation:
+older H-A handoffs without that row or the counts remain valid context.
+Rows in another shape are not enumerated, so a consumer cannot see deferrals inside a
+checklist file.
 H-A is context, not a receipt: the next stage reads the live plan and diff and
 rebuilds its completion matrix. `BUILT` and `ADAPTED` are not `VERIFIED`.
+A producer must withhold H-A while a run is pending. Consumers do not interpret
+arbitrary `RUN:` lines as a new status signal; H-A always requires the full live
+check, even if a producer incorrectly appends a pending-run line.
 
 ```text fixture=a-success.txt
 Run /review-and-prep for the implementation below. Use the installed skill
@@ -619,12 +637,13 @@ Plan: docs/plans/example-plan.md; approved scope: Track 7 only, approved by the 
 Read the full plan and accepted revisions, project instructions, and current diff.
 
 Implementation: Added the exporter module and its tests.
-Coverage: 3 items, one row each below
+Coverage: 0 DEFERRED BY USER, 0 BLOCKED; 3 items, one row each below
   T1 BUILT: src/export.ts writes the report; tests/export.test.ts covers it.
   T2 BUILT: src/cli.ts passes the new flag through.
   T3 ADAPTED: reused the shared formatter instead of adding a second one.
 Decisions/deviations: T3 reuses the shared formatter; the required outcome is unchanged.
 Checks run: bun test tests/export.test.ts, cwd /home/example/work/example-repo, exit 0
+- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: none
 Risks/context: none
 Preserve: none
@@ -930,7 +949,10 @@ every `STATUS:` line counts.
 | a bare summary | any | `HOLD` with a PR URL or full SHA, else `REFUSE` | a success summary never starts a stage |
 
 A failed live read, or a pause in force on the bound PR, holds an H-D text whatever its
-words say. A BLOCKED `/implement` report is H-D: it carries no handoff prompt, and the next action
+words say. An `/implement` turn that ends with a run still pending prints its last
+`RUN: running` or `RUN: lost` line and no prompt. That text is a bare summary, so it refuses,
+or holds when it carries a full SHA, and the caller continues or reruns `/implement` in the
+same workspace, which reconciles the run directory first. A BLOCKED `/implement` report is H-D: it carries no handoff prompt, and the next action
 or input it says is needed is for the user.
 
 ## Validated and receipt-present bindings

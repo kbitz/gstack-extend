@@ -12,7 +12,7 @@ the user or with the caller's own gate.
 It uses no subagents, no outside voices, no `/review`, no Greptile and no full
 test suite. A Sonnet-class model can run it; the caller picks the model.
 
-The skill is beta. The helper `bin/docs-ship` (`docs-ship --help`) does the
+The helper `bin/docs-ship` (`docs-ship --help`) does the
 mechanical parts; `tests/docs-ship.test.ts` locks its behavior.
 
 ## Docs-only classification

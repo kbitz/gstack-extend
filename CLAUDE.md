@@ -181,7 +181,7 @@ Key routing rules:
 - Update roadmap, refresh roadmap, roadmap out of date → invoke roadmap with args "update"
 - Full codebase review, "review everything", weekly review, what needs cleaning up → invoke full-review
 - Upgrade gstack-extend, update gstack-extend, check for gstack-extend updates → invoke gstack-extend-upgrade
-- Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init _(beta)_
+- Bootstrap a new project, scaffold project docs, onboard a project with gstack-extend → invoke gstack-extend-init
 
 ## Consumer independence
 

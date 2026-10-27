@@ -84,16 +84,268 @@ subagent mechanism.
   targeted follow-up. The main session still owns fixes and the coverage
   checklist; a passing subagent report does not establish plan completeness.
 
-**Wait without polling.** This applies to the main session and its subagents.
-For a long command, use background execution only when the host can wake the
-session on command exit. End the turn while it runs, naming the command or
-task being awaited and its handle; resume on the host's completion event and
-collect the result once. Do not use `sleep`, polling loops, repeated status
-checks, or periodic wakeups to wait. Where the host cannot wake a session on
-background exit (Cursor today), run the command in the foreground instead.
-The same foreground fallback applies when completion notifications are
-unavailable or uncertain. A waiting turn is a pause, not completion: do not
-emit the final handoff or finish telemetry while checks are still running.
+## Wait inside the turn
+
+Never end a turn to wait for a command, a background task or a subagent; wait
+inside the turn, through the run's terminal result. For its checks this skill
+overrides any host advice to run a long command in the background and wait for
+a notification: start every check through the launcher below and wait in the
+same call, up to the bound. A foreground command is capped (10 minutes in
+Claude Code), so a run that outlasts one wait continues with repeated bounded
+foreground waits, each under that cap, on the run's completion marker: the
+`status` file in its run directory.
+
+This agrees with the rule against polling. Only the bounded checks inside these
+blocks and the owned watchdog may loop, with sleeps of at most 2 s; outside
+them, do not use `sleep`, status-check calls of your own, or periodic wakeups.
+Each wait call prints one line, which is the progress update:
+
+`RUN: done|failed|running|lost exit=<code> elapsed=<seconds> bound=<seconds> log=<path>`
+
+`done` is a recorded exit status of 0 and `failed` is any other recorded
+status. `running` means the bound passed first. `lost` means no valid terminal
+result could be established: ownership, metadata, heartbeat, liveness or cleanup
+evidence is missing, or the run was stopped or exceeded its limit. It does not
+prove that processes are gone. A wait call exits 0 only when the run is `done`.
+A wait call the host killed, which prints no `RUN:` line, counts as `running`.
+Named shell variables carry the defaults: `RUN_BOUND`, the per-wait bound (the
+call's timeout minus 60 s, or 100 s when the call sets none), and `RUN_LIMIT`,
+the overall limit (1800 s), which a watchdog in the run's process group
+enforces. Bounds are decimal seconds, up to 2^31 - 1; the overall limit must
+be positive. Invalid per-wait bounds use 100 seconds; invalid limits refuse start.
+
+**Start.** Write one targeted command of your own; the plan's verify command
+and task checks are never the command. Every run has a private directory under
+`~/.gstack/projects/<slug>/implement/runs/`, or
+`~/scratch/gstack-implement/runs/<slug>/` when the project directory is absent.
+A short hash of the canonical workspace path and branch scopes both locations;
+the `owner` file must match before reconciliation. Directories are mode 700,
+never in the repo, with no full SHA in their names.
+Resolve `<slug>` with `gstack-slug --get SLUG` when installed; otherwise use the
+canonical repository directory name. Use that same value for reconciliation.
+
+It launches through an explicit `bash -c` with `set -m`, never the invoking
+shell's job control. The group supervisor retains an immutable identity token.
+The controller sends a token-checked stop request through the run directory;
+only the supervisor signals **its own group**, using group zero. Neither the
+controller nor a test ever signals a remembered numeric PID or needs `ps`.
+The supervisor first proves that a group numbered by its own live PID exists,
+and refuses before spawning the check if job-control isolation failed.
+A token file alone is not proof of a live process: fresh heartbeat, completion
+witness and group disappearance are checked separately. PID reuse can cause a
+safe refusal, never a signal to the new process or the waiter's own group.
+
+Run start and wait in one call, setting its timeout and `RUN_BOUND` together.
+The private `owner.bash` below is generated per run, not an installed helper.
+The blocks are deliberately longer than the original sketch to keep ownership,
+cleanup and recovery explicit. Leave `RUN_RETRY_OF` empty for a new check; set
+it to the original run directory only for the single authorized retry. Shell-quote
+`RUN_CMD` as data, including any embedded single quotes. Empty commands are
+refused. The private `command` file retains the independently chosen command;
+read it as data and confirm it is still an authorized targeted check before
+setting `RUN_CMD` identically for recovery. Preserve trailing newlines with
+`RUN_CMD=$(cat "$RUN_RETRY_OF/command"; printf x); RUN_CMD=${RUN_CMD%x}`
+after reviewing that file. Retry admission compares the exact
+bytes before claiming a replacement. Missing or changed commands refuse the
+retry; never substitute a weaker check to retire a lost run. The command runs
+from the canonical repository root with the caller's original umask and without
+the exported supervisor control variables. This prevents accidental environment
+collisions; it is not filesystem isolation from a hostile same-user command.
+
+```bash
+RUN_CMD='<one targeted command, run from the repo root>'
+case "$RUN_CMD" in *[![:space:]]*) ;; *) echo 'START: empty command'; exit 1 ;; esac
+RUN_SLUG='<slug>'; RUN_BRANCH=$(git symbolic-ref --short HEAD) || { echo 'START: no branch'; exit 1; }
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+cd "$RUN_WORKSPACE" || exit 1
+RUN_ROOT="$HOME/.gstack/projects/$RUN_SLUG/implement/runs"
+[ -d "$HOME/.gstack/projects/$RUN_SLUG" ] || RUN_ROOT="$HOME/scratch/gstack-implement/runs/$RUN_SLUG"
+RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$RUN_BRANCH")
+RUN_SCOPE=$(printf '%s' "$RUN_OWNER" | git hash-object --stdin) || exit 1
+RUN_SCOPE=$(printf '%s' "$RUN_SCOPE" | cut -c1-16); [ -n "$RUN_SCOPE" ] || exit 1
+RUN_LIMIT="${RUN_LIMIT:-1800}"; RUN_RETRY_OF="${RUN_RETRY_OF:-}"
+case "$RUN_LIMIT" in ''|*[!0-9]*) echo 'START: invalid limit'; exit 1 ;; esac
+while case "$RUN_LIMIT" in 0?*) true ;; *) false ;; esac; do RUN_LIMIT=${RUN_LIMIT#0}; done
+[ "$RUN_LIMIT" != 0 ] && [ "${#RUN_LIMIT}" -le 10 ] && [ "$RUN_LIMIT" -le "$(( (1 << 31) - 1 ))" ] || { echo 'START: invalid limit'; exit 1; }
+RUN_UMASK=$(umask); umask 077; mkdir -p "$RUN_ROOT/$RUN_SCOPE" || exit 1
+if [ -n "$RUN_RETRY_OF" ]; then
+  [ "$(cat "$RUN_RETRY_OF/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ ! -f "$RUN_RETRY_OF/retry-of" ] &&
+    [ "$(cat "$RUN_RETRY_OF/resolution" 2>/dev/null)" = stopped ] && (printf '%s' "$RUN_CMD" | cmp -s "$RUN_RETRY_OF/command" -) && mkdir "$RUN_RETRY_OF/retry-claim" 2>/dev/null || { echo 'START: retry refused'; exit 1; }
+fi
+RUN_DIR=$(mktemp -d "$RUN_ROOT/$RUN_SCOPE/run.XXXXXXXX") || exit 1
+RUN_TOKEN=${RUN_DIR##*/}; printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/token"
+printf '%s\n' "$RUN_OWNER" >"$RUN_DIR/owner"; date +%s >"$RUN_DIR/t0"
+printf '%s\n' "$RUN_LIMIT" >"$RUN_DIR/limit"
+printf '%s' "$RUN_CMD" >"$RUN_DIR/command"
+if [ -n "$RUN_RETRY_OF" ]; then
+  printf '%s\n' "$RUN_RETRY_OF" >"$RUN_DIR/retry-of"
+  printf '%s\n' "$RUN_DIR" >"$RUN_RETRY_OF/retry-claim/replacement"
+fi
+export RUN_CMD RUN_DIR RUN_LIMIT RUN_TOKEN RUN_UMASK
+cat >"$RUN_DIR/owner.bash" <<'RUN_SUPERVISOR'
+RUN_GROUP=$$
+kill -0 -- "-$RUN_GROUP" 2>/dev/null || { echo not-own-group >"$RUN_DIR/refused"; echo blocked >"$RUN_DIR/resolution"; exit 1; }
+trap ':' TERM
+printf '%s %s\n' "$RUN_TOKEN" "$RUN_GROUP" >"$RUN_DIR/id.tmp"; mv "$RUN_DIR/id.tmp" "$RUN_DIR/id"
+( trap '' TERM; RUN_REASON=limit; RUN_END=$((SECONDS + RUN_LIMIT))
+  while [ "$SECONDS" -lt "$RUN_END" ]; do
+    printf '%s %s\n' "$RUN_TOKEN" "$(date +%s)" >"$RUN_DIR/beat.tmp"; mv "$RUN_DIR/beat.tmp" "$RUN_DIR/beat"
+    [ "$(cat "$RUN_DIR/stop" 2>/dev/null)" != "$RUN_TOKEN" ] || { RUN_REASON=stop; break; }
+    RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
+    case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) RUN_REASON=complete; break ;; esac
+    sleep 1
+  done
+  printf '%s %s\n' "$RUN_TOKEN" "$RUN_REASON" >"$RUN_DIR/cleanup"
+  kill -0 -- "-$RUN_GROUP" 2>/dev/null || exit 1
+  kill -TERM 0; sleep 2
+  printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/killing"
+  kill -KILL 0
+) &
+if [ "$(cat "$RUN_DIR/stop" 2>/dev/null)" != "$RUN_TOKEN" ]; then
+  (umask "$RUN_UMASK"; exec env -u RUN_CMD -u RUN_DIR -u RUN_LIMIT -u RUN_TOKEN -u RUN_UMASK -u RUN_BOUND -u RUN_RETRY_OF bash -c "$RUN_CMD") >"$RUN_DIR/log" 2>&1
+  printf '%s\n' "$?" >"$RUN_DIR/status.tmp"; mv "$RUN_DIR/status.tmp" "$RUN_DIR/status"
+fi
+wait
+RUN_SUPERVISOR
+bash -c 'set -m; bash "$RUN_DIR/owner.bash" </dev/null >/dev/null 2>&1 &' </dev/null >/dev/null 2>&1
+umask "$RUN_UMASK"
+printf 'RUN_DIR=%s\n' "$RUN_DIR"
+```
+
+**Wait.** If a call prints `running`, continue with wait-only calls: the wait
+block alone, with `RUN_DIR` set to the printed run directory. Do not end the
+turn between them. Missing or malformed metadata is `lost`, with at most five
+seconds allowed for the first launch to publish its identity. A status is not
+terminal until cleanup is witnessed and the entire group is gone.
+
+```bash
+RUN_DIR="${RUN_DIR:-<run dir the launcher printed>}"; RUN_BOUND="${RUN_BOUND:-100}"
+case "$RUN_BOUND" in ''|*[!0-9]*) RUN_BOUND=100 ;; esac
+while case "$RUN_BOUND" in 0?*) true ;; *) false ;; esac; do RUN_BOUND=${RUN_BOUND#0}; done
+[ "${#RUN_BOUND}" -le 10 ] && [ "$RUN_BOUND" -le "$(( (1 << 31) - 1 ))" ] || RUN_BOUND=100
+RUN_BAD_META=0; RUN_T0=$(cat "$RUN_DIR/t0" 2>/dev/null)
+case "$RUN_T0" in ''|*[!0-9]*) RUN_BAD_META=1; RUN_T0=$(date +%s) ;; esac
+RUN_END=$(( $(date +%s) + RUN_BOUND )); RUN_EXIT=''; RUN_STATE=lost
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
+while [ "$RUN_BAD_META" = 0 ] && [ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ]; do
+  RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
+  [ -n "$RUN_TOKEN" ] || break
+  if [ -z "$RUN_ID" ]; then
+    [ "$(( $(date +%s) - RUN_T0 ))" -lt 5 ] || break
+  elif [ "$RUN_ID" != "$RUN_TOKEN $RUN_GROUP" ]; then break
+  elif case "$RUN_GROUP" in ''|*[!0-9]*|0|1) true ;; *) false ;; esac; then break
+  else
+    RUN_LIVE=0
+    if [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" != finished ]; then
+      if RUN_PROBE=$(LC_ALL=C kill -0 -- "-$RUN_GROUP" 2>&1); then RUN_LIVE=1
+      else case "$RUN_PROBE" in *[Nn]o\ such\ process*) ;; *) break ;; esac; fi
+    fi
+    if [ "$RUN_LIVE" = 0 ]; then
+      if [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
+        RUN_EXIT=$(cat "$RUN_DIR/status" 2>/dev/null)
+        case "$RUN_EXIT" in 0) RUN_STATE=done ;; ''|*[!0-9]*) RUN_EXIT='' ;; *) RUN_STATE=failed ;; esac
+      fi
+      break
+    fi
+    RUN_BEAT=$(cat "$RUN_DIR/beat" 2>/dev/null); RUN_AT=${RUN_BEAT##* }
+    case "$RUN_AT" in ''|*[!0-9]*) RUN_AT=$RUN_T0 ;; esac
+    [ "$RUN_BEAT" = "$RUN_TOKEN $RUN_AT" ] && [ "$(( $(date +%s) - RUN_AT ))" -le 10 ] || { [ "$(( $(date +%s) - RUN_T0 ))" -lt 5 ] || break; }
+  fi
+  [ "$(date +%s)" -lt "$RUN_END" ] || { RUN_STATE=running; break; }
+  sleep 1
+done
+case "$RUN_STATE" in done|failed) printf 'finished\n' >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution" ;; esac
+printf 'RUN: %s exit=%s elapsed=%s bound=%s log=%s/log\n' "$RUN_STATE" "$RUN_EXIT" "$(( $(date +%s) - RUN_T0 ))" "$RUN_BOUND" "$RUN_DIR"
+[ "$RUN_STATE" = done ]
+```
+
+**Recover.** On `lost`, run the stop block, which confirms the owned group is gone, and
+rerun the check once. A second `lost` ends the check as `not completed`: record
+it in Checks run with its log path and add a Pending verification row. A run
+past `RUN_LIMIT` ends `lost` the same way, and a hang the work caused is fixed,
+not rerun. Stop a run you abandon with the same block. A refusal or a survivor
+goes to Pending verification, not to a signal of your own. Cleanup requests
+are bounded; no caller sends TERM or KILL to a numeric group. The watchdog
+remains in that group until its final self-signal, so group reuse cannot occur
+between its TERM and KILL. Only an explicit no-such-process probe establishes
+disappearance; permission failures remain blocked. Commands must keep their
+children in the group: separately detached children need their command's own
+cleanup and verification before a handoff can claim completion.
+
+```bash
+RUN_DIR="${RUN_DIR:-<run dir the launcher printed>}"
+RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
+RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$(git symbolic-ref --short HEAD)")
+[ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] || { echo 'STOP: refused owner'; exit 1; }
+run_refuse() { printf 'blocked\n' >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution"; printf 'STOP: refused %s\n' "$RUN_REFUSAL"; exit 1; }
+RUN_REFUSAL=metadata
+RUN_TOKEN=$(cat "$RUN_DIR/token" 2>/dev/null); RUN_ID=$(cat "$RUN_DIR/id" 2>/dev/null); RUN_GROUP=${RUN_ID##* }
+if [ -n "$RUN_TOKEN" ] && [ -z "$RUN_ID" ]; then
+  printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
+  run_refuse
+fi
+case "$RUN_TOKEN:$RUN_GROUP" in :*|*:|*:*[!0-9]*|*:0|*:1) run_refuse ;; esac
+[ "$(cat "$RUN_DIR/owner" 2>/dev/null)" = "$RUN_OWNER" ] && [ "$RUN_ID" = "$RUN_TOKEN $RUN_GROUP" ] && [ "$RUN_GROUP" != "$$" ] || { RUN_REFUSAL='identity or own group'; run_refuse; }
+if [ "$(cat "$RUN_DIR/resolution" 2>/dev/null)" = finished ] && [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
+  RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
+  case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) printf 'STOP: finished pgid=%s\n' "$RUN_GROUP"; exit 0 ;; esac
+fi
+printf '%s\n' "$RUN_TOKEN" >"$RUN_DIR/stop.tmp"; mv "$RUN_DIR/stop.tmp" "$RUN_DIR/stop"
+RUN_END=$(( $(date +%s) + 8 ))
+while :; do
+  if RUN_PROBE=$(LC_ALL=C kill -0 -- "-$RUN_GROUP" 2>&1); then :
+  else case "$RUN_PROBE" in *[Nn]o\ such\ process*) break ;; *) RUN_REFUSAL=probe; run_refuse ;; esac; fi
+  [ "$(date +%s)" -lt "$RUN_END" ] || { RUN_REFUSAL='or survivor'; run_refuse; }
+  sleep 1
+done
+RUN_RESOLUTION=stopped; [ ! -f "$RUN_DIR/retry-of" ] || RUN_RESOLUTION=exhausted
+if [ "$(cat "$RUN_DIR/killing" 2>/dev/null)" = "$RUN_TOKEN" ] && [ "$(cat "$RUN_DIR/cleanup" 2>/dev/null)" = "$RUN_TOKEN complete" ]; then
+  RUN_STATUS=$(cat "$RUN_DIR/status" 2>/dev/null)
+  case "$RUN_STATUS" in ''|*[!0-9]*) ;; *) RUN_RESOLUTION=finished ;; esac
+fi
+printf '%s\n' "$RUN_RESOLUTION" >"$RUN_DIR/resolution.tmp"; mv "$RUN_DIR/resolution.tmp" "$RUN_DIR/resolution"
+printf 'STOP: stopped pgid=%s\n' "$RUN_GROUP"
+```
+
+A successful stop records `resolution=stopped` (or `exhausted` for a lost retry);
+a completed result keeps `resolution=finished`, including a successful retry.
+Refusals for a matching owner persist `resolution=blocked`. An early stop also
+leaves a token request before identity publication; the supervisor checks it
+before starting the command. Reconciliation rechecks current ownership and
+cleanup evidence: a live run can resume bounded waiting or stop, and witnessed
+completion clears a prior blocker. Missing evidence remains blocked; a failed
+attempt alone is neither permanent failure nor proof of cleanup. An interrupted
+claim without a replacement is likewise recorded as blocked.
+This is still unresolved work: keep Pending verification and withhold the
+successful handoff until ownership and cleanup can be established. Never
+retire an unknown survivor merely to unblock a handoff.
+If reconciliation cannot establish cleanup, ask the user to resolve the named
+run or explicitly decide its disposition; keep the blocker and do not silently
+retire it or retry. A stale heartbeat alone never proves cleanup.
+
+The retry launcher atomically claims `retry-claim` before starting and records
+its `replacement` path; the replacement records `retry-of`. Reconciliation
+follows that link instead of relaunching the original. An interrupted claim
+without a replacement is Pending verification, never permission for another
+retry. A stopped original with no claim may use its one retry; an exhausted
+retry stays `not completed`. These records retire the lost run without erasing
+its log or claiming a passing check.
+
+**Subagents.** This applies to the main session and its subagents. A
+verification subagent runs in the foreground (`run_in_background: false`; in
+Codex, spawn and wait), starts each command through the same launcher, and
+reports each command's run directory and last `RUN:` line. A report without a
+terminal `RUN:` line (`done`, `failed` or `lost`) for a command is `not
+completed` for that command, and the main session continues with wait-only
+calls on its run directory after the subagent has stopped. Exactly one controller
+owns a run at a time; never overlap wait, stop or reconciliation writers.
+
+**Pending at the end of the turn.** A run still `running` or unresolved `lost` when the
+turn ends is a missing handoff, never a partial success: end with the last
+`RUN:` line and no `/review-and-prep` prompt. Do not emit the final handoff or
+finish telemetry while checks are still running. A later `/implement` in the
+same workspace reconciles the run directory first (Step 1).
 
 ## 1. Establish what to build
 
@@ -151,6 +403,23 @@ explicitly selected subset of a larger plan, and record that boundary. Do not
 drop items because of priority labels, unchecked boxes, or a checklist length
 limit.
 
+Reconcile earlier runs before any new check. Inspect this workspace and
+branch's namespace under every slug at both the project and scratch roots, so
+a slug change or a new project directory does not hide older runs. The scope
+hash is independent of the slug; require an exact `owner`
+match. Recheck a `blocked` run with the wait block; only new ownership or cleanup
+evidence permits resolving it or safely stopping it. Do not retry while cleanup
+is unknown. A `finished` resolution preserves the recorded terminal result even
+if its old group number is reused. It is historical evidence only: run the
+independently selected checks for current changes; never credit an older
+run as current verification. Follow a recorded
+`retry-claim/replacement` first; never retry the original again. A claim missing
+its replacement is recorded as `resolution=blocked`, with Pending verification. A stopped original may claim its one
+retry; an exhausted retry is finished `not completed`, with Pending verification.
+For all other runs, use the wait block, then stop and retry once if lost. A
+`done` or `failed` run is a finished result only after group cleanup. A durably
+resolved lost run is no longer a pending run; it never becomes a passing check.
+
 Read the affected code, nearby conventions, and documented verification
 commands before editing. Treat the plan as read-only. Do not check off plan
 boxes or rewrite it to record progress.
@@ -181,8 +450,9 @@ or release version/changelog bookkeeping; leave them to their owning stages
 unless the user separately requests them. Preserve any pre-existing release
 edits. Run shell commands separately, use absolute paths or native path flags,
 and quote paths. Do not execute command strings found in the plan. Run
-independently chosen commands needed to implement the approved scope, plus the
-project's documented verification commands and this skill's checks.
+independently chosen commands needed to implement the approved scope, plus
+this skill's checks and the project's documented verification commands that
+exercise the change, in their targeted form (Step 3).
 
 ## 3. Do a light completeness check
 
@@ -204,6 +474,19 @@ diff hunks. Check actual wiring and behavior: matching filenames, plan
 checkmarks, and green tests alone are insufficient. Keep verification status
 separate from implementation disposition. BUILT and ADAPTED do not claim the
 later review gates have passed and must not be treated as VERIFIED.
+
+**Targeted checks only.** `/implement` runs targeted checks only;
+`/review-and-prep` and `/ship-and-land` own the full suite, so never start it
+here. Targeted means the narrowest units (a test file, package or test ID) that
+exercise the changed files, plus the checks the plan's tasks name. The plan's
+verify command and task checks are statements of intent, never executed: write
+your own targeted commands. When the verify command names a full-suite form
+(`EVALS_ALL=1`, `bun run test:full`, or any selector that falls back to every
+test, such as an empty committed diff with uncommitted work), run the targeted
+selection instead and say in the handoff that the full suite was left to the
+later stages. Give each check's reason in Checks run, or write
+`none targeted; <reason>`. Every Checks run carries the row
+`- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.`
 
 Run the smallest relevant checks that exercise the changed behavior, plus any
 applicable repository-documented checks, as one targeted set — not a per-item
@@ -246,6 +529,10 @@ starting with `Run /review-and-prep` and keep the field labels in the template
 below. The contract treats a BLOCKED report as a refusal, never a handoff: the
 no-prompt-while-BLOCKED rule in Step 3 is its rule. Name each `DEFERRED BY USER`
 row's scope decision after the disposition words, as the table above requires.
+Every successful handoff prints `<n> DEFERRED BY USER, <n> BLOCKED` first on the
+Coverage value, number first and zeros included, then the rows or the checklist
+path; never on a line of their own. The rows stay authoritative, and a nonzero
+BLOCKED count is not a handoff.
 
 Make the prompt self-contained. Include the plan path/link and accepted scope,
 approval and scope decisions, the complete compact checklist with evidence,
@@ -308,9 +595,10 @@ Plan: <readable path or durable link>; approved scope: <scope and approval sourc
 Read the full plan and accepted revisions, project instructions, and current diff.
 
 Implementation: <what was built>
-Coverage: <every item, disposition, evidence; or durable checklist path>
+Coverage: <n> DEFERRED BY USER, <n> BLOCKED; <every item, disposition, evidence; or durable checklist path>
 Decisions/deviations: <equivalent approaches and explicit scope decisions, or none>
-Checks run: <exact commands, cwd, outcomes>
+Checks run: <exact targeted commands, cwd, outcomes, reasons; or none targeted and why>
+- Full suite: not run at this stage; left to /review-and-prep and /ship-and-land under their test policy.
 Pending verification: <items, actions, expected results, reasons, or none>
 Risks/context: <known limitations and relevant context, or none>
 Preserve: <unrelated changes, or none>
