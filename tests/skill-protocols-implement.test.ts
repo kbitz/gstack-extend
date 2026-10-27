@@ -550,12 +550,31 @@ describe('implement wait blocks', () => {
       expect(RUN_LINE.exec(wait(shell,h,dir,1).out)?.[1]).toBe('running');
       expect(RUN_LINE.exec(wait(shell,h,dir).out)?.[1]).toBe('done');
     });
+    // Value: protects=missing or stale heartbeat evidence cannot report an owned live run as healthy; fails_when=wait ignores malformed or stale heartbeat metadata; why_new=existing partial-result cases do not exercise heartbeat refusal; seam=none; no_claim=real watchdog death or external process supervision
     t('lost and partial results never become success', () => {
-      const h = home(), dir = start(shell,h,'sleep 8');
+      const h = home(), dir = start(shell,h,'sleep 20');
       for (const partial of ['', '0x', '\n']) {
         writeFileSync(join(dir,'status'), partial);
         expect(wait(shell,h,dir,0).out).toMatch(/^RUN: running /);
       }
+      // An inert metadata copy avoids racing the real watchdog's heartbeat writer.
+      // It names our still-live fixture group; only wait reads it, never stop.
+      const stale = mkdtempSync(join(tmpdir(), 'implement-stale-beat-')); dirs.push(stale);
+      for (const file of ['owner', 'token', 'id']) writeFileSync(join(stale,file),readFileSync(join(dir,file)));
+      writeFileSync(join(stale,'t0'),'1\n');
+      const token = readFileSync(join(stale,'token'),'utf8').trim();
+      const liveControl = () => {
+        writeFileSync(join(stale,'beat'),`${token} ${Math.floor(Date.now()/1000)}\n`);
+        expect(wait(shell,h,stale,0).out).toMatch(/^RUN: running /);
+      };
+      liveControl();
+      const now = Math.floor(Date.now()/1000);
+      for (const beat of [null, `wrong-token ${now}`, `${token} 1`, `${token} invalid`, `${token} extra ${now}`]) {
+        if (beat === null) rmSync(join(stale,'beat'));
+        else writeFileSync(join(stale,'beat'),beat+'\n');
+        expect(wait(shell,h,stale,0).out).toMatch(/^RUN: lost /);
+      }
+      liveControl();
       expect(stop(shell,h,dir).code).toBe(0);
       expect(wait(shell,h,dir).out).toMatch(/^RUN: lost /);
       const lost = start(shell,h,'sleep 1; kill -KILL 0');
