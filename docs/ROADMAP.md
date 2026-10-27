@@ -2,11 +2,11 @@
 
 Organized by lifecycle state: **In Progress**, **Current Plan**, **Future** and
 **Shipped**. A Track is one PR/session. Explicit scheduling edges prioritize
-development speed: after the in-flight timing Track, the capped-review baseline
-repair and the `/implement` waiting and targeted-check repair run first, then the
-opt-in review-fix policy, test savings, telemetry, and audit and review
-optimizations; the packer then assigns Groups of disjoint file footprints and
-their launch dependencies.
+development speed: the timing, capped-review baseline repair and `/implement`
+waiting and targeted-check Tracks have shipped, so the opt-in review-fix policy
+runs first, then test savings, telemetry, and audit and review optimizations;
+the packer then assigns Groups of disjoint file footprints and their launch
+dependencies.
 
 **Card size.** A Track estimated above about 300 authored lines, counting its
 tests, is split into separate Tracks unless splitting would leave a Track that
@@ -16,7 +16,10 @@ same files and must run one after another anyway, because each Track costs a
 full pipeline run. A card kept above the threshold says why on its
 **Scheduling:** line, and a card with copied or generated lines states them
 separately from authored ones (owner rule, 2026-10-26). Track 31A was already in
-progress when the rule was adopted.
+progress when the rule was adopted and has shipped. Applied 2026-10-26 to three
+Track pairs that edit the same files and run in sequence: each pair is now one
+card, with the reason on its Scheduling line; the review-fix policy pair stays
+split on purpose, with its reason on its Scheduling line.
 
 Target: [SPEC](SPEC.md) O1–O5, public-release 1.0.0, potentially-public users.
 Paseo and Conductor retain equal priority. The owner-selected
@@ -26,70 +29,20 @@ owner acceptance remain distinct. No new spend or unattended merge is authorized
 
 ## In Progress
 
-Track 31A is in progress as [PR #174](https://github.com/kbitz/gstack-extend/pull/174),
-declared 2026-10-26; Group 31 keeps its label. Tracks 29A (v0.49.0) and 30A
-(v0.50.0) are recorded independently in shipped history. Track 28A's required
-published-release upgrade acceptance remains in Future; its revisit trigger, the
-first published three-part release, was met by v0.48.0 and the item awaits an
-owner reassessment. O1 and O3–O5 remain pending.
-
-### Group 31: Truthful timing and metric isolation
-
-_Depends on: none_
-
-**This group delivers:** Trustworthy work/wait attribution without fixture rows contaminating real observations.
-
-##### Track 31A: Record truthful timing and isolate synthetic metrics
-_2 tasks . ~400 LOC incl. tests . medium risk_
-**Outcome:** Operators can attribute stage work and waits without fixture rows contaminating real observations.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O4.3 provenance.
-**Done when:** Events are stamped at the actual boundary; completion, pregate, tests, coverage, documentation and Greptile have spans; the fixture-shaped real-store writer is traced and its pollution path stopped, and isolated checks prove synthetic runs do not touch real analytics. An unresolved writer keeps this obligation open. Historical rows remain intact.
-_touches: bin/lib/workflow_metrics.py, skills/review-and-prep.md, skills/ship-and-land.md, skills/autoplan-lean.md, skills/implement.md, skills/docs-ship.md, docs/telemetry.md, docs/workflow-metrics.schema.json, tests/workflow-metrics.test.ts, tests/telemetry-contract.test.ts, tests/helpers/telemetry-env.ts_
-_blocked-by: Track 30A_
-**Scheduling:** Owner priority, 2026-10-25: the capped-review repair runs before this Track; the edge is a priority choice, not a technical prerequisite.
-_Source: program E1 / research R3_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Capture boundaries as they happen** -- Add begin/end work and wait records at the owning skill boundaries with truthful interrupted/unknown handling; keep existing schema consumers and optional telemetry behavior compatible. _~240 lines._ (M)
-- **Trace and fence synthetic writes** -- Find the producer of the observed fixture-shaped rows; qualify all test and shell-example entry points with isolated state and before/after real-store integrity checks. Do not claim current fixtures are at fault from UUID shape alone. _~160 lines._ (M)
+No active work is declared (none declared as of 2026-10-26). Tracks 29A (v0.49.0),
+30A (v0.50.0), 31A (v0.51.0), 32A (v0.51.1) and 32B (v0.52.0) are recorded
+independently in shipped history. Track 28A's required published-release upgrade
+acceptance remains in Future; its revisit trigger, the first published three-part
+release, was met by v0.48.0 and the item awaits an owner reassessment. O1 and
+O3–O5 remain pending.
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30_
-
-### Group 32: Capped-review baseline repair ∥ /implement waiting and targeted checks
-
-_Depends on: Group 31_
-
-**This group delivers:** A capped review whose complete first cycle reproduced defects continues under repair-only without an owner decision, and `/implement` waits inside its turn on targeted checks with explicit handoff counts.
-
-##### Track 32A: Record a usable full-review baseline when cycle 1 reproduced defects
-_1 task . ~150 LOC incl. tests . medium risk_
-**Outcome:** A review that stops at the three-cycle cap after a complete first cycle that reproduced defects can continue under `continuation=repair-only` from its own stop receipt, without an owner decision.
-**Supports:** [SPEC](SPEC.md) P1, owner-approved 2026-10-26; O3.2 (a stage never repeats a completed review without cause) and O4.2 (stopped work stays explicit). Observed in Track 31A's review, 2026-10-26: cycle 1 completed every reviewer and reproduced defects, its `cycle-1-baseline` record said `completed=false` (`reviewer-incomplete`), and neither a repair-only continuation nor a ship of the stopped draft could proceed until the owner authorized a full continuation.
-**Done when:** A full-scope cycle 1 whose selected reviewers all completed, and whose required Step 4.7 probes all ran to a result, records a usable full-review baseline even when probes reproduced defects, once a later in-cap cycle has reviewed those fixes as a delta; the stop receipt's `Full-review evidence:` row then names that B and T. A reproduced defect counts as a probe result, not as an incomplete probe. A genuinely incomplete cycle 1 (an unavailable, failed or bounded-wait reviewer, or a blocked, inconclusive or unrun probe) still writes `completed=false` with its reason and still holds repair-only. The repair-only guard's author, tree and count checks, the anchor check and the rule against inferring a baseline from HEAD are unchanged. Regressions cover the reproduced-defects case and a genuinely incomplete cycle 1, and a drift-lock test pins the wording.
-_touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: Track 31A_
-**Scheduling:** Owner order, 2026-10-26: runs next after the timing Track, which also edits `skills/review-and-prep.md`.
-_Source: owner-approved 2026-10-26 after Track 31A's capped review (a 2,680-line diff against a ~400-line card estimate)_
-_read-first: skills/review-and-prep.md sections "Record cycle 1's full-review baseline" and "When /review stops at its cycle cap"_
-- **Separate a reproduced defect from an incomplete review** -- In the `cycle-1-baseline` record, distinguish a probe that reproduced a defect from one that was blocked, inconclusive or unrun; settle at planning which record a later in-cap delta cycle writes so that, after it reviews cycle 1's fixes, the stop receipt can report cycle 1's B and T as a completed full-review baseline, written from actual records before the receipt and never inferred afterwards; keep every existing guard check; add the two regressions. _~150 lines incl. tests._ (M)
-
-##### Track 32B: Keep /implement on targeted checks inside its turn, with explicit handoff counts
-_2 tasks . ~220 LOC incl. tests . medium risk_
-**Outcome:** An implementation session never idles waiting on its own command and never runs the full suite, and external callers receive complete handoffs with machine-readable counts.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved `/implement` edits, 2026-10-26; O3.1 and O4.1–2.
-**Done when:** (a) `/implement` never ends a turn to wait for a command; it waits inside the turn through the terminal result, with progress updates. The "Wait without polling" rule, which today ends the turn while a background command runs, is replaced: the skill states how it waits past the host's foreground command cap (a foreground command caps at 10 minutes in Claude Code) with repeated bounded foreground waits, each under the cap, on that run's completion marker, and reconciles this with the rule against polling. A run still pending when the turn ends is a missing handoff, never a partial success. (b) `/implement` runs targeted checks only; `/review-and-prep` and `/ship-and-land` own the full suite. The plan's verify command is expected to be a selection: when it names a full-suite form (for example `EVALS_ALL=1` or `bun run test:full`), implement runs the targeted selection instead and the handoff says the full suite was left to the later stages. (c) Every successful handoff prints DEFERRED BY USER <n>, BLOCKED <n>, zeros included; BLOCKED still refuses a handoff. Drift-lock tests pin all three.
-_touches: skills/implement.md, docs/workflow-handoffs.md, tests/skill-protocols-implement.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/_
-_blocked-by: Track 31A_
-**Scheduling:** Owner-approved 2026-10-26: the two `/implement` edits fold into this card, the existing `/implement` Track, which moves up beside the baseline repair because the turn-ending wait and the full-suite run cost every later Track's implement stage. Its former edges to the before-audit policy and usage-telemetry Tracks only expressed the earlier order and are dropped. The timing Track edge orders the shared `skills/implement.md`.
-_Source: program E6; observed missing-count and no-handoff incidents; Track 31A's implement stage (a 20-minute idle stall while the worker ended its turn to wait on its own background test run, and a full-suite run because the plan's verify command named it) and the same turn-ending wait in Track 30A's, 2026-10-26_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Wait inside the turn and run targeted checks only** -- Replace the end-the-turn background wait with an in-turn wait that survives the foreground cap; state that implement runs targeted checks and treats the plan's verify command as a selection, replacing a full-suite form; pin both rules with drift-lock tests. _~100 lines incl. tests._ (S)
-- **Pin the counts and the pending-run rule** -- Update the producer template and compatibility fixtures; cover zero/nonzero deferred rows, blocked refusal and a turn that ends with a run pending as a missing handoff. _~120 lines incl. tests._ (S)
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32_
 
 ### Group 33: Keep behavior-neutral repairs out of review cycles
 
-_Depends on: Group 31, Group 32_
+_Depends on: none_
 
 **This group delivers:** An opt-in review policy under which only behavior-changing repairs reopen review.
 
@@ -100,7 +53,7 @@ _1 task . ~240 LOC incl. tests . medium risk_
 **Done when:** An opt-in `Review policy:` value (named at planning) makes a repair that changes no behavior (a docstring, a rename, dead code, a redundant handler) open no further review cycle; targeted lanes and the single final suite cover it, and only behavior-changing repairs feed the next `in-cap=delta` cycle. `/review-and-prep` already draws this line for Greptile follow-ups ("a substantive new diff (one that changes behavior beyond the mechanical edit a finding asked for)"); this Track extends it to `/review`'s own cycles, and an unclassifiable repair counts as behavior-changing. The value activates only while the installed upstream `/review` Fix-First text it relies on (Step 5's AUTO-FIX/ASK classification and the Fix-First heuristic) matches byte for byte; those anchors join the upstream drift check's inventory with missing and changed cases, and on drift the review runs today's behavior and the receipt says so. No upstream file is edited. The receipt records each repair that opened no cycle. The policy grammar is v1 with fixed keys, so the older-producer fallback is documented as it was for `final-gate-repair`. Omitted-policy behavior is unchanged, and before/after cycle counts and wall time are measured with the timing Track's spans.
 _touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, docs/upstream-check.md, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/review-fix-policy.md (new)_
 _blocked-by: Track 31A, Track 29A, Track 32A, Track 32B_
-**Scheduling:** Owner order, 2026-10-26: the review-fix policy runs right after the baseline repair, ahead of the test-savings and telemetry Tracks. The timing edge is the measurement prerequisite; the baseline-repair and `/implement` edges order the shared `skills/review-and-prep.md` and handoff-contract files. The former bounded-audit edge only expressed the earlier order and is dropped. Split from the former single review-fix policy card under the card-size rule; the test-gap half follows.
+**Scheduling:** Owner order, 2026-10-26: the review-fix policy runs right after the baseline repair, ahead of the test-savings and telemetry Tracks. The timing edge is the measurement prerequisite; the baseline-repair and `/implement` edges order the shared `skills/review-and-prep.md` and handoff-contract files (both have shipped: v0.51.1, v0.52.0). The former bounded-audit edge only expressed the earlier order and is dropped. Split from the former single review-fix policy card under the card-size rule; the test-gap half follows. Kept as two cards on purpose, although the card-size rule's same-files exception would otherwise merge them (both edit the same skill, handoff and fixture files and run one after another, about 420 lines together): the owner keeps the split (owner direction, 2026-10-26), and the next card adds a second review behavior, test-gap routing, that is activated and measured separately on the grammar this card defines.
 _Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent re-reviewing behavior-neutral repairs_
 _read-first: docs/designs/workflow-efficiency-program.md, docs/upstream-check.md_
 - **Reopen review only for behavior-changing repairs** -- Name the upstream `/review` Fix-First text the value relies on and check it byte for byte at launch; classify each repair as behavior-changing or not; feed only behavior-changing repairs to the next `in-cap=delta` cycle and cover the rest with targeted lanes and the final suite; carry the value through preparation and continuations; document the older-producer fallback; record before/after cycle counts. _~240 lines incl. tests._ (M)
@@ -118,14 +71,14 @@ _1 task . ~180 LOC incl. tests . medium risk_
 **Done when:** Under the review-fix policy (a key or value settled at planning on the grammar the previous Track defines), a test-gap finding with no demonstrated defect, such as an untested state-matrix cell, is recorded and its test is not written; its upstream severity label stays unchanged, and a reproduced defect still gets its regression test. Each recorded gap goes to TODOS with the registered `review` source tag carrying `files=`, so `/roadmap` routes it to the next Track whose `_touches:` cover those files. The anchors this relies on join the upstream drift inventory with missing and changed cases; on drift the review writes tests as today and the receipt says so. The receipt records each recorded gap, omitted-policy behavior is unchanged, and before/after cycle counts are recorded.
 _touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/review-fix-policy.md_
 _blocked-by: Track 33A_
-**Scheduling:** Owner order, 2026-10-26: completes the review-fix policy before the test-savings Tracks. Split from the former review-fix policy card under the card-size rule; it builds on the policy value the previous Track defines, which is a technical prerequisite.
+**Scheduling:** Owner order, 2026-10-26: completes the review-fix policy before the test-savings Tracks. Split from the former review-fix policy card under the card-size rule; it builds on the policy value the previous Track defines, which is a technical prerequisite. Kept as a separate card from the previous Track on purpose despite the shared files and serial order (owner direction, 2026-10-26); that card's Scheduling line gives the reason.
 _Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent writing tests for untested cells with no defect_
 _read-first: docs/designs/workflow-efficiency-program.md, docs/source-tag-contract.md_
 - **Record unproven test gaps instead of writing their tests** -- Keep upstream severity labels; record a test-gap finding with no demonstrated defect instead of writing its test, and file it to TODOS as `[review:files=…]` with its evidence; keep regression tests for reproduced defects; add the anchors to the drift inventory with missing and changed cases; record before/after cycle counts. _~180 lines incl. tests._ (M)
 
 ### Group 35: Reduce repeated and overbroad test work
 
-_Depends on: Group 31, Group 34_
+_Depends on: Group 34_
 
 **This group delivers:** Narrower skill-only test selection and an opt-in full-suite-before-audit policy, with required coverage preserved.
 
@@ -151,12 +104,12 @@ _blocked-by: Track 31A, Track 34A_
 **Scheduling:** Owner order, 2026-10-26: follows the review-fix policy, which edits the same skill and handoff files. Kept as one card at ~330 lines: the second task is the reuse and invalidation proof for the first, and the policy cannot ship without it.
 _Source: program E3; owner-approved policy option_
 _read-first: docs/designs/workflow-efficiency-program.md_
-- **Carry policy and evidence through all stages** -- Define parsing, continuation propagation and prepared/ship receipt semantics; bind the full suite to its reviewed tree and audit output; include release edits in the conservative rerun rule. Track 45A later adds an opt-in release-only credit that narrows this rule for release edits only under its own policy value; write the rule so that exception can attach without changing this value's meaning. _~190 lines._ (M)
+- **Carry policy and evidence through all stages** -- Define parsing, continuation propagation and prepared/ship receipt semantics; bind the full suite to its reviewed tree and audit output; include release edits in the conservative rerun rule. The later Track "Prove release-only reuse mechanically and credit a prepared full run across a release-only delta" adds an opt-in release-only credit that narrows this rule for release edits only under its own policy value; write the rule so that exception can attach without changing this value's meaning. _~190 lines._ (M)
 - **Verify reuse and invalidation** -- Test docs-only audit delta, no changes, non-doc fixes, changed policy/base, missing evidence and stale trees; measure savings using E1 spans without changing public defaults. _~140 lines._ (M)
 
 ### Group 36: Paused and resumed telemetry ∥ Python source-root test selection
 
-_Depends on: Group 31, Group 35_
+_Depends on: Group 35_
 
 **This group delivers:** Truthful blocked/completed segments with stable run identity across resumes, and generated, checkable pregate dependency maps for Python source-root layouts.
 
@@ -215,271 +168,222 @@ _blocked-by: Track 26A, Track 36A_
 _read-first: 26A, docs/telemetry.md_
 - **Record the caller's requested model and effort** -- Stage-runs schema v2 (0.37.0.0) already reserves the `requested` source for non-null model and effort; this Track is its first producer. On Cursor's CLI route (`CURSOR_INVOKED_AS` set) `_observe_cursor_store()` skips the store and `cursor_turns()` returns only a transcript mtime. A local check on 2026-10-16 found no model in `cursor-agent` transcripts or chat-store metadata, and `~/.cursor/cli-config.json` holds only a configured default, which provenance must not record. Check whether `cursor-agent --output-format json` events name the model before relying on the environment alone. Source: `[manual] Accept a caller-supplied model when detection finds none, labeled as requested`. _~120 lines._ (S)
 
-### Group 38: Run usage telemetry
+### Group 38: Run and child usage telemetry
 
-_Depends on: Group 31, Group 36, Group 37_
+_Depends on: Group 36, Group 37_
 
-**This group delivers:** Per-run token usage from the harness's own logs with explicit uncertainty.
+**This group delivers:** Per-run token usage from the harness's own logs, with child and outside-reviewer usage attributed to it and explicit uncertainty throughout.
 
-##### Track 38A: Record each run's token usage from the harness's own logs
-_2 tasks . ~300 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can compare each run's token usage by workflow, step and recorded model, with explicit uncertainty where a source cannot support it.
-**Supports:** [SPEC](SPEC.md) P1 and owner-selected usage capture, 2026-10-19; promotes the retained run-usage Future commitment without enabling quota routing or vendor usage API calls.
-**Done when:** A local report combines step/pass events with disjoint token classes and available plan-window observations; fixtures cover streaming copies and cumulative counter resets; unknown values remain null with reasons; legacy, v1 and v2 stage rows stay immutable and readable, and capture makes no credential or network calls.
+##### Track 38A: Record each run's token usage, parent and child, from the harness's own logs
+_3 tasks . ~600 LOC incl. tests . medium risk_
+**Outcome:** The maintainer can compare each run's total token usage, parent and child together, by workflow, step and recorded model, with explicit uncertainty where a source cannot support it or attribution.
+**Supports:** [SPEC](SPEC.md) P1 and owner-selected usage capture, 2026-10-19; promotes the retained run-usage and outside-voice Future commitments without enabling quota routing or vendor usage API calls.
+**Done when:** A local report combines step/pass events with disjoint token classes and available plan-window observations; fixtures cover streaming copies and cumulative counter resets; each recorded child or outside-reviewer call joins its invocation and pass, with direct evidence distinguished from time/directory correlation and ambiguous or overlapping usage excluded from exact totals; fixtures cover nested children and concurrent sessions; unknown values remain null with reasons; legacy, v1 and v2 stage rows stay immutable and readable, a closed schema gains a version branch and never a silent field, and capture makes no credential or network calls.
 _touches: bin/lib/telemetry.py, bin/lib/workflow_metrics.py, bin/lib/quota/usage.py, docs/workflow-metrics.schema.json, docs/telemetry.md, docs/stage-runs.schema.json, tests/workflow-metrics.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/quota.test.ts, tests/fixtures/quota/, tests/helpers/touchfiles.ts_
 _blocked-by: Track 24A, Track 26A, Track 36A, Track 37B, Track 31A_
-**Scheduling:** The third telemetry step after test savings, before bounded audits and review overlap. Split from the former usage-attribution card under the card-size rule; child and outside-reviewer attribution follows.
-_read-first: docs/telemetry.md, docs/quota-ledger.md_
-- **Reuse the local log parser for run usage** -- Absorb "Record each run's token usage and plan-window readings from the harness's own logs". Reuse or isolate the existing quota usage parser rather than introduce a third parser. Record uncached input, cache read/write and output; reasoning is a subset, never added twice. Retain logged start/end rate-limit readings with reset and concurrency caveats; account-wide percentage changes are not attributable stage consumption. Cursor/Grok sources remain unknown until verified. Read only session logs and CLI output: no credentials, identity/capacity readers or vendor usage services. _~240 lines._ (M)
-- **Preserve schema and parser compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1/v2 stage rows. Coordinate any stage-row reference fields with the stage-runs v2 schema shipped in 0.37.0.0; never add fields silently to a published closed schema. When editing `bin/lib/workflow_metrics.py`, weigh the Future item "Slim the workflow-metrics helper without dropping requirements"; adopting it is optional. _~60 lines._ (S)
-
-### Group 39: Child and reviewer usage telemetry
-
-_Depends on: Group 38_
-
-**This group delivers:** Attributable parent/child usage with explicit uncertainty.
-
-##### Track 39A: Attribute child and outside-reviewer usage
-_2 tasks . ~300 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can compare total parent-and-child token usage by workflow, step and recorded model, with explicit uncertainty where a source cannot support attribution.
-**Supports:** [SPEC](SPEC.md) P1 and owner-selected usage capture, 2026-10-19; promotes the retained outside-voice Future commitment without enabling quota routing or vendor usage API calls.
-**Done when:** Each recorded child or outside-reviewer call joins its invocation and pass; direct evidence is distinguished from time/directory correlation, and ambiguous or overlapping usage is excluded from exact totals; fixtures cover nested children and concurrent sessions; unknown values remain null with reasons; a closed schema gains a version branch, never a silent field.
-_touches: bin/lib/telemetry.py, bin/lib/workflow_metrics.py, docs/workflow-metrics.schema.json, docs/telemetry.md, docs/stage-runs.schema.json, tests/workflow-metrics.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts_
-_blocked-by: Track 38A_
-**Scheduling:** Split from the former usage-attribution card under the card-size rule; it joins child usage to the run usage the previous Track records, a technical prerequisite.
+**Scheduling:** The third telemetry step after test savings, before bounded audits and review overlap. Run usage and child and outside-reviewer attribution were two Tracks (~300 lines each) under the card-size rule; the attribution Track edited the same telemetry, metrics and schema files and joined the usage records the first one writes, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~600 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
+_Source: absorbs "Record each run's token usage and plan-window readings from the harness's own logs" and "Record outside-voice calls' vendor, model, tokens and window readings"_
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 _produces: comparable per-run and per-voice local usage projections, source/attribution grades and a replayable sanitized fixture corpus_
+- **Reuse the local log parser for run usage** -- Absorb "Record each run's token usage and plan-window readings from the harness's own logs". Reuse or isolate the existing quota usage parser rather than introduce a third parser. Record uncached input, cache read/write and output; reasoning is a subset, never added twice. Retain logged start/end rate-limit readings with reset and concurrency caveats; account-wide percentage changes are not attributable stage consumption. Cursor/Grok sources remain unknown until verified. Read only session logs and CLI output: no credentials, identity/capacity readers or vendor usage services. _~240 lines._ (M)
 - **Attribute child and outside-reviewer usage** -- Absorb "Record outside-voice calls' vendor, model, tokens and window readings". Join each recorded call to its invocation and pass using direct parent/session evidence when available, including the local `voices.jsonl` reviewer join (host subagent identifier, parent-observed dispatch/return times) that 0.38.0.0 added; mark directory/time matches as correlation and ambiguous shared-worktree matches as unknown. Deduplicate native subagents and cross-harness children, account for children that outlive the step, and preserve every contributing model/source. Do not modify upstream commands or claim observed/billed models from requested labels. _~240 lines._ (M)
-- **Keep the child records compatible** -- Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. _~60 lines._ (S)
+- **Preserve schema, parser and child-record compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1/v2 stage rows. Coordinate any stage-row reference fields with the stage-runs v2 schema shipped in 0.37.0.0; never add fields silently to a published closed schema. Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. When editing `bin/lib/workflow_metrics.py`, weigh the Future item "Slim the workflow-metrics helper without dropping requirements"; adopting it is optional. _~120 lines._ (S)
 
-### Group 40: Bound audit effort
+### Group 39: Bound audit effort
 
-_Depends on: Group 31, Group 35, Group 37, Group 39_
+_Depends on: Group 35, Group 37, Group 38_
 
 **This group delivers:** Fewer irrelevant documentation reads with real drift detection retained.
 
-##### Track 40A: Bound documentation audits by changed contracts
+##### Track 39A: Bound documentation audits by changed contracts
 _1 tasks . ~220 LOC incl. tests . medium risk_
 **Outcome:** Reviews read the documentation relevant to their changed contracts and retain real drift detection.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25
 **Done when:** The scope includes changed-path and contract references, linked authorities and safe broad fallback when relevance is uncertain; the one re-audit follows only the fix delta. Before/after time, read volume and retained finding quality are recorded before any default activation.
 _touches: skills/review-and-prep.md, skills/ship-and-land.md, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-ship-and-land.test.ts, docs/acceptance/documentation-audit-efficiency.md (new)_
-_blocked-by: Track 31A, Track 35B, Track 39A, Track 37A_
+_blocked-by: Track 31A, Track 35B, Track 38A, Track 37A_
 **Scheduling:** Owner-selected order places telemetry after test savings, then bounded documentation audits; the usage edge is a priority choice. The update-check edge orders the shared skill files.
 _Source: program E4 / research R4_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Constrain discovery and re-audit inputs** -- Keep current/updated/blocked truthful and the existing attempt bound; compare the bounded audit against representative known documentation drift. If public-quality evidence is insufficient, expose an explicit option and retain the default. _~220 lines._ (M)
 
-### Group 41: Attribute review findings to their source part
+### Group 40: Attribute review findings to their source part
 
-_Depends on: Group 31, Group 34, Group 40_
+_Depends on: Group 34, Group 39_
 
 **This group delivers:** Every logged review finding names the specialist, Red Team, native adversarial pass or outside voice that found it.
 
-##### Track 41A: Attribute every logged review finding to the part that found it
+##### Track 40A: Attribute every logged review finding to the part that found it
 _1 tasks . ~220 LOC incl. tests . medium risk_
 **Outcome:** A maintainer comparing review arms can see, finding by finding, which part found it, so the value of each part is measured instead of assumed.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 (the first-cycle overlap's activation evidence needs per-part finding quality); O4.3 provenance.
 **Done when:** Every finding the wrapper logs for a review names the part that found it: a named specialist, Red Team, the native adversarial pass or an outside voice. A finding several parts reported keeps every part, and one that cannot be attributed reads unknown with its reason, never a guess. The closed metrics finding record gains a new schema version branch rather than a silent field, and earlier rows stay readable as unknown. Fixtures cover each part and a merged finding. Upstream's review log is read, not edited.
 _touches: skills/review-and-prep.md, bin/lib/workflow_metrics.py, docs/workflow-metrics.schema.json, docs/telemetry.md, tests/workflow-metrics.test.ts, tests/skill-protocols-review-and-prep.test.ts_
-_blocked-by: Track 31A, Track 29A, Track 40A, Track 34A_
+_blocked-by: Track 31A, Track 29A, Track 39A, Track 34A_
 **Scheduling:** Owner order, 2026-10-25: after the timing Track and before the first-cycle overlap, whose activation evidence needs it. Owner order, 2026-10-26: the review-fix policy Tracks lead the review-cycle work, so this Track follows them. Both edges are priority choices.
 _Source: program E13; observed unattributed review findings_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Name the part that found each finding** -- Carry the specialist name upstream's findings already hold, the Red Team tag and a native-adversarial or outside-voice source from each pass's own record into the wrapper's finding rows. The metrics finding record carries a severity class but no named part and rejects unknown keys, so add a schema branch and keep earlier rows readable. _~220 lines._ (M)
 
-### Group 42: Opt-in folded first review cycle
+### Group 41: Opt-in folded first review cycle
 
-_Depends on: Group 31, Group 34, Group 40, Group 41_
+_Depends on: Group 34, Group 39, Group 40_
 
 **This group delivers:** A measured alternative to specialist subagents in the first review cycle, with the arm that ran recorded and today's default unchanged.
 
-##### Track 42A: Offer an opt-in first review cycle that folds specialist checklists into the main pass
+##### Track 41A: Offer an opt-in first review cycle that folds specialist checklists into the main pass
 _2 tasks . ~300 LOC incl. tests . medium risk_
 **Outcome:** A caller can measure whether the specialist subagents pay for themselves by running a first cycle without them, with every other review part unchanged and the arm that ran recorded.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O3.2.
 **Done when:** An opt-in mode, a documented `Review policy:` value or flag, runs cycle 1 without dispatching specialist subagents: the main review pass reads the selected specialists' checklists itself, loaded on demand. Red Team when its gate fires, the native adversarial pass and the outside voices run as today. Installed `/review` triggers Red Team on a diff over 200 lines or a specialist CRITICAL finding; with no specialist dispatches the mode restates that as the size arm or a CRITICAL finding from the folded pass. The mode activates only while the installed `/review` text it relies on matches byte for byte, as `in-cap=delta` does, and it edits no upstream file; if folding needs upstream text to change, the Track records that and stops. Its anchors join the upstream drift check's inventory. Today's default stays and the receipt records which arm ran. The policy grammar is v1 with fixed keys, so an older producer's fallback is documented, and the documentation notes that upstream's adaptive gating statistics learn only from specialist dispatches, so a folded review adds no sample. The quality comparison is a consumer-owned experiment outside this repository; this Track authorizes no spend and no default change.
 _touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, docs/acceptance/review-fold.md (new)_
-_blocked-by: Track 31A, Track 29A, Track 40A, Track 41A, Track 34A_
+_blocked-by: Track 31A, Track 29A, Track 39A, Track 40A, Track 34A_
 **Scheduling:** Sits beside the first-cycle overlap Track as an alternative. The timing Track's measurements decide which runs first; the packer's order between them is a placeholder, not that decision. If folding wins, overlapping the specialists matters less. Owner order, 2026-10-26: the review-fix policy Tracks run before this one. At ~300 lines it is within the card-size rule.
 _Source: program E12; observed zero-finding specialist reviews_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Define the folded cycle and its gate** -- Name the installed `/review` text the substitution relies on and check it byte for byte at launch; carry the policy value through preparation and continuations; restate Red Team's trigger for a review with no specialist dispatches; keep the native adversarial pass, outside voices, cap and stop unchanged. If upstream text would have to change, record it and stop. _~200 lines._ (M)
 - **Record the arm and qualify the drift check** -- Name the arm that ran and the checklists the main pass read in the receipt and metrics; add the anchors to the drift inventory with missing and changed cases; document the value for older producers. _~100 lines._ (S)
 
-### Group 43: Shorten the first review cycle
+### Group 42: Shorten the first review cycle
 
-_Depends on: Group 31, Group 40, Group 41, Group 42_
+_Depends on: Group 39, Group 40, Group 41_
 
 **This group delivers:** Measured overlap of independent first-cycle review work without losing finding quality.
 
-##### Track 43A: Overlap independent first-cycle review work
+##### Track 42A: Overlap independent first-cycle review work
 _1 tasks . ~230 LOC incl. tests . medium risk_
 **Outcome:** A full first review cycle can finish sooner without losing independent coverage.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25
 **Done when:** E1 establishes a baseline; one immutable scope feeds concurrent specialists, native adversarial and outside pair, with the pair internally sequential and Red Team after merged findings. Host-cap fallback and incomplete voices preserve holds. Before/after wall time and finding quality support activation.
 _touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts, tests/workflow-metrics.test.ts, docs/acceptance/review-concurrency.md (new)_
-_blocked-by: Track 31A, Track 29A, Track 40A, Track 41A_
+_blocked-by: Track 31A, Track 29A, Track 39A, Track 40A_
 **Scheduling:** Owner order, 2026-10-25: after the per-finding attribution Track, whose per-part finding quality this Track's activation evidence needs. The folded first-cycle alternative sits beside this Track; the timing Track's measurements decide which runs first.
 _Source: program E5 / research R2_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Overlap only verified-independent inputs** -- Recheck upstream dependencies; preserve no-fix-before-collection, deduplication, cycle cap, stop and outside-call policy; qualify both hosts and retain the old default behind an option until public activation evidence exists. _~230 lines._ (M)
 
-### Group 44: Docs-only test selection ∥ mechanical release-only proof
+### Group 43: Docs-only test selection ∥ release-only proof and full-run credit
 
-_Depends on: Group 31, Group 35, Group 43_
+_Depends on: Group 35, Group 42_
 
-**This group delivers:** A shared docs-only test map, an explained elapsed-time outlier and mechanical release-stamp proof.
+**This group delivers:** A shared docs-only test map, an explained elapsed-time outlier, mechanical release-stamp proof and an opt-in credit for a prepared full run across a release-only delta.
 
-##### Track 44A: Use pregate to select docs-only tests and explain long runs
+##### Track 43A: Use pregate to select docs-only tests and explain long runs
 _2 tasks . ~280 LOC incl. tests . medium risk_
 **Outcome:** Docs-only shipping has one policy map for selected tests and attributable work/wait timing.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O3 documentation workflow.
 **Done when:** With a usable base policy the nonexecuting pregate explanation owns selected tests and reasons for the exact delta; missing/invalid policy and legacy marker handling are explicit and conservative. Same-tree evidence reuse survives. The reported 211-minute outlier has an evidenced explanation; any unavailable intervals remain open unless the owner explicitly defers that obligation.
 _touches: src/docs-ship/pinning.ts, src/docs-ship/cli.ts, src/docs-ship/config.ts, skills/docs-ship.md, docs/docs-ship.md, tests/docs-ship.test.ts, tests/skill-protocols-docs-ship.test.ts_
-_blocked-by: Track 31A, Track 29A, Track 43A_
+_blocked-by: Track 31A, Track 29A, Track 42A_
 **Scheduling:** Prioritize the main review savings before the separate docs-only path and its long-run investigation; relative call frequency has not been established.
 _Source: program E8 / research R8_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Adopt the policy map compatibly** -- Consume exact-delta/base-policy explanation, preserve no-lane and error semantics, and cover policy-backed, policy-less, configured-marker and bump-delta cases without silently losing coverage. _~210 lines._ (M)
 - **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach installed-host qualification to the two existing host Tracks. _~70 lines._ (S)
 
-##### Track 44B: Prove release-only reuse with mechanical stamp-hunk checks
-_1 task . ~210 LOC incl. tests . medium risk_
-**Outcome:** A policy-equipped repository gets mechanical stamp-hunk proof before release gate reuse.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O3/O5 release integrity.
-**Done when:** The verified base ship policy drives gstack-tree-receipt; eligible per-lane proof and current evidence are required; same-file functional edits, unreadable policy, stale evidence and stamp-sensitive tests cannot reuse improperly. Repositories without policy keep the documented existing path.
-_touches: skills/ship-and-land.md, tests/skill-protocols-ship-and-land.test.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/_
-_blocked-by: Track 29A, Track 35B, Track 43A_
-**Scheduling:** Land the main review speed improvements before optimizing release-only proof. Split from the former release-only card under the card-size rule; the full-run credit follows.
-_Source: program E7 / research R7_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Integrate mechanical eligibility** -- Record the exact upstream source and helper result, retain required checks and receipt compatibility, and demonstrate valid version-only changes versus invalid hunks without authoring any consumer ship policy. _~210 lines._ (M)
-
-### Group 45: Credit a prepared full run for release-only commits
-
-_Depends on: Group 35, Group 44_
-
-**This group delivers:** An opt-in credit for a prepared full run across release-only changes.
-
-##### Track 45A: Credit a prepared full run across a release-only delta
-_2 tasks . ~310 LOC incl. tests . medium risk_
-**Outcome:** An opted-in caller whose preparation already ran the full suite on the prepared head does not run it again for a release-only commit.
+##### Track 43B: Prove release-only reuse mechanically and credit a prepared full run across a release-only delta
+_3 tasks . ~520 LOC incl. tests . medium risk_
+**Outcome:** A policy-equipped repository gets mechanical stamp-hunk proof before release gate reuse, and an opted-in caller whose preparation already ran the full suite on the prepared head does not run it again for a release-only commit.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved release-only credit, 2026-10-26; O3/O5 release integrity.
-**Done when:** Under an opt-in policy value (named at planning), when `full-suite=final` is recorded `/ship-and-land` credits a verified full run of the prepared head (same tree, the documented full command, exit 0, tests ran, recorded in the ledger) across a release-only delta and runs only what that delta selects, instead of the full form a second time; without the value, `full-suite=final` keeps today's meaning. An opt-in per-repository list of extra release files keeps a release commit that also edits such a file (for example an acceptance record) on the release-only path; omitted, the release files stay VERSION, the CHANGELOG entry and the files `/ship`'s version tool writes. Under the same opt-in and `full-suite=final`, a verified pregate selection may stand as preparation's main-suite run when the main test command does not select from the diff (today `/review-and-prep`'s coverage rule then runs the full main command). Track 35B's conservative rerun of release edits is reconciled in one rule: only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it. Omitted-policy behavior and an older producer's fallback are documented, and before/after test time is measured on a real run.
+**Done when:** The verified base ship policy drives gstack-tree-receipt; eligible per-lane proof and current evidence are required; same-file functional edits, unreadable policy, stale evidence and stamp-sensitive tests cannot reuse improperly; repositories without policy keep the documented existing path. Under an opt-in policy value (named at planning), when `full-suite=final` is recorded `/ship-and-land` credits a verified full run of the prepared head (same tree, the documented full command, exit 0, tests ran, recorded in the ledger) across a release-only delta and runs only what that delta selects, instead of the full form a second time; without the value, `full-suite=final` keeps today's meaning. An opt-in per-repository list of extra release files keeps a release commit that also edits such a file (for example an acceptance record) on the release-only path; omitted, the release files stay VERSION, the CHANGELOG entry and the files `/ship`'s version tool writes. Under the same opt-in and `full-suite=final`, a verified pregate selection may stand as preparation's main-suite run when the main test command does not select from the diff (today `/review-and-prep`'s coverage rule then runs the full main command). Track 35B's conservative rerun of release edits is reconciled in one rule: only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it. Omitted-policy behavior and an older producer's fallback are documented, and before/after test time is measured on a real run.
 _touches: skills/ship-and-land.md, skills/review-and-prep.md, tests/skill-protocols-ship-and-land.test.ts, tests/skill-protocols-review-and-prep.test.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, CLAUDE.md_
-_blocked-by: Track 35B, Track 44B_
-**Scheduling:** Split from the former release-only card under the card-size rule. Kept at ~310 lines: its pregate-selection task uses the same opt-in value and the same reconciled rerun rule, and could not ship without them. The mechanical-proof edge orders the shared ship-and-land files.
+_blocked-by: Track 29A, Track 35B, Track 42A_
+**Scheduling:** Land the main review speed improvements before optimizing release-only proof. The mechanical proof and the full-run credit were two Tracks under the card-size rule; the credit edited the same ship-and-land and handoff files and consumed the proof's eligibility result, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~520 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
 _Source: program E7 / research R7; owner-approved release-only full-run credit, 2026-10-26_
 _read-first: docs/designs/workflow-efficiency-program.md_
+- **Integrate mechanical eligibility** -- Record the exact upstream source and helper result, retain required checks and receipt compatibility, and demonstrate valid version-only changes versus invalid hunks without authoring any consumer ship policy. _~210 lines._ (M)
 - **Credit a prepared full run across a release-only delta** -- Under the opt-in value, accept a verified full run of the prepared head plus the release-delta selection at Verification Gate (16); add the opt-in per-repository release-file list as a documented project setting; state Track 35B's conservative release-edit rule and this exception as one rule; update the handoff grammar and this repository's release-selection note in `CLAUDE.md`. _~230 lines incl. tests._ (M)
 - **Let a verified pregate selection stand when the main command does not select** -- Under the same opt-in and `full-suite=final`, let preparation's verified pregate selection (complete selection retained, tests ran) satisfy its main-suite run when the main command is not a selector, instead of the full main command; partial or unknown coverage keeps today's rule. _~80 lines incl. tests._ (S)
 
-### Group 46: Machine-readable planning artifacts
+### Group 44: Machine-readable planning artifacts
 
-_Depends on: Group 32, Group 44, Group 45_
+_Depends on: Group 43_
 
 **This group delivers:** Validated upstream-compatible decisions and findings artifacts alongside the current lean sidecar.
 
-##### Track 46A: Publish upstream-schema lean planning artifacts
+##### Track 44A: Publish upstream-schema lean planning artifacts
 _1 tasks . ~240 LOC incl. tests . medium risk_
 **Outcome:** An orchestrator can inspect decisions and findings without parsing the review prose.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O4 compatible artifacts.
 **Done when:** decisions.jsonl and findings.jsonl validate with installed upstream schemas, carry auto/approval/user_challenge decisions and attributed findings beside the sidecar, and remain consistent on sealing, retries and phase replacement; existing prompt/handoff consumers are unchanged.
 _touches: src/autoplan-lean/sidecar.ts, src/autoplan-lean/cli.ts, src/autoplan-lean/history.ts, skills/autoplan-lean.md, docs/workflow-handoffs.md, tests/autoplan-lean.test.ts, tests/autoplan-lean-history.test.ts, tests/skill-protocols-autoplan-lean.test.ts_
-_blocked-by: Track 29A, Track 32B, Track 45A, Track 44A_
+_blocked-by: Track 29A, Track 32B, Track 43B, Track 43A_
 **Scheduling:** Land direct test, audit, review and shipping efficiency changes before the planning-artifact producer.
 _Source: program E9 / research R10_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Emit and validate machine artifacts** -- Map the current sidecar semantics to upstream schemas; preserve IDs and source provenance and report unknowns; bind records to the sealed plan/review without inventing decisions or adding a parallel format. _~240 lines._ (M)
 
-### Group 47: Supporting contracts and equal host acceptance
+### Group 45: Supporting contracts and equal host acceptance
 
-_Depends on: Group 32, Group 36, Group 37, Group 46_
+_Depends on: Group 36, Group 37, Group 44_
 
 **This group delivers:** A stable-interface catalog, evidence/recovery design and independent qualification on both hosts.
 
-##### Track 47A: Publish the stable compatibility and recovery catalog
+##### Track 45A: Publish the stable compatibility and recovery catalog
 _1 tasks . ~180 LOC incl. tests . medium risk_
 **Outcome:** Public users can identify stable interfaces, experimental exclusions and recovery obligations.
 **Supports:** [SPEC](SPEC.md) O5.1; preserved required inbox obligation, 2026-10-23
 **Done when:** A catalog names every promised surface, version/compatibility rules, support conditions and recovery links; stage-runs v2 is one checked example, not the whole catalog. Experimental surfaces stay explicitly excluded; no checkpoint is awarded by documentation alone.
 _touches: docs/compatibility.md (new), docs/SPEC.md, README.md, docs/installation.md_
-_blocked-by: Track 28A, Track 46A_
+_blocked-by: Track 28A, Track 44A_
 **Scheduling:** The stable-interface catalog remains a 1.0 obligation but does not delay the selected efficiency work.
 _Source: [plan-ceo-review] stable compatibility surfaces (O5.1)_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Catalog the promised surfaces** -- Trace CLI/config, skills, handoffs, provenance and install ownership against shipped code and public instructions. Carry the existing stable promises and disclose unknown qualification; retain O5 acceptance as an owner gate. _~180 lines._ (M)
 
-##### Track 47B: Qualify the complete Conductor workflow and cross-session handoffs
+##### Track 45B: Qualify the complete Conductor workflow and cross-session handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
 **Outcome:** Conductor receives the same supported workflow and recovery guarantees as Paseo.
 **Supports:** [SPEC](SPEC.md) O1/O3/O4 — equal priority requires current host evidence in addition to legacy usage.
 **Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and cross-session handoff evidence; unknown model evidence remains unknown.
 _touches: docs/acceptance/conductor.md (new)_
-_blocked-by: Track 26A, Track 23I, Track 23A, Track 23G, Track 28A, Track 26B, Track 36A, Track 37A, Track 37B, Track 46A_
+_blocked-by: Track 26A, Track 23I, Track 23A, Track 23G, Track 28A, Track 26B, Track 36A, Track 37A, Track 37B, Track 44A_
 **Scheduling:** Retain broad host qualification after the direct efficiency changes and planning artifacts; moving telemetry earlier does not move or waive this acceptance gate. The update-check edge keeps the upgrade qualification on the final upgrade behavior.
 - **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the SQLite store-reader fix from Track 23G, with its still-open owner gate: T42 native receipt 2 on an installed release and the 2-5 minute row-interpretation check (O4 stays unawarded until the owner confirms), plus the open owner note on receipt 1's expected effort. Include the installed Conductor host-attribution check the user deferred from Track 26A (DFR1). Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
 **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Conductor through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Across the two host records include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23. This is part of the one host qualification task, not another release authorization.
 
-##### Track 47C: Qualify the complete Paseo workflow and external handoffs
+##### Track 45C: Qualify the complete Paseo workflow and external handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
 **Outcome:** Paseo users and an external orchestrator can carry real work through the supported stages.
 **Supports:** [SPEC](SPEC.md) O1/O3/O4 — workspace guard wording is shipped, but end-to-end host and consumer acceptance is not established.
 **Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and external-consumer handoff evidence; pending approvals or failures remain holds.
 _touches: docs/acceptance/paseo.md (new)_
-_blocked-by: Track 26A, Track 23I, Track 23A, Track 28A, Track 26B, Track 36A, Track 37A, Track 37B, Track 46A_
+_blocked-by: Track 26A, Track 23I, Track 23A, Track 28A, Track 26B, Track 36A, Track 37A, Track 37B, Track 44A_
 **Scheduling:** Retain broad host qualification after the direct efficiency changes and planning artifacts; moving telemetry earlier does not move or waive this acceptance gate. The update-check edge keeps the upgrade qualification on the final upgrade behavior.
 - **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. Include the installed Paseo host-attribution check the user deferred from Track 26A (DFR1). The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. Confirm independent onboarding across the two host qualification Tracks. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
 **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Paseo through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Across the two host records include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23. This is part of the one host qualification task, not another release authorization.
 
-##### Track 47D: Specify portable review evidence and capped-review recovery
+##### Track 45D: Specify portable review evidence and capped-review recovery
 _2 tasks . ~220 LOC incl. tests . medium risk_
 **Outcome:** Callers know what proves a completed full review and how a stopped draft can reach shipping.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O4 provenance and O3 stop preservation.
 **Done when:** A supporting design maps review facts to a portable evidence-bundle reference and independently checks review-log full-scope/completion/convergence/binding predicates. Documentation walks stopped draft → authorized exact repair-only continuation → prepared readiness → ship with all unavailable evidence and continuation counts preserved, including a stop after a first cycle that reproduced defects; it cites the already recorded rule that `/ship-and-land` keeps refusing a stopped draft, including one whose receipt says `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`). No envelope runtime or stop bypass is introduced.
 _touches: docs/designs/review-evidence-envelope.md (new), docs/workflow-handoffs.md_
-_blocked-by: Track 29A, Track 46A, Track 30A, Track 32A_
+_blocked-by: Track 29A, Track 44A, Track 30A, Track 32A_
 **Scheduling:** Preserve the evidence design and capped-review recovery work after the direct savings and artifact producer; the artifact producer edge is priority ordering, not a claimed technical prerequisite. The capped-review repair and baseline-repair edges are technical: the documented recovery path must describe the shipped repair-only continuation, including after a first cycle that reproduced defects. This Track specifies and checks the cycle 1 baseline record and does not write it.
 _Source: program E10–E11 / research R11 and observed capped-review stops_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Map the existing upstream proof** -- Compare commit_full/tree/scope/completed/converged/cycles plus review_binding and verified/imported lane semantics; specify missing/stale/unavailable cases and identify gaps without claiming nonconverged full scope is a completed baseline. _~150 lines._ (M)
 - **Document the recovery path** -- Use the stop receipt's own repair-only prompt and remaining budget, which the capped-review and baseline repairs make reachable after a completed first cycle, preserve the bound PR, and show why shipping cannot replace the continuation, including for a receipt that says `Unresolved: none recorded`. Keep manual holds and Full-review evidence: unavailable explicit. _~70 lines._ (S)
 
-### Group 48: Workflow efficiency baseline
+### Group 46: Workflow efficiency baseline and decisions
 
-_Depends on: Group 35, Group 39, Group 47_
+_Depends on: Group 35, Group 38, Group 45_
 
-**This group delivers:** A reproducible cross-run baseline report of work, waits, reuse and rework.
+**This group delivers:** A reproducible cross-run baseline report and an adopt, reject or insufficient-evidence decision for each optimization.
 
-##### Track 48A: Build a comparable workflow-efficiency baseline report
-_1 task . ~180 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can reproduce an offline report that separates model work, tool/CI/human waits, reuse and rework across runs.
+##### Track 46A: Build a comparable workflow-efficiency baseline and evaluate each optimization
+_3 tasks . ~440 LOC incl. tests . medium risk_
+**Outcome:** The maintainer can reproduce an offline report that separates model work, tool/CI/human waits, reuse and rework across runs, and gets an evidence-backed decision for each proposed optimization, including a valid conclusion that a change is not worthwhile or that evidence is insufficient.
 **Supports:** [SPEC](SPEC.md) P1 and owner-selected investigation, 2026-10-19; empirical model comparison and review-policy changes remain outside the 1.0 acceptance gates.
-**Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split; no review gate or model choice changes.
-_touches: scripts/workflow-efficiency-report.py (new), tests/workflow-efficiency-report.test.ts (new), tests/fixtures/workflow-efficiency/ (new), tests/helpers/touchfiles.ts_
-_blocked-by: Track 39A, Track 35A, Track 47A, Track 47D, Track 47B, Track 47C_
-**Scheduling:** Keep the cross-run efficiency assessment after the selected changes and host-qualification work; individual changes still need their own before/after evidence before activation. Split from the former efficiency-evaluation card under the card-size rule; the assessment follows.
+**Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split. Each candidate has measured evidence or a named evidence gap; comparisons include total parent/child usage, quality and capture overhead; each candidate gets adopt, reject or insufficient evidence with its follow-up mapped to existing Future items. No review gate or model choice changes, and no model downgrade or review gate is changed by the study itself.
+_touches: scripts/workflow-efficiency-report.py (new), tests/workflow-efficiency-report.test.ts (new), tests/fixtures/workflow-efficiency/ (new), tests/helpers/touchfiles.ts, docs/acceptance/workflow-efficiency.md (new)_
+_blocked-by: Track 38A, Track 35A, Track 45A, Track 45D, Track 45B, Track 45C_
+**Scheduling:** Keep the cross-run efficiency assessment after the selected changes and host-qualification work; individual changes still need their own before/after evidence before activation. The baseline report and the evaluation were two Tracks under the card-size rule; the evaluation edited the same script, test and fixture files and read the report the baseline builds, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~440 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 - **Build a comparable baseline** -- Produce an offline report from sanitized projections. Separate DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs; report sample size and missingness. Reuse eligible existing release-only receipts and preserve the separate first-installed-no-CI timing obligation and 15-minute target. Report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~180 lines._ (M)
-
-### Group 49: Workflow efficiency decisions
-
-_Depends on: Group 48_
-
-**This group delivers:** A reproducible report that supports adoption, rejection or insufficient evidence for each optimization.
-
-##### Track 49A: Evaluate workflow efficiency and recommend only supported changes
-_2 tasks . ~260 LOC incl. tests . medium risk_
-**Outcome:** The maintainer gets an evidence-backed decision for each proposed optimization, including a valid conclusion that a change is not worthwhile or that evidence is insufficient.
-**Supports:** [SPEC](SPEC.md) P1 and owner-selected investigation, 2026-10-19; empirical model comparison and review-policy changes remain outside the 1.0 acceptance gates.
-**Done when:** Each candidate has measured evidence or a named evidence gap; comparisons include total parent/child usage, quality and capture overhead; each candidate gets adopt, reject or insufficient evidence with its follow-up mapped to existing Future items; no model downgrade or review gate is changed by the study itself.
-_touches: scripts/workflow-efficiency-report.py, tests/workflow-efficiency-report.test.ts, tests/fixtures/workflow-efficiency/, docs/acceptance/workflow-efficiency.md (new)_
-_blocked-by: Track 48A_
-**Scheduling:** Split from the former efficiency-evaluation card under the card-size rule; it reads the baseline report the previous Track builds.
-_read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 - **Assess the uncertain efficiency choices** -- Compare smaller models and lower effort for bounded drafting/extraction versus the main runner, including launch/context-transfer and parent-correction costs. Investigate repeated plan extraction, evidence reads, long-suite reruns, section loading, parallel scheduling and each reviewer voice's unique accepted findings. Use the existing eval/benchmark facilities where suitable; define corpus, quality bars, fixed budgets and stop rules before any model trial. Include known-defect controls and false positives; a saved success flag is not quality evidence. This Track authorizes offline analysis; any new paid/API trials need a separately approved concrete pilot and spend bound. _~180 lines._ (M)
-- **Publish decisions and follow-up ownership** -- For each candidate give adopt/reject/insufficient-evidence, expected benefit, observed limitations and the smallest follow-up scope. Map recommendations to existing Future items rather than duplicating them: lifecycle helper, eval persistence, vendor diversity, the delta-scoped review default, on-demand `/review-and-prep` section loading and the `/autoplan-lean` measurement. Preserve the independent historical review-independence study and its unfulfilled evidence obligations. An insufficient-evidence result names missing data and a bounded next measurement; it never silently removes a review or acceptance gate. _~80 lines._ (S)
+- **Publish decisions and follow-up ownership** -- For each candidate give adopt/reject/insufficient-evidence, expected benefit, observed limitations and the smallest follow-up scope. Map recommendations to existing Future items rather than duplicating them: lifecycle helper, eval persistence, vendor diversity, the delta-scoped review default and on-demand `/review-and-prep` section loading. Preserve the independent historical review-independence study and its unfulfilled evidence obligations. An insufficient-evidence result names missing data and a bounded next measurement; it never silently removes a review or acceptance gate. _~80 lines._ (S)
 
 ### Execution Map
 
@@ -489,34 +393,30 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 31 ← {}
-- Group 32 ← {31}
-- Group 33 ← {31, 32}
+- Group 33 ← {}
 - Group 34 ← {33}
-- Group 35 ← {31, 34}
-- Group 36 ← {31, 35}
+- Group 35 ← {34}
+- Group 36 ← {35}
 - Group 37 ← {36}
-- Group 38 ← {31, 36, 37}
-- Group 39 ← {38}
-- Group 40 ← {31, 35, 37, 39}
-- Group 41 ← {31, 34, 40}
-- Group 42 ← {31, 34, 40, 41}
-- Group 43 ← {31, 40, 41, 42}
-- Group 44 ← {31, 35, 43}
-- Group 45 ← {35, 44}
-- Group 46 ← {32, 44, 45}
-- Group 47 ← {32, 36, 37, 46}
-- Group 48 ← {35, 39, 47}
-- Group 49 ← {48}
+- Group 38 ← {36, 37}
+- Group 39 ← {35, 37, 38}
+- Group 40 ← {34, 39}
+- Group 41 ← {34, 39, 40}
+- Group 42 ← {39, 40, 41}
+- Group 43 ← {35, 42}
+- Group 44 ← {43}
+- Group 45 ← {36, 37, 44}
+- Group 46 ← {35, 38, 45}
 ```
 
-**19 Groups / 27 Tracks remaining.** Group 31 is In Progress; the other 18 Groups are in the Current Plan.
+**14 Groups / 21 Tracks remaining.** No Group is In Progress; all 14 are in the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
+
 ## Future
 
-Deferred: docs/roadmap-future.md (53 items)
+Deferred: docs/roadmap-future.md (57 items)
 
 ## Shipped
 
