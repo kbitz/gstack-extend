@@ -865,6 +865,18 @@ describe('skill and contract text', () => {
       expect(flat(question)).toContain('ends with `Not merged.`');
     });
 
+    // Value: protects=approval is unconditional for the stated PR, head and method;
+    // fails_when=conditional or altered answers can authorize a merge;
+    // why_new=the prior word lock did not exclude qualified approval; seam=none;
+    // no_claim=installed-agent interpretation of user answers
+    test('conditional or altered answers never authorize the stated merge', () => {
+      for (const [name, raw] of [['skill step 12', step12], ['contract section', question]] as const) {
+        const text = flat(raw);
+        expect([name, text.includes('It must be an unconditional answer for the stated PR, head and method.')]).toEqual([name, true]);
+        expect([name, text.includes('Any conditional or altered answer merges nothing and ends with `Not merged.`.')]).toEqual([name, true]);
+      }
+    });
+
     test('no way to ask is decided by the environment and ends on the result line', () => {
       const block = /```bash\n(case "\$\{GSTACK_SESSION_KIND:-\}"[^\n]*)\n```/.exec(step11)?.[1];
       expect(block).toBeDefined();
