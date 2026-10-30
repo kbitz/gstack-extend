@@ -252,11 +252,13 @@ and worktrees stay with the host. It then ends with one outcome line after the
 result line, whose bytes do not change:
 
 ```text
-Docs ship merge: <merged|queued|refused|failed>; pr: <number>; head: <40-hex SHA>; detail: <gh's first error line, or none>
+Docs ship merge: <merged|queued|refused|failed>; pr: <number>; head: <40-hex SHA>; detail: <gh's first error line, observed head, unreadable head, or none>
 ```
 
-`merged` means the PR state is `MERGED`. `queued` means `gh` exited 0 and the PR
-is still `OPEN`, as on a merge-queue branch. `refused` means `gh` exited non-zero
+`merged` means the PR state is `MERGED` and its observed `headRefOid` equals
+the frozen head. For `MERGED` with a different or unreadable `headRefOid`,
+report `failed` and put the observed head or `unreadable head` in `detail`.
+`queued` means `gh` exited 0 and the PR is still `OPEN`, as on a merge-queue branch. `refused` means `gh` exited non-zero
 and the PR is still `OPEN`. `failed` is anything else, including an unreadable
 state. The outcome line is not a `docs-ship/v1` field; a v1 reader ignores it.
 Because it follows the result line, a reader that takes the last line of the

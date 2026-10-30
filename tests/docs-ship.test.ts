@@ -895,14 +895,16 @@ describe('skill and contract text', () => {
       expect(flat(question)).toContain('The question offers **Merge** and **Do not merge** and recommends neither.');
     });
 
-    // Value: protects=published merged and failed outcome definitions;
-    // fails_when=MERGED or unreadable-state mapping changes;
+    // Value: protects=published merged outcome binds the approved head, including mismatch/unreadable rejection;
+    // fails_when=approved-head match or mismatch/unreadable rejection disappears;
     // why_new=existing outcome assertions cover queued and refused only; seam=none;
     // no_claim=real GitHub outcomes or attribution during a concurrent merge
-    test('merged requires MERGED state and failed includes unreadable state', () => {
-      expect(flat(step12)).toContain('`merged` when the state is `MERGED`;');
+    test('merged requires the approved head and failed includes unreadable state', () => {
+      expect(flat(step12)).toContain('`merged` when the state is `MERGED` and `headRefOid` equals the frozen head;');
+      expect(flat(step12)).toContain('For `MERGED` with a different or unreadable `headRefOid`, report `failed` and put the observed head or `unreadable head` in `detail`.');
       expect(flat(step12)).toContain('`failed` otherwise, including an unreadable state.');
-      expect(flat(question)).toContain('`merged` means the PR state is `MERGED`.');
+      expect(flat(question)).toContain('`merged` means the PR state is `MERGED` and its observed `headRefOid` equals the frozen head.');
+      expect(flat(question)).toContain('For `MERGED` with a different or unreadable `headRefOid`, report `failed` and put the observed head or `unreadable head` in `detail`.');
       expect(flat(question)).toContain('`failed` is anything else, including an unreadable state.');
     });
 
@@ -921,7 +923,7 @@ describe('skill and contract text', () => {
     // why_new=existing command lock does not bind the complete attempt sequence; seam=none;
     // no_claim=actual stale-head refusal or exclusive authorship of observed merged state
     test('the attempt uses the frozen head without bypasses then reads PR state', () => {
-      expect(flat(step12)).toContain('run `gh pr merge <n> --<method> --match-head-commit <head>` once, using the head frozen in step 10. Never add `--admin`, `--auto` or `--delete-branch`, never drop `--match-head-commit`, never retry. Then read `gh pr view <n> --json state --jq .state`, run Telemetry finish with `--outcome success` and end with this outcome line');
+      expect(flat(step12)).toContain('run `gh pr merge <n> --<method> --match-head-commit <head>` once, using the head frozen in step 10. Never add `--admin`, `--auto` or `--delete-branch`, never drop `--match-head-commit`, never retry. Then read `gh pr view <n> --json state,headRefOid`, run Telemetry finish with `--outcome success` and end with this outcome line');
       expect(flat(question)).toContain('once, with the head frozen at the receipt. It never adds `--admin`, `--auto` or `--delete-branch`, never drops `--match-head-commit` and never retries;');
     });
 
