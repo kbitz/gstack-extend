@@ -166,7 +166,7 @@ Key routing rules:
 - Implement the plan, build this plan → invoke implement (targeted checks, then a fresh-session review-and-prep handoff)
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
 - Ship and land, finish a prepared PR → invoke ship-and-land (reuse verified evidence; run missing/stale stages, then land)
-- Docs-only PR, ship docs, a /roadmap or /project-spec handoff → invoke docs-ship (narrow checks, receipt, any policy bump; stops at the merge gate)
+- Docs-only PR, ship docs, a /roadmap or /project-spec handoff → invoke docs-ship (narrow checks, receipt, any policy bump; at the merge gate, merges only on the user's word)
 - Resume review and prep after manual testing, continue the paused draft PR → invoke review-and-prep with args "resume"
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
