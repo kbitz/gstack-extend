@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.53.0] - 2026-10-30
+
+### Changed
+
+- **`/docs-ship` merges only on an explicit answer.** The merge gate waits for that answer before it merges. README and the skill page state the same rule.
+
+### Fixed
+
+- **Conditional merge approvals are rejected.** An answer that adds a condition is not approval to merge.
+- **The merged head is verified before success is reported.** `/docs-ship` confirms the landed commit is the one it merged, then reports success.
+
 ## [0.52.0] - 2026-10-26
 
 ### Added
