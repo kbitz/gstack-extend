@@ -6,12 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **`/docs-ship` merges only on an explicit answer.** The merge gate waits for that answer before it merges. README and the skill page state the same rule.
+- **`/docs-ship` can now merge.** At `PASS` it asks whether to merge the verified head and merges only on the user's explicit, unconditional answer for that PR, head and method. With no way to ask, it stops with the merge command, as before.
+- **Merge attempts report their outcome.** A separate `Docs ship merge:` line follows the `docs-ship/v1` line, and it says `merged` only when the PR's head is the approved one.
 
-### Fixed
+### Upgrade notes
 
-- **Conditional merge approvals are rejected.** An answer that adds a condition is not approval to merge.
-- **The merged head is verified before success is reported.** `/docs-ship` confirms the landed commit is the one it merged, then reports success.
+- **Result line position.** After a merge question, the `docs-ship/v1` line is no longer the last line of the final message. A reader that matches the line still works; a reader that takes the last line can miss it. A run that does not ask still ends on it.
+- **Callers whose questions are answered by anything but the user.** A caller with a question tool and no session marker moves from never merging to possibly merging. Set `GSTACK_SESSION_KIND=spawned` or ask for no questions. A caller that must never merge should deny `gh pr merge` in its own permission layer, because skill text is not enforcement. See the Merge question section of `docs/docs-ship.md`.
 
 ## [0.52.0] - 2026-10-26
 
