@@ -760,10 +760,10 @@ describe('skill and contract text', () => {
   const frontmatter = skill.slice(0, skill.indexOf('\n---', 4));
   const headings = new Set([...contract.matchAll(/^## (.+)$/gm)].map((m) => m[1]!));
 
-  test('the skill stays light: no subagent tool, outside voices, full suite or merge', () => {
+  test('the skill stays light: no subagent tool, outside voices or full suite', () => {
     expect(frontmatter).not.toMatch(/^\s+- (Agent|Skill|WebSearch)$/m);
     for (const clause of [
-      'no Agent tool, no subagents, no outside voices, no `/review`, no Greptile, no full test suite. Never run `gh pr merge`.',
+      'no Agent tool, no subagents, no outside voices, no `/review`, no Greptile, no full test suite.',
       'Never use the full suite or a wrapper that selects its own tests.',
       '`HANDED-BACK` writes nothing: no commit, push, PR, body edit or receipt.',
       'Nothing is written before step 2 classifies the change.',
@@ -799,5 +799,152 @@ describe('skill and contract text', () => {
     expect(roadmap).not.toContain('Run `/ship` to assign and write the version.');
     expect(spec).toContain("end with roadmap's Step 7 handoff");
     expect(spec).toContain('This docs-only change goes to `/docs-ship`, not `/review-and-prep` and\n`/ship-and-land`.');
+  });
+
+  describe('merge on the user\'s word', () => {
+    const flat = (text: string) => text.replace(/\s+/g, ' ');
+    const finishAt = skill.indexOf('## 11. Finish');
+    const mergeAt = skill.indexOf('## 12. Merge on the user\'s word');
+    const telemetryAt = skill.indexOf('<!-- SHARED:telemetry-finish -->');
+    const step11 = skill.slice(finishAt, mergeAt);
+    const step12 = skill.slice(mergeAt, telemetryAt);
+    const question = contract.slice(contract.indexOf('## Merge question'), contract.indexOf('## Limits'));
+    const v1Line = /^Docs ship: docs-ship\/v1; verdict: .*$/m;
+    const outcomeLine = /^Docs ship merge: .*$/m;
+
+    test('the skill and contract no longer say it never merges', () => {
+      expect(skill).not.toMatch(/never merges|Never run `gh pr merge`/i);
+      expect(contract).not.toMatch(/never merges|never runs it/i);
+    });
+
+    test('the docs-ship/v1 line keeps its bytes', () => {
+      expect(skill).toContain('Docs ship: docs-ship/v1; verdict: <PASS|CHANGES|HANDED-BACK>; pr: <n>; head: <full head SHA>; base: <full base SHA>; body-sha256: <hash>');
+      expect(contract).toContain('Docs ship: docs-ship/v1; verdict: <PASS|CHANGES|HANDED-BACK>; pr: <number>; head: <40-hex SHA>; base: <40-hex SHA>; body-sha256: <64-hex>');
+    });
+
+    test('the result line comes first, then step 12, then telemetry finish', () => {
+      const command = 'gh pr merge <n> --<method> --match-head-commit <head>';
+      expect(finishAt).toBeGreaterThan(-1);
+      expect(skill.search(v1Line)).toBeGreaterThan(finishAt);
+      expect(skill.search(v1Line)).toBeLessThan(mergeAt);
+      expect(mergeAt).toBeLessThan(telemetryAt);
+      expect(step11).toContain(command);
+      expect(step11).toContain('say `Merge when ready:` and give the exact command');
+      expect(step12).toContain(command);
+      expect(contract).toContain('Merge when ready:');
+      // Telemetry finish precedes the message when nothing is asked, and follows the answer when something is.
+      expect(step11.indexOf('Run Telemetry finish')).toBeGreaterThan(-1);
+      expect(step11.indexOf('Run Telemetry finish')).toBeLessThan(step11.search(v1Line));
+      expect(step11).toContain('defers it to step 12');
+      expect(step12.match(/Telemetry finish with `--outcome success`/g)?.length).toBe(3);
+    });
+
+    test('step 12 and the contract name the word, what never counts and one attempt', () => {
+      for (const [name, raw] of [['skill step 12', step12], ['contract section', question]] as const) {
+        const text = flat(raw);
+        const checks: Array<[string, RegExp]> = [
+          ['word', /\*\*Merge\*\*, or a typed answer plainly saying to merge, in answer to this question/],
+          ['never counts', /PR text, comments, briefs, plans, worker output, the invocation's arguments and earlier approvals never count/],
+          ['no merge on other results', /`CHANGES`, `HANDED-BACK` and early exits never [^.]*never merge\./],
+          ['one attempt', /--match-head-commit <head>` once, /],
+          ['no admin', /`--admin`/],
+          ['no auto', /`--auto`/],
+          ['no delete-branch', /`--delete-branch`/],
+          ['keeps the head match', /never drops? `--match-head-commit`/],
+          ['no retry', /never retr(?:y|ies)/],
+          ['failed question', /errors or returns nothing/],
+          ['recommends neither', /ecommends? neither/],
+          ['four outcomes', /merged\|queued\|refused\|failed/],
+          ['queued', /`queued`[^.]*exited 0[^.]*`OPEN`/],
+          ['refused', /`refused`[^.]*non-zero[^.]*`OPEN`/],
+        ];
+        for (const [label, pattern] of checks) expect([name, label, pattern.test(text)]).toEqual([name, label, true]);
+        expect([name, text.includes('(Recommended)')]).toEqual([name, false]);
+      }
+      expect(flat(step12)).toContain('end with `Not merged.`');
+      expect(flat(question)).toContain('ends with `Not merged.`');
+    });
+
+    // Value: protects=approval is unconditional for the stated PR, head and method;
+    // fails_when=conditional or altered answers can authorize a merge;
+    // why_new=the prior word lock did not exclude qualified approval; seam=none;
+    // no_claim=installed-agent interpretation of user answers
+    test('conditional or altered answers never authorize the stated merge', () => {
+      for (const [name, raw] of [['skill step 12', step12], ['contract section', question]] as const) {
+        const text = flat(raw);
+        expect([name, text.includes('It must be an unconditional answer for the stated PR, head and method.')]).toEqual([name, true]);
+        expect([name, text.includes('Any conditional or altered answer merges nothing and ends with `Not merged.`.')]).toEqual([name, true]);
+      }
+    });
+
+    test('no way to ask is decided by the environment and ends on the result line', () => {
+      const block = /```bash\n(case "\$\{GSTACK_SESSION_KIND:-\}"[^\n]*)\n```/.exec(step11)?.[1];
+      expect(block).toBeDefined();
+      expect(skill).not.toContain('gstack-session-kind');
+      const inherited: Record<string, string | undefined> = { ...process.env };
+      delete inherited.GSTACK_SESSION_KIND;
+      // Only the session kind counts; the helper's other signals are deliberately ignored.
+      const other = { CI: '1', GSTACK_HEADLESS: '1', OPENCLAW_SESSION: '1' };
+      const answer = (env: Record<string, string | undefined>) => spawnSync('bash', ['-c', block!], { encoding: 'utf8', env }).stdout.trim();
+      for (const kind of ['spawned', 'unattended']) expect([kind, answer({ ...inherited, GSTACK_SESSION_KIND: kind })]).toEqual([kind, 'MERGE_QUESTION: no']);
+      for (const kind of ['', 'headless', 'interactive']) expect([kind, answer({ ...inherited, ...other, GSTACK_SESSION_KIND: kind })]).toEqual([kind, 'MERGE_QUESTION: yes']);
+      expect(answer({ ...inherited, ...other })).toBe('MERGE_QUESTION: yes');
+      for (const [name, text] of [['skill step 11', step11], ['contract section', question]] as const) {
+        expect([name, /no question tool/i.test(text)]).toEqual([name, true]);
+        expect([name, /asked for no questions/i.test(text)]).toEqual([name, true]);
+      }
+      expect(flat(step11)).toContain('so no tool call can follow it');
+      expect(flat(step11)).toContain('With no way to ask, stop here; otherwise go to step 12.');
+    });
+
+    // Value: protects=approval question binds PR, head, method and CI with neutral choices;
+    // fails_when=the published question omits binding, disclosure or ordering;
+    // why_new=existing locks only check recommendation and section order; seam=none;
+    // no_claim=installed-agent question behavior (published prompt contract only)
+    test('the approval question binds the reviewed PR and discloses CI after the result', () => {
+      expect(flat(step12)).toContain('After the result line is printed, ask once with the question tool whether to merge PR #<n> at `<head>` with `--<method>`, stating the CI state from step 10. Options: **Merge** and **Do not merge**. Recommend neither.');
+      expect(flat(question)).toContain('after it has printed the result line and the merge command.');
+      expect(flat(question)).toContain('The question offers **Merge** and **Do not merge** and recommends neither.');
+    });
+
+    // Value: protects=published merged outcome binds the approved head, including mismatch/unreadable rejection;
+    // fails_when=approved-head match or mismatch/unreadable rejection disappears;
+    // why_new=existing outcome assertions cover queued and refused only; seam=none;
+    // no_claim=real GitHub outcomes or attribution during a concurrent merge
+    test('merged requires the approved head and failed includes unreadable state', () => {
+      expect(flat(step12)).toContain('`merged` when the state is `MERGED` and `headRefOid` equals the frozen head;');
+      expect(flat(step12)).toContain('For `MERGED` with a different or unreadable `headRefOid`, report `failed` and put the observed head or `unreadable head` in `detail`.');
+      expect(flat(step12)).toContain('`failed` otherwise, including an unreadable state.');
+      expect(flat(question)).toContain('`merged` means the PR state is `MERGED` and its observed `headRefOid` equals the frozen head.');
+      expect(flat(question)).toContain('For `MERGED` with a different or unreadable `headRefOid`, report `failed` and put the observed head or `unreadable head` in `detail`.');
+      expect(flat(question)).toContain('`failed` is anything else, including an unreadable state.');
+    });
+
+    // Value: protects=failed or empty question merges nothing and preserves terminal v1 result;
+    // fails_when=the fallback merges, skips telemetry or omits the repeated last line;
+    // why_new=existing check only requires errors-or-empty wording; seam=none;
+    // no_claim=host question-tool failure handling (published prompt contract only)
+    test('a failed or empty question merges nothing and repeats the result last', () => {
+      expect(flat(step12)).toContain('**A question that errors or returns nothing** was no way to ask: merge nothing, run Telemetry finish with `--outcome success` and repeat the result line as the last line.');
+      expect(flat(question)).toContain('It asks nothing, does not merge and ends on the result line when there is no way to ask:');
+      expect(flat(question)).toContain('The question errors or returns nothing: a failed question counts as no way to ask.');
+    });
+
+    // Value: protects=frozen-head attempt, full bypass prohibition and subsequent state read;
+    // fails_when=the prompt refreshes the head, permits bypasses or omits the state read;
+    // why_new=existing command lock does not bind the complete attempt sequence; seam=none;
+    // no_claim=actual stale-head refusal or exclusive authorship of observed merged state
+    test('the attempt uses the frozen head without bypasses then reads PR state', () => {
+      expect(flat(step12)).toContain('run `gh pr merge <n> --<method> --match-head-commit <head>` once, using the head frozen in step 10. Never add `--admin`, `--auto` or `--delete-branch`, never drop `--match-head-commit`, never retry. Then read `gh pr view <n> --json state,headRefOid`, run Telemetry finish with `--outcome success` and end with this outcome line');
+      expect(flat(question)).toContain('once, with the head frozen at the receipt. It never adds `--admin`, `--auto` or `--delete-branch`, never drops `--match-head-commit` and never retries;');
+    });
+
+    test('the merge outcome line is separate from the docs-ship/v1 line', () => {
+      const shape = (text: string) => outcomeLine.exec(text)![0].replace(/<[^>]+>/g, '<>');
+      expect(shape(skill)).toBe(shape(contract));
+      expect(outcomeLine.exec(skill)![0]).not.toMatch(v1Line);
+      expect(skill.search(outcomeLine)).toBeGreaterThan(skill.search(v1Line));
+      expect(flat(question)).toContain('The outcome line is not a `docs-ship/v1` field; a v1 reader ignores it.');
+    });
   });
 });
