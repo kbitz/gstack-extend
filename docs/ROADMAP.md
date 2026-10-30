@@ -3,10 +3,17 @@
 Organized by lifecycle state: **In Progress**, **Current Plan**, **Future** and
 **Shipped**. A Track is one PR/session. Explicit scheduling edges prioritize
 development speed: the timing, capped-review baseline repair and `/implement`
-waiting and targeted-check Tracks have shipped, so the opt-in review-fix policy
-runs first, then test savings, telemetry, and audit and review optimizations;
-the packer then assigns Groups of disjoint file footprints and their launch
-dependencies.
+waiting and targeted-check Tracks have shipped. Owner order, 2026-10-30 (the
+efficiency review's order, approved as proposed): `/docs-ship` merging on the
+user's word (47A, in progress), the external full-suite gate with lean parent
+reads (48A), the review-fix policy (33A), state-root, telemetry-helper and
+stage-handoff changes (49A) and a new plan-prompt skill (50A) run first; then
+the rest of the plan in its earlier order: test savings, telemetry, and audit
+and review optimizations. The packer assigns Groups of disjoint file
+footprints and their launch dependencies. Groups 48 to 50 keep the existing
+Group and Track labels 33 to 46 stable on purpose, because open cards and
+outside references cite them; they are numbered above the plan's idle range,
+and the renumbering rule's recycling is deferred to the next full regeneration.
 
 **Card size.** A Track estimated above about 300 authored lines, counting its
 tests, is split into separate Tracks unless splitting would leave a Track that
@@ -29,38 +36,124 @@ owner acceptance remain distinct. No new spend or unattended merge is authorized
 
 ## In Progress
 
-No active work is declared (none declared as of 2026-10-26). Tracks 29A (v0.49.0),
-30A (v0.50.0), 31A (v0.51.0), 32A (v0.51.1) and 32B (v0.52.0) are recorded
-independently in shipped history. Track 28A's required published-release upgrade
-acceptance remains in Future; its revisit trigger, the first published three-part
-release, was met by v0.48.0 and the item awaits an owner reassessment. O1 and
-O3–O5 remain pending.
+Track 47A is in progress (owner, 2026-10-30). Tracks 29A (v0.49.0), 30A (v0.50.0), 31A
+(v0.51.0), 32A (v0.51.1) and 32B (v0.52.0) are recorded independently in
+shipped history. Track 28A's required published-release upgrade acceptance
+remains in Future; its revisit trigger, the first published three-part release,
+was met by v0.48.0 and the item awaits an owner reassessment. O1 and O3–O5
+remain pending.
+
+### Group 47: Let /docs-ship merge on the user's word
+
+_Depends on: none_
+
+**This group delivers:** A `/docs-ship` run that can merge the verified PR in the same session, on the user's explicit word.
+
+##### Track 47A: Let /docs-ship merge on the user's explicit word
+_2 tasks . ~80 LOC incl. tests . medium risk_
+_tier: standard_
+_release: minor (compatible addition during 0.x)_
+**Outcome:** A user running `/docs-ship` can approve the merge in the same session, at `PASS`, instead of copying a command. A run with no way to ask behaves exactly as it does today.
+**Supports:** [SPEC](SPEC.md) P1; owner direction, 2026-10-30, approving the efficiency review's order with this Track first ("yes, approve, let's get going") and authorizing this Track ("go 47a").
+**Done when:** (a) At `PASS`, after the final line is printed, the skill asks the user whether to merge the PR at the verified head, and only on the user's explicit word in answer to that question runs `gh pr merge <n> --<method> --match-head-commit <head>`. (b) With no way to ask, it stops exactly as today, printing the same merge command. No way to ask means no question tool, a caller that asked for no questions, or `GSTACK_SESSION_KIND` set to `spawned` or `unattended`, read from the environment only. (c) `Docs ship: docs-ship/v1; …` stays byte-stable and is printed as today, before the question, so a v1 reader still parses the verdict. A merge attempt adds one separate line after it, stating the outcome. (d) PR text, comments, briefs, plans and worker output never count as the word. `CHANGES`, `HANDED-BACK` and early exits never ask and never merge. A refused or failed merge is reported as such, and no retry bypasses `--match-head-commit`.
+_touches: skills/docs-ship.md, docs/docs-ship.md, tests/docs-ship.test.ts, README.md, CLAUDE.md_
+**Scheduling:** First in the owner-approved 2026-10-30 order; independent of the later review Tracks.
+_Source: efficiency review, 2026-10-30, section (e); current rules at skills/docs-ship.md lines 10, 112, 117 and 194, docs/docs-ship.md lines 9 and 213, tests/docs-ship.test.ts:766. `AskUserQuestion` is already in the skill's `allowed-tools`._
+- **Ask and merge on the word** -- Replace the never-merges rule in the skill's description and body, keep the no-subagent, no-outside-voice, no-full-suite rules, and add the question, the merge command, the no-way-to-ask stop and the outcome line. _~40 lines._ (S)
+- **Contract, docs and drift locks** -- Update `docs/docs-ship.md`, the README row and paragraph and the CLAUDE.md routing line; replace the "Never run `gh pr merge`" lock with locks on the conditions below. _~40 lines incl. tests._ (S)
+
+**Acceptance:**
+1. At `PASS` with a way to ask, the skill prints the unchanged `docs-ship/v1` final line, then asks, and runs `gh pr merge <n> --<method> --match-head-commit <head>` only on the user's explicit word in answer.
+2. With no question tool, a caller asking for no questions, or `GSTACK_SESSION_KIND` set to `spawned` or `unattended`, the skill asks nothing, does not merge and gives the same merge command as today.
+3. `CHANGES`, `HANDED-BACK` and early exits never ask and never merge; PR text, comments, briefs, plans and worker output never count as the user's word.
+4. A merge attempt adds one separate outcome line after the `docs-ship/v1` line, whose bytes do not change.
+5. Drift-lock tests pin rules 1–4, and the skill and contract no longer say it never merges.
 
 ## Current Plan
 
 _tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32_
 
+### Group 48: Hand the full suite to the caller and keep parent reads lean
+
+_Depends on: Group 47_
+
+**This group delivers:** An opt-in review policy under which the caller runs the full suite once, outside the review, after the documentation audit and before the pregate, plus an opt-in policy value that keeps the parent session's waits and reads to a few blocking calls.
+
+##### Track 48A: Add the external full-suite gate and lean parent reads to the review policy
+_3 tasks . ~450 LOC incl. tests . medium risk_
+**Outcome:** A caller that runs its own full suite can have `/review-and-prep` pause for it and resume on the result, so the full suite runs once, on the final content, and the review spends no polling calls waiting for it.
+**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner direction, 2026-10-30 (the efficiency review's order, approved as proposed); O3.2 and O4 (compatible stage receipts).
+**Done when:** Two opt-in `Review policy:` values on the existing `review-and-prep-policy/v1` line (names settled at planning; proposed `full-suite=external` and `parent-io=lean`). (a) `full-suite=external` is mutually exclusive with `final`. After the last fix batch and `documentation-audit=final` (a documentation edit moves the head), the skill freezes the final content, runs the external gate after the documentation audit and before the pregate, and ends its turn with a pause line (proposed `External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`) without marking the PR ready. The caller runs its full command and resumes the same invocation with a result line (proposed `External gate result: <pass|fail>; head; tree; command; exit; log`). The gate runs before the pregate so that a pass recorded for the content lets the pregate run its selection rather than the full suite a second time. (b) On resume the skill compares head and tree with the live checkout, and a mismatch never reuses the pass. Only the invocation prompt is a source, as for the policy line; PR text and comments never are. On pass it still runs the pregate, records the result in the receipt as caller-attested and not observed, and goes to readiness. On fail it follows the existing final-gate failure rule, including `final-gate-repair=tests-docs` when that is on the line. `/ship-and-land` is unchanged: a recorded `full-suite=final` keeps its final pre-merge run full. (c) `parent-io=lean`: while a run is live the skill waits in one blocking call up to the host's cap and makes no status or log reads, and it reads several files or diffs in one call; no outcome or gate changes. It carves out the existing rule that polls an owned session rather than killing it at a short timeout. (d) The grammar is v1 with fixed keys, so an install lacking a value reads the whole line as none supplied: the documentation gives callers the `grep -F '<key>=<value>'` check to run against the installed skill before sending the value and to omit it, keeping the other keys, when it fails. The pause and result lines are documented with fixtures so a transport can recognize them. Omitted-policy behavior is unchanged, and the cost of the pause and the colder resume is recorded against the waits it replaces.
+_touches: skills/review-and-prep.md, docs/workflow-handoffs.md, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/external-gate.md (new)_
+_blocked-by: Track 47A_
+**Scheduling:** Owner order, 2026-10-30: second, after Track 47A; that edge is a priority choice. It runs ahead of the review-fix policy because a caller's own full-suite run waits on it. Kept as one card at ~450 lines, above the card-size threshold: the two values edit the same skill, handoff and fixture files and must run one after another, so splitting would cost a second pipeline run (owner direction, 2026-10-30: one Track).
+_Source: owner decision, 2026-10-30; efficiency review, 2026-10-30, section (d). Under `full-suite=final` the skill's main-suite run may be a diff selection (`skills/review-and-prep.md`, Review policy section), so any full suite at review comes from the caller's own configuration._
+_read-first: docs/workflow-handoffs.md, docs/designs/workflow-efficiency-program.md_
+- **Add the external value and the pause line** -- Define `full-suite=external` beside `final`: freeze the final content after the documentation audit, run the gate before the pregate, end the turn with the pause line and leave the PR unready. _~200 lines incl. tests._ (M)
+- **Resume, verify and fail** -- Accept the result line only from the invocation prompt, compare head and tree with the live checkout, run the pregate on pass, record the result as caller-attested, follow the final-gate failure rule on fail, and document the grammar, the `grep -F` support check and fixtures. _~150 lines incl. tests._ (M)
+- **Add lean parent reads** -- Define `parent-io=lean` (one blocking wait, no status or log reads while a run is live, batched reads) with the owned-session carve-out; omitted-policy behavior unchanged. _~100 lines incl. tests._ (S)
+
 ### Group 33: Keep behavior-neutral repairs out of review cycles
 
-_Depends on: none_
+_Depends on: Group 48_
 
 **This group delivers:** An opt-in review policy under which only behavior-changing repairs reopen review.
 
 ##### Track 33A: Reopen review only for behavior-changing repairs
-_1 task . ~240 LOC incl. tests . medium risk_
+_2 tasks . ~300 LOC incl. tests . medium risk_
 **Outcome:** An opted-in caller's review stops spending further cycles on repairs that change no behavior, while every behavior-changing repair is still reviewed.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved review-fix policy, 2026-10-26; O3.2 (a stage never repeats a completed review without cause).
-**Done when:** An opt-in `Review policy:` value (named at planning) makes a repair that changes no behavior (a docstring, a rename, dead code, a redundant handler) open no further review cycle; targeted lanes and the single final suite cover it, and only behavior-changing repairs feed the next `in-cap=delta` cycle. `/review-and-prep` already draws this line for Greptile follow-ups ("a substantive new diff (one that changes behavior beyond the mechanical edit a finding asked for)"); this Track extends it to `/review`'s own cycles, and an unclassifiable repair counts as behavior-changing. The value activates only while the installed upstream `/review` Fix-First text it relies on (Step 5's AUTO-FIX/ASK classification and the Fix-First heuristic) matches byte for byte; those anchors join the upstream drift check's inventory with missing and changed cases, and on drift the review runs today's behavior and the receipt says so. No upstream file is edited. The receipt records each repair that opened no cycle. The policy grammar is v1 with fixed keys, so the older-producer fallback is documented as it was for `final-gate-repair`. Omitted-policy behavior is unchanged, and before/after cycle counts and wall time are measured with the timing Track's spans.
+**Done when:** An opt-in `Review policy:` value (named at planning) makes a repair that changes no behavior (a docstring, a rename, dead code, a redundant handler) open no further review cycle; targeted lanes and the single final suite cover it, and only behavior-changing repairs feed the next `in-cap=delta` cycle. `/review-and-prep` already draws this line for Greptile follow-ups ("a substantive new diff (one that changes behavior beyond the mechanical edit a finding asked for)"); this Track extends it to `/review`'s own cycles, and an unclassifiable repair counts as behavior-changing. The value activates only while the installed upstream `/review` Fix-First text it relies on (Step 5's AUTO-FIX/ASK classification and the Fix-First heuristic) matches byte for byte; those anchors join the upstream drift check's inventory with missing and changed cases, and on drift the review runs today's behavior and the receipt says so. No upstream file is edited. The receipt records each repair that opened no cycle. Before the first repair of a batch the review classifies every finding in that batch once, so the batch is sized by consequence; the severity label itself stays upstream's and is never downgraded or overruled by the wrapper, and the receipt records the classification. The policy grammar is v1 with fixed keys, so the older-producer fallback is documented as it was for `final-gate-repair`, and the release notes give the value's exact words and the `grep -F` check a caller runs before sending it. Omitted-policy behavior is unchanged, and before/after cycle counts and wall time are measured with the timing Track's spans.
 _touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, docs/upstream-check.md, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/review-fix-policy.md (new)_
-_blocked-by: Track 31A, Track 29A, Track 32A, Track 32B_
-**Scheduling:** Owner order, 2026-10-26: the review-fix policy runs right after the baseline repair, ahead of the test-savings and telemetry Tracks. The timing edge is the measurement prerequisite; the baseline-repair and `/implement` edges order the shared `skills/review-and-prep.md` and handoff-contract files (both have shipped: v0.51.1, v0.52.0). The former bounded-audit edge only expressed the earlier order and is dropped. Split from the former single review-fix policy card under the card-size rule; the test-gap half follows. Kept as two cards on purpose, although the card-size rule's same-files exception would otherwise merge them (both edit the same skill, handoff and fixture files and run one after another, about 420 lines together): the owner keeps the split (owner direction, 2026-10-26), and the next card adds a second review behavior, test-gap routing, that is activated and measured separately on the grammar this card defines.
-_Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent re-reviewing behavior-neutral repairs_
+_blocked-by: Track 31A, Track 29A, Track 32A, Track 32B, Track 48A_
+**Scheduling:** Owner order, 2026-10-30: third, after the external-gate Track; that edge is a priority choice, and the two Tracks edit the same skill and handoff files. Grown by the classify-severity-once rule (~60 lines), which still fits one card at ~300 lines. Owner order, 2026-10-26: the review-fix policy runs right after the baseline repair, ahead of the test-savings and telemetry Tracks. The timing edge is the measurement prerequisite; the baseline-repair and `/implement` edges order the shared `skills/review-and-prep.md` and handoff-contract files (both have shipped: v0.51.1, v0.52.0). The former bounded-audit edge only expressed the earlier order and is dropped. Split from the former single review-fix policy card under the card-size rule; the test-gap half follows. Kept as two cards on purpose, although the card-size rule's same-files exception would otherwise merge them (both edit the same skill, handoff and fixture files and run one after another, about 480 lines together): the owner keeps the split (owner direction, 2026-10-26), and the next card adds a second review behavior, test-gap routing, that is activated and measured separately on the grammar this card defines.
+_Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent re-reviewing behavior-neutral repairs; severity-first ordering added by owner decision, 2026-10-30 (efficiency review section (d))_
 _read-first: docs/designs/workflow-efficiency-program.md, docs/upstream-check.md_
 - **Reopen review only for behavior-changing repairs** -- Name the upstream `/review` Fix-First text the value relies on and check it byte for byte at launch; classify each repair as behavior-changing or not; feed only behavior-changing repairs to the next `in-cap=delta` cycle and cover the rest with targeted lanes and the final suite; carry the value through preparation and continuations; document the older-producer fallback; record before/after cycle counts. _~240 lines incl. tests._ (M)
+- **Classify severity once before the first repair of a batch** -- Label each finding of a batch once, with upstream's labels unchanged and no downgrading, before any repair starts, so the batch is sized by consequence and a trivial fix is still made rather than deferred; an unclassifiable finding keeps its upstream label; record the classification in the receipt. _~60 lines incl. tests._ (S)
+
+### Group 49: Follow the state root, shrink the telemetry blocks, end stages with one handoff line
+
+_Depends on: Group 33_
+
+**This group delivers:** Stage skills that keep their state under a caller-supplied state root, a much shorter telemetry preamble in all eleven skills and one parseable final line for the plan, implement and review stages.
+
+##### Track 49A: Follow the state root, shrink the telemetry blocks and add one stage-handoff line
+_3 tasks . ~200 authored LOC incl. tests, plus eleven skills' copied telemetry lines removed . medium risk_
+**Outcome:** A caller can place a stage's run and handoff files under its own state directory by passing one value, every skill's telemetry preamble shrinks to a short helper call with unchanged behavior, and an orchestrator can read each stage's outcome from one trailing line.
+**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner direction, 2026-10-30 (the efficiency review's order, approved as proposed); O4 (stable stage handoffs for external orchestrators).
+**Done when:** (a) `/implement`, `/autoplan-lean`, `/review-and-prep`, `/ship-and-land` and `/docs-ship`, which hardcode `~/.gstack` for their run and handoff paths, resolve those paths with the rule `/full-review`, `/pair-review`, `/roadmap` and `bin/lib/session-paths.sh` already use (`${GSTACK_STATE_ROOT:-$HOME/.gstack}`), extended to follow upstream's documented state variable `GSTACK_HOME` as well, with the precedence between the two settled at planning; with neither set the paths are today's. The documentation says that `GSTACK_HOME` moves all upstream state for the stage (configuration, analytics, learnings, review logs), not only these files. No caller path enters any skill. (b) The two `SHARED` telemetry blocks (start and finish) in all eleven skills are replaced by a short call to a small resolver helper; state, tier gating, run identity, rows and the `provenance` gate behave as before, `TELEMETRY_SKILLS` still covers all eleven skills, the telemetry and skill-protocol suites lock the new form, and the bytes saved per skill are recorded. No skill loses telemetry. (c) `/autoplan-lean`, `/implement` and `/review-and-prep` end with one trailing line after the fenced handoff block (proposed `Stage handoff: stage-handoff/v1; stage: <plan|implement|review>; next: <skill|none>; status: <…>; head: <40-hex|none>; plan-sha256: <…>`; fields settled at planning), unconditional with no environment branch. It is additive: the existing H-A, H-B and H-E grammars, the `Run /<skill>` line and the number-first Coverage counts keep their bytes, and `docs/workflow-handoffs.md` and its fixtures document the new line.
+_touches: skills/, bin/lib/session-paths.sh, bin/gstack-extend-telemetry, docs/telemetry.md, docs/workflow-handoffs.md, tests/skill-protocols.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/_
+_blocked-by: Track 33A_
+**Scheduling:** Owner order, 2026-10-30: fourth, after the review-fix policy; that edge is a priority choice, and both Tracks edit `skills/review-and-prep.md`. The state-root rule, the telemetry shrink and the handoff line are one card at about 200 authored lines because they edit the same skill files and fixtures and would run one after another; the removed copied telemetry lines are deletions and do not count. The owner's 2026-10-30 approval named no telemetry option; this card takes the review's recommendation, shrinking the blocks in all eleven skills rather than deleting telemetry from `/implement` alone, which would break the all-eleven invariant; the owner can choose otherwise before planning. It runs before the telemetry Tracks that edit the same blocks; their copied-line estimates predate the shrink and are restated when they are planned. The handoff line lands before the plan-prompt skill, which ends with it.
+_Source: owner decision, 2026-10-30; efficiency review, 2026-10-30, sections (b) and (c). Precedent for a single parseable final line: `docs-ship/v1` and `review-and-prep/v1` in `docs/workflow-handoffs.md`; upstream's `docs/state-root.md` names `GSTACK_HOME` as the one variable to set._
+_read-first: docs/workflow-handoffs.md, docs/telemetry.md, bin/lib/session-paths.sh_
+- **Follow the state root** -- Replace the hardcoded `~/.gstack` run and handoff paths in the five skills with the shared state-root expression extended with `GSTACK_HOME`; add a drift lock that no skill hardcodes the default root; document what the variable moves. _~50 lines incl. tests._ (S)
+- **Shrink the telemetry blocks to a helper call** -- Replace the start and finish `SHARED` blocks in all eleven skills with a short call to a resolver helper that keeps the lookup, trust and tier behavior; update the cohort and telemetry suites; record the bytes saved. _~90 authored lines incl. tests, plus copied lines removed._ (M)
+- **Add the stage-handoff line** -- Print the trailing line after the fenced handoff block of the three stages, document it beside the existing grammars and add fixtures; the existing lines stay byte for byte. _~60 lines incl. tests._ (S)
+
+### Group 50: Offer an owned plan prompt as a new skill
+
+_Depends on: Group 49_
+
+**This group delivers:** A small planning skill that works alone, beside `/autoplan-lean`, which keeps its review pipeline and its routing.
+
+##### Track 50A: Add a plan-prompt skill beside /autoplan-lean
+_2 tasks . ~400 LOC incl. tests . medium risk_
+**Outcome:** A caller whose cards are small and well specified can have a plan produced by one session without the review pipeline, and everyone else keeps `/autoplan-lean` exactly as it is.
+**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner direction, 2026-10-30 (the efficiency review's order, approved as proposed); O3.2.
+**Done when:** A new installed skill (name settled at planning) turns an approved card into an executable plan for `/implement` in one session, working alone: no subagents, outside voices or other model or agent CLI. `/autoplan-lean`, its description and its routing are unchanged, and neither skill's text claims to replace the other; deprecating `/autoplan-lean` is not part of this Track. Its inputs are documented invocation-prompt fields, not host-filled placeholders, and its text names no consumer or personal tool. It ends with the stage-handoff line from the previous Track, using generic tokens. One verify-command label is settled and documented for the plan, and its relation to `/autoplan-lean`'s `Verify command:` label is stated. It carries the shortened telemetry call, so the telemetry cohort covers it; an exemption needs the owner's word. It is registered everywhere a skill is: `setup`'s skill list, `tests/helpers/expected-setup-skills.ts`, the protocol and compliance suites, the README and the CLAUDE.md routing, and the documentation says how a host that `setup` does not manage links it. The default stays `/autoplan-lean`; the two blind comparisons that scored this approach's risk handling lower stay recorded as the reason, and no default changes.
+_touches: skills/, setup, tests/helpers/expected-setup-skills.ts, tests/skill-protocols.test.ts, tests/audit-compliance.test.ts, tests/setup-hosts.test.ts, docs/workflow-handoffs.md, README.md, CLAUDE.md_
+_blocked-by: Track 49A_
+**Scheduling:** Owner order, 2026-10-30: last of the five. The stage-handoff line and the shortened telemetry call (previous Track) are technical prerequisites: the new skill uses both. The planner widens `_touches:` with the new skill's own protocol test file once the name is settled. Kept as one card at ~400 lines, above the card-size threshold: the skill and its registration edit the same registration and test files and run one after another.
+_Source: owner decision, 2026-10-30; efficiency review, 2026-10-30, section (a). It is not a slimmer `/autoplan-lean`: that skill's definition is upstream `/autoplan`'s review pipeline, which this skill omits._
+_read-first: skills/autoplan-lean.md, docs/workflow-handoffs.md_
+- **Write the skill** -- Write the planning prompt as a skill that works alone, with documented input fields, one verify-command label and the stage-handoff line; leave `/autoplan-lean` untouched. _~220 lines._ (M)
+- **Register it and lock it** -- Add the skill to `setup`, the expected-skills list, the protocol and compliance suites, the README and the CLAUDE.md routing; document the manual link for unmanaged hosts. _~180 lines incl. tests._ (M)
 
 ### Group 34: Route unproven test gaps to the next Track that touches them
 
-_Depends on: Group 33_
+_Depends on: Group 33, Group 50_
 
 **This group delivers:** Recorded and routed test gaps in place of tests written for cells with no demonstrated defect, with regression tests kept for reproduced defects.
 
@@ -70,8 +163,8 @@ _1 task . ~180 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved review-fix policy, 2026-10-26; O3.2.
 **Done when:** Under the review-fix policy (a key or value settled at planning on the grammar the previous Track defines), a test-gap finding with no demonstrated defect, such as an untested state-matrix cell, is recorded and its test is not written; its upstream severity label stays unchanged, and a reproduced defect still gets its regression test. Each recorded gap goes to TODOS with the registered `review` source tag carrying `files=`, so `/roadmap` routes it to the next Track whose `_touches:` cover those files. The anchors this relies on join the upstream drift inventory with missing and changed cases; on drift the review writes tests as today and the receipt says so. The receipt records each recorded gap, omitted-policy behavior is unchanged, and before/after cycle counts are recorded.
 _touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/review-fix-policy.md_
-_blocked-by: Track 33A_
-**Scheduling:** Owner order, 2026-10-26: completes the review-fix policy before the test-savings Tracks. Split from the former review-fix policy card under the card-size rule; it builds on the policy value the previous Track defines, which is a technical prerequisite. Kept as a separate card from the previous Track on purpose despite the shared files and serial order (owner direction, 2026-10-26); that card's Scheduling line gives the reason.
+_blocked-by: Track 33A, Track 50A_
+**Scheduling:** Owner order, 2026-10-30: the three Tracks that follow the review-fix policy (state-root and telemetry-helper changes, then the plan-prompt skill) run before this one; the plan-prompt edge is a priority choice. Owner order, 2026-10-26: completes the review-fix policy before the test-savings Tracks. Split from the former review-fix policy card under the card-size rule; it builds on the policy value the previous Track defines, which is a technical prerequisite. Kept as a separate card from the previous Track on purpose despite the shared files and serial order (owner direction, 2026-10-26); that card's Scheduling line gives the reason.
 _Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent writing tests for untested cells with no defect_
 _read-first: docs/designs/workflow-efficiency-program.md, docs/source-tag-contract.md_
 - **Record unproven test gaps instead of writing their tests** -- Keep upstream severity labels; record a test-gap finding with no demonstrated defect instead of writing its test, and file it to TODOS as `[review:files=…]` with its evidence; keep regression tests for reproduced defects; add the anchors to the drift inventory with missing and changed cases; record before/after cycle counts. _~180 lines incl. tests._ (M)
@@ -393,8 +486,12 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 33 ← {}
-- Group 34 ← {33}
+- Group 47 ← {}
+- Group 48 ← {47}
+- Group 33 ← {48}
+- Group 49 ← {33}
+- Group 50 ← {49}
+- Group 34 ← {33, 50}
 - Group 35 ← {34}
 - Group 36 ← {35}
 - Group 37 ← {36}
@@ -409,14 +506,14 @@ DEPENDS output with bin numbers replaced by the assigned Group numbers.
 - Group 46 ← {35, 38, 45}
 ```
 
-**14 Groups / 21 Tracks remaining.** No Group is In Progress; all 14 are in the Current Plan.
+**18 Groups / 25 Tracks remaining.** Group 47 (Track 47A) is In Progress; the other 17 Groups, with 24 Tracks, are in the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
 
 ## Future
 
-Deferred: docs/roadmap-future.md (57 items)
+Deferred: docs/roadmap-future.md (59 items)
 
 ## Shipped
 
