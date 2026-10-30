@@ -885,6 +885,46 @@ describe('skill and contract text', () => {
       expect(flat(step11)).toContain('With no way to ask, stop here; otherwise go to step 12.');
     });
 
+    // Value: protects=approval question binds PR, head, method and CI with neutral choices;
+    // fails_when=the published question omits binding, disclosure or ordering;
+    // why_new=existing locks only check recommendation and section order; seam=none;
+    // no_claim=installed-agent question behavior (published prompt contract only)
+    test('the approval question binds the reviewed PR and discloses CI after the result', () => {
+      expect(flat(step12)).toContain('After the result line is printed, ask once with the question tool whether to merge PR #<n> at `<head>` with `--<method>`, stating the CI state from step 10. Options: **Merge** and **Do not merge**. Recommend neither.');
+      expect(flat(question)).toContain('after it has printed the result line and the merge command.');
+      expect(flat(question)).toContain('The question offers **Merge** and **Do not merge** and recommends neither.');
+    });
+
+    // Value: protects=published merged and failed outcome definitions;
+    // fails_when=MERGED or unreadable-state mapping changes;
+    // why_new=existing outcome assertions cover queued and refused only; seam=none;
+    // no_claim=real GitHub outcomes or attribution during a concurrent merge
+    test('merged requires MERGED state and failed includes unreadable state', () => {
+      expect(flat(step12)).toContain('`merged` when the state is `MERGED`;');
+      expect(flat(step12)).toContain('`failed` otherwise, including an unreadable state.');
+      expect(flat(question)).toContain('`merged` means the PR state is `MERGED`.');
+      expect(flat(question)).toContain('`failed` is anything else, including an unreadable state.');
+    });
+
+    // Value: protects=failed or empty question merges nothing and preserves terminal v1 result;
+    // fails_when=the fallback merges, skips telemetry or omits the repeated last line;
+    // why_new=existing check only requires errors-or-empty wording; seam=none;
+    // no_claim=host question-tool failure handling (published prompt contract only)
+    test('a failed or empty question merges nothing and repeats the result last', () => {
+      expect(flat(step12)).toContain('**A question that errors or returns nothing** was no way to ask: merge nothing, run Telemetry finish with `--outcome success` and repeat the result line as the last line.');
+      expect(flat(question)).toContain('It asks nothing, does not merge and ends on the result line when there is no way to ask:');
+      expect(flat(question)).toContain('The question errors or returns nothing: a failed question counts as no way to ask.');
+    });
+
+    // Value: protects=frozen-head attempt, full bypass prohibition and subsequent state read;
+    // fails_when=the prompt refreshes the head, permits bypasses or omits the state read;
+    // why_new=existing command lock does not bind the complete attempt sequence; seam=none;
+    // no_claim=actual stale-head refusal or exclusive authorship of observed merged state
+    test('the attempt uses the frozen head without bypasses then reads PR state', () => {
+      expect(flat(step12)).toContain('run `gh pr merge <n> --<method> --match-head-commit <head>` once, using the head frozen in step 10. Never add `--admin`, `--auto` or `--delete-branch`, never drop `--match-head-commit`, never retry. Then read `gh pr view <n> --json state --jq .state`, run Telemetry finish with `--outcome success` and end with this outcome line');
+      expect(flat(question)).toContain('once, with the head frozen at the receipt. It never adds `--admin`, `--auto` or `--delete-branch`, never drops `--match-head-commit` and never retries;');
+    });
+
     test('the merge outcome line is separate from the docs-ship/v1 line', () => {
       const shape = (text: string) => outcomeLine.exec(text)![0].replace(/<[^>]+>/g, '<>');
       expect(shape(skill)).toBe(shape(contract));
