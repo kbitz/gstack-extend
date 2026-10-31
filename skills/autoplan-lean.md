@@ -627,8 +627,8 @@ Print the line after the closing fence, outside it, as the last line of the
 message. `next: implement` goes with `status: done` or `done-with-concerns`; on
 `BLOCKED`, `NEEDS_CONTEXT` or a rejected gate there is no prompt, and the line
 prints `next: none` with `blocked`, `needs-context` or `stopped`. `head` is the
-prompt's `Branch` HEAD; without a prompt, use the current HEAD, or `none` if
-the workspace has no HEAD. `plan-sha256` is `PLAN_SHA256` from `seal`, or `none`
+prompt's `Branch` HEAD; without a prompt, use the current HEAD, or `none` for
+a workspace without HEAD. `plan-sha256` is `PLAN_SHA256` from `seal`, or `none`
 when no seal ran. `check --message` requires the line after the fence, with
 `stage: plan`, `next: implement`, that `head` and the checked plan's SHA-256.
 
