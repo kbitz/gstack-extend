@@ -30,24 +30,9 @@ allowed-tools:
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:review-and-prep" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:review-and-prep" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -167,11 +152,12 @@ library and both call forms are in
   carrying the candidate HEAD/tree/base you already observed (or null — never run
   `git write-tree` or create an index for metrics), `binding` clean/dirty/unknown,
   the SHA-256 of the installed copy of this skill, and `parent_session_id:null`
-  unless the spawning stage handed you its exact ID. In the same call, after the
-  telemetry start block's launcher resolution, print the library path to retain
+  unless the spawning stage handed you its exact ID. In the same call, resolve the
+  launcher through the telemetry helper and print the library path to retain
   as `GX_LIB`:
 
   ```bash
+  _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
   GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
   [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
   ```
@@ -1544,7 +1530,9 @@ Do not emit a `STATUS:` line on this exit; the literal
 `STOPPED — review cycle cap` line above is the status.
 This prompt is the H-E hold of the
 [stage-handoff contract](https://github.com/kbitz/gstack-extend/blob/main/docs/workflow-handoffs.md);
-keep its first line and labels byte-stable for callers.
+keep its first line and labels byte-stable for callers. After its fence, print
+Step 7's stage line: `next: review-and-prep; status: stopped`, with `head` the
+`Stopped at` SHA.
 
 On `/review-and-prep continue`, refresh Step 1's live state. A later pause or
 receipt supersedes the old continuation prompt: hold it and use the current
@@ -1718,9 +1706,9 @@ reuse these records.
 A later change, such as a Greptile fix or a base merge, reruns each gate whose
 inputs it touched under that gate's own freshness rule before Step 6. Copy the
 final pregate record, the audit's post-child snapshot and its documentation
-section to an existing `~/.gstack/projects/<slug>/review-and-prep/`, otherwise
+section to an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise
 `~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
-receipt. Never record a gate as passed from memory or a partial run.
+receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run.
 
 ### Pause for an external full-suite gate
 
@@ -1798,6 +1786,8 @@ push nothing, write nothing to the PR, never run `gh pr ready`, post no
 `review-and-prep:paused:` comment, and never write the word `PAUSED`, which is
 the manual-testing hold's. The head may be unpushed and a PR may not exist yet;
 a caller that runs elsewhere moves the commit itself. The PR stays unready.
+This pause prints no stage line: the contract freezes the `External gate:` line as
+the last line of the turn, and a line after it holds the caller.
 
 **Resume entry.** Handle any existing manual-testing or cycle-cap hold first.
 Otherwise an external-gate resume needs no H-C marker or PR. Read the highest
@@ -2115,7 +2105,7 @@ Capture evidence as the work runs so a new session can reuse it:
 - Keep long evidence in files, not chat. Write the completion matrix,
   per-review evidence, gate records and receipt drafts to the evidence
   directory (a unique branch/invocation subdirectory under an existing
-  `~/.gstack/projects/<slug>/review-and-prep/`, otherwise
+  `<state-root>/projects/<slug>/review-and-prep/`, otherwise
   `~/scratch/review-and-prep/`) as they are produced, assemble the
   receipt from them, and read them back by targeted excerpt. Chat carries
   short status lines; output a nested skill requires is unchanged.
@@ -2264,6 +2254,9 @@ When these checks are complete, return to /review-and-prep resume for this
 same PR; its remaining preparation precedes /ship-and-land. Do not follow a
 generic /pair-review completion suggestion to go directly to /ship.
 ```
+
+After its fence, print Step 7's stage line: `next: pair-review; status: paused`,
+with `head` the checkpoint SHA.
 
 On `/review-and-prep resume` (or a repeat invocation), refresh Step 1's live
 branch/PR state and read this receipt. Locate `/pair-review` through the host's
@@ -2987,6 +2980,16 @@ Save before shipping: <unrelated paths preparation preserved>; move them out of
 this checkout without committing them, since they block release work until then.
 ```
 
+End every final message except the external-gate pause with this stage line, after
+any handoff fence and outside it, with nothing after it:
+
+Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
+
+The prompt above is `next: ship-and-land; status: done`, with `head` the Prepared
+HEAD and `plan-sha256` the prompt's `SHA-256`. A blocked or needs-context exit
+prints `next: none` and that status after its resume summary, with no fence.
+`plan-sha256` is `none` when the exit names no plan hash.
+
 Read back live readiness before producing this prompt on an already-complete
 rerun too. Do not publish new PR comments or push code after the ready transition
 just to store the handoff; the pre-ready receipt and copyable final response
@@ -2998,24 +3001,9 @@ carry it across sessions.
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:review-and-prep" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:review-and-prep" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->

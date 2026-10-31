@@ -11,7 +11,7 @@ import { buildPrompt, ceoReference, parseSizeRecords } from './prompt.ts';
 import { outline } from './outline.ts';
 import { assembleSidecar } from './sidecar.ts';
 import { PHASE_HISTORY, PHASE_OUTPUTS, parsePhaseHistory, type PhaseAttempt } from './history.ts';
-import { checkMessage, checkPlan, promptBindingForPlan } from './transport.ts';
+import { checkMessage, checkPlan, checkStageLine, promptBindingForPlan } from './transport.ts';
 
 // All three launcher flags first coexist in Bun 1.3.3's src/cli/Arguments.zig.
 export const BUN_FLOOR = '1.3.3';
@@ -75,7 +75,9 @@ seal     Assemble DIR's review files into the sidecar <plan-stem>.review-record.
          pair unchanged; publication failures restore it or report the
          retained recovery file. New review-record copies are owner-only;
          PLAN uses its existing permission mode, restricted by the process umask.
-check    Check the transport shape of PLAN (and the copyable /implement prompt in FILE).
+check    Check the transport shape of PLAN (and the copyable /implement prompt in FILE,
+         which must end with one "Stage handoff: stage-handoff/v1; ..." line bound
+         to PLAN's SHA-256 and the prompt's Branch HEAD).
 drift    Compare native criteria exactly and check known outside paragraphs
          in installed upstream text. Added outside requirements are not detected.
 outline  Print FILE's H1-H3 sections as "SECTION: START-END BYTES STATUS HEADING"
@@ -468,7 +470,7 @@ function checkCmd(argv: string[], io: CliIo): number {
     if (!text) throw new Refusal('MESSAGE_MISSING', `message file ${message} does not exist`, 'write the final message to a file first');
     const binding = promptBindingForPlan(bytes, planPath);
     if (!binding) problems.push('message: cannot bind the /implement prompt to the checked plan (missing or ambiguous standalone Tier, Verify command, or review record)');
-    problems.push(...checkMessage(text.toString('utf8'), binding).map((p) => `message: ${p}`));
+    problems.push(...[...checkMessage(text.toString('utf8'), binding), ...checkStageLine(text.toString('utf8'), binding)].map((p) => `message: ${p}`));
   }
   const { proper } = splitPlan(bytes.toString('utf8'));
   let out = `PLAN_BYTES: ${bytes.byteLength}\nPROPER_BYTES: ${Buffer.byteLength(proper)}\n`;

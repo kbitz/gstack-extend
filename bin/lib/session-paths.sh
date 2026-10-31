@@ -9,7 +9,7 @@
 #   _session_resolve_slug                       : Internal slug resolution (mirrors gstack-slug).
 #
 # Path shape mirrors gstack:
-#   Project-scoped: ${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/<skill>
+#   Project-scoped: ${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/<skill>
 #   Branch-scoped: <slug>/<skill>/branches/<branch>
 #   Archived (no branch): <slug>/<skill>-archived-<ts>   [project-sibling, legacy shape]
 #   Archived (branch):    <slug>/<skill>/archives/<branch>-<ts>
@@ -68,7 +68,7 @@ session_dir() {
     echo "session_dir: skill argument required" >&2
     return 1
   fi
-  local root="${GSTACK_STATE_ROOT:-$HOME/.gstack}"
+  local root="${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}"
   local slug
   slug=$(_session_resolve_slug)
   if [ -n "$branch" ]; then
@@ -90,7 +90,7 @@ session_archive_dir() {
     echo "session_archive_dir: skill and ts arguments required" >&2
     return 1
   fi
-  local root="${GSTACK_STATE_ROOT:-$HOME/.gstack}"
+  local root="${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}"
   local slug
   slug=$(_session_resolve_slug)
   if [ -n "$branch" ]; then

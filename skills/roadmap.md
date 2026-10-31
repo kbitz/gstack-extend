@@ -141,24 +141,9 @@ Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/confi
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:roadmap" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:roadmap" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -1021,7 +1006,7 @@ PROPOSAL_DIR=$(session_dir roadmap-proposals)
 mkdir -p "$PROPOSAL_DIR"
 ```
 
-This resolves to `${GSTACK_STATE_ROOT:-$HOME/.gstack}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival (Conductor, Paseo).
+This resolves to `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}/projects/<slug>/roadmap-proposals/` — durable, survives workspace archival (Conductor, Paseo).
 
 Format:
 
@@ -1780,24 +1765,9 @@ Table leads. Audit section detail follows.
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:roadmap" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:roadmap" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->

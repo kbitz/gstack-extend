@@ -36,7 +36,18 @@ function skillBlock(path: string, kind: 'start' | 'finish') {
   if (!code) throw new Error('Missing executable block in ' + path);
   return code;
 }
-function executeBlock(env: Record<string, string>, kind: 'start' | 'finish', path = join(ROOT, 'skills/full-review.md'), cwd?: string) {
+const HELPER_SOURCE = join(ROOT, 'bin/lib/telemetry-call.sh');
+// What `setup` installs for the blocks to call. The fixture does not create it, because several suites assert the
+// fixture home holds no .gstack-extend; a test that runs a block asks for it, and the generated-host test leaves it
+// to the real setup.
+function installCallHelper(home: string) {
+  const dir = join(home, '.gstack-extend/bin');
+  mkdirSync(dir, { recursive: true });
+  copyFileSync(HELPER_SOURCE, join(dir, 'telemetry-call'));
+  chmodSync(join(dir, 'telemetry-call'), 0o755);
+}
+function executeBlock(env: Record<string, string>, kind: 'start' | 'finish', path = join(ROOT, 'skills/full-review.md'), cwd?: string, helper = true) {
+  if (helper) installCallHelper(env.HOME);
   return spawnSync('bash', ['-euc', skillBlock(path, kind)], { env, cwd, encoding: 'utf8', timeout: 10_000 });
 }
 
@@ -76,8 +87,10 @@ describe('shipped blocks and installation lookup', () => {
       const path = join(fix.home, hostDir, 'full-review/SKILL.md');
       expect(existsSync(join(fix.home, hostDir, 'full-review/.extend-root'))).toBe(true);
       expect(existsSync(join(fix.home, '.local/bin/gstack-extend-telemetry'))).toBe(false);
-      expect(executeBlock(fix.env, 'start', path).status).toBe(0);
-      expect(executeBlock(fix.env, 'finish', path).status).toBe(0);
+      // setup, not the harness, put the helper where the blocks call it.
+      expect(existsSync(join(fix.home, '.gstack-extend/bin/telemetry-call'))).toBe(true);
+      expect(executeBlock(fix.env, 'start', path, undefined, false).status).toBe(0);
+      expect(executeBlock(fix.env, 'finish', path, undefined, false).status).toBe(0);
       const rows = fix.readJsonl();
       expect(rows).toHaveLength(2);
       expect(rows[0].session_id).toBe(rows[1].session_id);
@@ -138,6 +151,7 @@ describe('shipped blocks and installation lookup', () => {
     const pointerDir = join(fix.home, '.claude/skills/aaa');
     mkdirSync(pointerDir, { recursive: true });
     writeFileSync(join(pointerDir, '.extend-root'), '.\n');
+    installCallHelper(fix.home);
     const r = spawnSync('bash', ['-euc', skillBlock(join(ROOT, 'skills/full-review.md'), 'start')], {
       env: { ...fix.env, PATH: '/bin', GSTACK_EXTEND_TELEMETRY_DEBUG: '1' },
       cwd: repo,
@@ -158,6 +172,7 @@ describe('shipped blocks and installation lookup', () => {
     writeFileSync(join(evilRoot, 'bin/gstack-extend-telemetry'), '#!/bin/bash\nprintf "planted\\n"\n');
     chmodSync(join(evilRoot, 'bin/gstack-extend-telemetry'), 0o755);
     writeFileSync(join(planted, '.extend-root'), evilRoot + '\n');
+    installCallHelper(fix.home);
     const r = spawnSync('bash', ['-euc', skillBlock(join(ROOT, 'skills/full-review.md'), 'start')], {
       env: { ...fix.env, PATH: '/bin', GSTACK_EXTEND_TELEMETRY_DEBUG: '1' },
       cwd: repo,
@@ -231,7 +246,7 @@ describe('shipped blocks and installation lookup', () => {
     }
   }, 30_000);
   test('the protocol line the blocks grep for is the one the wrapper and helper carry', () => {
-    const marker = skillBlock(join(ROOT, 'skills/full-review.md'), 'start').match(/grep -q '([^']+)'/)?.[1];
+    const marker = readFileSync(HELPER_SOURCE, 'utf8').match(/grep -q '([^']+)'/)?.[1];
     expect(marker).toBe('telemetry-protocol: start-finish-v1');
     expect(readFileSync(HELPER_BIN, 'utf8')).toContain('# ' + marker);
     expect(readFileSync(join(ROOT, 'bin/lib/telemetry.py'), 'utf8')).toContain('PROTOCOL_MARKER = b"' + marker + '"');
@@ -243,24 +258,67 @@ describe('shipped blocks and installation lookup', () => {
     const pointer = join(fix.home, '.codex/skills/full-review');
     mkdirSync(pointer, { recursive: true });
     writeFileSync(join(pointer, '.extend-root'), ROOT + '\n');
+    installCallHelper(fix.home);
     const r = spawnSync(Bun.which('zsh')!, ['-fc', skillBlock(join(ROOT, 'skills/full-review.md'), 'start')], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
     expect(r.status).toBe(0);
     expect(r.stderr).not.toContain('no matches found');
     expect(r.stdout).toMatch(/^GE_TELEMETRY: session=/);
     expect(fix.readJsonl()).toHaveLength(1);
   }, 30_000);
-  test('unwired install is silent by default and diagnosable without exit 127', () => {
-    const fix = makeTelemetryFixture('community', 'absent');
-    for (const kind of ['start', 'finish'] as const) {
-      const quiet = executeBlock(fix.env, kind);
-      expect(quiet.status).toBe(0);
-      expect(quiet.stdout).toBe('');
-      expect(quiet.stderr).toBe('');
-      const debug = executeBlock({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, kind);
-      expect(debug.status).toBe(0);
-      expect(debug.stderr).toContain('unresolvable');
-      expect(debug.stderr).toContain('re-run ./setup');
+  for (const helper of [false, true]) {
+    test('unwired install is silent by default and diagnosable without exit 127, helper ' + (helper ? 'present with nothing resolvable' : 'absent'), () => {
+      const fix = makeTelemetryFixture('community', 'absent');
+      for (const kind of ['start', 'finish'] as const) {
+        const quiet = executeBlock(fix.env, kind, undefined, undefined, helper);
+        expect(quiet.status).toBe(0);
+        expect(quiet.stdout).toBe('');
+        expect(quiet.stderr).toBe('');
+        const debug = executeBlock({ ...fix.env, GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }, kind, undefined, undefined, helper);
+        expect(debug.status).toBe(0);
+        expect(debug.stderr).toContain('unresolvable');
+        expect(debug.stderr).toContain('re-run ./setup');
+      }
+    });
+  }
+});
+
+describe('the telemetry-call helper', () => {
+  const callPath = (home: string) => join(home, '.gstack-extend/bin/telemetry-call');
+  test('--resolve prints the wrapper the blocks would run, and nothing when none is compatible', () => {
+    const fix = makeTelemetryFixture('community');
+    installCallHelper(fix.home);
+    const found = spawnSync(callPath(fix.home), ['--resolve'], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect([found.status, found.stderr]).toEqual([0, '']);
+    expect(found.stdout).toBe(join(fix.home, '.claude/skills/gstack-extend/bin/gstack-extend-telemetry') + '\n');
+
+    const bare = makeTelemetryFixture('community', 'absent');
+    installCallHelper(bare.home);
+    for (const debug of [{}, { GSTACK_EXTEND_TELEMETRY_DEBUG: '1' }]) {
+      const none = spawnSync(callPath(bare.home), ['--resolve'], { env: { ...bare.env, ...debug }, encoding: 'utf8', timeout: 10_000 });
+      expect([none.status, none.stdout, none.stderr]).toEqual([0, '', '']);
     }
+  });
+  test('it runs the wrapper in place, so the wrapper\'s parent is the shell that ran the block', () => {
+    const fix = makeTelemetryFixture('community');
+    installCallHelper(fix.home);
+    const bin = join(fix.home, 'ppid-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gstack-extend-telemetry'), '#!/bin/bash\n' + PROTOCOL_LINE + 'printf "ppid=%s args=%s\\n" "$PPID" "$*"\n');
+    chmodSync(join(bin, 'gstack-extend-telemetry'), 0o755);
+    const r = spawnSync('bash', ['-c', '"$HOME/.gstack-extend/bin/telemetry-call" finish --skill extend:roadmap --outcome unknown; echo "shell=$$"'], {
+      env: { ...fix.env, PATH: bin + ':' + fix.env.PATH }, encoding: 'utf8', timeout: 10_000,
+    });
+    expect(r.status).toBe(0);
+    const parent = /^ppid=(\d+) args=finish --skill extend:roadmap --outcome unknown$/m.exec(r.stdout)?.[1];
+    expect(parent).toBeDefined();
+    expect(parent).toBe(/^shell=(\d+)$/m.exec(r.stdout)![1]);
+  });
+  test('without arguments it runs nothing and exits 0', () => {
+    const fix = makeTelemetryFixture('community');
+    installCallHelper(fix.home);
+    const quiet = spawnSync(callPath(fix.home), [], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect([quiet.status, quiet.stdout, quiet.stderr]).toEqual([0, '', '']);
+    expect(fix.readJsonl()).toHaveLength(0);
   });
 });
 

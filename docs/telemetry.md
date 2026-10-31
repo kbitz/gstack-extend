@@ -77,6 +77,8 @@ GSTACK_STATE_DIR → $HOME/.gstack, so setting only GSTACK_HOME changes config
 lookup for those releases. With the shared resolver, upstream config selects
 the most restrictive telemetry tier across the selected root and $HOME/.gstack;
 an `off` in either keeps usage off. Tier selection stays upstream's responsibility.
+Where the run and handoff files go, and what `GSTACK_HOME` moves, is in the
+[stage handoff contract](workflow-handoffs.md#state-root).
 Tests isolate HOME and overrides, copy the optional resolver, and omit the
 network sync helper so they never upload fixture rows or write to the user sink.
 
@@ -1045,10 +1047,11 @@ value other than `recorded`, `replayed`, `match`, `pending` or `skipped`
 makes the receipt carry `capture=partial (<reason>)`. The pattern is valid in
 bash and zsh and avoids zsh's reserved `status` and `path`.
 
-To obtain the retained library path, run once (with the run `begin`) the
-telemetry start block's launcher resolution, then:
+To obtain the retained library path, run once (with the run `begin`), resolving
+the launcher through the telemetry helper:
 
 ~~~sh
+_GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
 GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
 [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
 ~~~
@@ -1262,8 +1265,9 @@ truth, and the report says so.
 `/review-and-prep` and `/ship-and-land` append one JSON line per reviewer
 attempt and outside call to `voices.jsonl` in the workflow's evidence
 directory (a unique branch/invocation subdirectory under an existing
-`~/.gstack/projects/<slug>/<stage>/`, otherwise `~/scratch/<stage>/`, where
-`<stage>` is `review-and-prep` or `ship-and-land`). It lets a consumer that
+`<state-root>/projects/<slug>/<stage>/`, otherwise `~/scratch/<stage>/`, where
+`<stage>` is `review-and-prep` or `ship-and-land`, and `<state-root>` is the
+[state root](workflow-handoffs.md#state-root)). It lets a consumer that
 reads the harness's own session logs attribute each reviewer's tokens to its
 part exactly, instead of matching task names by keyword. The agent writes it
 from what it observed; no helper validates it. It is optional, local and
@@ -1915,6 +1919,28 @@ their no-copying rule for legacy calls are unchanged. Authors changing those
 wrappers update their phase mapping in the same change. See
 [Workflow metrics](#workflow-metrics).
 
+**Block size.** Each skill carries one start and one finish fence. The table counts the UTF-8
+bytes of both fences together, from the opening fence line to the closing one,
+before (the base `a74abf4`, where each fence held the whole lookup) and after
+(a call to the `telemetry-call` helper). `tests/skill-protocols.test.ts`
+recomputes the "after" column from each skill and fails on a stale row.
+
+| Skill | Before (bytes) | After (bytes) | Saved (bytes) |
+|---|---:|---:|---:|
+| `pair-review` | 2341 | 729 | 1612 |
+| `roadmap` | 2333 | 721 | 1612 |
+| `project-spec` | 2343 | 731 | 1612 |
+| `full-review` | 2341 | 729 | 1612 |
+| `gstack-extend-upgrade` | 2361 | 749 | 1612 |
+| `gstack-extend-init` | 2355 | 743 | 1612 |
+| `review-and-prep` | 2349 | 737 | 1612 |
+| `implement` | 2337 | 725 | 1612 |
+| `ship-and-land` | 2345 | 733 | 1612 |
+| `autoplan-lean` | 2345 | 733 | 1612 |
+| `docs-ship` | 2337 | 725 | 1612 |
+
+The marker lines and the prose around each fence did not change.
+
 ~~~sh
 (
   GX_TMP="$(mktemp -d)" || exit 1
@@ -1957,8 +1983,11 @@ routinely lose their duration.
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
 "extend:full-review" argument with its name. Keep the quotes: the drift lock
-substitutes that exact string. Each block has one telemetry invocation; its guard
-only resolves the install and contains a missing binary. Lookup is PATH →
+substitutes that exact string. Each block is one call to the `telemetry-call`
+helper, which `setup` copies (a copy, not a link, so a moved checkout does not
+break it) to the fixed path `$HOME/.gstack-extend/bin/telemetry-call` for every
+host, ignoring `GSTACK_EXTEND_STATE_DIR`. The block only checks that the helper
+is there and contains a missing one; the helper holds the lookup, which is PATH →
 $HOME/.claude/skills/gstack-extend/bin → setup's .extend-root pointers under
 $HOME host skill directories (setup writes one for Claude, Codex, OpenCode, and Cursor).
 A candidate must be an absolute regular file and carry the `telemetry-protocol:
@@ -1968,10 +1997,14 @@ The line is a version-compatibility probe, not a trust check, and the same
 absolute-path rule protects the wrapper's lookup of gstack's own helpers. It does
 not protect other commands: a relative PATH entry still affects git, python3, and
 everything else an agent runs, so remove such entries from PATH.
-The first line of the guard keeps an unmatched pointer glob from aborting the
-block under zsh. GSTACK_EXTEND_DIR is not required. CWD-relative pointers are
-ignored. Existing setup wiring already handles this binary, and upgrade invokes
-setup again.
+The helper replaces itself with the wrapper (`exec`), so the wrapper's parent is
+still the shell that ran the block, which the harness lookup walks from.
+`telemetry-call --resolve` prints the wrapper's path, or nothing; the
+workflow-span library lookup uses it. GSTACK_EXTEND_DIR is not required.
+CWD-relative pointers are ignored. Upgrade invokes setup again, which refreshes
+the helper; pulling a checkout by hand skips telemetry until `setup` runs, and
+`GSTACK_EXTEND_TELEMETRY_DEBUG=1` or the doctor says so. Uninstall removes the
+helper only when no host keeps an `.extend-root` pointer.
 
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
@@ -1979,24 +2012,9 @@ setup again.
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:full-review" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:full-review" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -2007,24 +2025,9 @@ true
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:full-review" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:full-review" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->
@@ -2076,7 +2079,9 @@ is diagnosed by the shell guard in debug mode, or by doctor. Doctor also warns
 (text mode, and `warnings` plus `stale_wrapper` and `logger_supports_no_sweep` in
 JSON) about a stale wrapper that predates the start/finish protocol and about a
 gstack logger without --no-sweep; both mean completions or starts are being
-skipped rather than misfiled.
+skipped rather than misfiled. JSON `call_helper` is the path of the `telemetry-call`
+helper the skill blocks run, or null when `setup` has not installed it; text mode
+then prints one line saying every skill's telemetry call is skipped.
 
 Every installed skill appears, including zero-row skills. Activity counts include
 legacy rows, but ratios exclude them. Completions the pre-rollout wrapper wrote

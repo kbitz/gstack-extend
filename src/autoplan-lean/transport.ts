@@ -24,6 +24,13 @@
  * (`promptBindingForPlan`), the prompt's plan path, plan SHA-256, Tier,
  * sidecar path/SHA-256 and Verify command must also match that plan, so a
  * stale prompt fails instead of handing off the wrong revision.
+ *
+ * One `Stage handoff: stage-handoff/v1; ...` line (docs/workflow-handoffs.md,
+ * "Grammar stage line") may follow the block as the message's last line. It is
+ * outside the handoff: `handoffBlock` and `checkMessage` ignore exactly one such
+ * line and still refuse any other trailing text, so a transport that stops at
+ * the closing fence reads the same block. `checkStageLine` is the separate check
+ * that requires it and binds it to the checked plan.
  */
 import { REPORT_HEADING, REVIEW_RECORD_HEADING, rawOutputMarkers, readSeal, scanLines, sha256, splitPlan } from './plan.ts';
 
@@ -201,9 +208,17 @@ export function checkPlan(bytes: Uint8Array, readSidecar: SidecarReader): string
   return problems;
 }
 
+/** The stage line's full grammar; every field is required and the line stands alone. */
+export const STAGE_LINE = /^Stage handoff: stage-handoff\/v1; stage: (plan|implement|review); next: (implement|review-and-prep|ship-and-land|pair-review|none); status: (done|done-with-concerns|paused|stopped|blocked|needs-context); head: ([0-9a-f]{40}|none); plan-sha256: ([0-9a-f]{64}|none)$/;
+
 /** The handoff block at the end of the message, or undefined. */
 export function handoffBlock(message: string): string[] | undefined {
   const raw = message.replace(/\s+$/, '').split('\n').map((l) => l.replace(/\r$/, ''));
+  // Exactly one trailing stage line is outside the handoff; anything else after the block still fails below.
+  if (STAGE_LINE.test(raw[raw.length - 1] ?? '')) {
+    raw.pop();
+    while (raw.length && !raw[raw.length - 1]!.trim()) raw.pop();
+  }
   const RUN = /^Run \/implement(?:\s|$)/;
   let fence: { char: string; length: number; at: number } | undefined;
   for (let i = 0; i < raw.length; i++) {
@@ -231,6 +246,31 @@ export function handoffBlock(message: string): string[] | undefined {
     if (RUN.test(line)) return raw.slice(i);
   }
   return undefined;
+}
+
+/**
+ * The stage line `check --message` requires: exactly one, last, well formed, for this stage and plan.
+ * `head` must be the prompt's `Branch` HEAD and `plan-sha256` the checked plan's SHA-256.
+ */
+export function checkStageLine(message: string, binding?: PromptBinding): string[] {
+  const lines = message.replace(/\s+$/, '').split('\n').map((l) => l.replace(/\r$/, ''));
+  const stageLines = lines.filter((l) => /^\s*Stage handoff:/i.test(l));
+  if (stageLines.length > 1) return [`the final message carries ${stageLines.length} stage handoff lines; it must end with exactly one`];
+  const m = STAGE_LINE.exec(lines[lines.length - 1] ?? '');
+  if (!m) {
+    return [stageLines.length
+      ? 'the stage handoff line is malformed or not the last line of the message; it must read "Stage handoff: stage-handoff/v1; stage: plan; next: implement; status: done; head: <40-char hex>; plan-sha256: <64-char hex>"'
+      : 'the final message does not end with a "Stage handoff: stage-handoff/v1; ..." line after the handoff block'];
+  }
+  const [, stage, next, status, head, planSha] = m;
+  const problems: string[] = [];
+  if (stage !== 'plan') problems.push(`the stage handoff line names stage ${stage}; /autoplan-lean prints stage: plan`);
+  if (next !== 'implement') problems.push(`the stage handoff line names next ${next}; a handoff prompt goes with next: implement`);
+  if (status !== 'done' && status !== 'done-with-concerns') problems.push(`the stage handoff line has status ${status}; a handoff prompt goes with done or done-with-concerns`);
+  if (binding && planSha !== binding.planSha256) problems.push('the stage handoff line plan-sha256 does not match the checked plan (stale line; re-seal or update it)');
+  const branch = (handoffBlock(message) ?? []).map((l) => /^Branch:\s+[^;<>]+;\s*target base:\s*[^;<>]+;\s*HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$/.exec(l)?.[1]).find(Boolean);
+  if (branch !== undefined && head !== branch) problems.push(`the stage handoff line head (${head}) does not match the prompt's Branch HEAD (${branch})`);
+  return problems;
 }
 
 export function checkMessage(message: string, binding?: PromptBinding): string[] {

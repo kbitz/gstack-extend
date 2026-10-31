@@ -895,7 +895,7 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt', 'stage-line.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
@@ -1814,5 +1814,136 @@ describe('(F) repair-review and repair-cycles', () => {
     const notes = raw.split('```text\n')[1]!.split('\n```')[0]!;
     expect(notes).not.toMatch(/routine|standard|novel/);
     expect(has(doc, 'The exact words of each value and its check also appear in the release notes of the version that adds them.')).toBe(true);
+  });
+});
+
+// ─── (F) The stage line and the state root ─────────────────────────────
+
+// The line each producer prints last, outside its fence. The text is the producer's own template: the exit decides
+// each alternative, and no environment, caller or host chooses whether the line is printed.
+const STAGE_TEMPLATES: Record<string, string> = {
+  'autoplan-lean': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  implement: 'Stage handoff: stage-handoff/v1; stage: implement; next: <review-and-prep|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  'review-and-prep': 'Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+};
+const stageSkillText = (name: string): string => (name === 'autoplan-lean' ? read('skills/autoplan-lean.md') : SKILLS[name]);
+const STAGE_DOC = section('### Grammar stage line');
+const STAGE_FIXTURE = readFileSync(join(FIXTURES, 'stage-line.txt'), 'utf8').trimEnd();
+const stageDocFields = (): Array<{ label: string; values: string[] }> =>
+  tableRows(STAGE_DOC).map(([label, , value]) => ({ label: unTick(label), values: [...value.matchAll(/`([^`]+)`/g)].map((m) => m[1]) }));
+
+describe('(F) the stage line', () => {
+  test('each of the three producers carries its template once, as a line of its own outside any fence', () => {
+    for (const [name, line] of Object.entries(STAGE_TEMPLATES)) {
+      const text = stageSkillText(name);
+      expect(text.split(`\n${line}\n`), name).toHaveLength(2);
+      for (const fenced of fencedTexts(text)) expect(fenced, `${name}: the stage line is outside the fence`).not.toContain('Stage handoff:');
+    }
+    // Only these three print it; the others do not mention it.
+    for (const name of ['pair-review', 'ship-and-land', 'docs-ship']) {
+      expect(read(`skills/${name}.md`), name).not.toContain('Stage handoff:');
+    }
+  });
+
+  test('the text around each template has no environment, host or caller branch', () => {
+    for (const [name, line] of Object.entries(STAGE_TEMPLATES)) {
+      const text = stageSkillText(name);
+      const at = text.indexOf(`\n${line}\n`);
+      const head = text.slice(0, at);
+      const before = head.slice(head.lastIndexOf('```') + 3);
+      const after = text.slice(at + line.length + 2).split('\n\n')[0]!;
+      for (const paragraph of [before, after]) {
+        expect(paragraph, `${name}: ${paragraph.slice(0, 60)}`).not.toMatch(/\bif\b|\benvironment\b|\bcaller\b|\bhost\b|PASEO|CONDUCTOR|\$\{?[A-Z_]{3,}/);
+      }
+    }
+  });
+
+  test('the doc names the same fields in the same order, and the fixture parses against them', () => {
+    const fields = stageDocFields();
+    expect(fields.map((f) => f.label)).toEqual(['stage-handoff/v1', 'stage', 'next', 'status', 'head', 'plan-sha256']);
+    const parts = STAGE_FIXTURE.split('; ');
+    expect(parts[0]).toBe('Stage handoff: stage-handoff/v1');
+    const given = new Map(parts.slice(1).map((p) => [p.slice(0, p.indexOf(': ')), p.slice(p.indexOf(': ') + 2)] as const));
+    expect([...given.keys()]).toEqual(fields.slice(1).map((f) => f.label));
+    for (const f of fields.slice(1)) {
+      const value = given.get(f.label)!;
+      if (f.label === 'head') expect(value === 'none' || SHA40.test(value), value).toBe(true);
+      else if (f.label === 'plan-sha256') expect(value === 'none' || SHA256.test(value), value).toBe(true);
+      else expect(f.values, f.label).toContain(value);
+    }
+    expect(squash(STAGE_DOC)).toContain('`head` | yes | the stage\'s HEAD as 40 lowercase hex characters, or `none`');
+  });
+
+  test('every stage, next and status value the doc lists is in a template, and every template value is in the doc', () => {
+    const alternatives = (key: string): string[] => Object.values(STAGE_TEMPLATES)
+      .flatMap((t) => new RegExp(`${key}: (?:<([^>]+)>|([a-z-]+))`).exec(t)!.slice(1).filter(Boolean).flatMap((v) => v.split('|')));
+    const fields = Object.fromEntries(stageDocFields().map((f) => [f.label, f.values]));
+    for (const key of ['stage', 'next', 'status']) {
+      const doc = key === 'stage' ? ['plan', 'implement', 'review'] : fields[key];
+      expect([...new Set(alternatives(key))].sort(), key).toEqual([...new Set(doc)].sort());
+    }
+  });
+
+  test('the Versions row freezes the prefix, and the producers and the doc carry it byte for byte', () => {
+    const frozen = tableRows(section('## Versions')).map((r) => r[4]).join(' ');
+    expect(frozen).toContain('`Stage handoff: stage-handoff/v1;');
+    expect(has(squash(DOC), 'Stage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status: done;')).toBe(true);
+    for (const name of Object.keys(STAGE_TEMPLATES)) expect(has(stageSkillText(name), 'Stage handoff: stage-handoff/v1; stage: '), name).toBe(true);
+  });
+
+  test('the line never changes an outcome, a handoff kind or a binding, whatever it says', () => {
+    for (const [code, base] of [['A-STAGE-LINE', 'A-SUCCESS'], ['B-STAGE-LINE', 'B-FENCED'], ['C-PAUSE-STAGE-LINE', 'C-PAUSED'], ['E-STAGE-LINE', 'E-CONTINUE']] as const) {
+      const without = run(base);
+      const withLine = run(code);
+      expect({ code, outcome: withLine.outcome, handoff: withLine.handoff, mismatches: withLine.mismatches.map((m) => m.binding) })
+        .toEqual({ code, outcome: without.outcome, handoff: without.handoff, mismatches: without.mismatches.map((m) => m.binding) });
+      expect(withLine.releaseOnlyEligible, code).toBe(without.releaseOnlyEligible);
+    }
+    // A line that contradicts the block, malformed, upper case or doubled is still ignored.
+    for (const suffix of [
+      '\nStage handoff: stage-handoff/v1; stage: review; next: none; status: blocked; head: $HEAD; plan-sha256: $PLAN\n',
+      '\nStage handoff: stage-handoff/v1; stage: review; next: ship-and-land; status: DONE; head: $HEAD; plan-sha256: $PLAN\n',
+      '\nStage handoff: stage-handoff/v2; stage: nowhere; next: anything\nStage handoff: stage-handoff/v1\n',
+      '\nStage handoff:\n',
+    ]) {
+      const v = run('B-TRUSTED', { suffix });
+      expect([v.outcome, v.mismatches.map((m) => m.binding), v.releaseOnlyEligible], suffix).toEqual([TRUSTED, [], true]);
+    }
+  });
+
+  test('next: review-and-prep; is not the version marker token of rule 10', () => {
+    const v = run('B-TRUSTED', { suffix: '\nStage handoff: stage-handoff/v1; stage: review; next: review-and-prep; status: stopped; head: $HEAD; plan-sha256: none\n' });
+    expect(v.outcome).toBe(TRUSTED);
+    expect(v.mismatches).toEqual([]);
+    expect(v.notes).toEqual([]);
+    expect(/review-and-prep\/v\d/.test(STAGE_FIXTURE)).toBe(false);
+  });
+
+  test('the doc says the line is outside the handoff, never an H-D signal, ignored when malformed, and absent on H-F', () => {
+    const doc = squash(STAGE_DOC);
+    for (const phrase of ['The line follows the handoff and never changes an outcome.', 'The block wins: classify it as usual.',
+      'Older producers print no line, and H-F prints none', 'so the line never caps an outcome', 'Malformed is ignored.',
+      'a stage line after it holds', 'still refuses any other text after the block']) expect(has(doc, phrase), phrase).toBe(true);
+  });
+
+  test('/review-and-prep keeps the H-F pause line last and prints no stage line after it', () => {
+    const rp = squash(SKILLS['review-and-prep']);
+    expect(has(rp, 'This pause prints no stage line: the contract freezes the `External gate:` line as the last line of the turn')).toBe(true);
+    expect(has(rp, 'End every final message except the external-gate pause with this stage line')).toBe(true);
+    expect(run('F-PAUSE').outcome).toBe(FULL);
+    expect(run('F-PAUSE-STAGE-LINE').outcome).toBe(HOLD);
+  });
+
+  test('the state-root section states the precedence and what GSTACK_HOME moves', () => {
+    const state = squash(section('## State root'));
+    for (const phrase of [
+      '`${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`',
+      '`GSTACK_STATE_ROOT` wins, then `GSTACK_HOME`, then `$HOME/.gstack`; an empty value counts as unset.',
+      '`GSTACK_HOME` moves all upstream state for the stage (configuration, analytics, learnings, review logs), not only these files.',
+      '`~/.gstack-extend` does not move.', '`GSTACK_STATE_DIR` and `CLAUDE_PLUGIN_DATA`',
+      'A relative root goes to `~/scratch`.',
+    ]) expect(has(state, phrase), phrase).toBe(true);
+    expect(DOC.indexOf('\n## State root\n')).toBeLessThan(DOC.indexOf('\n## Confidentiality and data handling\n'));
+    expect(DOC.indexOf('\n## State root\n')).toBeGreaterThan(DOC.indexOf('\n## Versioning and compatibility\n'));
   });
 });

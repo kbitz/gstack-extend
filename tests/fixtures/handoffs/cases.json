@@ -288,6 +288,12 @@
     "F-PAUSE-NEWER": {"text":"f-pause.txt","edits":[["external-gate/v1;","external-gate/v2;"]],"expect":{"mismatches":["external-gate-version"]}},
     "F-PAUSE-READY": {"text":"f-pause.txt","live":{"isDraft":false},"expect":{"mismatches":["pr-ready"]}},
     "F-PAUSE-UNKNOWN": {"text":"f-pause.txt","live":{"lookupFailed":{"operation":"gh pr view 42","summary":"timeout"}},"expect":{"mismatches":["unknown"]}},
-    "F-PAUSE-BLOCKED": {"text":"f-pause.txt","prefix":"BLOCKED: dirty paths src/example.ts\n","expect":{"mismatches":["blocked"]}}
+    "F-PAUSE-BLOCKED": {"text":"f-pause.txt","prefix":"BLOCKED: dirty paths src/example.ts\n","expect":{"mismatches":["blocked"]}},
+    "A-STAGE-LINE": {"text":"a-success.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status: done; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-A","mismatches":[]}},
+    "B-STAGE-LINE": {"text":"b-prepared.txt","wrap":"fence","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: ship-and-land; status: done; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-B","mismatches":[],"releaseOnlyEligible":true}},
+    "C-PAUSE-STAGE-LINE": {"text":"c-pause.txt","live":{"headSha":"$HEAD"},"suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: pair-review; status: paused; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-C-pause","mismatches":[]}},
+    "E-STAGE-LINE": {"text":"e-continue.txt","prefix":"STOPPED \u2014 review cycle cap \u2014 https://github.com/example-org/example-repo/pull/42\n\n","expect":{"handoff":"H-E","mismatches":[]},"suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: review-and-prep; status: stopped; head: $HEAD; plan-sha256: $PLAN\n"},
+    "D-STAGE-LINE-BLOCKED": {"text":"d-blocked-summary.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: none; status: blocked; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-D","mismatches":["blocked"]}},
+    "F-PAUSE-STAGE-LINE": {"text":"f-pause.txt","suffix":"\nStage handoff: stage-handoff/v1; stage: review; next: pair-review; status: paused; head: $HEAD; plan-sha256: $PLAN\n","expect":{"handoff":"H-F","mismatches":["external-gate-line"]}}
   }
 }

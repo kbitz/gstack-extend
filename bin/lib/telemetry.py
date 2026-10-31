@@ -27,7 +27,7 @@ INT64_MAX = 2**63 - 1  # the logger stores durations as 64-bit integers
 INT64_DIGITS = len(str(INT64_MAX))
 CONFIG_TIMEOUT_S = 10  # git and gstack-config lookups
 LOGGER_TIMEOUT_S = 15  # the delegated completion logger
-# The skill blocks in skills/*.md grep the wrapper for this exact text (also a comment in bin/gstack-extend-telemetry).
+# bin/lib/telemetry-call.sh, the helper the skill blocks call, greps the wrapper for this exact text (also a comment in bin/gstack-extend-telemetry).
 # Bump it with any incompatible change to the start/finish call shape so older/newer pairs fail closed.
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep

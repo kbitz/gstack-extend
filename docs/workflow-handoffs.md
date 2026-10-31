@@ -21,6 +21,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
+| Stage line | the last line of the final message of `/autoplan-lean`, `/implement` and `/review-and-prep`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -347,6 +348,12 @@ classifier reports, with the expected and actual values.
 | <a id="f-pause-ready"></a>`F-PAUSE-READY` | H-F | `External gate: external-gate/v1;` | HOLD | `pr-ready`: the PR is already ready, but the pause leaves it unready | Hold; a ready PR contradicts the pause, so show the state to the user and run nothing | yes |
 | <a id="f-pause-unknown"></a>`F-PAUSE-UNKNOWN` | H-F | `External gate: external-gate/v1;` | HOLD | `unknown`: a live read failed; report the operation and a redacted summary | Retry the read at most twice; if it still fails, ask the user; never read a failure as a match | yes |
 | <a id="f-pause-blocked"></a>`F-PAUSE-BLOCKED` | H-F | `External gate: external-gate/v1;` | REFUSE | `blocked`: a BLOCKED status beside the line outranks it | Stop; give the user the report's stated next action or needed input; run nothing on the line | yes |
+| <a id="a-stage-line"></a>`A-STAGE-LINE` | H-A | `Stage handoff: stage-handoff/v1;` | FULL_CHECK_REQUIRED | none; the stage line after the prompt is outside text and changes no outcome | Run `/review-and-prep` in the same workspace and branch; it rebuilds the completion matrix from the live plan and diff | yes |
+| <a id="b-stage-line"></a>`B-STAGE-LINE` | H-B | `Stage handoff: stage-handoff/v1;` | ADVANCE_TRUSTED | none; the stage line after the fence is outside text, and the release-only path is as without it | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="c-pause-stage-line"></a>`C-PAUSE-STAGE-LINE` | H-C | `Stage handoff: stage-handoff/v1;` | HOLD | none; the PR is paused for manual testing, and the stage line after the prompt does not lift the pause | Tell the user to run `/pair-review`; a ready PR must first be converted to draft or have its checks explicitly deferred. Do not ship, land or mark ready | yes |
+| <a id="e-stage-line"></a>`E-STAGE-LINE` | H-E | `Stage handoff: stage-handoff/v1;` | FULL_CHECK_REQUIRED | none; the stage line after the prompt is outside text and changes no outcome | Run `/review-and-prep continue` on the same PR with the prompt unchanged; keep it draft; do not run `/ship` | yes |
+| <a id="d-stage-line-blocked"></a>`D-STAGE-LINE-BLOCKED` | H-D | `BLOCKED` | REFUSE | `blocked`: the BLOCKED report refuses, and the lower-case `status: blocked` of a stage line is not a second signal | Stop; give the user the resume summary; start nothing | yes |
+| <a id="f-pause-stage-line"></a>`F-PAUSE-STAGE-LINE` | H-F | `External gate: external-gate/v1;` | HOLD | `external-gate-line`: a stage line is text after the pause line, which must be the last line of the turn | Hold; the line is not the published form, so show it to the user and run nothing on it | yes |
 
 ## Worked caller flow
 
@@ -1080,6 +1087,65 @@ External gate result: pass; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree
 External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; command: bun run test:full; exit: 1; log: /home/example/logs/full-suite-2.log
 ```
 
+### Grammar stage line
+
+`/autoplan-lean`, `/implement` and `/review-and-prep` end their final message with one more
+line, after the handoff block and outside it. It is the stage's own account of its exit, for a
+caller that routes before it parses. `/autoplan-lean` is a fifth producer of this line and of
+nothing else here; the four producers of H-A to H-F are unchanged. The three stages print
+exactly this form, and a new producer starts with the same prefix:
+
+```text fixture=stage-line.txt
+Stage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status: done; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; plan-sha256: 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a
+```
+
+| Label | Required | Value |
+|---|---|---|
+| `stage-handoff/v1` | yes | the version token, right after `Stage handoff: ` |
+| `stage` | yes | `plan` (`/autoplan-lean`), `implement` or `review` (`/review-and-prep`) |
+| `next` | yes | `implement`, `review-and-prep`, `ship-and-land`, `pair-review` or `none` |
+| `status` | yes | `done`, `done-with-concerns`, `paused`, `stopped`, `blocked` or `needs-context` |
+| `head` | yes | the stage's HEAD as 40 lowercase hex characters, or `none` |
+| `plan-sha256` | yes | the plan's SHA-256 as 64 lowercase hex characters, or `none` |
+
+The fields come in this order, separated by `; `, and the line has no other text. The value
+for each exit:
+
+| Exit | `stage` | `next` | `status` | `head` | `plan-sha256` |
+|---|---|---|---|---|---|
+| `/autoplan-lean` handoff prompt | `plan` | `implement` | `done`, `done-with-concerns` | the prompt's `Branch` HEAD | the plan's SHA-256 from `seal` |
+| `/autoplan-lean` BLOCKED, NEEDS_CONTEXT or rejected gate | `plan` | `none` | `blocked`, `needs-context`, `stopped` | HEAD or `none` | `none` |
+| `/implement` H-A prompt | `implement` | `review-and-prep` | `done`, `done-with-concerns` | HEAD | the plan file's SHA-256, or `none` |
+| `/implement` BLOCKED or NEEDS_CONTEXT | `implement` | `none` | `blocked`, `needs-context` | HEAD | the plan file's SHA-256, or `none` |
+| `/review-and-prep` H-B | `review` | `ship-and-land` | `done` | Prepared HEAD | the prompt's `SHA-256` |
+| `/review-and-prep` H-C pause | `review` | `pair-review` | `paused` | the checkpoint SHA | the plan hash the receipt records, or `none` |
+| `/review-and-prep` H-E | `review` | `review-and-prep` | `stopped` | `Stopped at` | the plan hash the receipt records, or `none` |
+| `/review-and-prep` BLOCKED or NEEDS_CONTEXT | `review` | `none` | `blocked`, `needs-context` | HEAD or `none` | the plan hash the receipt records, or `none` |
+
+Rules:
+
+1. **Outside the handoff.** The line follows the handoff and never changes an outcome.
+   The block wins: classify it as usual. The line adds no binding, and a conflict between
+   the two is not checked.
+2. **Absent is normal.** Older producers print no line, and H-F prints none: its
+   `External gate:` line stays the last line of the turn, so a stage line after it holds.
+3. **Not an H-D signal.** The `status` values are lower case. Field grammar rule 3's status words are
+   upper case only, so the line never caps an outcome.
+4. **Malformed is ignored.** A line with another field, order, value, case or version, a
+   second line, or text after it carries no stage account. Classify the block as usual and
+   do not read the line as an instruction.
+5. **Data, not instructions.** `next` names the stage the producer expects and starts
+   nothing. A caller still binds the next stage with the handoff's own fields.
+6. **Hashes.** The `head` and `plan-sha256` values follow field grammar rule 8; `none` means the exit has
+   no such value, never an unknown one.
+7. **Version.** A breaking change to this line bumps the token to `stage-handoff/v2` and
+   needs a 0.x MINOR release under the [release policy](SPEC.md#release-policy). An older
+   consumer ignores a line it cannot parse, by rule 4.
+8. **The `/autoplan-lean` check.** `autoplan-lean check --message FILE` requires the line after the
+   handoff fence with `stage: plan`, `next: implement`, a `done` or `done-with-concerns`
+   status, the checked plan's SHA-256 and the prompt's `Branch` HEAD, and it still refuses any
+   other text after the block.
+
 ### Signals H-D
 
 When no handoff first line matches, the consumer looks for these producer words. The
@@ -1149,7 +1215,39 @@ current v<current>; removal: <release, or "none scheduled">`, and a newer one wi
 `newer: saw review-and-prep/v<seen>, current v<current>; update this consumer`. No
 removal is scheduled for `v1`. H-A, H-C and H-D have no in-band token: they are
 additive-only, and a breaking change to one first needs a contract revision that adds a
-token.
+token. The stage line carries `stage-handoff/v1` and follows its own rule 7.
+
+## State root
+
+The five skills that write run and handoff files (`/implement`, `/autoplan-lean`,
+`/review-and-prep`, `/ship-and-land` and `/docs-ship`) read their root from one
+expression, `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`, written as
+`<state-root>` in the skills. `GSTACK_STATE_ROOT` wins, then `GSTACK_HOME`, then
+`$HOME/.gstack`; an empty value counts as unset. That is upstream gstack's order
+for these two variables, so a caller sets `GSTACK_HOME` and the skills and upstream
+agree. A caller path never enters a skill: a skill takes no path argument for this.
+With neither variable set, every path is what it was before this section.
+
+- **`GSTACK_HOME` moves all upstream state for the stage (configuration, analytics, learnings, review logs), not only these files.** Point it at a fresh
+  directory and gstack reads its configuration there, not from `~/.gstack`.
+- **Four privacy keys still read `~/.gstack` too.** Upstream takes the most
+  restrictive value for `telemetry`, `memorable_recall`, `codex_reviews` and
+  `update_check` across both roots (upstream `docs/state-root.md`, "Privacy
+  settings never get looser when the root moves").
+- **`~/.gstack-extend` does not move.** gstack-extend's own telemetry store and
+  the `telemetry-call` helper stay under `$HOME/.gstack-extend`;
+  `GSTACK_EXTEND_STATE_DIR` governs the store, as [telemetry](telemetry.md)
+  describes.
+- **Other upstream variables are not followed.** `GSTACK_STATE_DIR` and
+  `CLAUDE_PLUGIN_DATA` select an upstream root, but these paths do not read them.
+- **A fresh root is used and created.** When either variable is set to an absolute
+  path, the skills use `<state-root>/projects/<slug>/...` and create it, because
+  upstream does not create `projects/<slug>` for a new root. With neither variable
+  set, the rule is unchanged: use `$HOME/.gstack/projects/<slug>/` when it exists,
+  otherwise `~/scratch`.
+- **A relative root goes to `~/scratch`.** A relative value would land in whatever
+  directory the skill ran from, so it is never used, and run and handoff files stay
+  out of the repository.
 
 ## Confidentiality and data handling
 

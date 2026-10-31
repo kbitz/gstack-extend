@@ -2716,3 +2716,59 @@ describe('source skill descriptions fit Codex limit', () => {
     });
   }
 });
+
+describe('telemetry-call helper install', () => {
+  const source = join(ROOT, 'bin', 'lib', 'telemetry-call.sh');
+  const installed = (home: string) => join(home, '.gstack-extend', 'bin', 'telemetry-call');
+
+  for (const host of ['claude', 'codex', 'opencode', 'cursor'] as const) {
+    test(`${host} setup installs an executable byte-identical copy, and uninstall removes it`, () => {
+      const home = join(baseTmp, `call-helper-${host}`);
+      mkdirSync(home, { recursive: true });
+      expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
+      const dst = installed(home);
+      // A copy, not a link, so a moved checkout does not break the lookup it holds.
+      expect(lstatSync(dst).isFile()).toBe(true);
+      expect(statSync(dst).mode & 0o777).toBe(0o755);
+      expect(readFileSync(dst).equals(readFileSync(source))).toBe(true);
+      expect(readdirSync(join(home, '.gstack-extend', 'bin'))).toEqual(['telemetry-call']);
+
+      expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
+      expect(existsSync(dst)).toBe(false);
+    });
+  }
+
+  test('a stale copy is replaced on the next setup', () => {
+    const home = join(baseTmp, 'call-helper-stale');
+    mkdirSync(join(home, '.gstack-extend', 'bin'), { recursive: true });
+    writeFileSync(installed(home), '#!/bin/sh\nexit 1\n');
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(readFileSync(installed(home)).equals(readFileSync(source))).toBe(true);
+  });
+
+  test('a pointer under any host keeps it until the last one is gone', () => {
+    const home = join(baseTmp, 'call-helper-pointer');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    expect(runSetup(['--host', 'codex', '--quiet'], home).exitCode).toBe(0);
+    const first = runSetup(['--host', 'claude', '--uninstall'], home);
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain('Kept ~/.gstack-extend/bin/telemetry-call');
+    expect(existsSync(installed(home))).toBe(true);
+    const last = runSetup(['--host', 'codex', '--uninstall'], home);
+    expect(last.exitCode).toBe(0);
+    expect(last.stdout).toContain('Removed telemetry-call');
+    expect(existsSync(installed(home))).toBe(false);
+  });
+
+  test('a pointer another checkout wrote also keeps it', () => {
+    const home = join(baseTmp, 'call-helper-foreign-pointer');
+    mkdirSync(home, { recursive: true });
+    expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
+    const foreign = join(hostDir(home, 'codex'), 'roadmap');
+    mkdirSync(foreign, { recursive: true });
+    writeFileSync(join(foreign, '.extend-root'), join(home, 'other-checkout') + '\n');
+    expect(runSetup(['--host', 'claude', '--uninstall', '--quiet'], home).exitCode).toBe(0);
+    expect(existsSync(installed(home))).toBe(true);
+  });
+});

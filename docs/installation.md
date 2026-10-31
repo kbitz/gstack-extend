@@ -125,6 +125,15 @@ or audit errors leave the installation usable and print full diagnostics plus
 a HOME-scoped `Retry:` command. Correct the reported cause, then run that
 command in Bash.
 
+Setup also copies `bin/lib/telemetry-call.sh` to
+`$HOME/.gstack-extend/bin/telemetry-call`, whichever hosts it installs for, and
+again ignores `GSTACK_EXTEND_STATE_DIR`. Every skill's telemetry start and finish
+block is one call to that file, which finds the compatible wrapper
+([telemetry](telemetry.md)). It is a copy so a moved checkout cannot break it, and
+`bin/update-run` refreshes it because it runs setup. Pulling a checkout by hand
+leaves skill telemetry off until `setup` runs: `GSTACK_EXTEND_TELEMETRY_DEBUG=1`
+names the cause and `gstack-extend doctor telemetry` reports a missing helper.
+
 To uninstall: `~/.claude/skills/gstack-extend/setup --host auto --uninstall`
 
 Every host-specific uninstall, and `--host auto --uninstall`, keeps
@@ -140,7 +149,9 @@ absent, not ownership evidence: setup leaves an unrecognized regular `SKILL.md`
 beside it untouched, and removes the dangling link only when it otherwise
 refreshes or removes that skill. The last uninstall removes both links if they
 point at this checkout. A preserved, customized skill's pointer also keeps the links; a
-pointer naming another checkout does not. Foreign links and regular files are left alone. Legacy
+pointer naming another checkout does not. The `telemetry-call` copy is kept while
+any host skill directory still holds an `.extend-root` pointer, whichever checkout
+wrote it, and removed with the last one. Foreign links and regular files are left alone. Legacy
 `--skills-dir ... --uninstall` cleanup leaves the shared CLI links alone.
 
 Setup also removes retired gstack-extend skills owned by this checkout. Personal skills,

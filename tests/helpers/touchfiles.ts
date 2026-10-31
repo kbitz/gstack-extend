@@ -170,6 +170,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'docs/workflow-metrics.schema.json',
     // The Track 16D guard test sources the real session-paths helper.
     'bin/lib/session-paths.sh',
+    // Track 49A: the blocks call this resolver, and the lock reads the lookup ladder it holds.
+    'bin/lib/telemetry-call.sh',
   ],
   // One suite per skill. Each lists every skill file it reads, and
   // tests/touchfiles.test.ts checks the list against the skill paths the suite
@@ -203,6 +205,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
+    // The stage line: /autoplan-lean prints it too, and the others must not.
+    skill('autoplan-lean'),
+    skill('docs-ship'),
     'README.md',
     'docs/acceptance/external-gate.md',
     'docs/acceptance/review-fix-policy.md',
@@ -259,6 +264,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'setup',
     'skills/**',
     'bin/lib/install-safety.sh',
+    // Track 49A: setup copies this helper to the fixed path the blocks call.
+    'bin/lib/telemetry-call.sh',
     // Track 23C: the checker reads setup's snapshot, and the recovery
     // examples in the installation guide run as tests.
     'bin/update-check',
@@ -293,6 +300,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/install-safety.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
+    // Track 49A: the blocks call the helper `setup` installs; the suite copies it into each fixture home.
+    'bin/lib/telemetry-call.sh',
     'docs/stage-runs.schema.json',
     'setup',
     'skills/**',

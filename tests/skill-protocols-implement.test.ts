@@ -242,18 +242,18 @@ Stay in this workspace and branch; uncommitted implementation lives here.`);
     );
     // Handoff location preference: gstack project dir → Conductor .context → ~/scratch.
     const handoffDoc = content.slice(content.indexOf('For a long checklist, save a handoff document'));
-    const gstackAt = handoffDoc.indexOf('~/.gstack/projects/<slug>/implement/');
+    const gstackAt = handoffDoc.indexOf('<state-root>/projects/<slug>/implement/');
     const contextAt = handoffDoc.indexOf('.context/implement/');
     const scratchAt = handoffDoc.indexOf('~/scratch/gstack-implement/');
     expect(gstackAt).toBeGreaterThan(-1);
     expect(contextAt).toBeGreaterThan(gstackAt);
     expect(scratchAt).toBeGreaterThan(contextAt);
-    expect(normalized).toContain('when `~/.gstack/projects/<slug>/` already exists');
+    expect(normalized).toContain('when `<state-root>/projects/<slug>/` already exists');
     expect(normalized).toContain(
       'Never leave the only copy of a needed plan in `.context`, `/tmp`, or host session memory',
     );
     expect(normalized).toContain(
-      'copy a transient plan to `~/.gstack/projects/<slug>/` when that directory exists, otherwise `~/scratch/gstack-implement/`',
+      'copy a transient plan to `<state-root>/projects/<slug>/` when that directory exists, otherwise `~/scratch/gstack-implement/`',
     );
     expect(normalized).toContain(
       'this checklist is context, not a prepared-PR receipt, a VERIFIED matrix, or permission to skip review',
@@ -362,7 +362,7 @@ describe('implement wait blocks', () => {
   let activePath = process.env.PATH!;
   const sh = (shell: string, script: string, home: string, env: Record<string, string> = {}, cwd = ROOT) => {
     const r = Bun.spawnSync([shell, '-c', script], {
-      cwd, env: { ...process.env, HOME: home, ZDOTDIR: tmpdir(), PATH: activePath, RUN_LIMIT: '12', RUN_RETRY_OF: '', ...env },
+      cwd, env: { ...process.env, HOME: home, ZDOTDIR: tmpdir(), PATH: activePath, RUN_LIMIT: '12', RUN_RETRY_OF: '', GSTACK_STATE_ROOT: '', GSTACK_HOME: '', ...env },
       stdout: 'pipe', stderr: 'pipe', timeout: 30000,
     });
     return { code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
@@ -435,6 +435,28 @@ describe('implement wait blocks', () => {
       expect(wait(shell, h, two, 0, b).out).toContain('RUN: running');
       const project = home();
       expect(start(shell, project, 'echo hi').startsWith(join(project, '.gstack', 'projects', 'slug-x', 'implement', 'runs') + '/')).toBe(true);
+    });
+    t("the state root follows the caller's variables, with one fallback", () => {
+      const h = home(false);
+      const scratch = join(h, 'scratch', 'gstack-implement', 'runs', 'slug-x') + '/';
+      const under = (root: string) => join(root, 'projects', 'slug-x', 'implement', 'runs') + '/';
+      // One variable naming a directory that does not exist yet: used, and created, never the scratch fallback.
+      const fresh = join(h, 'fresh-root');
+      expect(start(shell, h, 'echo hi', { GSTACK_HOME: fresh }).startsWith(under(fresh))).toBe(true);
+      expect(existsSync(join(h, 'scratch'))).toBe(false);
+      // Both set: GSTACK_STATE_ROOT wins and the other is left alone.
+      const winner = join(h, 'winner'), loser = join(h, 'loser');
+      expect(start(shell, h, 'echo hi', { GSTACK_STATE_ROOT: winner, GSTACK_HOME: loser }).startsWith(under(winner))).toBe(true);
+      expect(existsSync(loser)).toBe(false);
+      // Neither set (empty counts as unset): today's rule, scratch while the project directory is absent.
+      expect(start(shell, h, 'echo hi').startsWith(scratch)).toBe(true);
+      // Neither set with the project directory present: the default root.
+      const project = home();
+      expect(start(shell, project, 'echo hi').startsWith(under(join(project, '.gstack')))).toBe(true);
+      // A relative root is never used: it would land in the repository.
+      expect(start(shell, h, 'echo hi', { GSTACK_HOME: 'relative-state' }).startsWith(scratch)).toBe(true);
+      expect(start(shell, h, 'echo hi', { GSTACK_STATE_ROOT: 'relative-state', GSTACK_HOME: fresh }).startsWith(scratch)).toBe(true);
+      expect(existsSync(join(ROOT, 'relative-state'))).toBe(false);
     });
     t('done and failed are terminal only after cleanup', () => {
       const h = home();
