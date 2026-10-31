@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.55.0] - 2026-10-31
+
+### Added
+
+- **Opt-in review repair policies.** Review-and-prep and the upstream check apply a repair policy when you enable one, and that policy reconciles the repair with the final gate.
+- **Neutral repairs keep baseline and invalidated evidence.** Reconciliation reads a neutral repair against the final gate policy and preserves the baseline and invalidated repair evidence.
+- **A neutral repair stays bound to its review.** The repair remains on that review, and the review keeps its existing scope.
+
+### Upgrade notes
+
+- **The new reconciliation waits until you opt in.** Review-and-prep and the upstream check keep the current gate reconciliation until a review repair policy is enabled.
+
 ## [0.54.1] - 2026-10-31
 
 ### Fixed
