@@ -78,8 +78,11 @@ Ambiguous rendered filenames also block rather than guessing an approval path.
 The supplied upstream root must be outside the target project.
 
 Default `--stage all` requires the full installed check set exactly once.
-Use `--stage preflight` only for ship's final preflight record after its full
-test evidence has already qualified. A partial `--only secrets` record cannot
+Use `--stage preflight` for ship's final preflight record after its full
+test evidence has already qualified, or review-and-prep's external-gate
+pre-pause preflight. The latter satisfies only that preliminary check: it
+grants no test evidence or full-pregate credit, and the full gate still runs
+after an accepted result. A partial `--only secrets` record cannot
 satisfy either gate. The evaluator checks the raw schema/verdict, current
 tree/HEAD/base, cleared remote obligations, other checks and the upstream
 added-line hash. It matches every blocking finding by exact path, rule and
@@ -116,6 +119,13 @@ secret finding still block. MEDIUM findings outside the secret category retain
 upstream's advisory behavior. A raw failing pregate ledger run remains failed:
 run the documented main test command separately under its normal `tests` label
 for passing test evidence. No record or exit code is rewritten.
+
+Review-and-prep's accepted `full-suite=external` pass is the scoped exception
+to that main-command fallback: retain the failed raw ledger, successful
+disposition evaluation, lane output and caller attestation separately, without
+creating passing `tests` evidence. A pending final-gate repair falls back to
+ordinary review coverage because its unchanged rerun receipt requires a passing
+ledger record. Ship's test-evidence requirements remain unchanged.
 
 Every invocation also reports entries whose exact line no longer exists in
 the named file, including deleted/renamed files. A stale entry cannot match a

@@ -1,7 +1,7 @@
 /**
  * handoff-contract.test.ts — fixture consumers for docs/workflow-handoffs.md.
  *
- * Four describes:
+ * Four describes, then (D) and (E) below:
  *   (A) The doc is the oracle — the case list parses, its codes match
  *       tests/fixtures/handoffs/cases.json, each row names a next action and a
  *       producer word that still appears verbatim in a producer skill.
@@ -13,6 +13,9 @@
  *       tables in both directions, fixed guard text and the two legacy anchors
  *       are verbatim, and a fixture filled mechanically from each producer
  *       template classifies cleanly.
+ *   (D) The final-gate repair key and cycle 1's baseline.
+ *   (E) The external full-suite gate (H-F) and `parent-io=lean`: the policy
+ *       values, the pause and result lines, and a test-only model of the resume.
  *
  * classify() is a test-only second implementation of the contract. It proves
  * drift between the doc, the producers and the fixtures, not that an external
@@ -20,6 +23,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -30,7 +34,7 @@ const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
 const has = (haystack: string, needle: string): boolean => haystack.includes(needle);
 
 type Outcome = 'ADVANCE_TRUSTED' | 'FULL_CHECK_REQUIRED' | 'HOLD' | 'REFUSE';
-type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D' | 'H-E';
+type Kind = 'H-A' | 'H-B' | 'H-C-pause' | 'H-C-resume' | 'H-D' | 'H-E' | 'H-F';
 const RANK: Record<Outcome, number> = { ADVANCE_TRUSTED: 0, FULL_CHECK_REQUIRED: 1, HOLD: 2, REFUSE: 3 };
 const TRUSTED: Outcome = 'ADVANCE_TRUSTED';
 const FULL: Outcome = 'FULL_CHECK_REQUIRED';
@@ -155,7 +159,7 @@ const shown = (x: unknown): unknown => {
   if (tokenShaped(x)) return WITHHELD;
   return x.length > 120 ? `${x.slice(0, 120)}…` : x;
 };
-const HANDOFF_START = /^Run \/(?:review-and-prep\b|pair-review for draft PR\b|ship-and-land for this prepared PR\b)/;
+const HANDOFF_START = /^(?:Run \/(?:review-and-prep\b|pair-review for draft PR\b|ship-and-land for this prepared PR\b)|External gate: external-gate\/v)/;
 const FENCE = /^\s*```/;
 const sameRepo = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -192,6 +196,7 @@ function normalize(text: string): string[] {
 }
 
 function kindOf(line: string): Kind {
+  if (/^External gate: external-gate\/v/.test(line)) return 'H-F';
   if (/^Run \/review-and-prep resume\b/.test(line)) return 'H-C-resume';
   if (/^Run \/review-and-prep continue\b/.test(line)) return 'H-E';
   if (/^Run \/pair-review for draft PR\b/.test(line)) return 'H-C-pause';
@@ -207,6 +212,7 @@ const CLOSING: Partial<Record<Kind, RegExp>> = {
   'H-E': /^Do not run \/ship on this PR\.$/,
 };
 function endOf(kind: Kind, lines: string[], s: number, limit: number): number {
+  if (kind === 'H-F') return Math.min(s + 1, limit); // the pause is one line, the last of its turn
   if (kind === 'H-B') {
     const g = lines.findIndex((l, i) => i > s && i < limit && /^Greptile: /.test(l));
     const blank = g < 0 ? -1 : lines.findIndex((l, i) => i > g && i < limit && l.trim() === '');
@@ -642,16 +648,17 @@ function classifyResume(lines: string[], live: Live): Verdict {
 
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
-  'documentation-audit': /^final$/, 'full-suite': /^final$/, 'final-gate-repair': /^tests-docs$/, 'max-continuations': /^[0-9]$/,
+  'documentation-audit': /^final$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
+  'max-continuations': /^[0-9]$/,
 };
 /** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
-function parsePolicy(value: string): Map<string, string> | null {
+function parsePolicy(value: string, values: Record<string, RegExp> = POLICY_VALUES): Map<string, string> | null {
   const [version, ...pairs] = value.split('; ');
   if (version !== 'review-and-prep-policy/v1') return null;
   const keys = new Map<string, string>();
   for (const pair of pairs) {
     const kv = /^([a-z-]+)=(\S+)$/.exec(pair);
-    if (!kv || !POLICY_VALUES[kv[1]]?.test(kv[2]) || keys.has(kv[1])) return null;
+    if (!kv || !values[kv[1]]?.test(kv[2]) || keys.has(kv[1])) return null;
     keys.set(kv[1], kv[2]);
   }
   return keys;
@@ -758,6 +765,41 @@ function classifyD(lines: string[], live: Live): Verdict {
   return v;
 }
 
+const EXTERNAL_PAUSE = /^External gate: external-gate\/v1; head: ([0-9a-f]{40}); tree: ([0-9a-f]{40}); base: ([0-9a-f]{40})$/;
+
+/**
+ * H-F: the external full-suite gate's pause. The caller's own policy must have asked for it, and the line's
+ * head, tree and base must equal the caller's live reads; otherwise it holds. A match is FULL_CHECK_REQUIRED:
+ * the next action is the caller's own command, not a stage.
+ */
+function classifyExternalPause(lines: string[], after: string[], live: Live): Verdict {
+  const v = new Verdict('H-F', FULL);
+  const line = lines[0];
+  scanTokens(v, { fields: new Map([['External gate', [[line]]]]), unknown: [], extensions: [] }, lines);
+  const seen = /^External gate: external-gate\/(v\d+)\b/.exec(line)?.[1];
+  if (seen !== 'v1') {
+    v.flag('external-gate-version', HOLD, 'external-gate/v1', seen ? `external-gate/${seen}` : 'no version');
+    return v;
+  }
+  const m = EXTERNAL_PAUSE.exec(line);
+  if (!m) v.flag('external-gate-line', HOLD, 'External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>', line);
+  else if (after.some((l) => l.trim() !== '')) v.flag('external-gate-line', HOLD, 'the pause as the last line of the turn', 'text after the line');
+  if (unknownLive(v, live)) return v;
+  unread(v, live, ['callerPolicy', 'headSha', 'headTree', 'baseTip', 'prState', ...(live.prState === 'OPEN' ? ['isDraft'] : [])], ['isDraft']);
+  if (!m) return v;
+  const policy = typeof live.callerPolicy === 'string' ? parsePolicy(live.callerPolicy) : null;
+  if (live.callerPolicy !== undefined && policy?.get('full-suite') !== 'external') {
+    v.flag('external-unrequested', HOLD, 'a caller policy with full-suite=external', live.callerPolicy ?? 'none');
+  }
+  if (live.headSha !== undefined && m[1] !== live.headSha) v.flag('head', HOLD, live.headSha, m[1]);
+  if (live.headTree !== undefined && m[2] !== live.headTree) v.flag('tree', HOLD, live.headTree, m[2]);
+  if (live.baseTip !== undefined && m[3] !== live.baseTip) v.flag('base', HOLD, live.baseTip, m[3]);
+  // No PR yet is normal: the pause pushes nothing. An existing PR must be an open draft.
+  if (live.prState !== undefined && live.prState !== 'NONE' && live.prState !== 'OPEN') v.flag('pr-state', HOLD, 'OPEN or no PR', live.prState);
+  else if (live.prState === 'OPEN' && live.isDraft === false) v.flag('pr-ready', HOLD, 'a draft PR', 'ready');
+  return v;
+}
+
 function classify(text: string, prov: Provenance, live: Live): Verdict {
   const lines = normalize(text);
   const { kind, handoff, outside, count } = locate(lines);
@@ -766,10 +808,11 @@ function classify(text: string, prov: Provenance, live: Live): Verdict {
     : kind === 'H-B' ? classifyB(handoff, prov, live)
     : kind === 'H-C-pause' ? classifyPause(handoff, live)
     : kind === 'H-E' ? classifyContinue(handoff, live)
+    : kind === 'H-F' ? classifyExternalPause(handoff, lines.slice(lines.indexOf(handoff[0]) + 1), live)
     : classifyResume(handoff, live);
   // Text around the handoff, and any STATUS: line in it, caps the outcome as it would alone,
   // except that DONE and the bare-summary rule apply only when no handoff is present.
-  const around = kind === 'H-B' ? [...outside, ...handoff] : [...outside, ...handoff.filter((l) => /^STATUS:/.test(l))];
+  const around = kind === 'H-B' || kind === 'H-F' ? [...outside, ...handoff] : [...outside, ...handoff.filter((l) => /^STATUS:/.test(l))];
   statusSignals(v, around.join('\n'));
   phraseSignals(v, outside.join('\n'));
   if (tokenShaped(outside.join('\n'))) v.flag('redaction', HOLD, 'no token-shaped value', 'outside text');
@@ -851,13 +894,14 @@ describe('(A) the doc is the oracle', () => {
 
   test('embedded fixtures are byte-locked to the fixture files', () => {
     const embedded = [...DOC.matchAll(/^```text fixture=(\S+)\n([\s\S]*?)\n```$/gm)];
-    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt']);
+    expect(embedded.map((m) => m[1]).sort()).toEqual(['a-success.txt', 'b-prepared.txt', 'c-pause.txt', 'c-resume.txt', 'e-continue.txt', 'f-pause.txt', 'f-result-fail.txt', 'f-result-pass.txt']);
     for (const m of embedded) expect(m[2], m[1]).toBe(readFileSync(join(FIXTURES, m[1]), 'utf8').trimEnd());
   });
 
   test('every detection prefix is a byte-frozen anchor in the Versions table', () => {
     const frozen = tableRows(section('## Versions')).map((r) => r[4]).join(' ');
-    for (const p of ['Run /review-and-prep', 'Run /review-and-prep resume', 'Run /review-and-prep continue', 'Run /pair-review for draft PR', 'Run /ship-and-land for this prepared PR']) {
+    for (const p of ['Run /review-and-prep', 'Run /review-and-prep resume', 'Run /review-and-prep continue', 'Run /pair-review for draft PR', 'Run /ship-and-land for this prepared PR',
+      'External gate: external-gate/v1;', 'External gate result:']) {
       expect(frozen, p).toContain(`\`${p}`);
     }
   });
@@ -1025,6 +1069,7 @@ describe('(B2) classifier rules beyond one fixture per case', () => {
     sweep('C-RESUME', ['repo', 'prNumber', 'branch', 'prState', 'isDraft', 'markers', 'pausedShaIsAncestorOfHead']);
     sweep('C-PAUSED', ['repo', 'prNumber', 'branch', 'headSha']);
     sweep('E-CONTINUE', ['repo', 'prNumber', 'branch', 'prState', 'isDraft', 'markers', 'stoppedShaIsAncestorOfHead', 'callerPolicy']);
+    sweep('F-PAUSE', ['callerPolicy', 'headSha', 'headTree', 'baseTip', 'prState', 'isDraft']);
   });
 
   test('required labels match what the producers always print', () => {
@@ -1327,7 +1372,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final; final-gate-repair=tests-docs; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -1423,4 +1468,209 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
     expect(has(squash(DOC), 'the H-E prompt is unchanged')).toBe(true);
     expect(has(prep, 'Full-review evidence: unavailable')).toBe(true);
   });
+});
+
+// ─── (E) Track 48A: the external full-suite gate (H-F) and lean parent reads ───
+
+const PAUSE_TEMPLATE = 'External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>';
+const RESULT_TEMPLATE = 'External gate result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <command>; exit: <n>; log: <reference>';
+const ATTESTATION_TEMPLATE = 'External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>';
+
+interface ExternalResult { result: 'pass' | 'fail'; head: string; tree: string; command: string; exit: number; log: string }
+/** Test-only parser for the result line; null for anything the published grammar refuses. */
+function parseResult(line: string): ExternalResult | null {
+  if (/[\r\n]/.test(line)) return null;
+  const parts = line.split('; ');
+  if (parts.length !== 6) return null; // a `; ` inside a value adds a part
+  const [first, head, tree, command, exit, log] = parts;
+  const r = /^External gate result: (pass|fail)$/.exec(first);
+  const h = /^head: ([0-9a-f]{40})$/.exec(head);
+  const t = /^tree: ([0-9a-f]{40})$/.exec(tree);
+  const c = /^command: (\S.*)$/.exec(command);
+  const e = /^exit: (\d+)$/.exec(exit);
+  const l = /^log: (\S.*)$/.exec(log);
+  if (!r || !h || !t || !c || !e || !l) return null;
+  const code = Number(e[1]);
+  if (r[1] === 'pass' ? e[1] !== '0' : code === 0) return null;
+  return { result: r[1] as 'pass' | 'fail', head: h[1], tree: t[1], command: c[1], exit: code, log: l[1] };
+}
+
+interface ResumeLive { head: string; tree: string; clean: boolean }
+type ResumeDecision = 'accept-pass' | 'accept-fail' | 'new-pause' | 'default';
+/** The skill's Resume rule as a model: which result line, if any, the gate slot accepts. Not installed-agent proof. */
+function resumeDecision(prompt: string, source: 'prompt' | 'pr-text', policy: string | null, live: ResumeLive): { decision: ResumeDecision; reason?: string } {
+  if (parsePolicy(policy ?? '')?.get('full-suite') !== 'external') return { decision: 'default', reason: 'full-suite=external absent' };
+  if (source !== 'prompt') return { decision: 'new-pause', reason: 'not from the invocation prompt' };
+  const lines = prompt.split('\n').filter((l) => l.startsWith('External gate result:'));
+  if (lines.length !== 1) return { decision: 'new-pause', reason: lines.length === 0 ? 'no line' : 'two lines' };
+  const r = parseResult(lines[0]);
+  if (!r) return { decision: 'new-pause', reason: 'malformed' };
+  if (r.head !== live.head) return { decision: 'new-pause', reason: 'head' };
+  if (r.tree !== live.tree) return { decision: 'new-pause', reason: 'tree' };
+  if (!live.clean) return { decision: 'new-pause', reason: 'dirty' };
+  return { decision: r.result === 'pass' ? 'accept-pass' : 'accept-fail' };
+}
+
+describe('(E) the external gate and lean parent reads', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const POLICY_EXTERNAL = 'review-and-prep-policy/v1; full-suite=external';
+  const OLD_POLICY_VALUES: Record<string, RegExp> = { ...POLICY_VALUES, 'full-suite': /^final$/ };
+  delete OLD_POLICY_VALUES['parent-io'];
+  const live = { head: FIX.vars.HEAD, tree: FIX.vars.TREE, clean: true };
+  const resultLine = (kind: 'pass' | 'fail') => fixtureText({ text: `f-result-${kind}.txt` }).trimEnd();
+
+  // Value: protects=the two new policy values parse, nothing near them does, and an older value map loses the whole line; fails_when=a value regex loosens, a repeat parses or the older-install claim stops being true; why_new=new policy values; seam=none; no_claim=installed-agent execution
+  test('the policy parser accepts both values and the older value map reads the whole line as unsupported', () => {
+    const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+    expect(parsePolicy(line('full-suite=external; parent-io=lean; final-gate-repair=tests-docs'))?.get('full-suite')).toBe('external');
+    expect(parsePolicy(line('full-suite=external; parent-io=lean'))?.get('parent-io')).toBe('lean');
+    for (const bad of ['full-suite=both', 'full-suite=External', 'parent-io=heavy', 'parent-io=Lean', 'parent-io=lean; parent-io=lean',
+      'full-suite=final; full-suite=external', 'full-suite=external; full-suite=external']) expect(parsePolicy(line(bad)), bad).toBeNull();
+    // An older install's value map returns null for the whole line, so every other key is lost with it.
+    expect(parsePolicy(line('in-cap=delta; full-suite=external'), OLD_POLICY_VALUES)).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; parent-io=lean'), OLD_POLICY_VALUES)).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; full-suite=final'), OLD_POLICY_VALUES)?.get('in-cap')).toBe('delta');
+  });
+
+  // Value: protects=an H-E prompt whose policy carries either new value still continues and a bad value still holds; fails_when=the new values break the H-E path; why_new=new policy values through the consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries either value still continues', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['full-suite=external', 'parent-io=lean', 'full-suite=external; parent-io=lean']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    const bad = base.replace('; max-continuations=1', '; parent-io=heavy; max-continuations=1');
+    expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding)).toContain('policy-malformed');
+  });
+
+  // Value: protects=the capability check works against the real skill and the doc publishes it generically with the omit rule; fails_when=a value leaves the skill, the check text drifts or the omit rule is dropped; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F finds both values in the skill and none for an absent one, and the doc publishes the check', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    for (const value of ['full-suite=external', 'parent-io=lean']) {
+      expect(spawnSync('grep', ['-F', value, skillPath]).status, value).toBe(0);
+    }
+    expect(spawnSync('grep', ['-F', 'full-suite=both', skillPath]).status).toBe(1);
+    expect(has(doc, `grep -F '<key>=<value>' "<installed skill dir>/SKILL.md"`)).toBe(true);
+    for (const phrase of ['A caller omits a value whose check fails and keeps its other keys',
+      'an installation lacking the value reads the whole line as `none supplied`',
+      'an H-E parser without the value holds a returned policy that carries it as `policy-malformed`',
+      'A returned H-E prompt whose policy carries either value still continues']) expect(has(doc, phrase), phrase).toBe(true);
+    // The skill's own check text names each value with the same literal grep.
+    expect(has(prep, `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`)).toBe(true);
+    expect(has(prep, `grep -F 'parent-io=lean' "<installed skill dir>/SKILL.md"`)).toBe(true);
+    expect(has(doc, '`full-suite` (`final`, `external`)')).toBe(true);
+    expect(has(doc, '`parent-io` (`lean`)')).toBe(true);
+  });
+
+  // Value: protects=the published fixtures parse under the published grammar and the refused shapes stay refused; fails_when=the parser accepts a short SHA, a mismatched exit, a `; ` value or reordered fields; why_new=new result-line grammar; seam=none; no_claim=installed-agent execution
+  test('the fixtures parse under the published grammar and malformed result lines are refused', () => {
+    expect(EXTERNAL_PAUSE.test(fixtureText({ text: 'f-pause.txt' }).trimEnd().split('\n').at(-1)!)).toBe(true);
+    const pass = parseResult(resultLine('pass'))!;
+    expect(pass).toMatchObject({ result: 'pass', head: FIX.vars.HEAD, tree: FIX.vars.TREE, command: 'bun run test:full', exit: 0 });
+    expect(parseResult(resultLine('fail'))).toMatchObject({ result: 'fail', exit: 1 });
+    const line = resultLine('pass');
+    for (const [name, bad] of [
+      ['short SHA', line.replace(FIX.vars.HEAD, FIX.vars.SHORT)],
+      ['upper-case tree', line.replace(FIX.vars.TREE, FIX.vars.UPTREE)],
+      ['pass with exit 1', line.replace('exit: 0', 'exit: 1')],
+      ['fail with exit 0', line.replace('result: pass', 'result: fail').replace('External gate result: pass', 'External gate result: fail')],
+      ['"; " in command', line.replace('command: bun run test:full', 'command: bun install; bun run test:full')],
+      ['reordered fields', line.replace(/(head: [0-9a-f]{40}); (tree: [0-9a-f]{40})/, '$2; $1')],
+      ['empty command', line.replace('command: bun run test:full', 'command: ')],
+      ['non-numeric exit', line.replace('exit: 0', 'exit: ok')],
+      ['newline in log', `${line}\nmore`],
+      ['unknown result word', line.replace('result: pass', 'result: ok').replace('External gate result: pass', 'External gate result: ok')],
+    ] as const) expect(parseResult(bad), name).toBeNull();
+    expect(parseResult(line.replace('External gate result: pass', 'External gate result: fail'))).toBeNull();
+  });
+
+  // Value: protects=a result line is reused only when it comes from the invocation prompt, is the only one and matches the live head, tree and a clean checkout; fails_when=the model accepts PR text, two lines or a mismatch; why_new=new resume rule; seam=none; no_claim=installed-agent execution
+  test('the resume model accepts one matching prompt line and starts a new pause for everything else', () => {
+    const pass = resultLine('pass');
+    const fail = resultLine('fail');
+    expect(resumeDecision(pass, 'prompt', POLICY_EXTERNAL, live).decision).toBe('accept-pass');
+    expect(resumeDecision(fail, 'prompt', POLICY_EXTERNAL, live).decision).toBe('accept-fail');
+    expect(resumeDecision(pass, 'prompt', POLICY_EXTERNAL, { ...live, head: FIX.vars.NEWHEAD })).toEqual({ decision: 'new-pause', reason: 'head' });
+    expect(resumeDecision(fail, 'prompt', POLICY_EXTERNAL, { ...live, head: FIX.vars.NEWHEAD })).toEqual({ decision: 'new-pause', reason: 'head' });
+    expect(resumeDecision(pass, 'prompt', POLICY_EXTERNAL, { ...live, tree: FIX.vars.NEWTREE })).toEqual({ decision: 'new-pause', reason: 'tree' });
+    expect(resumeDecision(pass, 'prompt', POLICY_EXTERNAL, { ...live, clean: false })).toEqual({ decision: 'new-pause', reason: 'dirty' });
+    expect(resumeDecision(`${pass}\n${fail}`, 'prompt', POLICY_EXTERNAL, live)).toEqual({ decision: 'new-pause', reason: 'two lines' });
+    expect(resumeDecision(pass, 'pr-text', POLICY_EXTERNAL, live)).toEqual({ decision: 'new-pause', reason: 'not from the invocation prompt' });
+    expect(resumeDecision('Resume with no result', 'prompt', POLICY_EXTERNAL, live)).toEqual({ decision: 'new-pause', reason: 'no line' });
+    expect(resumeDecision(pass.replace('exit: 0', 'exit: 1'), 'prompt', POLICY_EXTERNAL, live)).toEqual({ decision: 'new-pause', reason: 'malformed' });
+    // Without the policy value the line is no result and default behavior applies.
+    expect(resumeDecision(pass, 'prompt', 'review-and-prep-policy/v1; full-suite=final', live).decision).toBe('default');
+    expect(resumeDecision(pass, 'prompt', null, live).decision).toBe('default');
+    // Naming both values is the repeated key that reads as none supplied.
+    expect(resumeDecision(pass, 'prompt', 'review-and-prep-policy/v1; full-suite=final; full-suite=external', live).decision).toBe('default');
+  });
+
+  // Value: protects=skill and doc print the same three line templates, and a consumer without H-F holds the pause as a bare summary; fails_when=a template drifts between skill and doc or the fallback stops holding; why_new=new line formats; seam=none; no_claim=installed-agent execution
+  test('skill and doc carry the same line templates, and a consumer without H-F holds the pause', () => {
+    for (const t of [PAUSE_TEMPLATE, RESULT_TEMPLATE, ATTESTATION_TEMPLATE]) {
+      expect(has(prep, t), `skill: ${t}`).toBe(true);
+      expect(has(doc, t), `doc: ${t}`).toBe(true);
+    }
+    expect(has(doc, '`External gate attestation:` rows | receipt-present')).toBe(true);
+    const text = fixtureText(FIX.cases['F-PAUSE']);
+    const older = classifyD(normalize(text), withVars(FIX.defaults.live.D));
+    expect(older.outcome).toBe(HOLD);
+    expect(older.mismatches.map((m) => m.binding)).toEqual(['bare-summary']);
+    expect(has(doc, 'A consumer without H-F reads the pause as a bare summary with a full SHA and holds it (H-D).')).toBe(true);
+    expect(run('F-PAUSE').handoff).toBe('H-F');
+  });
+
+  // Value: protects=the pause line must be the last line of the turn and a second pause line holds; fails_when=trailing text or a repeated line is accepted; why_new=new pause shape; seam=none; no_claim=installed-agent execution
+  test('text after the pause line and a second pause line hold', () => {
+    const trailing = run('F-PAUSE', { suffix: 'Resume with /review-and-prep resume\n' });
+    expect(trailing.outcome).toBe(HOLD);
+    expect(trailing.mismatches.map((m) => m.binding)).toEqual(['external-gate-line']);
+    const twice = run('F-PAUSE', { suffix: fixtureText(FIX.cases['F-PAUSE']).split('\n').at(-2)! + '\n' });
+    expect(twice.mismatches.map((m) => m.binding)).toContain('multiple-handoffs');
+    expect(run('F-PAUSE', { live: { prState: 'CLOSED' } }).mismatches.map((m) => m.binding)).toEqual(['pr-state']);
+    expect(run('F-PAUSE', { prefix: 'PAUSED — manual testing required\n' }).mismatches.map((m) => m.binding)).toEqual(['pause']);
+  });
+
+  // Value: protects=the cost record states the waits it replaces, the costs it adds, the unknowns and that no saving is established; fails_when=a figure, an unknown or the no-saving statement is dropped; why_new=new acceptance record; seam=none; no_claim=installed-agent execution
+  test('the cost record states waits, costs, unknowns and no established saving', () => {
+    const record = squash(read('docs/acceptance/external-gate.md'));
+    for (const phrase of ['30 to 70 minutes', '10 minutes in Claude Code', 'at least 3 to 7 blocking calls', 'about 2,500 tests, about 75 minutes',
+      '89 minutes in tests', 'One turn end and one resume message for each pause', 'A colder resume', 'One more full run for each head move after a pass is accepted',
+      'Every value reads unknown until a real run records it', 'First-turn cache read tokens after a resume', 'Parent status reads per run',
+      'No saving is established', 'No installed-agent run backs it', 'awards no checkpoint']) expect(has(record, phrase), phrase).toBe(true);
+    expect(has(doc, 'no saving is established')).toBe(true);
+    expect(has(doc, '`docs/acceptance/external-gate.md` records')).toBe(true);
+  });
+
+  // Value: protects=the limits the doc states: an attested pass never satisfies /ship-and-land, and the pass is caller-attested; fails_when=the doc drops the limit, the threat-model sentence or the confidentiality sentence; why_new=new trust boundary; seam=none; no_claim=installed-agent execution
+  test('the doc states the ship-and-land limit, the attestation trust boundary and the data rule', () => {
+    for (const phrase of ["An attested pass never satisfies `/ship-and-land`'s test gate, which is unchanged",
+      'a recorded `full-suite=final` keeps its final pre-merge run full',
+      'a caller that misreports its result is undefended',
+      "A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write",
+    ]) expect(has(doc, phrase), phrase).toBe(true);
+  });
+});
+
+// Value: protects=literal pass exit and token redaction on unsupported versions; fails_when=00 passes or an early version return skips redaction; why_new=Track 48A review regression; seam=none; no_claim=installed-agent execution
+test('external result uses literal zero and every pause version scans tokens', () => {
+  const pass = fixtureText({ text: 'f-result-pass.txt' }).trimEnd();
+  expect(parseResult(pass.replace('exit: 0', 'exit: 00'))).toBeNull();
+  const missingSeparator = run('F-PAUSE', { edits: [['external-gate/v1;', 'external-gate/v1']] });
+  expect(missingSeparator.mismatches.map(m => m.binding)).toContain('external-gate-line');
+  expect(missingSeparator.mismatches.map(m => m.binding)).not.toContain('external-gate-version');
+  const unknownToken = run('F-PAUSE', { edits: [['external-gate/v1', 'external-gate/v2'], [FIX.vars.HEAD, VARS.TOKEN]] });
+  expect(unknownToken.mismatches.map(m => m.binding)).toContain('external-gate-version');
+  expect(unknownToken.mismatches.map(m => m.binding)).toContain('redaction');
+  expect(JSON.stringify(unknownToken)).not.toContain(VARS.TOKEN);
+  for (const verdict of [
+    run('F-PAUSE', { edits: [[FIX.vars.HEAD, VARS.TOKEN]] }),
+    run('F-PAUSE', { suffix: VARS.TOKEN }),
+  ]) {
+    expect(verdict.mismatches.map(m => m.binding)).toContain('redaction');
+    expect(JSON.stringify(verdict)).not.toContain(VARS.TOKEN);
+  }
 });
