@@ -6,21 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Workflow skills write a stage handoff line that the next stage reads, so a later skill can continue from the recorded stage. `docs/workflow-handoffs.md` describes that line and the fallback used when it is absent.
+- `/autoplan-lean`, `/implement` and `/review-and-prep` end with one trailing line after their handoff: `Stage handoff: stage-handoff/v1; stage: …; next: …; status: …; head: …; plan-sha256: …`, so an orchestrator can read a stage's outcome from one line. It is additive: the existing handoff grammars, the `Run /<skill>` line and the Coverage counts keep their bytes, and the line never changes a handoff's outcome. A malformed line is ignored, older producers do not print it, and the external-gate pause prints none because its pause line stays last. `docs/workflow-handoffs.md` documents the fields.
 
 ### Changed
 
-- Workflow state is resolved by following the workflow state root, wherever that root is set.
-
-### Fixed
-
-- Setup's install of the telemetry helper validates symlink hops on the helper path.
-- Handoff binding is tighter, so an accepted handoff stays tied to the workflow that wrote it.
+- The five stage skills, `/full-review`, `/pair-review`, `/roadmap` and `bin/lib/session-paths.sh` resolve their state paths with `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`, so a caller can move them by setting one variable. With neither set the paths are as before. Setting `GSTACK_HOME` moves all upstream state for the stage (configuration, analytics, learnings, review logs), not only these files; see `## State root` in `docs/workflow-handoffs.md`.
+- The start and finish telemetry blocks in all eleven skills are now a short call to a helper, `bin/lib/telemetry-call.sh`, saving 1,612 bytes per skill. State, tier gating, run identity, rows and the `provenance` gate behave as before. `setup` installs the helper at `$HOME/.gstack-extend/bin/telemetry-call` after checking the destination path, and the telemetry doctor reports a missing helper.
+- `autoplan-lean check --message` now requires a well-formed stage line after the closing fence, bound to the checked plan and head. A message without the line fails this check.
 
 ### Upgrade notes
 
-- Run `setup` after upgrading so the telemetry helper is installed with the symlink-hop check.
-- A handoff written before this version has no stage line and uses the fallback in `docs/workflow-handoffs.md`.
+- Upgrade with `bin/update-run`, which runs `setup`. After a hand `git pull` without `setup`, skills skip telemetry until `setup` runs; the debug line and the doctor report it.
+- A caller that parses the end of a stage's final message must tolerate the new trailing line.
 
 ## [0.55.0] - 2026-10-31
 
