@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.54.1] - 2026-10-31
+
+### Fixed
+
+- **Outside review recovers a qualified severity label.** Recovery restores that severity onto the finding, so the label is kept through the outside-review pass.
+- **A severity word beside a dangling hyphen is rejected.** Recovery leaves that word out of the finding's severity.
+
+### Upgrade notes
+
+- **Run outside review again for the corrected severities.** A qualified label comes back with its severity, and a severity word that only sat beside a dangling hyphen comes back without one.
+
 ## [0.54.0] - 2026-10-31
 
 ### Added
