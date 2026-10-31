@@ -516,6 +516,7 @@ Apply the outcome to the plan proper: approved changes, settlements and tasks.
 A rejected User Challenge leaves the original direction. Write `<run>/gate.md`:
 the brief, the reply or auto-choice, and the outcome. On E (reject), stop after
 writing `<run>/gate.md`: do not seal the plan or emit the `/implement` prompt.
+On E, print §7's terminal stage line with `next: none; status: stopped`.
 On approval, run the installed `## Completion: Write Review Logs` commands for
 every phase that ran, with `"via":"autoplan-lean"`. Those logs live under
 `<state-root>`, outside the repository.
@@ -626,7 +627,8 @@ Print the line after the closing fence, outside it, as the last line of the
 message. `next: implement` goes with `status: done` or `done-with-concerns`; on
 `BLOCKED`, `NEEDS_CONTEXT` or a rejected gate there is no prompt, and the line
 prints `next: none` with `blocked`, `needs-context` or `stopped`. `head` is the
-prompt's `Branch` HEAD and `plan-sha256` is `PLAN_SHA256` from `seal`, or `none`
+prompt's `Branch` HEAD; without a prompt, use the current HEAD, or `none` if
+the workspace has no HEAD. `plan-sha256` is `PLAN_SHA256` from `seal`, or `none`
 when no seal ran. `check --message` requires the line after the fence, with
 `stage: plan`, `next: implement`, that `head` and the checked plan's SHA-256.
 

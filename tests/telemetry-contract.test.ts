@@ -2053,7 +2053,10 @@ describe('workflow metrics contract (Track 24A)', () => {
       expect(missing.stdout.trim()).toBe('GX_LIB=');
       // No helper installed at all: the same empty result, not an error.
       rmSync(helper);
-      const unhelped = spawnSync('bash', ['-c', lookup], { env: fix.env, encoding: 'utf8' });
+      // An empty resolved launcher must not select a sibling library via realpath("").
+      mkdirSync(join(fix.home, 'lib'));
+      writeFileSync(join(fix.home, 'lib/workflow-span.sh'), 'echo unintended-library\n');
+      const unhelped = spawnSync('bash', ['-c', lookup], { cwd: repo, env: fix.env, encoding: 'utf8' });
       expect(unhelped.stdout.trim()).toBe('GX_LIB=');
       const head = `GX_STAGE='review-and-prep'; GX_SID='${sid}'; GX_CAPTURE=1; GX_LIB='${lib}'; GX_RUN='${run}'\n. "$GX_LIB"\n`;
       const first = spawnSync('bash', ['-c', head + 'gx_span_begin tests "$GX_RUN" phase'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });

@@ -326,7 +326,7 @@ describe('implement review regressions', () => {
       .replaceAll('<slug>', 'fixture').replaceAll('<branch>', 'main');
     try {
       const r = Bun.spawnSync(['bash', '-c', script], {
-        env: { ...process.env, HOME: h, RUN_LIMIT: '3' }, stdout: 'pipe', stderr: 'pipe', timeout: 5000,
+        env: { ...process.env, HOME: h, GSTACK_STATE_ROOT: '', GSTACK_HOME: '', RUN_LIMIT: '3' }, stdout: 'pipe', stderr: 'pipe', timeout: 5000,
       });
       expect(r.exitCode).toBe(0);
       // gstack-timing-ok: absence is observable only after this finite orphan's 5 s write deadline; also cleans the pre-fix fixture.

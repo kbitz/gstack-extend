@@ -1114,7 +1114,7 @@ for each exit:
 | Exit | `stage` | `next` | `status` | `head` | `plan-sha256` |
 |---|---|---|---|---|---|
 | `/autoplan-lean` handoff prompt | `plan` | `implement` | `done`, `done-with-concerns` | the prompt's `Branch` HEAD | the plan's SHA-256 from `seal` |
-| `/autoplan-lean` BLOCKED, NEEDS_CONTEXT or rejected gate | `plan` | `none` | `blocked`, `needs-context`, `stopped` | HEAD or `none` | `none` |
+| `/autoplan-lean` BLOCKED, NEEDS_CONTEXT or rejected gate | `plan` | `none` | `blocked`, `needs-context`, `stopped` | current HEAD, or `none` if the workspace has no HEAD | the plan's SHA-256 from `seal`, or `none` if no seal ran |
 | `/implement` H-A prompt | `implement` | `review-and-prep` | `done`, `done-with-concerns` | HEAD | the plan file's SHA-256, or `none` |
 | `/implement` BLOCKED or NEEDS_CONTEXT | `implement` | `none` | `blocked`, `needs-context` | HEAD | the plan file's SHA-256, or `none` |
 | `/review-and-prep` H-B | `review` | `ship-and-land` | `done` | Prepared HEAD | the prompt's `SHA-256` |

@@ -2721,6 +2721,102 @@ describe('telemetry-call helper install', () => {
   const source = join(ROOT, 'bin', 'lib', 'telemetry-call.sh');
   const installed = (home: string) => join(home, '.gstack-extend', 'bin', 'telemetry-call');
 
+  test('a permissive caller umask cannot create writable helper directories', () => {
+    const home = join(baseTmp, 'call-helper-umask');
+    mkdirSync(home);
+    chmodSync(home, 0o755);
+    const result = spawnSync('bash', ['-c', 'umask 000; exec "$1" --host codex --quiet', 'setup-test', SETUP], {
+      env: { HOME: home, PATH: process.env.PATH ?? '/usr/bin:/bin' }, encoding: 'utf8',
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(installed(home))).toBe(true);
+    for (const dir of [join(home, '.gstack-extend'), join(home, '.gstack-extend', 'bin')]) {
+      expect(statSync(dir).mode & 0o002).toBe(0);
+    }
+  });
+
+  test('an allowed in-HOME symlink cannot hide a writable ancestor', () => {
+    const home = join(baseTmp, 'call-helper-resolved-ancestor');
+    const shared = join(home, 'shared');
+    const state = join(shared, 'state');
+    mkdirSync(join(state, 'bin'), { recursive: true });
+    chmodSync(shared, 0o777);
+    symlinkSync(state, join(home, '.gstack-extend'));
+    for (const uninstall of [false, true]) {
+      const skill = join(hostDir(home, 'codex'), 'implement');
+      if (uninstall) {
+        mkdirSync(skill, { recursive: true });
+        writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
+        symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+      }
+      const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('world-writable');
+      expect(existsSync(installed(home))).toBe(false);
+      expect(existsSync(skill)).toBe(uninstall);
+      if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+    }
+  });
+
+  for (const unsafe of ['outside-home', 'world-writable', 'parent-world-writable'] as const) {
+    test(`helper ${unsafe} destination is refused before publishing skills or removing files`, () => {
+      const home = join(baseTmp, `call-helper-unsafe-${unsafe}`);
+      const dir = join(home, '.gstack-extend', 'bin');
+      mkdirSync(join(home, '.gstack-extend'), { recursive: true });
+      if (unsafe === 'outside-home') {
+        const outside = join(baseTmp, 'call-helper-outside');
+        mkdirSync(outside);
+        symlinkSync(outside, dir);
+      } else {
+        mkdirSync(dir);
+        chmodSync(unsafe === 'parent-world-writable' ? join(home, '.gstack-extend') : dir, 0o777);
+      }
+      const marker = '#!/bin/sh\nexit 0\n';
+      writeFileSync(installed(home), marker);
+      for (const uninstall of [false, true]) {
+        const skill = join(hostDir(home, 'codex'), 'implement');
+        if (uninstall) {
+          mkdirSync(skill, { recursive: true });
+          writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
+          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+        }
+        const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain(unsafe === 'outside-home' ? 'outside resolved $HOME' : 'world-writable');
+        expect(readFileSync(installed(home), 'utf8')).toBe(marker);
+        expect(existsSync(skill)).toBe(uninstall);
+        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+      }
+    });
+  }
+
+  for (const leafKind of ['directory', 'symlink-to-directory'] as const) {
+    test(`helper leaf ${leafKind} is refused before install or uninstall touches anything`, () => {
+      const home = join(baseTmp, `call-helper-leaf-${leafKind}`);
+      mkdirSync(join(home, '.gstack-extend', 'bin'), { recursive: true });
+      const target = leafKind === 'directory' ? installed(home) : join(baseTmp, 'call-helper-leaf-outside');
+      mkdirSync(target);
+      writeFileSync(join(target, 'keep'), 'personal file');
+      if (leafKind === 'symlink-to-directory') symlinkSync(target, installed(home));
+      for (const uninstall of [false, true]) {
+        const skill = join(hostDir(home, 'codex'), 'implement');
+        if (uninstall) {
+          mkdirSync(skill, { recursive: true });
+          writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
+          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+        }
+        const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain('telemetry-call');
+        expect(readdirSync(target)).toEqual(['keep']);
+        expect(readFileSync(join(target, 'keep'), 'utf8')).toBe('personal file');
+        expect(lstatSync(installed(home)).isSymbolicLink()).toBe(leafKind === 'symlink-to-directory');
+        expect(existsSync(skill)).toBe(uninstall);
+        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+      }
+    });
+  }
+
   for (const host of ['claude', 'codex', 'opencode', 'cursor'] as const) {
     test(`${host} setup installs an executable byte-identical copy, and uninstall removes it`, () => {
       const home = join(baseTmp, `call-helper-${host}`);

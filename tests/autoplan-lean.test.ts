@@ -495,6 +495,40 @@ describe('transport contract shape', () => {
       }
     });
 
+    test('a wrapped Branch still binds the stage HEAD', () => {
+      const out = sealed();
+      const wrap = (text: string) => text.replace('; target base:', ';\n  target base:');
+      expect(checkText(wrap(boundMessage(out))).code).toBe(0);
+      for (const head of ['f'.repeat(40), 'none']) {
+        const text = wrap(boundMessage(out, { stage: stageLine(planSha(out), head) }));
+        expect(checkMessage(text)).toEqual([]);
+        const result = checkText(text);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toContain("does not match the prompt's Branch HEAD");
+      }
+    });
+
+    test('a stage line requires a fenced handoff even when the legacy raw prompt is valid', () => {
+      const text = boundMessage(sealed()).replace(/^```(?:text)?\s*$/gm, '');
+      expect(checkMessage(text)).toEqual([]);
+      const result = checkText(text);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toContain('fenced handoff');
+    });
+
+    test('outer fields cannot supply the bindings of an incomplete fenced prompt', () => {
+      const out = sealed();
+      const good = boundMessage(out);
+      const inner = /```text\n([\s\S]*?)\n```/.exec(good)![1]!;
+      const branch = inner.split('\n').find(line => line.startsWith('Branch:'))!;
+      const outer = inner.slice(0, inner.indexOf('Auto-decisions:')).replace(branch + '\n', '');
+      const text = `${outer}\n\`\`\`text\nRun /implement /wrong.plan.md\n${branch}\nAuto-decisions:\n- [fork] bounded scope\n  \`\`\`\n${stageLine(planSha(out))}\n`;
+      const result = checkText(text);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toContain('does not match the checked plan');
+      expect(result.stdout).toContain('missing required field');
+    });
+
     test('without a binding, checkStageLine still checks shape but cannot compare the plan', () => {
       const out = sealed();
       expect(checkStageLine(boundMessage(out, { stage: stageLine('0'.repeat(64)) }))).toEqual([]);

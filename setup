@@ -1414,6 +1414,27 @@ if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ "$SKIPPED_NON_CURS
   [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
 
+# Every native host executes this shared helper. Validate its destination before publishing
+# skills or removing any helper so a symlink cannot redirect executable ownership outside HOME.
+telemetry_call_dir="$HOME/.gstack-extend/bin"
+if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
+  is_safe_install_path "$HOME" || exit 1
+  is_safe_install_path "$HOME/.gstack-extend" || exit 1
+  is_safe_install_path "$telemetry_call_dir" || exit 1
+  # An allowed in-HOME symlink can introduce additional ancestors. Check the
+  # resolved chain too, so none can let another user replace the executable subtree.
+  _telemetry_parent="$(_resolve_path "$(_nearest_existing_ancestor "$telemetry_call_dir")")" || exit 1
+  _telemetry_home="$(_resolve_path "$HOME")" || exit 1
+  while [ "$_telemetry_parent" != "$_telemetry_home" ]; do
+    _telemetry_parent="$(dirname "$_telemetry_parent")"
+    is_safe_install_path "$_telemetry_parent" || exit 1
+  done
+  if [ -L "$telemetry_call_dir/telemetry-call" ] || { [ -e "$telemetry_call_dir/telemetry-call" ] && [ ! -f "$telemetry_call_dir/telemetry-call" ]; }; then
+    echo "Error: $telemetry_call_dir/telemetry-call must be absent or a regular file, not a symlink or directory" >&2
+    exit 1
+  fi
+fi
+
 # ─── Uninstall ─────────────────────────────────────────────────────
 if [ "$UNINSTALL" -eq 1 ]; then
   report_unserved_cursor
@@ -1587,11 +1608,10 @@ wire_bin "$SCRIPT_DIR/bin/gstack-extend-telemetry" "gstack-extend-telemetry"
 # The telemetry blocks in every skill call this resolver at one fixed path. A copy, not a symlink, so a moved
 # checkout does not break the ladder it holds; written through a temp file, so a block never runs half a script.
 # Like the project registration, it ignores GSTACK_EXTEND_STATE_DIR. A missing source is skipped, as wire_bin does.
-telemetry_call_dir="$HOME/.gstack-extend/bin"
 install_telemetry_call() {
   local src="$SCRIPT_DIR/bin/lib/telemetry-call.sh" tmp
   [ -f "$src" ] || return 0
-  mkdir -p "$telemetry_call_dir" 2>/dev/null || return 0
+  (umask 077; mkdir -p "$telemetry_call_dir") 2>/dev/null || return 0
   tmp="$(mktemp "$telemetry_call_dir/.telemetry-call.XXXXXX" 2>/dev/null)" || return 0
   if cp "$src" "$tmp" 2>/dev/null && chmod 755 "$tmp" 2>/dev/null && mv -f "$tmp" "$telemetry_call_dir/telemetry-call" 2>/dev/null; then
     log "Installed telemetry-call → $telemetry_call_dir/telemetry-call"

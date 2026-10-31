@@ -212,7 +212,7 @@ export function checkPlan(bytes: Uint8Array, readSidecar: SidecarReader): string
 export const STAGE_LINE = /^Stage handoff: stage-handoff\/v1; stage: (plan|implement|review); next: (implement|review-and-prep|ship-and-land|pair-review|none); status: (done|done-with-concerns|paused|stopped|blocked|needs-context); head: ([0-9a-f]{40}|none); plan-sha256: ([0-9a-f]{64}|none)$/;
 
 /** The handoff block at the end of the message, or undefined. */
-export function handoffBlock(message: string): string[] | undefined {
+export function handoffBlock(message: string, fencedOnly = false): string[] | undefined {
   const raw = message.replace(/\s+$/, '').split('\n').map((l) => l.replace(/\r$/, ''));
   // Exactly one trailing stage line is outside the handoff; anything else after the block still fails below.
   if (STAGE_LINE.test(raw[raw.length - 1] ?? '')) {
@@ -243,7 +243,7 @@ export function handoffBlock(message: string): string[] | undefined {
       if (inner.some((l) => { const c = /^\s*(`{3,}|~{3,})\s*$/.exec(l); return !!c && c[1]![0] === fence!.char && c[1]!.length >= fence!.length; })) continue;
       return inner;
     }
-    if (RUN.test(line)) return raw.slice(i);
+    if (RUN.test(line) && !fencedOnly) return raw.slice(i);
   }
   return undefined;
 }
@@ -268,26 +268,24 @@ export function checkStageLine(message: string, binding?: PromptBinding): string
   if (next !== 'implement') problems.push(`the stage handoff line names next ${next}; a handoff prompt goes with next: implement`);
   if (status !== 'done' && status !== 'done-with-concerns') problems.push(`the stage handoff line has status ${status}; a handoff prompt goes with done or done-with-concerns`);
   if (binding && planSha !== binding.planSha256) problems.push('the stage handoff line plan-sha256 does not match the checked plan (stale line; re-seal or update it)');
-  const branch = (handoffBlock(message) ?? []).map((l) => /^Branch:\s+[^;<>]+;\s*target base:\s*[^;<>]+;\s*HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$/.exec(l)?.[1]).find(Boolean);
-  if (branch !== undefined && head !== branch) problems.push(`the stage handoff line head (${head}) does not match the prompt's Branch HEAD (${branch})`);
+  const block = handoffBlock(message, true);
+  if (!block) {
+    problems.push('the stage handoff line must follow a fenced handoff block');
+    return problems;
+  }
+  // The legacy parser may select raw text before this fence. Validate the selected
+  // copyable block itself so those outer fields cannot supply its required bindings.
+  problems.push(...checkMessage(block.join('\n'), binding));
+  const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
+  const value = promptFields(block, label).seen.get('Branch')?.trim();
+  const branch = value && /^[^;<>]+;\s*target base:\s*[^;<>]+;\s*HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$/.exec(value)?.[1];
+  if (!branch) problems.push("the stage handoff line cannot bind to the prompt's Branch HEAD");
+  else if (head !== branch) problems.push(`the stage handoff line head (${head}) does not match the prompt's Branch HEAD (${branch})`);
   return problems;
 }
 
-export function checkMessage(message: string, binding?: PromptBinding): string[] {
-  const block = handoffBlock(message);
-  if (!block) return ['the final message does not end with a block whose first line starts "Run /implement"'];
-  const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
-  if (label < 0) return ['the handoff block has no bare "Auto-decisions:" line after "Run /implement"'];
-
+function promptFields(block: string[], label: number) {
   const problems: string[] = [];
-  const run = /^Run \/implement(?:\s+(\S.*?))?\s*$/.exec(block[0]!);
-  const runPlan = run?.[1];
-  if (!runPlan || /^<[^>]+>$/.test(runPlan)) {
-    problems.push('the first line of the handoff block must be "Run /implement <ACTIVE_PLAN>" with a concrete plan path');
-  } else if (!runPlan.startsWith('/')) {
-    problems.push(`the "Run /implement" plan path must be an absolute path, got ${runPlan}`);
-  }
-
   const seen = new Map<string, string>();
   let currentLabel: string | undefined;
   const consumed = new Set<number>();
@@ -316,6 +314,27 @@ export function checkMessage(message: string, binding?: PromptBinding): string[]
       consumed.add(idx + 1);
     }
   }
+
+  return { seen, consumed, problems };
+}
+
+export function checkMessage(message: string, binding?: PromptBinding): string[] {
+  const block = handoffBlock(message);
+  if (!block) return ['the final message does not end with a block whose first line starts "Run /implement"'];
+  const label = block.findIndex((l) => /^\s*(?:[-*+]\s+)?(?:\*\*|__)?auto-decisions(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(l));
+  if (label < 0) return ['the handoff block has no bare "Auto-decisions:" line after "Run /implement"'];
+
+  const problems: string[] = [];
+  const run = /^Run \/implement(?:\s+(\S.*?))?\s*$/.exec(block[0]!);
+  const runPlan = run?.[1];
+  if (!runPlan || /^<[^>]+>$/.test(runPlan)) {
+    problems.push('the first line of the handoff block must be "Run /implement <ACTIVE_PLAN>" with a concrete plan path');
+  } else if (!runPlan.startsWith('/')) {
+    problems.push(`the "Run /implement" plan path must be an absolute path, got ${runPlan}`);
+  }
+
+  const { seen, consumed, problems: fieldProblems } = promptFields(block, label);
+  problems.push(...fieldProblems);
 
   const missing = PROMPT_LABELS.filter((k) => {
     const v = seen.get(k)?.trim();
