@@ -154,7 +154,9 @@ describe('qualified severity labels', () => {
     }
   });
   both('a qualifier that names a severity word is not rewritten, while a hyphen compound is', classifier => {
-    rows(classifier, ['[P3, high] note', '[P1, low] crash', '[P3, HIGH] note', '[P2, high confidence] note'].map(text => [text, UNREAD] as const), true);
+    rows(classifier, ['[P3, high] note', '[P1, low] crash', '[P3, HIGH] note', '[P2, high confidence] note',
+      '[P3-high] note', '[P3-critical] note', '[P3 -HIGH] note', '[P1-low] crash', '[P2-medium] note',
+      '[P3-high]', '[P3-critical]'].map(text => [text, UNREAD] as const), true);
     rows(classifier, ['[P3, low-risk] note', '[P3, non-critical] note', '[P3, severity]: high', '[P3, x -] high'].map(text => [text, credited('P3')] as const));
   });
 

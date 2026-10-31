@@ -91,7 +91,7 @@ review capability. First real post-release review measurement is still required.
 
 The installed classifier owns severity and execution checks. Recovery accepts
 only a completed execution, normalizes wrapped recommendation headings and
-lowercase priority labels, and permits a missing recommendation when the
+lowercase priority labels and one-severity qualified labels, and permits a missing recommendation when the
 upstream structured validator independently establishes findings or an explicit
 no-findings conclusion. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
