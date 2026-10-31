@@ -7,6 +7,9 @@ export interface Classification {
 }
 export type Classifier = (input: { text: string; gate: 'review' | 'structured'; exit: number; stderr: string }) => Classification;
 
+// One severity plus a qualifier is formatting. Never quotes (`>`, code spans) or a second severity, token or word.
+const QUALIFIED_LABEL = /^(\s*(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__)?\[P[0-3])(?:\s*[,;:/—–-]\s*|\s+)([a-z][a-z -]*)\]/i;
+
 /** Recover formatting only. The upstream validator still owns execution and severity. */
 export function recover(text: string, gate: 'review' | 'structured', exit: number, stderr: string, classify: Classifier) {
   const original = classify({ text, gate, exit, stderr });
@@ -28,6 +31,9 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
     if (/^NEEDSCONTEXT(?:\s*(?::|[—–-]|\||$)|\s+because\b)/i.test(body)) needsContext = true;
     // Only label positions, never identifiers or quoted examples in finding prose.
     return line.replace(/^(\s*(?:>\s*)?(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__|`)?\[?)p([0-3])\b/i, '$1P$2')
+      .replace(QUALIFIED_LABEL, (label, prefix: string, qualifier: string) =>
+        /(?<![a-z]-|[a-z])(?:critical|high|medium|low)(?![a-z]|-[a-z])/i.test(qualifier)
+          ? label : `${prefix}] (${qualifier})`)
       .replace(/`[^`]*`|(\|\s*(?:\*\*|__|`)?\[?)p([0-3])(?=\]?(?:\*\*|__|`)?\s*\|)/gi,
         (span, before: string | undefined, priority: string) => before === undefined ? span : `${before}P${priority}`);
   }).join('\n').replace(/^(\s*(?:[-*] |#{1,6} )?)(?:\*\*|__)?(Recommendation|Verdict)(?:\*\*|__)?\s*:\s*\n\s*/gim, '$1$2: ');
