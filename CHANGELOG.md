@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.54.0] - 2026-10-31
+
+### Added
+
+- **`/review-and-prep` has an external review test gate.** The handoff can pause, or it can record a pass or fail result.
+- **Lean parent reads.** `/review-and-prep` reads the parent plan leanly.
+
+### Fixed
+
+- **Resume keeps the external gate.** Resuming `/review-and-prep` preserves the external gate's resume state and its receipt.
+
+### Upgrade notes
+
+- **Handoff outcomes.** A `/review-and-prep` handoff can now include a pause, or a pass or fail result, for the external review test gate. A reader that follows `docs/workflow-handoffs.md` still works; a reader that only matched the previous handoff can miss the gate's outcome.
+
 ## [0.53.0] - 2026-10-30
 
 ### Changed
