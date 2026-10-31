@@ -775,7 +775,8 @@ const EXTERNAL_PAUSE = /^External gate: external-gate\/v1; head: ([0-9a-f]{40});
 function classifyExternalPause(lines: string[], after: string[], live: Live): Verdict {
   const v = new Verdict('H-F', FULL);
   const line = lines[0];
-  const seen = /^External gate: external-gate\/(v\d+);/.exec(line)?.[1];
+  scanTokens(v, { fields: new Map([['External gate', [[line]]]]), unknown: [], extensions: [] }, lines);
+  const seen = /^External gate: external-gate\/(v\d+)\b/.exec(line)?.[1];
   if (seen !== 'v1') {
     v.flag('external-gate-version', HOLD, 'external-gate/v1', seen ? `external-gate/${seen}` : 'no version');
     return v;
@@ -783,7 +784,6 @@ function classifyExternalPause(lines: string[], after: string[], live: Live): Ve
   const m = EXTERNAL_PAUSE.exec(line);
   if (!m) v.flag('external-gate-line', HOLD, 'External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>', line);
   else if (after.some((l) => l.trim() !== '')) v.flag('external-gate-line', HOLD, 'the pause as the last line of the turn', 'text after the line');
-  scanTokens(v, { fields: new Map([['External gate', [[line]]]]), unknown: [], extensions: [] }, lines);
   if (unknownLive(v, live)) return v;
   unread(v, live, ['callerPolicy', 'headSha', 'headTree', 'baseTip', 'prState', ...(live.prState === 'OPEN' ? ['isDraft'] : [])], ['isDraft']);
   if (!m) return v;
@@ -1491,7 +1491,7 @@ function parseResult(line: string): ExternalResult | null {
   const l = /^log: (\S.*)$/.exec(log);
   if (!r || !h || !t || !c || !e || !l) return null;
   const code = Number(e[1]);
-  if ((r[1] === 'pass') !== (code === 0)) return null;
+  if (r[1] === 'pass' ? e[1] !== '0' : code === 0) return null;
   return { result: r[1] as 'pass' | 'fail', head: h[1], tree: t[1], command: c[1], exit: code, log: l[1] };
 }
 
@@ -1653,4 +1653,24 @@ describe('(E) the external gate and lean parent reads', () => {
       "A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write",
     ]) expect(has(doc, phrase), phrase).toBe(true);
   });
+});
+
+// Value: protects=literal pass exit and token redaction on unsupported versions; fails_when=00 passes or an early version return skips redaction; why_new=Track 48A review regression; seam=none; no_claim=installed-agent execution
+test('external result uses literal zero and every pause version scans tokens', () => {
+  const pass = fixtureText({ text: 'f-result-pass.txt' }).trimEnd();
+  expect(parseResult(pass.replace('exit: 0', 'exit: 00'))).toBeNull();
+  const missingSeparator = run('F-PAUSE', { edits: [['external-gate/v1;', 'external-gate/v1']] });
+  expect(missingSeparator.mismatches.map(m => m.binding)).toContain('external-gate-line');
+  expect(missingSeparator.mismatches.map(m => m.binding)).not.toContain('external-gate-version');
+  const unknownToken = run('F-PAUSE', { edits: [['external-gate/v1', 'external-gate/v2'], [FIX.vars.HEAD, VARS.TOKEN]] });
+  expect(unknownToken.mismatches.map(m => m.binding)).toContain('external-gate-version');
+  expect(unknownToken.mismatches.map(m => m.binding)).toContain('redaction');
+  expect(JSON.stringify(unknownToken)).not.toContain(VARS.TOKEN);
+  for (const verdict of [
+    run('F-PAUSE', { edits: [[FIX.vars.HEAD, VARS.TOKEN]] }),
+    run('F-PAUSE', { suffix: VARS.TOKEN }),
+  ]) {
+    expect(verdict.mismatches.map(m => m.binding)).toContain('redaction');
+    expect(JSON.stringify(verdict)).not.toContain(VARS.TOKEN);
+  }
 });

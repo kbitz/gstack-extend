@@ -35,7 +35,8 @@ by rule, and the count it removes is unknown until a real run records it.
   is unknown.
 - A pass is caller-attested, so `/ship-and-land` still runs its own test gate, and
   a repository whose main command is the whole suite runs it again there. The
-  single full run holds at review only.
+  omitted main-command fallback is a preparation-only change; pregate can still
+  select the whole suite.
 
 ## Measurement fields
 

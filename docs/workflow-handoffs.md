@@ -961,8 +961,15 @@ H-C's hold for manual testing. The head may be unpushed and a PR may not exist
 yet. The caller runs the full suite itself on that head and tree, then resumes
 with one result line in the invocation prompt.
 
-The pause line, printed unfenced as the last line of the turn. Text before it
-(the evidence directory, `Auto-chosen` lines) is free-form and not a binding:
+Preparation prints `Evidence directory: <absolute path>` before the pause line.
+Carry that labeled line in the resume prompt as a locator, never as authority;
+preparation verifies its durable-root provenance and reads the highest checkpoint
+sequence plus later state records. A corrupt or incomplete newest record makes
+history unverifiable; never fall back to an older intact checkpoint. State records
+preserve consumed allowance and the no-content retry count and cause links.
+
+The pause line is printed unfenced as the last line of the turn. Text before it
+(the evidence directory, `Auto-chosen` lines) is not a binding:
 
 `External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`
 
@@ -991,7 +998,8 @@ lacks `full-suite=external` or a line from anywhere but the invocation prompt
 preparation prints `External gate result: none accepted (<redacted reason>)` and
 continues to a new pause, or to its default behavior when the value is absent.
 `command` and `log` are never executed or placed in a shell, and the preparation
-scans them with its redaction step before any receipt write.
+scans them with its redaction step before any receipt write. Both values in the
+receipt use the scan's output.
 
 The caller flow, in order:
 
@@ -999,15 +1007,21 @@ The caller flow, in order:
    exits 0 when supported. If it fails, omit the value and keep the other keys.
 2. Send the policy line with `full-suite=external` in the invocation prompt.
    Never also name `final`: a repeated key reads as `none supplied`.
-3. Recognize the pause by its last line starting `External gate: external-gate/v1;`
-   and classify it against the case list. Only a match of the caller's own
-   policy, head, tree and base reaches `FULL_CHECK_REQUIRED`.
+3. Recognize the pause family by its last line starting `External gate: external-gate/v`
+   and classify it against the case list; an unknown version holds. Only a match
+   of the caller's own policy, head, tree and base reaches `FULL_CHECK_REQUIRED`.
 4. Run the caller's own full-suite command on that head and tree, outside the
    stage. For H-F the next action is that command, not a stage; the stage does
    not run it.
 5. Resume with `/review-and-prep resume` in the same workspace and branch, with
-   the same policy line and exactly one result line. A head that moved since the
-   pause, a dirty checkout or a base merge makes the line unusable and the
+   the evidence directory printed at the pause, the same policy line and exactly
+   one result line. Preparation restores its verified local checkpoint, including
+   earlier attestations and any pending repair chain; no PR or H-C marker is
+   required when no existing manual-testing or cycle-cap hold applies. A fresh
+   invocation without a checkpoint rebuilds
+   missing preparation evidence before evaluating the result; it never resets a
+   consumed repair allowance or claims a missing repair chain. A head that moved
+   since the pause, a dirty checkout or a base merge makes the line unusable and the
    preparation prints a new pause line; run the command again on that one.
 
 Text after the pause line, a PR that exists but is not `OPEN` and a PR that is
@@ -1015,20 +1029,23 @@ already ready hold as `external-gate-line`, `pr-state` and `pr-ready`.
 A consumer without H-F reads the pause as a bare summary with a full SHA and
 holds it (H-D).
 
-On `pass` the preparation still runs its pregate, which runs its selection and
-not a second full suite, records the result in its receipt and goes to readiness;
+On `pass` the preparation still runs its pregate with its ordinary selection,
+which can itself be the whole suite; it adds no main-command fallback run.
+It records the result in its receipt and goes to readiness;
 the pass is never a `tests` ledger record. On `fail` it follows its ordinary
 final-gate failure rule, including the repair under `final-gate-repair=tests-docs`
 when that key is on the line. The receipt row for each accepted line:
 
 `External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`
 
-The row is receipt-present: a consumer may show it and it never authorizes a stage
-or a merge. An attested pass never satisfies `/ship-and-land`'s test gate, which
+Readiness requires the latest accepted result to be a pass for the final head
+and tree; earlier rows remain historical. The row is receipt-present: a consumer
+may show it and it never authorizes a stage or a merge. An attested pass never satisfies `/ship-and-land`'s test gate, which
 is unchanged: it accepts a fresh ledger entry, an authenticated check run or a
 live run, and a recorded `full-suite=final` keeps its final pre-merge run full. A
 repository whose main command is the whole suite runs it again at ship, so the
-single full run holds at review only. `docs/acceptance/external-gate.md` records
+omitted main-command fallback is a preparation-only change; pregate can still
+select the whole suite. `docs/acceptance/external-gate.md` records
 the added turn end and colder resume against the waits it replaces; no saving is
 established.
 
@@ -1121,7 +1138,8 @@ scope sources by path and SHA-256, and H-A cites the plan by path. `/implement` 
 prompt with `gstack-redact --from-file` before emitting it. `/review-and-prep` scans the
 PR text and comments it writes; its H-B and H-C prompts carry identifiers, hashes and
 fixed text. `/pair-review`'s resume prompt copies item titles the user entered, unscanned.
-A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write.
+A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write. Both values in the
+receipt use the scan's output.
 
 A consumer therefore scans the whole input, outside text included. A token-shaped value anywhere returns
 `HOLD` with `redaction`, names the field (or `unlabeled text`) and never echoes the value,

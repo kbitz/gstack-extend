@@ -1501,7 +1501,7 @@ describe('review-and-prep external full-suite gate', () => {
     expect(pause).toContain("Then run item 4's pregate once in its existing ledger-wrapped form, with no flag that widens its selection; its selection does not depend on the pass.");
     expect(pause).toContain("Item 4's fallback to the documented main command under `tests` does not run, because the accepted pass stands for that main-suite run.");
     expect(pause).toContain('Write no `gstack-evidence` record for the attested pass, and never relabel or import it as one.');
-    expect(pause).toContain("A failure of that pregate takes item 4's failure rule unchanged.");
+    expect(pause).toContain("A failure of that pregate takes item 4's failure rule, except for the explicit raw-secret branch below.");
     expect(pause).toContain("**Fail.** Add the same receipt row, then take item 4's failure rule: fix it like any other, with **Repair a test-only final-gate failure** first when `final-gate-repair=tests-docs` is on the line.");
     expect(pause).toContain("Any fix moves the head, so the gate's rerun is a new pause on the new frozen content, followed by item 4's pregate on a pass.");
     // The existing repair pins stay, and the repair names the new path.
@@ -1510,7 +1510,7 @@ describe('review-and-prep external full-suite gate', () => {
     expect(repair).toContain("`gate=` in the `Final-gate repair rerun` line names that pregate's ledger record with `selection`, and the line's format is unchanged.");
     expect(repair).toContain('A log the skill cannot read gives `no-diagnosis`.');
     // Readiness and the receipt list carry the attestation rows.
-    expect(readiness).toContain("Under `full-suite=external`, an accepted pass's `External gate attestation:` row also carries a head and tree equal to the final head and tree.");
+    expect(readiness).toContain("Under `full-suite=external`, the latest accepted result must be a pass whose `External gate attestation:` row carries a head and tree equal to the final head and tree. Keep older rows as history; they cannot satisfy this gate.");
     expect(readiness).toContain('every `External gate attestation:` row (each accepted result line adds one)');
     expect(readiness).toContain('the `Final-gate repair` lines when a repair ran');
   });
@@ -1539,4 +1539,59 @@ describe('review-and-prep external full-suite gate', () => {
     expect(flat).toContain('Check every 30–60 seconds, with concise progress updates.');
     expect(flat).toContain('poll `mergeable` for a bounded time while it is UNKNOWN');
   });
+});
+
+// Value: protects=cold resumes restore stage and repair evidence without treating files as policy/result authority; fails_when=external pause loses its route, history, repair chain or fresh-invocation path; why_new=Track 48A review regression; seam=none; no_claim=installed-agent execution
+test('external cold resume connects its checkpoint to repair readiness', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = raw.replace(/\s+/g, ' ');
+  const pause = skillSection(raw, '### Pause for an external full-suite gate').replace(/\s+/g, ' ');
+  const readiness = skillSection(raw, '### Readiness').replace(/\s+/g, ' ');
+  expect(flat).toContain('With `full-suite=external` in the invocation prompt, read **Resume entry**');
+  expect(pause).toContain('Before every pause, save a new checkpoint');
+  expect(pause).toContain('Retain auto-choices and every accepted attestation row in order');
+  expect(pause).toContain('B and S, repair commit, diagnosis, path classification, targeted ledger and native adversarial evidence');
+  expect(pause).toContain('mark the full-gate rerun pending, never passed');
+  expect(pause).toContain('verify its evidence hashes, Git snapshots, ledger records and review coverage before reusing completed stages');
+  expect(pause).toContain("A fresh invocation without a checkpoint runs ordinary preparation to the gate slot and may still accept its prompt's result on unchanged content");
+  expect(pause).toContain('Missing or unverifiable repair history takes the existing `interrupted`/consumed fallback and ordinary review coverage');
+  expect(pause).toContain('The current prompt must still supply the policy and result; a checkpoint is not their source.');
+  expect(pause).toContain('monotonic sequence number and the preceding checkpoint hash');
+  expect(pause).toContain('Never fall back to an older intact checkpoint when a newer one is corrupt or incomplete');
+  expect(pause).toContain('Persist each accepted attestation before taking its pass/fail action');
+  expect(pause).toContain('persist allowance consumption atomically with the diagnosis record, after its snapshot/coverage prerequisites and before any edit');
+  expect(pause).toContain('recompute the repair path and content classification from Git');
+  expect(pause).toContain('Only a first invocation with neither `resume`, a result line nor prior invocation evidence starts with an unused allowance');
+  expect(pause).toContain('`Evidence directory: <absolute path>`');
+  expect(pause).toContain('A failed state write stops BLOCKED before the action proceeds.');
+  expect(pause).toContain('use exclusive creation, never overwrite an existing sequence');
+  expect(pause).toContain('regular owned files with no symlink redirection within the invocation directory');
+  expect(pause).toContain('Compare parsed policy key/value pairs');
+  expect(pause).toContain('restore the no-content rerun count and linked cause records');
+
+  expect(readiness).toContain('Only for an external-gate pause, its verified local checkpoint may supply the pending chain instead');
+  expect(readiness).toContain('complete the full-gate rerun and all repair freshness checks before writing the three receipt lines');
+});
+
+// Value: protects=preflight uses existing approved-disposition semantics without crediting tests, and pause retries retain content gates; fails_when=raw secret false positives loop or changed content bypasses its audits; why_new=Track 48A review regression; seam=none; no_claim=installed-agent execution
+test('external preflight preserves approved dispositions and affected gates', () => {
+  const pause = skillSection(readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8'), '### Pause for an external full-suite gate').replace(/\s+/g, ' ');
+  expect(pause).toContain('Evaluate the untouched preflight record with **Reviewed secret findings**, adding `--stage preflight`');
+  expect(pause).toContain('The same approval rules apply; no new disposition is inferred.');
+  expect(pause).toContain('This record still grants no test or full-pregate credit.');
+  expect(pause).toContain('Require a clean index and worktree, including unrelated tracked and untracked changes');
+  expect(pause).toContain('rerun each affected review, coverage and documentation gate under its existing freshness rule and attempt bound');
+  expect(pause).toContain('with both command and log as the scan left them');
+  expect(pause).toContain('Escape Markdown and HTML metacharacters in these values');
+  expect(pause).toContain("Without a declared runner, run item 4's ordinary pregate and any separately required lanes");
+  expect(pause).toContain('pause again on the same frozen head; do not create an empty commit');
+  expect(pause).toContain('A wrapper-satisfied raw secret failure keeps the failed pregate ledger record');
+  expect(pause).toContain('does not consume a repair allowance and does not restore the main-command fallback');
+  expect(pause).toContain('At most one no-content rerun per invocation');
+  expect(pause).toContain('A later pass on that same tree requires the linked cause record');
+  expect(pause).toContain("independently checked transient cause, not just a log's assertion");
+  expect(pause).toContain('A pending final-gate repair takes `gate-failed-again` on this raw failure');
+  expect(pause).toContain('never writes a `pass` repair-rerun line against a failed ledger record');
+
+
 });
