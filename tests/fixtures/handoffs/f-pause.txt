@@ -1,0 +1,3 @@
+Evidence directory: /home/example/.gstack/projects/example-repo/review-and-prep/feature-handoff-demo
+Auto-chosen (veto by replying on this PR): Rename the helper? → keep the name
+External gate: external-gate/v1; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3

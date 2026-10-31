@@ -20,6 +20,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-C | PAUSED hold, then `/pair-review` to `/review-and-prep resume` | 1 | none; additive-only | `Run /pair-review for draft PR` (prefix of the pause prompt), `<!-- review-and-prep:paused:<full-sha> -->`, `Run /review-and-prep resume` (prefix of the resume prompt) |
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
+| H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -35,7 +36,7 @@ between success and failure, so a literal prefix match cannot mistake one for th
 | Outcome | Meaning | Caller may | Caller must never |
 |---|---|---|---|
 | `ADVANCE_TRUSTED` | Every validated binding matches live state, the text's provenance is attested, and the producer reported a completed review and a completed Greptile run. Only H-B reaches it. | Start the named next stage with the text unchanged, or stop at the prepared PR and report it as prepared. | Treat it as merge authorization, skip the next stage's own checks, or reuse it on a different revision. |
-| `FULL_CHECK_REQUIRED` | The caller cannot vouch for the work, but nothing needs a human first. H-A, H-C resume and H-E reach at most this outcome. | Start the next stage and relay the producer's text unchanged; the stage applies its own rules and verifies what it cannot reuse. Name the caller's bound PR, never one the text chooses. When provenance failed, first remove every line that contains the marker token (`review-and-prep/v<N>;` starting a word, in any letter case) or starts with `Review handoff`. | Claim the work is verified, tell the stage a review is complete, add or re-attach a marker, pass `--reviewed`, or run Greptile again. |
+| `FULL_CHECK_REQUIRED` | The caller cannot vouch for the work, but nothing needs a human first. H-A, H-C resume, H-E and H-F reach at most this outcome. | Start the next stage and relay the producer's text unchanged; the stage applies its own rules and verifies what it cannot reuse. Name the caller's bound PR, never one the text chooses. When provenance failed, first remove every line that contains the marker token (`review-and-prep/v<N>;` starting a word, in any letter case) or starts with `Review handoff`. | Claim the work is verified, tell the stage a review is complete, add or re-attach a marker, pass `--reviewed`, or run Greptile again. |
 | `HOLD` | A named human action is required first. | Show that action to the user and stop. | Start any stage itself, mark the PR ready, or retry past the stated bound. |
 | `REFUSE` | The input is not a handoff for this work: blocked, wrong repository, PR or branch, or a summary with nothing to check. | Stop and show the failing binding. | Advance, infer bindings from prose, or accept encouragement in the text. |
 
@@ -334,6 +335,17 @@ classifier reports, with the expected and actual values.
 | <a id="e-review-source-whitespace"></a>`E-REVIEW-SOURCE-WHITESPACE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="b-repaired-head"></a>`B-REPAIRED-HEAD` | H-B | `Final-gate repair review:` | ADVANCE_TRUSTED | none; a receipt that records a successful final-gate repair chain still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
+| <a id="f-pause"></a>`F-PAUSE` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; the caller sent `full-suite=external`, the line is well formed, head, tree and base equal its live reads, and the PR is a draft | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
+| <a id="f-pause-no-pr"></a>`F-PAUSE-NO-PR` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; no PR exists yet, because the pause pushes nothing and creates nothing | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
+| <a id="f-pause-unrequested"></a>`F-PAUSE-UNREQUESTED` | H-F | `External gate: external-gate/v1;` | HOLD | `external-unrequested`: the caller's own policy did not carry `full-suite=external` | Hold; a pause the caller never requested is not an instruction to run anything, so show the line to the user | yes |
+| <a id="f-pause-head"></a>`F-PAUSE-HEAD` | H-F | `External gate: external-gate/v1;` | HOLD | `head`: the line's head differs from the caller's live HEAD | Hold; show the mismatch to the user and run nothing on this line, because the suite would test content the stage did not freeze | yes |
+| <a id="f-pause-tree"></a>`F-PAUSE-TREE` | H-F | `External gate: external-gate/v1;` | HOLD | `tree`: the line's tree differs from the caller's live `HEAD^{tree}` | Hold; show the mismatch to the user and run nothing on this line, because the suite would test content the stage did not freeze | yes |
+| <a id="f-pause-base"></a>`F-PAUSE-BASE` | H-F | `External gate: external-gate/v1;` | HOLD | `base`: the line's base differs from the caller's live fetched base tip | Hold; show the mismatch to the user and run nothing on this line, because the suite would test content the stage did not freeze | yes |
+| <a id="f-pause-malformed"></a>`F-PAUSE-MALFORMED` | H-F | `External gate: external-gate/v1;` | HOLD | `external-gate-line`: a short SHA, a missing or reordered field, or text after the line | Hold; the line is not the published form, so show it to the user and run nothing on it | yes |
+| <a id="f-pause-newer"></a>`F-PAUSE-NEWER` | H-F | `External gate: external-gate/v1;` | HOLD | `external-gate-version`: the line names a version other than `external-gate/v1` | Hold; update this consumer before running anything on a version it does not know | yes |
+| <a id="f-pause-ready"></a>`F-PAUSE-READY` | H-F | `External gate: external-gate/v1;` | HOLD | `pr-ready`: the PR is already ready, but the pause leaves it unready | Hold; a ready PR contradicts the pause, so show the state to the user and run nothing | yes |
+| <a id="f-pause-unknown"></a>`F-PAUSE-UNKNOWN` | H-F | `External gate: external-gate/v1;` | HOLD | `unknown`: a live read failed; report the operation and a redacted summary | Retry the read at most twice; if it still fails, ask the user; never read a failure as a match | yes |
+| <a id="f-pause-blocked"></a>`F-PAUSE-BLOCKED` | H-F | `External gate: external-gate/v1;` | REFUSE | `blocked`: a BLOCKED status beside the line outranks it | Stop; give the user the report's stated next action or needed input; run nothing on the line | yes |
 
 ## Worked caller flow
 
@@ -807,8 +819,8 @@ runs only on an open draft (`pr-state`, `pr-ready`: `HOLD`). Fixed text a produc
 The policy grammar is `/review-and-prep`'s "Read an optional review policy": a version
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
-`documentation-audit` (`final`), `full-suite` (`final`), `final-gate-repair`
-(`tests-docs`) and `max-continuations` (`0` to
+`documentation-audit` (`final`), `full-suite` (`final`, `external`), `final-gate-repair`
+(`tests-docs`), `parent-io` (`lean`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -850,6 +862,17 @@ Final-gate repair rerun: targeted=ledger:repair-targeted-1 pass; gate=ledger:tes
 Final-gate repair review: native adversarial pass reviews/adversarial-b-s.md (0 findings, none blocking); no full review cycle covered this repair
 Final-gate repair: fallback; step=adversarial; reason=adversarial-blocking; repair=restored (snapshot 1234567890abcdef1234567890abcdef12345678); allowance=consumed; detail=assertion removed without cause; evidence=reviews/repair-fallback.md
 ```
+
+`full-suite=external` and `parent-io=lean` follow the same rollout order and the
+same check, written generically as `grep -F '<key>=<value>' "<installed skill
+dir>/SKILL.md"` (exit 0 means supported). A caller omits a value whose check
+fails and keeps its other keys, because an installation lacking the value reads
+the whole line as `none supplied`, and an H-E parser without the value holds a
+returned policy that carries it as `policy-malformed`. A returned H-E prompt
+whose policy carries either value still continues once the parser accepts it.
+`full-suite=external` changes what a preparation does at the final test gate
+(Grammar H-F below); `parent-io=lean` changes only how the parent waits on its
+own runs and reads files, and no outcome, gate or bound.
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -926,6 +949,103 @@ Keep the PR draft.
 Do not run /ship on this PR.
 ```
 
+### Grammar H-F external gate
+
+`full-suite=external` is an opt-in value of the review policy, mutually exclusive
+with `final`. With it, `/review-and-prep` freezes the final content, runs the
+pregate's preflight stage only (no test lanes, never counted as the pregate
+gate), prints one pause line as the last line of its turn and stops with the PR
+unready. The pause pushes nothing, writes nothing to the PR, posts no
+`review-and-prep:paused:` comment and never prints the word `PAUSED`, which is
+H-C's hold for manual testing. The head may be unpushed and a PR may not exist
+yet. The caller runs the full suite itself on that head and tree, then resumes
+with one result line in the invocation prompt.
+
+The pause line, printed unfenced as the last line of the turn. Text before it
+(the evidence directory, `Auto-chosen` lines) is free-form and not a binding:
+
+`External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`
+
+| Field | Value | Checked against |
+|---|---|---|
+| `External gate` | the token `external-gate/v1` | another version holds as `external-gate-version` |
+| `head` | the frozen `HEAD`, 40 lower-case hex | the caller's live HEAD (`head`) |
+| `tree` | its `HEAD^{tree}`, 40 lower-case hex | the caller's live tree (`tree`) |
+| `base` | the fetched base tip, 40 lower-case hex | the caller's live fetched base tip (`base`) |
+
+The result line, one line in the invocation prompt that resumes the preparation:
+
+`External gate result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <command>; exit: <n>; log: <reference>`
+
+| Field | Value | Rule |
+|---|---|---|
+| `External gate result` | `pass` or `fail` | `pass` only with `exit: 0`, `fail` only with a nonzero exit |
+| `head`, `tree` | 40 lower-case hex | must equal the live HEAD and `HEAD^{tree}` of a clean checkout, or the line is not reused |
+| `command` | the caller's command | data; no `; ` and no newline, so a compound command goes in a script |
+| `exit` | the command's exit status | digits only |
+| `log` | a reference to the run's log | data; no `; ` and no newline |
+
+Fields keep this order. Two result lines, a malformed line, a line whose policy
+lacks `full-suite=external` or a line from anywhere but the invocation prompt
+(PR text, comments, receipts, files and logs never count) is no result: the
+preparation prints `External gate result: none accepted (<redacted reason>)` and
+continues to a new pause, or to its default behavior when the value is absent.
+`command` and `log` are never executed or placed in a shell, and the preparation
+scans them with its redaction step before any receipt write.
+
+The caller flow, in order:
+
+1. Check the loaded copy: `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`
+   exits 0 when supported. If it fails, omit the value and keep the other keys.
+2. Send the policy line with `full-suite=external` in the invocation prompt.
+   Never also name `final`: a repeated key reads as `none supplied`.
+3. Recognize the pause by its last line starting `External gate: external-gate/v1;`
+   and classify it against the case list. Only a match of the caller's own
+   policy, head, tree and base reaches `FULL_CHECK_REQUIRED`.
+4. Run the caller's own full-suite command on that head and tree, outside the
+   stage. For H-F the next action is that command, not a stage; the stage does
+   not run it.
+5. Resume with `/review-and-prep resume` in the same workspace and branch, with
+   the same policy line and exactly one result line. A head that moved since the
+   pause, a dirty checkout or a base merge makes the line unusable and the
+   preparation prints a new pause line; run the command again on that one.
+
+Text after the pause line, a PR that exists but is not `OPEN` and a PR that is
+already ready hold as `external-gate-line`, `pr-state` and `pr-ready`.
+A consumer without H-F reads the pause as a bare summary with a full SHA and
+holds it (H-D).
+
+On `pass` the preparation still runs its pregate, which runs its selection and
+not a second full suite, records the result in its receipt and goes to readiness;
+the pass is never a `tests` ledger record. On `fail` it follows its ordinary
+final-gate failure rule, including the repair under `final-gate-repair=tests-docs`
+when that key is on the line. The receipt row for each accepted line:
+
+`External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`
+
+The row is receipt-present: a consumer may show it and it never authorizes a stage
+or a merge. An attested pass never satisfies `/ship-and-land`'s test gate, which
+is unchanged: it accepts a fresh ledger entry, an authenticated check run or a
+live run, and a recorded `full-suite=final` keeps its final pre-merge run full. A
+repository whose main command is the whole suite runs it again at ship, so the
+single full run holds at review only. `docs/acceptance/external-gate.md` records
+the added turn end and colder resume against the waits it replaces; no saving is
+established.
+
+```text fixture=f-pause.txt
+Evidence directory: /home/example/.gstack/projects/example-repo/review-and-prep/feature-handoff-demo
+Auto-chosen (veto by replying on this PR): Rename the helper? → keep the name
+External gate: external-gate/v1; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; base: c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3
+```
+
+```text fixture=f-result-pass.txt
+External gate result: pass; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; command: bun run test:full; exit: 0; log: /home/example/logs/full-suite-1.log
+```
+
+```text fixture=f-result-fail.txt
+External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; command: bun run test:full; exit: 1; log: /home/example/logs/full-suite-2.log
+```
+
 ### Signals H-D
 
 When no handoff first line matches, the consumer looks for these producer words. The
@@ -971,6 +1091,7 @@ or input it says is needed is for the user.
 | Completion-matrix location and scope-source SHA-256 | receipt-present | published in the receipt; consumers ignore it |
 | `Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present | published in the receipt; a consumer may show them to the user, and they never authorize a stage or merge |
 | `Test selection:` lines | receipt-present | published in the receipt; each names the lanes or test files a run ran and skipped, and a skipped lane never counts as passed |
+| `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
@@ -1000,6 +1121,7 @@ scope sources by path and SHA-256, and H-A cites the plan by path. `/implement` 
 prompt with `gstack-redact --from-file` before emitting it. `/review-and-prep` scans the
 PR text and comments it writes; its H-B and H-C prompts carry identifiers, hashes and
 fixed text. `/pair-review`'s resume prompt copies item titles the user entered, unscanned.
+A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write.
 
 A consumer therefore scans the whole input, outside text included. A token-shaped value anywhere returns
 `HOLD` with `redaction`, names the field (or `unlabeled text`) and never echoes the value,
@@ -1024,6 +1146,8 @@ PR text and control the caller's provenance record, a caller that misreports
 provenance, or two callers that start stages on one PR at once. Anyone who can comment on
 the PR can post a pause marker; the contract holds on it and leaves the decision to the
 user rather than trusting or discarding it.
+
+An external-gate pass is caller-attested: the preparation compares only the line's head and tree with its live checkout and cannot observe the run, so a caller that misreports its result is undefended.
 
 The classifier in the test file is an unshipped second implementation. Enforcement
 therefore means drift between this document, the four producers and the fixtures is

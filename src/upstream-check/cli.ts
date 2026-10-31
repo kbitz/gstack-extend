@@ -28,6 +28,10 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'fails closed at call time with "incompatible installed pregate helpers"; outside the launch contracts in docs/upstream-check.md' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'final-gate-repair=tests-docs'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy key, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'full-suite=external'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'parent-io=lean'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
     reason: 'quotes the audit\'s own shell operands, not installed upstream text' },
 ];

@@ -1,0 +1,1 @@
+External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree: b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2; command: bun run test:full; exit: 1; log: /home/example/logs/full-suite-2.log
