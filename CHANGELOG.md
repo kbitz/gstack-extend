@@ -6,13 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Opt-in review repair policies.** Review-and-prep and the upstream check apply a repair policy when you enable one, and that policy reconciles the repair with the final gate.
-- **Neutral repairs keep baseline and invalidated evidence.** Reconciliation reads a neutral repair against the final gate policy and preserves the baseline and invalidated repair evidence.
-- **A neutral repair stays bound to its review.** The repair remains on that review, and the review keeps its existing scope.
+`/review-and-prep` accepts two new optional `Review policy:` values.
+
+- `repair-review=behavior-changing`: a repair that changes no behavior (a docstring or comment, a rename of a name nothing outside the change reads, unreachable code, a redundant handler) opens no further review cycle. Targeted lanes and the single final suite cover it, and only behavior-changing repairs feed the next `in-cap=delta` cycle. A repair that cannot be classified counts as behavior-changing. It applies only while the installed `/review` Fix-First text matches byte for byte; otherwise the review runs today's behavior and the receipt records `repair-review: inactive`. Before sending it, check the loaded copy: `grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+- `repair-cycles=light`: a delta repair cycle makes no outside call and skips the Red Team; the native adversarial pass and force-included specialists still run, and cycle 1 and every full-scope or inactive cycle run as today. It needs no `review_default` config and is independent of the first value. Before sending it, check the loaded copy: `grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+
+Older installations: an installation without a value reads the whole line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`. A caller omits a value whose check fails and keeps its other keys. Omitted, every default is unchanged. Neither value waives a gate or authorizes a continuation.
 
 ### Upgrade notes
 
-- **The new reconciliation waits until you opt in.** Review-and-prep and the upstream check keep the current gate reconciliation until a review repair policy is enabled.
+- **Not yet proven.** No installed agent has run either value, and no saving has been measured. `docs/acceptance/review-fix-policy.md` records the "after" fields as unknown until an opted-in run fills them.
 
 ## [0.54.1] - 2026-10-31
 
