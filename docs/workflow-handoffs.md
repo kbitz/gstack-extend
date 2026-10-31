@@ -1127,6 +1127,7 @@ or input it says is needed is for the user.
 | `Test selection:` lines | receipt-present | published in the receipt; each names the lanes or test files a run ran and skipped, and a skipped lane never counts as passed |
 | `Repair classification:`, `Repair without review cycle:` and `Repair evidence:` lines | receipt-present | published in the receipt under `repair-review=behavior-changing`, one classification per finding and one repair line plus a committed diff binding per repair that opened no review cycle; a consumer may show them to the user, they never authorize a stage or merge, and `/review`'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`) |
 | `repair-cycles=light` skip records | receipt-present | each skip names `source: repair-cycles=light`; an explicit full cycle instead records `repair-cycles=light: nothing skipped — in-cap=full`; these are evidence, never stage or merge authorization |
+| `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The

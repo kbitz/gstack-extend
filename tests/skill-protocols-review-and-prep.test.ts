@@ -1677,13 +1677,13 @@ describe('review-and-prep behavior-changing repair review', () => {
   test('each neutral repair is recorded in one receipt line', () => {
     expect(reopenRaw).toContain('`Repair without review cycle: <fingerprint>; class=<docstring|rename|dead-code|redundant-handler>; paths=<n>; cycle=<n>; targeted=<ledger reference> pass; final-gate=<ledger reference or external attestation or pending>`');
     expect(reopen).toContain('`final-gate=` reads `pending` until the final gate passes, then names its ledger reference or, under `full-suite=external`, the attestation.');
-    expect(reopen).toContain('Pause and stopped receipts carry the status, classification, repair and evidence lines and the policy line that authorized them.');
+    expect(reopen).toContain('Pause and stopped receipts carry the status, classification, repair and evidence lines, every `Repair chain voided:` line and any `neutral-only baseline:` outcome, and the policy line that authorized them.');
     // The handoff contract splits the receipt on the first literal; no earlier occurrence may exist.
     expect(reopenRaw).not.toContain('**Receipt.**');
     expect(prep.indexOf('**Receipt.**')).toBeGreaterThan(prep.indexOf('### Reopen review only for behavior-changing repairs'));
     expect(prep.split('**Receipt.**').length - 1).toBe(1);
     expect(flat).toContain('the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line');
-    expect(flat).toContain('Likewise record the `repair-review:` status and every `Repair classification:`, `Repair without review cycle:` and `Repair evidence:` line, with the policy line that authorized them.');
+    expect(flat).toContain('Likewise record the `repair-review:` status and every `Repair classification:`, `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain voided:` line and any `neutral-only baseline:` outcome, with the policy line that authorized them.');
   });
 
   // Value: protects=readiness accepts a recorded neutral chain for that repair alone, only under the value and not while pending; fails_when=the first exception changes, the second widens or a pending chain counts; why_new=criterion 8; seam=none; no_claim=installed-agent execution
@@ -1701,16 +1701,30 @@ describe('review-and-prep behavior-changing repair review', () => {
     expect(reopenRaw).toContain('`Repair evidence: <fingerprint>; before=<full commit SHA>; after=<full commit SHA>; paths=<exact path list>; diff-sha256=<hash>; diff-check=<evidence reference>`');
     expect(reopen).toContain('The before/after commits must be durable ancestors of the prepared head.');
     expect(reopen).toContain('Before readiness or reuse, recompute the diff, path list and hash, and check that every subsequent change has its own review or neutral chain.');
-    expect(readiness).toContain('Require its verified `Repair evidence:` commit/diff binding and reject any voided chain.');
+    expect(readiness).toContain('Require its verified `Repair evidence:` commit/diff binding and reject any chain with a `Repair chain voided:` record; its repair requires ordinary review coverage.');
   });
 
   // Value: protects=full or inactive cycles retain selection and neutral-only exits cannot invent a completed baseline; fails_when=the mixed split narrows full review or promotes a pending baseline; why_new=outside review found ambiguous scope; seam=none; no_claim=installed-agent execution
   test('mixed narrowing is delta-only and a neutral exit cannot promote its baseline', () => {
-    expect(reopen).toContain('Only on an active delta repeat, use this split.');
-    expect(reopen).toContain("A full-scope or inactive cycle uses today's reviewer selection and previous-cycle base, with no N split or specialist narrowing.");
+    expect(reopen).toContain('Only when the next cycle qualifies as an active delta, use this split.');
+    expect(reopen).toContain("A full-scope or inactive cycle preserves today's reviewer and base selection, with no N split or specialist narrowing. Full scope uses the verified PR merge base, never a previous-cycle snapshot.");
     expect(reopen).toContain('A neutral-only exit never writes or upgrades `cycle-1-fix-review`.');
     expect(reopen).toContain('`neutral-only baseline: unestablished — no fix-review cycle`');
-    expect(reopen).toContain('A later re-review uses full scope unless it has a different corroborated completed baseline; neutral receipts cannot manufacture one.');
+    expect(reopen).toContain('A later re-review uses full scope unless it has a corroborated completed baseline; neutral receipts cannot manufacture one.');
+    expect(reopen).toContain('If the write-once baseline is `pending-fix-review` and has no matching valid `cycle-1-fix-review` with `fix-reviewed=true`');
+    expect(reopen).toContain('An existing valid combined baseline remains established; the neutral exit creates or upgrades neither record.');
+  });
+
+  // Value: protects=voided chains remain rejected across resume and canonical contiguous bindings survive host config; fails_when=later gates erase the failure or isolated diffs leave uncovered gaps; why_new=outside repair review found missing durable state; seam=none; no_claim=installed-agent execution
+  test('void records survive pauses and recovery reviews all invalidated content', () => {
+    expect(reopenRaw).toContain('`Repair chain voided: <fingerprint>; failed=<ledger reference>; reason=<attribution>`');
+    expect(reopen).toContain('It permanently disqualifies that neutral chain, even after passing gates.');
+    expect(reopen).toContain('use a snapshot before the voided repair as B, or full scope if that delta cannot be bounded. Never reuse N that already contains it.');
+    expect(reopen).toContain('a cap stop still requires its authorized continuation and cannot be cleared by a passing gate.');
+    expect(reopen).toContain("Before must be after's sole parent, with a tree equal to a covered reviewed snapshot or the preceding verified chain's after tree.");
+    expect(reopen).toContain('Check contiguous coverage from the full reviewed snapshot through the prepared head, including changes before `before`; a gap covers nothing.');
+    expect(reopenRaw).toContain('`git diff-tree --no-commit-id --raw -r -z --no-renames --no-relative --no-abbrev --no-color --no-ext-diff --no-textconv -O/dev/null <before> <after> --`');
+    expect(flat).toContain('every `Repair evidence:` line, every `Repair chain voided:` line and any `neutral-only baseline:` outcome');
   });
 
   // Value: protects=repair-review is an opt-in value with a literal capability check and no default; fails_when=the light default sets it, the grep literal wraps or the omitted-policy sentence changes; why_new=new policy value; seam=none; no_claim=installed-agent execution
