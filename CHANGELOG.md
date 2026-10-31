@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.56.0] - 2026-10-31
+
+### Added
+
+- Workflow skills write a stage handoff line that the next stage reads, so a later skill can continue from the recorded stage. `docs/workflow-handoffs.md` describes that line and the fallback used when it is absent.
+
+### Changed
+
+- Workflow state is resolved by following the workflow state root, wherever that root is set.
+
+### Fixed
+
+- Setup's install of the telemetry helper validates symlink hops on the helper path.
+- Handoff binding is tighter, so an accepted handoff stays tied to the workflow that wrote it.
+
+### Upgrade notes
+
+- Run `setup` after upgrading so the telemetry helper is installed with the symlink-hop check.
+- A handoff written before this version has no stage line and uses the fallback in `docs/workflow-handoffs.md`.
+
 ## [0.55.0] - 2026-10-31
 
 ### Added
