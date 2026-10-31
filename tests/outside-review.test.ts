@@ -83,6 +83,153 @@ describe('completed outside recovery', () => {
   });
 });
 
+describe('qualified severity labels', () => {
+  const REC = 'Recommendation: fix because reason.';
+  const gates = ['review', 'structured'] as const;
+  type Gate = (typeof gates)[number];
+  const installedClassifier = async (): Promise<Classifier> =>
+    (await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'))).classifyOutsideReview;
+  // The strict fixture and the installed classifier read the same table; the installed run skips without the root.
+  const both = (title: string, body: (classifier: Classifier, installed: boolean) => void) => {
+    test(`${title} (strict fixture)`, () => body(classify, false));
+    test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)(`${title} (installed classifier)`, async () => body(await installedClassifier(), true));
+  };
+  // `recover` does not return its normalized text, so record what the classifier is given: call 0 is the
+  // original, call 1 the normalized copy. The review gate gets a one-line recommendation so no line is joined.
+  const read = (classifier: Classifier, text: string, gate: Gate) => {
+    const input = gate === 'review' ? `${text}\n${REC}` : text;
+    const seen: string[] = [];
+    const result = recover(input, gate, 0, '', args => { seen.push(args.text); return classifier(args); });
+    return { input, normalized: seen[1]!, result };
+  };
+  const outcome = ({ result }: ReturnType<typeof read>) =>
+    [result.credited, result.parse, result.classification.verdict, result.classification.findings.highest];
+  const UNREAD = [false, 'failed', 'unverified', null];
+  const rows = (classifier: Classifier, table: readonly (readonly [string, readonly unknown[]])[], unchanged = false) => {
+    for (const gate of gates) for (const [text, expected] of table) {
+      const checked = read(classifier, text, gate);
+      expect([gate, text, outcome(checked)]).toEqual([gate, text, expected]);
+      if (unchanged) expect([gate, text, checked.normalized]).toEqual([gate, text, checked.input]);
+    }
+  };
+
+  // Criterion 1
+  const credited = (highest: string) => [true, 'recovered', 'clean', highest];
+  const labelled: [string, unknown[]][] = [
+    ...['', '# ', '## ', '- ', '+ ', '* ', '1. ', '1) '].map(prefix => [`${prefix}[P3, advisory] note`, credited('P3')] as [string, unknown[]]),
+    ['[p3, advisory] note', credited('P3')], ['**[P3, advisory]** note', credited('P3')], ['__[P3, advisory]__ note', credited('P3')],
+    ['**[p3, advisory]:** note', credited('P3')], ['- **[P2, advisory]** note', credited('P2')],
+    ['[P3; advisory] note', credited('P3')], ['[P3: advisory] note', credited('P3')], ['[P3 - advisory] note', credited('P3')],
+    ['[P3 — advisory] note', credited('P3')], ['[P3 – advisory] note', credited('P3')], ['[P3/advisory] note', credited('P3')],
+    ['[P3 advisory] note', credited('P3')],
+  ];
+  both('a qualified label is credited at the severity it names', classifier => rows(classifier, labelled));
+
+  // Criterion 2
+  both('the qualifier cannot lower or raise the severity, and its text stays in the response', classifier => {
+    for (const [text, highest, qualifier] of [['[P1, blocking] crash', 'P1', '(blocking)'], ['[P0, security] crash', 'P0', '(security)']] as const) {
+      for (const gate of gates) {
+        const checked = read(classifier, text, gate);
+        expect([gate, text, outcome(checked)]).toEqual([gate, text, [true, 'recovered', 'findings', highest]]);
+        expect(checked.normalized).toContain(qualifier);
+        expect(checked.normalized.split('\n').length).toBe(checked.input.split('\n').length);
+      }
+    }
+  });
+  test('a saved response is byte-identical to what the provider sent, and replays without another call', async () => temporary(async dir => {
+    const text = `[P3, advisory] x\n[P1, blocking] y\n${REC}`;
+    let calls = 0;
+    const send = async () => { calls++; return { status: 'completed', result: text }; };
+    const first = await run(request, '+diff', dir, 'model', send, classify);
+    expect(calls).toBe(2);
+    expect(first.map(r => [r.credited, r.parse, r.response.result])).toEqual([[true, 'recovered', text], [true, 'recovered', text]]);
+    const replay = await run(request, '+diff', dir, 'model', send, classify);
+    expect(calls).toBe(2);
+    expect(replay.map(r => [r.replay, r.credited, r.response.result])).toEqual([[true, true, text], [true, true, text]]);
+  }));
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier reads the highest of several qualified labels (installed only)', async () => {
+    const classifier = await installedClassifier();
+    for (const gate of gates) {
+      expect([gate, outcome(read(classifier, '[P2, advisory] x\n[P1, blocking] y', gate))]).toEqual([gate, [true, 'recovered', 'findings', 'P1']]);
+    }
+  });
+  both('a qualifier that names a severity word is not rewritten, while a hyphen compound is', classifier => {
+    rows(classifier, ['[P3, high] note', '[P1, low] crash', '[P3, HIGH] note', '[P2, high confidence] note'].map(text => [text, UNREAD] as const), true);
+    rows(classifier, ['[P3, low-risk] note', '[P3, non-critical] note', '[P3, severity]: high', '[P3, x -] high'].map(text => [text, credited('P3')] as const));
+  });
+
+  // Criterion 3
+  both('a label naming more than one severity is not rewritten and stays uncredited', classifier => {
+    rows(classifier, ['[P1, P2] note', '[P1/P2] note', '## P1/P2 findings', '- P2/P3 nits', '[P1 - P2] note', '[P1 P2] note',
+      '[P1, advisory, P2] note', '**[P1, P2]** note'].map(text => [text, UNREAD] as const), true);
+    for (const gate of gates) {
+      // Only the existing first-token case change applies.
+      const checked = read(classifier, '[p1, p2] note', gate);
+      expect([gate, outcome(checked), checked.normalized]).toEqual([gate, UNREAD, checked.input.replace('[p1, p2]', '[P1, p2]')]);
+    }
+  });
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the installed classifier reports an unparsed severity for a multi-severity label (installed only)', async () => {
+    const classifier = await installedClassifier();
+    for (const text of ['[P1, P2] note', '[P1/P2] note', '[P1 P2] note', '## P1/P2 findings', '- P2/P3 nits']) {
+      for (const gate of gates) {
+        expect([gate, text, read(classifier, text, gate).result.classification.reason]).toEqual([gate, text, 'unparsed_severity']);
+      }
+    }
+    for (const gate of gates) {
+      // The readable advisory label keeps its severity, but the unreadable label beside it leaves the response uncredited.
+      expect([gate, outcome(read(classifier, '[P3, advisory] x\n## P1/P2 findings', gate)).slice(0, 3)]).toEqual([gate, [false, 'failed', 'unverified']]);
+      // A readable blocker keeps upstream's own result; the unreadable label stays unread beside it.
+      for (const blocker of ['[P1] crash', '[P1, blocking] crash']) {
+        const checked = read(classifier, `${blocker}\n## P1/P2 findings`, gate);
+        expect([gate, blocker, checked.result.credited, checked.result.classification.verdict, checked.result.classification.findings.highest])
+          .toEqual([gate, blocker, true, 'findings', 'P1']);
+        expect(checked.result.classification.unparsed).toBeTruthy();
+      }
+    }
+  });
+
+  // Criterion 4: the example comes first, so a rewrite would make the first-match strict fixture read P1.
+  const quoted = ['```text\n[P1, blocking] quoted\n```', '~~~\n[P1, blocking] quoted\n~~~', '`[P1, blocking]` quoted', '- `[P1, blocking]` quoted',
+    '**`[P1, blocking]`** quoted', 'See [P1, blocking] in the docs.'].map(example => `${example}\n[P3] real`);
+  both('a bracketed example in a fence, code span or prose does not change the highest severity', classifier => {
+    rows(classifier, [...quoted, '[P3] Prefer [P1, blocking] here'].map(text => [text, [true, 'valid', 'clean', 'P3']] as const), true);
+    for (const gate of gates) {
+      // The existing case normalizer still upper-cases a code-span label; upstream blanks that span.
+      expect([gate, outcome(read(classifier, '`[p1, blocking]` quoted\n[P3] real', gate))]).toEqual([gate, credited('P3')]);
+    }
+  });
+  both('a blockquote or table cell is not a label position', (classifier, installed) => {
+    for (const gate of gates) {
+      for (const text of ['> [P1, blocking] quoted\n[P3] real', '| [P1, blocking] | cell |\n[P3] real']) {
+        const checked = read(classifier, text, gate);
+        expect([gate, text, checked.normalized]).toEqual([gate, text, checked.input]);
+        if (!installed) expect([gate, text, checked.result.classification.findings.highest]).toEqual([gate, text, 'P3']);
+      }
+      if (installed) expect([gate, read(classifier, '> [P1, blocking] quoted\n[P3] real', gate).result.credited]).toEqual([gate, false]);
+    }
+  });
+
+  // Criterion 5: a rewrite must not rescue a response the recovery cannot read.
+  both('a response the recovery cannot read is still not credited', classifier => {
+    for (const gate of gates) {
+      for (const failure of ['NEEDS_CONTEXT: callers\nNO_FINDINGS', '**NEEDS_CONTEXT:** callers\nNO_FINDINGS', '| Verdict | NEEDS_CONTEXT |', '```diff\nexample']) {
+        const text = `[P3, advisory] x\n${failure}`;
+        expect([gate, text, outcome(read(classifier, text, gate)).slice(0, 3)]).toEqual([gate, text, [false, 'failed', 'unverified']]);
+      }
+      expect([gate, outcome(read(classifier, 'Looks reasonable overall.', gate)).slice(0, 3)]).toEqual([gate, [false, 'failed', 'unverified']]);
+    }
+    for (const [text, exit] of [['[P3, advisory] x', 124], ['I cannot review\n[P3, advisory] x', 0]] as const) {
+      const result = recover(text, 'structured', exit, '', classifier);
+      expect([text, exit, result.credited, result.parse, result.classification.verdict]).toEqual([text, exit, false, 'not-applicable', 'unavailable']);
+    }
+  });
+
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)("a reviewer's not-ready verdict still blocks beside an advisory qualified label (installed only)", async () => {
+    const result = recover(`[P3, advisory] x\n${REC}\nVerdict: not ready`, 'review', 0, '', await installedClassifier());
+    expect([result.credited, result.classification.verdict, result.classification.findings.highest]).toEqual([true, 'findings', 'P3']);
+  });
+});
+
 test('UTF-8 byte record accounts for every supplied byte and contains no content', () => {
   const p = prepare(request, '+secret-diff');
   const record = p.record('challenge');
