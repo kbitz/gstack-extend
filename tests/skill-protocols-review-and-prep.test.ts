@@ -515,7 +515,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -1594,4 +1594,183 @@ test('external preflight preserves approved dispositions and affected gates', ()
   expect(pause).toContain('never writes a `pass` repair-rerun line against a failed ledger record');
 
 
+});
+
+// Track 33A: reopen review only for behavior-changing repairs, and the
+// `repair-cycles=light` value. Static prose locks: no_claim=installed-agent execution.
+describe('review-and-prep behavior-changing repair review', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const reopenRaw = skillSection(prep, '### Reopen review only for behavior-changing repairs');
+  const reopen = reopenRaw.replace(/\s+/g, ' ');
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+  const paragraph = reopenRaw.slice(reopenRaw.indexOf('**Activation'), reopenRaw.indexOf('\n\n', reopenRaw.indexOf('**Activation')));
+
+  // Value: protects=the activation paragraph's exact shape, which bin/upstream-check parses; fails_when=a span moves, wraps onto two lines, changes file or loses a delimiter; why_new=new drift-checked gate; seam=none; no_claim=installed-agent execution
+  test('the activation paragraph keeps the shape the drift check parses', () => {
+    expect(paragraph.startsWith('**Activation (`repair-review=behavior-changing`).** Apply this section only\nwhen the review policy carries that value')).toBe(true);
+    expect(paragraph.replace(/\s+/g, ' ')).toContain('still contains, byte for byte, `For each finding, classify as AUTO-FIX or ASK per the Fix-First Heuristic in` and `Critical findings lean toward ASK; informational toward AUTO-FIX.`, its `review/checklist.md` still contains, byte for byte, `## Fix-First Heuristic`, `AUTO-FIX (agent fixes without asking): ASK (needs human judgment):`, `├─ Anything changing user-visible` and `**Rule of thumb:** If the fix is mechanical and a senior engineer would apply it`, and the `in-cap=delta` paragraph\'s first two anchors still match. Check each with `grep -F`.');
+    // Squashing hides the five spaces upstream's column layout has, which the byte match needs.
+    expect(paragraph).toContain('`AUTO-FIX (agent fixes without asking):     ASK (needs human judgment):`');
+    // Each span and each delimiter sits on one line, and the paragraph has no blank line.
+    for (const span of paragraph.match(/`[^`]+`/g) ?? []) expect(span).not.toContain('\n');
+    expect(paragraph.split('\n').some((line) => line.includes('byte for byte,'))).toBe(true);
+    expect(paragraph.split('\n').filter((line) => line.includes('byte for byte,'))).toHaveLength(2);
+    expect(paragraph.split('\n').some((line) => line.includes('its `review/checklist.md` still contains, byte for byte,'))).toBe(true);
+    expect(paragraph.split('\n').some((line) => line.startsWith('and the `in-cap=delta` paragraph'))).toBe(true);
+    expect(paragraph.split('\n').filter((line) => line.includes('grep -F'))).toHaveLength(1);
+  });
+
+  // Value: protects=an anchor mismatch runs today's behavior and says so, with no upstream edit; fails_when=the inactive line, the no-classification fallback or the no-edit rule drifts; why_new=new activation gate; seam=none; no_claim=installed-agent execution
+  test('a missing anchor records the inactive line and runs today\'s behavior', () => {
+    expect(reopen).toContain('When every anchor matches, record `repair-review: active`.');
+    expect(reopen).toContain('A missing anchor means the section does not apply: record `repair-review: inactive — anchor changed (<which>)`, run today\'s behavior with no batch classification and every edited pass repeating, and edit no upstream file.');
+    expect(reopen).toContain('A policy without the value records nothing here.');
+  });
+
+  // Value: protects=every finding of a batch is classified once, before the first repair, with upstream's label kept; fails_when=the line is written late, relabeled, downgrades severity or defers a trivial fix; why_new=criterion 3; seam=none; no_claim=installed-agent execution
+  test('the batch is classified once before its first repair and changes no action', () => {
+    expect(reopen).toContain("Under the active value only, after `/review`'s Step 5.0 dedup and Step 5a and before Step 5b's first edit, write one line per finding of that batch:");
+    expect(reopenRaw).toContain('`Repair classification: cycle=<n>; finding=<fingerprint>; severity=<upstream label>; fix-first=<AUTO-FIX|ASK>; repair=<neutral-candidate|behavior-changing|unclassifiable>`');
+    expect(reopen).toContain('Write each line once per batch and never relabel it.');
+    expect(reopen).toContain('`severity` is copied from upstream and is never downgraded or overruled; an unclassifiable finding keeps its upstream label.');
+    expect(reopen).toContain('The classification changes no action: `/review`\'s "action every remaining finding" stands, so a trivial fix is still made rather than deferred.');
+    expect(reopen).toContain("A candidate's final class comes from the diff check below.");
+    expect(reopen.indexOf('Classify the batch once')).toBeLessThan(reopen.indexOf('Classify each repair on its actual diff'));
+  });
+
+  // Value: protects=neutral is a closed list that excludes ASK, CRITICAL, contract files and anything unclassifiable; fails_when=the list widens or a doubtful repair counts as neutral; why_new=criterion 1; seam=none; no_claim=installed-agent execution
+  test('a repair is neutral only on a closed list and everything else is behavior-changing', () => {
+    expect(reopen).toContain('A repair is neutral only when all of these hold: Step 5a classified its finding AUTO-FIX and the finding is not CRITICAL;');
+    expect(reopen).toContain('its whole diff is a docstring or comment, a rename with every reference updated of a name nothing outside this change reads, code no path reaches, or a handler for a case already handled, with the evidence named;');
+    expect(reopen).toContain('it touches no file that an agent or a gate reads as instructions or a contract (skills, prompts, handoff and contract docs, tests, fixtures, CI and `.gstack/`); and its targeted lanes pass.');
+    expect(reopen).toContain('Everything else is behavior-changing, including every ASK repair and every repair that cannot be classified. Any doubt counts as behavior-changing.');
+  });
+
+  // Value: protects=a neutral-only batch leaves upstream's log row and opens no cycle, and the receipt still hands off review: COMPLETE; fails_when=the wrapper rewrites converged, takes the repeat or loses the freshness fallback; why_new=criterion 8; seam=none; no_claim=installed-agent execution
+  test('a neutral-only batch below the cap opens no cycle and leaves the log row alone', () => {
+    expect(reopen).toContain("A neutral-only batch below the cap** leaves `/review`'s own log row as upstream wrote it (`converged:false`, never rewritten), and the wrapper does not take upstream's \"Below 3, repeat\".");
+    expect(reopen).toContain("Targeted lanes and Step 2's single final suite cover those repairs, so no further cycle opens.");
+    expect(reopen).toContain("That pass counts as final for Step 5.8 items 2–4 and Step 4.7's freshness check.");
+    expect(reopen).toContain('A failing freshness rerun or targeted lane reclassifies the repair as behavior-changing, and a batch with one repeats as today.');
+    expect(reopen).toContain('A prepared receipt that records such a repair still hands off `review: COMPLETE`.');
+    expect(reopen).not.toContain('converged:true');
+  });
+
+  // Value: protects=only behavior-changing repairs feed the next delta, with two recorded fallbacks that keep the baseline writable; fails_when=B=N applies after a failed split or while cycle 1 is pending-fix-review; why_new=criterion 1; seam=none; no_claim=installed-agent execution
+  test('a mixed batch uses B=N only when the split is clean', () => {
+    expect(reopen).toContain('Within Step 5b, apply the neutral candidates first, take one candidate snapshot N with the snapshot procedure above, then apply the rest.');
+    expect(reopen).toContain('The next delta uses B=N only when every repair before N proved neutral and every repair after it is behavior-changing; otherwise B stays the previous cycle\'s snapshot, and the receipt records which.');
+    expect(reopen).toContain("While `cycle-1-baseline` says `pending-fix-review`, B stays cycle 1's snapshot so `cycle-1-fix-review` stays writable.");
+    expect(reopen).toContain('Re-dispatch only the specialists whose finding a behavior-changing repair fixed; the neutral repairs get their targeted lanes and the final gate.');
+  });
+
+  // Value: protects=the third-cycle cap and stop apply to a neutral-only batch too; fails_when=a neutral third batch ends clean; why_new=SPEC P1 compatibility; seam=none; no_claim=installed-agent execution
+  test('the cap and stop are unchanged', () => {
+    expect(reopen).toContain('The cap and stop are unchanged: a neutral-only third batch still takes **When /review stops at its cycle cap**, and the value waives no gate.');
+    expect(policy).toContain("A policy never waives a gate or changes its bound: Greptile-once, manual testing, the completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds all stand.");
+  });
+
+  // Value: protects=the receipt records every repair that opened no cycle, in a line the readiness gate reads; fails_when=the line shape, its pending rule or the literal-receipt hazard drifts; why_new=criterion 1; seam=none; no_claim=installed-agent execution
+  test('each neutral repair is recorded in one receipt line', () => {
+    expect(reopenRaw).toContain('`Repair without review cycle: <fingerprint>; class=<docstring|rename|dead-code|redundant-handler>; paths=<n>; cycle=<n>; targeted=<ledger reference> pass; final-gate=<ledger reference or external attestation or pending>`');
+    expect(reopen).toContain('`final-gate=` reads `pending` until the final gate passes, then names its ledger reference or, under `full-suite=external`, the attestation.');
+    expect(reopen).toContain('Pause and stopped receipts carry these lines and the policy line that authorized them.');
+    // The handoff contract splits the receipt on the first literal; no earlier occurrence may exist.
+    expect(reopenRaw).not.toContain('**Receipt.**');
+    expect(prep.indexOf('**Receipt.**')).toBeGreaterThan(prep.indexOf('### Reopen review only for behavior-changing repairs'));
+    expect(prep.split('**Receipt.**').length - 1).toBe(1);
+    expect(flat).toContain('the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line');
+    expect(flat).toContain('Likewise record each `Repair without review cycle:` line and the policy line that authorized it.');
+  });
+
+  // Value: protects=readiness accepts a recorded neutral chain for that repair alone, only under the value and not while pending; fails_when=the first exception changes, the second widens or a pending chain counts; why_new=criterion 8; seam=none; no_claim=installed-agent execution
+  test('readiness adds a second exception and keeps the first as written', () => {
+    expect(readiness).toContain('One exception, only under `final-gate-repair=tests-docs`: a recorded final-gate repair chain (diagnosis, classification, targeted rerun, adversarial pass, full-gate rerun and the three receipt lines) covers that repair commit alone.');
+    expect(readiness).toContain('A second exception, only under `repair-review=behavior-changing` while the receipt records `repair-review: active`: a recorded neutral-repair chain (its `Repair classification:` line, the diff check, passing targeted lanes and a `Repair without review cycle:` line whose `final-gate=` is no longer `pending`) covers that repair alone, and a chain still `pending` covers nothing.');
+    expect(readiness).toContain('Accept it on resume or after a pause from the corroborated pause comment or receipt that records it and the authorizing policy line, never from the resume prompt.');
+  });
+
+  // Value: protects=repair-review is an opt-in value with a literal capability check and no default; fails_when=the light default sets it, the grep literal wraps or the omitted-policy sentence changes; why_new=new policy value; seam=none; no_claim=installed-agent execution
+  test('the value is opt-in, checkable and absent from the light default', () => {
+    expect(policy).toContain('`repair-review=behavior-changing` (its only value) is opt-in.');
+    expect(policy).toContain('A repair that changes no behavior then opens no further review cycle: targeted lanes and the single final suite cover it, and only behavior-changing repairs feed the next `in-cap=delta` cycle');
+    expect(policy).toContain('Omitted, every edited pass repeats as today.');
+    expect(policy).toContain(`grep -F 'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"`);
+    expect(prep).toContain("grep -F 'repair-review=behavior-changing'\n");
+    expect(policy).toContain('The value waives no gate and never authorizes a continuation.');
+    expect(light).toContain('It never sets `repair-review=behavior-changing`');
+    expect(light).toContain('It never sets `full-suite=external` or `parent-io=lean`');
+    expect(policy).toContain('Without a policy every default in this skill is unchanged, unless the light review default below applies.');
+  });
+
+  // Value: protects=the new section sits between the in-cap paragraph and the baseline section, with a closed-list phase row; fails_when=the section moves into the inventoried paragraph or loses its row; why_new=new section; seam=none; no_claim=installed-agent execution
+  test('the section sits after the in-cap paragraph and has its phase row', () => {
+    const inCap = prep.indexOf("**`/review`'s own repeat cycles (`in-cap=delta`).**");
+    const section = prep.indexOf('### Reopen review only for behavior-changing repairs');
+    const baseline = prep.indexOf("### Record cycle 1's full-review baseline");
+    expect(inCap).toBeGreaterThan(-1);
+    expect(section).toBeGreaterThan(inCap);
+    expect(baseline).toBeGreaterThan(section);
+    expect(prep).toContain('| `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |');
+  });
+});
+
+describe('review-and-prep repair-cycles=light', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- A policy never waives a gate'));
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const delta = skillSection(prep, '### Scope a re-review to its delta').replace(/\s+/g, ' ');
+  const baseline = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
+
+  // Value: protects=the value points at the light default's single statement of the skip rule and holds no copy; fails_when=the bullet restates the skips or the light section changes; why_new=criterion 4; seam=none; no_claim=installed-agent execution
+  test('the bullet points to the light section and has no copy of its rule', () => {
+    expect(bullet).toContain('`repair-cycles=light` (its only value) is opt-in, independent of `repair-review` and needs no `review_default` config.');
+    expect(bullet).toContain('the repair-cycle skips that **Use the light review default** states, which stays their single statement');
+    for (const copied of ['makes no outside call', 'skips the Red Team', 'native adversarial pass', 'force-included specialists']) expect(bullet).not.toContain(copied);
+    expect(light).toContain('A cycle it runs as a delta makes no outside call and skips the Red Team; the native adversarial pass and force-included specialists still run.');
+    expect(light).toContain('Cycle 1 runs `/review` as written, with every reviewer its gates select.');
+    expect(light).toContain('A full-scope or inactive cycle runs every reviewer as usual.');
+  });
+
+  // Value: protects=the literal capability check and the independence from repair-review and review_default; fails_when=the grep literal wraps, the value needs config or sets another key; why_new=criterion 5; seam=none; no_claim=installed-agent execution
+  test('the value is checkable, independent and sets no other key', () => {
+    expect(bullet).toContain(`grep -F 'repair-cycles=light' "<installed skill dir>/SKILL.md"`);
+    expect(prep).toContain("grep -F 'repair-cycles=light'\n");
+    expect(bullet).toContain('(exit 0 means supported) and omits the value otherwise, keeping its other keys');
+    expect(bullet).toContain('It sets no other key.');
+    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
+    expect(policy).toContain('review-and-prep-policy/v1; in-cap=delta|full;');
+  });
+
+  // Value: protects=without in-cap the value runs cycles 2-3 as in-cap delta, and an explicit in-cap=full wins and is recorded; fails_when=the pair reads as none supplied or in-cap=full is overridden; why_new=fork decision; seam=none; no_claim=installed-agent execution
+  test('it runs cycles 2-3 through the in-cap procedure and yields to in-cap=full', () => {
+    expect(bullet).toContain('Without `in-cap` it runs cycles 2–3 through the `in-cap=delta` procedure, including its anchor check and full-scope fallbacks; an explicit `in-cap=full` wins, so nothing is skipped and the receipt says so.');
+    expect(bullet).toContain('`repair-cycles=light: nothing skipped — in-cap=full`');
+    expect(delta).toContain("Apply this only when the review policy says `in-cap=delta` or carries `repair-cycles=light` without `in-cap=full`, the light review default applies, or the user asks in this session");
+  });
+
+  // Value: protects=cycle 1, a continuation's first pass and Step 5's delta re-review take no skips; fails_when=a first pass skips a reviewer; why_new=criterion 4; seam=none; no_claim=installed-agent execution
+  test('cycle 1, a continuation first pass and Step 5 take no skips', () => {
+    expect(bullet).toContain("A continuation's first pass counts as that invocation's cycle 1, and Step 5's delta re-review is its own cycle 1, so neither takes the skips.");
+  });
+
+  // Value: protects=the recorded skip names its source and still counts under the pinned literal; fails_when=the suffix replaces the prefix or the baseline stops counting it; why_new=criterion 4; seam=none; no_claim=installed-agent execution
+  test('each skip is recorded with its source and counts as a light-default skip', () => {
+    expect(bullet).toContain('Record each skip as `skipped — light default repair cycle; source: repair-cycles=light`');
+    expect(baseline).toContain('Allowed cycle 2 skips are gate skips plus the recorded `skipped — light default repair cycle` and `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host rule that runs the Red Team on cycle 1 only, not a stalled reviewer).');
+    expect(baseline).toContain('The light-default skip counts with or without the `; source: repair-cycles=light` suffix.');
+    expect(light).toContain('Record each skip as `skipped — light default repair cycle`.');
+  });
+
+  // Value: protects=the outside-call bound and reviewer-skip exceptions name the value and keep their pinned sentences; fails_when=either pinned sentence changes or the value is not named; why_new=criterion 4; seam=none; no_claim=installed-agent execution
+  test('the outside-call bound and reviewer-skip exception name the value', () => {
+    expect(flat).toContain('Under the light review default, a delta repair cycle makes no outside call. `repair-cycles=light` applies the same bound to its delta repair cycles.');
+    expect(delta).toContain("The only exceptions are the light review default's repair-cycle skips and a bounded-wait host's Red Team rule, each recorded with its reason. `repair-cycles=light` selects those same skips.");
+    expect(delta).toContain('Never pick or skip a reviewer yourself, and never use a force flag to skip.');
+  });
 });

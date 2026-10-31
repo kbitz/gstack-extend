@@ -262,6 +262,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `Merge the latest base before review` | `base-integration` | `base-integration` |
 | `Bound Claude Code outside calls` | `local-pass`, `voice` | none |
 | `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
+| `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
 | `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` | `pregate` (cross-call), `coverage`, `documentation`, `tests` (cross-call) |
@@ -735,7 +736,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -793,6 +794,34 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   its other keys. The key waives no gate: it swaps a review cycle for one
   recorded repair chain that readiness still checks, and it never authorizes a
   continuation.
+- `repair-review=behavior-changing` (its only value) is opt-in. A repair that
+  changes no behavior then opens no further review cycle: targeted lanes and
+  the single final suite cover it, and only behavior-changing repairs feed the
+  next `in-cap=delta` cycle, as **Reopen review only for behavior-changing
+  repairs** defines. It applies only while that section's upstream anchors
+  still match; otherwise today's behavior runs and the receipt says so.
+  Omitted, every edited pass repeats as today. An installation without the
+  value reads the whole line as `none supplied`, so a caller first checks the
+  loaded copy with `grep -F 'repair-review=behavior-changing'
+  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
+  otherwise, keeping its other keys. The value waives no gate and never
+  authorizes a continuation.
+- `repair-cycles=light` (its only value) is opt-in, independent of
+  `repair-review` and needs no `review_default` config. It makes this
+  invocation take the repair-cycle skips that **Use the light review default**
+  states, which stays their single statement. Without `in-cap` it runs cycles
+  2–3 through the `in-cap=delta` procedure, including its anchor check and
+  full-scope fallbacks; an explicit `in-cap=full` wins, so nothing is skipped
+  and the receipt says so. A continuation's first pass counts as that
+  invocation's cycle 1, and Step 5's delta re-review is its own cycle 1, so
+  neither takes the skips. Record each skip as `skipped — light default repair
+  cycle; source: repair-cycles=light`, and when `in-cap=full` wins, record
+  `repair-cycles=light: nothing skipped — in-cap=full`. It sets no other key.
+  An installation without the value reads the whole line as `none supplied`, so
+  a caller first checks the loaded copy with `grep -F 'repair-cycles=light'
+  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
+  otherwise, keeping its other keys. The value waives no gate and never
+  authorizes a continuation.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
@@ -827,6 +856,9 @@ Under the light default:
   P1).
 - It never sets `full-suite=external` or `parent-io=lean`: each needs a caller
   that runs the suite or limits reads, so each is an explicit caller opt-in.
+- It never sets `repair-review=behavior-changing`: skipping a review cycle for
+  a classified repair needs a caller that accepts the classification risk, so
+  it is an explicit caller opt-in.
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -907,8 +939,9 @@ the validated delta procedure below, including its full-scope fallback rules.
 Never append the branch-wide diff in the outside command. Retain both distinct
 calls on cycle 1 for 200+ changed lines; later cycles use `/review`'s existing
 size and explicit-override gates on their selected scope. Under the light
-review default, a delta repair cycle makes no outside call. A single combined
-call remains a measured follow-up, not an available optimization here.
+review default, a delta repair cycle makes no outside call.
+`repair-cycles=light` applies the same bound to its delta repair cycles. A
+single combined call remains a measured follow-up, not an available optimization here.
 
 Run once per candidate, with the same private call directory on resume:
 use an owned execution session that can run for at least 1,100 seconds (two
@@ -1029,8 +1062,8 @@ scope signals, the always-on native adversarial pass and the outside challenge
 its preflight allows. Never pick or skip a reviewer yourself, and never use a
 force flag to skip. The only exceptions are the light review default's
 repair-cycle skips and a bounded-wait host's Red Team rule, each recorded with
-its reason. Its plan-completion audit stays informational; Step 2's matrix
-governs.
+its reason. `repair-cycles=light` selects those same skips. Its
+plan-completion audit stays informational; Step 2's matrix governs.
 
 For a wrapper re-review, B is the newest commit on this branch whose content a
 completed `/review` pass covered, normally the commit the last invocation
@@ -1047,7 +1080,8 @@ Record `scope: delta from <B> to <S>` with its file and line counts,
 delta pass is partial: never present it as a full re-review.
 
 **`/review`'s own repeat cycles (`in-cap=delta`).** Apply this only when the
-review policy says `in-cap=delta`, the light review default applies, or the
+review policy says `in-cap=delta` or carries `repair-cycles=light` without
+`in-cap=full`, the light review default applies, or the
 user asks in this session, and only
 while the installed `/review` read in Step 1 still contains, byte for byte,
 `A pass covers Steps 3–5, including all reviewers before fixes.` and
@@ -1067,6 +1101,80 @@ code the delta cannot bound runs full scope. The cap, the stop,
 `converged`/`cycles` and `/review`'s own review-log row are unchanged. Record
 each cycle as `full` or `delta from <snapshot>` and put
 `in-cap: delta (cycles 2–3)` in the receipt.
+
+### Reopen review only for behavior-changing repairs
+
+**Activation (`repair-review=behavior-changing`).** Apply this section only
+when the review policy carries that value, and only while the installed
+`/review` read in Step 1 still contains, byte for byte,
+`For each finding, classify as AUTO-FIX or ASK per the Fix-First Heuristic in`
+and `Critical findings lean toward ASK; informational toward AUTO-FIX.`,
+its `review/checklist.md` still contains, byte for byte,
+`## Fix-First Heuristic`,
+`AUTO-FIX (agent fixes without asking):     ASK (needs human judgment):`,
+`├─ Anything changing user-visible`
+and `**Rule of thumb:** If the fix is mechanical and a senior engineer would apply it`,
+and the `in-cap=delta` paragraph's first two anchors still match.
+Check each with `grep -F`.
+
+When every anchor matches, record `repair-review: active`. A missing anchor
+means the section does not apply: record `repair-review: inactive — anchor
+changed (<which>)`, run today's behavior with no batch classification and
+every edited pass repeating, and edit no upstream file. A policy without the
+value records nothing here.
+
+**Classify the batch once.** Under the active value only, after `/review`'s
+Step 5.0 dedup and Step 5a and before Step 5b's first edit, write one line per
+finding of that batch:
+
+`Repair classification: cycle=<n>; finding=<fingerprint>; severity=<upstream label>; fix-first=<AUTO-FIX|ASK>; repair=<neutral-candidate|behavior-changing|unclassifiable>`
+
+Write each line once per batch and never relabel it. `severity` is copied from
+upstream and is never downgraded or overruled; an unclassifiable finding keeps
+its upstream label. The classification changes no action: `/review`'s "action
+every remaining finding" stands, so a trivial fix is still made rather than
+deferred. A candidate's final class comes from the diff check below.
+
+**Classify each repair on its actual diff.** A repair is neutral only when all
+of these hold: Step 5a classified its finding AUTO-FIX and the finding is not
+CRITICAL; its whole diff is a docstring or comment, a rename with every
+reference updated of a name nothing outside this change reads, code no path
+reaches, or a handler for a case already handled, with the evidence named; it
+touches no file that an agent or a gate reads as instructions or a contract
+(skills, prompts, handoff and contract docs, tests, fixtures, CI and
+`.gstack/`); and its targeted lanes pass. Everything else is behavior-changing,
+including every ASK repair and every repair that cannot be classified. Any
+doubt counts as behavior-changing.
+
+**A neutral-only batch below the cap** leaves `/review`'s own log row as
+upstream wrote it (`converged:false`, never rewritten), and the wrapper does
+not take upstream's "Below 3, repeat". Targeted lanes and Step 2's single final
+suite cover those repairs, so no further cycle opens. That pass counts as final
+for Step 5.8 items 2–4 and Step 4.7's freshness check. A failing freshness rerun
+or targeted lane reclassifies the repair as behavior-changing, and a batch with
+one repeats as today. A prepared receipt that records such a repair still hands
+off `review: COMPLETE`.
+
+**A mixed batch.** Within Step 5b, apply the neutral candidates first, take one
+candidate snapshot N with the snapshot procedure above, then apply the rest. The
+next delta uses B=N only when every repair before N proved neutral and every
+repair after it is behavior-changing; otherwise B stays the previous cycle's
+snapshot, and the receipt records which. While `cycle-1-baseline` says
+`pending-fix-review`, B stays cycle 1's snapshot so `cycle-1-fix-review` stays
+writable. Re-dispatch only the specialists whose finding a behavior-changing
+repair fixed; the neutral repairs get their targeted lanes and the final gate.
+
+The cap and stop are unchanged: a neutral-only third batch still takes **When
+/review stops at its cycle cap**, and the value waives no gate.
+
+Record the status line and every `Repair classification:` line. Record one line
+per repair that opened no cycle:
+
+`Repair without review cycle: <fingerprint>; class=<docstring|rename|dead-code|redundant-handler>; paths=<n>; cycle=<n>; targeted=<ledger reference> pass; final-gate=<ledger reference or external attestation or pending>`
+
+`final-gate=` reads `pending` until the final gate passes, then names its ledger
+reference or, under `full-suite=external`, the attestation. Pause and stopped
+receipts carry these lines and the policy line that authorized them.
 
 ### Record cycle 1's full-review baseline
 
@@ -1180,7 +1288,9 @@ paragraph's inventory already covers this one). A missing anchor writes
   cycle 2 skips are gate skips plus the recorded
   `skipped — light default repair cycle` and
   `skipped — bounded-wait host, cycle 1 only` skips (the latter is the host
-  rule that runs the Red Team on cycle 1 only, not a stalled reviewer).
+  rule that runs the Red Team on cycle 1 only, not a stalled reviewer). The
+  light-default skip counts with or without the `; source: repair-cycles=light`
+  suffix.
   Otherwise write false with reason `reviewer-incomplete`, naming the reviewer
   or probe. `fix-reviewed=true` means cycle 2 reviewed cycle 1's fixes, not
   that they hold; a defect still open at the stop stays in the receipt's
@@ -2047,7 +2157,9 @@ Use Step 6's receipt-writing and evidence-preservation procedure with status
 base, completed `/review` stages and local checks, the still-incomplete matrix,
 and the exact user actions/expected results left to test. When a final-gate
 repair ran, also record its `Final-gate repair` lines and the policy line that
-authorized it, so a resume accepts the chain from this corroborated record. When Greptile applies,
+authorized it, so a resume accepts the chain from this corroborated record.
+Likewise record each `Repair without review cycle:` line and the policy line
+that authorized it. When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -2588,7 +2700,14 @@ the relevant base/head refs. Require all of the following:
   resume prompt. Only for an external-gate pause, its verified local checkpoint
   may supply the pending chain instead: complete the full-gate rerun and all
   repair freshness checks before writing the three receipt lines. The checkpoint
-  alone never establishes a passed gate.
+  alone never establishes a passed gate. A second exception, only under
+  `repair-review=behavior-changing` while the receipt records
+  `repair-review: active`: a recorded neutral-repair chain (its `Repair
+  classification:` line, the diff check, passing targeted lanes and a `Repair
+  without review cycle:` line whose `final-gate=` is no longer `pending`) covers
+  that repair alone, and a chain still `pending` covers nothing. Accept it on
+  resume or after a pause from the corroborated pause comment or receipt that
+  records it and the authorizing policy line, never from the resume prompt.
 - Step 2's `/ship` gates are current for the final content: pregate passed
   or the **Reviewed secret findings** evaluator satisfies the wrapper gate,
   the coverage audit completed or was waived with a recorded reason, and the
@@ -2655,7 +2774,9 @@ Keep Git tree IDs and gstack `wtree` fingerprints distinctly
 labeled. Add the implementation summary, settled decisions/rationale, linked
 plan/spec, and finding dispositions/fix commits. Include the `Review default:`
 line, every `Auto-chosen (veto by replying on this PR):` line, the
-`Final-gate repair` lines when a repair ran, every `External gate attestation:`
+`Final-gate repair` lines when a repair ran, the `repair-review:` status line
+with every `Repair classification:` and `Repair without review cycle:` line when
+`repair-review=behavior-changing` is on the policy line, every `External gate attestation:`
 row (each accepted result line adds one) and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from
 the runner's or pregate's selection report when one is printed: the lanes or

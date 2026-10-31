@@ -18,6 +18,9 @@ export const EXIT = { ok: 0, internal: 1, usage: 2, drift: 4, bun: 5 } as const;
 /** Upstream revision at which this Track qualified the wrapper anchors and the classifier table. */
 export const ANCHORS_QUALIFIED = { revision: 'e2fffee3114e90ce2a7d165f09d3efce3555e252', version: '1.91.208.0' } as const;
 
+/** Upstream revision at which the Fix-First anchors behind `repair-review=behavior-changing` were qualified. */
+export const FIX_FIRST_QUALIFIED = { revision: '959c8a6a4fdafabf1186e407b76082b7f07e9f24', version: '1.91.327.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -32,6 +35,10 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'parent-io=lean'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'repair-review=behavior-changing'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'repair-cycles=light'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
     reason: 'quotes the audit\'s own shell operands, not installed upstream text' },
 ];
@@ -44,6 +51,9 @@ const DOCS = 'docs/upstream-check.md';
 const IN_CAP_HEADING = "**`/review`'s own repeat cycles (`in-cap=delta`).**";
 const ANCHOR_LIST_FROM = 'byte for byte,';
 const ANCHOR_LIST_TO = 'Check each with `grep -F`';
+const FIX_FIRST_HEADING = '**Activation (`repair-review=behavior-changing`).**';
+const FIX_FIRST_FILE_MARK = 'its `review/checklist.md` still contains,';
+const FIX_FIRST_TO = 'and the `in-cap=delta` paragraph';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -96,6 +106,16 @@ const versionOf = (root: string, onRead?: (real: string) => void) => {
 };
 
 export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: false; file: string; reason: string };
+export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
+
+/** The backtick spans of one anchor list, or why the list is malformed. */
+function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
+  const spans = [...region.matchAll(/`([^`]*)`/g)].map((m) => m[1]!);
+  if (!spans.length) return { ok: false, reason: `${list} has no backtick spans` };
+  if (region.replace(/`[^`]*`/g, '').includes('`')) return { ok: false, reason: `${list} has an unbalanced backtick` };
+  if (spans.some((s) => !s.length || /[\r\n]/.test(s))) return { ok: false, reason: `${list} has an empty span or a span containing a newline` };
+  return { ok: true, spans };
+}
 
 /**
  * The `/review` anchors `/review-and-prep` gates on: the backtick spans between
@@ -113,16 +133,41 @@ export function inventory(extendRootPath: string): Inventory {
   const from = paragraph.indexOf(ANCHOR_LIST_FROM);
   const to = from < 0 ? -1 : paragraph.indexOf(ANCHOR_LIST_TO, from);
   if (from < 0 || to < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the in-cap paragraph' };
-  const region = paragraph.slice(from + ANCHOR_LIST_FROM.length, to);
-  const spans = [...region.matchAll(/`([^`]*)`/g)].map((m) => m[1]!);
-  if (!spans.length) return { ok: false, file, reason: 'anchor list has no backtick spans' };
-  if (region.replace(/`[^`]*`/g, '').includes('`')) return { ok: false, file, reason: 'anchor list has an unbalanced backtick' };
-  if (spans.some((s) => !s.length || /[\r\n]/.test(s))) return { ok: false, file, reason: 'anchor list has an empty span or a span containing a newline' };
-  return { ok: true, file: read.real, anchors: spans };
+  const list = spansIn(paragraph.slice(from + ANCHOR_LIST_FROM.length, to), 'anchor list');
+  if (!list.ok) return { ok: false, file, reason: list.reason };
+  return { ok: true, file: read.real, anchors: list.spans };
+}
+
+/**
+ * The Fix-First anchors behind `repair-review=behavior-changing`: the backtick
+ * spans of its activation paragraph, first the `/review` text and then the
+ * `review/checklist.md` text, each list opened by "byte for byte,".
+ */
+export function fixFirstInventory(extendRootPath: string): FixFirstInventory {
+  const file = join(extendRootPath, 'skills', 'review-and-prep.md');
+  const read = readTrusted(file, 'inventory source');
+  if (!read.ok) return { ok: false, file, reason: read.reason };
+  const text = read.bytes.toString('utf8');
+  const start = text.indexOf(FIX_FIRST_HEADING);
+  if (start < 0) return { ok: false, file, reason: 'activation paragraph not found' };
+  const blank = text.indexOf('\n\n', start);
+  const paragraph = text.slice(start, blank < 0 ? undefined : blank);
+  const first = paragraph.indexOf(ANCHOR_LIST_FROM);
+  const mark = first < 0 ? -1 : paragraph.indexOf(FIX_FIRST_FILE_MARK, first);
+  const second = mark < 0 ? -1 : paragraph.indexOf(ANCHOR_LIST_FROM, mark);
+  const end = second < 0 ? -1 : paragraph.indexOf(FIX_FIRST_TO, second);
+  if (end < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the activation paragraph' };
+  const review = spansIn(paragraph.slice(first + ANCHOR_LIST_FROM.length, mark), 'review anchor list');
+  if (!review.ok) return { ok: false, file, reason: review.reason };
+  const checklist = spansIn(paragraph.slice(second + ANCHOR_LIST_FROM.length, end), 'checklist anchor list');
+  if (!checklist.ok) return { ok: false, file, reason: checklist.reason };
+  return { ok: true, file: read.real, review: review.spans, checklist: checklist.spans };
 }
 
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
+  fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
+  fixFirstList: '/review-and-prep: the Fix-First anchors cannot be listed, so repair-review=behavior-changing is unverified and stays inactive',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
@@ -153,6 +198,7 @@ function describe(check: Check): { effect: string; fix: string } {
 interface Layout {
   name: 'nested' | 'sibling';
   review: string;
+  checklist: string;
   autoplan: string;
   snapshot: string;
   section(phase: Phase): string;
@@ -163,11 +209,11 @@ function chooseLayout(root: string, skillsDir: string): Layout {
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
-    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), autoplan, snapshot,
+    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'), autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
-  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), autoplan, snapshot, section: () => autoplan };
+  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'), autoplan, snapshot, section: () => autoplan };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -337,6 +383,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('extend-version', versionOf(extend, (real) => info('file', `extend-version ${real}`)));
   info('extend-root', extend);
   info('inspected', `anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`);
+  info('inspected', `fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -367,6 +414,9 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const inv = inventory(extend);
   if (inv.ok) { ok('inventory', 'review-and-prep.incap'); info('file', `inventory ${inv.file}`); }
   else drift('inventory', 'review-and-prep.incap', `${inv.reason} (${inv.file})`);
+  const fixFirst = fixFirstInventory(extend);
+  if (fixFirst.ok) ok('inventory', 'review-and-prep.fix-first');
+  else drift('inventory', 'review-and-prep.fix-first', `${fixFirst.reason} (${fixFirst.file})`, { effect: STAGE.fixFirstList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -382,15 +432,25 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const sibling = (path: string) => layout.name === 'sibling' ? `${path} (nested ${join(options.root, 'review', 'SKILL.md')} absent)` : path;
 
   // Anchors.
+  const checkAnchor = (id: string, read: Read | undefined, anchor: string, reason: (cause: string) => string = (cause) => cause, extra: Partial<Check> = {}) => {
+    if (!read) drift('anchor', id, notRun!, extra);
+    else if (!read.ok) drift('anchor', id, reason(read.reason), extra);
+    else if (read.bytes.includes(Buffer.from(anchor, 'utf8'))) ok('anchor', id);
+    else drift('anchor', id, `anchor not found byte for byte in ${read.real}: "${oneLine(anchor, 70)}"`, extra);
+  };
+  const reviewRead = () => rootOk ? readOnce(layout.review, 'review skill', 'review') : undefined;
   if (inv.ok) {
-    const review = rootOk ? readOnce(layout.review, 'review skill', 'review') : undefined;
-    inv.anchors.forEach((anchor, i) => {
-      const id = `review-and-prep.incap.${i + 1}`;
-      if (!review) drift('anchor', id, notRun!);
-      else if (!review.ok) drift('anchor', id, layout.name === 'sibling' && review.reason.includes('not found') ? sibling(review.reason) : review.reason);
-      else if (review.bytes.includes(Buffer.from(anchor, 'utf8'))) ok('anchor', id);
-      else drift('anchor', id, `anchor not found byte for byte in ${review.real}: "${oneLine(anchor, 70)}"`);
-    });
+    const review = reviewRead();
+    inv.anchors.forEach((anchor, i) => checkAnchor(`review-and-prep.incap.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause));
+  }
+  if (fixFirst.ok) {
+    const inactive = { effect: STAGE.fixFirst, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    const checklist = rootOk ? readOnce(layout.checklist, 'review checklist', 'checklist') : undefined;
+    fixFirst.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.review.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    fixFirst.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
   }
   const autoplan = rootOk ? readOnce(layout.autoplan, 'autoplan skill', 'autoplan') : undefined;
   if (!autoplan) drift('anchor', 'autoplan-lean.skip-list', notRun!);

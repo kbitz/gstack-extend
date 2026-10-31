@@ -205,6 +205,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('ship-and-land'),
     'README.md',
     'docs/acceptance/external-gate.md',
+    'docs/acceptance/review-fix-policy.md',
     'tests/fixtures/handoffs/**',
   ],
   'tests/update.test.ts': [

@@ -334,6 +334,7 @@ classifier reports, with the expected and actual values.
 | <a id="e-review-source-file-uri"></a>`E-REVIEW-SOURCE-FILE-URI` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="e-review-source-whitespace"></a>`E-REVIEW-SOURCE-WHITESPACE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="b-repaired-head"></a>`B-REPAIRED-HEAD` | H-B | `Final-gate repair review:` | ADVANCE_TRUSTED | none; a receipt that records a successful final-gate repair chain still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-neutral-repair-head"></a>`B-NEUTRAL-REPAIR-HEAD` | H-B | `Repair without review cycle:` | ADVANCE_TRUSTED | none; a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="f-pause"></a>`F-PAUSE` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; the caller sent `full-suite=external`, the line is well formed, head, tree and base equal its live reads, and the PR is a draft | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
 | <a id="f-pause-no-pr"></a>`F-PAUSE-NO-PR` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; no PR exists yet, because the pause pushes nothing and creates nothing | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
@@ -820,7 +821,8 @@ The policy grammar is `/review-and-prep`'s "Read an optional review policy": a v
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
 `documentation-audit` (`final`), `full-suite` (`final`, `external`), `final-gate-repair`
-(`tests-docs`), `parent-io` (`lean`) and `max-continuations` (`0` to
+(`tests-docs`), `parent-io` (`lean`), `repair-review` (`behavior-changing`),
+`repair-cycles` (`light`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -873,6 +875,21 @@ whose policy carries either value still continues once the parser accepts it.
 `full-suite=external` changes what a preparation does at the final test gate
 (Grammar H-F below); `parent-io=lean` changes only how the parent waits on its
 own runs and reads files, and no outcome, gate or bound.
+
+`repair-review=behavior-changing` and `repair-cycles=light` follow the same
+rollout order and the same check, each written as `grep -F
+'repair-review=behavior-changing' "<installed skill dir>/SKILL.md"` and `grep -F
+'repair-cycles=light' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+An installation without a value reads the whole line as `none supplied`, an
+older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits a value whose check fails and keeps its other keys. The two
+are independent: either may be sent alone or together, since a repeated key
+voids the line. Neither is set by the light review default, waives a gate or
+authorizes a continuation. `repair-review=behavior-changing` lets a repair that
+changes no behavior open no further review cycle while its upstream anchors still
+match; `repair-cycles=light` makes a delta repair cycle skip the outside call and
+the Red Team without any `review_default` config. The exact words of each value
+and its check also appear in the release notes of the version that adds them.
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1108,6 +1125,7 @@ or input it says is needed is for the user.
 | Completion-matrix location and scope-source SHA-256 | receipt-present | published in the receipt; consumers ignore it |
 | `Review default:` and `Auto-chosen (veto by replying on this PR):` lines | receipt-present | published in the receipt; a consumer may show them to the user, and they never authorize a stage or merge |
 | `Test selection:` lines | receipt-present | published in the receipt; each names the lanes or test files a run ran and skipped, and a skipped lane never counts as passed |
+| `Repair classification:` and `Repair without review cycle:` lines | receipt-present | published in the receipt under `repair-review=behavior-changing`, one classification per finding and one repair line per repair that opened no review cycle; a consumer may show them to the user, they never authorize a stage or merge, and `/review`'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`) |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The

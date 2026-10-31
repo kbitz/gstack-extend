@@ -649,6 +649,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
   'documentation-audit': /^final$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/,
   'max-continuations': /^[0-9]$/,
 };
 /** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
@@ -1372,7 +1373,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -1673,4 +1674,142 @@ test('external result uses literal zero and every pause version scans tokens', (
     expect(verdict.mismatches.map(m => m.binding)).toContain('redaction');
     expect(JSON.stringify(verdict)).not.toContain(VARS.TOKEN);
   }
+});
+
+// Track 33A: `repair-review=behavior-changing` and `repair-cycles=light`. Each follows
+// the rollout order of the older values; the fixtures model only the receipt-present
+// lines and the policy grammar. no_claim=installed-agent execution.
+describe('(F) repair-review and repair-cycles', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const VALUES = { 'repair-review': 'behavior-changing', 'repair-cycles': 'light' } as const;
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => { const m = { ...POLICY_VALUES }; for (const k of keys) delete m[k]; return m; };
+
+  // Value: protects=both values parse exactly, near misses and repeats do not, and an older value map loses the whole line; fails_when=a regex loosens, a repeat parses or the older-install claim stops being true; why_new=new policy values; seam=none; no_claim=installed-agent execution
+  test('the parser accepts both values, refuses near misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('repair-review=behavior-changing'))?.get('repair-review')).toBe('behavior-changing');
+    expect(parsePolicy(line('repair-cycles=light'))?.get('repair-cycles')).toBe('light');
+    const both = parsePolicy(line('in-cap=delta; repair-review=behavior-changing; repair-cycles=light; full-suite=external'));
+    expect(both?.get('repair-review')).toBe('behavior-changing');
+    expect(both?.get('repair-cycles')).toBe('light');
+    for (const bad of ['repair-review=behavior', 'repair-review=Behavior-Changing', 'repair-review=all', 'repair-review=light', 'repair-review=behavior-changing,light',
+      'repair-cycles=Light', 'repair-cycles=heavy', 'repair-cycles=behavior-changing', 'repair-cycle=light', 'repair=light',
+      'repair-review=behavior-changing; repair-review=behavior-changing', 'repair-cycles=light; repair-cycles=light']) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    // An older install's map lacks the key, so the whole line is lost with every other key.
+    for (const tail of ['in-cap=delta; repair-review=behavior-changing', 'in-cap=delta; repair-cycles=light']) {
+      expect(parsePolicy(line(tail), without('repair-review', 'repair-cycles')), tail).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; repair-cycles=light'), without('repair-review'))?.get('in-cap')).toBe('delta');
+    expect(parsePolicy(line('in-cap=delta; repair-review=behavior-changing'), without('repair-cycles'))?.get('in-cap')).toBe('delta');
+    expect(parsePolicy(line('in-cap=delta; full-suite=final'), without('repair-review', 'repair-cycles'))?.get('in-cap')).toBe('delta');
+  });
+
+  // Value: protects=an H-E prompt whose policy carries either value, or both, still continues and a bad value still holds; fails_when=a new value breaks the H-E path; why_new=new policy values through the consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries either value, or both, still continues', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['repair-review=behavior-changing', 'repair-cycles=light', 'repair-review=behavior-changing; repair-cycles=light']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['repair-review=light', 'repair-cycles=heavy', 'repair-cycles=light; repair-cycles=light']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=the capability check works against the real skill for both values and the doc publishes the checks, the rollout and the omit rule; fails_when=a value leaves the skill, a check text drifts or the omit rule is dropped; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F finds both values in the skill, none for an absent one, and the doc publishes each check', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    for (const [key, value] of Object.entries(VALUES)) {
+      expect(spawnSync('grep', ['-F', `${key}=${value}`, skillPath]).status, key).toBe(0);
+      const check = `grep -F '${key}=${value}' "<installed skill dir>/SKILL.md"`;
+      expect(has(prep, check), `skill: ${check}`).toBe(true);
+      expect(has(doc, check), `doc: ${check}`).toBe(true);
+    }
+    for (const absent of ['repair-review=none', 'repair-cycles=heavy', 'repair-review=light']) {
+      expect(spawnSync('grep', ['-F', absent, skillPath]).status, absent).toBe(1);
+    }
+    for (const phrase of ['`repair-review=behavior-changing` and `repair-cycles=light` follow the same rollout order and the same check',
+      '(exit 0 means supported)',
+      'An installation without a value reads the whole line as `none supplied`',
+      'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
+      'a caller omits a value whose check fails and keeps its other keys',
+      'The two are independent: either may be sent alone or together, since a repeated key voids the line.',
+      'Neither is set by the light review default, waives a gate or authorizes a continuation.',
+      'The exact words of each value and its check also appear in the release notes of the version that adds them.',
+      '`repair-review` (`behavior-changing`), `repair-cycles` (`light`)']) expect(has(doc, phrase), phrase).toBe(true);
+    // The older paragraph's pinned wording stays.
+    for (const phrase of ['A caller omits a value whose check fails and keeps its other keys',
+      'A returned H-E prompt whose policy carries either value still continues']) expect(has(doc, phrase), phrase).toBe(true);
+  });
+
+  // Value: protects=each value is its exact string, with no consumer or plan-tier word in its text; fails_when=a value is renamed, widened or given a word that names a caller; why_new=criterion 5; seam=none; no_claim=installed-agent execution
+  test('each value is its exact string and names no consumer or tier', () => {
+    expect(VALUES).toEqual({ 'repair-review': 'behavior-changing', 'repair-cycles': 'light' });
+    for (const [key, value] of Object.entries(VALUES)) {
+      expect(POLICY_VALUES[key]!.source).toBe(`^${value}$`);
+      expect(value).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
+      expect(`${key}=${value}`).not.toMatch(/routine|standard|novel/);
+      expect(has(prep, `\`${key}=${value}\` (its only value)`), key).toBe(true);
+    }
+  });
+
+  // Value: protects=a receipt that records a repair which opened no review cycle still hands /ship-and-land a trusted head; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 8; seam=none; no_claim=installed-agent execution
+  test('a neutral-repair receipt hands off review: COMPLETE exactly as a plain one', () => {
+    const plain = run('B-TRUSTED');
+    const neutral = run('B-NEUTRAL-REPAIR-HEAD');
+    expect(neutral.outcome).toBe(plain.outcome);
+    expect(neutral.mismatches).toEqual(plain.mismatches);
+    expect(neutral.parsed).toEqual(plain.parsed);
+    const body = FIX.cases['B-NEUTRAL-REPAIR-HEAD'].live?.receiptBody as string;
+    expect(body).toContain('Repair without review cycle:');
+    expect(fixtureText(FIX.cases['B-NEUTRAL-REPAIR-HEAD'])).not.toContain('Repair without review cycle:');
+    expect(has(doc, 'a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`')).toBe(true);
+    // The fixture line has the producer template's keys, in order.
+    const template = prep.match(/`Repair without review cycle: ([^`]+)`/)![1];
+    const row = body.split('\n').find((l) => l.startsWith('Repair without review cycle: '))!.slice('Repair without review cycle: '.length);
+    const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
+    expect(keys(row)).toEqual(keys(template));
+    expect(keys(template)).toEqual(['class', 'paths', 'cycle', 'targeted', 'final-gate']);
+  });
+
+  // Value: protects=the new lines are published as receipt-present by the producer and the doc, and never authorize anything; fails_when=either side drops the lines or the producer stops writing them; why_new=receipt-present contract; seam=none; no_claim=installed-agent execution
+  test('the repair lines are receipt-present in both the producer and the doc', () => {
+    expect(has(doc, '`Repair classification:` and `Repair without review cycle:` lines | receipt-present')).toBe(true);
+    expect(has(doc, 'they never authorize a stage or merge')).toBe(true);
+    expect(has(prep, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
+    expect(has(doc, 'and `/review`\'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`)')).toBe(true);
+  });
+
+  // Value: protects=the acceptance record states the before sample's shape, the unknown after fields, both exact tokens and checks, and that no saving is established; fails_when=a token, a check, an unknown or the limits are dropped, or a session ID or repository name is published; why_new=new acceptance record; seam=none; no_claim=installed-agent execution
+  test('the acceptance record states the before sample, the unknown after fields and the limits', () => {
+    const raw = read('docs/acceptance/review-fix-policy.md');
+    const record = squash(raw);
+    for (const phrase of ['13 runs with a metrics summary', '10 `ok`, 3 `partial`', '`data.local_passes`', '`data.fix_cycles`',
+      '`local-pass` phase `observed_wall_duration_ms`', '`fix` phase `observed_wall_duration_ms`', '`data.union_observed_wall_ms`',
+      'Aggregates only: no session ID or repository name is published.', 'The sample is unpaired',
+      'Count of `Repair without review cycle:` lines in the receipt | unknown',
+      'Count of `skipped — light default repair cycle; source: repair-cycles=light` records | unknown',
+      'read `unknown` until a real run with the value on its policy line records them',
+      'the owner decides whether to accept it on the first opted-in run after a release installs',
+      'No saving is established', 'No installed-agent run backs it', 'No checkpoint is awarded',
+      'For `/ship` to copy verbatim into the CHANGELOG entry', 'the `/ship-and-land` review checks the entry against this block',
+      'Older installations: an installation without a value reads the whole line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`.',
+      'A caller omits a value whose check fails and keeps its other keys.']) expect(has(record, phrase), phrase).toBe(true);
+    for (const [key, value] of Object.entries(VALUES)) {
+      expect(has(record, `\`${key}=${value}\``), `${key}=${value}`).toBe(true);
+      expect(has(record, `grep -F '${key}=${value}' "<installed skill dir>/SKILL.md"`), `check for ${key}`).toBe(true);
+    }
+    // The published block names no session or repository, and no word that names a consumer or a plan tier.
+    expect(raw).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+    expect(raw).not.toMatch(/\b(?:routine|novel)\b/);
+    const notes = raw.split('```text\n')[1]!.split('\n```')[0]!;
+    expect(notes).not.toMatch(/routine|standard|novel/);
+    expect(has(doc, 'The exact words of each value and its check also appear in the release notes of the version that adds them.')).toBe(true);
+  });
 });
