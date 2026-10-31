@@ -6,12 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **Outside review recovers a qualified severity label.** Recovery restores that severity onto the finding, so the label is kept through the outside-review pass.
-- **A severity word beside a dangling hyphen is rejected.** Recovery leaves that word out of the finding's severity.
+- **Outside review reads a severity label with a qualifier.** A complete response that labeled a finding `[P3, advisory]` used to fail the severity parser, stay uncredited and block with `GATE: MISSING COVERAGE`. Recovery now reads that label as its one severity for the classifier, keeps the qualifier and every finding, and leaves the saved response unchanged. The upstream validator still owns severity.
+- **A label that could name two severities stays unread.** `[P1, P2]`, `[P1/P2]` and a qualifier holding a standalone `critical`, `high`, `medium` or `low`, including one beside a dangling hyphen such as `[P3, risk -high]`, are not rewritten. Hyphen compounds such as `[P3, low-risk]` are read. Quoted forms in fences, code spans, blockquotes and table cells are left alone.
 
 ### Upgrade notes
 
-- **Run outside review again for the corrected severities.** A qualified label comes back with its severity, and a severity word that only sat beside a dangling hyphen comes back without one.
+- **Exit codes move for these responses only.** From `bin/outside-review`, `[P3, advisory]` goes from exit 4 to exit 0 and `[P1, blocking]` from exit 4 to exit 3. P2 and P3 findings still need adjudication. `[P2, high confidence]` stays uncredited by design.
 
 ## [0.54.0] - 2026-10-31
 
