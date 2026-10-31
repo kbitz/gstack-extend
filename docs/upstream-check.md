@@ -10,7 +10,8 @@ answer (see [what it does not do](#what-it-does-not-do)).
 
 Without it, a drifted contract is found when the stage reaches the affected
 step: `/review-and-prep` records `in-cap delta: inactive` and runs the
-unmodified `/review`, `bin/outside-review` refuses at dispatch, and
+unmodified `/review` (or records `repair-review: inactive` and repeats every
+edited pass), `bin/outside-review` refuses at dispatch, and
 `/autoplan-lean` records criteria drift and continues with voices that are not
 upstream-identical. The check moves that discovery ahead of the spend. It only
 describes the installation at the moment it ran.
@@ -24,7 +25,8 @@ guesses a root.
 # Claude Code layout: review and autoplan live under the root.
 bin/upstream-check --gstack-root "$HOME/.claude/skills/gstack"
 
-# Codex-style layout: gstack-review and gstack-autoplan are siblings of the root.
+# Codex-style layout: gstack-review and gstack-autoplan are siblings of the root
+# (review/checklist.md stays under the root in both layouts).
 bin/upstream-check --gstack-root "$HOME/.codex/skills/gstack"
 # Sibling skills somewhere else:
 bin/upstream-check --gstack-root /abs/path/gstack --skills-dir /abs/path/skills
@@ -151,7 +153,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=21 drift=1
+RESULT drift checks=28 drift=1
 ```
 
 ## What it checks
@@ -171,6 +173,19 @@ The inventory comes from this extension's own source, never a second copy:
   wrapper's check does; its prose "in its Step 5.8" is enforced by neither, and
   there is no decoding or normalization), plus the `**Section skip list` label in the installed
   autoplan file, through the `skipList` helper `/autoplan-lean outline` uses.
+- **Fix-First anchors.** The backtick spans of the activation paragraph of
+  `skills/review-and-prep.md` (opened by `**Activation
+  (`repair-review=behavior-changing`).**`): the two after its first "byte for
+  byte," are checked as raw bytes in the installed `/review` skill file, and the
+  four after its second, which follows "its `review/checklist.md` still
+  contains,", in `review/checklist.md` under the same root. The checklist is
+  read from the root in both layouts, so the nested-or-sibling choice is
+  unchanged. They are listed by `fixFirstInventory`, a separate check
+  (`review-and-prep.fix-first`) from the in-cap list. Their anchor results are
+  independent, but activation is not: the paragraph also requires the first two
+  in-cap anchors, which the in-cap list already checks. Drift in either of those
+  disables both values even while the six Fix-First anchor checks say OK; the
+  existing in-cap effect line names only the delta consequence.
 - **Exports.** `runClaudeCode`, `resolveClaudeCommand` and
   `classifyOutsideReview`, from the one list (`UPSTREAM_HELPERS`) that
   `src/outside-review/cli.ts` itself loads before any dispatch. Each module is
@@ -229,7 +244,10 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
 
 <a id="drift-anchor"></a>
 - **`anchor`.** For the three `/review` anchors, the in-cap delta is inactive
-  and `/review` runs unmodified (full repeat cycles). For the skip list,
+  and `/review` runs unmodified (full repeat cycles); the first two also gate
+  `repair-review=behavior-changing`, which then records `repair-review: inactive`.
+  For the six Fix-First anchors, that value is inactive: every edited pass repeats
+  as today and the receipt says so, with no upstream file edited. For the skip list,
   `autoplan-lean outline` marks no row `skip`, so `/autoplan-lean` applies
   upstream's skip list by heading itself and reads more.
 
@@ -276,6 +294,9 @@ observed" is not evidence that none happened.
 this extension's contracts. Run both if you want both. The checker does not call
 doctor. Revisit if upstream publishes anchor or contract identifiers.
 
+The [review repair policy acceptance record](acceptance/review-fix-policy.md)
+holds the measurement limits and release-note block for the opt-in repair values.
+
 ## Upgrade checklist
 
 1. Upgrade (`/gstack-extend-upgrade`, or a gstack upgrade), then rerun the
@@ -302,6 +323,7 @@ doctor. Revisit if upstream publishes anchor or contract identifiers.
 | Contract | Upstream revision | Version |
 |---|---|---|
 | Wrapper anchors and classifier cases (qualified by this Track) | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
+| Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 

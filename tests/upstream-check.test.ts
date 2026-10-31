@@ -7,13 +7,13 @@ import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, U
 import { skipList } from '../src/autoplan-lean/outline';
 import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
-import { ANCHORS_QUALIFIED, EXEMPTIONS, FORMAT, inventory, main } from '../src/upstream-check/cli';
+import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, fixFirstInventory, inventory, main } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 21; // root, inventory, 3 anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 28; // root, 2 inventory, 3 in-cap + 6 Fix-First anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 let counter = 0;
@@ -21,7 +21,9 @@ const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
 
 const HEADING = "**`/review`'s own repeat cycles (`in-cap=delta`).**";
+const FIX_FIRST_HEADING = '**Activation (`repair-review=behavior-changing`).**';
 const CURRENT_ANCHORS = (() => { const inv = inventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv.anchors; })();
+const FIX_FIRST = (() => { const inv = fixFirstInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 
 const CLASSIFIER = (honorNotReady: boolean) => `export function classifyOutsideReview({ text }) {
   const highest = /\\[(P[0-3])\\]/.exec(text)?.[1] ?? null;
@@ -38,7 +40,8 @@ const MODULES = {
 const snapshotText = () => PHASES.map((p) => `  ${p}: \`${NATIVE_CRITERIA[p]}\`,`).join('\n') + '\n';
 const sectionText = (p: (typeof PHASES)[number]) => [BOUNDARY, OUTSIDE_RESULT_CONTRACT, ...OUTSIDE_CRITERIA[p]].join('\n\n') + '\n';
 const SKIP = '**Section skip list (apply these):**\n\n- Preamble\n- Telemetry\n';
-const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n`;
+const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n`;
+const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n`;
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
@@ -48,6 +51,7 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   const files: Record<string, string> = {};
   put(join(root, 'VERSION'), '1.2.3.4\n');
   put(join(root, 'bin', 'gstack-autoplan-snapshot.ts'), snapshotText());
+  put(join(root, 'review', 'checklist.md'), checklistText());
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
@@ -140,6 +144,42 @@ describe('inventory', () => {
   });
 });
 
+describe('fix-first inventory', () => {
+  // Value: protects=the activation paragraph's anchor lists, in both installed files; fails_when=a span is added, dropped or moved between files unnoticed; why_new=repair-review=behavior-changing gates on upstream text; seam=none
+  test('locks the Fix-First anchors exactly', () => {
+    expect(FIX_FIRST.review).toEqual([
+      'For each finding, classify as AUTO-FIX or ASK per the Fix-First Heuristic in',
+      'Critical findings lean toward ASK; informational toward AUTO-FIX.',
+    ]);
+    expect(FIX_FIRST.checklist).toEqual([
+      '## Fix-First Heuristic',
+      'AUTO-FIX (agent fixes without asking):     ASK (needs human judgment):',
+      '├─ Anything changing user-visible',
+      '**Rule of thumb:** If the fix is mechanical and a senior engineer would apply it',
+    ]);
+  });
+
+  const withSkill = (mutate: (text: string) => string | undefined) => {
+    const extend = fresh('extend-fix-first');
+    const changed = mutate(readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8'));
+    if (changed !== undefined) put(join(extend, 'skills', 'review-and-prep.md'), changed);
+    return fixFirstInventory(extend);
+  };
+  test('a removed source, a reworded paragraph, a moved delimiter or a bad span is drift', () => {
+    const removed = withSkill(() => undefined);
+    expect(!removed.ok && removed.reason).toContain('inventory source not found');
+    const reworded = withSkill((t) => t.replace(FIX_FIRST_HEADING, '**Activation of the repair value.**'));
+    expect(!reworded.ok && reworded.reason).toBe('activation paragraph not found');
+    const delimiters = 'anchor list delimiters not found in the activation paragraph';
+    expect(withSkill((t) => t.replace('its `review/checklist.md` still contains,', 'its checklist still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('and the `in-cap=delta` paragraph\'s first two anchors', 'and the in-cap anchors'))).toMatchObject({ ok: false, reason: delimiters });
+    const reviewSpans = (t: string) => t.replace('`For each finding, classify as AUTO-FIX or ASK per the Fix-First Heuristic in`', 'x').replace('`Critical findings lean toward ASK; informational toward AUTO-FIX.`', 'y');
+    expect(withSkill(reviewSpans)).toMatchObject({ ok: false, reason: 'review anchor list has no backtick spans' });
+    expect(withSkill((t) => t.replace('`## Fix-First Heuristic`', '`## Fix-First\nHeuristic`'))).toMatchObject({ ok: false, reason: 'checklist anchor list has an empty span or a span containing a newline' });
+    expect(withSkill((t) => t.replace('`├─ Anything changing user-visible`', '├─ Anything changing user-visible`'))).toMatchObject({ ok: false, reason: 'checklist anchor list has an unbalanced backtick' });
+  });
+});
+
 describe('a healthy installation', () => {
   test('the protocol assertion rejects late INFO and a whitespace-containing check ID', async () => {
     const r = await check(rootArgs(upstream('nested')));
@@ -157,7 +197,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + 1); // three /review anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + 1); // three in-cap anchors, six Fix-First anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -165,6 +205,7 @@ describe('a healthy installation', () => {
     for (const golden of GOLDEN_CASES) expect(r.lines).toContain(`OK classifier classifier.${golden.id}`);
     expect(r.lines.filter((l) => l.startsWith('INFO inspected '))).toEqual([
       `INFO inspected anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`,
+      `INFO inspected fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`,
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
@@ -255,7 +296,7 @@ test.skipIf(process.getuid?.() === 0)('an inaccessible upstream root reports dri
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.out).toContain('DRIFT root gstack-root gstack root is missing, inaccessible or not a directory:');
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=20`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 2}`); // both inventory checks read this extension's own source
   } finally { chmodSync(f.root, 0o700); }
 }, 30000);
 
@@ -304,12 +345,97 @@ describe('drift', () => {
     expect(line).toContain(join(f.root, 'review', 'SKILL.md'));
   }, 30000);
 
+  const FIX_FIRST_EFFECT = '  effect: /review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so';
+  // Value: protects=each installed file's Fix-First drift names its stage cost and docs link, and leaves the other gate OK; fails_when=a missing or changed anchor passes, reports the in-cap effect or turns the in-cap gate off; why_new=second upstream gate; seam=none
+  test.each([
+    ['nested', 'review', 'review-and-prep.fix-first.review.1', 'For each finding, classify as AUTO-FIX or ASK per the Fix-First Heuristic in'],
+    ['sibling', 'review', 'review-and-prep.fix-first.review.2', 'Critical findings lean toward ASK; informational toward AUTO-FIX.'],
+    ['nested', 'checklist', 'review-and-prep.fix-first.checklist.1', '## Fix-First Heuristic'],
+    ['sibling', 'checklist', 'review-and-prep.fix-first.checklist.2', 'AUTO-FIX (agent fixes without asking):     ASK (needs human judgment):'],
+    ['nested', 'checklist', 'review-and-prep.fix-first.checklist.3', '├─ Anything changing user-visible'],
+    ['sibling', 'checklist', 'review-and-prep.fix-first.checklist.4', '**Rule of thumb:** If the fix is mechanical and a senior engineer would apply it'],
+  ] as const)('a changed anchor in the %s layout\'s %s file is drift naming %s', async (layout, file, id, anchor) => {
+    const f = upstream(layout);
+    const path = file === 'review' ? f.files.review! : join(f.root, 'review', 'checklist.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(anchor, `${anchor.slice(0, -2)}!!`));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
+    expect(at).toBeGreaterThan(-1);
+    const shown = anchor.replace(/\s+/g, ' '); // the report is one line with collapsed whitespace
+    expect(r.lines[at]).toContain(shown.length > 70 ? `"${shown.slice(0, 69)}…"` : `"${shown}"`);
+    expect(r.lines[at + 1]).toBe(FIX_FIRST_EFFECT);
+    expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
+    expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    // The in-cap gate is independent: it still passes, and its cost line is not used.
+    expect(r.lines).toContain('OK inventory review-and-prep.incap');
+    for (const n of [1, 2, 3]) expect(r.lines).toContain(`OK anchor review-and-prep.incap.${n}`);
+    expect(r.out).not.toContain('the in-cap delta is inactive');
+  }, 30000);
+
+  test.each(['nested', 'sibling'] as const)('a missing checklist file in the %s layout drifts every checklist anchor and nothing else', async (layout) => {
+    const f = upstream(layout);
+    const checklist = join(f.root, 'review', 'checklist.md');
+    rmSync(checklist);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
+    expect(r.lines).toContain(`INFO layout ${layout}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([1, 2, 3, 4].map((n) => `review-and-prep.fix-first.checklist.${n}`));
+    for (const line of drifts(r.lines)) expect(line).toContain(`review checklist not found: ${checklist}`);
+    expect(r.lines.filter((l) => l.startsWith('INFO file checklist '))).toEqual([]);
+    expect(r.lines).toContain('OK anchor review-and-prep.fix-first.review.2');
+  }, 30000);
+
+  test('a checklist that is not a regular file is drift, and a healthy one is reported as INFO', async () => {
+    const f = upstream('nested');
+    const healthy = await check(rootArgs(f));
+    expect(healthy.lines).toContain(`INFO file checklist ${realpathSync(join(f.root, 'review', 'checklist.md'))}`);
+    rmSync(join(f.root, 'review', 'checklist.md'));
+    mkdirSync(join(f.root, 'review', 'checklist.md'));
+    const r = await check(rootArgs(f));
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
+    expect(drifts(r.lines)[0]).toContain('review checklist is not a regular file');
+  }, 30000);
+
+  test('an emptied review file drifts the in-cap and Fix-First review anchors, not the checklist anchors', async () => {
+    const f = upstream('nested');
+    writeFileSync(f.files.review!, '# nothing\n');
+    const r = await check(rootArgs(f));
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([
+      'review-and-prep.incap.1', 'review-and-prep.incap.2', 'review-and-prep.incap.3',
+      'review-and-prep.fix-first.review.1', 'review-and-prep.fix-first.review.2',
+    ]);
+    for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
+  }, 30000);
+
+  test('a missing root leaves both inventory checks OK and every anchor not run', async () => {
+    const r = await check(['--gstack-root', join(scratch, 'does-not-exist-fix-first')]);
+    expect(r.lines).toContain('OK inventory review-and-prep.incap');
+    expect(r.lines).toContain('OK inventory review-and-prep.fix-first');
+    const anchors = drifts(r.lines).filter((l) => l.startsWith('DRIFT anchor review-and-prep.fix-first.'));
+    expect(anchors).toHaveLength(6);
+    for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
+  }, 30000);
+
+  test('a missing in-cap anchor leaves the Fix-First gate OK', async () => {
+    const f = upstream('nested');
+    writeFileSync(f.files.review!, reviewText().replace('Allow at most 3 fix cycles', 'Allow at most 4 fix cycles'));
+    const r = await check(rootArgs(f));
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(r.lines).toContain('OK inventory review-and-prep.fix-first');
+    for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.review.${n}`);
+    for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
+  }, 30000);
+
   test('a missing root is drift, never a pass, and every later check says not run', async () => {
     const r = await check(['--gstack-root', join(scratch, 'does-not-exist')]);
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.lines.some((l) => l.startsWith('DRIFT root gstack-root '))).toBe(true);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 1}`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 2}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
@@ -699,6 +825,25 @@ describe('launcher', () => {
     expect(r.stdout.trimEnd().split('\n').at(-1)).toMatch(/^RESULT drift /);
   }, 40000);
 
+  // Value: protects=a reworded activation paragraph reports its own inventory drift and leaves the in-cap gate alone; fails_when=the Fix-First list reuses the in-cap check or vanishes silently; why_new=second inventory source; seam=none
+  test('a copied tree with a reworded activation paragraph reports DRIFT inventory for Fix-First only', () => {
+    const copy = fresh('copy-fix-first');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    mkdirSync(join(copy, 'bin'));
+    cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
+    put(join(copy, 'skills', 'review-and-prep.md'),
+      readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(FIX_FIRST_HEADING, '**Activation of the repair value.**'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(4);
+    expect(r.stdout).toContain('DRIFT inventory review-and-prep.fix-first activation paragraph not found');
+    expect(r.stdout).toContain('OK inventory review-and-prep.incap');
+    for (const n of [1, 2, 3]) expect(r.stdout).toContain(`OK anchor review-and-prep.incap.${n}`);
+    expect(r.stdout).not.toContain('review-and-prep.fix-first.review.');
+    expect(r.stdout).toContain('  effect: /review-and-prep: the Fix-First anchors cannot be listed, so repair-review=behavior-changing is unverified and stays inactive');
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - 6} drift=1`);
+  }, 40000);
+
   test('a missing extension dependency uses the internal-error contract before output', () => {
     const copy = fresh('missing-local-module');
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
@@ -843,18 +988,24 @@ function scanGates(repo: string) {
   });
   return hits;
 }
-/** Hits covered by the runtime inventory: the anchor paragraph, and the two readers of the helper list. */
+/** Hits covered by the runtime inventory: the two anchor paragraphs, and the two readers of the helper list. */
 function unlisted(repo: string) {
   const skill = readFileSync(join(repo, 'skills', 'review-and-prep.md'), 'utf8');
-  const start = skill.indexOf(HEADING);
-  const blank = skill.indexOf('\n\n', start);
-  const paragraph = start < 0 ? '' : skill.slice(start, blank < 0 ? undefined : blank);
-  // Only the two inventory delimiters are covered, not other gates that happen
+  // Only the inventory delimiters are covered (the in-cap list opens once, the
+  // activation paragraph's two lists open twice), not other gates that happen
   // to share their paragraph or line. Missing/reworded delimiters exempt nothing.
-  const covered = ['byte for byte,', 'Check each with `grep -F`'].flatMap((text) => {
-    const at = paragraph.indexOf(text);
-    return at < 0 ? [] : [start + at + (text.startsWith('Check') ? text.indexOf('grep') : 0)];
-  });
+  const delimiters = (heading: string, lists: number) => {
+    const start = skill.indexOf(heading);
+    const blank = skill.indexOf('\n\n', start);
+    const paragraph = start < 0 ? '' : skill.slice(start, blank < 0 ? undefined : blank);
+    const offsets: number[] = [];
+    let at = -1;
+    for (let i = 0; i < lists && (at = paragraph.indexOf('byte for byte,', at + 1)) >= 0; i++) offsets.push(start + at);
+    const grep = paragraph.indexOf('Check each with `grep -F`');
+    if (grep >= 0) offsets.push(start + grep + 'Check each with `'.length);
+    return offsets;
+  };
+  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2)];
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.offset !== undefined && covered.includes(hit.offset)) return false;
     // Only the reviewed list-driven loader sites are covered; a new import or
@@ -932,10 +1083,11 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
+    ['Fix-First anchors', FIX_FIRST_QUALIFIED.revision, FIX_FIRST_QUALIFIED.version],
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];
