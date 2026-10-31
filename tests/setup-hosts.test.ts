@@ -2721,6 +2721,60 @@ describe('telemetry-call helper install', () => {
   const source = join(ROOT, 'bin', 'lib', 'telemetry-call.sh');
   const installed = (home: string) => join(home, '.gstack-extend', 'bin', 'telemetry-call');
 
+  for (const layout of ['intermediate-hop', 'redirected-bin'] as const) {
+    for (const unsafe of [false, true]) {
+      test(`helper ${layout} checks every symlink hop (${unsafe ? 'unsafe' : 'safe'})`, () => {
+        const home = join(baseTmp, `call-helper-hop-${layout}-${unsafe}`);
+        const shared = join(home, 'shared');
+        const safe = join(home, 'safe');
+        mkdirSync(join(safe, 'bin'), { recursive: true });
+        mkdirSync(shared);
+        if (layout === 'intermediate-hop') {
+          symlinkSync(safe, join(shared, 'link'));
+          symlinkSync(join(shared, 'link'), join(home, '.gstack-extend'));
+        } else {
+          mkdirSync(join(shared, 'state'));
+          symlinkSync(join(safe, 'bin'), join(shared, 'state', 'bin'));
+          symlinkSync(join(shared, 'state'), join(home, '.gstack-extend'));
+        }
+        if (unsafe) chmodSync(shared, 0o777);
+        const result = runSetup(['--host', 'codex', '--quiet'], home);
+        const skill = join(hostDir(home, 'codex'), 'implement');
+        if (unsafe) {
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).toContain('world-writable');
+          expect(existsSync(installed(home))).toBe(false);
+          expect(existsSync(skill)).toBe(false);
+          mkdirSync(skill, { recursive: true });
+          writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
+          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+        } else {
+          expect(result.exitCode, result.stderr).toBe(0);
+          expect(readFileSync(installed(home)).equals(readFileSync(source))).toBe(true);
+        }
+        const removed = runSetup(['--host', 'codex', '--uninstall', '--quiet'], home);
+        expect(removed.exitCode === 0).toBe(!unsafe);
+        expect(existsSync(skill)).toBe(unsafe);
+        expect(existsSync(installed(home))).toBe(false);
+      });
+    }
+  }
+
+  test('early wire failure creates private default state under a permissive umask', () => {
+    const home = join(baseTmp, 'call-helper-early-umask');
+    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+    const bins = join(home, 'stub-bin');
+    mkdirSync(bins);
+    writeFileSync(join(bins, 'ln'), '#!/bin/sh\ncase "$*" in *"$HOME/.local/bin/"*) exit 42 ;; *) exec /bin/ln "$@" ;; esac\n');
+    chmodSync(join(bins, 'ln'), 0o755);
+    const result = spawnSync('bash', ['-c', 'umask 000; exec "$1" --host codex --quiet', 'setup-test', SETUP], {
+      env: { HOME: home, PATH: `${bins}:${process.env.PATH ?? '/usr/bin:/bin'}` }, encoding: 'utf8',
+    });
+    expect(result.status).toBe(42);
+    expect(existsSync(installed(home))).toBe(false);
+    expect(statSync(join(home, '.gstack-extend')).mode & 0o002).toBe(0);
+  });
+
   test('a permissive caller umask cannot create writable helper directories', () => {
     const home = join(baseTmp, 'call-helper-umask');
     mkdirSync(home);
@@ -2840,6 +2894,31 @@ describe('telemetry-call helper install', () => {
     writeFileSync(installed(home), '#!/bin/sh\nexit 1\n');
     expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
     expect(readFileSync(installed(home)).equals(readFileSync(source))).toBe(true);
+  });
+
+  // Coverage audit extension.
+  // Value: protects=failed helper publication preserves the installed executable and cleans its temporary file;
+  // fails_when=setup removes the prior helper or leaks its staged copy after rename fails;
+  // why_new=existing stale-copy and install tests cover successful publication only;
+  // seam=none;
+  // no_claim=real disk failure or concurrent attacker acceptance; PATH stub injects only helper rename failure.
+  test('failed helper publication preserves the previous copy and cleans staging', () => {
+    const home = join(baseTmp, 'call-helper-publish-failure');
+    const dir = join(home, '.gstack-extend', 'bin');
+    const bins = join(home, 'stub-bin');
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(bins);
+    const previous = '#!/bin/sh\nexit 0\n';
+    writeFileSync(installed(home), previous);
+    chmodSync(installed(home), 0o755);
+    writeFileSync(join(bins, 'mv'), '#!/bin/sh\nfor arg do\n  case "$arg" in "$HOME/.gstack-extend/bin/telemetry-call") exit 42 ;; esac\ndone\nexec /bin/mv "$@"\n');
+    chmodSync(join(bins, 'mv'), 0o755);
+    const result = runSetup(['--host', 'codex', '--quiet'], home, bins);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain('Warning: could not install');
+    expect(readFileSync(installed(home), 'utf8')).toBe(previous);
+    expect(statSync(installed(home)).mode & 0o777).toBe(0o755);
+    expect(readdirSync(dir)).toEqual(['telemetry-call']);
   });
 
   test('a pointer under any host keeps it until the last one is gone', () => {

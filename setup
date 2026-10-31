@@ -1294,7 +1294,7 @@ install_status_finalize() {
   if [ "$INSTALL_STATUS_RECONCILE" -eq 0 ] && [ "${#IS_NEW_KEY[@]}" -eq 0 ]; then
     return 0
   fi
-  if ! mkdir -p "$INSTALL_STATUS_DIR"; then
+  if ! (umask 077; mkdir -p "$INSTALL_STATUS_DIR"); then
     _is_warn mkdir_failed
     return 0
   fi
@@ -1421,14 +1421,38 @@ if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
   is_safe_install_path "$HOME" || exit 1
   is_safe_install_path "$HOME/.gstack-extend" || exit 1
   is_safe_install_path "$telemetry_call_dir" || exit 1
-  # An allowed in-HOME symlink can introduce additional ancestors. Check the
-  # resolved chain too, so none can let another user replace the executable subtree.
-  _telemetry_parent="$(_resolve_path "$(_nearest_existing_ancestor "$telemetry_call_dir")")" || exit 1
-  _telemetry_home="$(_resolve_path "$HOME")" || exit 1
-  while [ "$_telemetry_parent" != "$_telemetry_home" ]; do
-    _telemetry_parent="$(dirname "$_telemetry_parent")"
-    is_safe_install_path "$_telemetry_parent" || exit 1
-  done
+  # Check every component and symlink hop, not only the final physical path.
+  # Ancestors may be owned by this user or root, but never world-writable.
+  # Bun is required at setup entry, including for uninstall.
+  bun --no-env-file --config=/dev/null -e '
+    const fs = require("node:fs"), path = require("node:path");
+    const home = fs.realpathSync(process.argv[1]), uid = Number(process.argv[2]);
+    let at = path.parse(home).root, hops = 0;
+    let parts = [...home.slice(at.length).split(path.sep), ".gstack-extend", "bin"];
+    const refuse = (where, why) => { console.error(`Error: ${where} (${why}; refusing telemetry-call path)`); process.exit(1); };
+    while (parts.length) {
+      const part = parts.shift();
+      if (!part || part === ".") continue;
+      if (part === "..") { at = path.dirname(at); continue; }
+      const next = path.join(at, part);
+      let st;
+      try { st = fs.lstatSync(next); }
+      catch (error) { if (error.code === "ENOENT") break; refuse(next, "cannot inspect path"); }
+      // The existing HOME guard defines the boundary; its own parents are not install targets.
+      const aboveHome = next !== home && home.startsWith(next.endsWith(path.sep) ? next : next + path.sep);
+      if (!aboveHome && st.uid !== uid && st.uid !== 0) refuse(next, "foreign-owned");
+      if (st.isSymbolicLink()) {
+        if (++hops > 40) refuse(next, "too many symlink hops");
+        const target = fs.readlinkSync(next), root = path.isAbsolute(target) ? path.parse(target).root : "";
+        if (root) at = root;
+        parts = [...target.slice(root.length).split(path.sep), ...parts];
+        continue;
+      }
+      if (!st.isDirectory()) refuse(next, "not a directory");
+      if (!aboveHome && (st.mode & 0o002)) refuse(next, "world-writable");
+      at = next;
+    }
+  ' "$HOME" "$(id -u)" || exit 1
   if [ -L "$telemetry_call_dir/telemetry-call" ] || { [ -e "$telemetry_call_dir/telemetry-call" ] && [ ! -f "$telemetry_call_dir/telemetry-call" ]; }; then
     echo "Error: $telemetry_call_dir/telemetry-call must be absent or a regular file, not a symlink or directory" >&2
     exit 1
