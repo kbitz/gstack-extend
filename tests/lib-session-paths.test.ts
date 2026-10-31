@@ -76,11 +76,45 @@ describe('session_dir', () => {
     const fakeHome = join(baseTmp, 'home-default');
     mkdirSync(fakeHome, { recursive: true });
     const r = runFn('session_dir', ['full-review'], {
-      env: { HOME: fakeHome, GSTACK_STATE_ROOT: '' },
+      env: { HOME: fakeHome, GSTACK_STATE_ROOT: '', GSTACK_HOME: '' },
     });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toStartWith(`${fakeHome}/.gstack/projects/`);
     expect(r.stdout).toEndWith('/full-review');
+  });
+
+  test('GSTACK_HOME alone moves the root', () => {
+    const fakeHome = join(baseTmp, 'home-gstack-home');
+    mkdirSync(fakeHome, { recursive: true });
+    const home = join(baseTmp, 'gstack-home-only');
+    const r = runFn('session_dir', ['pair-review', 'feature/x'], {
+      env: { HOME: fakeHome, GSTACK_STATE_ROOT: '', GSTACK_HOME: home },
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toStartWith(`${home}/projects/`);
+    expect(r.stdout).toEndWith('/pair-review/branches/feature--x');
+    const archive = runFn('session_archive_dir', ['pair-review', '20260101T000000Z', 'feature/x'], {
+      env: { HOME: fakeHome, GSTACK_STATE_ROOT: '', GSTACK_HOME: home },
+    });
+    expect(archive.stdout).toStartWith(`${home}/projects/`);
+    expect(archive.stdout).toEndWith('/pair-review/archives/feature--x-20260101T000000Z');
+  });
+
+  test('GSTACK_STATE_ROOT wins when both are set', () => {
+    const stateRoot = join(baseTmp, 'both-state-root');
+    const home = join(baseTmp, 'both-gstack-home');
+    for (const [fn, args] of [['session_dir', ['full-review']], ['session_archive_dir', ['full-review', '20260101T000000Z']]] as const) {
+      const r = runFn(fn, [...args], { env: { GSTACK_STATE_ROOT: stateRoot, GSTACK_HOME: home } });
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toStartWith(`${stateRoot}/projects/`);
+      expect(r.stdout).not.toContain(home);
+    }
+  });
+
+  test('empty values count as unset, so an empty GSTACK_STATE_ROOT falls through to GSTACK_HOME', () => {
+    const home = join(baseTmp, 'empty-then-gstack-home');
+    const r = runFn('session_dir', ['full-review'], { env: { GSTACK_STATE_ROOT: '', GSTACK_HOME: home } });
+    expect(r.stdout).toStartWith(`${home}/projects/`);
   });
 
   test('falls back to basename PWD when gstack-slug binary is missing', () => {

@@ -518,7 +518,7 @@ install_into_dir() {
     else
       rewrite_skill_body "$src" "$target/SKILL.md" "$host"
     fi
-    # Every host gets the pointer: the telemetry blocks fall back to it when the wrapper is not on PATH,
+    # Every host gets the pointer: the telemetry-call helper falls back to it when the wrapper is not on PATH,
     # which matters for a Claude install from a clone outside ~/.claude/skills/gstack-extend.
     rm -f "$target/.extend-root"
     printf '%s\n' "$SCRIPT_DIR" > "$target/.extend-root"
@@ -1294,7 +1294,7 @@ install_status_finalize() {
   if [ "$INSTALL_STATUS_RECONCILE" -eq 0 ] && [ "${#IS_NEW_KEY[@]}" -eq 0 ]; then
     return 0
   fi
-  if ! mkdir -p "$INSTALL_STATUS_DIR"; then
+  if ! (umask 077; mkdir -p "$INSTALL_STATUS_DIR"); then
     _is_warn mkdir_failed
     return 0
   fi
@@ -1414,6 +1414,51 @@ if [ "$HOST" = "auto" ] && [ "$SKILLS_DIR_GIVEN" -eq 0 ] && [ "$SKIPPED_NON_CURS
   [ -n "$HOST_DETECT_claude" ] || HOST_DETECT_claude=not_applicable
 fi
 
+# Every native host executes this shared helper. Validate its destination before publishing
+# skills or removing any helper so a symlink cannot redirect executable ownership outside HOME.
+telemetry_call_dir="$HOME/.gstack-extend/bin"
+if [ "$SKILLS_DIR_GIVEN" -eq 0 ] && any_host_selected; then
+  is_safe_install_path "$HOME" || exit 1
+  is_safe_install_path "$HOME/.gstack-extend" || exit 1
+  is_safe_install_path "$telemetry_call_dir" || exit 1
+  # Check every component and symlink hop, not only the final physical path.
+  # Ancestors may be owned by this user or root, but never world-writable.
+  # Bun is required at setup entry, including for uninstall.
+  bun --no-env-file --config=/dev/null -e '
+    const fs = require("node:fs"), path = require("node:path");
+    const home = fs.realpathSync(process.argv[1]), uid = Number(process.argv[2]);
+    let at = path.parse(home).root, hops = 0;
+    let parts = [...home.slice(at.length).split(path.sep), ".gstack-extend", "bin"];
+    const refuse = (where, why) => { console.error(`Error: ${where} (${why}; refusing telemetry-call path)`); process.exit(1); };
+    while (parts.length) {
+      const part = parts.shift();
+      if (!part || part === ".") continue;
+      if (part === "..") { at = path.dirname(at); continue; }
+      const next = path.join(at, part);
+      let st;
+      try { st = fs.lstatSync(next); }
+      catch (error) { if (error.code === "ENOENT") break; refuse(next, "cannot inspect path"); }
+      // The existing HOME guard defines the boundary; its own parents are not install targets.
+      const aboveHome = next !== home && home.startsWith(next.endsWith(path.sep) ? next : next + path.sep);
+      if (!aboveHome && st.uid !== uid && st.uid !== 0) refuse(next, "foreign-owned");
+      if (st.isSymbolicLink()) {
+        if (++hops > 40) refuse(next, "too many symlink hops");
+        const target = fs.readlinkSync(next), root = path.isAbsolute(target) ? path.parse(target).root : "";
+        if (root) at = root;
+        parts = [...target.slice(root.length).split(path.sep), ...parts];
+        continue;
+      }
+      if (!st.isDirectory()) refuse(next, "not a directory");
+      if (!aboveHome && (st.mode & 0o002)) refuse(next, "world-writable");
+      at = next;
+    }
+  ' "$HOME" "$(id -u)" || exit 1
+  if [ -L "$telemetry_call_dir/telemetry-call" ] || { [ -e "$telemetry_call_dir/telemetry-call" ] && [ ! -f "$telemetry_call_dir/telemetry-call" ]; }; then
+    echo "Error: $telemetry_call_dir/telemetry-call must be absent or a regular file, not a symlink or directory" >&2
+    exit 1
+  fi
+fi
+
 # ─── Uninstall ─────────────────────────────────────────────────────
 if [ "$UNINSTALL" -eq 1 ]; then
   report_unserved_cursor
@@ -1456,6 +1501,25 @@ if [ "$UNINSTALL" -eq 1 ]; then
       fi
     done
     [ "$_kept_links" -eq 0 ] || log "  Kept for: $HOST_INSTALL_POINTER"
+
+    # The telemetry-call copy serves every installed pointer, whichever checkout wrote it.
+    if [ -f "$HOME/.gstack-extend/bin/telemetry-call" ]; then
+      _keep_call=0
+      for _host in claude codex opencode cursor; do
+        for _pointer in "$(host_skills_dir "$_host")"/*/.extend-root; do
+          [ -e "$_pointer" ] || [ -L "$_pointer" ] || continue
+          _keep_call=1
+          break 2
+        done
+      done
+      if [ "$_keep_call" -eq 1 ]; then
+        log "Kept ~/.gstack-extend/bin/telemetry-call (a host install still has an .extend-root pointer)"
+      else
+        rm -f "$HOME/.gstack-extend/bin/telemetry-call"
+        rmdir "$HOME/.gstack-extend/bin" 2>/dev/null || true
+        log "Removed telemetry-call (~/.gstack-extend/bin/telemetry-call)"
+      fi
+    fi
   fi
 
   log "Uninstall complete."
@@ -1564,6 +1628,23 @@ wire_bin() {
 cli_bin_src="$SCRIPT_DIR/bin/gstack-extend"
 wire_bin "$cli_bin_src" "gstack-extend"
 wire_bin "$SCRIPT_DIR/bin/gstack-extend-telemetry" "gstack-extend-telemetry"
+
+# The telemetry blocks in every skill call this resolver at one fixed path. A copy, not a symlink, so a moved
+# checkout does not break the ladder it holds; written through a temp file, so a block never runs half a script.
+# Like the project registration, it ignores GSTACK_EXTEND_STATE_DIR. A missing source is skipped, as wire_bin does.
+install_telemetry_call() {
+  local src="$SCRIPT_DIR/bin/lib/telemetry-call.sh" tmp
+  [ -f "$src" ] || return 0
+  (umask 077; mkdir -p "$telemetry_call_dir") 2>/dev/null || return 0
+  tmp="$(mktemp "$telemetry_call_dir/.telemetry-call.XXXXXX" 2>/dev/null)" || return 0
+  if cp "$src" "$tmp" 2>/dev/null && chmod 755 "$tmp" 2>/dev/null && mv -f "$tmp" "$telemetry_call_dir/telemetry-call" 2>/dev/null; then
+    log "Installed telemetry-call → $telemetry_call_dir/telemetry-call"
+  else
+    rm -f "$tmp"
+    echo "Warning: could not install $telemetry_call_dir/telemetry-call; skill telemetry stays off until setup is re-run" >&2
+  fi
+}
+install_telemetry_call
 
 if [ -d "$cli_bin_dir" ] && [ -e "$cli_bin_dir/gstack-extend" ]; then
   case ":$PATH:" in

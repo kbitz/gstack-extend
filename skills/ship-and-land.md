@@ -27,24 +27,9 @@ allowed-tools:
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:ship-and-land" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:ship-and-land" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -164,12 +149,13 @@ library and both call forms are in
   carrying the candidate HEAD/tree/base you already observed (or null — never run
   `git write-tree` or create an index for metrics), `binding` clean/dirty/unknown,
   the SHA-256 of the installed copy of this skill, and `parent_session_id:null`
-  unless the spawning stage handed you its exact ID. In the same call, after the
-  telemetry start block's launcher resolution, print the library path to retain
+  unless the spawning stage handed you its exact ID. In the same call, resolve the
+  launcher through the telemetry helper and print the library path to retain
   as `GX_LIB`:
 
   ```bash
-  GX_LIB=$(python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null)
+  _GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)
+  GX_LIB=$(if [ -n "$_GE_BIN" ]; then python3 -B -I -c 'import os,sys;print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),"lib","workflow-span.sh"))' "$_GE_BIN" 2>/dev/null; fi)
   [ -f "$GX_LIB" ] || GX_LIB=; printf 'GX_LIB=%s\n' "$GX_LIB"
   ```
 
@@ -923,8 +909,8 @@ once. Pass these overrides and the project's Shell Rules to every subagent.
 Record each reader in `voices.jsonl` as `/review-and-prep`'s evidence rules
 describe (Reviewer join file in `docs/telemetry.md`): local only, never in a
 receipt or the PR body. Use a unique branch/invocation subdirectory under an
-existing `~/.gstack/projects/<slug>/ship-and-land/`, otherwise
-`~/scratch/ship-and-land/`. A
+existing `<state-root>/projects/<slug>/ship-and-land/`, otherwise
+`~/scratch/ship-and-land/`. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. A
 failed required reader still needs coverage; a peer's output is not its substitute.
 Re-dispatch only that reader once on the same frozen snapshot, keeping completed
 peers' outputs; if it fails again, record incomplete coverage and ask the user.
@@ -1137,7 +1123,7 @@ make old evidence look current. Persist sufficient sanitized excerpts and links
 for another machine; a local log path alone is not portable evidence.
 
 Store supplementary durable artifacts outside ephemeral workspaces: an existing
-`~/.gstack/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.
+`<state-root>/projects/<slug>/ship-and-land/`, otherwise `~/scratch/ship-and-land/`.
 In Conductor, use the workspace's gitignored `.context/` only for temporary files
 needed during its lifetime; elsewhere, keep temporary files outside the repository.
 
@@ -1405,24 +1391,9 @@ answer this invocation acts on, such as merge approval, is not an exit.
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:ship-and-land" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:ship-and-land" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->

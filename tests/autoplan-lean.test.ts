@@ -16,7 +16,7 @@ import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, U
 import { BUDGET_ALLOWANCE_BYTES, BUDGET_SOURCE_FACTOR, PHASES, changedLines, parseSettlements, planBudget, readSeal, settlementsSection, sha256, splitPlan, taskRefs } from '../src/autoplan-lean/plan.ts';
 import { OUTSIDE_OUTPUT_FORMAT, SETTLEMENTS_NOTE, buildPrompt, parseSizeRecords } from '../src/autoplan-lean/prompt.ts';
 import { outline, skipList } from '../src/autoplan-lean/outline.ts';
-import { PROMPT_LABELS, checkMessage, checkPlan } from '../src/autoplan-lean/transport.ts';
+import { PROMPT_LABELS, STAGE_LINE, checkMessage, checkPlan, checkStageLine, handoffBlock } from '../src/autoplan-lean/transport.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'autoplan-lean');
@@ -330,6 +330,10 @@ describe('transport contract shape', () => {
     expect(checkMessage(readFileSync(join(FIXTURES, 'final-message-fenced.md'), 'utf8'))).toEqual([]);
   });
 
+  const STAGE_HEAD = '0123456789abcdef0123456789abcdef01234567';
+  // The stage line binds to the sealed plan itself, so a test that stales the prompt's own fields keeps a good line.
+  const stageLine = (planSha: string, head = STAGE_HEAD, fields = 'stage: plan; next: implement; status: done') =>
+    `Stage handoff: stage-handoff/v1; ${fields}; head: ${head}; plan-sha256: ${planSha}`;
   const boundMessage = (sealOut: string, over: Record<string, string> = {}) => {
     const values: Record<string, string> = {
       planPath: plan,
@@ -338,6 +342,7 @@ describe('transport contract shape', () => {
       sidecarSha: field(sealOut, 'SHA256')!,
       tier: 'standard',
       verify: '`bun run test`',
+      stage: stageLine(field(sealOut, 'PLAN_SHA256')!),
       ...over,
     };
     return [
@@ -349,7 +354,7 @@ describe('transport contract shape', () => {
       `Review record: ${values.sidecar}; SHA-256: ${values.sidecarSha}`,
       'Approved scope: Export widgets as CSV; approved as-is',
       'Spec: none', 'Test plan: in plan', `Verify command: ${values.verify}`, 'Preserve: none', '',
-      'Auto-decisions:', '- none', '```', '',
+      'Auto-decisions:', '- none', '```', ...(values.stage ? [values.stage] : []), '',
     ].join('\n');
   };
 
@@ -379,6 +384,156 @@ describe('transport contract shape', () => {
       expect(r.stdout, name).toContain(expected);
       expect(field(r.stdout, 'CHECK'), name).toBe('fail');
     }
+  });
+
+  describe('the trailing stage handoff line', () => {
+    const sealed = () => {
+      const seal = cli('seal', '--plan', plan, '--run', run);
+      expect(seal.code).toBe(0);
+      return seal.stdout;
+    };
+    const planSha = (out: string) => field(out, 'PLAN_SHA256')!;
+    const checkText = (text: string) => {
+      const msg = join(temp, 'stage-bound.md');
+      writeFileSync(msg, text);
+      return cli('check', '--plan', plan, '--message', msg);
+    };
+    const without = (text: string) => text.split('\n').filter((l) => !l.startsWith('Stage handoff:')).join('\n');
+
+    test('a well-formed line after the fence passes the CLI, checkMessage and checkStageLine', () => {
+      const out = sealed();
+      const text = boundMessage(out);
+      const r = checkText(text);
+      expect([r.code, field(r.stdout, 'CHECK')]).toEqual([0, 'ok']);
+      expect(checkMessage(text)).toEqual([]);
+      expect(checkStageLine(text)).toEqual([]);
+      // Blank lines between the fence and the line are not text after the block.
+      expect(checkMessage(text.replace('```\nStage', '```\n\n\nStage'))).toEqual([]);
+      // done-with-concerns is the other status a handoff prompt goes with.
+      expect(checkText(boundMessage(out, { stage: stageLine(planSha(out), STAGE_HEAD, 'stage: plan; next: implement; status: done-with-concerns') })).code).toBe(0);
+    });
+
+    test('checkMessage ignores exactly one line and checkStageLine is not needed to read the block', () => {
+      const text = boundMessage(sealed());
+      expect(handoffBlock(text)!.at(-1)).toBe('- none');
+      expect(handoffBlock(without(text))!.at(-1)).toBe('- none');
+      expect(checkMessage(without(text))).toEqual([]);
+    });
+
+    test('a missing line fails at the CLI and in checkStageLine, naming the line', () => {
+      const text = without(boundMessage(sealed()));
+      const r = checkText(text);
+      expect([r.code, field(r.stdout, 'CHECK')]).toEqual([1, 'fail']);
+      expect(r.stdout).toContain('does not end with a "Stage handoff: stage-handoff/v1; ..." line');
+      expect(checkMessage(text)).toEqual([]);
+    });
+
+    test('a malformed line fails: every field is required and lower case', () => {
+      const out = sealed();
+      const good = stageLine(planSha(out));
+      for (const bad of [
+        good.replace('; plan-sha256: ' + planSha(out), ''),
+        good.replace('status: done', 'status: DONE'),
+        good.replace('stage-handoff/v1', 'stage-handoff/v2'),
+        good.replace('stage: plan', 'stage: planning'),
+        good.replace(STAGE_HEAD, 'abc123'),
+        good + ';',
+        good.replace('Stage handoff:', 'stage handoff:'),
+      ]) {
+        const r = checkText(boundMessage(out, { stage: bad }));
+        expect(r.code, bad).toBe(1);
+        expect(r.stdout, bad).toMatch(/PROBLEM: message: (the stage handoff line is malformed|the final message does not end with a "Stage handoff)/);
+      }
+      expect(STAGE_LINE.test(good)).toBe(true);
+    });
+
+    test('two lines, or prose after the line, fail', () => {
+      const out = sealed();
+      const text = boundMessage(out);
+      const twice = checkText(text + stageLine(planSha(out)) + '\n');
+      expect(twice.code).toBe(1);
+      expect(twice.stdout).toContain('carries 2 stage handoff lines');
+      expect(checkMessage(text + stageLine(planSha(out)) + '\n').join('\n')).toContain('does not end with a block');
+      const prose = checkText(text + 'Thanks!\n');
+      expect(prose.code).toBe(1);
+      expect(prose.stdout).toContain('malformed or not the last line');
+      expect(checkMessage(text + 'Thanks!\n').join('\n')).toContain('does not end with a block');
+    });
+
+    test('a line inside the fence, or before the block, is not the trailing line', () => {
+      const out = sealed();
+      const line = stageLine(planSha(out));
+      const inside = boundMessage(out, { stage: '' }).replace('```\n', `${line}\n\`\`\`\n`);
+      expect(checkText(inside).code).toBe(1);
+      expect(checkText(line + '\n' + boundMessage(out, { stage: '' })).code).toBe(1);
+    });
+
+    test('a stale plan-sha256 or a head that is not the prompt\'s Branch HEAD fails', () => {
+      const out = sealed();
+      const stale = checkText(boundMessage(out, { stage: stageLine('0'.repeat(64)) }));
+      expect(stale.code).toBe(1);
+      expect(stale.stdout).toContain('plan-sha256 does not match the checked plan');
+      const moved = checkText(boundMessage(out, { stage: stageLine(planSha(out), 'f'.repeat(40)) }));
+      expect(moved.code).toBe(1);
+      expect(moved.stdout).toContain("does not match the prompt's Branch HEAD");
+      const none = checkText(boundMessage(out, { stage: stageLine(planSha(out), 'none') }));
+      expect(none.code).toBe(1);
+      expect(none.stdout).toContain("does not match the prompt's Branch HEAD");
+    });
+
+    test('the line must belong to this stage: plan, then implement, with a status a prompt goes with', () => {
+      const out = sealed();
+      for (const [fields, expected] of [
+        ['stage: implement; next: implement; status: done', 'names stage implement'],
+        ['stage: plan; next: none; status: done', 'names next none'],
+        ['stage: plan; next: implement; status: blocked', 'has status blocked'],
+        ['stage: plan; next: implement; status: stopped', 'has status stopped'],
+      ] as const) {
+        const r = checkText(boundMessage(out, { stage: stageLine(planSha(out), STAGE_HEAD, fields) }));
+        expect(r.code, fields).toBe(1);
+        expect(r.stdout, fields).toContain(expected);
+      }
+    });
+
+    test('a wrapped Branch still binds the stage HEAD', () => {
+      const out = sealed();
+      const wrap = (text: string) => text.replace('; target base:', ';\n  target base:');
+      expect(checkText(wrap(boundMessage(out))).code).toBe(0);
+      for (const head of ['f'.repeat(40), 'none']) {
+        const text = wrap(boundMessage(out, { stage: stageLine(planSha(out), head) }));
+        expect(checkMessage(text)).toEqual([]);
+        const result = checkText(text);
+        expect(result.code).toBe(1);
+        expect(result.stdout).toContain("does not match the prompt's Branch HEAD");
+      }
+    });
+
+    test('a stage line requires a fenced handoff even when the legacy raw prompt is valid', () => {
+      const text = boundMessage(sealed()).replace(/^```(?:text)?\s*$/gm, '');
+      expect(checkMessage(text)).toEqual([]);
+      const result = checkText(text);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toContain('fenced handoff');
+    });
+
+    test('outer fields cannot supply the bindings of an incomplete fenced prompt', () => {
+      const out = sealed();
+      const good = boundMessage(out);
+      const inner = /```text\n([\s\S]*?)\n```/.exec(good)![1]!;
+      const branch = inner.split('\n').find(line => line.startsWith('Branch:'))!;
+      const outer = inner.slice(0, inner.indexOf('Auto-decisions:')).replace(branch + '\n', '');
+      const text = `${outer}\n\`\`\`text\nRun /implement /wrong.plan.md\n${branch}\nAuto-decisions:\n- [fork] bounded scope\n  \`\`\`\n${stageLine(planSha(out))}\n`;
+      const result = checkText(text);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toContain('does not match the checked plan');
+      expect(result.stdout).toContain('missing required field');
+    });
+
+    test('without a binding, checkStageLine still checks shape but cannot compare the plan', () => {
+      const out = sealed();
+      expect(checkStageLine(boundMessage(out, { stage: stageLine('0'.repeat(64)) }))).toEqual([]);
+      expect(checkStageLine('nothing here\n')[0]).toContain('does not end with a "Stage handoff');
+    });
   });
 
   test('check fails closed when the plan Verify lines disagree', () => {
@@ -1465,7 +1620,8 @@ describe('launcher and skill contract', () => {
       'Do not load the review-record sidecar into main context unless a task or accepted decision needs deeper phase detail.',
       'With none, the list is exactly `- none`.',
       'Mark each User Challenge `[challenge]` and every other entry `[fork]`.',
-      'End the message with this block. Nothing may follow it:',
+      'End the message with this block, then the stage line below. Nothing else may follow the block:',
+      'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
       '`CHECK: ok` is required.',
       '"$_EXTEND_ROOT/bin/autoplan-lean" outline --skill',
       'Do not re-read a range you still hold in context; after a compaction, and on every rerun from the final gate, re-read the ranges the current step applies.',
@@ -1510,7 +1666,7 @@ describe('launcher and skill contract', () => {
       .replace('<sidecar SHA-256>', 'b'.repeat(64))
       .replace('<what to build, gate outcome, and any HOLD SCOPE or Track boundary>', 'Export widgets as CSV; approved as-is')
       .replace('<docs/SPEC.md path and relevant outcome/target IDs, or none>', 'none')
-      .replace('<Eng test-plan artifact path under ~/.gstack/projects/<slug>/, or in plan>', 'in plan')
+      .replace('<Eng test-plan artifact path under <state-root>/projects/<slug>/, or in plan>', 'in plan')
       .replace('<the plan\'s Verify command line, as data>', '`bun run test`')
       .replace('<TODOS.md deferrals written by Eng and any unrelated working-tree changes, or none>', 'none')
       .replace('<decision on the caller\'s fork list, and the option taken>', 'Stream rows instead of buffering')

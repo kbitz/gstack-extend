@@ -206,6 +206,8 @@ const TELEMETRY_EPILOGUE_RE = /<!-- SHARED:telemetry-finish -->[\s\S]*?<!-- \/SH
 
 const fullReviewContent = readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8');
 
+const TELEMETRY_CALL_HELPER = readFileSync(join(ROOT, 'bin', 'lib', 'telemetry-call.sh'), 'utf8');
+
 const PREAMBLE_MATCH = TELEMETRY_PREAMBLE_RE.exec(fullReviewContent);
 
 const EPILOGUE_MATCH = TELEMETRY_EPILOGUE_RE.exec(fullReviewContent);
@@ -336,15 +338,17 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     expect(CANONICAL_TELEMETRY_PREAMBLE).not.toBe('');
     expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('<!-- SHARED:telemetry-start -->');
     expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('--skill "extend:full-review"');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('"$_GE_BIN" start --skill');
-    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('.extend-root');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('"$_GE_CALL" start --skill');
+    // The lookup ladder lives in the helper setup installs, not in the block.
+    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toContain('.extend-root');
+    expect(TELEMETRY_CALL_HELPER).toContain('.extend-root');
   });
   test('canonical epilogue block extracted from skills/full-review.md', () => {
     expect(CANONICAL_TELEMETRY_EPILOGUE).not.toBe('');
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('<!-- SHARED:telemetry-finish -->');
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('--skill "extend:full-review"');
-    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('bin/gstack-extend-telemetry');
-    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_BIN" finish --skill');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_CALL" finish --skill');
+    expect(TELEMETRY_CALL_HELPER).toContain('bin/gstack-extend-telemetry');
   });
   // Drift locks use content.includes(), which cannot see a duplicated block, a finish that precedes
   // its start, or a skill whose frontmatter forbids the Bash tool the blocks need. Duplicated starts
@@ -357,7 +361,7 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
       for (const kind of ['start', 'finish']) {
         if (count(`<!-- SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one opening telemetry-${kind} marker`);
         if (count(`<!-- /SHARED:telemetry-${kind} -->`) !== 1) problems.push(`${skill}: expected exactly one closing telemetry-${kind} marker`);
-        if (count(`"$_GE_BIN" ${kind} --skill "extend:${skill}"`) !== 1) problems.push(`${skill}: expected exactly one ${kind} invocation`);
+        if (count(`"$_GE_CALL" ${kind} --skill "extend:${skill}"`) !== 1) problems.push(`${skill}: expected exactly one ${kind} invocation`);
       }
       if (content.indexOf('<!-- SHARED:telemetry-start -->') > content.indexOf('<!-- SHARED:telemetry-finish -->')) {
         problems.push(`${skill}: finish block precedes start block`);
@@ -396,6 +400,119 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
       }
     });
   }
+});
+
+// ─── Track 49A: the blocks call the installed helper ──────────────
+
+const telemetryFence = (content: string, kind: 'start' | 'finish') =>
+  new RegExp('<!-- SHARED:telemetry-' + kind + ' -->[\\s\\S]*?(```bash\\n[\\s\\S]*?\\n```)[\\s\\S]*?<!-- /SHARED:telemetry-' + kind + ' -->').exec(content)?.[1] ?? '';
+
+describe('Track 49A telemetry blocks are one call to the installed helper', () => {
+  const expectedFence = (kind: 'start' | 'finish', skill: string) => [
+    '```bash',
+    '_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"',
+    `if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" ${kind} --skill "extend:${skill}"${kind === 'finish' ? ' --outcome unknown' : ''} || true`,
+    `elif [ "\${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi`,
+    'true',
+    '```',
+  ].join('\n');
+
+  for (const skill of TELEMETRY_SKILLS) {
+    test(`${skill}: both fences are exactly the helper call, with no lookup of their own`, () => {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      for (const kind of ['start', 'finish'] as const) {
+        expect(telemetryFence(content, kind)).toBe(expectedFence(kind, skill));
+      }
+    });
+  }
+
+  test('no skill resolves the wrapper itself, and the helper holds the ladder the blocks used to carry', () => {
+    for (const skill of TELEMETRY_SKILLS) {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      expect(content, skill).not.toContain('_ge_ok');
+      expect(content, skill).not.toContain('start-finish-v1');
+    }
+    for (const needle of ['_ge_ok()', 'telemetry-protocol: start-finish-v1', 'command -v gstack-extend-telemetry',
+      '.claude/skills/*/.extend-root', '.codex/skills/*/.extend-root', '.config/opencode/skills/*/.extend-root', '.cursor/skills/*/.extend-root']) {
+      expect(TELEMETRY_CALL_HELPER).toContain(needle);
+    }
+  });
+
+  test('the helper runs the wrapper in place with exec and prints the path for --resolve', () => {
+    expect(TELEMETRY_CALL_HELPER.startsWith('#!/usr/bin/env bash\n')).toBe(true);
+    expect(TELEMETRY_CALL_HELPER).toContain('exec "$_GE_BIN" "$@"');
+    expect(TELEMETRY_CALL_HELPER).toContain('"--resolve"');
+  });
+
+  test('the span-library lookup resolves the launcher through the helper in both skills and the docs', () => {
+    const lookup = '_GE_BIN=$("$HOME/.gstack-extend/bin/telemetry-call" --resolve 2>/dev/null)';
+    for (const skill of ['review-and-prep', 'ship-and-land']) {
+      expect(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8'), skill).toContain(lookup + '\n  GX_LIB=$(');
+    }
+    expect(readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8')).toContain(lookup + '\nGX_LIB=$(');
+  });
+});
+
+describe('Track 49A recorded block sizes', () => {
+  const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
+  const rows = [...docs.matchAll(/^\| `([a-z-]+)` \| (\d+) \| (\d+) \| (\d+) \|$/gm)]
+    .map(m => ({ skill: m[1], before: Number(m[2]), after: Number(m[3]), saved: Number(m[4]) }));
+
+  test('the table has one row per telemetry skill', () => {
+    expect(rows.map(r => r.skill).sort()).toEqual([...TELEMETRY_SKILLS].sort());
+    expect(rows).toHaveLength(11);
+  });
+  for (const skill of TELEMETRY_SKILLS) {
+    test(`${skill}: the recorded size matches the skill and saved is positive`, () => {
+      const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+      const after = (['start', 'finish'] as const).reduce((sum, kind) => sum + Buffer.byteLength(telemetryFence(content, kind)), 0);
+      const row = rows.find(r => r.skill === skill)!;
+      expect(row.after, `${skill}: stale after-size in docs/telemetry.md; the fences now measure ${after} bytes`).toBe(after);
+      expect(row.saved).toBe(row.before - row.after);
+      expect(row.saved).toBeGreaterThan(0);
+    });
+  }
+});
+
+// ─── Track 49A: one state-root rule for run and handoff paths ─────
+
+describe('Track 49A state root', () => {
+  const EXPRESSION = '${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}';
+  const NARROW = '${GSTACK_STATE_ROOT:-$HOME/.gstack}';
+  // /implement's start block tests whether a variable was set, which has to name both of them.
+  const SET_TEST = '[ -n "${GSTACK_STATE_ROOT:-}${GSTACK_HOME:-}" ]';
+  const FIVE = ['implement', 'autoplan-lean', 'review-and-prep', 'ship-and-land', 'docs-ship'] as const;
+  const skillNames = readdirSync(join(ROOT, 'skills')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3));
+  const read = (skill: string) => readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
+  const stripped = (skill: string) => read(skill).replaceAll(EXPRESSION, '').replaceAll(SET_TEST, '');
+
+  test('no skill hardcodes the default root outside the expression', () => {
+    const hardcoded = /(?:~|\$HOME|"\$HOME"|\$\{HOME\})\/\.gstack(?!-)/;
+    for (const skill of skillNames) expect(hardcoded.exec(stripped(skill))?.[0], skill).toBeUndefined();
+  });
+  test('the narrow expression is gone and GSTACK_HOME appears only inside the expression', () => {
+    for (const skill of skillNames) {
+      expect(read(skill), skill).not.toContain(NARROW);
+      expect(stripped(skill), skill).not.toContain('GSTACK_HOME');
+    }
+  });
+  test('the set test is /implement\'s alone', () => {
+    for (const skill of skillNames) expect(read(skill).includes(SET_TEST), skill).toBe(skill === 'implement');
+  });
+  test('each of the five stage skills carries the expression and defines its state root', () => {
+    for (const skill of FIVE) {
+      expect(read(skill), skill).toContain(EXPRESSION);
+      expect(read(skill), skill).toContain('<state-root>/projects/<slug>/');
+    }
+  });
+  test('the lib and the three session skills carry the same expression', () => {
+    expect(readFileSync(join(ROOT, 'bin', 'lib', 'session-paths.sh'), 'utf8')).not.toContain(NARROW);
+    expect(readFileSync(join(ROOT, 'bin', 'lib', 'session-paths.sh'), 'utf8').split(EXPRESSION)).toHaveLength(3 + 1);
+    for (const skill of ['full-review', 'pair-review', 'roadmap']) expect(read(skill), skill).toContain(EXPRESSION);
+  });
+  test('pair-review names the deploy recipe through its project directory', () => {
+    expect(read('pair-review')).toContain('test_deploy_recipe: "<PROJECT_DIR>/deploy.md"');
+  });
 });
 
 // ─── Track 10A: SHARED:upgrade-flow verbatim block (drift-lock, 6 files) ──

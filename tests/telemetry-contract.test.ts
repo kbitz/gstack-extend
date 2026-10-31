@@ -2034,14 +2034,30 @@ describe('workflow metrics contract (Track 24A)', () => {
       const sid = /session=(extend-[0-9a-f-]{36})/.exec(runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']).stdout)![1];
       const run = randomUUID();
       spawnSync(WRAPPER, ['metrics', 'begin'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 15_000, input: JSON.stringify({ v: 1, stage: 'review-and-prep', session_id: sid, event_id: randomUUID(), step_id: run, parent_step_id: null, kind: 'run', phase: 'run', context: { candidate_head: null, candidate_tree: null, candidate_base: null, binding: 'unknown', skill_sha256: null, parent_session_id: null } }) });
-      // The lookup resolves a symlinked launcher to the checkout's own library, as the start block's _GE_BIN may be one.
+      // The lookup resolves a symlinked launcher to the checkout's own library, as the helper's --resolve may print one.
+      // The documented lookup now sets _GE_BIN itself, from the installed helper, so a stub helper stands in for it.
       const link = join(fix.home, 'launcher-link');
       symlinkSync(WRAPPER, link);
-      const found = spawnSync('bash', ['-c', lookup], { env: { ...fix.env, _GE_BIN: link }, encoding: 'utf8' });
+      const helper = join(fix.home, '.gstack-extend/bin/telemetry-call');
+      const stubHelper = (target: string) => {
+        mkdirSync(join(fix.home, '.gstack-extend/bin'), { recursive: true });
+        writeFileSync(helper, `#!/bin/sh\nprintf '%s\\n' '${target}'\n`);
+        chmodSync(helper, 0o755);
+      };
+      stubHelper(link);
+      const found = spawnSync('bash', ['-c', lookup], { env: fix.env, encoding: 'utf8' });
       const lib = /^GX_LIB=(.+)$/m.exec(found.stdout)![1];
       expect(realpathSync(lib)).toBe(realpathSync(join(ROOT, 'bin/lib/workflow-span.sh')));
-      const missing = spawnSync('bash', ['-c', lookup], { env: { ...fix.env, _GE_BIN: join(fix.home, 'absent') }, encoding: 'utf8' });
+      stubHelper(join(fix.home, 'absent'));
+      const missing = spawnSync('bash', ['-c', lookup], { env: fix.env, encoding: 'utf8' });
       expect(missing.stdout.trim()).toBe('GX_LIB=');
+      // No helper installed at all: the same empty result, not an error.
+      rmSync(helper);
+      // An empty resolved launcher must not select a sibling library via realpath("").
+      mkdirSync(join(fix.home, 'lib'));
+      writeFileSync(join(fix.home, 'lib/workflow-span.sh'), 'echo unintended-library\n');
+      const unhelped = spawnSync('bash', ['-c', lookup], { cwd: repo, env: fix.env, encoding: 'utf8' });
+      expect(unhelped.stdout.trim()).toBe('GX_LIB=');
       const head = `GX_STAGE='review-and-prep'; GX_SID='${sid}'; GX_CAPTURE=1; GX_LIB='${lib}'; GX_RUN='${run}'\n. "$GX_LIB"\n`;
       const first = spawnSync('bash', ['-c', head + 'gx_span_begin tests "$GX_RUN" phase'], { cwd: repo, env: fix.env, encoding: 'utf8', timeout: 30_000 });
       const line = /^SPAN step=(\S+) phase=tests begin=(\S+) end=pending$/m.exec(first.stdout)!;

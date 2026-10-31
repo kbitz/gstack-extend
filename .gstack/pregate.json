@@ -112,6 +112,11 @@
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
     ],
+    "bin/lib/telemetry-call.sh": [
+      "tests/setup-hosts.test.ts",
+      "tests/skill-protocols.test.ts",
+      "tests/telemetry.test.ts"
+    ],
     "bin/lib/telemetry.py": [
       "tests/workflow-metrics.test.ts"
     ],
@@ -268,10 +273,12 @@
     ],
     "skills/autoplan-lean.md": [
       "tests/autoplan-lean-history.test.ts",
-      "tests/autoplan-lean.test.ts"
+      "tests/autoplan-lean.test.ts",
+      "tests/handoff-contract.test.ts"
     ],
     "skills/docs-ship.md": [
-      "tests/docs-ship.test.ts"
+      "tests/docs-ship.test.ts",
+      "tests/handoff-contract.test.ts"
     ],
     "skills/full-review.md": [
       "tests/skill-protocols-full-review.test.ts",

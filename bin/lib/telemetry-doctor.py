@@ -86,7 +86,8 @@ def transcripts(since, now):
 
 
 def wrapper_candidates():
-    # The ladder the skill blocks walk: PATH, the canonical install, then setup's .extend-root pointers.
+    # The ladder bin/lib/telemetry-call.sh walks for the skill blocks: PATH, the canonical install, then setup's
+    # .extend-root pointers.
     yield which("gstack-extend-telemetry")
     yield str(Path.home() / ".claude/skills/gstack-extend/bin/gstack-extend-telemetry")
     for directory in (Path.home() / ".claude/skills", Path.home() / ".codex/skills",
@@ -102,6 +103,13 @@ def wrapper_candidates():
             except OSError:
                 continue
             yield str(Path(root) / "bin/gstack-extend-telemetry")
+
+
+def call_helper():
+    """The resolver setup copies for the skill blocks, at the fixed path they call, or None. Without it every
+    block skips telemetry, whatever extend_binary finds."""
+    path = str(Path.home() / ".gstack-extend/bin/telemetry-call")
+    return path if executable(path) else None
 
 
 def extend_binary():
@@ -206,6 +214,7 @@ def report(days):
         except (OSError, subprocess.SubprocessError):
             pass  # a config helper that cannot run leaves the tier unavailable; the pairing stats still print
     binary, stale = extend_binary()
+    helper = call_helper()
     logger = resolve("gstack-telemetry-log")
     no_sweep = supports_no_sweep(logger) if logger else None
     warnings = []
@@ -226,7 +235,7 @@ def report(days):
         warnings.append(helper_warning)
     return dict(days=days, since=since.isoformat(), as_of=now.isoformat(), sink=str(sink),
                 sink_exists=sink.exists(), tier=tier, telemetry_binary=binary,
-                stale_wrapper=stale, logger_supports_no_sweep=no_sweep,
+                stale_wrapper=stale, call_helper=helper, logger_supports_no_sweep=no_sweep,
                 gstack_logger=logger, gstack_config=config,
                 warnings=warnings,
                 diagnostic=None if binary else "gstack-extend-telemetry unresolvable; re-run ./setup. See docs/telemetry.md.",
@@ -261,6 +270,9 @@ def main(args):
         print(result["diagnostic"])
     for warning in result["warnings"]:
         print(warning)
+    if not result["call_helper"]:
+        print("telemetry-call helper missing at ~/.gstack-extend/bin/telemetry-call, so every skill's telemetry "
+              "call is skipped; re-run ./setup.")
     print("skill                  activation completion paired/eligible deferred unpaired-finish transcripts status")
     for stat in result["skills"]:
         ratio = f"{stat['paired']}/{stat['denominator']}"

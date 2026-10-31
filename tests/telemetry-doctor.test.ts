@@ -452,6 +452,28 @@ describe('doctor degraded environments', () => {
     expect(JSON.parse(run(fix.env).stdout).warnings).toEqual([]);
   }, 30_000);
 
+  test('call_helper is the installed telemetry-call path, or null with a line saying every skill call is skipped', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    expect(JSON.parse(run(fix.env).stdout).call_helper).toBeNull();
+    const missing = run(fix.env, []).stdout;
+    expect(missing).toContain('telemetry-call helper missing at ~/.gstack-extend/bin/telemetry-call');
+    expect(missing).toContain('re-run ./setup');
+    // A missing helper is not a stale wrapper or a diagnostic of the wrapper itself.
+    expect(JSON.parse(run(fix.env).stdout)).toMatchObject({ diagnostic: null, stale_wrapper: null });
+
+    const dir = join(fix.home, '.gstack-extend/bin');
+    const helper = join(dir, 'telemetry-call');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(helper, '#!/bin/sh\nexit 0\n');
+    chmodSync(helper, 0o755);
+    expect(JSON.parse(run(fix.env).stdout).call_helper).toBe(helper);
+    expect(run(fix.env, []).stdout).not.toContain('telemetry-call helper missing');
+
+    // A helper the blocks cannot run counts as missing.
+    chmodSync(helper, 0o644);
+    expect(JSON.parse(run(fix.env).stdout).call_helper).toBeNull();
+  }, 30_000);
+
   test('a PYTHONPATH pointing at planted modules never reaches the doctor', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const repo = join(fix.home, 'repo');

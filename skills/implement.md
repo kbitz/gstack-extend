@@ -26,24 +26,9 @@ allowed-tools:
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:implement" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:implement" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -116,8 +101,11 @@ be positive. Invalid per-wait bounds use 100 seconds; invalid limits refuse star
 
 **Start.** Write one targeted command of your own; the plan's verify command
 and task checks are never the command. Every run has a private directory under
-`~/.gstack/projects/<slug>/implement/runs/`, or
-`~/scratch/gstack-implement/runs/<slug>/` when the project directory is absent.
+`<state-root>/projects/<slug>/implement/runs/`, or
+`~/scratch/gstack-implement/runs/<slug>/` when the project directory is absent or
+`<state-root>` is not absolute. `<state-root>` is
+`${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set
+absolute root counts as present and is created.
 A short hash of the canonical workspace path and branch scopes both locations;
 the `owner` file must match before reconciliation. Directories are mode 700,
 never in the repo, with no full SHA in their names.
@@ -158,8 +146,10 @@ case "$RUN_CMD" in *[![:space:]]*) ;; *) echo 'START: empty command'; exit 1 ;; 
 RUN_SLUG='<slug>'; RUN_BRANCH=$(git symbolic-ref --short HEAD) || { echo 'START: no branch'; exit 1; }
 RUN_WORKSPACE=$(cd "$(git rev-parse --show-toplevel)" && pwd -P) || exit 1
 cd "$RUN_WORKSPACE" || exit 1
-RUN_ROOT="$HOME/.gstack/projects/$RUN_SLUG/implement/runs"
-[ -d "$HOME/.gstack/projects/$RUN_SLUG" ] || RUN_ROOT="$HOME/scratch/gstack-implement/runs/$RUN_SLUG"
+RUN_STATE="${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}"
+RUN_ROOT="$RUN_STATE/projects/$RUN_SLUG/implement/runs"
+case "$RUN_STATE" in /*) ;; *) RUN_ROOT="$HOME/scratch/gstack-implement/runs/$RUN_SLUG" ;; esac
+[ -n "${GSTACK_STATE_ROOT:-}${GSTACK_HOME:-}" ] || [ -d "$RUN_STATE/projects/$RUN_SLUG" ] || RUN_ROOT="$HOME/scratch/gstack-implement/runs/$RUN_SLUG"
 RUN_OWNER=$(printf '%s\n%s' "$RUN_WORKSPACE" "$RUN_BRANCH")
 RUN_SCOPE=$(printf '%s' "$RUN_OWNER" | git hash-object --stdin) || exit 1
 RUN_SCOPE=$(printf '%s' "$RUN_SCOPE" | cut -c1-16); [ -n "$RUN_SCOPE" ] || exit 1
@@ -511,7 +501,9 @@ successful review handoff. Do not emit the copyable `/review-and-prep` prompt
 while any in-scope row is BLOCKED. If implementation is complete but
 verification requires unavailable access, tooling, or human judgment, a
 handoff may proceed with those limitations plainly recorded. A local check
-that exposes an implementation defect still requires a fix.
+that exposes an implementation defect still requires a fix. A BLOCKED or
+NEEDS_CONTEXT report is prose with no fence, and it ends with the stage line
+from Step 4 (`next: none`).
 
 ## 4. Generate the next-session prompt
 
@@ -557,7 +549,7 @@ For a long checklist, save a handoff document and reference its absolute path
 in the prompt. Use the project's established tracked documentation location
 when it belongs in the repo. Otherwise, use the first location that applies:
 
-1. `~/.gstack/projects/<slug>/implement/` when `~/.gstack/projects/<slug>/`
+1. `<state-root>/projects/<slug>/implement/` when `<state-root>/projects/<slug>/`
    already exists, with `<slug>` from gstack's `gstack-slug` or the repository
    directory name.
 2. In Conductor, the workspace's gitignored `.context/implement/`. The next
@@ -567,7 +559,7 @@ when it belongs in the repo. Otherwise, use the first location that applies:
 
 Name the file with the branch and a timestamp. Never leave the only copy of a
 needed plan in `.context`, `/tmp`, or host session memory: later stages outlive
-the workspace, so copy a transient plan to `~/.gstack/projects/<slug>/` when
+the workspace, so copy a transient plan to `<state-root>/projects/<slug>/` when
 that directory exists, otherwise `~/scratch/gstack-implement/`, with its source
 recorded. Local paths support another session on this machine; a
 cross-machine handoff needs portable plan/checklist contents or a durable
@@ -608,30 +600,25 @@ Apply /review-and-prep's own scope, review, testing, and readiness gates.
 Stay in this workspace and branch; uncommitted implementation lives here.
 ```
 
+End the message with this stage line, after the fence and outside it, with nothing
+after it:
+
+Stage handoff: stage-handoff/v1; stage: implement; next: <review-and-prep|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
+
+The prompt above is `next: review-and-prep` with `status: done`, or
+`done-with-concerns` when Pending verification or Risks name an open item. `head` is
+`git rev-parse HEAD` and `plan-sha256` is `shasum -a 256` of the plan file, or `none`
+when no single plan file was readable.
+
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:implement" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:implement" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->

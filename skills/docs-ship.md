@@ -84,24 +84,9 @@ In this skill, an `ERROR:` line from the preamble replaces the no-install messag
 Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" start --skill "extend:docs-ship" || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:docs-ship" || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-start -->
@@ -118,7 +103,7 @@ This replaces `/review-and-prep` and `/ship-and-land` for that PR. It merges onl
 - **Light by design.** Work in this session only: no Agent tool, no subagents, no outside voices, no `/review`, no Greptile, no full test suite. Run `gh pr merge` only as step 12 says.
 - **Read on demand.** `"$_EXTEND_ROOT/docs/docs-ship.md"` is the contract. Read only the section a step names (`grep -n '^## '`, then that range).
 - **Helper.** Every `docs-ship` command below is `"$_EXTEND_ROOT/bin/docs-ship"`, run in the PR checkout. Start each command with the `_EXTEND_ROOT=…` line the preamble printed. `<base>` is `origin/<PR base branch>`, fetched first. Output is `KEY: value` lines; exit 1 means stop or findings, 3 a refusal to relay with its `FIX:` line.
-- **Files.** Keep saved PR JSON and receipt drafts outside the worktree: `~/.gstack/projects/<slug>/docs-ship/` when `~/.gstack/projects/<slug>/` exists (slug from the installed gstack's `gstack-slug`), otherwise `~/scratch/docs-ship/`. After classification passes, create a unique per-invocation subdirectory there with `mktemp -d`; that directory is `<files dir>` for every scratch file. Never share filenames across runs.
+- **Files.** Keep saved PR JSON and receipt drafts outside the worktree: `<state-root>/projects/<slug>/docs-ship/` when `<state-root>/projects/<slug>/` exists (slug from the installed gstack's `gstack-slug`), otherwise `~/scratch/docs-ship/`. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. After classification passes, create a unique per-invocation subdirectory there with `mktemp -d`; that directory is `<files dir>` for every scratch file. Never share filenames across runs.
 - **Host ownership.** Never create, switch, rename or delete branches or worktrees.
 - **Automatic review guards.** Before any push, PR creation or ready transition, read § Automatic review guards, then verify that configured automatic Greptile review will not start. On an unknown or enabled trigger, stop with `CHANGES` before that write; report the needed configuration repair without applying it.
 - **Findings** are `file:line`, what is wrong and the fix, one line each. Keep a running list; every step adds to it.
@@ -154,7 +139,7 @@ Run `docs-ship check --base <base>`, adding `--brief <file>` for each brief or p
 
 SHA-like example identifiers and sample output are also candidates: confirm their purpose, then dismiss and record a false citation match instead of rewriting a valid example.
 
-Then confirm each `CLAIM:` line whose status is `check`, `exists` or `unconfirmed` against the source the text cites or the brief names. Sources include repository files, `git log` or `git show`, `gh pr view`, `gh issue view` and files under `~/.gstack/projects/<slug>/`. `exists` proves only that the commit exists, not that it is the one cited. A quotation of the user must match the brief verbatim. Read sources narrowly, with `grep` and line ranges. A claim that is wrong is a finding. List every claim you could not confirm in the receipt, not only the wrong ones. Near-quote findings are candidates: verify attribution before accepting them. Dismiss and record false matches to unrelated quotations, paraphrases, code messages or admonitions; never rewrite them into brief text merely because the helper suggests it. For a missing SHA, check repository identity and fetched history before declaring the citation wrong.
+Then confirm each `CLAIM:` line whose status is `check`, `exists` or `unconfirmed` against the source the text cites or the brief names. Sources include repository files, `git log` or `git show`, `gh pr view`, `gh issue view` and files under `<state-root>/projects/<slug>/`. `exists` proves only that the commit exists, not that it is the one cited. A quotation of the user must match the brief verbatim. Read sources narrowly, with `grep` and line ranges. A claim that is wrong is a finding. List every claim you could not confirm in the receipt, not only the wrong ones. Near-quote findings are candidates: verify attribution before accepting them. Dismiss and record false matches to unrelated quotations, paraphrases, code messages or admonitions; never rewrite them into brief text merely because the helper suggests it. For a missing SHA, check repository identity and fetched history before declaring the citation wrong.
 
 ## 5. Project rules
 
@@ -224,24 +209,9 @@ Docs ship merge: <merged|queued|refused|failed>; pr: <n>; head: <full head SHA>;
 Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
-if [ -n "${ZSH_VERSION:-}" ]; then setopt +o nomatch; fi
-_ge_ok() { case "$_GE_CAND" in /*) [ -f "$_GE_CAND" ] && [ -x "$_GE_CAND" ] && grep -q 'telemetry-protocol: start-finish-v1' "$_GE_CAND" ;; *) false ;; esac; }
-_GE_BIN=$(command -v gstack-extend-telemetry 2>/dev/null || true)
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then _GE_BIN="$HOME/.claude/skills/gstack-extend/bin/gstack-extend-telemetry"; fi
-if ! _GE_CAND="$_GE_BIN" _ge_ok; then
-  _GE_BIN=""
-  for _GE_PTR in "$HOME"/.claude/skills/*/.extend-root "$HOME"/.codex/skills/*/.extend-root "$HOME"/.config/opencode/skills/*/.extend-root "$HOME"/.cursor/skills/*/.extend-root; do
-    if [ -f "$_GE_PTR" ] && [ -r "$_GE_PTR" ]; then
-      IFS= read -r _GE_ROOT < "$_GE_PTR" || true
-      if _GE_CAND="$_GE_ROOT/bin/gstack-extend-telemetry" _ge_ok; then _GE_BIN="$_GE_ROOT/bin/gstack-extend-telemetry"; break; fi
-    fi
-  done
-fi
-if [ -n "$_GE_BIN" ]; then
-  "$_GE_BIN" finish --skill "extend:docs-ship" --outcome unknown || true
-elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then
-  echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2
-fi
+_GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:docs-ship" --outcome unknown || true
+elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
 <!-- /SHARED:telemetry-finish -->
