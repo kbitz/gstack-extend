@@ -1157,15 +1157,25 @@ or targeted lane reclassifies the repair as behavior-changing, and a batch with
 one repeats as today. A final-gate failure attributable to the repair also
 reclassifies it and voids its neutral chain; a later pass alone cannot restore
 that chain. If attribution is uncertain, treat the repair as behavior-changing.
-Append `Repair chain voided: <fingerprint>; failed=<ledger reference>; reason=<attribution>`
+A prepared receipt that records such a repair still hands off `review: COMPLETE`
+only after the applicable neutral or ordinary review coverage is verified.
+Append `Repair chain voided: <fingerprint>; failed=<ledger or persisted external-failure reference>; reason=<attribution>`
 and carry that immutable line in every later receipt, including pauses and
 stops. It permanently disqualifies that neutral chain, even after passing gates.
-Before readiness, review the repair as behavior-changing: use a snapshot before
-the voided repair as B, or full scope if that delta cannot be bounded. Never
-reuse N that already contains it. Use the normal remaining cycles or Step 5
-re-review path; a cap stop still requires its authorized continuation and
-cannot be cleared by a passing gate. A prepared receipt that records such a
-repair still hands off `review: COMPLETE`.
+Persist the failed result and void record in the durable evidence directory
+before any retry or further action; a failed write stops. External failures
+use the existing external-gate checkpoint/attestation history, whose failure
+row is the reference; attribution uncertainty still voids the chain. Before
+readiness or resume, reconcile all final-gate runs and external results for the
+chain against its void records. Missing or unverifiable history covers nothing,
+so an older receipt or a later pass cannot prove the absence of a failure.
+Before readiness, review the repair as behavior-changing. Only when the next
+cycle qualifies as an active delta, use a snapshot before the voided repair as
+B; otherwise use today's full-scope selection and verified PR merge base. An
+unbounded delta also falls back to full scope. Never reuse N that already
+contains the repair. Use the normal remaining cycles or Step 5 re-review path;
+a cap stop still requires its authorized continuation and cannot be cleared
+by a passing gate.
 
 **A mixed batch.** Only when the next cycle qualifies as an active delta, use
 this split. Within Step 5b, apply the neutral candidates first, take one candidate snapshot N with the snapshot procedure above, then apply the rest. The
@@ -1206,12 +1216,15 @@ The before/after commits must be durable ancestors of the prepared head.
 Before must be after's sole parent, with a tree equal to a covered reviewed
 snapshot or the preceding verified chain's after tree. Check contiguous
 coverage from the full reviewed snapshot through the prepared head, including
-changes before `before`; a gap covers nothing. Hash this canonical raw listing:
+changes before `before`; a gap covers nothing. A verified, policy-authorized
+final-gate repair chain also supplies a coverage link under the existing
+readiness exception; it can precede or follow a neutral repair. Hash this
+canonical raw listing:
 `git diff-tree --no-commit-id --raw -r -z --no-renames --no-relative --no-abbrev --no-color --no-ext-diff --no-textconv -O/dev/null <before> <after> --`
 It binds paths, modes and full blob IDs without host-dependent patch formatting.
 Record the closed-list evidence and final class in `diff-check`. Before readiness or
 reuse, recompute the diff, path list and hash, and check that every subsequent
-change has its own review or neutral chain. A missing or mismatched binding
+change has its own review, neutral chain or authorized final-gate repair chain. A missing or mismatched binding
 covers nothing; never infer coverage from a path count or finding fingerprint.
 
 `final-gate=` reads `pending` until the final gate passes, then names its ledger

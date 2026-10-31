@@ -1655,7 +1655,7 @@ describe('review-and-prep behavior-changing repair review', () => {
     expect(reopen).toContain("Targeted lanes and Step 2's single final suite cover those repairs, so no further cycle opens.");
     expect(reopen).toContain("That pass counts as final for Step 5.8 items 2–4 and Step 4.7's freshness check.");
     expect(reopen).toContain('A failing freshness rerun or targeted lane reclassifies the repair as behavior-changing, and a batch with one repeats as today.');
-    expect(reopen).toContain('A prepared receipt that records such a repair still hands off `review: COMPLETE`.');
+    expect(reopen).toContain('A prepared receipt that records such a repair still hands off `review: COMPLETE` only after the applicable neutral or ordinary review coverage is verified.');
     expect(reopen).not.toContain('converged:true');
   });
 
@@ -1700,7 +1700,7 @@ describe('review-and-prep behavior-changing repair review', () => {
     expect(reopen).toContain('If attribution is uncertain, treat the repair as behavior-changing.');
     expect(reopenRaw).toContain('`Repair evidence: <fingerprint>; before=<full commit SHA>; after=<full commit SHA>; paths=<exact path list>; diff-sha256=<hash>; diff-check=<evidence reference>`');
     expect(reopen).toContain('The before/after commits must be durable ancestors of the prepared head.');
-    expect(reopen).toContain('Before readiness or reuse, recompute the diff, path list and hash, and check that every subsequent change has its own review or neutral chain.');
+    expect(reopen).toContain('Before readiness or reuse, recompute the diff, path list and hash, and check that every subsequent change has its own review, neutral chain or authorized final-gate repair chain.');
     expect(readiness).toContain('Require its verified `Repair evidence:` commit/diff binding and reject any chain with a `Repair chain voided:` record; its repair requires ordinary review coverage.');
   });
 
@@ -1717,10 +1717,15 @@ describe('review-and-prep behavior-changing repair review', () => {
 
   // Value: protects=voided chains remain rejected across resume and canonical contiguous bindings survive host config; fails_when=later gates erase the failure or isolated diffs leave uncovered gaps; why_new=outside repair review found missing durable state; seam=none; no_claim=installed-agent execution
   test('void records survive pauses and recovery reviews all invalidated content', () => {
-    expect(reopenRaw).toContain('`Repair chain voided: <fingerprint>; failed=<ledger reference>; reason=<attribution>`');
+    expect(reopenRaw).toContain('`Repair chain voided: <fingerprint>; failed=<ledger or persisted external-failure reference>; reason=<attribution>`');
     expect(reopen).toContain('It permanently disqualifies that neutral chain, even after passing gates.');
-    expect(reopen).toContain('use a snapshot before the voided repair as B, or full scope if that delta cannot be bounded. Never reuse N that already contains it.');
+    expect(reopen).toContain('Only when the next cycle qualifies as an active delta, use a snapshot before the voided repair as B; otherwise use today\'s full-scope selection and verified PR merge base.');
     expect(reopen).toContain('a cap stop still requires its authorized continuation and cannot be cleared by a passing gate.');
+    expect(reopen).toContain('Persist the failed result and void record in the durable evidence directory before any retry or further action; a failed write stops.');
+    expect(reopen).toContain('External failures use the existing external-gate checkpoint/attestation history, whose failure row is the reference; attribution uncertainty still voids the chain.');
+    expect(reopen).toContain('Before readiness or resume, reconcile all final-gate runs and external results for the chain against its void records.');
+    expect(reopen).toContain('Missing or unverifiable history covers nothing');
+    expect(reopen).toContain('A verified, policy-authorized final-gate repair chain also supplies a coverage link under the existing readiness exception; it can precede or follow a neutral repair.');
     expect(reopen).toContain("Before must be after's sole parent, with a tree equal to a covered reviewed snapshot or the preceding verified chain's after tree.");
     expect(reopen).toContain('Check contiguous coverage from the full reviewed snapshot through the prepared head, including changes before `before`; a gap covers nothing.');
     expect(reopenRaw).toContain('`git diff-tree --no-commit-id --raw -r -z --no-renames --no-relative --no-abbrev --no-color --no-ext-diff --no-textconv -O/dev/null <before> <after> --`');
