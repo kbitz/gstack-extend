@@ -1721,11 +1721,16 @@ describe('review-and-prep behavior-changing repair review', () => {
     expect(reopen).toContain('It permanently disqualifies that neutral chain, even after passing gates.');
     expect(reopen).toContain('Only when the next cycle qualifies as an active delta, use a snapshot before the voided repair as B; otherwise use today\'s full-scope selection and verified PR merge base.');
     expect(reopen).toContain('a cap stop still requires its authorized continuation and cannot be cleared by a passing gate.');
-    expect(reopen).toContain('Persist the failed result and void record in the durable evidence directory before any retry or further action; a failed write stops.');
+    expect(reopen).toContain('Persist the failed result in the durable evidence directory immediately; a failed write stops. Read-only diagnosis may then establish attribution.');
     expect(reopen).toContain('External failures use the existing external-gate checkpoint/attestation history, whose failure row is the reference; attribution uncertainty still voids the chain.');
     expect(reopen).toContain('Before readiness or resume, reconcile all final-gate runs and external results for the chain against its void records.');
     expect(reopen).toContain('Missing or unverifiable history covers nothing');
-    expect(reopen).toContain('A verified, policy-authorized final-gate repair chain also supplies a coverage link under the existing readiness exception; it can precede or follow a neutral repair.');
+    expect(reopen).toContain('Before any edit or retry, persist either the void record or the existing diagnosis and evidence proving the failure unrelated.');
+    expect(reopen).toContain('Missing attribution evidence means uncertainty and voids the chain.');
+    expect(reopen).toContain('A wrapper-satisfied raw secret failure needs its raw record and successful disposition evaluation, never a fabricated passing test ledger.');
+    expect(reopen).toContain('This grants no diagnosis coverage to a pending neutral chain; where that prerequisite is absent, use ordinary review coverage.');
+    expect(readiness).toContain("Acceptance also requires the section's reconciliation of all final-gate history; missing or unverifiable history cannot be cleared by that receipt.");
+    expect(reopen).toContain('A verified, policy-authorized final-gate repair chain also supplies a coverage link under the existing readiness exception only after its own diagnosis and verification prerequisites are met.');
     expect(reopen).toContain("Before must be after's sole parent, with a tree equal to a covered reviewed snapshot or the preceding verified chain's after tree.");
     expect(reopen).toContain('Check contiguous coverage from the full reviewed snapshot through the prepared head, including changes before `before`; a gap covers nothing.');
     expect(reopenRaw).toContain('`git diff-tree --no-commit-id --raw -r -z --no-renames --no-relative --no-abbrev --no-color --no-ext-diff --no-textconv -O/dev/null <before> <after> --`');

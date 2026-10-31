@@ -1162,8 +1162,13 @@ only after the applicable neutral or ordinary review coverage is verified.
 Append `Repair chain voided: <fingerprint>; failed=<ledger or persisted external-failure reference>; reason=<attribution>`
 and carry that immutable line in every later receipt, including pauses and
 stops. It permanently disqualifies that neutral chain, even after passing gates.
-Persist the failed result and void record in the durable evidence directory
-before any retry or further action; a failed write stops. External failures
+Persist the failed result in the durable evidence directory immediately; a
+failed write stops. Read-only diagnosis may then establish attribution. Before
+any edit or retry, persist either the void record or the existing diagnosis
+and evidence proving the failure unrelated. Missing attribution evidence means
+uncertainty and voids the chain. A wrapper-satisfied raw secret failure needs
+its raw record and successful disposition evaluation, never a fabricated
+passing test ledger. External failures
 use the existing external-gate checkpoint/attestation history, whose failure
 row is the reference; attribution uncertainty still voids the chain. Before
 readiness or resume, reconcile all final-gate runs and external results for the
@@ -1218,7 +1223,9 @@ snapshot or the preceding verified chain's after tree. Check contiguous
 coverage from the full reviewed snapshot through the prepared head, including
 changes before `before`; a gap covers nothing. A verified, policy-authorized
 final-gate repair chain also supplies a coverage link under the existing
-readiness exception; it can precede or follow a neutral repair. Hash this
+readiness exception only after its own diagnosis and verification prerequisites
+are met. This grants no diagnosis coverage to a pending neutral chain; where
+that prerequisite is absent, use ordinary review coverage. Hash this
 canonical raw listing:
 `git diff-tree --no-commit-id --raw -r -z --no-renames --no-relative --no-abbrev --no-color --no-ext-diff --no-textconv -O/dev/null <before> <after> --`
 It binds paths, modes and full blob IDs without host-dependent patch formatting.
@@ -2769,6 +2776,8 @@ the relevant base/head refs. Require all of the following:
   `Repair chain voided:` record; its repair requires ordinary review coverage.
   Accept it on resume or after a pause from the corroborated pause comment or receipt that
   records it and the authorizing policy line, never from the resume prompt.
+  Acceptance also requires the section's reconciliation of all final-gate
+  history; missing or unverifiable history cannot be cleared by that receipt.
 - Step 2's `/ship` gates are current for the final content: pregate passed
   or the **Reviewed secret findings** evaluator satisfies the wrapper gate,
   the coverage audit completed or was waived with a recorded reason, and the
