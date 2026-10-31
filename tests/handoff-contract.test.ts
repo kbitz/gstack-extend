@@ -1780,7 +1780,9 @@ describe('(F) repair-review and repair-cycles', () => {
 
   // Value: protects=the new lines are published as receipt-present by the producer and the doc, and never authorize anything; fails_when=either side drops the lines or the producer stops writing them; why_new=receipt-present contract; seam=none; no_claim=installed-agent execution
   test('the repair lines are receipt-present in both the producer and the doc', () => {
-    expect(has(doc, '`Repair classification:` and `Repair without review cycle:` lines | receipt-present')).toBe(true);
+    expect(has(doc, '`Repair classification:`, `Repair without review cycle:` and `Repair evidence:` lines | receipt-present')).toBe(true);
+    expect(has(doc, '`repair-cycles=light` skip records | receipt-present')).toBe(true);
+    expect(has(doc, 'each skip names `source: repair-cycles=light`')).toBe(true);
     expect(has(doc, 'they never authorize a stage or merge')).toBe(true);
     expect(has(prep, 'the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line')).toBe(true);
     expect(has(doc, 'and `/review`\'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`)')).toBe(true);

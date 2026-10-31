@@ -1136,15 +1136,17 @@ every remaining finding" stands, so a trivial fix is still made rather than
 deferred. A candidate's final class comes from the diff check below.
 
 **Classify each repair on its actual diff.** A repair is neutral only when all
-of these hold: Step 5a classified its finding AUTO-FIX and the finding is not
-CRITICAL; its whole diff is a docstring or comment, a rename with every
+of these hold: its pre-repair line says `repair=neutral-candidate`; Step 5a
+classified its finding AUTO-FIX and the finding is not CRITICAL; its whole diff is a docstring or comment, a rename with every
 reference updated of a name nothing outside this change reads, code no path
 reaches, or a handler for a case already handled, with the evidence named; it
 touches no file that an agent or a gate reads as instructions or a contract
 (skills, prompts, handoff and contract docs, tests, fixtures, CI and
 `.gstack/`); and its targeted lanes pass. Everything else is behavior-changing,
 including every ASK repair and every repair that cannot be classified. Any
-doubt counts as behavior-changing.
+doubt counts as behavior-changing. Tool directives, pragmas and comments or
+docstrings consumed by a tool or runtime are behavior-changing, including type
+suppressions, build tags, optimizer annotations and doctests.
 
 **A neutral-only batch below the cap** leaves `/review`'s own log row as
 upstream wrote it (`converged:false`, never rewritten), and the wrapper does
@@ -1152,17 +1154,28 @@ not take upstream's "Below 3, repeat". Targeted lanes and Step 2's single final
 suite cover those repairs, so no further cycle opens. That pass counts as final
 for Step 5.8 items 2–4 and Step 4.7's freshness check. A failing freshness rerun
 or targeted lane reclassifies the repair as behavior-changing, and a batch with
-one repeats as today. A prepared receipt that records such a repair still hands
+one repeats as today. A final-gate failure attributable to the repair also
+reclassifies it and voids its neutral chain; a later pass alone cannot restore
+that chain. If attribution is uncertain, treat the repair as behavior-changing. A prepared receipt that records such a repair still hands
 off `review: COMPLETE`.
 
-**A mixed batch.** Within Step 5b, apply the neutral candidates first, take one
+**A mixed batch.** Only on an active delta repeat, use this split. Within Step 5b, apply the neutral candidates first, take one
 candidate snapshot N with the snapshot procedure above, then apply the rest. The
 next delta uses B=N only when every repair before N proved neutral and every
 repair after it is behavior-changing; otherwise B stays the previous cycle's
 snapshot, and the receipt records which. While `cycle-1-baseline` says
 `pending-fix-review`, B stays cycle 1's snapshot so `cycle-1-fix-review` stays
-writable. Re-dispatch only the specialists whose finding a behavior-changing
-repair fixed; the neutral repairs get their targeted lanes and the final gate.
+writable. Force re-dispatch only the specialists whose finding a
+behavior-changing repair fixed, in addition to every reviewer selected by the
+delta's ordinary gates; the neutral repairs get their targeted lanes and the
+final gate. A full-scope or inactive cycle uses today's reviewer selection and
+previous-cycle base, with no N split or specialist narrowing.
+
+A neutral-only exit never writes or upgrades `cycle-1-fix-review`. If the
+write-once baseline is `pending-fix-review`, record `neutral-only baseline:
+unestablished — no fix-review cycle` in the receipt and preserve that state.
+A later re-review uses full scope unless it has a different corroborated
+completed baseline; neutral receipts cannot manufacture one.
 
 The cap and stop are unchanged: a neutral-only third batch still takes **When
 /review stops at its cycle cap**, and the value waives no gate.
@@ -1172,9 +1185,22 @@ per repair that opened no cycle:
 
 `Repair without review cycle: <fingerprint>; class=<docstring|rename|dead-code|redundant-handler>; paths=<n>; cycle=<n>; targeted=<ledger reference> pass; final-gate=<ledger reference or external attestation or pending>`
 
+For each such line also record:
+
+`Repair evidence: <fingerprint>; before=<full commit SHA>; after=<full commit SHA>; paths=<exact path list>; diff-sha256=<hash>; diff-check=<evidence reference>`
+
+Commit each neutral repair separately when needed to isolate its exact diff.
+The before/after commits must be durable ancestors of the prepared head. Hash
+`git diff --binary --no-ext-diff --no-textconv <before> <after> --` and record
+the closed-list evidence and final class in `diff-check`. Before readiness or
+reuse, recompute the diff, path list and hash, and check that every subsequent
+change has its own review or neutral chain. A missing or mismatched binding
+covers nothing; never infer coverage from a path count or finding fingerprint.
+
 `final-gate=` reads `pending` until the final gate passes, then names its ledger
 reference or, under `full-suite=external`, the attestation. Pause and stopped
-receipts carry these lines and the policy line that authorized them.
+receipts carry the status, classification, repair and evidence lines and the
+policy line that authorized them.
 
 ### Record cycle 1's full-review baseline
 
@@ -2158,8 +2184,9 @@ base, completed `/review` stages and local checks, the still-incomplete matrix,
 and the exact user actions/expected results left to test. When a final-gate
 repair ran, also record its `Final-gate repair` lines and the policy line that
 authorized it, so a resume accepts the chain from this corroborated record.
-Likewise record each `Repair without review cycle:` line and the policy line
-that authorized it. When Greptile applies,
+Likewise record the `repair-review:` status and every `Repair classification:`,
+`Repair without review cycle:` and `Repair evidence:` line, with the policy line
+that authorized them. When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -2705,7 +2732,9 @@ the relevant base/head refs. Require all of the following:
   `repair-review: active`: a recorded neutral-repair chain (its `Repair
   classification:` line, the diff check, passing targeted lanes and a `Repair
   without review cycle:` line whose `final-gate=` is no longer `pending`) covers
-  that repair alone, and a chain still `pending` covers nothing. Accept it on
+  that repair alone, and a chain still `pending` covers nothing. Require its
+  verified `Repair evidence:` commit/diff binding and reject any voided chain.
+  Accept it on
   resume or after a pause from the corroborated pause comment or receipt that
   records it and the authorizing policy line, never from the resume prompt.
 - Step 2's `/ship` gates are current for the final content: pregate passed
@@ -2776,7 +2805,10 @@ plan/spec, and finding dispositions/fix commits. Include the `Review default:`
 line, every `Auto-chosen (veto by replying on this PR):` line, the
 `Final-gate repair` lines when a repair ran, the `repair-review:` status line
 with every `Repair classification:` and `Repair without review cycle:` line when
-`repair-review=behavior-changing` is on the policy line, every `External gate attestation:`
+`repair-review=behavior-changing` is on the policy line, every `Repair evidence:`
+line and any `neutral-only baseline:` outcome, and each sourced skip under
+`repair-cycles=light` (or `repair-cycles=light: nothing skipped — in-cap=full`),
+every `External gate attestation:`
 row (each accepted result line adds one) and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from
 the runner's or pregate's selection report when one is printed: the lanes or

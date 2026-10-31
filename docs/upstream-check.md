@@ -181,9 +181,11 @@ The inventory comes from this extension's own source, never a second copy:
   contains,", in `review/checklist.md` under the same root. The checklist is
   read from the root in both layouts, so the nested-or-sibling choice is
   unchanged. They are listed by `fixFirstInventory`, a separate check
-  (`review-and-prep.fix-first`) from the in-cap list, so drift in one gate never
-  reports the other inactive. The paragraph also requires the first two in-cap
-  anchors, which the in-cap list already checks.
+  (`review-and-prep.fix-first`) from the in-cap list. Their anchor results are
+  independent, but activation is not: the paragraph also requires the first two
+  in-cap anchors, which the in-cap list already checks. Drift in either of those
+  disables both values even while the six Fix-First anchor checks say OK; the
+  existing in-cap effect line names only the delta consequence.
 - **Exports.** `runClaudeCode`, `resolveClaudeCommand` and
   `classifyOutsideReview`, from the one list (`UPSTREAM_HELPERS`) that
   `src/outside-review/cli.ts` itself loads before any dispatch. Each module is
@@ -291,6 +293,9 @@ observed" is not evidence that none happened.
 `gstack-doctor --check` certifies install health; `upstream-check` certifies
 this extension's contracts. Run both if you want both. The checker does not call
 doctor. Revisit if upstream publishes anchor or contract identifiers.
+
+The [review repair policy acceptance record](acceptance/review-fix-policy.md)
+holds the measurement limits and release-note block for the opt-in repair values.
 
 ## Upgrade checklist
 
