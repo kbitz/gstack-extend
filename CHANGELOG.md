@@ -6,16 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **`/review-and-prep` has an external review test gate.** The handoff can pause, or it can record a pass or fail result.
-- **Lean parent reads.** `/review-and-prep` reads the parent plan leanly.
-
-### Fixed
-
-- **Resume keeps the external gate.** Resuming `/review-and-prep` preserves the external gate's resume state and its receipt.
+- **`/review-and-prep` can hand the full suite to its caller.** With `full-suite=external` on the `Review policy:` line, the skill freezes the final content after the documentation audit, runs the pregate's preflight stage and ends its turn with an `External gate: external-gate/v1` line, leaving the PR unready. The caller runs its own command and resumes with an `External gate result:` line, accepted only from the invocation prompt. A result whose head or tree differs from the live checkout, or that arrives on a dirty checkout, is never reused.
+- **`parent-io=lean` keeps the parent's waits quiet.** While a run it started is live, the parent session only makes blocking waits, with no status or log reads, and it reads several files or diffs in one call. Outcomes and gates do not change.
 
 ### Upgrade notes
 
-- **Handoff outcomes.** A `/review-and-prep` handoff can now include a pause, or a pass or fail result, for the external review test gate. A reader that follows `docs/workflow-handoffs.md` still works; a reader that only matched the previous handoff can miss the gate's outcome.
+- **Both values are opt-in.** A policy line without them behaves as before. An install that lacks a value reads the whole line as none supplied, so check first with `grep -F '<key>=<value>'` against the installed skill, and omit a value that fails while keeping the other keys.
+- **A pass is caller-attested, not observed.** The receipt says so, and `/ship-and-land` does not accept it: its own test gate still applies, so a repository whose main command is the whole suite runs it again at ship.
+- **New handoff section.** `docs/workflow-handoffs.md` gains H-F for the pause and result lines. A consumer without H-F holds on a pause, and an older H-E parser reads a prompt carrying either value as `policy-malformed`.
+- **Not yet proven.** No installed agent has paused or resumed, and no saving has been measured. `docs/acceptance/external-gate.md` records the costs as unknown.
 
 ## [0.53.0] - 2026-10-30
 
