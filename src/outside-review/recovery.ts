@@ -32,7 +32,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
     // Only label positions, never identifiers or quoted examples in finding prose.
     return line.replace(/^(\s*(?:>\s*)?(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|__|`)?\[?)p([0-3])\b/i, '$1P$2')
       .replace(QUALIFIED_LABEL, (label, prefix: string, qualifier: string) =>
-        /(?<![\w-])(?:critical|high|medium|low)(?![\w-])/i.test(qualifier)
+        /(?<![a-z]-|[a-z])(?:critical|high|medium|low)(?![a-z]|-[a-z])/i.test(qualifier)
           ? label : `${prefix}] (${qualifier})`)
       .replace(/`[^`]*`|(\|\s*(?:\*\*|__|`)?\[?)p([0-3])(?=\]?(?:\*\*|__|`)?\s*\|)/gi,
         (span, before: string | undefined, priority: string) => before === undefined ? span : `${before}P${priority}`);
