@@ -6,24 +6,35 @@ development speed: the timing, capped-review baseline repair and `/implement`
 waiting and targeted-check Tracks have shipped, and so has the owner's
 2026-10-30 efficiency-review order (approved as proposed): `/docs-ship` merging
 on the user's word (47A, v0.53.0), the external full-suite gate with lean parent
-reads (48A, v0.54.0), the review-fix policy (33A, v0.55.0), state-root,
-telemetry-helper and stage-handoff changes (49A, v0.56.0) and the `/plan-track`
-skill (50A, v0.57.0, shipped as `/plan-card` and since renamed). The rest of the plan keeps its earlier order: test
-savings, telemetry, and audit and review optimizations. The packer assigns
-Groups of disjoint file footprints and their launch dependencies. The previous
-regeneration kept the existing Group and Track labels 33 to 46 stable on
-purpose, because open cards and outside references cited them, and deferred
-the renumbering rule's recycling to this one. That recycling is done
-(2026-10-31): the 13 remaining Groups 34 to 46 and their Tracks are now Groups
-51 to 63 in packer order (`34A` is `51A`, `35A` is `52A`, `46A` is `63A`; the
-full map is in the commit message). Shipped numbers 33 and 47 to 50 are
-reserved by tombstones. Track 35B, the `full-suite=before-audit` value, was
-dropped rather than renumbered (2026-10-31): under `full-suite=final` and
-`full-suite=external` the suite already runs once on the final content, after
-the documentation audit (`skills/review-and-prep.md`, Review policy section and
-the external gate's slot), so that value has no second suite to avoid, and no
-caller has asked for it. Its design item E3 is marked dropped in the
-[efficiency program](designs/workflow-efficiency-program.md).
+reads (48A, v0.54.0), the review-fix policy (33A, v0.55.0, and its test-gap
+routing, 51A, v0.59.0), state-root, telemetry-helper and stage-handoff changes
+(49A, v0.56.0) and the `/plan-track` skill (50A, v0.57.0, shipped as `/plan-card`
+and renamed in v0.58.0, PR #187). The pregate narrowing after an accepted
+external-gate pass (v0.60.0, PR #189) shipped without a Track number. On
+2026-11-01 the owner kept this order after a regeneration: Track 52A stays the
+next Track and no later Track moved ahead of it. The rest of the plan keeps its
+earlier order: test savings, telemetry, and audit and review optimizations. The
+packer assigns Groups of disjoint file footprints and their launch dependencies.
+The regeneration of 2026-10-31 recycled the labels of Groups 34 to 46: the 13
+remaining Groups and their Tracks became Groups 51 to 63 in packer order (`34A`
+became `51A`, `35A` became `52A`, `46A` became `63A`; the full map is in that
+commit message). Group 51 has since shipped as Track 51A, so the 12 remaining
+Groups keep the numbers 52 to 63 and no label changed on 2026-11-01. Shipped
+numbers 33 and 47 to 51 are reserved by tombstones. Track 35B, the
+`full-suite=before-audit` value, was dropped rather than renumbered
+(2026-10-31): under `full-suite=final` and `full-suite=external` the full suite
+already runs once on the final content, after the documentation audit
+(`skills/review-and-prep.md`, Review policy section and the external gate's
+slot), so that value has no second full suite to avoid, and no caller has asked
+for it. That reasoning was narrower than the text first said (corrected
+2026-11-01): under `full-suite=external` the pregate's selected test lanes ran a
+second time after the caller's accepted full-suite pass, repeated work that the
+pregate narrowing in v0.60.0 skips when the attested command covers every
+selected test. That is a different repetition from the one 35B targeted, which
+reorders the full suite against the documentation audit, so 35B stays dropped
+and its design item E3 stays marked dropped in the
+[efficiency program](designs/workflow-efficiency-program.md); reinstating it is
+the owner's decision.
 
 **Card size.** A Track estimated above about 300 authored lines, counting its
 tests, is split into separate Tracks unless splitting would leave a Track that
@@ -36,8 +47,8 @@ separately from authored ones (owner rule, 2026-10-26). Track 31A was already in
 progress when the rule was adopted and has shipped. Applied 2026-10-26 to three
 Track pairs that edit the same files and run in sequence: each pair is now one
 card, with the reason on its Scheduling line; the review-fix policy pair stayed
-split on purpose (Track 33A has shipped; the reason is on Track 51A's
-Scheduling line).
+split on purpose (both Tracks have shipped, 33A in v0.55.0 and 51A in v0.59.0;
+the reason is on 51A's shipped receipt).
 
 Target: [SPEC](SPEC.md) O1–O5, public-release 1.0.0, potentially-public users.
 Paseo and Conductor retain equal priority. The owner-selected
@@ -49,52 +60,37 @@ owner acceptance remain distinct. No new spend or unattended merge is authorized
 
 No Group is in progress, and no working branch, session or PR is declared active.
 Tracks 29A (v0.49.0), 30A (v0.50.0), 31A (v0.51.0), 32A (v0.51.1), 32B (v0.52.0),
-47A (v0.53.0), 48A (v0.54.0), 33A (v0.55.0), 49A (v0.56.0) and 50A (v0.57.0) are
-recorded independently in shipped history, with the v0.54.1 outside-review
-severity fix (PR #182). Track 28A's required published-release upgrade
+47A (v0.53.0), 48A (v0.54.0), 33A (v0.55.0), 49A (v0.56.0), 50A (v0.57.0) and
+51A (v0.59.0) are recorded independently in shipped history, with three changes
+that carried no Track ID and consumed no number: the v0.54.1 outside-review
+severity fix (PR #182), the v0.58.0 `/plan-card` to `/plan-track` rename
+(PR #187) and the v0.60.0 pregate narrowing after an accepted external-gate pass
+(PR #189). Track 28A's required published-release upgrade
 acceptance remains in Future; its revisit trigger, the first published
 three-part release, was met by v0.48.0 and the item awaits an owner
 reassessment. O1 and O3–O5 remain pending.
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50_
-
-### Group 51: Route unproven test gaps to the next Track that touches them
-
-_Depends on: none_
-
-**This group delivers:** Recorded and routed test gaps in place of tests written for cells with no demonstrated defect, with regression tests kept for reproduced defects.
-
-##### Track 51A: Record unproven test gaps for the next Track that touches them
-_1 task . ~180 LOC incl. tests . medium risk_
-**Outcome:** An opted-in caller's review stops writing tests for gaps with no demonstrated defect, every reproduced defect still gets its regression test, and each recorded gap reaches the next Track that touches its files.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved review-fix policy, 2026-10-26; O3.2.
-**Done when:** Under the review-fix policy (a key or value settled at planning on the grammar Track 33A shipped in v0.55.0, whose values are `repair-review=behavior-changing` and `repair-cycles=light`), a test-gap finding with no demonstrated defect, such as an untested state-matrix cell, is recorded and its test is not written; its upstream severity label stays unchanged, and a reproduced defect still gets its regression test. Each recorded gap goes to TODOS with the registered `review` source tag carrying `files=`, so `/roadmap` routes it to the next Track whose `_touches:` cover those files. The anchors this relies on join the upstream drift inventory with missing and changed cases; on drift the review writes tests as today and the receipt says so. The receipt records each recorded gap, omitted-policy behavior is unchanged, and before/after cycle counts are recorded.
-_touches: skills/review-and-prep.md, docs/workflow-handoffs.md, src/upstream-check/, tests/upstream-check.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, docs/acceptance/review-fix-policy.md_
-_blocked-by: Track 33A, Track 50A_
-**Scheduling:** Owner order, 2026-10-30: the three Tracks that follow the review-fix policy (the state-root, telemetry-helper and stage-handoff change, then the plan-prompt skill) ran before this one and have shipped (v0.56.0, v0.57.0); the plan-prompt edge was a priority choice. Owner order, 2026-10-26: completes the review-fix policy before the test-savings Tracks. Split from the former review-fix policy card under the card-size rule; it builds on the policy values Track 33A shipped in v0.55.0, a technical prerequisite that is now met. Kept as a separate card from Track 33A on purpose despite the shared files and serial order (owner direction, 2026-10-26): it adds a second review behavior, test-gap routing, that is activated and measured separately on the grammar 33A defined.
-_Source: owner-approved review-fix policy, 2026-10-26; observed review cycles spent writing tests for untested cells with no defect_
-_read-first: docs/designs/workflow-efficiency-program.md, docs/source-tag-contract.md_
-- **Record unproven test gaps instead of writing their tests** -- Keep upstream severity labels; record a test-gap finding with no demonstrated defect instead of writing its test, and file it to TODOS as `[review:files=…]` with its evidence; keep regression tests for reproduced defects; add the anchors to the drift inventory with missing and changed cases; record before/after cycle counts. _~180 lines incl. tests._ (M)
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51_
 
 ### Group 52: Reduce repeated and overbroad test work
 
-_Depends on: Group 51_
+_Depends on: none_
 
-**This group delivers:** Narrower skill-only test selection, with required coverage preserved.
+**This group delivers:** Narrower skill-only test selection for the runs that still select tests, with required coverage preserved.
 
 ##### Track 52A: Narrow the remaining broad skill-test readers
-_1 tasks . ~260 LOC incl. tests . medium risk_
-**Outcome:** A skill prose edit runs the content rules it reaches without paying for unrelated installer mechanics.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; observed broad-suite cost from 2026-10-23
-**Done when:** Measured skill-only selection removes unnecessary broad mechanics while every real-skill content rule still runs for its consumers, dependency-map parity and conservative full-suite fallback hold, and before/after test time and coverage are recorded.
-_touches: tests/telemetry.test.ts, tests/setup-hosts.test.ts, tests/helpers/telemetry-env.ts, tests/helpers/touchfiles.ts, tests/touchfiles.test.ts, tests/skill-content.test.ts (new), .gstack/pregate.json_
+_1 tasks . ~300 LOC incl. tests and record . medium risk_
+**Outcome:** A skill prose edit run through a selection (a direct `bun run test`, or a pregate run that cannot narrow) runs the content rules it reaches without paying for unrelated installer and telemetry mechanics. Runs that do not select are unchanged.
+**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; observed broad-suite cost from 2026-10-23, restated 2026-11-01 for what v0.60.0 (PR #189) changed.
+**Done when:** An acceptance record (`docs/acceptance/skill-test-selection.md`) gives, before and after this Track, for one edit to `skills/roadmap.md` and one to `skills/review-and-prep.md`: the test files selected and skipped, and the wall time and host load of each run that still selects, which are a direct `bun run test` and a pregate run that cannot narrow (the default `full-suite` path, or `full-suite=external` when its narrowing declines). It states that the review's external full-suite run, the narrowed pregate's preflight-only run and the release stage's single `EVALS_ALL=1 bun run test` are unchanged, so it claims no end-to-end pipeline saving. The narrowing removes unnecessary broad mechanics while every real-skill content rule still runs for its consumers; dependency-map parity (`tests/touchfiles.test.ts`, the pregate copy sync) and the conservative full-suite fallback hold; CLAUDE.md's Testing section still describes what a skill edit selects.
+_touches: tests/telemetry.test.ts, tests/setup-hosts.test.ts, tests/helpers/telemetry-env.ts, tests/helpers/touchfiles.ts, tests/touchfiles.test.ts, tests/skill-content.test.ts (new), .gstack/pregate.json, docs/acceptance/skill-test-selection.md (new), CLAUDE.md_
 _blocked-by: Track 31A, Track 29A, Track 51A_
-**Scheduling:** Owner order, 2026-10-26: test savings follow the review-fix policy; that edge is a priority choice. Reduce recurring skill-test cost; requested-model provenance is not a technical prerequisite. The companion full-suite-before-audit Track was dropped (2026-10-31, see the header).
+**Scheduling:** Owner order, 2026-10-26: test savings follow the review-fix policy, which has shipped (33A, 51A); that edge is a priority choice. Owner decision, 2026-11-01: keep this order, so 52A stays next and the paused and resumed telemetry Track was not moved ahead of it. Reduce recurring skill-test cost; requested-model provenance is not a technical prerequisite. The companion full-suite-before-audit Track was dropped (2026-10-31, see the header). **Reach, stated for the owner (2026-11-01):** reviews of this project's own PRs have run under `full-suite=external` (PRs #188 and #189), where the caller's full suite runs once, an accepted pass can narrow the pregate to its preflight checks, and the release stage runs `EVALS_ALL=1 bun run test` once, so none of those runs selects and this Track does not shorten them. Selection still shortens a direct `bun run test`, a targeted check inside `/implement`, `/docs-ship`'s selected tests and any pregate run that cannot narrow. The card keeps its scope and its coverage guarantees; only its claimed benefit is restated. Measured baseline, 2026-11-01, one serial run of each file the dependency map selects for an edit to `skills/roadmap.md` (10 of the 78 test files), on a host at load average 9.5 to 10 (so the times are inflated and unpaired): 929 s in all, of which `tests/setup-hosts.test.ts` took 394 s and `tests/telemetry.test.ts` 333 s, 78% between the two; the other eight took 0 to 87 s each. `skills/review-and-prep.md` selects 12 files and `skills/plan-track.md` 8. The Track repeats the measurement at a quieter load and records it in its acceptance record.
 _Source: [manual] narrow the two broad skills suites_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Separate real-skill readers from fixture mechanics** -- Use existing cross-skill invariants to keep all content dependencies explicit, retain installer/telemetry behavior coverage, and sync the pregate dependency map. Measure a representative skill-only edit without weakening unknown-change fallback. _~260 lines._ (M)
+_read-first: docs/designs/workflow-efficiency-program.md, docs/acceptance/external-gate.md_
+- **Separate real-skill readers from fixture mechanics** -- Use existing cross-skill invariants to keep all content dependencies explicit, retain installer/telemetry behavior coverage, and sync the pregate dependency map. Measure a representative skill-only edit through each run that still selects, and record the before and after, without weakening unknown-change fallback. _~300 lines incl. tests and record._ (M)
 
 ### Group 53: Paused and resumed telemetry ∥ Python source-root test selection
 
@@ -198,7 +194,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 
 ### Group 57: Attribute review findings to their source part
 
-_Depends on: Group 51, Group 56_
+_Depends on: Group 56_
 
 **This group delivers:** Every logged review finding names the specialist, Red Team, native adversarial pass or outside voice that found it.
 
@@ -216,7 +212,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 
 ### Group 58: Opt-in folded first review cycle
 
-_Depends on: Group 51, Group 56, Group 57_
+_Depends on: Group 56, Group 57_
 
 **This group delivers:** A measured alternative to specialist subagents in the first review cycle, with the arm that ran recorded and today's default unchanged.
 
@@ -383,14 +379,13 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 51 ← {}
-- Group 52 ← {51}
+- Group 52 ← {}
 - Group 53 ← {52}
 - Group 54 ← {53}
 - Group 55 ← {53, 54}
 - Group 56 ← {54, 55}
-- Group 57 ← {51, 56}
-- Group 58 ← {51, 56, 57}
+- Group 57 ← {56}
+- Group 58 ← {56, 57}
 - Group 59 ← {56, 57, 58}
 - Group 60 ← {59}
 - Group 61 ← {60}
@@ -398,7 +393,7 @@ DEPENDS output with bin numbers replaced by the assigned Group numbers.
 - Group 63 ← {52, 55, 62}
 ```
 
-**13 Groups / 20 Tracks remaining.** None is In Progress; all 13 Groups are in
+**12 Groups / 18 Tracks remaining.** None is In Progress; all 12 Groups are in
 the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
@@ -406,7 +401,7 @@ The published-upgrade obligation remains open and is not waived; its revisit tri
 
 ## Future
 
-Deferred: docs/roadmap-future.md (61 items)
+Deferred: docs/roadmap-future.md (68 items)
 
 ## Shipped
 
