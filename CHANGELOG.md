@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.59.0] - 2026-11-01
+
+### Added
+
+- With the review policy opted in, `/review-and-prep` records unproven test gaps, and `/roadmap` follows that same policy. Leave the policy off and review and prep behave as they did before.
+
+### Fixed
+
+- Test-gap eligibility and readiness keep their existing boundaries. Recording an unproven gap does not change which work is eligible or when a review counts as ready.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` and `roadmap` skills pick up the policy. Invoke `/review-and-prep` as before. The new recording stays off until the review policy is opted in.
+
 ## [0.58.0] - 2026-11-01
 
 ### Changed
