@@ -11,7 +11,7 @@ from telemetry import (MIN_GSTACK_FOR_NO_SWEEP, RESUMABLE, capture, compatible_w
 
 SKILLS = ("pair-review", "roadmap", "project-spec", "full-review",
           "gstack-extend-upgrade", "gstack-extend-init", "review-and-prep", "implement", "ship-and-land",
-          "autoplan-lean", "docs-ship", "plan-card")
+          "autoplan-lean", "docs-ship", "plan-track")
 PAIRING_TARGET_PERCENT = 95
 DECISION_WINDOW_DAYS = 30
 MAX_DAYS = 365000

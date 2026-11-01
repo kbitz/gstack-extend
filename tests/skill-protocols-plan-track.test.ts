@@ -1,5 +1,5 @@
 /**
- * skill-protocols-plan-card.test.ts — drift-locks for skills/plan-card.md.
+ * skill-protocols-plan-track.test.ts — drift-locks for skills/plan-track.md.
  *
  * Split from tests/skill-protocols.test.ts, which keeps the cross-skill rules.
  * tests/helpers/touchfiles.ts declares every file this suite reads, and
@@ -19,7 +19,7 @@ const ROOT = join(import.meta.dir, '..');
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const norm = (text: string) => text.replace(/\s+/g, ' ');
 
-const skill = read('skills/plan-card.md');
+const skill = read('skills/plan-track.md');
 const skillN = norm(skill);
 const lean = read('skills/autoplan-lean.md');
 const readme = read('README.md');
@@ -50,12 +50,12 @@ allowed-tools:`;
 const LEAN_ROUTE = "- Autoplan with a small plan, autoplan lean → invoke autoplan-lean (upstream /autoplan's review; review record in a sidecar, then a fresh-session implement handoff)";
 const LEAN_README_ROW = "| [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | New |";
 
-describe('plan-card works alone and hands off to /implement', () => {
+describe('plan-track works alone and hands off to /implement', () => {
   // Value: protects=the skill cannot spawn helpers, call another model or ask a question; fails_when=a tool beyond the five is granted or the working-alone rule is edited out; why_new=no other suite reads this skill; seam=none; no_claim=what an installed agent does
   test('allows exactly Bash, Read, Write, Glob and Grep and states the working-alone rule', () => {
     const tools = [...frontmatter(skill).matchAll(/^  - (\S+)$/gm)].map(m => m[1]);
     expect(tools).toEqual(['Bash', 'Read', 'Write', 'Glob', 'Grep']);
-    expect(frontmatter(skill)).toMatch(/^name: plan-card$/m);
+    expect(frontmatter(skill)).toMatch(/^name: plan-track$/m);
     expect(skillN).toContain('Work alone: no subagents, outside voices or other model or agent CLI.');
     expect(skillN).toContain('Ask no questions.');
     expect(skillN).toContain('Write only `PLAN_FILE`');
@@ -81,10 +81,10 @@ describe('plan-card works alone and hands off to /implement', () => {
   });
 });
 
-describe('plan-card sits beside /autoplan-lean and changes nothing about it', () => {
+describe('plan-track sits beside /autoplan-lean and changes nothing about it', () => {
   // Value: protects=criterion 2, the two planners stay separate and the default does not move; fails_when=/autoplan-lean names this skill, or its description, routing line or README row changes; why_new=the lean suites do not lock its description or routing; seam=none; no_claim=routing in a live host
-  test('/autoplan-lean never names /plan-card and keeps its description, routing line and README row', () => {
-    expect(lean).not.toContain('plan-card');
+  test('/autoplan-lean never names /plan-track and keeps its description, routing line and README row', () => {
+    expect(lean).not.toContain('plan-track');
     expect(lean).toContain(LEAN_DESCRIPTION);
     expect(claude).toContain(`${LEAN_ROUTE}\n`);
     expect(readme).toContain(LEAN_README_ROW);
@@ -110,7 +110,7 @@ describe('plan-card sits beside /autoplan-lean and changes nothing about it', ()
   });
 });
 
-describe('plan-card inputs are documented fields and its text is generic', () => {
+describe('plan-track inputs are documented fields and its text is generic', () => {
   const inputs = (() => {
     const from = skill.indexOf('## Inputs');
     const to = skill.indexOf('\n## ', from + 1);
@@ -136,12 +136,12 @@ describe('plan-card inputs are documented fields and its text is generic', () =>
   test('writes its plan under the state root and stops on a collision instead of overwriting', () => {
     expect(skillN).toContain('${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}');
     expect(skillN).toContain('<state-root>/projects/<slug>/plans/<card-stem>.md');
-    expect(skillN).toContain('~/scratch/gstack-plan-card/<slug>-<card-stem>.md');
+    expect(skillN).toContain('~/scratch/gstack-plan-track/<slug>-<card-stem>.md');
     expect(skillN).toContain('A default target that already exists with different bytes is not overwritten: write no plan and stop with `needs-context`.');
   });
 });
 
-describe('plan-card ends with the stage line', () => {
+describe('plan-track ends with the stage line', () => {
   // Value: protects=criterion 4, the line is printed once, outside the fence, after the prompt; fails_when=the line moves into a fence, repeats or loses its generic tokens; why_new=the contract suite checks the line, not its place in this skill; seam=none; no_claim=a consumer reads the line
   test('the stage line follows the prompt fence and only the exit paragraph and completion precede the telemetry finish', () => {
     const prompt = fences(skill).find(f => f.body.startsWith('Run /implement <PLAN_FILE>'))!;
@@ -160,7 +160,7 @@ describe('plan-card ends with the stage line', () => {
   });
 });
 
-describe('plan-card uses one verify-command label', () => {
+describe('plan-track uses one verify-command label', () => {
   // Value: protects=criterion 5, one label across both planners; fails_when=the template or the docs use a bare Verify: label or drop the stated relation; why_new=the label differs in the private source and must stay settled; seam=none; no_claim=a caller gate reads the label
   test('the plan carries Verify command: and the skill and the contract state its relation to /autoplan-lean', () => {
     const template = fences(skill).find(f => f.lang === 'markdown')!;
@@ -173,31 +173,31 @@ describe('plan-card uses one verify-command label', () => {
   });
 });
 
-describe('plan-card is registered everywhere a skill is', () => {
+describe('plan-track is registered everywhere a skill is', () => {
   // Value: protects=criteria 6 and 7, the skill is installed, covered by the telemetry cohort and documented; fails_when=it leaves setup, the expected list, the README or the routing; why_new=the cross-skill suites check lists, not that this skill is named in the docs; seam=none; no_claim=an install on a real host
   test('setup, the expected list, the README and the CLAUDE.md routing all name it', () => {
-    expect(EXPECTED_SETUP_SKILLS).toContain('plan-card');
-    expect(parseSetupSkills(setup)).toContain('plan-card');
-    expect(readme).toContain('| [`/plan-card`](skills/plan-card.md) |');
-    expect(claude).toContain('→ invoke plan-card');
+    expect(EXPECTED_SETUP_SKILLS).toContain('plan-track');
+    expect(parseSetupSkills(setup)).toContain('plan-track');
+    expect(readme).toContain('| [`/plan-track`](skills/plan-track.md) |');
+    expect(claude).toContain('→ invoke plan-track');
   });
 
   // Value: protects=criterion 6, the telemetry cohort covers the skill with one start and one finish call; fails_when=a call is duplicated or names another skill; why_new=the cohort suites iterate the list, so this pins the skill's own name; seam=none; no_claim=a row is recorded
   test('carries exactly one telemetry start and one finish call under its own name', () => {
     for (const kind of ['start', 'finish']) {
-      expect(skill.split(`"$_GE_CALL" ${kind} --skill "extend:plan-card"`)).toHaveLength(2);
+      expect(skill.split(`"$_GE_CALL" ${kind} --skill "extend:plan-track"`)).toHaveLength(2);
     }
   });
 });
 
-describe('plan-card documents the manual link', () => {
+describe('plan-track documents the manual link', () => {
   // Value: protects=criterion 8, a host that setup does not manage can link the skill; fails_when=the section or either link form is dropped; why_new=update.test.ts locks only the rollback steps in this file; seam=none; no_claim=a link works on a real host
   test('docs/installation.md holds the unmanaged-host section with both link forms', () => {
     expect(installation).toContain('### Hosts setup does not manage');
     expect(norm(installation)).toContain('With a managed Claude install');
     expect(installation).toContain('mkdir -p <host-skills-dir>');
-    expect(installation).toContain('ln -s ~/.claude/skills/plan-card <host-skills-dir>/plan-card');
-    expect(installation).toContain('ln -s <checkout>/skills/plan-card.md <host-skills-dir>/plan-card/SKILL.md');
+    expect(installation).toContain('ln -s ~/.claude/skills/plan-track <host-skills-dir>/plan-track');
+    expect(installation).toContain('ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md');
     expect(norm(installation)).toContain('`setup` and its uninstall never see these links, so remove them by hand');
   });
 });

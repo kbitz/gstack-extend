@@ -21,7 +21,7 @@ these rules and fails when the doc, the four producers and the fixtures drift.
 | H-D | blocked and partial outputs | 1 | none; additive-only | the status words `BLOCKED`, `NEEDS_CONTEXT`, `DONE_WITH_CONCERNS`, `DONE` |
 | H-E | STOPPED hold at `/review`'s cycle cap, then `/review-and-prep continue` | 1 | none; additive-only | `Run /review-and-prep continue` (prefix of the first line) |
 | H-F | external full-suite gate: the `/review-and-prep` pause, then the caller's result line | 1 | `external-gate/v1` | `External gate: external-gate/v1;` (prefix of the pause line), `External gate result:` (prefix of the result line) |
-| Stage line | the last line of the final message of `/autoplan-lean`, `/plan-card`, `/implement` and `/review-and-prep`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
+| Stage line | the last line of the final message of `/autoplan-lean`, `/plan-track`, `/implement` and `/review-and-prep`, after the handoff and outside it | 1 | `stage-handoff/v1` | `Stage handoff: stage-handoff/v1;` (prefix of the line) |
 
 The two legacy anchors, the `Run /review-and-prep` prefix and the
 `review-and-prep/v1` marker line, are retained byte for byte. Today's first lines,
@@ -1089,10 +1089,10 @@ External gate result: fail; head: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1; tree
 
 ### Grammar stage line
 
-`/autoplan-lean`, `/plan-card`, `/implement` and `/review-and-prep` end their final message with one more
+`/autoplan-lean`, `/plan-track`, `/implement` and `/review-and-prep` end their final message with one more
 line, after the handoff block and outside it. It is the stage's own account of its exit, for a
 caller that routes before it parses. `/autoplan-lean` is a fifth producer of this line and of
-nothing else here, and `/plan-card` is a sixth; the four producers of H-A to H-F are unchanged.
+nothing else here, and `/plan-track` is a sixth; the four producers of H-A to H-F are unchanged.
 The four stages print exactly this form, and a new producer starts with the same prefix:
 
 ```text fixture=stage-line.txt
@@ -1102,7 +1102,7 @@ Stage handoff: stage-handoff/v1; stage: implement; next: review-and-prep; status
 | Label | Required | Value |
 |---|---|---|
 | `stage-handoff/v1` | yes | the version token, right after `Stage handoff: ` |
-| `stage` | yes | `plan` (`/autoplan-lean`, `/plan-card`), `implement` or `review` (`/review-and-prep`) |
+| `stage` | yes | `plan` (`/autoplan-lean`, `/plan-track`), `implement` or `review` (`/review-and-prep`) |
 | `next` | yes | `implement`, `review-and-prep`, `ship-and-land`, `pair-review` or `none` |
 | `status` | yes | `done`, `done-with-concerns`, `paused`, `stopped`, `blocked` or `needs-context` |
 | `head` | yes | the stage's HEAD as 40 lowercase hex characters, or `none` |
@@ -1115,8 +1115,8 @@ for each exit:
 |---|---|---|---|---|---|
 | `/autoplan-lean` handoff prompt | `plan` | `implement` | `done`, `done-with-concerns` | the prompt's `Branch` HEAD | the plan's SHA-256 from `seal` |
 | `/autoplan-lean` BLOCKED, NEEDS_CONTEXT or rejected gate | `plan` | `none` | `blocked`, `needs-context`, `stopped` | current HEAD, or `none` if the workspace has no HEAD | the plan's SHA-256 from `seal`, or `none` if no seal ran |
-| `/plan-card` handoff prompt | `plan` | `implement` | `done`, `done-with-concerns` | the prompt's `Branch` HEAD | the plan file's SHA-256 |
-| `/plan-card` BLOCKED or NEEDS_CONTEXT | `plan` | `none` | `blocked`, `needs-context` | current HEAD, or `none` if the workspace has no HEAD | the plan file's SHA-256, or `none` if no plan was written |
+| `/plan-track` handoff prompt | `plan` | `implement` | `done`, `done-with-concerns` | the prompt's `Branch` HEAD | the plan file's SHA-256 |
+| `/plan-track` BLOCKED or NEEDS_CONTEXT | `plan` | `none` | `blocked`, `needs-context` | current HEAD, or `none` if the workspace has no HEAD | the plan file's SHA-256, or `none` if no plan was written |
 | `/implement` H-A prompt | `implement` | `review-and-prep` | `done`, `done-with-concerns` | HEAD | the plan file's SHA-256, or `none` |
 | `/implement` BLOCKED or NEEDS_CONTEXT | `implement` | `none` | `blocked`, `needs-context` | HEAD | the plan file's SHA-256, or `none` |
 | `/review-and-prep` H-B | `review` | `ship-and-land` | `done` | Prepared HEAD | the prompt's `SHA-256` |
@@ -1147,7 +1147,7 @@ Rules:
    handoff fence with `stage: plan`, `next: implement`, a `done` or `done-with-concerns`
    status, the checked plan's SHA-256 and the prompt's `Branch` HEAD, and it still refuses any
    other text after the block.
-9. **`/plan-card` has no check helper.** Its plan's `Verify command:` line has the same label and
+9. **`/plan-track` has no check helper.** Its plan's `Verify command:` line has the same label and
    meaning as `/autoplan-lean`'s, and `/implement` reads it as intent and never runs it.
 
 ### Signals H-D
@@ -1223,7 +1223,7 @@ token. The stage line carries `stage-handoff/v1` and follows its own rule 7.
 
 ## State root
 
-The six skills that write run and handoff files (`/implement`, `/autoplan-lean`, `/plan-card`,
+The six skills that write run and handoff files (`/implement`, `/autoplan-lean`, `/plan-track`,
 `/review-and-prep`, `/ship-and-land` and `/docs-ship`) read their root from one
 expression, `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`, written as
 `<state-root>` in the skills. `GSTACK_STATE_ROOT` wins, then `GSTACK_HOME`, then

@@ -180,8 +180,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols-implement.test.ts': [skill('implement')],
   'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), 'bin/lib/session-paths.sh'],
   // Reads /autoplan-lean to lock that the two planners stay separate, and the docs that name the new skill.
-  'tests/skill-protocols-plan-card.test.ts': [
-    skill('plan-card'),
+  'tests/skill-protocols-plan-track.test.ts': [
+    skill('plan-track'),
     skill('autoplan-lean'),
     'setup',
     'README.md',
@@ -216,9 +216,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
-    // The stage line: /autoplan-lean and /plan-card print it too, and the others must not.
+    // The stage line: /autoplan-lean and /plan-track print it too, and the others must not.
     skill('autoplan-lean'),
-    skill('plan-card'),
+    skill('plan-track'),
     skill('docs-ship'),
     'README.md',
     'docs/acceptance/external-gate.md',

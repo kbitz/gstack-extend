@@ -1823,11 +1823,11 @@ describe('(F) repair-review and repair-cycles', () => {
 // each alternative, and no environment, caller or host chooses whether the line is printed.
 const STAGE_TEMPLATES: Record<string, string> = {
   'autoplan-lean': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
-  'plan-card': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  'plan-track': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   implement: 'Stage handoff: stage-handoff/v1; stage: implement; next: <review-and-prep|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   'review-and-prep': 'Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
 };
-const stageSkillText = (name: string): string => (name === 'autoplan-lean' ? read('skills/autoplan-lean.md') : name === 'plan-card' ? read('skills/plan-card.md') : SKILLS[name]);
+const stageSkillText = (name: string): string => (name === 'autoplan-lean' ? read('skills/autoplan-lean.md') : name === 'plan-track' ? read('skills/plan-track.md') : SKILLS[name]);
 const STAGE_DOC = section('### Grammar stage line');
 const STAGE_FIXTURE = readFileSync(join(FIXTURES, 'stage-line.txt'), 'utf8').trimEnd();
 const stageDocFields = (): Array<{ label: string; values: string[] }> =>

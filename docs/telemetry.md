@@ -1924,7 +1924,7 @@ bytes of both fences together, from the opening fence line to the closing one,
 before (the base `a74abf4`, where each fence held the whole lookup) and after
 (a call to the `telemetry-call` helper). `tests/skill-protocols.test.ts`
 recomputes the "after" column from each skill and fails on a stale row. The table
-covers the eleven skills measured at base `a74abf4`; `/plan-card`, added later with
+covers the eleven skills measured at base `a74abf4`; `/plan-track`, added later with
 the same blocks, has no before figure and no row.
 
 | Skill | Before (bytes) | After (bytes) | Saved (bytes) |

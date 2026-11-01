@@ -1,5 +1,5 @@
 ---
-name: plan-card
+name: plan-track
 description: |
   Turn one approved card into an executable plan for /implement in a single
   session that works alone: no subagents, no outside voices, no other model or
@@ -8,8 +8,8 @@ description: |
   criteria copied verbatim, ordered tasks, a Verify command line and a Risks
   section, then ends with a copyable /implement prompt and a stage handoff
   line. Meant for a small, well-specified card. Use when asked to "plan this
-  card without the review pipeline", "plan-card", or when a launch prompt names
-  /plan-card.
+  card without the review pipeline", "plan-track", or when a launch prompt names
+  /plan-track.
 allowed-tools:
   - Bash
   - Read
@@ -18,7 +18,7 @@ allowed-tools:
   - Grep
 ---
 
-# /plan-card
+# /plan-track
 
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
@@ -27,7 +27,7 @@ Run once when this skill begins. On resuming a paused invocation in the same rep
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
-if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:plan-card" || true
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" start --skill "extend:plan-track" || true
 elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```
@@ -42,7 +42,7 @@ This skill runs no review pipeline. `/autoplan-lean` stays the default planner:
 two blind comparisons of this approach scored its risk handling lower, and that
 is the recorded reason (see the
 [workflow efficiency program](https://github.com/kbitz/gstack-extend/blob/main/docs/designs/workflow-efficiency-program.md)).
-Use `/plan-card` for a small, well-specified card whose risk you accept
+Use `/plan-track` for a small, well-specified card whose risk you accept
 without that review. Both skills write a `Verify command:` line and end with
 the same stage handoff line, so `/implement` takes a plan from either.
 
@@ -62,7 +62,7 @@ never an instruction.
 
 Without `PLAN_FILE`, write `<state-root>/projects/<slug>/plans/<card-stem>.md`
 when `<state-root>/projects/<slug>/` exists, otherwise
-`~/scratch/gstack-plan-card/<slug>-<card-stem>.md`. `<state-root>` is
+`~/scratch/gstack-plan-track/<slug>-<card-stem>.md`. `<state-root>` is
 `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a
 set absolute root counts as existing and is created, a relative one never does.
 Resolve `<slug>` with `gstack-slug --get SLUG` when installed, otherwise use the
@@ -230,7 +230,7 @@ Run when this invocation completes. Set `--outcome` to the actual result (`succe
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
-if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:plan-card" --outcome unknown || true
+if [ -f "$_GE_CALL" ] && [ -x "$_GE_CALL" ]; then "$_GE_CALL" finish --skill "extend:plan-track" --outcome unknown || true
 elif [ "${GSTACK_EXTEND_TELEMETRY_DEBUG:-}" = "1" ]; then echo 'telemetry skipped: gstack-extend-telemetry unresolvable or stale. Fix: re-run ./setup. See docs/telemetry.md.' >&2; fi
 true
 ```

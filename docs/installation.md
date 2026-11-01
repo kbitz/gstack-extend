@@ -161,7 +161,7 @@ foreign install pointers, and unrelated files are preserved.
 
 `setup` manages Claude, Codex, OpenCode and Cursor only (the table above). Another
 agent that reads `<host-skills-dir>/<name>/SKILL.md` can still use a skill that needs
-no helper from this checkout, such as `/plan-card`. Antigravity's
+no helper from this checkout, such as `/plan-track`. Antigravity's
 `~/.gemini/config/skills/` is one such directory.
 
 With a managed Claude install, link the directory `setup` already maintains, so
@@ -170,17 +170,17 @@ directory from the table above:
 
 ```bash
 mkdir -p <host-skills-dir>
-ln -s ~/.claude/skills/plan-card <host-skills-dir>/plan-card
+ln -s ~/.claude/skills/plan-track <host-skills-dir>/plan-track
 ```
 
 With no managed install, link the source file the way `setup` does for Claude:
 
 ```bash
-mkdir -p <host-skills-dir>/plan-card
-ln -s <checkout>/skills/plan-card.md <host-skills-dir>/plan-card/SKILL.md
+mkdir -p <host-skills-dir>/plan-track
+ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md
 ```
 
-`/plan-card` needs nothing else from the agent. Its telemetry call does nothing until
+`/plan-track` needs nothing else from the agent. Its telemetry call does nothing until
 some `setup` run has installed `$HOME/.gstack-extend/bin/telemetry-call` (see above).
 `setup` and its uninstall never see these links, so remove them by hand; a link
 dangles after `setup --uninstall` or a moved checkout. Skills that call helpers in the
