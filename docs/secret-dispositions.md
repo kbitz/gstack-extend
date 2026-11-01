@@ -126,6 +126,10 @@ disposition evaluation, lane output and caller attestation separately, without
 creating passing `tests` evidence. A pending final-gate repair falls back to
 ordinary review coverage because its unchanged rerun receipt requires a passing
 ledger record. Ship's test-evidence requirements remain unchanged.
+When that pass narrows the pregate to its preflight stage, the failed record is
+the `pregate-preflight` ledger entry and the evaluation uses `--stage preflight`.
+It has no lane output to retain: the receipt's `Pregate lane not run:` lines
+stand in its place, and no passing `tests` evidence exists.
 
 Every invocation also reports entries whose exact line no longer exists in
 the named file, including deleted/renamed files. A stale entry cannot match a

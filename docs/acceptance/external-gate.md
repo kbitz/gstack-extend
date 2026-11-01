@@ -37,6 +37,12 @@ by rule, and the count it removes is unknown until a real run records it.
   a repository whose main command is the whole suite runs it again there. The
   omitted main-command fallback is a preparation-only change; pregate can still
   select the whole suite.
+- A pregate narrowed after a pass leaves no full pregate record and no
+  pregate-wrapped `tests` entry. `/ship-and-land` then takes its `FULL` path and
+  runs its own test gate for that head, where a head with preparation's full
+  pregate record could take its release-only path. Total test time is not reduced
+  for a caller that lands through `/ship-and-land`; the saving is real only for a
+  caller that lands by its own gate.
 
 ## Measurement fields
 
@@ -56,6 +62,36 @@ value reads unknown until a real run records it.
 | Parent log reads per run | unknown |
 | Head moves after an accepted pass | unknown |
 | Wall time replaced by the pause | unknown |
+
+## Pregate narrowing after an accepted pass
+
+After an accepted `full-suite=external` pass whose attested command covers every
+test the diff selects, `/review-and-prep` runs the pregate's preflight stage
+alone (see [Grammar H-F](../workflow-handoffs.md#grammar-h-f-external-gate) and
+the skill's **Narrow the pregate after an accepted pass**). Partial or unknown
+coverage runs the pregate as today. This section records the wall time of the
+review loop it targets.
+
+### Before
+
+One consumer's review, measured by that consumer and described here without
+naming it: the caller's own full-suite gate, then the pregate that followed the
+accepted pass, inside the whole review loop.
+
+| Field | Before | After |
+|---|---|---|
+| Caller's own gate | 1,228.7 s | unknown |
+| Pregate after the accepted pass | 1,358.2 s | unknown |
+| Whole review loop | 5,109.9 s | unknown |
+
+The before figures are one unpaired sample, so they establish neither a typical
+cost nor a saving.
+
+### After
+
+Every "after" value reads unknown until a real opted-in run records it: a run
+whose receipt carries `pregate-narrowing: active` and a `pregate-preflight`
+ledger record. Fill the table from that record after the first such run.
 
 ## Limits
 

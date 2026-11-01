@@ -7,13 +7,13 @@ import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, U
 import { skipList } from '../src/autoplan-lean/outline';
 import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
-import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, TEST_GAP_QUALIFIED, fixFirstInventory, inventory, main, testGapInventory } from '../src/upstream-check/cli';
+import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, fixFirstInventory, inventory, main, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 45; // root, 3 inventory, 3 in-cap + 6 Fix-First + 16 test-gap anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 55; // root, 4 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 let counter = 0;
@@ -23,10 +23,13 @@ const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recu
 const HEADING = "**`/review`'s own repeat cycles (`in-cap=delta`).**";
 const FIX_FIRST_HEADING = '**Activation (`repair-review=behavior-changing`).**';
 const TEST_GAP_HEADING = '**Activation (`test-gaps=record`).**';
+const PREGATE_NARROW_HEADING = '**Activation (narrowed pregate).**';
 const TEST_GAP_ANCHORS = 16;
+const PREGATE_NARROW_ANCHORS = 9;
 const CURRENT_ANCHORS = (() => { const inv = inventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv.anchors; })();
 const FIX_FIRST = (() => { const inv = fixFirstInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const TEST_GAP = (() => { const inv = testGapInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
+const PREGATE_NARROW = (() => { const inv = pregateNarrowInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 
 const CLASSIFIER = (honorNotReady: boolean) => `export function classifyOutsideReview({ text }) {
   const highest = /\\[(P[0-3])\\]/.exec(text)?.[1] ?? null;
@@ -47,6 +50,9 @@ const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST
 const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
 const testingText = () => `# testing\n\n${TEST_GAP.testing.join('\n')}\n`;
 const coverageText = () => `# coverage\n\n${TEST_GAP.coverage.join('\n')}\n`;
+const pregateBinText = () => `# gstack-pregate\n\n${PREGATE_NARROW.bin.join('\n')}\n`;
+const pregateIndexText = () => `// index\n\n${PREGATE_NARROW.index.join('\n')}\n`;
+const pregateLanesText = () => `// lanes\n\n${PREGATE_NARROW.lanes.join('\n')}\n`;
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
@@ -59,6 +65,13 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   put(join(root, 'review', 'checklist.md'), checklistText());
   files.testing = join(root, 'review', 'specialists', 'testing.md');
   put(files.testing, testingText());
+  // The pregate sits under the gstack root in both layouts.
+  files.pregateBin = join(root, 'bin', 'gstack-pregate');
+  files.pregateIndex = join(root, 'lib', 'pregate', 'index.ts');
+  files.pregateLanes = join(root, 'lib', 'pregate', 'checks', 'lanes.ts');
+  put(files.pregateBin, pregateBinText());
+  put(files.pregateIndex, pregateIndexText());
+  put(files.pregateLanes, pregateLanesText());
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
@@ -254,6 +267,57 @@ describe('test-gap inventory', () => {
   });
 });
 
+describe('pregate-narrowing inventory', () => {
+  // Value: protects=the activation paragraph's three anchor lists, in their three installed pregate files; fails_when=a span is added, dropped or moved between files unnoticed; why_new=a narrowed pregate gates on upstream text; seam=none
+  test('locks the pregate-narrowing anchors exactly', () => {
+    expect(PREGATE_NARROW.bin).toEqual([
+      '--stage preflight|tests|all   default all',
+      "--explain                     print each selected test's provenance and each uncertain mapping",
+    ]);
+    expect(PREGATE_NARROW.index).toEqual([
+      'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
+      "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
+    ]);
+    expect(PREGATE_NARROW.lanes).toEqual([
+      "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',",
+      "status: 'incomplete', code: 'REPO_COMMANDS_NOT_ALLOWED'",
+      "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'",
+      "selection: sha256(sel.tests.join('\\n'))",
+      'file set unknown',
+    ]);
+    expect(PREGATE_NARROW.bin.length + PREGATE_NARROW.index.length + PREGATE_NARROW.lanes.length).toBe(PREGATE_NARROW_ANCHORS);
+    for (const anchor of [...PREGATE_NARROW.bin, ...PREGATE_NARROW.index, ...PREGATE_NARROW.lanes]) expect(anchor).not.toContain('`');
+  });
+
+  const withSkill = (mutate: (paragraph: string) => string | undefined) => {
+    const extend = fresh('extend-pregate-narrow');
+    const text = readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8');
+    const start = text.indexOf(PREGATE_NARROW_HEADING);
+    const blank = text.indexOf('\n\n', start);
+    const changed = mutate(text.slice(start, blank));
+    if (changed !== undefined) put(join(extend, 'skills', 'review-and-prep.md'), text.slice(0, start) + changed + text.slice(blank));
+    return pregateNarrowInventory(extend);
+  };
+  // Value: protects=a removed source, reworded heading, moved delimiter or bad span reports inventory drift instead of a partial list; fails_when=a malformed paragraph lists fewer anchors silently; why_new=fourth inventory source; seam=none
+  test('a removed source, a reworded paragraph, a moved delimiter or a bad span is drift', () => {
+    const removed = pregateNarrowInventory(fresh('extend-pregate-narrow-removed'));
+    expect(!removed.ok && removed.reason).toContain('inventory source not found');
+    const extend = fresh('extend-pregate-narrow-heading');
+    put(join(extend, 'skills', 'review-and-prep.md'), readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(PREGATE_NARROW_HEADING, '**Activation of the narrowing.**'));
+    const reworded = pregateNarrowInventory(extend);
+    expect(!reworded.ok && reworded.reason).toBe('activation paragraph not found');
+    const delimiters = 'anchor list delimiters not found in the activation paragraph';
+    expect(withSkill((t) => t.replace('its `lib/pregate/index.ts` still contains,', 'its index file still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('and its `lib/pregate/checks/lanes.ts` still contains,', 'and its lanes file still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('Check each with `grep -F`', 'Check each'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace(/byte for byte,/g, 'verbatim,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace(/`--[^`]+`/g, 'x'))).toMatchObject({ ok: false, reason: 'bin anchor list has no backtick spans' });
+    expect(withSkill((t) => t.replace('`file set unknown`', '`file set\nunknown`'))).toMatchObject({ ok: false, reason: 'lanes anchor list has an empty span or a span containing a newline' });
+    expect(withSkill((t) => t.replace("`status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`", "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`")))
+      .toMatchObject({ ok: false, reason: 'lanes anchor list has an unbalanced backtick' });
+  });
+});
+
 describe('a healthy installation', () => {
   test('the protocol assertion rejects late INFO and a whitespace-containing check ID', async () => {
     const r = await check(rootArgs(upstream('nested')));
@@ -271,7 +335,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -281,6 +345,7 @@ describe('a healthy installation', () => {
       `INFO inspected anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`,
       `INFO inspected fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`,
       `INFO inspected test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`,
+      `INFO inspected pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`,
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
@@ -371,7 +436,7 @@ test.skipIf(process.getuid?.() === 0)('an inaccessible upstream root reports dri
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.out).toContain('DRIFT root gstack-root gstack root is missing, inaccessible or not a directory:');
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 3}`); // all three inventory checks read this extension's own source
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 4}`); // all four inventory checks read this extension's own source
   } finally { chmodSync(f.root, 0o700); }
 }, 30000);
 
@@ -573,12 +638,12 @@ describe('drift', () => {
     expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
   }, 40000);
 
-  // Value: protects=inventory order and an emptied review file's drift list; fails_when=the test-gap checks move before the older gates or an emptied file lists the wrong anchors; why_new=third inventory in the report; seam=none
-  test('the three inventories and the test-gap anchors report in a fixed order', async () => {
+  // Value: protects=inventory order and an emptied review file's drift list; fails_when=the test-gap checks move before the older gates or an emptied file lists the wrong anchors; why_new=fourth inventory in the report; seam=none
+  test('the four inventories and the test-gap anchors report in a fixed order', async () => {
     const r = await check(rootArgs(upstream('nested')));
     const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
     const inventories = ids.filter((id) => id.startsWith('inventory '));
-    expect(inventories).toEqual(['inventory review-and-prep.incap', 'inventory review-and-prep.fix-first', 'inventory review-and-prep.test-gaps']);
+    expect(inventories).toEqual(['inventory review-and-prep.incap', 'inventory review-and-prep.fix-first', 'inventory review-and-prep.test-gaps', 'inventory review-and-prep.pregate-narrowing']);
     const anchors = ids.filter((id) => id.startsWith('anchor review-and-prep.test-gaps.'));
     expect(anchors).toEqual([
       ...TEST_GAP.review.map((_, i) => `anchor review-and-prep.test-gaps.review.${i + 1}`),
@@ -587,6 +652,97 @@ describe('drift', () => {
       ...TEST_GAP.coverage.map((_, i) => `anchor review-and-prep.test-gaps.coverage.${i + 1}`),
     ]);
     expect(ids.indexOf('anchor review-and-prep.fix-first.checklist.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.test-gaps.review.1'));
+    // The pregate-narrowing anchors follow the test-gap checks, and the skip list follows them.
+    expect(ids.filter((id) => id.startsWith('anchor review-and-prep.pregate-narrowing.'))).toEqual([
+      ...PREGATE_NARROW.bin.map((_, i) => `anchor review-and-prep.pregate-narrowing.bin.${i + 1}`),
+      ...PREGATE_NARROW.index.map((_, i) => `anchor review-and-prep.pregate-narrowing.index.${i + 1}`),
+      ...PREGATE_NARROW.lanes.map((_, i) => `anchor review-and-prep.pregate-narrowing.lanes.${i + 1}`),
+    ]);
+    expect(ids.indexOf('anchor review-and-prep.test-gaps.coverage.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.pregate-narrowing.bin.1'));
+    expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor autoplan-lean.skip-list'));
+  }, 30000);
+
+  const NARROW_EFFECT = '  effect: /review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so';
+  const narrowFile = (f: Fixture, file: 'bin' | 'index' | 'lanes') => f.files[`pregate${file[0]!.toUpperCase()}${file.slice(1)}`]!;
+  // Value: protects=each installed pregate file's narrowing drift names its stage cost and docs link, and leaves every other gate OK; fails_when=a changed anchor passes, reports another gate's effect or turns another gate off; why_new=fourth upstream gate across three files and two layouts; seam=none
+  test.each([
+    ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1', '--stage preflight|tests|all   default all'],
+    ['sibling', 'bin', 'review-and-prep.pregate-narrowing.bin.2', "--explain                     print each selected test's provenance and each uncertain mapping"],
+    ['nested', 'index', 'review-and-prep.pregate-narrowing.index.1', 'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];'],
+    ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2', "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));"],
+    ['nested', 'lanes', 'review-and-prep.pregate-narrowing.lanes.1', "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',"],
+    ['sibling', 'lanes', 'review-and-prep.pregate-narrowing.lanes.3', "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'"],
+    ['nested', 'lanes', 'review-and-prep.pregate-narrowing.lanes.5', 'file set unknown'],
+  ] as const)('a changed anchor in the %s layout\'s pregate %s file is drift naming %s', async (layout, file, id, anchor) => {
+    const f = upstream(layout);
+    const path = narrowFile(f, file);
+    writeFileSync(path, readFileSync(path, 'utf8').replace(anchor, `${anchor.slice(0, -2)}!!`));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
+    expect(at).toBeGreaterThan(-1);
+    const shown = anchor.replace(/\s+/g, ' ');
+    expect(r.lines[at]).toContain(shown.length > 70 ? `"${shown.slice(0, 69)}…"` : `"${shown}"`);
+    expect(r.lines[at + 1]).toBe(NARROW_EFFECT);
+    expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
+    expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    // The other gates are independent: they still pass, and their cost lines are not used.
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    for (const n of [1, 2, 3]) expect(r.lines).toContain(`OK anchor review-and-prep.incap.${n}`);
+    for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
+    for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.test-gaps.coverage.${n}`);
+    expect(r.out).not.toContain('the in-cap delta is inactive');
+    expect(r.out).not.toContain('repair-review=behavior-changing is inactive');
+    expect(r.out).not.toContain('test-gaps=record is inactive');
+  }, 30000);
+
+  // Value: protects=a missing installed pregate file drifts exactly its own anchors, with a path-naming reason, in both layouts; fails_when=a missing file passes, drifts another file's anchors or reads the wrong layout path; why_new=three new installed files; seam=none
+  test.each([
+    ['nested', 'bin', 2], ['sibling', 'bin', 2], ['nested', 'index', 2], ['sibling', 'index', 2], ['nested', 'lanes', 5], ['sibling', 'lanes', 5],
+  ] as const)('a missing pregate %2$s file in the %1$s layout drifts its %3$s anchors and nothing else', async (layout, file, count) => {
+    const f = upstream(layout);
+    const path = narrowFile(f, file);
+    rmSync(path);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${count}`);
+    expect(r.lines).toContain(`INFO layout ${layout}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(Array.from({ length: count }, (_, i) => `review-and-prep.pregate-narrowing.${file}.${i + 1}`));
+    const what = { bin: 'pregate command', index: 'pregate check list', lanes: 'pregate lanes check' }[file];
+    for (const line of drifts(r.lines)) expect(line).toContain(`${what} not found: ${path}`);
+    expect(r.lines.filter((l) => l.startsWith(`INFO file pregate.${file} `))).toEqual([]);
+    expect(r.lines).toContain('OK inventory review-and-prep.pregate-narrowing');
+  }, 30000);
+
+  // Value: protects=a healthy pregate file is reported as INFO under the gstack root in both layouts; fails_when=the sibling layout reads the pregate from the skills directory or a healthy file is not reported; why_new=pregate files are not in the review or ship skill directories; seam=none
+  test('the pregate files are read from the gstack root and reported as INFO in both layouts', async () => {
+    for (const layout of ['nested', 'sibling'] as const) {
+      const f = upstream(layout);
+      const r = await check(rootArgs(f));
+      expect(r.lines).toContain(`INFO file pregate.bin ${realpathSync(join(f.root, 'bin', 'gstack-pregate'))}`);
+      expect(r.lines).toContain(`INFO file pregate.index ${realpathSync(join(f.root, 'lib', 'pregate', 'index.ts'))}`);
+      expect(r.lines).toContain(`INFO file pregate.lanes ${realpathSync(join(f.root, 'lib', 'pregate', 'checks', 'lanes.ts'))}`);
+    }
+  }, 40000);
+
+  test('a missing root leaves the pregate-narrowing inventory OK and every pregate anchor not run', async () => {
+    const r = await check(['--gstack-root', join(scratch, 'does-not-exist-pregate-narrowing')]);
+    expect(r.lines).toContain('OK inventory review-and-prep.pregate-narrowing');
+    const anchors = drifts(r.lines).filter((l) => l.startsWith('DRIFT anchor review-and-prep.pregate-narrowing.'));
+    expect(anchors).toHaveLength(PREGATE_NARROW_ANCHORS);
+    for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
+  }, 30000);
+
+  test('a missing test-gap anchor leaves the pregate-narrowing gate OK', async () => {
+    const f = upstream('nested');
+    writeFileSync(f.files.testing!, testingText().replace('### Coverage Gaps', 'x'));
+    const r = await check(rootArgs(f));
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(r.lines).toContain('OK inventory review-and-prep.pregate-narrowing');
+    for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor review-and-prep.pregate-narrowing.bin.${n}`);
+    for (const n of [1, 2, 3, 4, 5]) expect(r.lines).toContain(`OK anchor review-and-prep.pregate-narrowing.lanes.${n}`);
   }, 30000);
 
   test('a missing root leaves the test-gap inventory OK and every test-gap anchor not run', async () => {
@@ -611,7 +767,7 @@ describe('drift', () => {
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.lines.some((l) => l.startsWith('DRIFT root gstack-root '))).toBe(true);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 3}`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 4}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
@@ -1039,6 +1195,24 @@ describe('launcher', () => {
     expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - TEST_GAP_ANCHORS} drift=1`);
   }, 40000);
 
+  // Value: protects=a reworded pregate-narrowing activation paragraph reports its own inventory drift and leaves the other inventories alone; fails_when=the narrowing list reuses another check or vanishes silently; why_new=fourth inventory source; seam=none
+  test('a copied tree with a reworded activation paragraph reports DRIFT inventory for the pregate narrowing only', () => {
+    const copy = fresh('copy-pregate-narrow');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    mkdirSync(join(copy, 'bin'));
+    cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
+    put(join(copy, 'skills', 'review-and-prep.md'),
+      readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(PREGATE_NARROW_HEADING, '**Activation of the narrowing.**'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(4);
+    expect(r.stdout).toContain('DRIFT inventory review-and-prep.pregate-narrowing activation paragraph not found');
+    for (const gate of ['incap', 'fix-first', 'test-gaps']) expect(r.stdout).toContain(`OK inventory review-and-prep.${gate}`);
+    expect(r.stdout).not.toContain('review-and-prep.pregate-narrowing.bin.');
+    expect(r.stdout).toContain('  effect: /review-and-prep: the pregate-narrowing anchors cannot be listed, so narrowing is unverified and the pregate runs as today');
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - PREGATE_NARROW_ANCHORS} drift=1`);
+  }, 40000);
+
   test('a missing extension dependency uses the internal-error contract before output', () => {
     const copy = fresh('missing-local-module');
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
@@ -1200,7 +1374,7 @@ function unlisted(repo: string) {
     if (grep >= 0) offsets.push(start + grep + 'Check each with `'.length);
     return offsets;
   };
-  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4)];
+  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4), ...delimiters(PREGATE_NARROW_HEADING, 3)];
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.offset !== undefined && covered.includes(hit.offset)) return false;
     // Only the reviewed list-driven loader sites are covered; a new import or
@@ -1278,12 +1452,13 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
     ['Fix-First anchors', FIX_FIRST_QUALIFIED.revision, FIX_FIRST_QUALIFIED.version],
     ['Test-gap anchors', TEST_GAP_QUALIFIED.revision, TEST_GAP_QUALIFIED.version],
+    ['Pregate-narrowing anchors', PREGATE_NARROW_QUALIFIED.revision, PREGATE_NARROW_QUALIFIED.version],
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];

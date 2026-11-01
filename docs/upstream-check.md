@@ -11,7 +11,8 @@ answer (see [what it does not do](#what-it-does-not-do)).
 Without it, a drifted contract is found when the stage reaches the affected
 step: `/review-and-prep` records `in-cap delta: inactive` and runs the
 unmodified `/review` (or records `repair-review: inactive` and repeats every
-edited pass, or records `test-gaps: inactive` and writes tests as today),
+edited pass, or records `test-gaps: inactive` and writes tests as today, or
+records `pregate-narrowing: inactive` and runs the pregate as today),
 `bin/outside-review` refuses at dispatch, and
 `/autoplan-lean` records criteria drift and continues with voices that are not
 upstream-identical. The check moves that discovery ahead of the spend. It only
@@ -154,7 +155,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=45 drift=1
+RESULT drift checks=55 drift=1
 ```
 
 ## What it checks
@@ -204,6 +205,17 @@ The inventory comes from this extension's own source, never a second copy:
   `gstack/ship`. They are listed by `testGapInventory`, a separate check
   (`review-and-prep.test-gaps`). Anchor IDs read
   `review-and-prep.test-gaps.<review|testing|checklist|coverage>.<n>`.
+- **Pregate-narrowing anchors.** The backtick spans of the activation paragraph
+  of `skills/review-and-prep.md` (opened by `**Activation (narrowed
+  pregate).**`), in three lists each opened by "byte for byte,": the two after
+  the first are checked as raw bytes in `bin/gstack-pregate` under the root, the
+  two after the second (which follows "its `lib/pregate/index.ts` still
+  contains,") in `lib/pregate/index.ts`, and the five after the third
+  (following "and its `lib/pregate/checks/lanes.ts` still contains,") in
+  `lib/pregate/checks/lanes.ts`. All three files are read from the root in both
+  layouts. They are listed by `pregateNarrowInventory`, a separate check
+  (`review-and-prep.pregate-narrowing`). Anchor IDs read
+  `review-and-prep.pregate-narrowing.<bin|index|lanes>.<n>`.
 - **Exports.** `runClaudeCode`, `resolveClaudeCommand` and
   `classifyOutsideReview`, from the one list (`UPSTREAM_HELPERS`) that
   `src/outside-review/cli.ts` itself loads before any dispatch. Each module is
@@ -268,7 +280,9 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   as today and the receipt says so, with no upstream file edited. For the sixteen
   test-gap anchors, `test-gaps=record` is inactive: the review and the coverage
   audit write tests as today and the receipt says so, with no upstream file
-  edited. For the skip list,
+  edited. For the nine pregate-narrowing anchors, a pass under
+  `full-suite=external` does not narrow the pregate: it runs as today and the
+  receipt says so, with no upstream file edited. For the skip list,
   `autoplan-lean outline` marks no row `skip`, so `/autoplan-lean` applies
   upstream's skip list by heading itself and reads more.
 
@@ -347,6 +361,7 @@ and the test-gap routing value.
 | Wrapper anchors and classifier cases (qualified by this Track) | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 | Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
+| Pregate-narrowing anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
