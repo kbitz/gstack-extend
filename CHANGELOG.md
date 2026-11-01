@@ -6,14 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- `/plan-card` is renamed to `/plan-track`. It still turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline, subagents or outside voices. It is for small, well-specified cards. `/autoplan-lean` is unchanged and stays the default.
-- Its inputs are the same fields in the invocation prompt: `CARD_FILE` (required), `PLAN_FILE`, `VERIFY_COMMAND`, `FORK_LIST` and `NOTES`. The plan uses `/autoplan-lean`'s `Verify command:` label with the same meaning. A finished run prints an `/implement` prompt; a run that stops prints none. Every run ends with the `stage-handoff/v1` line, which uses `stage: plan` for both planning skills, so the line alone does not say which one ran. `docs/workflow-handoffs.md` documents `/plan-track`.
-- `docs/installation.md` says how to link `/plan-track` into a host that `setup` does not manage.
+- **Incompatible:** the skill `/plan-card` is now `/plan-track`, the roadmap's word for one PR of work. A skill name is a stable surface, so a caller that launches `/plan-card` by name must change. The skill's behavior is unchanged: its inputs (`CARD_FILE` included), its `Verify command:` label and its `stage: plan` line stay as they were. Only the strings built from its name move: the fallback plan directory is now `~/scratch/gstack-plan-track/`, and its telemetry rows use `extend:plan-track`.
 
 ### Upgrade notes
 
-- Upgrade with `bin/update-run`, which runs `setup`, so `/plan-track` is installed and carries telemetry like the other skills. After a hand `git pull` without `setup`, the skill is absent until `setup` runs. The telemetry doctor still expects twelve skills.
-- Invocations and hand-made links that still name `/plan-card` need to name `/plan-track`. This version ships the skill as `/plan-track`.
+- Upgrade with `bin/update-run`, which runs `setup`, then invoke `/plan-track`. `setup` installs `plan-track` and removes a `plan-card` install this checkout owns. It leaves alone a `plan-card` directory it does not own.
+- On a host `setup` does not manage, remove the old `<host-skills-dir>/plan-card` link by hand and link `plan-track` as `docs/installation.md` shows under "Hosts setup does not manage".
 
 ## [0.57.0] - 2026-10-31
 
