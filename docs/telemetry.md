@@ -9,7 +9,7 @@ Step/pass timing for `/review-and-prep` and `/ship-and-land`:
 [Workflow metrics](#workflow-metrics); their reviewer subagent join keys:
 [Reviewer join file](#reviewer-join-file).
 
-All eleven installed skills carry optional start and finish calls. They record local
+All twelve installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or
@@ -1923,7 +1923,9 @@ wrappers update their phase mapping in the same change. See
 bytes of both fences together, from the opening fence line to the closing one,
 before (the base `a74abf4`, where each fence held the whole lookup) and after
 (a call to the `telemetry-call` helper). `tests/skill-protocols.test.ts`
-recomputes the "after" column from each skill and fails on a stale row.
+recomputes the "after" column from each skill and fails on a stale row. The table
+covers the eleven skills measured at base `a74abf4`; `/plan-card`, added later with
+the same blocks, has no before figure and no row.
 
 | Skill | Before (bytes) | After (bytes) | Saved (bytes) |
 |---|---:|---:|---:|

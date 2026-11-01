@@ -16,10 +16,12 @@
       "tests/release-manifest.test.ts"
     ],
     "CLAUDE.md": [
-      "tests/release-manifest.test.ts"
+      "tests/release-manifest.test.ts",
+      "tests/skill-protocols-plan-card.test.ts"
     ],
     "README.md": [
-      "tests/handoff-contract.test.ts"
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-plan-card.test.ts"
     ],
     "VERSION": [
       "tests/release-manifest.test.ts",
@@ -183,11 +185,15 @@
     "docs/acceptance/review-fix-policy.md": [
       "tests/handoff-contract.test.ts"
     ],
+    "docs/designs/workflow-efficiency-program.md": [
+      "tests/skill-protocols-plan-card.test.ts"
+    ],
     "docs/docs-ship.md": [
       "tests/docs-ship.test.ts"
     ],
     "docs/installation.md": [
       "tests/setup-hosts.test.ts",
+      "tests/skill-protocols-plan-card.test.ts",
       "tests/update.test.ts"
     ],
     "docs/merge-gate.md": [
@@ -225,7 +231,8 @@
       "tests/upstream-check.test.ts"
     ],
     "docs/workflow-handoffs.md": [
-      "tests/handoff-contract.test.ts"
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-plan-card.test.ts"
     ],
     "docs/workflow-metrics.schema.json": [
       "tests/skill-protocols.test.ts",
@@ -257,6 +264,7 @@
       "tests/audit-compliance.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/skill-protocols-plan-card.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
@@ -274,7 +282,8 @@
     "skills/autoplan-lean.md": [
       "tests/autoplan-lean-history.test.ts",
       "tests/autoplan-lean.test.ts",
-      "tests/handoff-contract.test.ts"
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-plan-card.test.ts"
     ],
     "skills/docs-ship.md": [
       "tests/docs-ship.test.ts",
@@ -296,6 +305,10 @@
       "tests/handoff-contract.test.ts",
       "tests/skill-protocols-pair-review.test.ts",
       "tests/update.test.ts"
+    ],
+    "skills/plan-card.md": [
+      "tests/handoff-contract.test.ts",
+      "tests/skill-protocols-plan-card.test.ts"
     ],
     "skills/project-spec.md": [
       "tests/docs-ship.test.ts",

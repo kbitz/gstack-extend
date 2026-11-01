@@ -1823,23 +1823,24 @@ describe('(F) repair-review and repair-cycles', () => {
 // each alternative, and no environment, caller or host chooses whether the line is printed.
 const STAGE_TEMPLATES: Record<string, string> = {
   'autoplan-lean': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
+  'plan-card': 'Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   implement: 'Stage handoff: stage-handoff/v1; stage: implement; next: <review-and-prep|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
   'review-and-prep': 'Stage handoff: stage-handoff/v1; stage: review; next: <ship-and-land|pair-review|review-and-prep|none>; status: <done|paused|stopped|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>',
 };
-const stageSkillText = (name: string): string => (name === 'autoplan-lean' ? read('skills/autoplan-lean.md') : SKILLS[name]);
+const stageSkillText = (name: string): string => (name === 'autoplan-lean' ? read('skills/autoplan-lean.md') : name === 'plan-card' ? read('skills/plan-card.md') : SKILLS[name]);
 const STAGE_DOC = section('### Grammar stage line');
 const STAGE_FIXTURE = readFileSync(join(FIXTURES, 'stage-line.txt'), 'utf8').trimEnd();
 const stageDocFields = (): Array<{ label: string; values: string[] }> =>
   tableRows(STAGE_DOC).map(([label, , value]) => ({ label: unTick(label), values: [...value.matchAll(/`([^`]+)`/g)].map((m) => m[1]) }));
 
 describe('(F) the stage line', () => {
-  test('each of the three producers carries its template once, as a line of its own outside any fence', () => {
+  test('each of the four producers carries its template once, as a line of its own outside any fence', () => {
     for (const [name, line] of Object.entries(STAGE_TEMPLATES)) {
       const text = stageSkillText(name);
       expect(text.split(`\n${line}\n`), name).toHaveLength(2);
       for (const fenced of fencedTexts(text)) expect(fenced, `${name}: the stage line is outside the fence`).not.toContain('Stage handoff:');
     }
-    // Only these three print it; the others do not mention it.
+    // Only these four print it; the others do not mention it.
     for (const name of ['pair-review', 'ship-and-land', 'docs-ship']) {
       expect(read(`skills/${name}.md`), name).not.toContain('Stage handoff:');
     }

@@ -179,6 +179,17 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols-full-review.test.ts': [skill('full-review'), 'bin/lib/session-paths.sh'],
   'tests/skill-protocols-implement.test.ts': [skill('implement')],
   'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), 'bin/lib/session-paths.sh'],
+  // Reads /autoplan-lean to lock that the two planners stay separate, and the docs that name the new skill.
+  'tests/skill-protocols-plan-card.test.ts': [
+    skill('plan-card'),
+    skill('autoplan-lean'),
+    'setup',
+    'README.md',
+    'CLAUDE.md',
+    'docs/installation.md',
+    'docs/workflow-handoffs.md',
+    'docs/designs/workflow-efficiency-program.md',
+  ],
   'tests/skill-protocols-project-spec.test.ts': [
     skill('project-spec'),
     // The composition locks check that these consumers keep the spec's clauses.
@@ -205,8 +216,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
-    // The stage line: /autoplan-lean prints it too, and the others must not.
+    // The stage line: /autoplan-lean and /plan-card print it too, and the others must not.
     skill('autoplan-lean'),
+    skill('plan-card'),
     skill('docs-ship'),
     'README.md',
     'docs/acceptance/external-gate.md',
