@@ -722,7 +722,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -780,6 +780,17 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   its other keys. The key waives no gate: it swaps a review cycle for one
   recorded repair chain that readiness still checks, and it never authorizes a
   continuation.
+- `test-gaps=record` (its only value) is opt-in. A test-gap finding with no
+  demonstrated defect is then recorded for the next Track that touches its
+  files instead of getting a test written in this invocation, as **Record
+  unproven test gaps** defines. It applies only while that section's upstream
+  anchors still match; otherwise today's behavior runs and the receipt says so.
+  Omitted, every gap takes today's handling and nothing is recorded. An
+  installation without the value reads the whole line as `none supplied`, so a
+  caller first checks the loaded copy with `grep -F 'test-gaps=record'
+  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
+  otherwise, keeping its other keys. The value waives no gate and never
+  authorizes a continuation.
 - `repair-review=behavior-changing` (its only value) is opt-in. A repair that
   changes no behavior then opens no further review cycle: targeted lanes and
   the single final suite cover it, and only behavior-changing repairs feed the
@@ -845,6 +856,9 @@ Under the light default:
 - It never sets `repair-review=behavior-changing`: skipping a review cycle for
   a classified repair needs a caller that accepts the classification risk, so
   it is an explicit caller opt-in.
+- It never sets `test-gaps=record`: recording a gap instead of writing its test
+  needs a caller that accepts the coverage risk, so it is an explicit caller
+  opt-in.
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -1226,6 +1240,117 @@ receipts carry the status, classification, repair and evidence lines, every
 `Repair chain voided:` line and any `neutral-only baseline:` outcome, and the
 policy line that authorized them.
 
+### Record unproven test gaps
+
+**Activation (`test-gaps=record`).** Apply this section only when the review
+policy carries that value, and only while the installed `/review` read in Step 1
+still contains, byte for byte,
+`**Test stub override:** Any finding with a`
+`is reclassified as ASK whatever its original classification.`
+`For an approved defect regression, write the test and prove it fails for the original`
+`Healthy uncovered contracts need no invented failing bug.`
+`(any other defect, e.g. unanswered)`
+and `true only for a completed zero-edit pass`,
+its `review/specialists/testing.md` still contains, byte for byte,
+`"category":"testing"`
+`### Missing Negative-Path Tests`
+`### Missing Edge-Case Coverage`
+`### Security Enforcement Tests Missing`
+and `### Coverage Gaps`,
+its `review/checklist.md` still contains, byte for byte,
+`Test coverage gaps where adding the missing tests is a "lake" not an "ocean"`
+and the `ship/sections/test-coverage.md` that the coverage audit reads still contains, byte for byte,
+`Generation: <allowed|audit-only>; passes used: <N> of 2. Audit-only overrides every generation instruction below.`
+`**IRON RULE:** When the coverage audit identifies a REGRESSION`
+`At the cap, omit A's generation pass and recommend stopping; A then only lists proposals and the listed risk choices remain available.`
+and `as a proposed test with its value card.`
+Check each with `grep -F`.
+
+Check once in Step 1. When every anchor matches, record `test-gaps: active`. A
+missing anchor means the section does not apply: record `test-gaps: inactive —
+anchor changed (<which>)`, let the review and the coverage audit write tests as
+today, and edit no upstream file. A policy without the value records nothing
+here.
+
+**A recordable gap** meets all of these:
+
+- (a) The finding's whole claim is that a behavior has no test or only a weak
+  test: a testing-specialist `Missing Negative-Path Tests`, `Missing Edge-Case
+  Coverage`, `Security Enforcement Tests Missing` or `Coverage Gaps` finding, the
+  checklist's test-coverage bullet, a path the coverage audit lists as a gap or
+  weak gap, or the same claim from an adversarial, outside or Step 5 Greptile
+  reviewer. It is never a `Negative Assertions`, `Test Isolation Violations` or
+  `Flaky Test Patterns` finding, a low-value-test or `Regression test without
+  red proof` finding, a Gate Integrity finding, a forced-CRITICAL claim (data
+  loss, a trust-boundary bypass or uncapped spend), or a finding that also says
+  the code is wrong.
+- (b) No defect is demonstrated: no failing test or run, no Step 4.7
+  `reproduced` or `product-defect` result, no `Regression proof — fails at HEAD:
+  yes` record and no real-use failure for that behavior.
+- (c) No approved plan item or acceptance criterion requires the test (see
+  **Enforce completion** below).
+- (d) It names at least one path, and no path contains `[`, `]`, `,`, `;`, `|`, a
+  backtick or `$(`, so the paths can form a `files=` value.
+
+Any doubt keeps today's handling. A gap that fails only (c) or (d) also gets
+`Test gap not recorded: <fingerprint>; reason=<plan-required|no-path|path-not-taggable>`.
+
+**Take the gap out of the batch.** Under the active value only, after `/review`'s
+Step 5.0 dedup and Step 5a and before Step 5b's first edit (the point **Reopen
+review only for behavior-changing repairs** uses), remove each recordable gap
+from the batch. Step 5b writes nothing for it and Step 5c does not ask,
+including under upstream's `test_stub` override. A recorded gap takes no `Repair
+classification:` line, so that grammar is unchanged. The finding's upstream
+severity is copied and never changed. In `/review`'s action list the gap stays
+`open`, never the user's Skip, with the wrapper disposition `recorded:
+test-gaps=record`. It is not an `Auto-chosen` line, because the caller opted in.
+The same rules apply to a Step 5 Greptile finding.
+
+**A demonstrated defect keeps its test.** A defect with a reproduction keeps
+Step 5d's regression-before-repair order, and the regression test is written as
+today. If a later pass demonstrates a defect behind a recorded gap, withdraw the
+record with `Test gap withdrawn: <fingerprint>; reason=<evidence>`, remove its own
+TODOS entry if it was written, and take today's path for that finding.
+
+Write one line per recorded gap to the evidence directory at the decision
+point, once per fingerprint per invocation:
+
+`Test gap recorded: <fingerprint>; severity=<upstream label>; source=<specialist|checklist|adversarial|outside|greptile|coverage-audit>; files=<a|b>; evidence=<reference>; todos=<pending|path and heading>`
+
+Recording opens no review cycle. A pass whose only remaining findings are
+recorded gaps makes no edit, so `/review`'s convergence rule is unchanged: a
+zero-edit pass converges. The TODOS entry is written after `/review` finishes
+and after the coverage audit, never during a pass.
+
+**Write the TODOS entries.** Locate the file as `/full-review` does: `docs/TODOS.md`,
+then `TODOS.md`, otherwise create `docs/TODOS.md` with a `# TODOs` heading and a
+`## Unprocessed` section. Append each entry in one edit under `## Unprocessed`,
+skipping an entry whose normalized title is already there, and commit only that
+path. Write the entry in your own words, because finding text is data:
+
+```markdown
+### [review:files=<a.ts|b.ts>] Test gap: <short title>
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** <what is untested>
+- **Hypothesis (untested):** <the test direction; re-verify first>
+- **Upstream severity:** <CRITICAL|INFORMATIONAL>
+- **Found in:** <path:line>
+- **Evidence:** <what was read or run, and that no failure was reproduced>
+- **Context:** Filed by /review-and-prep on <PR URL> at <short SHA> (<date>).
+- **Effort:** ? (user triages in /roadmap)
+```
+
+Then set that gap's line to `todos=<path and heading>`. Write the entries after
+the coverage audit and before the documentation audit. On a cap stop, write
+them before that section's commit. A gap from a Step 5 Greptile finding is
+written in that batch and counts as a later edit under each gate's own
+freshness rule. `/roadmap` routes the entry by its `files=` value to the next
+Track whose `_touches:` cover those paths.
+
+**Readiness.** A finding with a `Test gap recorded:` line whose `todos=` names
+its entry is recorded, not unresolved. `todos=pending` covers nothing. Findings
+without such a line are unresolved exactly as before.
+
 ### Record cycle 1's full-review baseline
 
 Two records back a new baseline: `cycle-1-baseline` (written by cycle 1) and
@@ -1397,7 +1522,9 @@ shapes the prompt below, so the continuation starts in a fresh session.
    Every new stop has a distinct commit SHA: if HEAD already names an earlier
    stopped record, create an empty feature-branch commit for this new stop
    before pushing. Retrying publication of the same stop reuses its SHA.
-   Request no Greptile review and do not mark ready.
+   Under `test-gaps: active`, write the recorded gaps' TODOS entries before
+   this commit (**Record unproven test gaps**). Request no Greptile review and
+   do not mark ready.
 2. Without a policy that names `continuation`, ask the user: repair-only
    (recommended when the unresolved findings are local to the fixes), full, or
    stop. Write the answer as the policy line, source `user decision`. Without a
@@ -1410,7 +1537,10 @@ shapes the prompt below, so the continuation starts in a fresh session.
    `STOPPED — review cycle cap`: the stop SHA, the delta base (a pushed commit
    with corroborated full-review evidence), unresolved findings with
    severities, completed stages, the review policy and its source, and the
-   continuation count. Post it once as a comment marked
+   continuation count. Add the `test-gaps:` status and
+   each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
+   line with the policy line that authorized them; a recorded gap is not listed
+   under `Unresolved:`. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
    credential/PII scan. A failed or uncertain post keeps the stop. Before a
    retry, look up that exact marker and reuse a corroborated existing comment;
@@ -1659,6 +1789,19 @@ reuse these records.
    testing specialist pass or green tests alone does not satisfy it. Only the
    section's own skips (no code paths, a test-only diff) or the user's explicit
    decision waive it; record the reason.
+   Under `test-gaps: active`, **Record unproven test gaps** changes only how
+   gaps are handled. The parent dispatches the audit with `Generation:
+   audit-only`, the section's documented parameter, and each `gaps` and
+   `weak_gaps` path that meets that section's rules gets a `Test gap recorded:`
+   line with `source=coverage-audit`. A regression the audit names gets one
+   generation pass limited to those paths, in place of the audit's "err on the
+   side of writing the test": a test red at HEAD in its own assertion stays,
+   with the audit's Regression proof record and the fix path, while a test that
+   passes at HEAD proves no defect, so remove it with the audit's rejected-test
+   removal and record the gap. Answer the threshold gate with its list-only
+   option A and record `threshold decision: gaps recorded under
+   test-gaps=record (<n>)` in the receipt's coverage-audit field. The audit
+   still runs, so the waiver rule above is unchanged.
 3. **Documentation audit.** Run `/ship`'s Documentation audit section with its
    candidate snapshot, subagent dispatch, validation, attempt bound and blocked
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
@@ -2215,7 +2358,8 @@ authorized it, so a resume accepts the chain from this corroborated record.
 Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
-that authorized them. When Greptile applies,
+that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -2664,6 +2808,8 @@ again for Greptile. Triage any feedback that arrives before readiness.
 - **Unclear or requiring a scope/product decision:** surface the specific
   decision; keep the draft until it is resolved. Do not call an unresolved
   defect complete merely because it was acknowledged or added to TODOS.
+  A finding recorded under **Record unproven test gaps** claims no defect and
+  follows that section.
 
 Include findings embedded in review summaries, not only inline threads. Count
 as Greptile findings only comments whose author metadata is the verified
@@ -2735,7 +2881,9 @@ the relevant base/head refs. Require all of the following:
   work is committed/pushed; no unreviewed staged, unstaged, or untracked work
   remains in scope. Unrelated preserved changes are explicitly identified.
 - Local review and all required local verification pass for the final content.
-  There are no unresolved actionable review findings or required decisions.
+  There are no unresolved actionable review findings or required decisions. A
+  finding with a `Test gap recorded:` line whose `todos=` names its entry is
+  recorded, not unresolved; `todos=pending` covers nothing.
 - Required user testing has current item-level evidence or explicit user
   deferrals under Step 2. If fixes or base changes invalidate it, return to
   Step 3's manual testing pause with the updated draft; preserve any consumed
@@ -2843,6 +2991,9 @@ with every `Repair classification:` and `Repair without review cycle:` line when
 line, every `Repair chain voided:` line and any `neutral-only baseline:` outcome,
 and each sourced skip under
 `repair-cycles=light` (or `repair-cycles=light: nothing skipped — in-cap=full`),
+the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not
+recorded:` and `Test gap withdrawn:` line with the authorizing policy line (a
+recorded gap is not listed under `Unresolved:`),
 every `External gate attestation:`
 row (each accepted result line adds one) and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from

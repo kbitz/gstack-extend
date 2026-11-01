@@ -649,7 +649,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
   'documentation-audit': /^final$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/,
   'max-continuations': /^[0-9]$/,
 };
 /** `review-and-prep-policy/v1; key=value; ...`; null for an unknown version, key or value, or a repeated key. */
@@ -1373,7 +1373,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -1814,6 +1814,122 @@ describe('(F) repair-review and repair-cycles', () => {
     const notes = raw.split('```text\n')[1]!.split('\n```')[0]!;
     expect(notes).not.toMatch(/routine|standard|novel/);
     expect(has(doc, 'The exact words of each value and its check also appear in the release notes of the version that adds them.')).toBe(true);
+  });
+});
+
+// Track 51A: `test-gaps=record`. It follows the rollout order of the older values; the
+// fixture models only the receipt-present lines and the policy grammar. no_claim=installed-agent execution.
+describe('(G) test-gaps', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => { const m = { ...POLICY_VALUES }; for (const k of keys) delete m[k]; return m; };
+
+  // Value: protects=the value parses exactly, near misses and repeats do not, and an older value map loses the whole line; fails_when=a regex loosens, a repeat parses or the older-install claim stops being true; why_new=new policy value; seam=none; no_claim=installed-agent execution
+  test('the parser accepts the value, refuses near misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('test-gaps=record'))?.get('test-gaps')).toBe('record');
+    const all = parsePolicy(line('in-cap=delta; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; full-suite=external'));
+    expect(all?.get('test-gaps')).toBe('record');
+    expect(all?.get('repair-review')).toBe('behavior-changing');
+    for (const bad of ['test-gaps=Record', 'test-gaps=records', 'test-gaps=all', 'test-gaps=skip', 'test-gaps=record,skip', 'test-gap=record', 'test-gaps=', 'test-gaps',
+      'test-gaps=record; test-gaps=record']) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    // An older install's map lacks the key, so the whole line is lost with every other key.
+    expect(parsePolicy(line('in-cap=delta; test-gaps=record'), without('test-gaps'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; full-suite=final'), without('test-gaps'))?.get('in-cap')).toBe('delta');
+  });
+
+  // Value: protects=an H-E prompt whose policy carries the value still continues and a bad value still holds; fails_when=the new value breaks the H-E path; why_new=new policy value through the consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries the value still continues', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['test-gaps=record', 'repair-cycles=light; test-gaps=record']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['test-gaps=skip', 'test-gaps=record; test-gaps=record']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=the capability check works against the real skill, the doc publishes it with the rollout and the omit rule, and the value names no consumer; fails_when=the value leaves the skill, a check text drifts or a word naming a caller enters it; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F finds the value in the skill and the doc publishes the check and the rollout', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'test-gaps=record', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'test-gaps=skip', skillPath]).status).toBe(1);
+    const check = `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of ['`test-gaps=record` follows the same rollout order and the same check',
+      '(exit 0 means supported)',
+      'An installation without it reads the whole line as `none supplied`',
+      'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
+      'and a caller omits it when the check fails and keeps its other keys',
+      'It is independent of `repair-review` and `repair-cycles`, may be sent alone or with either, and is never set by the light review default.',
+      'a reproduced defect keeps its regression test',
+      'It waives no gate and never authorizes a continuation.',
+      '`repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations`']) expect(has(doc, phrase), phrase).toBe(true);
+    expect(POLICY_VALUES['test-gaps']!.source).toBe('^record$');
+    expect('test-gaps=record').not.toMatch(/routine|standard|novel/);
+    expect(has(prep, '`test-gaps=record` (its only value) is opt-in.')).toBe(true);
+  });
+
+  // Value: protects=a receipt that records a gap still hands /ship-and-land a trusted head, the fixture line has the producer template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 5; seam=none; no_claim=installed-agent execution
+  test('a recorded-gap receipt hands off review: COMPLETE exactly as a plain one', () => {
+    const plain = run('B-TRUSTED');
+    const recorded = run('B-RECORDED-GAP-HEAD');
+    expect(recorded.outcome).toBe(plain.outcome);
+    expect(recorded.mismatches).toEqual(plain.mismatches);
+    expect(recorded.parsed).toEqual(plain.parsed);
+    const body = FIX.cases['B-RECORDED-GAP-HEAD'].live?.receiptBody as string;
+    expect(body).toContain('test-gaps: active');
+    expect(body).toContain('Test gap recorded:');
+    expect(fixtureText(FIX.cases['B-RECORDED-GAP-HEAD'])).not.toContain('Test gap recorded:');
+    const template = prep.match(/`Test gap recorded: ([^`]+)`/)![1];
+    const row = body.split('\n').find((l) => l.startsWith('Test gap recorded: '))!.slice('Test gap recorded: '.length);
+    const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
+    expect(keys(row)).toEqual(keys(template));
+    expect(keys(template)).toEqual(['severity', 'source', 'files', 'evidence', 'todos']);
+    expect(has(doc, '`test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present')).toBe(true);
+    expect(has(doc, 'a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`)')).toBe(true);
+    expect(has(doc, 'A prepared receipt that records test gaps still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
+    expect(has(doc, '`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED')).toBe(true);
+    expect(has(prep, 'the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line')).toBe(true);
+  });
+
+  // Value: protects=the acceptance record states the before sample's shape, the unknown after fields, the exact token and check, and that no saving is established; fails_when=a token, a check, an unknown or the limits are dropped, or a session ID or repository name is published; why_new=new acceptance record; seam=none; no_claim=installed-agent execution
+  test('the acceptance record states the before sample, the unknown after fields and the limits', () => {
+    const raw = read('docs/acceptance/review-fix-policy.md');
+    const at = raw.indexOf('## Test-gap routing (Track 51A)');
+    expect(at).toBeGreaterThan(-1);
+    const section = raw.slice(at);
+    const record = squash(section);
+    for (const heading of ['### The value', '### Before: what recorded runs show', '### After: to be measured', '### Release notes', '### Limits']) expect(section).toContain(heading);
+    for (const phrase of ['15 runs with a metrics summary', '12 `ok`, 3 `partial`', '`data.local_passes`', '`data.fix_cycles`',
+      'Cycles spent on test gaps specifically | unknown',
+      'the metrics finding record has no per-finding attribution',
+      'Aggregates only: no session ID or repository name is published.', 'The sample is unpaired',
+      'Count of `Test gap recorded:` lines in the receipt | unknown',
+      '`/review` log row `cycles` for the run | unknown',
+      'Sample size, status, `local_passes`, `fix_cycles` | unknown',
+      'read `unknown` until a real run with the value on its policy line records them',
+      'the owner decides whether to accept it on the first opted-in run after a release installs',
+      'No saving is established', 'No installed-agent run backs it', 'No checkpoint is awarded',
+      'For `/ship` to copy verbatim into the CHANGELOG entry', 'the `/ship-and-land` review checks the entry against this block',
+      'an installation without the value reads the whole line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`.',
+      'A caller omits the value when its check fails and keeps its other keys.']) expect(has(record, phrase), phrase).toBe(true);
+    expect(has(record, '`test-gaps=record`')).toBe(true);
+    expect(has(record, `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`)).toBe(true);
+    expect(raw).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+    expect(raw).not.toMatch(/\b(?:routine|novel)\b/);
+    const notes = section.split('```text\n')[1]!.split('\n```')[0]!;
+    expect(notes).not.toMatch(/routine|standard|novel/);
+    // The 33A record stays intact and its first release block is still the first text block.
+    expect(has(squash(raw), 'Track 33A, recorded against source revision `778a265`')).toBe(true);
+    expect(raw.split('```text\n')[1]).toContain('`repair-review=behavior-changing`: a repair that changes no behavior');
   });
 });
 

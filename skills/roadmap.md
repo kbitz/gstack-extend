@@ -647,6 +647,22 @@ are estimates. A number another artifact will cite must be computed
 in that artifact, or the plan must name the command that produces
 it. Do not invent a `_regen:` field.
 
+**A recorded test gap is not a defect claim.** An inbox item whose tag is
+`review` with `files=` and whose body has the bullet `**Test gap:** no
+demonstrated defect` was filed by `/review-and-prep` under `test-gaps=record`.
+It asserts no failure, so the manifestation kill below does not apply to it,
+and it never admits a Track on its own. Re-verify it at drain: `discharge` it
+when a test now covers the behavior, `kill` it when its paths are gone.
+Otherwise, while drafting Tracks and before packing, **place** it as one S task
+on the first Track in plan order whose `_touches:` cover every `files=` path
+(the same path, or a path under a directory entry ending `/`), and add the
+task's proposed test file to that Track's `_touches:`. This is the one named
+exception to "proximity to touched files" in **Admission before
+decomposition**: here the proximity is the whole reason to place it. When no
+Track covers every path, or the task would break a size cap (**Sizing
+discipline**), **defer** it to Future with `**Revisit when:** a Track's
+`_touches:` cover <paths>.` Re-check that trigger on each run.
+
 ### Unobserved defects wait for manifestation
 
 A claim that something is broken is **hypothetical** until it manifests. Judge
