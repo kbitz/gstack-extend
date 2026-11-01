@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.0] - 2026-11-01
+
+### Fixed
+
+- `/review-and-prep` keeps pregate warnings in the result and keeps the narrowing evidence on the workflow handoff, so a later step still sees those warnings and what pregate narrowed.
+- `/review-and-prep` narrows pregate after an external test pass that covers the change.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` skill carries these fixes.
+
 ## [0.59.0] - 2026-11-01
 
 ### Added
