@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.58.0] - 2026-11-01
+
+### Changed
+
+- `/plan-card` is renamed to `/plan-track`. It still turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline, subagents or outside voices. It is for small, well-specified cards. `/autoplan-lean` is unchanged and stays the default.
+- Its inputs are the same fields in the invocation prompt: `CARD_FILE` (required), `PLAN_FILE`, `VERIFY_COMMAND`, `FORK_LIST` and `NOTES`. The plan uses `/autoplan-lean`'s `Verify command:` label with the same meaning. A finished run prints an `/implement` prompt; a run that stops prints none. Every run ends with the `stage-handoff/v1` line, which uses `stage: plan` for both planning skills, so the line alone does not say which one ran. `docs/workflow-handoffs.md` documents `/plan-track`.
+- `docs/installation.md` says how to link `/plan-track` into a host that `setup` does not manage.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so `/plan-track` is installed and carries telemetry like the other skills. After a hand `git pull` without `setup`, the skill is absent until `setup` runs. The telemetry doctor still expects twelve skills.
+- Invocations and hand-made links that still name `/plan-card` need to name `/plan-track`. This version ships the skill as `/plan-track`.
+
 ## [0.57.0] - 2026-10-31
 
 ### Added
