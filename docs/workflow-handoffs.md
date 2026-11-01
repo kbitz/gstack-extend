@@ -337,6 +337,7 @@ classifier reports, with the expected and actual values.
 | <a id="b-repaired-head"></a>`B-REPAIRED-HEAD` | H-B | `Final-gate repair review:` | ADVANCE_TRUSTED | none; a receipt that records a successful final-gate repair chain still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-neutral-repair-head"></a>`B-NEUTRAL-REPAIR-HEAD` | H-B | `Repair without review cycle:` | ADVANCE_TRUSTED | none; a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-recorded-gap-head"></a>`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED | none; a receipt that records a test gap under `test-gaps=record` still emits `review: COMPLETE`, and the test-gap lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-narrowed-pregate-head"></a>`B-NARROWED-PREGATE-HEAD` | H-B | `Pregate lane not run:` | ADVANCE_TRUSTED | none; a receipt that records a narrowed pregate under `full-suite=external` still emits `review: COMPLETE`, and the narrowing lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="f-pause"></a>`F-PAUSE` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; the caller sent `full-suite=external`, the line is well formed, head, tree and base equal its live reads, and the PR is a draft | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
 | <a id="f-pause-no-pr"></a>`F-PAUSE-NO-PR` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; no PR exists yet, because the pause pushes nothing and creates nothing | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
@@ -1047,6 +1048,10 @@ The caller flow, in order:
 
 1. Check the loaded copy: `grep -F 'full-suite=external' "<installed skill dir>/SKILL.md"`
    exits 0 when supported. If it fails, omit the value and keep the other keys.
+   To learn whether the loaded copy also narrows its pregate after a pass, run
+   `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`
+   on one line: exit 1 means an older installation runs the pregate as today, and
+   the policy line stays unchanged because narrowing is part of the existing value.
 2. Send the policy line with `full-suite=external` in the invocation prompt.
    Never also name `final`: a repeated key reads as `none supplied`.
 3. Recognize the pause family by its last line starting `External gate: external-gate/v`
@@ -1071,10 +1076,21 @@ already ready hold as `external-gate-line`, `pr-state` and `pr-ready`.
 A consumer without H-F reads the pause as a bare summary with a full SHA and
 holds it (H-D).
 
-On `pass` the preparation still runs its pregate with its ordinary selection,
-which can itself be the whole suite; it adds no main-command fallback run.
-It records the result in its receipt and goes to readiness;
-the pass is never a `tests` ledger record. On `fail` it follows its ordinary
+On `pass` the preparation decides whether the attested command covers the tests
+its pregate's `lanes` check would run. When it covers every test the diff selects
+and its log is readable on the preparation's machine with a positive executed
+count, the pregate narrows to its preflight stage: its non-test checks run and
+its test lanes do not. Partial or unknown coverage, a changed upstream anchor,
+head-policy pins, a pending repair, a touched file with no test lane or a
+requires-remote obligation run the pregate with its ordinary selection, which can
+itself be the whole suite, and the receipt says so. This includes no-policy
+unmapped files reported in probe detail or lines, even when the probe code
+stays `REPO_COMMANDS_NOT_ALLOWED`. A matching name or hash alone
+does not establish coverage. Neither path adds a main-command fallback run. A
+caller therefore attests a command that covers what the diff selects and supplies
+a log readable on that machine to get the saving. The preparation records the
+result in its receipt and goes to readiness; the pass is never a `tests` ledger
+record. On `fail` it follows its ordinary
 final-gate failure rule, including the repair under `final-gate-repair=tests-docs`
 when that key is on the line. The receipt row for each accepted line:
 
@@ -1087,7 +1103,10 @@ is unchanged: it accepts a fresh ledger entry, an authenticated check run or a
 live run, and a recorded `full-suite=final` keeps its final pre-merge run full. A
 repository whose main command is the whole suite runs it again at ship, so the
 omitted main-command fallback is a preparation-only change; pregate can still
-select the whole suite. `docs/acceptance/external-gate.md` records
+select the whole suite. A narrowed run leaves no full pregate record and no
+pregate-wrapped `tests` entry, so `/ship-and-land` takes its `FULL` path and runs
+its own test gate, with a `pregate-preflight` record that grants no test credit.
+`docs/acceptance/external-gate.md` records
 the added turn end and colder resume against the waits it replaces; no saving is
 established.
 
@@ -1218,6 +1237,7 @@ or input it says is needed is for the user.
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
+| `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.

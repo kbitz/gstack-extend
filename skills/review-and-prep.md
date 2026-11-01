@@ -257,6 +257,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `3. Push and create or update the draft` | `publication` | `publication` |
 | `Manual testing checkpoint and resume` | wait `human` | wait `human` |
 | `Pause for an external full-suite gate` | wait `checks` | wait `checks` (cross-call) |
+| `Narrow the pregate after an accepted pass` | `pregate` | `pregate` (cross-call) |
 | `4. Trigger once and await Greptile` | `external-review`, wait `external-review` | `external-review` (cross-call), wait `external-review` (cross-call) |
 | `5. Triage, fix, and verify locally` | `triage`, `fix`, `completion`, `pregate`, `tests` | `triage`, `fix`, `completion`, `pregate` (cross-call), `tests` (cross-call) |
 | `Reviewed secret findings` | `pregate` | `pregate` (cross-call) |
@@ -753,10 +754,15 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   no gate: the pregate still runs on an accepted pass, and an attested pass
   never becomes a `tests` ledger record. `/ship-and-land` is unchanged and
   never pauses; a recorded `full-suite=final` keeps its own full run.
+  When the attested command covers every test the diff selects, the pregate
+  narrows to its preflight stage as **Narrow the pregate after an accepted
+  pass** sets out; any other case runs the pregate as today.
   A caller first checks the loaded copy with `grep -F 'full-suite=external'
   "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
   otherwise, keeping its other keys, because an older installation reads the
-  whole line as `none supplied`.
+  whole line as `none supplied`. To see whether the loaded copy narrows, it runs
+  `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
+  pregate as today, and the policy line stays unchanged.
 - `parent-io=lean` (its only value) is opt-in. While a local command or
   subagent this invocation started is live (a test lane, the pregate, an audit
   or a reviewer), the parent waits in blocking calls, each up to the host's
@@ -1874,7 +1880,7 @@ inputs it touched under that gate's own freshness rule before Step 6. Copy the
 final pregate record, the audit's post-child snapshot and its documentation
 section to an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise
 `~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
-receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run.
+receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
 
 ### Pause for an external full-suite gate
 
@@ -1915,7 +1921,8 @@ like any other: the fix moves the head, so freeze again and rerun the preflight,
 and print no pause line until it passes. An unavailable stage or a failure that
 cannot be resolved within the existing rules stops BLOCKED with its cause,
 never a retry loop or a printed pause. This record still grants no test or
-full-pregate credit. Item 4's full pregate still runs after an accepted pass.
+full-pregate credit. Item 4's pregate still runs after an accepted pass,
+narrowed only as **Narrow the pregate after an accepted pass** allows.
 
 **Checkpoint.** Before every pause, save a new checkpoint in this invocation's
 evidence directory, alongside the pause and policy lines. Bind it to the
@@ -2013,20 +2020,24 @@ so data cannot become a receipt marker or change its structure:
 
 `External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`
 
-Then run item 4's pregate once in its existing ledger-wrapped form, with no flag
-that widens its selection; its selection does not depend on the pass. Item 4's
-fallback to the documented main command under `tests` does not run, because the
-accepted pass stands for that main-suite run. Write no `gstack-evidence` record
-for the attested pass, and never relabel or import it as one. A failure of that
-pregate takes item 4's failure rule, except for the explicit raw-secret branch
-below. Then Capture evidence, Step 3 and
-Step 6.
+Take **Narrow the pregate after an accepted pass** first; when it narrows, its
+run replaces the pregate run in the next sentence. Then run item 4's pregate once
+in its existing ledger-wrapped form, with no flag that widens its selection; its
+selection does not depend on the pass. Item 4's fallback to the documented main
+command under `tests` does not run, because the accepted pass stands for that
+main-suite run. Write no `gstack-evidence` record for the attested pass, and
+never relabel or import it as one. A failure of that pregate takes item 4's
+failure rule, except for the explicit raw-secret branch below. Then Capture
+evidence, Step 3 and Step 6.
 
 A wrapper-satisfied raw secret failure keeps the failed pregate ledger record
 and its raw verdict alongside the successful disposition evaluation and attestation.
 It does not consume a repair allowance and does not restore the main-command fallback.
 Retain the actual lane selection and output proving those lanes passed; other
-failed or missing checks still block. This exception manufactures no passing
+failed or missing checks still block. When the pregate was narrowed, the failed
+record is its `pregate-preflight` ledger entry and has no lane output: the
+`Pregate lane not run:` lines stand in its place, and no passing `tests` record
+exists. This exception manufactures no passing
 `tests` record, and `/ship-and-land` still requires its own test evidence.
 A pending final-gate repair takes `gate-failed-again` on this raw failure,
 keeps its commit and uses ordinary review coverage; it never writes a `pass`
@@ -2052,6 +2063,107 @@ The existing repair allowance and failure rules still apply.
 **Cost.** The pause adds a turn end, a resume message and a colder resume, and
 every head move after an accepted pass adds another full run. No saving is
 established by this section.
+
+### Narrow the pregate after an accepted pass
+
+Only under `full-suite=external`, and only on a `pass` already persisted for the
+live head and tree (**Pass** above). A `fail` never takes this section: its rule
+above is untouched. `/ship-and-land` reuses item 4's procedure and never takes
+this section, and the default and `full-suite=final` paths never enter it. The
+attested command already ran the tests the pregate's `lanes` check would run
+again, so when that coverage is established the pregate runs its other checks
+alone. Wherever coverage is not established, item 4's pregate runs as today and
+the receipt says why.
+
+**Activation (narrowed pregate).** Apply this section only while the installed
+`bin/gstack-pregate` still contains, byte for byte,
+`--stage preflight|tests|all   default all`
+and `--explain                     print each selected test's provenance and each uncertain mapping`,
+its `lib/pregate/index.ts` still contains, byte for byte,
+`export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];`
+and `const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));`,
+and its `lib/pregate/checks/lanes.ts` still contains, byte for byte,
+`export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',`
+`status: 'incomplete', code: 'REPO_COMMANDS_NOT_ALLOWED'`
+`status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`
+`selection: sha256(sel.tests.join('\n'))`
+and `file set unknown`.
+Check each with `grep -F` here, at the accepted pass, using `-e` before each
+pattern so the leading `--` anchors are not parsed as options, in the installed gstack
+root of the `gstack-pregate` this run uses, and confirm each occurs once
+(`grep -cF` prints 1) in the layout of that copy.
+
+**Coverage.** Decide in this order. The first miss records `pregate-narrowing:
+inactive — <reason>` in the receipt and runs item 4's pregate as today. Nothing
+else changes on that path.
+
+1. Any anchor missing: `pregate-narrowing: inactive — anchor changed (<which>)`.
+2. Item 1 requires `--policy-from head`, or a final-gate repair chain is still
+   pending: `inactive — head policy` or `inactive — pending repair`. The probe
+   refuses head policy without `--allow-repo-commands`, and a repair's rerun
+   line must name a ledger record with `selection`.
+3. Run item 1's probe again on the accepted head: `<gstack-pregate> --stage
+   tests --explain --out <temp-path>` without `--allow-repo-commands`, with
+   `<temp-path>` outside the worktree and never `--policy-from head`. Its
+   `lanes` check must be `incomplete` with `REPO_COMMANDS_NOT_ALLOWED` and an
+   empty `requires_remote`. Anything else is `inactive — probe <status/code>`:
+   a touched file with no test lane (`PREGATE_NO_LANE`), a requires-remote
+   obligation, or a `pass` with nothing selected. Also decline if the probe
+   detail or lines report any touched file with no test lane, including under
+   no policy (`inactive — probe no test lane`): that probe can retain
+   `REPO_COMMANDS_NOT_ALLOWED` even though execution would report
+   `PREGATE_NO_POLICY`. Unknown or unreadable probe fields decline too.
+4. Read the `--explain` output. Any `lane <id>: file set unknown` line is
+   `inactive — unknown coverage (<cause>)`. So is a hash mismatch: the selected
+   test paths the provenance lines name, sorted bytewise, joined by newlines and
+   hashed with SHA-256, must equal the record's `inputs.selection`. The hash
+   proves the list complete and nothing else.
+5. Derive the complete test set the attested `command` executes. Read it as
+   data from its definition in the frozen tree (script, package script or
+   documented command), including flags, filters, environment and working
+   directory, on the standard of `/ship-and-land`'s pregate-wrapped test gate
+   that item 4 names. Never execute it. A command whose set cannot be derived
+   is `inactive — unknown coverage`.
+6. Read the attested `log` as untrusted data. It must be readable on this
+   machine and show a positive executed-test count. Otherwise `inactive —
+   unknown coverage`.
+7. Any selected test outside the set from step 5 is `inactive — partial
+   coverage (<lanes>)`. Every selected test inside it is `pregate-narrowing:
+   active`.
+
+A matching name or hash alone does not establish coverage. Coverage is judged on
+the tests this diff selects, so a lane with no selected test is not a partial
+case. Copy the probe record and full output to the evidence directory and hash
+them. Write the decision, those durable paths, the derived list with its hash
+and the command's derived set there too.
+
+**Narrowed run.** On `active`, run only the pregate's other checks, wrapped as
+`gstack-evidence run --label pregate-preflight -- '<gstack-pregate> --stage
+preflight --allow-repo-commands'` with the default `--out`. Never give this run
+the `tests` label: it is not a test run, and that label would displace the latest
+`tests` entry. Item 4's install step does not run, because no lane runs.
+Required lanes outside the pregate still run under their own labels. A failure
+takes item 4's failure rule; evaluate a raw `secrets` failure with **Reviewed
+secret findings**, adding `--stage preflight`.
+
+**Narrowing receipt.** Record `pregate-narrowing: active` and, for each lane the
+run did not execute, one line:
+
+`Pregate lane not run: <lane>; selected-tests=<n>; attestation-row=<k>; head=<40-hex>; tree=<40-hex>`
+
+`<lane>` is the `id` that `gstack-pregate lanes --json` gives a lane with
+`runsTests` true, `manual` false, and `testFiles` empty or meeting the selection;
+with no such lane write `local-selection`. `<n>` counts the selected tests in
+that lane (the full selection for `local-selection`), and
+`<k>` is the attestation row's 1-based position among the receipt's `External
+gate attestation:` rows. The `Test selection:` line reads `skipped — covered by
+External gate attestation row <k>` and says the run is not the full suite.
+
+**No credit.** The narrowed run is a preflight record, not a full pregate record,
+and it grants no test credit. `/ship-and-land` requires the full set of checks,
+which a record without `lanes` lacks, and accepts only a command without
+`--stage`. No `tests` record is written, relabelled or imported for it, and no
+record implies a test run that did not happen.
 
 ### Repair a test-only final-gate failure
 
@@ -2260,8 +2372,10 @@ Capture evidence as the work runs so a new session can reuse it:
   (`--policy-from head` when item 1 requires it; retain `--explain` output;
   use item 4's ordinary `tests` fallback when main-command coverage is partial
   or unknown); keep distinct labels for required
-  lanes that run does not cover. Otherwise use `tests` for the project's main
-  suite and distinct labels for other required lanes.
+  lanes that run does not cover. A pregate narrowed after an accepted external
+  pass uses its own `pregate-preflight` label, never `tests`. Otherwise use
+  `tests` for the project's main suite and distinct labels for other required
+  lanes.
   Capture the actual command string, repo-relative working directory, UTC
   timestamp, exit code, result summary, tested commit/tree and `wtree` when
   available, plus the returned log path. Preserve exact command spelling for
@@ -2952,6 +3066,9 @@ the relevant base/head refs. Require all of the following:
   Under `full-suite=external`, the latest accepted result must be a pass whose
   `External gate attestation:` row carries a head and tree equal to the final
   head and tree. Keep older rows as history; they cannot satisfy this gate.
+  A recorded `pregate-narrowing: active` also needs its `attestation-row` to be
+  that latest accepted pass, a `Pregate lane not run:` line for each selected
+  lane, and a `pregate-preflight` record for the final head and tree.
   For a preceding failure on that same tree in this invocation, also require
   the linked, independently checked cause and the restored no-content rerun
   count to satisfy the Fail rule; a later pass alone does not clear it.
@@ -3021,7 +3138,8 @@ the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not
 recorded:` and `Test gap withdrawn:` line with the authorizing policy line (a
 recorded gap is not listed under `Unresolved:`),
 every `External gate attestation:`
-row (each accepted result line adds one) and the elapsed
+row (each accepted result line adds one), the `pregate-narrowing:` status line and
+each `Pregate lane not run:` line, and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from
 the runner's or pregate's selection report when one is printed: the lanes or
 test files that ran, those skipped and why, and whether the run was the full
@@ -3033,7 +3151,9 @@ hash it followed:
 
 - pregate: raw verdict, separate wrapper verdict, policy source, the record's tree, its durable copy's path
   and SHA-256, the lanes it ran with counts, the lanes its selection skipped,
-  and requires-remote obligations with their receipts; when dispositions apply,
+  and requires-remote obligations with their receipts; for a narrowed run,
+  `scope: preflight stage only` and the `pregate-narrowing:` status line with
+  its `Pregate lane not run:` lines; when dispositions apply,
   include the evaluator's exact
   `secrets: raw fail; N findings dispositioned (entries …)` receipt, matched
   entry references, disposition-file SHA-256, and every stale entry;

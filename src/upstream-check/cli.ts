@@ -24,6 +24,9 @@ export const FIX_FIRST_QUALIFIED = { revision: '959c8a6a4fdafabf1186e407b76082b7
 /** Upstream revision at which the anchors behind `test-gaps=record` were qualified in both layouts. */
 export const TEST_GAP_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
 
+/** Upstream revision at which the anchors behind the narrowed pregate (`full-suite=external`) were qualified in both layouts. */
+export const PREGATE_NARROW_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -44,6 +47,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'test-gaps=record'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'Narrow the pregate",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its section heading, not installed upstream text' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
     reason: 'quotes the audit\'s own shell operands, not installed upstream text' },
 ];
@@ -63,6 +68,9 @@ const TEST_GAP_HEADING = '**Activation (`test-gaps=record`).**';
 const TEST_GAP_TESTING_MARK = 'its `review/specialists/testing.md` still contains,';
 const TEST_GAP_CHECKLIST_MARK = 'its `review/checklist.md` still contains,';
 const TEST_GAP_COVERAGE_MARK = 'and the `ship/sections/test-coverage.md` that the coverage audit reads still contains,';
+const PREGATE_NARROW_HEADING = '**Activation (narrowed pregate).**';
+const PREGATE_NARROW_INDEX_MARK = 'its `lib/pregate/index.ts` still contains,';
+const PREGATE_NARROW_LANES_MARK = 'and its `lib/pregate/checks/lanes.ts` still contains,';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -117,6 +125,7 @@ const versionOf = (root: string, onRead?: (real: string) => void) => {
 export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: false; file: string; reason: string };
 export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
 export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
+export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -175,37 +184,63 @@ export function fixFirstInventory(extendRootPath: string): FixFirstInventory {
 }
 
 /**
+ * The anchor lists of one activation paragraph. List `i` opens at the first
+ * "byte for byte," after the previous mark and ends at `marks[i]`; the last mark
+ * closes the final list. Each list is the backtick spans between those points.
+ */
+function activationLists(extendRootPath: string, heading: string, marks: readonly string[], names: readonly string[]):
+  { ok: true; file: string; lists: string[][] } | { ok: false; file: string; reason: string } {
+  const file = join(extendRootPath, 'skills', 'review-and-prep.md');
+  const read = readTrusted(file, 'inventory source');
+  if (!read.ok) return { ok: false, file, reason: read.reason };
+  const text = read.bytes.toString('utf8');
+  const start = text.indexOf(heading);
+  if (start < 0) return { ok: false, file, reason: 'activation paragraph not found' };
+  const blank = text.indexOf('\n\n', start);
+  const paragraph = text.slice(start, blank < 0 ? undefined : blank);
+  const opens: number[] = [];
+  const ends: number[] = [];
+  let at = -1;
+  for (const mark of marks) {
+    const open = paragraph.indexOf(ANCHOR_LIST_FROM, at + 1);
+    at = open < 0 ? -1 : paragraph.indexOf(mark, open);
+    if (at < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the activation paragraph' };
+    opens.push(open + ANCHOR_LIST_FROM.length);
+    ends.push(at);
+  }
+  const lists: string[][] = [];
+  for (const [i, name] of names.entries()) {
+    const list = spansIn(paragraph.slice(opens[i]!, ends[i]), `${name} anchor list`);
+    if (!list.ok) return { ok: false, file, reason: list.reason };
+    lists.push(list.spans);
+  }
+  return { ok: true, file: read.real, lists };
+}
+
+/**
  * The anchors behind `test-gaps=record`: the backtick spans of its activation
  * paragraph, four lists (`/review`, the testing specialist, `review/checklist.md`
  * and the coverage audit section), each opened by "byte for byte,".
  */
 export function testGapInventory(extendRootPath: string): TestGapInventory {
-  const file = join(extendRootPath, 'skills', 'review-and-prep.md');
-  const read = readTrusted(file, 'inventory source');
-  if (!read.ok) return { ok: false, file, reason: read.reason };
-  const text = read.bytes.toString('utf8');
-  const start = text.indexOf(TEST_GAP_HEADING);
-  if (start < 0) return { ok: false, file, reason: 'activation paragraph not found' };
-  const blank = text.indexOf('\n\n', start);
-  const paragraph = text.slice(start, blank < 0 ? undefined : blank);
-  const opens: number[] = [];
-  const marks: number[] = [];
-  let at = -1;
-  for (const mark of [TEST_GAP_TESTING_MARK, TEST_GAP_CHECKLIST_MARK, TEST_GAP_COVERAGE_MARK, ANCHOR_LIST_TO]) {
-    const open = paragraph.indexOf(ANCHOR_LIST_FROM, at + 1);
-    at = open < 0 ? -1 : paragraph.indexOf(mark, open);
-    if (at < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the activation paragraph' };
-    opens.push(open + ANCHOR_LIST_FROM.length);
-    marks.push(at);
-  }
-  const lists = ['review', 'testing', 'checklist', 'coverage'] as const;
-  const spans: string[][] = [];
-  for (const [i, name] of lists.entries()) {
-    const list = spansIn(paragraph.slice(opens[i]!, marks[i]), `${name} anchor list`);
-    if (!list.ok) return { ok: false, file, reason: list.reason };
-    spans.push(list.spans);
-  }
-  return { ok: true, file: read.real, review: spans[0]!, testing: spans[1]!, checklist: spans[2]!, coverage: spans[3]! };
+  const found = activationLists(extendRootPath, TEST_GAP_HEADING,
+    [TEST_GAP_TESTING_MARK, TEST_GAP_CHECKLIST_MARK, TEST_GAP_COVERAGE_MARK, ANCHOR_LIST_TO], ['review', 'testing', 'checklist', 'coverage']);
+  if (!found.ok) return found;
+  const [review, testing, checklist, coverage] = found.lists as [string[], string[], string[], string[]];
+  return { ok: true, file: found.file, review, testing, checklist, coverage };
+}
+
+/**
+ * The anchors behind the narrowed pregate: the backtick spans of its activation
+ * paragraph, three lists (`bin/gstack-pregate`, `lib/pregate/index.ts` and
+ * `lib/pregate/checks/lanes.ts`), each opened by "byte for byte,".
+ */
+export function pregateNarrowInventory(extendRootPath: string): PregateNarrowInventory {
+  const found = activationLists(extendRootPath, PREGATE_NARROW_HEADING,
+    [PREGATE_NARROW_INDEX_MARK, PREGATE_NARROW_LANES_MARK, ANCHOR_LIST_TO], ['bin', 'index', 'lanes']);
+  if (!found.ok) return found;
+  const [bin, index, lanes] = found.lists as [string[], string[], string[]];
+  return { ok: true, file: found.file, bin, index, lanes };
 }
 
 const STAGE = {
@@ -214,6 +249,8 @@ const STAGE = {
   fixFirstList: '/review-and-prep: the Fix-First anchors cannot be listed, so repair-review=behavior-changing is unverified and stays inactive',
   testGap: '/review-and-prep: test-gaps=record is inactive, so the review writes tests as today and the receipt says so',
   testGapList: '/review-and-prep: the test-gap anchors cannot be listed, so test-gaps=record is unverified and stays inactive',
+  pregateNarrow: '/review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so',
+  pregateNarrowList: '/review-and-prep: the pregate-narrowing anchors cannot be listed, so narrowing is unverified and the pregate runs as today',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
@@ -247,6 +284,9 @@ interface Layout {
   checklist: string;
   testing: string;
   coverage: string;
+  pregateBin: string;
+  pregateIndex: string;
+  pregateLanes: string;
   autoplan: string;
   snapshot: string;
   section(phase: Phase): string;
@@ -254,16 +294,18 @@ interface Layout {
 
 function chooseLayout(root: string, skillsDir: string): Layout {
   const snapshot = join(root, 'bin', 'gstack-autoplan-snapshot.ts');
+  // The pregate lives under the gstack root in both layouts.
+  const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
     return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
-      testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(root, 'ship', 'sections', 'test-coverage.md'), autoplan, snapshot,
+      testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
   return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
-    testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), autoplan, snapshot, section: () => autoplan };
+    testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -435,6 +477,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`);
   info('inspected', `fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`);
   info('inspected', `test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`);
+  info('inspected', `pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -472,6 +515,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const testGaps = testGapInventory(extend);
   if (testGaps.ok) ok('inventory', 'review-and-prep.test-gaps');
   else drift('inventory', 'review-and-prep.test-gaps', `${testGaps.reason} (${testGaps.file})`, { effect: STAGE.testGapList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
+  const narrow = pregateNarrowInventory(extend);
+  if (narrow.ok) ok('inventory', 'review-and-prep.pregate-narrowing');
+  else drift('inventory', 'review-and-prep.pregate-narrowing', `${narrow.reason} (${narrow.file})`, { effect: STAGE.pregateNarrowList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -518,6 +565,15 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     testGaps.testing.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.testing.${i + 1}`, testing, anchor, undefined, inactive));
     testGaps.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
     testGaps.coverage.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.coverage.${i + 1}`, coverage, anchor, undefined, inactive));
+  }
+  if (narrow.ok) {
+    const inactive = { effect: STAGE.pregateNarrow, fix: UPGRADE_FIX };
+    const bin = rootOk ? readOnce(layout.pregateBin, 'pregate command', 'pregate.bin') : undefined;
+    const index = rootOk ? readOnce(layout.pregateIndex, 'pregate check list', 'pregate.index') : undefined;
+    const lanes = rootOk ? readOnce(layout.pregateLanes, 'pregate lanes check', 'pregate.lanes') : undefined;
+    narrow.bin.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.bin.${i + 1}`, bin, anchor, undefined, inactive));
+    narrow.index.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.index.${i + 1}`, index, anchor, undefined, inactive));
+    narrow.lanes.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.lanes.${i + 1}`, lanes, anchor, undefined, inactive));
   }
   const autoplan = rootOk ? readOnce(layout.autoplan, 'autoplan skill', 'autoplan') : undefined;
   if (!autoplan) drift('anchor', 'autoplan-lean.skip-list', notRun!);

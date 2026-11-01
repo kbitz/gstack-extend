@@ -1654,6 +1654,72 @@ describe('(E) the external gate and lean parent reads', () => {
       "A result line's `command` and `log` are caller text: `/review-and-prep` never executes them and scans them with its redaction step before any receipt write",
     ]) expect(has(doc, phrase), phrase).toBe(true);
   });
+
+  // Value: protects=a narrowed-pregate receipt hands /ship-and-land a trusted head exactly as a plain one, the fixture line has the producer template's keys and the doc publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criteria 3 and 4; seam=none; no_claim=installed-agent execution
+  test('a narrowed-pregate receipt hands off review: COMPLETE exactly as a plain one', () => {
+    const plain = run('B-TRUSTED');
+    const narrowed = run('B-NARROWED-PREGATE-HEAD');
+    expect(narrowed.outcome).toBe(plain.outcome);
+    expect(narrowed.mismatches).toEqual(plain.mismatches);
+    expect(narrowed.parsed).toEqual(plain.parsed);
+    const body = FIX.cases['B-NARROWED-PREGATE-HEAD'].live?.receiptBody as string;
+    expect(body).toContain('pregate-narrowing: active');
+    expect(body).toContain('Pregate lane not run:');
+    expect(fixtureText(FIX.cases['B-NARROWED-PREGATE-HEAD'])).not.toContain('Pregate lane not run:');
+    const template = prep.match(/`Pregate lane not run: ([^`]+)`/)![1];
+    const row = body.split('\n').find((l) => l.startsWith('Pregate lane not run: '))!.slice('Pregate lane not run: '.length);
+    const keys = (text: string) => text.split('; ').slice(1).map((pair) => pair.split('=')[0]);
+    expect(keys(row)).toEqual(keys(template));
+    expect(keys(template)).toEqual(['selected-tests', 'attestation-row', 'head', 'tree']);
+    expect(has(doc, '`pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present')).toBe(true);
+    expect(has(doc, 'the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`)')).toBe(true);
+    expect(has(doc, '`B-NARROWED-PREGATE-HEAD` | H-B | `Pregate lane not run:` | ADVANCE_TRUSTED')).toBe(true);
+    expect(has(prep, 'the `pregate-narrowing:` status line and each `Pregate lane not run:` line')).toBe(true);
+  });
+
+  // Value: protects=the skill and the published contract say the same thing about narrowing, its decline cases, the loaded-copy check and the ship consequence; fails_when=a sentence drifts apart between the two, the check is dropped or the doc stops saying a narrowed run takes the FULL ship path; why_new=criteria 5, 7 and 9; seam=none; no_claim=installed-agent execution
+  test('the doc and the skill state the same narrowing rule, the loaded-copy check and the ship consequence', () => {
+    const check = `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of ['Narrow the pregate after an accepted pass', 'A matching name or hash alone does not establish coverage.',
+      '`pregate-narrowing:`', '`Pregate lane not run:`', '`pregate-preflight`',
+      'exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged']) {
+      expect(has(prep, phrase), `skill: ${phrase}`).toBe(true);
+      expect(has(doc, phrase), `doc: ${phrase}`).toBe(true);
+    }
+    for (const phrase of ['the pregate narrows to its preflight stage: its non-test checks run and its test lanes do not',
+      'a touched file with no test lane or a requires-remote obligation run the pregate with its ordinary selection',
+      'a caller therefore attests a command that covers what the diff selects and supplies a log readable on that machine to get the saving',
+      'the pass is never a `tests` ledger record',
+      'A narrowed run leaves no full pregate record and no pregate-wrapped `tests` entry, so `/ship-and-land` takes its `FULL` path and runs its own test gate',
+      "An attested pass never satisfies `/ship-and-land`'s test gate, which is unchanged"]) expect(has(doc.toLowerCase(), phrase.toLowerCase()), phrase).toBe(true);
+    // The published grammar did not change: no new version, and the existing external-gate line is untouched.
+    expect(has(doc, '`External gate attestation: caller-attested, not observed; result: <pass|fail>; head: <40-hex>; tree: <40-hex>; command: <redacted command>; exit: <n>; log: <reference>`')).toBe(true);
+    expect(has(doc, 'external-gate/v1')).toBe(true);
+    expect(has(doc, 'external-gate/v2')).toBe(false);
+  });
+
+  // Value: protects=the acceptance record carries the before wall times, leaves every after value unknown and names no consumer; fails_when=a before figure or an unknown is dropped, an after value is invented or a consumer is named; why_new=criterion 9; seam=none; no_claim=installed-agent execution
+  test('the acceptance record states the before wall times and leaves the after values unknown', () => {
+    const raw = read('docs/acceptance/external-gate.md');
+    const at = raw.indexOf('## Pregate narrowing after an accepted pass');
+    expect(at).toBeGreaterThan(-1);
+    const section = raw.slice(at, raw.indexOf('## Limits', at));
+    const rows = section.split('\n').filter((l) => l.startsWith('|')).map((l) => l.split('|').slice(1, -1).map((c) => c.trim()));
+    expect(rows).toEqual([
+      ['Field', 'Before', 'After'],
+      ['---', '---', '---'],
+      ["Caller's own gate", '1,228.7 s', 'unknown'],
+      ['Pregate after the accepted pass', '1,358.2 s', 'unknown'],
+      ['Whole review loop', '5,109.9 s', 'unknown'],
+    ]);
+    expect(has(squash(section), 'Every "after" value reads unknown until a real opted-in run records it')).toBe(true);
+    expect(has(squash(section), 'one unpaired sample, so they establish neither a typical cost nor a saving')).toBe(true);
+    expect(has(squash(raw), '`/ship-and-land` then takes its `FULL` path and runs its own test gate for that head')).toBe(true);
+    expect(has(squash(section), "One consumer\'s review, measured by that consumer and described here without naming it")).toBe(true);
+    expect(has(squash(raw), 'No saving is established')).toBe(true);
+  });
 });
 
 // Value: protects=literal pass exit and token redaction on unsupported versions; fails_when=00 passes or an early version return skips redaction; why_new=Track 48A review regression; seam=none; no_claim=installed-agent execution

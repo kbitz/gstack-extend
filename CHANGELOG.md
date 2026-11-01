@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.0] - 2026-11-01
+
+### Changed
+
+`/review-and-prep` under `full-suite=external` no longer reruns tests that an accepted pass already covered. There is no new policy key or value: a caller already sending `full-suite=external` gets this after upgrading.
+
+- After an accepted `pass` for the final head and tree, the review checks whether the attested command covers every test the diff selects. If it does, and the attested log is readable and shows tests actually ran, the pregate runs its six preflight checks only, recorded under the ledger label `pregate-preflight`.
+- Anything less runs the pregate as today, and the receipt says why: partial or unknown coverage, an unmapped file, a remote obligation, head policy, a pending final-gate repair, or a change in the upstream text this relies on. Narrowing is all-or-nothing, because the installed pregate has no per-lane run.
+- The receipt adds a `pregate-narrowing:` status and one `Pregate lane not run:` line per lane, naming the attestation row, head and tree.
+- `bin/upstream-check` tracks nine more upstream anchors (55 checks, was 45).
+
+An attested pass still never becomes a `tests` ledger record, and the preflight run grants no test credit. `/ship-and-land`'s test gate is unchanged, so a narrowed head takes its `FULL` path and runs the gate at ship: the saving is real for a caller that lands through its own gate and moves the run for one that lands through `/ship-and-land`. The before figures are one unpaired observation, and the "after" wall times stay `unknown` until a real run.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` skill carries the section.
+- To check the loaded copy: `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"` (exit 0 means supported). A copy without it runs the pregate as today, with the same policy line.
+- To get the saving, attest a command that covers what the diff selects and supply a log readable on the reviewing machine.
+
 ## [0.59.0] - 2026-11-01
 
 ### Added

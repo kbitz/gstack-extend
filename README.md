@@ -113,12 +113,15 @@ user-approved, committed exact-line exceptions for MEDIUM false positives, with
 the raw pregate failure retained. HIGH findings remain blocking.
 Preparation also runs `/ship`'s pregate, coverage audit and documentation audit
 on the head it hands off. For a code PR (not the prose-only profile) whose
-prepared head is still the PR head, with an unmoved base, `/ship-and-land` takes
-a release-only path: it reuses the fresh test
-evidence and those audits, writes only the version, CHANGELOG entry and PR
+prepared head is still the PR head, with an unmoved base and reusable full
+pregate and test evidence, `/ship-and-land` takes a release-only path: it reuses
+the fresh test evidence and those audits, writes only the version, CHANGELOG entry and PR
 receipt, then runs the tests that release metadata selects (the full suite
 instead when `full-suite=final` is in force), and hands a finding that needs any other change back to
-`/review-and-prep`. `/ship-and-land --no-land` stops at the merge gate and
+`/review-and-prep`. A pregate narrowed after an accepted external pass leaves
+a preflight record, so shipping takes its `FULL` path and runs its own
+test gate; see [Grammar H-F](docs/workflow-handoffs.md#grammar-h-f-external-gate).
+`/ship-and-land --no-land` stops at the merge gate and
 ends by asking whether to land: it names the head and what landing would ask
 you to accept, such as no CI, and gives the command that starts the landing run,
 which asks for merge approval itself. With a blocker, it names the repair instead.

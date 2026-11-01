@@ -80,9 +80,11 @@ The supplied upstream root must be outside the target project.
 Default `--stage all` requires the full installed check set exactly once.
 Use `--stage preflight` for ship's final preflight record after its full
 test evidence has already qualified, or review-and-prep's external-gate
-pre-pause preflight. The latter satisfies only that preliminary check: it
-grants no test evidence or full-pregate credit, and the full gate still runs
-after an accepted result. A partial `--only secrets` record cannot
+pre-pause preflight or narrowed pregate after an accepted pass. The pre-pause
+record satisfies only that preliminary check: it grants no test evidence or
+full-pregate credit. After an accepted pass the pregate still runs, narrowed
+only under the coverage rule in [Grammar H-F](workflow-handoffs.md#grammar-h-f-external-gate).
+A partial `--only secrets` record cannot
 satisfy either gate. The evaluator checks the raw schema/verdict, current
 tree/HEAD/base, cleared remote obligations, other checks and the upstream
 added-line hash. It matches every blocking finding by exact path, rule and
@@ -126,6 +128,10 @@ disposition evaluation, lane output and caller attestation separately, without
 creating passing `tests` evidence. A pending final-gate repair falls back to
 ordinary review coverage because its unchanged rerun receipt requires a passing
 ledger record. Ship's test-evidence requirements remain unchanged.
+When that pass narrows the pregate to its preflight stage, the failed record is
+the `pregate-preflight` ledger entry and the evaluation uses `--stage preflight`.
+It has no lane output to retain: the receipt's `Pregate lane not run:` lines
+stand in its place, and no passing `tests` evidence exists.
 
 Every invocation also reports entries whose exact line no longer exists in
 the named file, including deleted/renamed files. A stale entry cannot match a
