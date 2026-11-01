@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.58.0] - 2026-11-01
+
+### Changed
+
+- **Incompatible:** the skill `/plan-card` is now `/plan-track`, the roadmap's word for one PR of work. A skill name is a stable surface, so a caller that launches `/plan-card` by name must change. The skill's behavior is unchanged: its inputs (`CARD_FILE` included), its `Verify command:` label and its `stage: plan` line stay as they were. Only the strings built from its name move: the fallback plan directory is now `~/scratch/gstack-plan-track/`, and its telemetry rows use `extend:plan-track`.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, then invoke `/plan-track`. `setup` installs `plan-track` and removes a `plan-card` install this checkout owns. It leaves alone a `plan-card` directory it does not own.
+- On a host `setup` does not manage, remove the old `<host-skills-dir>/plan-card` link by hand and link `plan-track` as `docs/installation.md` shows under "Hosts setup does not manage".
+
 ## [0.57.0] - 2026-10-31
 
 ### Added

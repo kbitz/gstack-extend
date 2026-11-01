@@ -162,7 +162,7 @@ not measurements repeated by this planning run. No saving has been established.
 
 ## A planning skill that works alone
 
-`/plan-card` turns one approved card into a plan in a single session with no
+`/plan-track` turns one approved card into a plan in a single session with no
 subagents, outside voices or other model or agent CLI. It drops the review
 pipeline instead of trimming it, so it is an addition beside `/autoplan-lean`,
 which keeps its pipeline, its description and its routing. `/autoplan-lean`

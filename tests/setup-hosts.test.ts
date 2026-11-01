@@ -89,13 +89,13 @@ describe('setup --host flags', () => {
       const home = join(baseTmp, `retired-plain-file-${host}`);
       const root = hostDir(home, host);
       mkdirSync(root, { recursive: true });
-      for (const skill of ['review-apparatus', 'test-plan']) {
+      for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
         writeFileSync(join(root, skill), 'PERSONAL FILE\n');
       }
       for (const uninstall of [false, true]) {
         const result = runSetup(['--host', host, ...(uninstall ? ['--uninstall'] : [])], home);
         expect(result.exitCode).toBe(0);
-        for (const skill of ['review-apparatus', 'test-plan']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
           expect(result.stdout).toContain(`Skipped ${skill} (target exists but is not a directory)`);
           expect(readFileSync(join(root, skill), 'utf8')).toBe('PERSONAL FILE\n');
         }
@@ -129,11 +129,34 @@ describe('setup --host flags', () => {
       });
     }
 
+    // Value: protects=an upgrade from a plan-card install removes the owned plan-card directory and leaves plan-track installed;
+    //   fails_when=plan-card leaves SETUP's LEGACY_SKILLS or plan-track is missing from SKILLS;
+    //   why_new=the retired-skill cases above use names that were never renamed; seam=none
+    test(`${host} upgrade from a plan-card install leaves only plan-track`, () => {
+      const home = join(baseTmp, `renamed-plan-card-${host}`);
+      const root = hostDir(home, host);
+      const dir = join(root, 'plan-card');
+      mkdirSync(dir, { recursive: true });
+      if (host === 'claude') {
+        // plan-card.md no longer exists in this checkout; the link dangles.
+        symlinkSync(join(realpathSync(ROOT), 'skills', 'plan-card.md'), join(dir, 'SKILL.md'));
+      } else {
+        writeFileSync(join(dir, 'SKILL.md'), 'old plan-card\n');
+      }
+      writeFileSync(join(dir, '.extend-root'), `${realpathSync(ROOT)}\n`);
+      const args = ['--host', host, '--quiet'];
+      for (const _run of [1, 2]) {
+        expect(runSetup(args, home).exitCode).toBe(0);
+        expect(existsSync(dir)).toBe(false);
+        expect(readFileSync(join(root, 'plan-track', 'SKILL.md'), 'utf8')).toContain('name: plan-track');
+      }
+    });
+
     for (const kind of ['regular', 'file-link', 'directory-link', 'foreign-pointer'] as const) {
       test(`${host} retirement preserves personal skills (${kind})`, () => {
         const home = join(baseTmp, `retired-personal-${host}-${kind}`);
         const root = hostDir(home, host);
-        for (const skill of ['review-apparatus', 'test-plan']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
           const dir = join(root, skill);
           const personal = join(home, 'dotfiles', skill);
           mkdirSync(personal, { recursive: true });
@@ -150,7 +173,7 @@ describe('setup --host flags', () => {
         }
         expect(runSetup(['--host', host, '--quiet'], home).exitCode).toBe(0);
         expect(runSetup(['--host', host, '--uninstall', '--quiet'], home).exitCode).toBe(0);
-        for (const skill of ['review-apparatus', 'test-plan']) {
+        for (const skill of ['review-apparatus', 'test-plan', 'plan-card']) {
           const dir = join(root, skill);
           expect(readFileSync(join(dir, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');
           expect(readFileSync(join(home, 'dotfiles', skill, 'SKILL.md'), 'utf8')).toBe('PERSONAL\n');

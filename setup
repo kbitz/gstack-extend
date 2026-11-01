@@ -184,7 +184,7 @@ SKILLS=(
   ship-and-land
   autoplan-lean
   docs-ship
-  plan-card
+  plan-track
 )
 
 LEGACY_SKILLS=(
@@ -192,6 +192,7 @@ LEGACY_SKILLS=(
   test-plan
   browse-native
   roadmap-new
+  plan-card
 )
 
 host_skills_dir() {

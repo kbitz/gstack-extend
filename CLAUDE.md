@@ -163,7 +163,7 @@ Key routing rules:
 - QA, test the site, find bugs → invoke qa
 - Code review, check my diff → invoke review
 - Autoplan with a small plan, autoplan lean → invoke autoplan-lean (upstream /autoplan's review; review record in a sidecar, then a fresh-session implement handoff)
-- Plan one small well-specified card in one session without the review pipeline, plan-card → invoke plan-card (works alone; /autoplan-lean stays the default)
+- Plan one small well-specified card in one session without the review pipeline, plan-track → invoke plan-track (works alone; /autoplan-lean stays the default)
 - Implement the plan, build this plan → invoke implement (targeted checks, then a fresh-session review-and-prep handoff)
 - Review and prep, prepare a draft PR, get Greptile review before shipping → invoke review-and-prep (versioning stays with ship)
 - Ship and land, finish a prepared PR → invoke ship-and-land (reuse verified evidence; run missing/stale stages, then land)
