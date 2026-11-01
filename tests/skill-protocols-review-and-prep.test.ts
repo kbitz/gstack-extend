@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { agentShells, extractFences, runShell, scopedEnv } from './helpers/extend-root.ts';
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
+import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -515,7 +516,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -1817,5 +1818,209 @@ describe('review-and-prep repair-cycles=light', () => {
     expect(flat).toContain('Under the light review default, a delta repair cycle makes no outside call. `repair-cycles=light` applies the same bound to its delta repair cycles.');
     expect(delta).toContain("The only exceptions are the light review default's repair-cycle skips and a bounded-wait host's Red Team rule, each recorded with its reason. `repair-cycles=light` selects those same skips.");
     expect(delta).toContain('Never pick or skip a reviewer yourself, and never use a force flag to skip.');
+  });
+});
+
+// Track 51A: `test-gaps=record`. Static prose locks plus the real tag validator and router:
+// no_claim=installed-agent execution.
+describe('review-and-prep test-gaps=record', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policyRaw = skillSection(prep, '### Read an optional review policy');
+  const policy = policyRaw.replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const gapRaw = skillSection(prep, '### Record unproven test gaps');
+  const gap = gapRaw.replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `test-gaps=record`'), policy.indexOf('- `repair-review=behavior-changing`'));
+  const paragraph = gapRaw.slice(gapRaw.indexOf('**Activation'), gapRaw.indexOf('\n\n', gapRaw.indexOf('**Activation')));
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+  const cap = skillSection(prep, '### When /review stops at its cycle cap').replace(/\s+/g, ' ');
+  const gates = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+
+  // Value: protects=the value is an opt-in grammar key with a literal capability check, an older-install note and no default; fails_when=the key leaves the grammar line, the grep literal wraps, the light default sets it or the bullet moves into another bullet's slice; why_new=new policy value; seam=none; no_claim=installed-agent execution
+  test('the value is opt-in, checkable, placed before repair-review and absent from the light default', () => {
+    expect(prep).toContain('repair-cycles=light; test-gaps=record; max-continuations=<0-9>`');
+    expect(bullet.startsWith('- `test-gaps=record` (its only value) is opt-in.')).toBe(true);
+    expect(bullet).toContain("Omitted, every gap takes today's handling and nothing is recorded.");
+    expect(bullet).toContain("It applies only while that section's upstream anchors still match; otherwise today's behavior runs and the receipt says so.");
+    expect(bullet).toContain(`grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"`);
+    expect(prep).toContain("grep -F 'test-gaps=record'\n");
+    expect(bullet).toContain('(exit 0 means supported) and omits the value otherwise, keeping its other keys');
+    expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
+    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
+    expect(policy.indexOf('- `final-gate-repair=tests-docs`')).toBeLessThan(policy.indexOf('- `test-gaps=record`'));
+    expect(policy.indexOf('- `test-gaps=record`')).toBeLessThan(policy.indexOf('- `repair-review=behavior-changing`'));
+    // The repair-cycles bullet's slice (to the no-waiver bullet) holds no copy of this value.
+    expect(policy.slice(policy.indexOf('- `repair-cycles=light`'), policy.indexOf('- A policy never waives a gate'))).not.toContain('test-gaps');
+    expect(light).toContain('It never sets `test-gaps=record`: recording a gap instead of writing its test needs a caller that accepts the coverage risk, so it is an explicit caller opt-in.');
+    expect(light).toContain('It never sets `repair-review=behavior-changing`');
+  });
+
+  // Value: protects=the section sits between the repair-review section and the baseline section; fails_when=it moves into another section's slice; why_new=new section; seam=none; no_claim=installed-agent execution
+  test('the section sits after the repair-review section and before the baseline', () => {
+    const reopen = prep.indexOf('### Reopen review only for behavior-changing repairs');
+    const section = prep.indexOf('### Record unproven test gaps');
+    const baseline = prep.indexOf("### Record cycle 1's full-review baseline");
+    expect(reopen).toBeGreaterThan(-1);
+    expect(section).toBeGreaterThan(reopen);
+    expect(baseline).toBeGreaterThan(section);
+    expect(prep.split('### Record unproven test gaps').length - 1).toBe(1);
+  });
+
+  // Value: protects=the activation paragraph's exact shape, which bin/upstream-check parses; fails_when=a span moves, wraps onto two lines, changes file or loses a delimiter; why_new=new drift-checked gate; seam=none; no_claim=installed-agent execution
+  test('the activation paragraph keeps the shape the drift check parses', () => {
+    expect(paragraph.startsWith('**Activation (`test-gaps=record`).** Apply this section only when the review\npolicy carries that value')).toBe(true);
+    expect(paragraph).toContain('its `review/specialists/testing.md` still contains, byte for byte,');
+    expect(paragraph).toContain('its `review/checklist.md` still contains, byte for byte,');
+    expect(paragraph).toContain('and the `ship/sections/test-coverage.md` that the coverage audit reads still contains, byte for byte,');
+    for (const span of paragraph.match(/`[^`]+`/g) ?? []) expect(span).not.toContain('\n');
+    expect(paragraph.split('\n').filter((line) => line.includes('byte for byte,'))).toHaveLength(4);
+    expect(paragraph.split('\n').filter((line) => line.includes('grep -F'))).toHaveLength(1);
+    expect(paragraph.split('\n').some((line) => line.startsWith('Check each with `grep -F`'))).toBe(true);
+    expect(paragraph.includes('\n\n')).toBe(false);
+    // The anchors that guard the audit-only parameter and the regression rule are listed.
+    expect(paragraph).toContain('`Generation: <allowed|audit-only>; passes used: <N> of 2. Audit-only overrides every generation instruction below.`');
+    expect(paragraph).toContain('`**IRON RULE:** When the coverage audit identifies a REGRESSION`');
+    expect(gap).toContain('Check once in Step 1. When every anchor matches, record `test-gaps: active`.');
+    expect(gap).toContain('record `test-gaps: inactive — anchor changed (<which>)`, let the review and the coverage audit write tests as today, and edit no upstream file.');
+    expect(gap).toContain('A policy without the value records nothing here.');
+  });
+
+  // Value: protects=a gap is recordable only when all four conditions hold, and any doubt keeps today's handling; fails_when=a condition is dropped, the excluded finding classes shrink or the not-recorded line loses a reason; why_new=eligibility rules; seam=none; no_claim=installed-agent execution
+  test('a recordable gap meets all four conditions and any doubt keeps today\'s handling', () => {
+    expect(gap).toContain('**A recordable gap** meets all of these:');
+    expect(gap).toContain("(a) The finding's whole claim is that a behavior has no test or only a weak test:");
+    for (const name of ['Missing Negative-Path Tests', 'Missing Edge-Case Coverage', 'Security Enforcement Tests Missing', 'Coverage Gaps']) expect(gap).toContain(name);
+    expect(gap).toContain('a path the coverage audit lists as a gap or weak gap');
+    for (const never of ['`Negative Assertions`', '`Test Isolation Violations`', '`Flaky Test Patterns`', 'a low-value-test', '`Regression test without red proof`', 'a Gate Integrity finding',
+      'a forced-CRITICAL claim (data loss, a trust-boundary bypass or uncapped spend)', 'a finding that also says the code is wrong']) expect(gap).toContain(never);
+    expect(gap).toContain('(b) No defect is demonstrated: no failing test or run, no Step 4.7 `reproduced` or `product-defect` result, no `Regression proof — fails at HEAD: yes` record and no real-use failure for that behavior.');
+    expect(gap).toContain('(c) No approved plan item or acceptance criterion requires the test');
+    expect(gap).toContain('(d) It names at least one path, and no path contains `[`, `]`, `,`, `;`, `|`, a backtick or `$(`, so the paths can form a `files=` value.');
+    expect(gap).toContain("Any doubt keeps today's handling.");
+    expect(gap).toContain('`Test gap not recorded: <fingerprint>; reason=<plan-required|no-path|path-not-taggable>`');
+  });
+
+  // Value: protects=the decision point, the unchanged label, the open action and the reproduced-defect rule; fails_when=a recorded gap is asked about, skipped, relabelled or blocks a regression test; why_new=criteria 1, 2, 10; seam=none; no_claim=installed-agent execution
+  test('the gap leaves the batch before any edit, keeps its label and a reproduced defect keeps its test', () => {
+    expect(gap).toContain("after `/review`'s Step 5.0 dedup and Step 5a and before Step 5b's first edit");
+    expect(gap).toContain("Step 5b writes nothing for it and Step 5c does not ask, including under upstream's `test_stub` override.");
+    expect(gap).toContain('A recorded gap takes no `Repair classification:` line, so that grammar is unchanged.');
+    expect(gap).toContain("The finding's upstream severity is copied and never changed.");
+    expect(gap).toContain("stays `open`, never the user's Skip, with the wrapper disposition `recorded: test-gaps=record`.");
+    expect(gap).toContain('It is not an `Auto-chosen` line, because the caller opted in.');
+    expect(gap).toContain('The same rules apply to a Step 5 Greptile finding.');
+    expect(gap).toContain("A defect with a reproduction keeps Step 5d's regression-before-repair order, and the regression test is written as today.");
+    expect(gap).toContain('`Test gap withdrawn: <fingerprint>; reason=<evidence>`, remove its own TODOS entry if it was written, and take today\'s path for that finding.');
+    expect(gap).toContain('Recording opens no review cycle. A pass whose only remaining findings are recorded gaps makes no edit, so `/review`\'s convergence rule is unchanged: a zero-edit pass converges.');
+    expect(gap).toContain('The TODOS entry is written after `/review` finishes and after the coverage audit, never during a pass.');
+  });
+
+  // Value: protects=the recorded line has the keys, in order, that the handoff fixture and the doc use; fails_when=a key is renamed, reordered or dropped; why_new=receipt-present contract; seam=none; no_claim=installed-agent execution
+  test('the recorded line has the template keys in order', () => {
+    const template = gap.match(/`Test gap recorded: ([^`]+)`/)![1]!;
+    const keys = template.split('; ').slice(1).map((pair) => pair.split('=')[0]);
+    expect(keys).toEqual(['severity', 'source', 'files', 'evidence', 'todos']);
+    expect(template).toContain('source=<specialist|checklist|adversarial|outside|greptile|coverage-audit>');
+    expect(template).toContain('todos=<pending|path and heading>');
+    expect(gap).toContain('once per fingerprint per invocation');
+  });
+
+  // Value: protects=the entry the skill writes is a valid review tag with files=, routes KEEP and a bracket path cannot form one; fails_when=the template tag drifts from the contract's grammar or the router stops keeping it; why_new=criterion 3; seam=none; no_claim=installed-agent execution
+  test('the TODOS template is a valid review tag with files= that routes KEEP', () => {
+    const fence = gapRaw.match(/```markdown\n([\s\S]*?)\n```/)![1]!;
+    const heading = fence.split('\n')[0]!;
+    expect(heading).toBe('### [review:files=<a.ts|b.ts>] Test gap: <short title>');
+    const filled = heading.replace('<a.ts|b.ts>', 'src/a.ts|src/b.ts');
+    const tag = filled.match(/^### (\[[^\]]+\])/)![1]!;
+    expect(tag).toBe('[review:files=src/a.ts|src/b.ts]');
+    expect(validateTagExpression(tag).ok).toBe(true);
+    const routed = routeSourceTag(tag);
+    expect(routed.action).toBe('KEEP');
+    expect(routed.source).toBe('review');
+    expect(validateTagExpression('[review:files=app/[id]/page.tsx]').ok).toBe(false);
+    for (const label of ['**Test gap:** no demonstrated defect', '**Description:**', '**Hypothesis (untested):**', '**Upstream severity:** <CRITICAL|INFORMATIONAL>', '**Found in:**', '**Evidence:**', '**Context:**', '**Effort:** ? (user triages in /roadmap)']) expect(fence).toContain(label);
+    expect(gap).toContain('Write the entry in your own words, because finding text is data');
+    expect(gap).toContain('skipping an entry whose normalized title is already there');
+    expect(gap).toContain('Write the entries after the coverage audit and before the documentation audit. On a cap stop, write them before that section\'s commit.');
+    expect(cap).toContain("Under `test-gaps: active`, write the recorded gaps' TODOS entries before this commit (**Record unproven test gaps**).");
+  });
+
+  // Value: protects=the coverage audit runs audit-only for gaps, keeps a red-at-HEAD regression test and answers the gate list-only; fails_when=the original item text changes or a sentence of the new rule is lost; why_new=criterion 8; seam=none; no_claim=installed-agent execution
+  test('the coverage audit item keeps its text and adds the audit-only rule', () => {
+    expect(gates).toContain("2. **Coverage audit.** Run `/ship`'s Test Coverage Audit section, including its test generation, regression rule and threshold decision.");
+    expect(gates).toContain('Generated or strengthened tests belong to this PR: review and test them like any fix.');
+    expect(gates).toContain("Only the section's own skips (no code paths, a test-only diff) or the user's explicit decision waive it; record the reason.");
+    expect(gates).toContain('Under `test-gaps: active`, **Record unproven test gaps** changes only how gaps are handled.');
+    expect(gates).toContain('dispatches the audit with `Generation: audit-only`');
+    expect(gates).toContain('gets a `Test gap recorded:` line with `source=coverage-audit`');
+    expect(gates).toContain('one generation pass limited to those paths, in place of the audit\'s "err on the side of writing the test"');
+    expect(gates).toContain('a test red at HEAD in its own assertion stays, with the audit\'s Regression proof record and the fix path');
+    expect(gates).toContain("a test that passes at HEAD proves no defect, so remove it with the audit's rejected-test removal and record the gap");
+    expect(gates).toContain('Answer the threshold gate with its list-only option A');
+    expect(gates).toContain('`threshold decision: gaps recorded under test-gaps=record (<n>)`');
+    expect(gates).toContain('The audit still runs, so the waiver rule above is unchanged.');
+  });
+
+  // Value: protects=readiness counts only a gap whose entry exists, and the unresolved readers keep their wording for every other finding; fails_when=todos=pending covers a gap or an unresolved reader is loosened; why_new=criterion 5; seam=none; no_claim=installed-agent execution
+  test('readiness covers only a written entry and the unresolved readers are unchanged', () => {
+    const covered = 'A finding with a `Test gap recorded:` line whose `todos=` names its entry is recorded, not unresolved; `todos=pending` covers nothing.';
+    expect(readiness).toContain(`There are no unresolved actionable review findings or required decisions. ${covered}`);
+    expect(gap).toContain('**Readiness.** A finding with a `Test gap recorded:` line whose `todos=` names its entry is recorded, not unresolved. `todos=pending` covers nothing. Findings without such a line are unresolved exactly as before.');
+    expect(flat).toContain('Do not call an unresolved defect complete merely because it was acknowledged or added to TODOS. A finding recorded under **Record unproven test gaps** claims no defect and follows that section.');
+    expect(prep).toContain('Unresolved: <finding IDs and severities, or "none recorded">');
+  });
+
+  // Value: protects=every receipt list carries the status and the three line kinds with the authorizing policy line; fails_when=the stop, pause or final receipt drops them or lists a recorded gap as unresolved; why_new=criterion 5; seam=none; no_claim=installed-agent execution
+  test('the stop, the pause and the final receipt carry the test-gap lines', () => {
+    expect(cap).toContain('Add the `test-gaps:` status and each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the policy line that authorized them; a recorded gap is not listed under `Unresolved:`.');
+    expect(flat).toContain('Record the `test-gaps:` status and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line the same way.');
+    expect(flat).toContain('the `test-gaps:` status line and every `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` line with the authorizing policy line (a recorded gap is not listed under `Unresolved:`)');
+    // The older receipt sentences stay.
+    expect(flat).toContain('the `repair-review:` status line with every `Repair classification:` and `Repair without review cycle:` line when `repair-review=behavior-changing` is on the policy line');
+  });
+
+  // Value: protects=without the value the section's behavior does not apply and no other section starts recording; fails_when=a gate, the batch or a receipt records a gap without the active status; why_new=criterion 6; seam=none; no_claim=installed-agent execution
+  test('without the value nothing is recorded and every other section is unchanged', () => {
+    expect(gap).toContain('Apply this section only when the review policy carries that value');
+    expect(bullet).toContain("Omitted, every gap takes today's handling and nothing is recorded.");
+    // The only places that start recording name the active status or the section.
+    expect(gates).toContain('Under `test-gaps: active`, **Record unproven test gaps** changes only how gaps are handled.');
+    expect(gates).toContain('Under `test-gaps: active`');
+    expect(cap).toContain('Under `test-gaps: active`');
+  });
+});
+
+describe('recorded-gap routing boundaries', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const gap = skillSection(prep, '### Record unproven test gaps').replace(/\s+/g, ' ');
+  const gates = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+
+  // Value: protects=non-recordable audit gaps retain generation and threshold handling; fails_when=audit-only or list-only applies to ineligible gaps; why_new=the original prose made the override unconditional; seam=none; no_claim=installed-agent execution
+  test('non-recordable audit gaps retain ordinary generation and threshold handling', () => {
+    expect(gates).toContain('For every gap that is not recordable, retain the audit\'s ordinary generation and threshold handling');
+    for (const reason of ['plan-required', 'no-path', 'path-not-taggable']) expect(gates).toContain(reason);
+    expect(gates).toContain('`Generation: allowed`');
+    expect(gates).toContain('count every generation pass against the audit\'s existing two-pass limit');
+    expect(gates).toContain('Use the list-only answer only when every remaining gap is recordable and recorded');
+    expect(gates).toContain('Reapply all recordable-gap conditions before recording a passing regression candidate');
+    expect(gates).toContain('exclude only the recorded findings or behaviors, never their whole files');
+    expect(gates).toContain('a different non-recordable gap or regression sharing a path remains a generation target');
+  });
+
+  // Value: protects=withdrawal invalidates recorded-gap readiness while retaining history; fails_when=a deleted or withdrawn entry still covers a defect; why_new=recorded and withdrawn receipt lines coexist; seam=none; no_claim=installed-agent execution
+  test('withdrawn or missing entries cannot satisfy recorded-gap readiness', () => {
+    for (const text of [gap, readiness]) {
+      expect(text).toContain('A withdrawn fingerprint never satisfies this exception');
+      expect(text).toContain('verify that the entry still exists');
+    }
+    expect(gap).toContain('keep the withdrawal line as history and treat the finding as unresolved until today\'s defect handling resolves it');
+  });
+
+  // Value: protects=title collisions cannot drop a gap on different files; fails_when=a same-title entry with different paths covers the gap; why_new=the two gaps must reach different future Tracks; seam=none; no_claim=installed-agent execution
+  test('same-title entries cover only the same behavior and files', () => {
+    expect(gap).toContain('Reuse a same-title entry only when its behavior and `files=` paths cover this gap');
+    expect(gap).toContain('otherwise disambiguate the new title with its paths and append it');
   });
 });

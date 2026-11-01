@@ -1,7 +1,7 @@
 # Source-Tag Contract
 
 Canonical schema for items written to `TODOS.md` by skills. All producer skills
-(`/pair-review`, `/full-review`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
+(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual) emit entries that match this contract. `/roadmap`'s
 scrutiny gate, outcome-based admission, and dedup pipeline parse entries against
 this contract. `bin/roadmap-audit` validates entries and emits `STATUS: fail`
 on malformed ones.
@@ -142,7 +142,7 @@ accepted so existing project backlogs still validate and retain their routing.
 | `group` | pair-review (legacy: test-plan) | integer, or `pre-test` | Roadmap Group that surfaced this item |
 | `item` | pair-review (legacy: test-plan) | integer | Test-plan item index within the group |
 | `severity` | full-review, review | `critical` \| `necessary` \| `nice-to-have` \| `edge-case` | Reviewer's severity classification |
-| `files` | full-review (when single-cluster) | pipe-separated paths | File paths the finding references |
+| `files` | full-review (when single-cluster), review | pipe-separated paths | File paths the finding references |
 | `track` | plan-ceo-review, plan-eng-review | track id (e.g. `4A`, `11A.2`) | The Track being reviewed; anchors the deferral to its origin |
 | `defer` | plan-ceo-review, plan-eng-review | `true` | Marks an item as deferred-from-scope by the review (in-scope work cut to keep the Track sized correctly), distinct from a normal review finding. Always written as `defer=true` (the grammar requires `key=value`; bare flags are rejected). |
 
@@ -174,7 +174,7 @@ amendment to cut; writing `defer=true` does not supply that approval.
 | `full-review:nice-to-have` | PROMPT | Non-essential improvement |
 | `full-review:edge-case` | SUGGEST_KILL | Edge or hypothetical — bias toward drop |
 | `full-review` (no severity, legacy) | PROMPT | Legacy tag without taxonomy |
-| `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. |
+| `review` (any form) | KEEP | Pre-landing `/review` finding — adversarial subagent + codex on a specific PR; defaults align with `full-review:necessary` semantics. Optional `severity=` mirrors the full-review taxonomy. `/review-and-prep` also writes `[review:files=<paths>]` for a recorded test gap (a `**Test gap:** no demonstrated defect` bullet, no `severity=`); it is KEEP like any `review` tag, and `/roadmap` places it by its `files=` instead of by a defect claim. |
 | `plan-ceo-review:track=<id>,defer=true` | PROMPT | Review deferral; reassess the selected target before placement, deferral or rejection |
 | `plan-eng-review:track=<id>,defer=true` | PROMPT | Same target-based reassessment as plan-ceo-review |
 | `plan-ceo-review` / `plan-eng-review` (no `defer=true`) | PROMPT | Review-surfaced finding that wasn't in original scope — ask user whether it's a deferred-scope item or new work |
@@ -209,6 +209,16 @@ amendment to cut; writing `defer=true` does not supply that approval.
 - **Description:** hardcoded 60s TTL doesn't fit all query types.
 - **Hypothesis (untested):** consider whether the TTL should be removed entirely (cache-busting on write) before adding configurability — adding a config knob is the additive direction.
 - **Effort:** M (human: ~1 day / CC: ~30 min)
+
+### [review:files=src/export.ts|src/export-format.ts] Test gap: empty batch is not tested
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** `exportBatch` has no test for an empty batch; the code path returns early and nothing asserts its output.
+- **Hypothesis (untested):** a test that passes an empty batch and expects an empty file; re-verify the early return first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/export.ts:41
+- **Evidence:** read the function and its existing tests; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/example-org/example-repo/pull/42 at a1b2c3d (2026-11-01).
+- **Effort:** ? (user triages in /roadmap)
 
 ### [manual] Explore webhook outbound events for v1.1
 - **Why:** customer ask from two accounts.

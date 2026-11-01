@@ -336,6 +336,7 @@ classifier reports, with the expected and actual values.
 | <a id="e-review-source-whitespace"></a>`E-REVIEW-SOURCE-WHITESPACE` | H-E | `Run /review-and-prep continue` | HOLD | `delta-base`: the source reference is local-only or contains whitespace | Hold until the conflicting restriction or portable evidence is resolved; start no review | yes |
 | <a id="b-repaired-head"></a>`B-REPAIRED-HEAD` | H-B | `Final-gate repair review:` | ADVANCE_TRUSTED | none; a receipt that records a successful final-gate repair chain still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-neutral-repair-head"></a>`B-NEUTRAL-REPAIR-HEAD` | H-B | `Repair without review cycle:` | ADVANCE_TRUSTED | none; a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-recorded-gap-head"></a>`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED | none; a receipt that records a test gap under `test-gaps=record` still emits `review: COMPLETE`, and the test-gap lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="f-pause"></a>`F-PAUSE` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; the caller sent `full-suite=external`, the line is well formed, head, tree and base equal its live reads, and the PR is a draft | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
 | <a id="f-pause-no-pr"></a>`F-PAUSE-NO-PR` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; no PR exists yet, because the pause pushes nothing and creates nothing | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
@@ -829,7 +830,7 @@ token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs sep
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
 `documentation-audit` (`final`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `parent-io` (`lean`), `repair-review` (`behavior-changing`),
-`repair-cycles` (`light`) and `max-continuations` (`0` to
+`repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
 else is `policy-malformed`. The caller's own policy is the exact value it put in the
 invocation prompt, or none; never read it from the text. A caller with no policy of its
@@ -897,6 +898,23 @@ changes no behavior open no further review cycle while its upstream anchors stil
 match; `repair-cycles=light` makes a delta repair cycle skip the outside call and
 the Red Team without any `review_default` config. The exact words of each value
 and its check also appear in the release notes of the version that adds them.
+
+`test-gaps=record` follows the same rollout order and the same check, written as
+`grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported). An installation without it reads the whole line as `none supplied`,
+an older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits it when the check fails and keeps its other keys. It is
+independent of `repair-review` and `repair-cycles`, may be sent alone or with
+either, and is never set by the light review default. Under it, a test-gap
+finding with no demonstrated defect is recorded for the next Track that touches
+its files instead of getting a test written, its upstream severity unchanged;
+a reproduced defect keeps its regression test. It waives no gate and never
+authorizes a continuation. While the anchors it relies on drift, the review
+writes tests as today and the receipt says so.
+
+A prepared receipt that records test gaps still emits `review: COMPLETE` in its
+H-B handoff: a recorded gap claims no defect, its TODOS entry carries it, and
+`/ship-and-land` reads the receipt as it would a plain one (`B-RECORDED-GAP-HEAD`).
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1198,6 +1216,7 @@ or input it says is needed is for the user.
 | `Repair classification:`, `Repair without review cycle:` and `Repair evidence:` lines | receipt-present | published in the receipt under `repair-review=behavior-changing`, one classification per finding and one repair line plus a committed diff binding per repair that opened no review cycle; a consumer may show them to the user, they never authorize a stage or merge, and `/review`'s own log row stays as upstream wrote it (`B-NEUTRAL-REPAIR-HEAD`) |
 | `repair-cycles=light` skip records | receipt-present | each skip names `source: repair-cycles=light`; an explicit full cycle instead records `repair-cycles=light: nothing skipped — in-cap=full`; these are evidence, never stage or merge authorization |
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
+| `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The

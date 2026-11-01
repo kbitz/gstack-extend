@@ -1117,6 +1117,18 @@ describe('(D) /full-review vocabulary matches the source-tag contract', () => {
     expect(validateTagExpression('[full-review:critical,files=src/$(id).ts]').ok).toBe(false);
   });
 
+  // Value: protects=the contract names /review-and-prep as a producer, scopes `files` to review and full-review, documents the test-gap tag, and the validator and router accept it; fails_when=the files row, the producer list or the routing note drifts from the tag the skill writes; why_new=criterion 3; seam=none
+  test('the contract names a review-tagged test gap and its files scope', () => {
+    const flat = contract.replace(/\s+/g, ' ');
+    expect(flat).toContain('| `files` | full-review (when single-cluster), review | pipe-separated paths | File paths the finding references |');
+    expect(flat).toContain('(`/pair-review`, `/full-review`, `/review-and-prep`, `/investigate`, manual)');
+    expect(flat).toContain('`/review-and-prep` also writes `[review:files=<paths>]` for a recorded test gap (a `**Test gap:** no demonstrated defect` bullet, no `severity=`); it is KEEP like any `review` tag, and `/roadmap` places it by its `files=` instead of by a defect claim.');
+    expect(contract).toContain('### [review:files=src/export.ts|src/export-format.ts] Test gap: empty batch is not tested');
+    expect(validateTagExpression('[review:files=src/a.ts|src/b.ts]').ok).toBe(true);
+    expect(validateTagExpression('[review:files=app/[id]/page.tsx]').ok).toBe(false);
+    expect(routeSourceTag('[review:files=src/a.ts|src/b.ts]').action).toBe('KEEP');
+  });
+
   test.each(['critical', 'necessary', 'nice-to-have'])(
     'agent prompts define %s exactly as the contract does',
     (severity) => {

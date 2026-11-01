@@ -93,3 +93,91 @@ agent classifies a repair as the text asks is unproven. No saving is
 established: the "before" sample is unpaired and the "after" side is unknown.
 No checkpoint is awarded. Revisit when an opted-in run has recorded the fields
 above and a similar run without the values can be set beside it.
+
+## Test-gap routing (Track 51A)
+
+Track 51A, recorded against source revision `f3ed03a` plus this Track's
+implementation. This record covers prose, fixtures and tests of one more
+optional `Review policy:` value, `test-gaps=record` (see
+[the policy grammar](../workflow-handoffs.md#grammar-h-e-continue)), the
+`/roadmap` rule that places what it records, and the `bin/upstream-check`
+anchors behind it (`review-and-prep.test-gaps`). No installed-agent run backs
+it: a static prose test is not installed-agent acceptance ([SPEC](../SPEC.md)).
+It establishes no saving and awards no checkpoint ([SPEC](../SPEC.md) selected
+target acceptance and P1).
+
+### The value
+
+`test-gaps=record` (its only value) makes a test-gap finding with no
+demonstrated defect, such as an untested state-matrix cell, a recorded gap
+instead of a written test. The finding keeps its upstream severity, a reproduced
+defect still gets its regression test, and the coverage audit that
+`/review-and-prep` runs applies the same rule. Each recorded gap goes to TODOS
+with the `review` source tag and a `files=` value, so `/roadmap` places it on the
+next Track whose `_touches:` cover those files. A gap with no usable path, or
+whose test an approved plan item requires, is not recorded and takes today's
+handling. It applies only while the installed upstream text matches (the anchors
+are in `bin/upstream-check`'s inventory); on drift the review writes tests as
+today and the receipt says `test-gaps: inactive`. Omitted, every default is
+unchanged. The value waives no gate and does not authorize a continuation.
+
+### Before: what recorded runs show
+
+Read on 2026-11-01 with `bin/gstack-extend-telemetry metrics read --session-id
+<id>` for every `review-and-prep` session in
+`~/.gstack-extend/analytics/stage-runs.jsonl` (117 sessions; 102 had no metrics
+file). Aggregates only: no session ID or repository name is published.
+
+| Field | Value |
+|---|---|
+| Sample size | 15 runs with a metrics summary |
+| Status | 12 `ok`, 3 `partial` |
+| `data.local_passes` | 0 to 3, median 2 (9 of 15 runs report it) |
+| `data.fix_cycles` | 0 to 3, median 1 (12 of 15 runs report it) |
+| Cycles spent on test gaps specifically | unknown |
+
+The last row reads `unknown` because the metrics finding record has no
+per-finding attribution, so a cycle cannot be traced to the gap that caused it.
+The sample is unpaired: the runs differ in size, host and policy, none ran with
+this value, and no run was repeated with and without it.
+
+### After: to be measured
+
+The same fields, plus the two counts below, read `unknown` until a real run with
+the value on its policy line records them.
+
+| Field | Value |
+|---|---|
+| Sample size, status, `local_passes`, `fix_cycles` | unknown |
+| `/review` log row `cycles` for the run | unknown |
+| Count of `Test gap recorded:` lines in the receipt | unknown |
+
+To fill them: after a release that carries the value is installed, run a review
+with `test-gaps=record` on its policy line; read its metrics with the command
+above; read the `/review` log row's `cycles`; count the receipt's
+`Test gap recorded:` lines; compare against a run of similar size without the
+value, and record that pairing here. Until then the criterion's "after" side is
+not measured, and the owner decides whether to accept it on the first opted-in
+run after a release installs.
+
+### Release notes
+
+For `/ship` to copy verbatim into the CHANGELOG entry of the version that adds
+the value. A test cannot pin text `/ship` has not written, so the
+`/ship-and-land` review checks the entry against this block.
+
+```text
+`/review-and-prep` accepts one more optional `Review policy:` value.
+
+- `test-gaps=record`: a test-gap finding with no demonstrated defect (for example an untested state-matrix cell) is recorded in TODOS for the next Track that touches its files instead of getting a test written in the same invocation. The finding keeps its upstream severity, a reproduced defect still gets its regression test, and the coverage audit that `/review-and-prep` runs follows the same rule. A gap with no usable path, or whose test an approved plan item requires, is not recorded and takes today's handling. It applies only while the installed `/review` and coverage audit text matches the anchors in `bin/upstream-check`; otherwise the review writes tests as today and the receipt records `test-gaps: inactive`. Before sending it, check the loaded copy: `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+
+Older installations: an installation without the value reads the whole line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`. A caller omits the value when its check fails and keeps its other keys. Omitted, every default is unchanged. The value waives no gate and does not authorize a continuation.
+```
+
+### Limits
+
+Prose, fixtures and tests only. No installed-agent run backs it, so whether an
+agent judges "no demonstrated defect" as the text asks is unproven. No saving is
+established: the "before" sample is unpaired and the "after" side is unknown.
+No checkpoint is awarded. Revisit when an opted-in run has recorded the fields
+above and a similar run without the value can be set beside it.

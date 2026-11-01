@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.59.0] - 2026-11-01
+
+### Added
+
+`/review-and-prep` accepts one more optional `Review policy:` value.
+
+- `test-gaps=record`: a test-gap finding with no demonstrated defect (for example an untested state-matrix cell) is recorded in TODOS for the next Track that touches its files instead of getting a test written in the same invocation. The finding keeps its upstream severity, a reproduced defect still gets its regression test, and the coverage audit that `/review-and-prep` runs follows the same rule. A gap with no usable path, or whose test an approved plan item requires, is not recorded and takes today's handling. It applies only while the installed `/review` and coverage audit text matches the anchors in `bin/upstream-check`; otherwise the review writes tests as today and the receipt records `test-gaps: inactive`. Before sending it, check the loaded copy: `grep -F 'test-gaps=record' "<installed skill dir>/SKILL.md"` (exit 0 means supported).
+- `/roadmap` places a recorded gap as a small task on the first Track whose `_touches:` cover its files, or defers it to Future with a trigger until one does. A recorded gap never creates a Track on its own.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` and `roadmap` skills carry the value.
+- Older installations: an installation without the value reads the whole line as `none supplied`, and an older handoff parser holds a returned policy that carries it as `policy-malformed`. A caller omits the value when its check fails and keeps its other keys. Omitted, every default is unchanged. The value waives no gate and does not authorize a continuation.
+
 ## [0.58.0] - 2026-11-01
 
 ### Changed

@@ -292,6 +292,16 @@ describe('Track 16D roadmap routing and renames', () => {
     }
   });
 
+  // Value: protects=a review-tagged test gap with files= routes KEEP; fails_when=the router starts killing or prompting the tag the review skill writes; why_new=criterion 3; seam=none
+  test('roadmap-route keeps a review-tagged test gap carrying files=', () => {
+    const script = '_EXTEND_ROOT="$CHECKOUT"\n"$_EXTEND_ROOT/bin/roadmap-route" \'[review:files=a.ts|b.ts]\'\n';
+    for (const sh of agentShells()) {
+      const r = runShell(sh.shell, sh.args, script, scopedEnv(join(extendRootTmp, 'route-gap-home'), { CHECKOUT: ROOT }));
+      expect(r.status).toBe(0);
+      expect(r.stdout ?? '').toContain('action=KEEP');
+    }
+  });
+
   test('renames block matches the static import for an apostrophe-named root', () => {
     const work = join(extendRootTmp, 'renames-work');
     mkdirSync(join(work, 'docs'), { recursive: true });
@@ -313,5 +323,29 @@ describe('Track 16D roadmap routing and renames', () => {
     expect(r.status).toBe(0);
     expect((r.stdout ?? '').trim()).toBe(expected.trim());
     expect(expected).toContain('Track 1A');
+  });
+});
+
+describe('Track 51A recorded test gaps at drain', () => {
+  const roadmap = readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8');
+  const drain = roadmap.slice(roadmap.indexOf('### Verify at drain time'), roadmap.indexOf('### Unobserved defects wait for manifestation'));
+  const flat = drain.replace(/\s+/g, ' ');
+
+  // Value: protects=the drain rule sits in Verify at drain time, exempts a recorded gap from the manifestation kill, discharges or kills on re-verification, places it by files= and defers with a touches trigger; fails_when=a sentence is dropped, the rule moves after the manifestation gate or the placement loses its size cap; why_new=criterion 3; seam=none
+  test('a recorded test gap is placed by its files= value and is not a defect claim', () => {
+    expect(drain.length).toBeGreaterThan(0);
+    expect(flat).toContain('**A recorded test gap is not a defect claim.**');
+    expect(flat).toContain('whose tag is `review` with `files=` and whose body has the bullet `**Test gap:** no demonstrated defect` was filed by `/review-and-prep` under `test-gaps=record`');
+    expect(flat).toContain('so the manifestation kill below does not apply to it, and it never admits a Track on its own');
+    expect(flat).toContain('`discharge` it when a test now covers the behavior, `kill` it when its paths are gone');
+    expect(flat).toContain('**place** it as one S task on the first Track in plan order whose `_touches:` cover every `files=` path (the same path, or a path under a directory entry ending `/`)');
+    expect(flat).toContain("add the task's proposed test file to that Track's `_touches:`");
+    expect(flat).toContain('the one named exception to "proximity to touched files" in **Admission before decomposition**');
+    expect(flat).toContain("**defer** it to Future with `**Revisit when:** a Track's `_touches:` cover <paths>.` Re-check that trigger on each run.");
+    expect(flat).toContain('or the task would break a size cap (**Sizing discipline**)');
+    // The gate it is exempt from still limits itself to defect claims, and admission still refuses proximity alone.
+    expect(roadmap).toContain('judges defect claims only');
+    expect(roadmap.replace(/\s+/g, ' ')).toContain('future scale and proximity to touched files do not establish necessity');
+    expect(roadmap.indexOf('**A recorded test gap is not a defect claim.**')).toBeLessThan(roadmap.indexOf('### Unobserved defects wait for manifestation'));
   });
 });

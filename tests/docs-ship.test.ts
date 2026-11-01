@@ -497,24 +497,30 @@ describe('continuation review regressions', () => {
   // fails_when=compact JSON siblings cause false stops or multiline config bumps escape;
   // why_new=existing version fixtures change a key and value on the same line; seam=none;
   // no_claim=all metadata languages or execution of a policy bump.
-  test('version metadata distinguishes unchanged JSON values and multiline bumps', () => {
+  describe('version metadata distinguishes unchanged JSON values and multiline bumps', () => {
     for (const opted of [false, true]) for (const bom of ['', '\uFEFF']) {
-      const r = repo({ 'package.json': bom + '{"description":"new","version":"1.2.0"}\n' }, {
-        'package.json': bom + '{"version":"1.2.0","description":"old"}\n',
-        'AGENTS.md': opted ? '<!-- docs-ship:docs=package.json -->\n' : '# Rules\n',
+      test(`unchanged JSON version (opted=${opted}, BOM=${Boolean(bom)})`, () => {
+        const r = repo({ 'package.json': bom + '{"description":"new","version":"1.2.0"}\n' }, {
+          'package.json': bom + '{"version":"1.2.0","description":"old"}\n',
+          'AGENTS.md': opted ? '<!-- docs-ship:docs=package.json -->\n' : '# Rules\n',
+        });
+        const out = cli(r.dir, 'classify', '--base', r.base);
+        expect(fileLine(out.stdout, 'package.json')?.[opted ? 0 : 3]).toBe(opted ? 'docs' : 'build');
       });
-      const out = cli(r.dir, 'classify', '--base', r.base);
-      expect(fileLine(out.stdout, 'package.json')?.[opted ? 0 : 3]).toBe(opted ? 'docs' : 'build');
     }
-    const r = repo({ 'release.yml': 'version:\n  1.2.1\n' }, {
-      'release.yml': 'version:\n  1.2.0\n', 'AGENTS.md': '<!-- docs-ship:docs=release.yml -->\n',
+    test('multiline YAML version', () => {
+      const r = repo({ 'release.yml': 'version:\n  1.2.1\n' }, {
+        'release.yml': 'version:\n  1.2.0\n', 'AGENTS.md': '<!-- docs-ship:docs=release.yml -->\n',
+      });
+      expect(fileLine(cli(r.dir, 'classify', '--base', r.base).stdout, 'release.yml')?.[3]).toBe('version');
     });
-    expect(fileLine(cli(r.dir, 'classify', '--base', r.base).stdout, 'release.yml')?.[3]).toBe('version');
-    const toml = repo({ 'release.toml': 'version = [\n"1.2.1"\n]\n' }, {
-      'release.toml': 'version = [\n"1.2.0"\n]\n', 'AGENTS.md': '<!-- docs-ship:docs=release.toml -->\n',
+    test('multiline TOML version array', () => {
+      const toml = repo({ 'release.toml': 'version = [\n"1.2.1"\n]\n' }, {
+        'release.toml': 'version = [\n"1.2.0"\n]\n', 'AGENTS.md': '<!-- docs-ship:docs=release.toml -->\n',
+      });
+      expect(fileLine(cli(toml.dir, 'classify', '--base', toml.base).stdout, 'release.toml')?.[3]).toBe('version');
     });
-    expect(fileLine(cli(toml.dir, 'classify', '--base', toml.base).stdout, 'release.toml')?.[3]).toBe('version');
-    for (const [path, before, after] of [
+    for (const [index, [path, before, after]] of [
       ['docs/config.swift', 'Package(name: "x", version: // release\n"1.2.0")\n', 'Package(name: "x", version: // release\n"1.2.1")\n'],
       ['docs/config.py', 'setup(name="x", description="A fun CLI", version=(\n"1.2.0"\n))\n', 'setup(name="x", description="A fun CLI", version=(\n"1.2.1"\n))\n'],
       ['docs/config.ts', 'export default defineConfig({ version: `\n1.2.0\n` });\n', 'export default defineConfig({ version: `\n1.2.1\n` });\n'],
@@ -531,20 +537,26 @@ describe('continuation review regressions', () => {
       ['setup.cfg', '[metadata]\nversion =\n    1.2.0\n', '[metadata]\nversion =\n    1.2.1\n'],
       ['docs/constants.py', '__version__ = (\n    "1.2.0"\n)\n', '__version__ = (\n    "1.2.1"\n)\n'],
       ['release.toml', 'version = """\nbuild=1.2.0\n"""\n', 'version = """\nbuild=1.2.1\n"""\n'],
-    ]) {
-      const field = repo({ [path!]: after! }, { [path!]: before!, 'AGENTS.md': `<!-- docs-ship:docs=${path} -->\n` });
-      expect(fileLine(cli(field.dir, 'classify', '--base', field.base).stdout, path!)?.[3]).toBe('version');
+    ].entries()) {
+      test(`changed version field ${index + 1}: ${path}`, () => {
+        const field = repo({ [path!]: after! }, { [path!]: before!, 'AGENTS.md': `<!-- docs-ship:docs=${path} -->\n` });
+        expect(fileLine(cli(field.dir, 'classify', '--base', field.base).stdout, path!)?.[3]).toBe('version');
+      });
     }
     for (const header of ['export function render(version: string) {', 'pub fn render(version: &str) {', 'const render = (version: string) => {']) {
-      const fn = repo({ 'docs/example.ts': `${header}\n  return 2;\n}\n` }, {
-        'docs/example.ts': `${header}\n  return 1;\n}\n`, 'AGENTS.md': '<!-- docs-ship:docs=docs/example.ts -->\n',
+      test(`unchanged version parameter: ${header}`, () => {
+        const fn = repo({ 'docs/example.ts': `${header}\n  return 2;\n}\n` }, {
+          'docs/example.ts': `${header}\n  return 1;\n}\n`, 'AGENTS.md': '<!-- docs-ship:docs=docs/example.ts -->\n',
+        });
+        expect(fileLine(cli(fn.dir, 'classify', '--base', fn.base).stdout, 'docs/example.ts')?.[0]).toBe('docs');
       });
-      expect(fileLine(cli(fn.dir, 'classify', '--base', fn.base).stdout, 'docs/example.ts')?.[0]).toBe('docs');
     }
-    const code = repo({ 'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 2\n' }, {
-      'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 1\n', 'AGENTS.md': '<!-- docs-ship:docs=docs/hook.py -->\n',
+    test('unchanged Python version and parameter', () => {
+      const code = repo({ 'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 2\n' }, {
+        'docs/hook.py': '__version__ = "1.0"\ndef render(page, version=None):\n  return 1\n', 'AGENTS.md': '<!-- docs-ship:docs=docs/hook.py -->\n',
+      });
+      expect(fileLine(cli(code.dir, 'classify', '--base', code.base).stdout, 'docs/hook.py')?.[0]).toBe('docs');
     });
-    expect(fileLine(cli(code.dir, 'classify', '--base', code.base).stdout, 'docs/hook.py')?.[0]).toBe('docs');
   });
 
   // Value: protects=absolute instruction symlinks cannot import unrelated repo-root policy;

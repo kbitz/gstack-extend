@@ -21,6 +21,9 @@ export const ANCHORS_QUALIFIED = { revision: 'e2fffee3114e90ce2a7d165f09d3efce35
 /** Upstream revision at which the Fix-First anchors behind `repair-review=behavior-changing` were qualified. */
 export const FIX_FIRST_QUALIFIED = { revision: '959c8a6a4fdafabf1186e407b76082b7f07e9f24', version: '1.91.327.0' } as const;
 
+/** Upstream revision at which the anchors behind `test-gaps=record` were qualified in both layouts. */
+export const TEST_GAP_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -39,6 +42,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'repair-cycles=light'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'test-gaps=record'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
     reason: 'quotes the audit\'s own shell operands, not installed upstream text' },
 ];
@@ -54,6 +59,10 @@ const ANCHOR_LIST_TO = 'Check each with `grep -F`';
 const FIX_FIRST_HEADING = '**Activation (`repair-review=behavior-changing`).**';
 const FIX_FIRST_FILE_MARK = 'its `review/checklist.md` still contains,';
 const FIX_FIRST_TO = 'and the `in-cap=delta` paragraph';
+const TEST_GAP_HEADING = '**Activation (`test-gaps=record`).**';
+const TEST_GAP_TESTING_MARK = 'its `review/specialists/testing.md` still contains,';
+const TEST_GAP_CHECKLIST_MARK = 'its `review/checklist.md` still contains,';
+const TEST_GAP_COVERAGE_MARK = 'and the `ship/sections/test-coverage.md` that the coverage audit reads still contains,';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -107,6 +116,7 @@ const versionOf = (root: string, onRead?: (real: string) => void) => {
 
 export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: false; file: string; reason: string };
 export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
+export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -164,10 +174,46 @@ export function fixFirstInventory(extendRootPath: string): FixFirstInventory {
   return { ok: true, file: read.real, review: review.spans, checklist: checklist.spans };
 }
 
+/**
+ * The anchors behind `test-gaps=record`: the backtick spans of its activation
+ * paragraph, four lists (`/review`, the testing specialist, `review/checklist.md`
+ * and the coverage audit section), each opened by "byte for byte,".
+ */
+export function testGapInventory(extendRootPath: string): TestGapInventory {
+  const file = join(extendRootPath, 'skills', 'review-and-prep.md');
+  const read = readTrusted(file, 'inventory source');
+  if (!read.ok) return { ok: false, file, reason: read.reason };
+  const text = read.bytes.toString('utf8');
+  const start = text.indexOf(TEST_GAP_HEADING);
+  if (start < 0) return { ok: false, file, reason: 'activation paragraph not found' };
+  const blank = text.indexOf('\n\n', start);
+  const paragraph = text.slice(start, blank < 0 ? undefined : blank);
+  const opens: number[] = [];
+  const marks: number[] = [];
+  let at = -1;
+  for (const mark of [TEST_GAP_TESTING_MARK, TEST_GAP_CHECKLIST_MARK, TEST_GAP_COVERAGE_MARK, ANCHOR_LIST_TO]) {
+    const open = paragraph.indexOf(ANCHOR_LIST_FROM, at + 1);
+    at = open < 0 ? -1 : paragraph.indexOf(mark, open);
+    if (at < 0) return { ok: false, file, reason: 'anchor list delimiters not found in the activation paragraph' };
+    opens.push(open + ANCHOR_LIST_FROM.length);
+    marks.push(at);
+  }
+  const lists = ['review', 'testing', 'checklist', 'coverage'] as const;
+  const spans: string[][] = [];
+  for (const [i, name] of lists.entries()) {
+    const list = spansIn(paragraph.slice(opens[i]!, marks[i]), `${name} anchor list`);
+    if (!list.ok) return { ok: false, file, reason: list.reason };
+    spans.push(list.spans);
+  }
+  return { ok: true, file: read.real, review: spans[0]!, testing: spans[1]!, checklist: spans[2]!, coverage: spans[3]! };
+}
+
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
   fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
   fixFirstList: '/review-and-prep: the Fix-First anchors cannot be listed, so repair-review=behavior-changing is unverified and stays inactive',
+  testGap: '/review-and-prep: test-gaps=record is inactive, so the review writes tests as today and the receipt says so',
+  testGapList: '/review-and-prep: the test-gap anchors cannot be listed, so test-gaps=record is unverified and stays inactive',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
@@ -199,6 +245,8 @@ interface Layout {
   name: 'nested' | 'sibling';
   review: string;
   checklist: string;
+  testing: string;
+  coverage: string;
   autoplan: string;
   snapshot: string;
   section(phase: Phase): string;
@@ -209,11 +257,13 @@ function chooseLayout(root: string, skillsDir: string): Layout {
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
-    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'), autoplan, snapshot,
+    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
+      testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(root, 'ship', 'sections', 'test-coverage.md'), autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
-  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'), autoplan, snapshot, section: () => autoplan };
+  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
+    testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), autoplan, snapshot, section: () => autoplan };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -384,6 +434,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('extend-root', extend);
   info('inspected', `anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`);
   info('inspected', `fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`);
+  info('inspected', `test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -418,6 +469,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   if (fixFirst.ok) ok('inventory', 'review-and-prep.fix-first');
   else drift('inventory', 'review-and-prep.fix-first', `${fixFirst.reason} (${fixFirst.file})`, { effect: STAGE.fixFirstList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
+  const testGaps = testGapInventory(extend);
+  if (testGaps.ok) ok('inventory', 'review-and-prep.test-gaps');
+  else drift('inventory', 'review-and-prep.test-gaps', `${testGaps.reason} (${testGaps.file})`, { effect: STAGE.testGapList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
   const readOnce = (path: string, what: string, key: string) => {
@@ -451,6 +506,18 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     fixFirst.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.review.${i + 1}`, review, anchor,
       (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
     fixFirst.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.fix-first.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
+  }
+  if (testGaps.ok) {
+    const inactive = { effect: STAGE.testGap, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    const testing = rootOk ? readOnce(layout.testing, 'review testing specialist', 'testing') : undefined;
+    const checklist = rootOk ? readOnce(layout.checklist, 'review checklist', 'checklist') : undefined;
+    const coverage = rootOk ? readOnce(layout.coverage, 'coverage audit section', 'coverage') : undefined;
+    testGaps.review.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.review.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    testGaps.testing.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.testing.${i + 1}`, testing, anchor, undefined, inactive));
+    testGaps.checklist.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.checklist.${i + 1}`, checklist, anchor, undefined, inactive));
+    testGaps.coverage.forEach((anchor, i) => checkAnchor(`review-and-prep.test-gaps.coverage.${i + 1}`, coverage, anchor, undefined, inactive));
   }
   const autoplan = rootOk ? readOnce(layout.autoplan, 'autoplan skill', 'autoplan') : undefined;
   if (!autoplan) drift('anchor', 'autoplan-lean.skip-list', notRun!);

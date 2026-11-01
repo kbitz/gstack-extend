@@ -7,13 +7,13 @@ import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, U
 import { skipList } from '../src/autoplan-lean/outline';
 import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
-import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, fixFirstInventory, inventory, main } from '../src/upstream-check/cli';
+import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, TEST_GAP_QUALIFIED, fixFirstInventory, inventory, main, testGapInventory } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 28; // root, 2 inventory, 3 in-cap + 6 Fix-First anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 45; // root, 3 inventory, 3 in-cap + 6 Fix-First + 16 test-gap anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 let counter = 0;
@@ -22,8 +22,11 @@ const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recu
 
 const HEADING = "**`/review`'s own repeat cycles (`in-cap=delta`).**";
 const FIX_FIRST_HEADING = '**Activation (`repair-review=behavior-changing`).**';
+const TEST_GAP_HEADING = '**Activation (`test-gaps=record`).**';
+const TEST_GAP_ANCHORS = 16;
 const CURRENT_ANCHORS = (() => { const inv = inventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv.anchors; })();
 const FIX_FIRST = (() => { const inv = fixFirstInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
+const TEST_GAP = (() => { const inv = testGapInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 
 const CLASSIFIER = (honorNotReady: boolean) => `export function classifyOutsideReview({ text }) {
   const highest = /\\[(P[0-3])\\]/.exec(text)?.[1] ?? null;
@@ -40,8 +43,10 @@ const MODULES = {
 const snapshotText = () => PHASES.map((p) => `  ${p}: \`${NATIVE_CRITERIA[p]}\`,`).join('\n') + '\n';
 const sectionText = (p: (typeof PHASES)[number]) => [BOUNDARY, OUTSIDE_RESULT_CONTRACT, ...OUTSIDE_CRITERIA[p]].join('\n\n') + '\n';
 const SKIP = '**Section skip list (apply these):**\n\n- Preamble\n- Telemetry\n';
-const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n`;
-const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n`;
+const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n`;
+const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
+const testingText = () => `# testing\n\n${TEST_GAP.testing.join('\n')}\n`;
+const coverageText = () => `# coverage\n\n${TEST_GAP.coverage.join('\n')}\n`;
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
@@ -52,17 +57,23 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   put(join(root, 'VERSION'), '1.2.3.4\n');
   put(join(root, 'bin', 'gstack-autoplan-snapshot.ts'), snapshotText());
   put(join(root, 'review', 'checklist.md'), checklistText());
+  files.testing = join(root, 'review', 'specialists', 'testing.md');
+  put(files.testing, testingText());
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
     files.autoplan = join(root, 'autoplan', 'SKILL.md');
+    files.coverage = join(root, 'ship', 'sections', 'test-coverage.md');
     put(files.review, reviewText());
+    put(files.coverage, coverageText());
     put(files.autoplan, SKIP);
     for (const p of PHASES) put(join(root, 'autoplan', 'sections', `${p}-phase.md`), sectionText(p));
   } else {
     files.review = join(skills, 'gstack-review', 'SKILL.md');
     files.autoplan = join(skills, 'gstack-autoplan', 'SKILL.md');
+    files.coverage = join(skills, 'gstack-ship', 'sections', 'test-coverage.md');
     put(files.review, reviewText());
+    put(files.coverage, coverageText());
     put(files.autoplan, SKIP + PHASES.map(sectionText).join('\n'));
   }
   return { root, skills, files };
@@ -180,6 +191,69 @@ describe('fix-first inventory', () => {
   });
 });
 
+describe('test-gap inventory', () => {
+  // Value: protects=the activation paragraph's four anchor lists, in their four installed files; fails_when=a span is added, dropped or moved between files unnoticed; why_new=test-gaps=record gates on upstream text; seam=none
+  test('locks the test-gap anchors exactly', () => {
+    expect(TEST_GAP.review).toEqual([
+      '**Test stub override:** Any finding with a',
+      'is reclassified as ASK whatever its original classification.',
+      'For an approved defect regression, write the test and prove it fails for the original',
+      'Healthy uncovered contracts need no invented failing bug.',
+      '(any other defect, e.g. unanswered)',
+      'true only for a completed zero-edit pass',
+    ]);
+    expect(TEST_GAP.testing).toEqual([
+      '"category":"testing"',
+      '### Missing Negative-Path Tests',
+      '### Missing Edge-Case Coverage',
+      '### Security Enforcement Tests Missing',
+      '### Coverage Gaps',
+    ]);
+    expect(TEST_GAP.checklist).toEqual(['Test coverage gaps where adding the missing tests is a "lake" not an "ocean"']);
+    expect(TEST_GAP.coverage).toEqual([
+      'Generation: <allowed|audit-only>; passes used: <N> of 2. Audit-only overrides every generation instruction below.',
+      '**IRON RULE:** When the coverage audit identifies a REGRESSION',
+      "At the cap, omit A's generation pass and recommend stopping; A then only lists proposals and the listed risk choices remain available.",
+      'as a proposed test with its value card.',
+    ]);
+    expect(TEST_GAP.review.length + TEST_GAP.testing.length + TEST_GAP.checklist.length + TEST_GAP.coverage.length).toBe(TEST_GAP_ANCHORS);
+    for (const anchor of [...TEST_GAP.review, ...TEST_GAP.testing, ...TEST_GAP.checklist, ...TEST_GAP.coverage]) expect(anchor).not.toContain('`');
+  });
+
+  const withSkill = (mutate: (paragraph: string) => string | undefined) => {
+    const extend = fresh('extend-test-gaps');
+    const text = readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8');
+    const start = text.indexOf(TEST_GAP_HEADING);
+    const blank = text.indexOf('\n\n', start);
+    const changed = mutate(text.slice(start, blank));
+    if (changed !== undefined) put(join(extend, 'skills', 'review-and-prep.md'), text.slice(0, start) + changed + text.slice(blank));
+    return testGapInventory(extend);
+  };
+  // Value: protects=a reworded heading, delimiter or span shape reports inventory drift instead of a partial list; fails_when=a malformed paragraph lists fewer anchors silently; why_new=third inventory source; seam=none
+  test('a removed source, a reworded paragraph, a moved delimiter or a bad span is drift', () => {
+    const extend = fresh('extend-test-gaps-removed');
+    const removed = testGapInventory(extend);
+    expect(!removed.ok && removed.reason).toContain('inventory source not found');
+    const reworded = (() => {
+      const extend2 = fresh('extend-test-gaps-heading');
+      put(join(extend2, 'skills', 'review-and-prep.md'), readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(TEST_GAP_HEADING, '**Activation of the gap value.**'));
+      return testGapInventory(extend2);
+    })();
+    expect(!reworded.ok && reworded.reason).toBe('activation paragraph not found');
+    const delimiters = 'anchor list delimiters not found in the activation paragraph';
+    expect(withSkill((t) => t.replace('its `review/specialists/testing.md` still contains,', 'its testing file still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('its `review/checklist.md` still contains,', 'its checklist still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('and the `ship/sections/test-coverage.md` that the coverage audit reads still contains,', 'and the coverage file still contains,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('Check each with `grep -F`', 'Check each'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace(/byte for byte,/g, 'verbatim,'))).toMatchObject({ ok: false, reason: delimiters });
+    expect(withSkill((t) => t.replace('`"category":"testing"`', '"category":"testing"').replace(/`### [^`]+`/g, 'x')))
+      .toMatchObject({ ok: false, reason: 'testing anchor list has no backtick spans' });
+    expect(withSkill((t) => t.replace('`### Coverage Gaps`', '`### Coverage\nGaps`'))).toMatchObject({ ok: false, reason: 'testing anchor list has an empty span or a span containing a newline' });
+    expect(withSkill((t) => t.replace('`**IRON RULE:** When the coverage audit identifies a REGRESSION`', '**IRON RULE:** When the coverage audit identifies a REGRESSION`')))
+      .toMatchObject({ ok: false, reason: 'coverage anchor list has an unbalanced backtick' });
+  });
+});
+
 describe('a healthy installation', () => {
   test('the protocol assertion rejects late INFO and a whitespace-containing check ID', async () => {
     const r = await check(rootArgs(upstream('nested')));
@@ -197,7 +271,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + 1); // three in-cap anchors, six Fix-First anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -206,6 +280,7 @@ describe('a healthy installation', () => {
     expect(r.lines.filter((l) => l.startsWith('INFO inspected '))).toEqual([
       `INFO inspected anchors ${ANCHORS_QUALIFIED.revision} ${ANCHORS_QUALIFIED.version}`,
       `INFO inspected fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`,
+      `INFO inspected test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`,
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
@@ -296,7 +371,7 @@ test.skipIf(process.getuid?.() === 0)('an inaccessible upstream root reports dri
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.out).toContain('DRIFT root gstack-root gstack root is missing, inaccessible or not a directory:');
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 2}`); // both inventory checks read this extension's own source
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 3}`); // all three inventory checks read this extension's own source
   } finally { chmodSync(f.root, 0o700); }
 }, 30000);
 
@@ -381,9 +456,9 @@ describe('drift', () => {
     rmSync(checklist);
     const r = await check(rootArgs(f));
     expectAgreement(r);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=5`);
     expect(r.lines).toContain(`INFO layout ${layout}`);
-    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([1, 2, 3, 4].map((n) => `review-and-prep.fix-first.checklist.${n}`));
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([...[1, 2, 3, 4].map((n) => `review-and-prep.fix-first.checklist.${n}`), 'review-and-prep.test-gaps.checklist.1']);
     for (const line of drifts(r.lines)) expect(line).toContain(`review checklist not found: ${checklist}`);
     expect(r.lines.filter((l) => l.startsWith('INFO file checklist '))).toEqual([]);
     expect(r.lines).toContain('OK anchor review-and-prep.fix-first.review.2');
@@ -396,7 +471,7 @@ describe('drift', () => {
     rmSync(join(f.root, 'review', 'checklist.md'));
     mkdirSync(join(f.root, 'review', 'checklist.md'));
     const r = await check(rootArgs(f));
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=5`);
     expect(drifts(r.lines)[0]).toContain('review checklist is not a regular file');
   }, 30000);
 
@@ -407,6 +482,7 @@ describe('drift', () => {
     expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([
       'review-and-prep.incap.1', 'review-and-prep.incap.2', 'review-and-prep.incap.3',
       'review-and-prep.fix-first.review.1', 'review-and-prep.fix-first.review.2',
+      ...TEST_GAP.review.map((_, i) => `review-and-prep.test-gaps.review.${i + 1}`),
     ]);
     for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
   }, 30000);
@@ -430,12 +506,112 @@ describe('drift', () => {
     for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
   }, 30000);
 
+  const TEST_GAP_EFFECT = '  effect: /review-and-prep: test-gaps=record is inactive, so the review writes tests as today and the receipt says so';
+  const gapFile = (f: Fixture, file: 'review' | 'testing' | 'checklist' | 'coverage') => file === 'checklist' ? join(f.root, 'review', 'checklist.md') : f.files[file]!;
+  // Value: protects=each installed file's test-gap drift names its stage cost and docs link, and leaves every other gate OK; fails_when=a missing or changed anchor passes, reports another gate's effect or turns another gate off; why_new=third upstream gate across four files and two layouts; seam=none
+  test.each([
+    ['nested', 'review', 'review-and-prep.test-gaps.review.1', '**Test stub override:** Any finding with a'],
+    ['sibling', 'review', 'review-and-prep.test-gaps.review.6', 'true only for a completed zero-edit pass'],
+    ['nested', 'testing', 'review-and-prep.test-gaps.testing.2', '### Missing Negative-Path Tests'],
+    ['sibling', 'testing', 'review-and-prep.test-gaps.testing.5', '### Coverage Gaps'],
+    ['nested', 'checklist', 'review-and-prep.test-gaps.checklist.1', 'Test coverage gaps where adding the missing tests is a "lake" not an "ocean"'],
+    ['sibling', 'checklist', 'review-and-prep.test-gaps.checklist.1', 'Test coverage gaps where adding the missing tests is a "lake" not an "ocean"'],
+    ['nested', 'coverage', 'review-and-prep.test-gaps.coverage.1', 'Generation: <allowed|audit-only>; passes used: <N> of 2. Audit-only overrides every generation instruction below.'],
+    ['sibling', 'coverage', 'review-and-prep.test-gaps.coverage.4', 'as a proposed test with its value card.'],
+  ] as const)('a changed anchor in the %s layout\'s %s file is drift naming %s', async (layout, file, id, anchor) => {
+    const f = upstream(layout);
+    const path = gapFile(f, file);
+    writeFileSync(path, readFileSync(path, 'utf8').replace(anchor, `${anchor.slice(0, -2)}!!`));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
+    expect(at).toBeGreaterThan(-1);
+    const shown = anchor.replace(/\s+/g, ' ');
+    expect(r.lines[at]).toContain(shown.length > 70 ? `"${shown.slice(0, 69)}…"` : `"${shown}"`);
+    expect(r.lines[at + 1]).toBe(TEST_GAP_EFFECT);
+    expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
+    expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    // The other gates are independent: they still pass, and their cost lines are not used.
+    for (const gate of ['incap', 'fix-first', 'test-gaps']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    for (const n of [1, 2, 3]) expect(r.lines).toContain(`OK anchor review-and-prep.incap.${n}`);
+    for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.review.${n}`);
+    for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
+    expect(r.out).not.toContain('the in-cap delta is inactive');
+    expect(r.out).not.toContain('repair-review=behavior-changing is inactive');
+  }, 30000);
+
+  // Value: protects=a missing installed file drifts exactly its own anchors, with a path-naming reason, in both layouts; fails_when=a missing file passes, drifts another file's anchors or reads the wrong layout path; why_new=two new installed files; seam=none
+  test.each([
+    ['nested', 'testing', 5], ['sibling', 'testing', 5], ['nested', 'coverage', 4], ['sibling', 'coverage', 4],
+  ] as const)('a missing %2$s file in the %1$s layout drifts its %3$s anchors and nothing else', async (layout, file, count) => {
+    const f = upstream(layout);
+    const path = gapFile(f, file);
+    rmSync(path);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${count}`);
+    expect(r.lines).toContain(`INFO layout ${layout}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(Array.from({ length: count }, (_, i) => `review-and-prep.test-gaps.${file}.${i + 1}`));
+    const what = file === 'testing' ? 'review testing specialist' : 'coverage audit section';
+    for (const line of drifts(r.lines)) expect(line).toContain(`${what} not found: ${path}`);
+    expect(r.lines.filter((l) => l.startsWith(`INFO file ${file} `))).toEqual([]);
+    expect(r.lines).toContain('OK inventory review-and-prep.test-gaps');
+  }, 30000);
+
+  // Value: protects=the sibling layout reads the coverage section from the skills directory and a healthy file is reported as INFO; fails_when=the sibling path points under the gstack root or a healthy file is not reported; why_new=Codex has no gstack/ship; seam=none
+  test('the coverage section is read from the layout\'s own directory and reported as INFO', async () => {
+    const nested = upstream('nested');
+    const sibling = upstream('sibling');
+    expect((await check(rootArgs(nested))).lines).toContain(`INFO file coverage ${realpathSync(join(nested.root, 'ship', 'sections', 'test-coverage.md'))}`);
+    expect((await check(rootArgs(sibling))).lines).toContain(`INFO file coverage ${realpathSync(join(sibling.skills, 'gstack-ship', 'sections', 'test-coverage.md'))}`);
+    const underRoot = join(sibling.root, 'ship', 'sections', 'test-coverage.md');
+    put(underRoot, coverageText());
+    rmSync(join(sibling.skills, 'gstack-ship'), { recursive: true });
+    const r = await check(rootArgs(sibling));
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=4`);
+  }, 40000);
+
+  // Value: protects=inventory order and an emptied review file's drift list; fails_when=the test-gap checks move before the older gates or an emptied file lists the wrong anchors; why_new=third inventory in the report; seam=none
+  test('the three inventories and the test-gap anchors report in a fixed order', async () => {
+    const r = await check(rootArgs(upstream('nested')));
+    const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
+    const inventories = ids.filter((id) => id.startsWith('inventory '));
+    expect(inventories).toEqual(['inventory review-and-prep.incap', 'inventory review-and-prep.fix-first', 'inventory review-and-prep.test-gaps']);
+    const anchors = ids.filter((id) => id.startsWith('anchor review-and-prep.test-gaps.'));
+    expect(anchors).toEqual([
+      ...TEST_GAP.review.map((_, i) => `anchor review-and-prep.test-gaps.review.${i + 1}`),
+      ...TEST_GAP.testing.map((_, i) => `anchor review-and-prep.test-gaps.testing.${i + 1}`),
+      ...TEST_GAP.checklist.map((_, i) => `anchor review-and-prep.test-gaps.checklist.${i + 1}`),
+      ...TEST_GAP.coverage.map((_, i) => `anchor review-and-prep.test-gaps.coverage.${i + 1}`),
+    ]);
+    expect(ids.indexOf('anchor review-and-prep.fix-first.checklist.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.test-gaps.review.1'));
+  }, 30000);
+
+  test('a missing root leaves the test-gap inventory OK and every test-gap anchor not run', async () => {
+    const r = await check(['--gstack-root', join(scratch, 'does-not-exist-test-gaps')]);
+    expect(r.lines).toContain('OK inventory review-and-prep.test-gaps');
+    const anchors = drifts(r.lines).filter((l) => l.startsWith('DRIFT anchor review-and-prep.test-gaps.'));
+    expect(anchors).toHaveLength(TEST_GAP_ANCHORS);
+    for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
+  }, 30000);
+
+  test('a missing Fix-First anchor leaves the test-gap gate OK', async () => {
+    const f = upstream('nested');
+    writeFileSync(f.files.review!, reviewText().replace('Critical findings lean toward ASK; informational toward AUTO-FIX.', 'x'));
+    const r = await check(rootArgs(f));
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(r.lines).toContain('OK inventory review-and-prep.test-gaps');
+    for (const n of [1, 2, 3, 4, 5, 6]) expect(r.lines).toContain(`OK anchor review-and-prep.test-gaps.review.${n}`);
+  }, 30000);
+
   test('a missing root is drift, never a pass, and every later check says not run', async () => {
     const r = await check(['--gstack-root', join(scratch, 'does-not-exist')]);
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.lines.some((l) => l.startsWith('DRIFT root gstack-root '))).toBe(true);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 2}`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 3}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
@@ -844,6 +1020,25 @@ describe('launcher', () => {
     expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - 6} drift=1`);
   }, 40000);
 
+  // Value: protects=a reworded test-gap activation paragraph reports its own inventory drift and leaves the other inventories alone; fails_when=the test-gap list reuses another check or vanishes silently; why_new=third inventory source; seam=none
+  test('a copied tree with a reworded activation paragraph reports DRIFT inventory for test-gaps only', () => {
+    const copy = fresh('copy-test-gaps');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    mkdirSync(join(copy, 'bin'));
+    cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
+    put(join(copy, 'skills', 'review-and-prep.md'),
+      readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(TEST_GAP_HEADING, '**Activation of the gap value.**'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(4);
+    expect(r.stdout).toContain('DRIFT inventory review-and-prep.test-gaps activation paragraph not found');
+    expect(r.stdout).toContain('OK inventory review-and-prep.incap');
+    expect(r.stdout).toContain('OK inventory review-and-prep.fix-first');
+    expect(r.stdout).not.toContain('review-and-prep.test-gaps.review.');
+    expect(r.stdout).toContain('  effect: /review-and-prep: the test-gap anchors cannot be listed, so test-gaps=record is unverified and stays inactive');
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - TEST_GAP_ANCHORS} drift=1`);
+  }, 40000);
+
   test('a missing extension dependency uses the internal-error contract before output', () => {
     const copy = fresh('missing-local-module');
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
@@ -1005,7 +1200,7 @@ function unlisted(repo: string) {
     if (grep >= 0) offsets.push(start + grep + 'Check each with `'.length);
     return offsets;
   };
-  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2)];
+  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4)];
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.offset !== undefined && covered.includes(hit.offset)) return false;
     // Only the reviewed list-driven loader sites are covered; a new import or
@@ -1083,11 +1278,12 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
     ['Fix-First anchors', FIX_FIRST_QUALIFIED.revision, FIX_FIRST_QUALIFIED.version],
+    ['Test-gap anchors', TEST_GAP_QUALIFIED.revision, TEST_GAP_QUALIFIED.version],
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];
