@@ -159,6 +159,22 @@ in tests and 32 in audits, batch-written pass timestamps, and two docs-only runs
 of 34.5 and 211 minutes. These are source observations with attribution limits,
 not measurements repeated by this planning run. No saving has been established.
 
+## A planning skill that works alone
+
+`/plan-card` turns one approved card into a plan in a single session with no
+subagents, outside voices or other model or agent CLI. It drops the review
+pipeline instead of trimming it, so it is an addition beside `/autoplan-lean`,
+which keeps its pipeline, its description and its routing. `/autoplan-lean`
+stays the default, and no default changes.
+
+The reason is recorded here because a Track card does not outlast its merge. The
+originating private review reported two blind judgments of the two approaches,
+30 vs 31 and 31 vs 32 of 50 overall, with risk handling scored 5 vs 6 and 5 vs 7.
+Risk handling is what a skipped review would miss. These are source observations
+with attribution limits, not measurements repeated here, and the source does not
+say outright which approach each overall score belongs to. Retiring
+`/autoplan-lean` would be a separate owner decision that waits for data.
+
 ## Deferred experiments
 
 The unattended autoplan runner waits for a blind comparison on real cards with

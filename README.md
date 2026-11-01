@@ -23,6 +23,7 @@ regularly; **New** skills are still settling in; **Beta** skills need more field
 | [`/project-spec`](skills/project-spec.md) | Establishes users, MVP outcomes, audience limits and release policy for a new or existing project, then runs roadmap. | New |
 | [`/roadmap`](skills/roadmap.md) | Admits work against the selected product target and produces an execution plan with visible outcomes, audits and dependency-aware grouping. | Stable |
 | [`/autoplan-lean`](skills/autoplan-lean.md) | Runs upstream `/autoplan`'s full review from the installed phase skills, keeps the plan within a size budget set by its card using a hashed review-record sidecar and bounded reviewer prompts, and finishes with a copyable `/implement` handoff. | New |
+| [`/plan-card`](skills/plan-card.md) | Turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline. `/autoplan-lean` stays the default because two blind comparisons scored this approach's risk handling lower; use `/plan-card` for a small, well-specified card. | New |
 | [`/implement`](skills/implement.md) | Executes an approved plan, checks completeness, runs targeted tests, and hands off for review. | Stable |
 | [`/review-and-prep`](skills/review-and-prep.md) | Reviews the work, runs local checks and `/ship`'s pre-release gates, prepares a draft PR, and marks it ready after required testing and applicable Greptile review. | Stable |
 | [`/pair-review`](skills/pair-review.md) | Guides manual testing, tracks results, fixes failures, and resumes across sessions. Works with web, native, and CLI projects. | Stable |
@@ -72,6 +73,9 @@ smaller reviewed plan), then use a fresh session for each handoff:
 /review-and-prep    # Review, test, prepare the PR
 /ship-and-land      # Version, ship, merge, and verify deployment
 ```
+
+A small, well-specified card can also start from `/plan-card`, which plans it in
+one session with no review pipeline.
 
 A docs-only PR, including the commit `/roadmap` or `/project-spec` leaves,
 skips that path: run `/docs-ship`, which asks before merging and, with no way

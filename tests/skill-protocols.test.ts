@@ -90,6 +90,7 @@ const NON_PREAMBLE_SETUP_SKILLS = [
   'ship-and-land',
   'autoplan-lean',
   'docs-ship',
+  'plan-card',
 ] as const;
 
 const CONDUCTOR_SKILLS = [
@@ -454,15 +455,18 @@ describe('Track 49A telemetry blocks are one call to the installed helper', () =
 });
 
 describe('Track 49A recorded block sizes', () => {
+  // The table records before-and-after bytes at base a74abf4. /plan-card came later with the same blocks and
+  // has no before figure, so it has no row (docs/telemetry.md says so).
+  const MEASURED_SKILLS = TELEMETRY_SKILLS.filter(skill => skill !== 'plan-card');
   const docs = readFileSync(join(ROOT, 'docs', 'telemetry.md'), 'utf8');
   const rows = [...docs.matchAll(/^\| `([a-z-]+)` \| (\d+) \| (\d+) \| (\d+) \|$/gm)]
     .map(m => ({ skill: m[1], before: Number(m[2]), after: Number(m[3]), saved: Number(m[4]) }));
 
   test('the table has one row per telemetry skill', () => {
-    expect(rows.map(r => r.skill).sort()).toEqual([...TELEMETRY_SKILLS].sort());
+    expect(rows.map(r => r.skill).sort()).toEqual([...MEASURED_SKILLS].sort());
     expect(rows).toHaveLength(11);
   });
-  for (const skill of TELEMETRY_SKILLS) {
+  for (const skill of MEASURED_SKILLS) {
     test(`${skill}: the recorded size matches the skill and saved is positive`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
       const after = (['start', 'finish'] as const).reduce((sum, kind) => sum + Buffer.byteLength(telemetryFence(content, kind)), 0);
@@ -481,7 +485,7 @@ describe('Track 49A state root', () => {
   const NARROW = '${GSTACK_STATE_ROOT:-$HOME/.gstack}';
   // /implement's start block tests whether a variable was set, which has to name both of them.
   const SET_TEST = '[ -n "${GSTACK_STATE_ROOT:-}${GSTACK_HOME:-}" ]';
-  const FIVE = ['implement', 'autoplan-lean', 'review-and-prep', 'ship-and-land', 'docs-ship'] as const;
+  const STAGE_SKILLS = ['implement', 'autoplan-lean', 'plan-card', 'review-and-prep', 'ship-and-land', 'docs-ship'] as const;
   const skillNames = readdirSync(join(ROOT, 'skills')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3));
   const read = (skill: string) => readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
   const stripped = (skill: string) => read(skill).replaceAll(EXPRESSION, '').replaceAll(SET_TEST, '');
@@ -499,8 +503,8 @@ describe('Track 49A state root', () => {
   test('the set test is /implement\'s alone', () => {
     for (const skill of skillNames) expect(read(skill).includes(SET_TEST), skill).toBe(skill === 'implement');
   });
-  test('each of the five stage skills carries the expression and defines its state root', () => {
-    for (const skill of FIVE) {
+  test('each of the six stage skills carries the expression and defines its state root', () => {
+    for (const skill of STAGE_SKILLS) {
       expect(read(skill), skill).toContain(EXPRESSION);
       expect(read(skill), skill).toContain('<state-root>/projects/<slug>/');
     }
