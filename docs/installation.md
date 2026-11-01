@@ -164,10 +164,12 @@ agent that reads `<host-skills-dir>/<name>/SKILL.md` can still use a skill that 
 no helper from this checkout, such as `/plan-card`. Antigravity's
 `~/.gemini/config/skills/` is one such directory.
 
-With a managed install, link the directory `setup` already maintains, so the link
-follows later refreshes:
+With a managed Claude install, link the directory `setup` already maintains, so
+the link follows later refreshes. For another managed host, use its skill
+directory from the table above:
 
 ```bash
+mkdir -p <host-skills-dir>
 ln -s ~/.claude/skills/plan-card <host-skills-dir>/plan-card
 ```
 

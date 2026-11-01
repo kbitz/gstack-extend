@@ -59,6 +59,9 @@ describe('plan-card works alone and hands off to /implement', () => {
     expect(skillN).toContain('Work alone: no subagents, outside voices or other model or agent CLI.');
     expect(skillN).toContain('Ask no questions.');
     expect(skillN).toContain('Write only `PLAN_FILE`');
+    expect(skillN).toContain('Record the initial work-tree status and existing changed-file content');
+    expect(skillN).toContain('identical status text alone does not prove unchanged content');
+    expect(skillN).toContain('An unexpected change stops with `blocked` and no implementation prompt');
   });
 
   // Value: protects=the next stage receives a prompt it can parse; fails_when=the prompt fence stops starting with the run line or loses its closing list; why_new=no other suite reads this skill; seam=none; no_claim=a transport accepts the prompt
@@ -150,6 +153,7 @@ describe('plan-card ends with the stage line', () => {
     for (const fence of fences(skill)) expect(fence.body, 'no fence carries the stage line').not.toContain('Stage handoff:');
     expect(skillN).toContain('A prompt goes with `next: implement` and `done`, or `done-with-concerns`');
     expect(skillN).toContain('print `next: none` with `needs-context`');
+    expect(skillN).toContain('a card without acceptance criteria, an invalid `PLAN_FILE` and a path collision write no plan');
   });
 });
 
@@ -187,6 +191,8 @@ describe('plan-card documents the manual link', () => {
   // Value: protects=criterion 8, a host that setup does not manage can link the skill; fails_when=the section or either link form is dropped; why_new=update.test.ts locks only the rollback steps in this file; seam=none; no_claim=a link works on a real host
   test('docs/installation.md holds the unmanaged-host section with both link forms', () => {
     expect(installation).toContain('### Hosts setup does not manage');
+    expect(norm(installation)).toContain('With a managed Claude install');
+    expect(installation).toContain('mkdir -p <host-skills-dir>');
     expect(installation).toContain('ln -s ~/.claude/skills/plan-card <host-skills-dir>/plan-card');
     expect(installation).toContain('ln -s <checkout>/skills/plan-card.md <host-skills-dir>/plan-card/SKILL.md');
     expect(norm(installation)).toContain('`setup` and its uninstall never see these links, so remove them by hand');

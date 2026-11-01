@@ -91,7 +91,9 @@ session memory.
 
 One pass, in this order:
 
-1. Read the card, the project's instruction files, `docs/SPEC.md` when it has
+1. Record the initial work-tree status and existing changed-file content so
+   later checks can distinguish existing edits from new changes. Read the
+   card, the project's instruction files, `docs/SPEC.md` when it has
    an `## Authority` section, and, for each criterion, the code it touches and
    its tests. A missing or unreadable card, or a card without acceptance
    criteria, writes no plan: stop with `needs-context`.
@@ -111,8 +113,11 @@ One pass, in this order:
    the behavior to keep and the test that pins it.
 7. Name the existing tests a task may change. `## Post-merge` holds only checks
    the card assigns to after the merge.
-8. Self-review once, against these steps and the code, then confirm
-   `git status --short` shows no change to the work tree.
+8. Self-review once, against these steps and the code, then compare work-tree
+   status and changed-file content with the initial state. Preserve existing
+   edits; identical status text alone does not prove unchanged content. An
+   unexpected change stops with `blocked` and no implementation prompt; report
+   it without undoing edits, retaining the plan path and hash when written.
 
 Tag as `[fork]` each decision named in `FORK_LIST`, and each decision a person
 would otherwise have answered: a taste choice, a criterion change, a tier or
@@ -200,9 +205,10 @@ Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <d
 
 A prompt goes with `next: implement` and `done`, or `done-with-concerns` when a
 `[challenge]` or an interface you could not read is recorded. A missing or
-unreadable card, a card without acceptance criteria and a path collision write
-no plan and print `next: none` with `needs-context`; any other stop without a
-plan prints `next: none` with `blocked`. `head` is `git rev-parse HEAD`, or
+unreadable card, a card without acceptance criteria, an invalid `PLAN_FILE`
+and a path collision write
+no plan and print `next: none` with `needs-context`; any other stop prints
+`next: none` with `blocked`. `head` is `git rev-parse HEAD`, or
 `none` for a workspace without one. `plan-sha256` is the `shasum -a 256` of the
 plan, or `none` when no plan was written. The line adds nothing else.
 
@@ -211,7 +217,7 @@ plan, or `none` when no plan was written. The line adds nothing else.
 Report `DONE` when the plan is written and self-reviewed. Report
 `DONE_WITH_CONCERNS` when it records a `[challenge]` or an interface you could
 not read. Report `NEEDS_CONTEXT` for missing or unusable input, and `BLOCKED`
-for any other stop with no plan.
+for any other stop, including a failed final work-tree check.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
