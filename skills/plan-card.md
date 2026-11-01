@@ -70,7 +70,9 @@ canonical repository directory name. `<card-stem>` is the card's file name
 without its extension. A default target that already exists with different
 bytes is not overwritten: write no plan and stop with `needs-context`. A
 `PLAN_FILE` that is relative or inside the work tree also stops with
-`needs-context`. Never leave the only copy of the plan in `.context`, `/tmp` or
+`needs-context`. A directory destination or a non-directory parent is invalid
+input too; filesystem or permission failures stop with `blocked`.
+Never leave the only copy of the plan in `.context`, `/tmp` or
 session memory.
 
 ## Rules
@@ -162,7 +164,8 @@ auto-decision), else write `Verify command: none — <how the plan is verified>`
 Run the telemetry finish block (the last section) before writing this message,
 so the message is the last output of the turn. Start with short status prose:
 `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED` or `NEEDS_CONTEXT`, the plan path, and a
-two-line summary. When a plan was written, finish with one fenced `text` prompt
+two-line summary. On successful completion (`DONE` or `DONE_WITH_CONCERNS`),
+finish with one fenced `text` prompt
 that starts by instructing the next session to run `/implement <PLAN_FILE>`.
 Name the workspace, branch, target base, HEAD and work state explicitly, and
 give concrete values for every field:
@@ -198,8 +201,8 @@ List one `-` line for each tagged entry in the plan's Auto-decisions. With none
 the list is exactly `- none`. Nothing else may follow the list inside the fence.
 Do not start `/implement`.
 
-After the closing fence, print this line on its own, outside any fence and
-exactly once:
+After the closing fence on success, or after the status prose on a stopped exit,
+print this line on its own, outside any fence and exactly once:
 
 Stage handoff: stage-handoff/v1; stage: plan; next: <implement|none>; status: <done|done-with-concerns|blocked|needs-context>; head: <full HEAD SHA|none>; plan-sha256: <SHA-256|none>
 
@@ -216,8 +219,9 @@ plan, or `none` when no plan was written. The line adds nothing else.
 
 Report `DONE` when the plan is written and self-reviewed. Report
 `DONE_WITH_CONCERNS` when it records a `[challenge]` or an interface you could
-not read. Report `NEEDS_CONTEXT` for missing or unusable input, and `BLOCKED`
-for any other stop, including a failed final work-tree check.
+not read. Report `NEEDS_CONTEXT` for the input cases listed above, and `BLOCKED`
+for any other stop, including a failed final work-tree check. Stops take
+precedence over both success statuses and never include an implementation prompt.
 
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish

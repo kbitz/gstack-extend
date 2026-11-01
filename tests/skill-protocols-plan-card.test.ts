@@ -75,6 +75,9 @@ describe('plan-card works alone and hands off to /implement', () => {
     expect(prompts[0]!.body.trimEnd().split('\n').slice(-3)[0]).toBe('Auto-decisions:');
     expect(prompts[0]!.body).not.toContain('Review record:');
     expect(prompts[0]!.body).not.toContain('Test plan:');
+    expect(skillN).toContain('On successful completion (`DONE` or `DONE_WITH_CONCERNS`), finish with one fenced `text` prompt');
+    expect(skillN).toContain('Stops take precedence over both success statuses');
+    expect(skillN).toContain('filesystem or permission failures stop with `blocked`');
   });
 });
 
