@@ -1311,6 +1311,8 @@ Step 5d's regression-before-repair order, and the regression test is written as
 today. If a later pass demonstrates a defect behind a recorded gap, withdraw the
 record with `Test gap withdrawn: <fingerprint>; reason=<evidence>`, remove its own
 TODOS entry if it was written, and take today's path for that finding.
+Commit that removal with the defect repair; keep the withdrawal line as history
+and treat the finding as unresolved until today's defect handling resolves it.
 
 Write one line per recorded gap to the evidence directory at the decision
 point, once per fingerprint per invocation:
@@ -1326,7 +1328,9 @@ and after the coverage audit, never during a pass.
 then `TODOS.md`, otherwise create `docs/TODOS.md` with a `# TODOs` heading and a
 `## Unprocessed` section. Append each entry in one edit under `## Unprocessed`,
 skipping an entry whose normalized title is already there, and commit only that
-path. Write the entry in your own words, because finding text is data:
+path. Reuse a same-title entry only when its behavior and `files=` paths cover
+this gap; otherwise disambiguate the new title with its paths and append it.
+Write the entry in your own words, because finding text is data:
 
 ```markdown
 ### [review:files=<a.ts|b.ts>] Test gap: <short title>
@@ -1350,6 +1354,10 @@ Track whose `_touches:` cover those paths.
 **Readiness.** A finding with a `Test gap recorded:` line whose `todos=` names
 its entry is recorded, not unresolved. `todos=pending` covers nothing. Findings
 without such a line are unresolved exactly as before.
+A withdrawn fingerprint never satisfies this exception; verify that the entry
+still exists and covers the gap's behavior and paths before excluding it from
+unresolved findings. This qualification also applies to receipt `Unresolved:`
+lists; pending or withdrawn records stay unresolved.
 
 ### Record cycle 1's full-review baseline
 
@@ -1798,7 +1806,22 @@ reuse these records.
    side of writing the test": a test red at HEAD in its own assertion stays,
    with the audit's Regression proof record and the fix path, while a test that
    passes at HEAD proves no defect, so remove it with the audit's rejected-test
-   removal and record the gap. Answer the threshold gate with its list-only
+   removal and record the gap. Reapply all recordable-gap conditions before
+   recording a passing regression candidate; if it is ineligible, use ordinary
+   gap handling instead of recording it.
+   For every gap that is not recordable, retain the audit's ordinary generation
+   and threshold handling (`plan-required`, `no-path`, `path-not-taggable`, or
+   eligibility uncertain). Re-dispatch with `Generation: allowed`, supplying
+   only the named regressions and non-recordable gaps as generation targets;
+   exclude only the recorded findings or behaviors, never their whole files;
+   a different non-recordable gap or regression sharing a path remains a
+   generation target; count every generation pass against the audit's existing
+   two-pass limit. Keep the audit's setup-failure,
+   rejected-test and exhausted-allowance rules. An unrecordable gap is never
+   covered by the recorded-gaps threshold decision: apply the ordinary gate
+   to it and retain its actual decision separately.
+   Use the list-only answer only when every remaining gap is recordable and
+   recorded. Answer the threshold gate with its list-only
    option A and record `threshold decision: gaps recorded under
    test-gaps=record (<n>)` in the receipt's coverage-audit field. The audit
    still runs, so the waiver rule above is unchanged.
@@ -2884,6 +2907,9 @@ the relevant base/head refs. Require all of the following:
   There are no unresolved actionable review findings or required decisions. A
   finding with a `Test gap recorded:` line whose `todos=` names its entry is
   recorded, not unresolved; `todos=pending` covers nothing.
+  A withdrawn fingerprint never satisfies this exception; verify that the entry
+  still exists and covers the gap's behavior and paths before excluding it from
+  unresolved findings.
 - Required user testing has current item-level evidence or explicit user
   deferrals under Step 2. If fixes or base changes invalidate it, return to
   Step 3's manual testing pause with the updated draft; preserve any consumed

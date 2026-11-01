@@ -1990,3 +1990,37 @@ describe('review-and-prep test-gaps=record', () => {
     expect(cap).toContain('Under `test-gaps: active`');
   });
 });
+
+describe('recorded-gap routing boundaries', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const gap = skillSection(prep, '### Record unproven test gaps').replace(/\s+/g, ' ');
+  const gates = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+  const readiness = skillSection(prep, '### Readiness').replace(/\s+/g, ' ');
+
+  // Value: protects=non-recordable audit gaps retain generation and threshold handling; fails_when=audit-only or list-only applies to ineligible gaps; why_new=the original prose made the override unconditional; seam=none; no_claim=installed-agent execution
+  test('non-recordable audit gaps retain ordinary generation and threshold handling', () => {
+    expect(gates).toContain('For every gap that is not recordable, retain the audit\'s ordinary generation and threshold handling');
+    for (const reason of ['plan-required', 'no-path', 'path-not-taggable']) expect(gates).toContain(reason);
+    expect(gates).toContain('`Generation: allowed`');
+    expect(gates).toContain('count every generation pass against the audit\'s existing two-pass limit');
+    expect(gates).toContain('Use the list-only answer only when every remaining gap is recordable and recorded');
+    expect(gates).toContain('Reapply all recordable-gap conditions before recording a passing regression candidate');
+    expect(gates).toContain('exclude only the recorded findings or behaviors, never their whole files');
+    expect(gates).toContain('a different non-recordable gap or regression sharing a path remains a generation target');
+  });
+
+  // Value: protects=withdrawal invalidates recorded-gap readiness while retaining history; fails_when=a deleted or withdrawn entry still covers a defect; why_new=recorded and withdrawn receipt lines coexist; seam=none; no_claim=installed-agent execution
+  test('withdrawn or missing entries cannot satisfy recorded-gap readiness', () => {
+    for (const text of [gap, readiness]) {
+      expect(text).toContain('A withdrawn fingerprint never satisfies this exception');
+      expect(text).toContain('verify that the entry still exists');
+    }
+    expect(gap).toContain('keep the withdrawal line as history and treat the finding as unresolved until today\'s defect handling resolves it');
+  });
+
+  // Value: protects=title collisions cannot drop a gap on different files; fails_when=a same-title entry with different paths covers the gap; why_new=the two gaps must reach different future Tracks; seam=none; no_claim=installed-agent execution
+  test('same-title entries cover only the same behavior and files', () => {
+    expect(gap).toContain('Reuse a same-title entry only when its behavior and `files=` paths cover this gap');
+    expect(gap).toContain('otherwise disambiguate the new title with its paths and append it');
+  });
+});
