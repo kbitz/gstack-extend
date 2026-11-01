@@ -80,9 +80,11 @@ The supplied upstream root must be outside the target project.
 Default `--stage all` requires the full installed check set exactly once.
 Use `--stage preflight` for ship's final preflight record after its full
 test evidence has already qualified, or review-and-prep's external-gate
-pre-pause preflight. The latter satisfies only that preliminary check: it
-grants no test evidence or full-pregate credit, and the full gate still runs
-after an accepted result. A partial `--only secrets` record cannot
+pre-pause preflight or narrowed pregate after an accepted pass. The pre-pause
+record satisfies only that preliminary check: it grants no test evidence or
+full-pregate credit. After an accepted pass the pregate still runs, narrowed
+only under the coverage rule in [Grammar H-F](workflow-handoffs.md#grammar-h-f-external-gate).
+A partial `--only secrets` record cannot
 satisfy either gate. The evaluator checks the raw schema/verdict, current
 tree/HEAD/base, cleared remote obligations, other checks and the upstream
 added-line hash. It matches every blocking finding by exact path, rule and

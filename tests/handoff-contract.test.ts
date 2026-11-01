@@ -1717,7 +1717,7 @@ describe('(E) the external gate and lean parent reads', () => {
     expect(has(squash(section), 'Every "after" value reads unknown until a real opted-in run records it')).toBe(true);
     expect(has(squash(section), 'one unpaired sample, so they establish neither a typical cost nor a saving')).toBe(true);
     expect(has(squash(raw), '`/ship-and-land` then takes its `FULL` path and runs its own test gate for that head')).toBe(true);
-    expect(raw).not.toMatch(/mmm-factory|mind-meld/i);
+    expect(has(squash(section), "One consumer\'s review, measured by that consumer and described here without naming it")).toBe(true);
     expect(has(squash(raw), 'No saving is established')).toBe(true);
   });
 });

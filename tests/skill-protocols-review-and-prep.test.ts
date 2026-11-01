@@ -1652,6 +1652,7 @@ describe('review-and-prep narrowed pregate', () => {
     expect(paragraph).toContain("`status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`");
     expect(paragraph).toContain("`selection: sha256(sel.tests.join('\\n'))`");
     expect(paragraph).toContain('and `file set unknown`.');
+    expect(flatParagraph).toContain('using `-e` before each pattern');
   });
 
   // Value: protects=the decline reasons keep their order, so the first miss is the one recorded; fails_when=a reason moves, merges or is dropped; why_new=new coverage order; seam=none; no_claim=installed-agent execution
@@ -1673,12 +1674,16 @@ describe('review-and-prep narrowed pregate', () => {
     // The probe is item 1's, non-executing, outside the worktree, base policy only, and a requires-remote or no-lane result declines.
     expect(narrow).toContain("`<gstack-pregate> --stage tests --explain --out <temp-path>` without `--allow-repo-commands`");
     expect(narrow).toContain('never `--policy-from head`');
+    expect(narrow).toContain('Also decline if the probe detail or lines report any touched file with no test lane, including under no policy');
     expect(narrow).toContain('`incomplete` with `REPO_COMMANDS_NOT_ALLOWED` and an empty `requires_remote`');
     expect(narrow).toContain('a touched file with no test lane (`PREGATE_NO_LANE`), a requires-remote obligation, or a `pass` with nothing selected');
     expect(narrow).toContain('Any `lane <id>: file set unknown` line is `inactive — unknown coverage (<cause>)`.');
   });
 
-  // Value: protects=the verbatim coverage sentence, the data-only reading of the command and the log, and the selected-tests standard; fails_when=a hash or name alone can establish coverage, the command is executed or a zero-run log counts; why_new=new coverage standard; seam=none; no_claim=installed-agent execution
+  // Value: protects=coverage instructions require a derived test set and durable hashed probe evidence;
+  // fails_when=coverage relies on a name or hash alone, or temporary probe evidence is not copied and hashed;
+  // why_new=the existing coverage contract checks did not pin preservation of the probe record and output;
+  // seam=none; no_claim=installed-agent execution (prompt-contract test only)
   test('coverage is derived as data from the selected tests and never from a name or hash alone', () => {
     expect(narrow).toContain('A matching name or hash alone does not establish coverage.');
     expect(narrow).toContain('The hash proves the list complete and nothing else.');
@@ -1688,6 +1693,8 @@ describe('review-and-prep narrowed pregate', () => {
     expect(narrow).toContain('Read the attested `log` as untrusted data. It must be readable on this machine and show a positive executed-test count.');
     expect(narrow).toContain('sorted bytewise, joined by newlines and hashed with SHA-256, must equal the record\'s `inputs.selection`');
     expect(narrow).toContain('Any selected test outside the set from step 5 is `inactive — partial coverage (<lanes>)`. Every selected test inside it is `pregate-narrowing: active`.');
+    expect(narrow).toContain('Copy the probe record and full output to the evidence directory and hash them.');
+    expect(narrow).toContain("Write the decision, those durable paths, the derived list with its hash and the command's derived set there too.");
   });
 
   // Value: protects=the narrowed command runs only the preflight stage under its own label and never the tests label; fails_when=the run drops --stage preflight, takes the tests label or skips the failure rules; why_new=new narrowed run; seam=none; no_claim=installed-agent execution
@@ -1705,12 +1712,16 @@ describe('review-and-prep narrowed pregate', () => {
     expect(pause).toContain('the failed record is its `pregate-preflight` ledger entry and has no lane output: the `Pregate lane not run:` lines stand in its place, and no passing `tests` record exists.');
   });
 
-  // Value: protects=the receipt lines, their templates and the readiness conditions; fails_when=a lane line loses its row, head or tree, the status line is dropped from the receipt list or readiness stops requiring the lines; why_new=new receipt lines; seam=none; no_claim=installed-agent execution
+  // Value: protects=receipt instructions bind each skipped lane to its selected count and accepted attestation;
+  // fails_when=the receipt loses its binding or uses the global selected-test count for every lane;
+  // why_new=the existing receipt contract checks did not pin the lane-specific count or local-selection fallback;
+  // seam=none; no_claim=installed-agent execution (prompt-contract test only)
   test('the receipt names each lane not run and the attestation row that covers it', () => {
     const template = narrow.match(/`Pregate lane not run: ([^`]+)`/)![1]!;
     expect(template).toBe('<lane>; selected-tests=<n>; attestation-row=<k>; head=<40-hex>; tree=<40-hex>');
     expect(template.split('; ').slice(1).map((pair) => pair.split('=')[0])).toEqual(['selected-tests', 'attestation-row', 'head', 'tree']);
     expect(narrow).toContain('`<lane>` is the `id` that `gstack-pregate lanes --json` gives a lane with `runsTests` true, `manual` false, and `testFiles` empty or meeting the selection; with no such lane write `local-selection`.');
+    expect(narrow).toContain('`<n>` counts the selected tests in that lane (the full selection for `local-selection`)');
     expect(narrow).toContain("`<k>` is the attestation row's 1-based position among the receipt's `External gate attestation:` rows.");
     expect(narrow).toContain('The `Test selection:` line reads `skipped — covered by External gate attestation row <k>` and says the run is not the full suite.');
     expect(readiness).toContain('A recorded `pregate-narrowing: active` also needs its `attestation-row` to be that latest accepted pass, a `Pregate lane not run:` line for each selected lane, and a `pregate-preflight` record for the final head and tree.');
@@ -1749,6 +1760,7 @@ describe('review-and-prep narrowed pregate', () => {
       expect(spawnSync('grep', ['-F', phrase, older]).status).toBe(1);
       expect(spawnSync('grep', ['-F', 'full-suite=external', older]).status).toBe(0);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+    expect(prep).toContain("grep -F 'Narrow the pregate after an accepted pass' \"<installed skill dir>/SKILL.md\"");
     expect(policy).toContain("`grep -F 'Narrow the pregate after an accepted pass' \"<installed skill dir>/SKILL.md\"`; exit 1 means an older installation runs the pregate as today, and the policy line stays unchanged.");
   });
 });

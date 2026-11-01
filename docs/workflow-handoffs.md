@@ -1083,7 +1083,9 @@ count, the pregate narrows to its preflight stage: its non-test checks run and
 its test lanes do not. Partial or unknown coverage, a changed upstream anchor,
 head-policy pins, a pending repair, a touched file with no test lane or a
 requires-remote obligation run the pregate with its ordinary selection, which can
-itself be the whole suite, and the receipt says so. A matching name or hash alone
+itself be the whole suite, and the receipt says so. This includes no-policy
+unmapped files reported in probe detail or lines, even when the probe code
+stays `REPO_COMMANDS_NOT_ALLOWED`. A matching name or hash alone
 does not establish coverage. Neither path adds a main-command fallback run. A
 caller therefore attests a command that covers what the diff selects and supplies
 a log readable on that machine to get the saving. The preparation records the

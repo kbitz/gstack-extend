@@ -761,8 +761,7 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value
   otherwise, keeping its other keys, because an older installation reads the
   whole line as `none supplied`. To see whether the loaded copy narrows, it runs
-  `grep -F 'Narrow the pregate after an accepted pass'
-  "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
+  `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
   pregate as today, and the policy line stays unchanged.
 - `parent-io=lean` (its only value) is opt-in. While a local command or
   subagent this invocation started is live (a test lane, the pregate, an audit
@@ -2089,7 +2088,8 @@ and its `lib/pregate/checks/lanes.ts` still contains, byte for byte,
 `status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`
 `selection: sha256(sel.tests.join('\n'))`
 and `file set unknown`.
-Check each with `grep -F` here, at the accepted pass, in the installed gstack
+Check each with `grep -F` here, at the accepted pass, using `-e` before each
+pattern so the leading `--` anchors are not parsed as options, in the installed gstack
 root of the `gstack-pregate` this run uses, and confirm each occurs once
 (`grep -cF` prints 1) in the layout of that copy.
 
@@ -2108,7 +2108,11 @@ else changes on that path.
    `lanes` check must be `incomplete` with `REPO_COMMANDS_NOT_ALLOWED` and an
    empty `requires_remote`. Anything else is `inactive — probe <status/code>`:
    a touched file with no test lane (`PREGATE_NO_LANE`), a requires-remote
-   obligation, or a `pass` with nothing selected.
+   obligation, or a `pass` with nothing selected. Also decline if the probe
+   detail or lines report any touched file with no test lane, including under
+   no policy (`inactive — probe no test lane`): that probe can retain
+   `REPO_COMMANDS_NOT_ALLOWED` even though execution would report
+   `PREGATE_NO_POLICY`. Unknown or unreadable probe fields decline too.
 4. Read the `--explain` output. Any `lane <id>: file set unknown` line is
    `inactive — unknown coverage (<cause>)`. So is a hash mismatch: the selected
    test paths the provenance lines name, sorted bytewise, joined by newlines and
@@ -2129,8 +2133,9 @@ else changes on that path.
 
 A matching name or hash alone does not establish coverage. Coverage is judged on
 the tests this diff selects, so a lane with no selected test is not a partial
-case. Write the decision, the probe's output path, the derived list with its
-hash and the command's derived set to the evidence directory.
+case. Copy the probe record and full output to the evidence directory and hash
+them. Write the decision, those durable paths, the derived list with its hash
+and the command's derived set there too.
 
 **Narrowed run.** On `active`, run only the pregate's other checks, wrapped as
 `gstack-evidence run --label pregate-preflight -- '<gstack-pregate> --stage
@@ -2148,7 +2153,8 @@ run did not execute, one line:
 
 `<lane>` is the `id` that `gstack-pregate lanes --json` gives a lane with
 `runsTests` true, `manual` false, and `testFiles` empty or meeting the selection;
-with no such lane write `local-selection`. `<n>` counts the selected tests and
+with no such lane write `local-selection`. `<n>` counts the selected tests in
+that lane (the full selection for `local-selection`), and
 `<k>` is the attestation row's 1-based position among the receipt's `External
 gate attestation:` rows. The `Test selection:` line reads `skipped — covered by
 External gate attestation row <k>` and says the run is not the full suite.
