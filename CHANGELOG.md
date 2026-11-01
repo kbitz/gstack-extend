@@ -6,16 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- `/plan-card` plans one small, well-specified card in one session and does not run the review pipeline. It works alone; `/autoplan-lean` stays the default for a reviewed plan. A finished run prints an implementation handoff, documented in `docs/workflow-handoffs.md`. `setup` installs the skill with the others, and the telemetry doctor expects it.
-
-### Fixed
-
-- A `/plan-card` run that stops does not print an implementation handoff, so a stopped plan is not offered as ready to implement.
-- `/plan-card` failure exits and the manual links that accompany them are clearer, including in `docs/installation.md`.
+- `/plan-card` turns one approved card into a plan for `/implement` in a single session that works alone, with no review pipeline, subagents or outside voices. It is for small, well-specified cards. `/autoplan-lean` is unchanged and stays the default, because two blind comparisons scored this approach's risk handling lower; `docs/designs/workflow-efficiency-program.md` records them.
+- Its inputs are fields in the invocation prompt: `CARD_FILE` (required), `PLAN_FILE`, `VERIFY_COMMAND`, `FORK_LIST` and `NOTES`. The plan uses `/autoplan-lean`'s `Verify command:` label with the same meaning. A finished run prints an `/implement` prompt; a run that stops prints none. Every run ends with the `stage-handoff/v1` line, which uses `stage: plan` for both planning skills, so the line alone does not say which one ran. `docs/workflow-handoffs.md` documents it.
+- `docs/installation.md` says how to link `/plan-card` into a host that `setup` does not manage.
 
 ### Upgrade notes
 
-- Upgrade with `bin/update-run`, which runs `setup`, so `/plan-card` is installed. After a hand `git pull` without `setup`, the new skill is absent until `setup` runs.
+- Upgrade with `bin/update-run`, which runs `setup`, so `/plan-card` is installed and carries telemetry like the other skills. After a hand `git pull` without `setup`, the skill is absent until `setup` runs. The telemetry doctor now expects twelve skills.
+- No installed agent has run `/plan-card` yet: its tests check the skill's text, so its plans are unproven until first use.
 
 ## [0.56.0] - 2026-10-31
 
