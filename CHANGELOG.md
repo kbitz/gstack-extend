@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.57.0] - 2026-10-31
+
+### Added
+
+- `/plan-card` plans one small, well-specified card in one session and does not run the review pipeline. It works alone; `/autoplan-lean` stays the default for a reviewed plan. A finished run prints an implementation handoff, documented in `docs/workflow-handoffs.md`. `setup` installs the skill with the others, and the telemetry doctor expects it.
+
+### Fixed
+
+- A `/plan-card` run that stops does not print an implementation handoff, so a stopped plan is not offered as ready to implement.
+- `/plan-card` failure exits and the manual links that accompany them are clearer, including in `docs/installation.md`.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so `/plan-card` is installed. After a hand `git pull` without `setup`, the new skill is absent until `setup` runs.
+
 ## [0.56.0] - 2026-10-31
 
 ### Added
