@@ -2091,3 +2091,84 @@ describe('Track 57A finding attribution', () => {
     expect(docs).toContain(`at most ${helper.found_by} unique labels`);
   });
 });
+
+// Coverage audit (/ship Step 7, 2026-11-02).
+// Value: protects=both scopes retain 24 maximum-length part labels alongside full phase/wait summaries and event reconciliation within 16 KiB;
+//   fails_when=attribution growth makes a valid full read fall back to capacity or lose summary data;
+//   why_new=existing envelope cases use short labels and omit full phase/wait summaries and event lookup;
+//   seam=none; no_claim=installed-agent attribution accuracy or arbitrary ledger size (schema-valid imported records in an isolated HOME)
+test('maximum-length attribution in both scopes preserves a full read and event lookup within 16 KiB', () => {
+  const fix = makeTelemetryFixture('community');
+  const sid = 'extend-' + u();
+  const run = runRows(sid);
+  const phases = ['run', 'evidence', 'scope', 'base-integration', 'local-pass', 'voice', 'completion', 'pregate',
+    'coverage', 'documentation', 'tests', 'commit', 'publication', 'external-review', 'triage', 'fix', 'readiness',
+    'handoff', 'reuse', 'release', 'ship', 'landing'];
+  const waits = ['human', 'external-review', 'checks', 'deploy', 'tool', 'other'];
+  const rows: any[] = [...run.rows];
+  for (const phase of phases.filter(p => p !== 'run')) {
+    const step = u();
+    rows.push(
+      { op: 'decision', at: 1999, request: { ...base(sid), step_id: step, phase, decision: 'RUN', reason: 'required' } },
+      { op: 'begin', at: 2000, request: { ...base(sid), step_id: step, parent_step_id: run.step, kind: phase === 'fix' ? 'fix' : 'phase', phase } },
+      { op: 'end', at: 2100, request: { ...base(sid), step_id: step, outcome: 'completed' } },
+    );
+  }
+  for (const wait_category of waits) {
+    const step = u();
+    rows.push(
+      { op: 'begin', at: 2200, request: { ...base(sid), step_id: step, parent_step_id: run.step, kind: 'wait', wait_category } },
+      { op: 'end', at: 2300, request: { ...base(sid), step_id: step, outcome: 'completed' } },
+    );
+  }
+  const labels = Array.from({ length: 24 }, (_, i) => `specialist:${`s${i}`.padEnd(64, 'x')}`);
+  for (const scope of ['local', 'greptile']) {
+    const findings = labels.map((label, i) => finding(`${scope}-${i}`, { found_by: [label], attribution_reason: null }));
+    rows.push(...passRows(sid, { scope, at: 3000, voices: [{ voice: 'testing', findings }] }).rows
+      .map(row => ({ ...row, request: { ...row.request, v: 2 } })));
+  }
+  const end = { ...base(sid), step_id: run.step, outcome: 'completed' };
+  rows.push({ op: 'end', at: 4000, request: end });
+  const ledger = craft(fix, sid, rows);
+  const before = readFileSync(ledger, 'utf8');
+  const { envelope, stdout } = read(fix, sid, end.event_id);
+  expect(envelope).toMatchObject({ status: 'ok', reason: null, data: { capture: 'ok', unknown_reasons: [], local_passes: 1, greptile_passes: 1 } });
+  const expectedParts = Object.fromEntries(labels.map(label => [label, { reported: 1, accepted: 1, rejected: 0 }]));
+  for (const totals of [envelope.data.findings, envelope.data.greptile_findings]) {
+    expect(totals.accepted).toBe(24);
+    expect(totals.by_part).toEqual(expectedParts);
+  }
+  expect(envelope.data.phases.map((phase: any) => phase.phase)).toEqual([...phases].sort());
+  expect(envelope.data.phases.every((phase: any) => phase.steps_completed === 1 && phase.observed_wall_duration_ms > 0)).toBe(true);
+  expect(envelope.data.waits).toEqual([...waits].sort().map(wait_category => ({ wait_category, count: 1, observed_wall_duration_ms: 100, unknown_durations: 0 })));
+  expect(envelope.data.event).toEqual({ status: 'match', request_digest: createHash('sha256').update(canonical({ op: 'end', request: end })).digest('hex'), captured_at_ms: 4000 });
+  expect(Buffer.byteLength(stdout)).toBeLessThanOrEqual(16 * 1024);
+  expect(Buffer.byteLength(envelope.data.receipt_text)).toBeLessThanOrEqual(2 * 1024);
+  expect(readFileSync(ledger, 'utf8')).toBe(before);
+}, 120_000);
+
+// Coverage audit (/ship Step 7, 2026-11-02).
+// Value: protects=ambiguous finding corrections leave both attribution summaries null in each affected scope;
+//   fails_when=unknown attribution becomes an empty or populated count map despite unresolved correction targets;
+//   why_new=existing ambiguous-correction tests assert scalar nulls without checking the new attribution fields;
+//   seam=none; no_claim=installed-agent correction accuracy (schema-valid imported records in an isolated HOME)
+test('ambiguous finding corrections leave both scopes attribution unknown', () => {
+  const fix = makeTelemetryFixture('community');
+  const sid = 'extend-' + u();
+  const rows: any[] = [...runRows(sid).rows];
+  for (const scope of ['local', 'greptile']) {
+    const findings = [finding('F1', { found_by: [scope === 'local' ? 'core' : 'greptile'], attribution_reason: null })];
+    rows.push(...passRows(sid, { scope, voices: [{ voice: 'testing', findings }] }).rows
+      .map(row => ({ ...row, request: { ...row.request, v: 2 } })));
+  }
+  rows.push({ op: 'correction', at: 3000, request: { ...base(sid), correction_kind: 'finding', finding_id: 'F1', resolution: 'fixed' } });
+  craft(fix, sid, rows);
+  const { envelope } = read(fix, sid);
+  expect(envelope.status).toBe('partial');
+  expect(envelope.data.unknown_reasons).toContain('competing-correction');
+  for (const totals of [envelope.data.findings, envelope.data.greptile_findings]) {
+    expect(totals.accepted).toBeNull();
+    expect(totals.by_part).toBeNull();
+    expect(totals.unattributed).toBeNull();
+  }
+}, 120_000);
