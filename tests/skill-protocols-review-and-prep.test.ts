@@ -494,6 +494,26 @@ describe('review-and-prep drift-locks', () => {
     expect(normalized).not.toContain('If the session ended after that answer and before Step 3 created the draft, ask again');
     expect(normalized).not.toContain('If the session ends before that, the next run asks again.');
   });
+
+  // Track 57A: a static prose lock; the agent writes each finding's part from the part's own record.
+  test('finding attribution names each part from its own record and never writes upstream\'s review log', () => {
+    const metrics = content.slice(content.indexOf('### Workflow metrics (optional, local)')).split(/\n## /)[0].replace(/\s+/g, ' ');
+    const from = metrics.indexOf('Finding attribution (`v:2`)');
+    expect(from).toBeGreaterThan(0);
+    const rule = metrics.slice(from, metrics.indexOf(' - ', from));
+    expect(rule).toContain('every `pass` record sends `v:2`; every other producer keeps `v:1`');
+    expect(rule).toContain("Take each part from that part's own record, never from the finding's text, file or category");
+    expect(rule).toContain('A finding several parts reported keeps every part');
+    expect(rule).toContain('a `duplicate_of` row keeps its own part');
+    expect(rule).toContain('Never guess a part.');
+    expect(rule).toContain("never write, append to or edit upstream's review log for attribution");
+    for (const token of ['found_by', 'attribution_reason', 'specialist:<name>', 'red-team', 'native-adversarial', 'core', 'qa', 'greptile',
+      'outside:challenge', 'outside:structured', 'not-reported', 'unlisted-part', 'unsupported']) {
+      expect(rule, token).toContain('`' + token + '`');
+    }
+    expect(metrics).toContain('(`v:1`, or `v:2` for a `pass` record, `stage:"review-and-prep"`');
+    expect(metrics).not.toContain('gstack-review-log');
+  });
 });
 
 // ─── review-and-prep repeated-review cuts: policy, delta scope, cycle stop, join keys ──

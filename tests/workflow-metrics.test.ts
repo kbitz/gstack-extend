@@ -1840,3 +1840,254 @@ describe('Track 31A real-store guard', () => {
     expect(run([]).status).toBe(2);
   }), 120_000);
 });
+
+// Track 57A: every logged finding names the part that reported it (a v2 `pass`), and the read counts per part.
+describe('Track 57A finding attribution', () => {
+  const v2 = (rows: any[]) => rows.map(r => (r.op === 'pass' ? { ...r, request: { ...r.request, v: 2 } } : r));
+  const att = (id: string, foundBy: string[], patch: Record<string, unknown> = {}) =>
+    finding(id, { found_by: foundBy, attribution_reason: null, ...patch });
+  const unatt = (id: string, reason: string, patch: Record<string, unknown> = {}) =>
+    finding(id, { found_by: [], attribution_reason: reason, ...patch });
+  const FIXED = { resolution: 'fixed' };
+  const REJECTED = { adjudication: 'rejected', resolution: 'unknown' };
+  const MERGED = ['native-adversarial', 'specialist:security', 'specialist:testing'];
+
+  test('(a) each part and a merged finding are counted per part, unattributed by reason, v1 totals unchanged', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const run = runRows(sid);
+    const local = passRows(sid, { voices: [
+      { voice: 'core', findings: [att('C1', ['core']), unatt('U1', 'not-reported'), unatt('U2', 'unlisted-part'), unatt('U3', 'unsupported')] },
+      { voice: 'testing', findings: [att('S1', ['specialist:testing'], FIXED), att('M1', MERGED, { severity_rubric: 'adversarial' })] },
+      { voice: 'red-team', findings: [att('R1', ['red-team'], REJECTED)] },
+      { voice: 'security', findings: [att('D1', ['specialist:security'], { adjudication: 'duplicate', resolution: 'unknown', duplicate_of: 'M1' })] },
+      { voice: 'native-adversarial', findings: [att('N1', ['native-adversarial'])] },
+      { voice: 'outside-challenge', findings: [att('O1', ['outside:challenge'])] },
+      { voice: 'outside-structured', findings: [att('O2', ['outside:structured'], { adjudication: 'deferred' })] },
+      { voice: 'qa', findings: [att('Q1', ['qa'])] },
+    ] });
+    const greptile = passRows(sid, { scope: 'greptile', at: 3000, voices: [{ voice: 'greptile', findings: [att('G1', ['greptile']), att('G2', ['greptile'], REJECTED)] }] });
+    craft(fix, sid, [...run.rows, ...v2(local.rows), ...v2(greptile.rows)]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.capture).toBe('ok');
+    expect(data.unknown_reasons).toEqual(['missing-end']); // only the crafted run step is open
+    expect(data.findings).toMatchObject({ accepted: 9, fixed: 1, open: 8, rejected: 1, deferred: 1, duplicate: 1, unclassified: 0 }); // the v1 totals
+    const part = (reported: number, accepted: number, rejected: number) => ({ reported, accepted, rejected });
+    expect(data.findings.by_part).toEqual({
+      core: part(1, 1, 0),
+      'native-adversarial': part(2, 2, 0), // N1 and the merged M1
+      'outside:challenge': part(1, 1, 0),
+      'outside:structured': part(1, 0, 0),
+      qa: part(1, 1, 0),
+      'red-team': part(1, 0, 1),
+      'specialist:security': part(2, 1, 0), // the merged M1 and its duplicate row D1
+      'specialist:testing': part(2, 2, 0), // S1 and the merged M1
+    });
+    expect(Object.keys(data.findings.by_part)).toEqual([...Object.keys(data.findings.by_part)].sort());
+    expect(data.findings.unattributed).toEqual({ 'not-reported': 1, 'unlisted-part': 1, unsupported: 1, 'v1-record': 0 });
+    expect(data.greptile_findings).toMatchObject({ accepted: 1, rejected: 1 });
+    expect(data.greptile_findings.by_part).toEqual({ greptile: part(2, 1, 1) });
+    expect(data.greptile_findings.unattributed).toEqual({ 'not-reported': 0, 'unlisted-part': 0, unsupported: 0, 'v1-record': 0 });
+    expect(data.receipt_text).not.toContain('by_part'); // the receipt line is unchanged
+  }, 30_000);
+
+  test('(a) a correction applies before the per-part counts: a fixed or rejected finding follows its adjudication', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const p = passRows(sid, { voices: [{ voice: 'testing', findings: [att('S1', ['specialist:testing']), att('S2', ['specialist:testing'])] }] });
+    craft(fix, sid, [...runRows(sid).rows, ...v2(p.rows),
+      { op: 'correction', at: 2100, request: { ...base(sid), correction_kind: 'finding', finding_id: 'S2', pass_id: p.passId, voice_id: 'testing', attempt_id: p.attempts.testing, adjudication: 'rejected', resolution: 'unknown' } }]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.findings.by_part).toEqual({ 'specialist:testing': { reported: 2, accepted: 1, rejected: 1 } });
+  }, 30_000);
+
+  test('(b) earlier v1 rows read as unknown (v1-record); a mixed ledger counts both', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const old = passRows(sid, { voices: [{ voice: 'core', findings: [finding('F1', FIXED), finding('F2'), finding('F3', REJECTED)] }] });
+    craft(fix, sid, [...runRows(sid).rows, ...old.rows]);
+    const before = read(fix, sid).envelope.data;
+    expect(before.findings).toMatchObject({ accepted: 2, fixed: 1, open: 1, rejected: 1 });
+    expect(before.findings.by_part).toEqual({});
+    expect(before.findings.unattributed).toEqual({ 'not-reported': 0, 'unlisted-part': 0, unsupported: 0, 'v1-record': 3 });
+
+    const mixedSid = 'extend-' + u();
+    const first = passRows(mixedSid, { voices: [{ voice: 'core', findings: [finding('A1'), finding('A2')] }] });
+    const second = passRows(mixedSid, { at: 3000, voices: [{ voice: 'testing', findings: [att('B1', ['specialist:testing']), unatt('B2', 'not-reported')] }] });
+    craft(fix, mixedSid, [...runRows(mixedSid).rows, ...first.rows, ...v2(second.rows)]);
+    const mixed = read(fix, mixedSid).envelope.data;
+    expect(mixed.local_passes).toBe(2);
+    expect(mixed.findings.accepted).toBe(4);
+    expect(mixed.findings.by_part).toEqual({ 'specialist:testing': { reported: 1, accepted: 1, rejected: 0 } });
+    expect(mixed.findings.unattributed).toEqual({ 'not-reported': 1, 'unlisted-part': 0, unsupported: 0, 'v1-record': 2 });
+  }, 30_000);
+
+  test('(c)(e) the helper and the schema agree on every v1 and v2 finding shape; invalid input never mutates', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    beginRun(fix, repo, sid);
+    const lines = ledgerLines(fix, sid).length;
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `specialist:s${i}`);
+    const cases: Array<[string, number, Record<string, unknown>, boolean]> = [
+      ['v1 finding', 1, {}, true],
+      ['v1 finding carrying found_by', 1, { found_by: ['core'] }, false],
+      ['v1 finding carrying attribution_reason', 1, { attribution_reason: 'not-reported' }, false],
+      ['v2 attributed', 2, { found_by: ['core'], attribution_reason: null }, true],
+      ['v2 every label form', 2, { found_by: ['specialist:data-migration', 'red-team', 'native-adversarial', 'core', 'qa', 'greptile', 'outside:challenge', 'outside:structured'], attribution_reason: null }, true],
+      ['v2 not-reported', 2, { found_by: [], attribution_reason: 'not-reported' }, true],
+      ['v2 unlisted-part', 2, { found_by: [], attribution_reason: 'unlisted-part' }, true],
+      ['v2 unsupported', 2, { found_by: [], attribution_reason: 'unsupported' }, true],
+      ['v2 eight labels', 2, { found_by: many(8), attribution_reason: null }, true],
+      ['v2 missing found_by', 2, { attribution_reason: null }, false],
+      ['v2 missing attribution_reason', 2, { found_by: ['core'] }, false],
+      ['v2 bad label', 2, { found_by: ['specialist:Testing'], attribution_reason: null }, false],
+      ['v2 unknown label', 2, { found_by: ['reviewer'], attribution_reason: null }, false],
+      ['v2 bare specialist', 2, { found_by: ['specialist:'], attribution_reason: null }, false],
+      ['v2 outside phase outside the list', 2, { found_by: ['outside:other'], attribution_reason: null }, false],
+      ['v2 empty label', 2, { found_by: [''], attribution_reason: null }, false],
+      ['v2 non-string label', 2, { found_by: [7], attribution_reason: null }, false],
+      ['v2 specialist:red-team', 2, { found_by: ['specialist:red-team'], attribution_reason: null }, false],
+      ['v2 duplicate label', 2, { found_by: ['core', 'core'], attribution_reason: null }, false],
+      ['v2 nine labels', 2, { found_by: many(9), attribution_reason: null }, false],
+      ['v2 found_by not an array', 2, { found_by: 'core', attribution_reason: null }, false],
+      ['v2 nonempty with a reason', 2, { found_by: ['core'], attribution_reason: 'not-reported' }, false],
+      ['v2 empty with null', 2, { found_by: [], attribution_reason: null }, false],
+      ['v2 empty with v1-record', 2, { found_by: [], attribution_reason: 'v1-record' }, false],
+      ['v2 empty with a made-up reason', 2, { found_by: [], attribution_reason: 'guessed' }, false],
+      ['v2 unknown key', 2, { found_by: ['core'], attribution_reason: null, part: 'core' }, false],
+    ];
+    let recorded = 0;
+    for (const [name, v, patch, valid] of cases) {
+      const request = { ...base(sid), v, pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed',
+        findings: [{ ...finding('F1'), ...patch }] };
+      const record = { v: 1, op: 'pass', event_id: request.event_id, request_digest: 'e'.repeat(64), captured_at_ms: 0, producer_version: null, request };
+      expect(validRecord(record), `${name}: schema`).toBe(valid);
+      const { envelope } = metrics(fix.env, 'pass', request, repo);
+      expect(envelope.reason, name).toBe(valid ? null : 'invalid-input');
+      expect(envelope.status, name).toBe(valid ? 'recorded' : 'unavailable');
+      if (valid) recorded += 1;
+      expect(ledgerLines(fix, sid), `${name}: ledger`).toHaveLength(lines + recorded);
+    }
+    // the stored record wrapper stays v1 whatever the request's v is
+    for (const line of ledgerLines(fix, sid)) expect(JSON.parse(line).v).toBe(1);
+  }, 120_000);
+
+  test('(c) only pass takes v2: a v2 begin, a v3 pass and a boolean version stay refused; a live v2 pass sequence reads back', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    const run = beginRun(fix, repo, sid);
+    const refused = (op: string, payload: unknown) => metrics(fix.env, op, payload, repo).envelope;
+    const begin = { ...base(sid), step_id: u(), parent_step_id: null, kind: 'phase', phase: 'tests' };
+    expect(refused('begin', { ...begin, v: 2 })).toMatchObject({ status: 'unavailable', reason: 'unsupported-version', diagnostics: { expected: '1', actual: 2 } });
+    expect(refused('end', { ...base(sid), v: 2, step_id: run.step, outcome: 'completed' }).reason).toBe('unsupported-version');
+    expect(refused('decision', { ...base(sid), v: 2, step_id: u(), phase: 'tests', decision: 'RUN', reason: 'required' }).reason).toBe('unsupported-version');
+    expect(refused('correction', { ...base(sid), v: 2, correction_kind: 'fix-cycle', fix_step_id: u() }).reason).toBe('unsupported-version');
+    const passId = u(), attemptId = u();
+    const pass = (extra: Record<string, unknown>, v = 2) => ({ ...base(sid), v, pass_id: passId, scope: 'local', ...extra });
+    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, 3))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2', actual: 3 } });
+    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, true as any)).reason).toBe('invalid-input');
+    const steps: Array<Record<string, unknown>> = [
+      { state: 'started', required_voice_ids: ['testing'] },
+      { state: 'attempt', voice_id: 'testing', attempt_id: attemptId, predecessor_attempt_id: null, attempt_outcome: 'completed', findings: [att('F1', ['specialist:testing', 'red-team']), unatt('F2', 'unlisted-part')] },
+      { state: 'voice-complete', voice_id: 'testing', voice_status: 'completed', selected_attempt_id: attemptId },
+      { state: 'completed' },
+    ];
+    const payloads = steps.map(step => pass(step));
+    for (const payload of payloads) expect(refused('pass', payload).status, JSON.stringify(payload.state)).toBe('recorded');
+    const data = read(fix, sid).envelope.data;
+    expect(data.local_passes).toBe(1);
+    expect(data.findings.by_part).toEqual({ 'red-team': { reported: 1, accepted: 1, rejected: 0 }, 'specialist:testing': { reported: 1, accepted: 1, rejected: 0 } });
+    expect(data.findings.unattributed).toEqual({ 'not-reported': 0, 'unlisted-part': 1, unsupported: 0, 'v1-record': 0 });
+    expect(refused('pass', payloads[1]).status).toBe('replayed'); // an identical v2 attempt replays like any other
+  }, 60_000);
+
+  test('(d) bound: 24 distinct parts stay reported; 25 null by_part with too-many-parts and the read stays ok', () => {
+    const fix = makeTelemetryFixture('community');
+    const labels = (n: number) => Array.from({ length: n }, (_, i) => `specialist:s${i}`);
+    for (const [n, over] of [[24, false], [25, true]] as const) {
+      const sid = 'extend-' + u();
+      const findings = labels(n).map((label, i) => att(`F${i}`, [label]));
+      craft(fix, sid, [...runRows(sid).rows, ...v2(passRows(sid, { voices: [{ voice: 'testing', findings }] }).rows)]);
+      const out = read(fix, sid); // metrics() holds the envelope within 16 KiB
+      expect(out.envelope.status).toBe('ok');
+      expect(out.envelope.data.capture).toBe('ok');
+      expect(out.envelope.data.findings.accepted).toBe(n);
+      expect(out.envelope.data.findings.unattributed).toEqual({ 'not-reported': 0, 'unlisted-part': 0, unsupported: 0, 'v1-record': 0 });
+      if (over) {
+        expect(out.envelope.data.findings.by_part).toBeNull();
+        expect(out.envelope.data.unknown_reasons).toContain('too-many-parts');
+      } else {
+        expect(Object.keys(out.envelope.data.findings.by_part)).toHaveLength(24);
+        expect(out.envelope.data.unknown_reasons).not.toContain('too-many-parts');
+      }
+    }
+  }, 60_000);
+
+  test('(d) a full scope of attributed findings keeps the envelope within 16 KiB', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const findings = Array.from({ length: 200 }, (_, i) => att(`F${i}`, i % 3 ? [`specialist:s${i % 24}`] : MERGED));
+    const local = passRows(sid, { voices: [{ voice: 'testing', findings }] });
+    const greptile = passRows(sid, { scope: 'greptile', at: 3000, voices: [{ voice: 'greptile', findings: Array.from({ length: 200 }, (_, i) => att(`G${i}`, [`specialist:g${i % 24}`])) }] });
+    craft(fix, sid, [...runRows(sid).rows, ...v2(local.rows), ...v2(greptile.rows)]);
+    const out = read(fix, sid);
+    expect(out.envelope.status).toBe('ok');
+    expect(out.envelope.data.findings.by_part).not.toBeNull();
+    expect(out.envelope.data.greptile_findings.by_part).not.toBeNull();
+  }, 30_000);
+
+  test('(e) the schema rejects a begin request with v:2 and a pass request whose findings do not match its version', () => {
+    const sid = 'extend-' + u();
+    const wrap = (op: string, request: any) => ({ v: 1, op, event_id: request.event_id, request_digest: 'e'.repeat(64), captured_at_ms: 0, producer_version: null, request });
+    const begin = { ...base(sid), step_id: u(), parent_step_id: null, kind: 'phase', phase: 'tests' };
+    expect(validRecord(wrap('begin', begin))).toBe(true);
+    expect(validRecord(wrap('begin', { ...begin, v: 2 }))).toBe(false);
+    expect(validRecord({ ...wrap('begin', begin), v: 2 })).toBe(false); // the record wrapper stays v1
+    const attempt = (v: number, f: any) => ({ ...base(sid), v, pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'core', attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed', findings: [f] });
+    expect(validRecord(wrap('pass', attempt(2, att('F1', ['core']))))).toBe(true);
+    expect(validRecord(wrap('pass', attempt(1, att('F1', ['core']))))).toBe(false);
+    expect(validRecord(wrap('pass', attempt(2, finding('F1'))))).toBe(false);
+    expect(validRecord(wrap('pass', attempt(3, finding('F1'))))).toBe(false);
+  });
+
+  test('(f) the helper, schema, docs and skill share one vocabulary', () => {
+    const dumped = spawnSync('python3', ['-B', '-I', '-c', [
+      'import importlib.util, json',
+      `spec = importlib.util.spec_from_file_location("workflow_metrics", ${JSON.stringify(join(ROOT, 'bin/lib/workflow_metrics.py'))})`,
+      'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+      'print(json.dumps({"part": m.PART_RE.pattern, "reasons": list(m.ATTRIBUTION_REASONS), "found_by": m.MAX_FOUND_BY, "parts": m.MAX_PARTS}))',
+    ].join('\n')], { encoding: 'utf8', timeout: 15_000 });
+    expect(dumped.status).toBe(0);
+    const helper = JSON.parse(dumped.stdout) as { part: string; reasons: string[]; found_by: number; parts: number };
+    const defs = schema.definitions;
+    expect(defs.part.pattern).toBe(`^${helper.part}$`);
+    expect(defs.finding_v2.properties.found_by.maxItems).toBe(helper.found_by);
+    expect([...defs.finding_v2.properties.attribution_reason.enum.filter((r: string | null) => r !== null)]).toEqual(helper.reasons);
+    expect(defs.finding_v2.required).toEqual([...defs.finding.required, 'found_by', 'attribution_reason']);
+    expect(Object.keys(defs.finding_v2.properties).sort()).toEqual([...Object.keys(defs.finding.properties), 'found_by', 'attribution_reason'].sort());
+
+    const skill = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+    const from = skill.indexOf('- Finding attribution (`v:2`)');
+    expect(from).toBeGreaterThan(0);
+    const bullet = skill.slice(from, skill.indexOf('\n- ', from + 1)).replace(/\s+/g, ' ');
+    const labelForms = ['specialist:<name>', 'red-team', 'native-adversarial', 'core', 'qa', 'greptile', 'outside:challenge', 'outside:structured'];
+    const part = new RegExp(`^${helper.part}$`);
+    for (const form of labelForms) {
+      expect(bullet, form).toContain('`' + form + '`');
+      expect(part.test(form.replace('<name>', 'testing')), form).toBe(true);
+    }
+    expect(part.test('specialist:red-team')).toBe(true); // the grammar admits it; the helper and schema reject it explicitly
+    expect(ajv.validate('workflow-metrics#/definitions/part', 'specialist:red-team')).toBe(false);
+    expect(ajv.validate('workflow-metrics#/definitions/part', 'specialist:testing')).toBe(true);
+    for (const reason of helper.reasons) expect(bullet, reason).toContain('`' + reason + '`');
+    expect(bullet).not.toContain('v1-record'); // read-only: a producer never sends it
+
+    const docs = readFileSync(join(ROOT, 'docs/telemetry.md'), 'utf8').replace(/\s+/g, ' ').toLowerCase();
+    for (const form of labelForms) expect(docs, form).toContain('`' + form + '`');
+    for (const reason of [...helper.reasons, 'v1-record', 'too-many-parts']) expect(docs, reason).toContain('`' + reason + '`');
+    expect(docs).toContain(`more than ${helper.parts} distinct parts`);
+    expect(docs).toContain(`at most ${helper.found_by} unique labels`);
+  });
+});

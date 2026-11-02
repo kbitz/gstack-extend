@@ -578,7 +578,9 @@ pending payload leaves the affected capture unknown; IDs are never guessed.
 `gstack-extend-telemetry metrics --help` and `metrics <operation> --help`
 print the field lists without touching stdin or state. Producers (`begin`,
 `end`, `decision`, `pass`, `correction`) take one JSON object on stdin with
-`v:1`, `stage`, `session_id` and a caller-stable UUID `event_id`, and print
+`v:1` (a `pass` may send `v:2`, below; any other operation answers
+`unsupported-version` to it), `stage`, `session_id` and a caller-stable UUID
+`event_id`, and print
 one envelope `{v, status, reason, session_id, event_id, data, diagnostics}`.
 Statuses: `recorded`, `replayed`, `disabled`, `unavailable`, `conflict`,
 `partial`, `unconfirmed`, and `ok` (a clean read). The launcher exits 0 in
@@ -632,10 +634,18 @@ counts without another append, and an absent boundary stays missing.
   or upstream cycles, and metrics never triggers it. A count is unknown, never
   zero, when its records are orphaned or when its work shows up only as a
   phase (`local-pass`, `external-review` or `fix` ran with no pass or fix
-  record). One 16 KiB producer event holds about 100 findings; a voice with
-  more cannot be captured whole. A `finding_id` is unique within one attempt
+  record). One 16 KiB producer event holds about 100 v1 findings; a voice with
+  more cannot be captured whole. A v2 finding is larger (it carries its
+  [attribution](#workflow-metrics-attribution)), so an event holds fewer; the
+  v2 count is not measured here. A `finding_id` is unique within one attempt
   (voices may reuse each other's IDs), and `duplicate_of` names another
-  finding.
+  finding. A `pass` may send `v:2`, which adds `found_by` and
+  `attribution_reason` to every finding; the request's `v` selects the
+  finding shape, so a v1 finding carrying either key is `invalid-input` and a
+  v2 finding missing one is too. Stored lines keep the record wrapper `v:1`
+  whatever the request's `v` is, and a helper older than this change reads a
+  stored v2 line as `malformed-record` (an older helper also answers
+  `unsupported-version` to a v2 `pass`, so that capture is unavailable).
 - `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
   referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
   acyclic and unambiguous, or the affected totals stay unknown — never
@@ -655,6 +665,11 @@ counts without another append, and an absent boundary stays missing.
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
   `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
+  The local and Greptile finding totals each add `by_part` (per part:
+  `reported`, `accepted`, `rejected`) and `unattributed` (counts by reason,
+  including the read-only `v1-record`); see
+  [Finding attribution](#workflow-metrics-attribution). `receipt_text` does not
+  carry them.
   With `--event-id` it also returns `data.event`: that event's `status`
   (`match`, `absent` or `unknown`) with its digest and timestamp, for
   reconciliation; only a valid snapshot can report absence. Malformed rows,
@@ -686,6 +701,41 @@ or merge. Wrappers map their existing headings to stable phase IDs in their
 own "Workflow metrics" sections; the owner of a wrapper change updates that
 mapping in the same change.
 
+<a id="workflow-metrics-attribution"></a>
+
+#### Finding attribution (v2 `pass`)
+
+A `pass` request with `v:2` names, on every finding, the part that reported it.
+`found_by` is an array of at most 8 unique labels and `attribution_reason`
+explains an empty one:
+
+- Labels: `specialist:<name>` (the `specialist` field of a specialist's
+  finding; `<name>` is lowercase letters, digits and hyphens), `red-team` (one
+  spelling: `specialist:red-team` is invalid), `native-adversarial` (the
+  in-host adversarial pass), `core` (the core checklist), `qa` (exploratory QA
+  probes), `greptile`, and `outside:challenge` or `outside:structured` (an
+  outside voice, by its phase).
+- Each label comes from that part's own record, never inferred from the
+  finding's text, file, category or scope. A finding several parts reported
+  keeps every part (the kept finding of a merge lists every source its merge
+  names, and a `duplicate_of` row keeps its own part).
+- A finding that cannot be attributed sends `found_by: []` with
+  `attribution_reason`: `unlisted-part` for a part outside the label list above,
+  `unsupported` for a name outside the label grammar, `not-reported` when the
+  part's record does not say. `attribution_reason` is `null` exactly when
+  `found_by` is nonempty. A producer never sends `v1-record`: the read uses it
+  for a finding stored by a v1 `pass`.
+- Upstream's review log is read, never edited, for attribution; the wrapper
+  neither writes nor appends to it.
+
+In a read, each scope's `findings` and `greptile_findings` add `by_part`
+(label to `{reported, accepted, rejected}`, after corrections apply; a merged
+finding counts under every part that reported it) and `unattributed` (counts
+for `not-reported`, `unlisted-part`, `unsupported` and `v1-record`). More than
+24 distinct parts in one scope leave `by_part` null and add the non-integrity
+reason `too-many-parts`, so the read stays `ok`. Both fields are null when the
+scope's totals are unknown.
+
 <a id="workflow-metrics-unknown"></a>
 
 #### Unknown reasons in a read
@@ -693,7 +743,7 @@ mapping in the same change.
 `data.unknown_reasons` (also printed as `unknown=` in `receipt_text`) says
 why a value is unknown. The first eight make the read `partial`; the rest
 (an in-progress run, a paused wait, a backward clock, work recorded only as a
-phase) leave it `ok`.
+phase, more finding parts in one scope than the read reports) leave it `ok`.
 
 | Reason | Meaning |
 |---|---|
@@ -710,6 +760,7 @@ phase) leave it `ok`.
 | `clock-invalid` | A step's end is earlier than its begin. |
 | `open-wait` | A wait ended `paused`; its duration is unknown. |
 | `unrecorded-work` | A phase ran with work recorded only as a decision (an [untimed visit](#workflow-metrics-untimed)), or a `local-pass`, `external-review` or `fix` phase ran with no pass or fix record. |
+| `too-many-parts` | One scope's findings name more than 24 distinct parts; `by_part` is null for that scope. |
 
 The envelope reasons `clock-invalid` and `candidate-changed` are reserved in
 v1: reads report clock problems through `unknown_reasons` and candidate drift
@@ -1116,7 +1167,7 @@ Each reason has one fixed action; messages contain no copied user text.
 |---|---|
 | <a id="workflow-metrics-capture-disabled"></a>`capture-disabled` | None needed; detailed capture is off. |
 | <a id="workflow-metrics-invalid-input"></a>`invalid-input` | Send one valid object (the diagnostic names the field/constraint and safe counts); see `metrics <operation> --help`. |
-| <a id="workflow-metrics-unsupported-version"></a>`unsupported-version` | Use `v:1`, or upgrade gstack-extend; unknown versions are never reinterpreted. |
+| <a id="workflow-metrics-unsupported-version"></a>`unsupported-version` | Use `v:1` (a `pass` alone may use `v:2`), or upgrade gstack-extend; unknown versions are never reinterpreted. |
 | <a id="workflow-metrics-identity-missing"></a>`identity-missing` | Provide the original start ID, or continue unavailable; never start or adopt another legacy run for metrics. |
 | <a id="workflow-metrics-identity-mismatch"></a>`identity-mismatch` | Use this invocation's ID in its own checkout/stage, or continue unavailable. |
 | <a id="workflow-metrics-ambiguous-binding"></a>`ambiguous-binding` | Run the first metrics call from the same git checkout as the legacy start, or continue unavailable. |

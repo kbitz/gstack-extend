@@ -24,6 +24,7 @@ import traceback
 from pathlib import Path
 
 V = 1
+PASS_VERSIONS = (1, 2)  # only `pass` takes v=2 (attributed findings); the record wrapper and every other op stay v=1
 STDIN_LIMIT = 16 * 1024
 MAX_DEPTH = 8
 MAX_ARRAY = 256
@@ -52,10 +53,16 @@ RESOLUTIONS = ("open", "fixed", "unknown")
 NORMALIZED = {"P0": "critical", "critical": "critical", "P1": "high", "high": "high",
               "P2": "medium", "medium": "medium", "P3": "low", "low": "low",
               "info": "info", "unknown": "unclassified"}
+# v=2 finding attribution (docs/telemetry.md#workflow-metrics-attribution): the part that reported a finding.
+PART_RE = re.compile(r"(?:specialist:[a-z][a-z0-9-]{0,63}|red-team|native-adversarial|core|qa|greptile"
+                     r"|outside:(?:challenge|structured))")
+ATTRIBUTION_REASONS = ("not-reported", "unlisted-part", "unsupported")  # producer-sendable; the read adds v1-record
+MAX_FOUND_BY = 8
+MAX_PARTS = 24  # distinct part labels per scope in a read; the full label list is 16 with every upstream specialist
 FIX_TEXT = {
     "capture-disabled": "Detailed capture is off; no action is needed.",
     "invalid-input": "Send one valid JSON object on stdin; see the operation help.",
-    "unsupported-version": "Use v=1, or upgrade gstack-extend.",
+    "unsupported-version": "Use v=1 (a pass alone may use v=2 for attributed findings), or upgrade gstack-extend.",
     "identity-missing": "Provide the exact GE_TELEMETRY start session ID, or continue without capture.",
     "identity-mismatch": "Use the start ID from this invocation in this checkout, or continue without capture.",
     "unsafe-path": "Inspect the configured state root; nothing was moved, deleted or chmodded.",
@@ -81,7 +88,7 @@ CANDIDATE_KEYS = ("candidate_head", "candidate_tree", "candidate_base", "binding
 # Why a read summary left something unknown (data.unknown_reasons; docs/telemetry.md#workflow-metrics-unknown).
 UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end",
                    "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass",
-                   "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work")
+                   "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts")
 # The subset that means the stored records contradict or orphan each other: the read is partial.
 INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
                      "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
@@ -382,11 +389,13 @@ def _model_context(value):
         raise _bad("model_context.unknown_reason", "required-when-a-value-is-null")
 
 
-def _finding(value):
+def _finding(value, version=1):
     if not isinstance(value, dict):
         raise _bad("findings[]", "object")
+    # v1 keeps its exact key set: found_by / attribution_reason on a v1 finding is an unknown key.
+    attribution = ("found_by", "attribution_reason") if version == 2 else ()
     _keys(value, ("finding_id", "severity_source", "severity_rubric", "adjudication",
-                  "resolution", "duplicate_of"), (), "findings[]")
+                  "resolution", "duplicate_of") + attribution, (), "findings[]")
     if not (isinstance(value["finding_id"], str) and SAFE_ID_RE.fullmatch(value["finding_id"])):
         raise _bad("findings[].finding_id", "bounded-identifier")
     _enum(value, "severity_source", SEVERITIES)
@@ -402,14 +411,36 @@ def _finding(value):
         raise _bad("findings[].duplicate_of", "required-for-duplicate")
     if value["duplicate_of"] == value["finding_id"]:
         raise _bad("findings[].duplicate_of", "another-finding")
+    if version == 2:
+        _attribution(value)
+
+
+def _attribution(value):
+    """v2: found_by lists the parts that reported the finding; empty needs a reason, never a guess."""
+    parts = value["found_by"]
+    if not isinstance(parts, list) or len(parts) > MAX_FOUND_BY:
+        raise _bad("findings[].found_by", "array-of-at-most-%d-parts" % MAX_FOUND_BY)
+    for part in parts:
+        # Red Team has one spelling: red-team, never specialist:red-team.
+        if not (isinstance(part, str) and PART_RE.fullmatch(part)) or part == "specialist:red-team":
+            raise _bad("findings[].found_by[]", "part-label")
+    if len(set(parts)) != len(parts):
+        raise _bad("findings[].found_by", "unique-parts")
+    reason = value["attribution_reason"]
+    if parts:
+        if reason is not None:
+            raise _bad("findings[].attribution_reason", "null-when-attributed")
+    elif reason not in ATTRIBUTION_REASONS:
+        raise _bad("findings[].attribution_reason", "|".join(ATTRIBUTION_REASONS))
 
 
 def validate_request(op, req):
     if type(req.get("v")) is not int:
-        raise _bad("v", "integer-1")
-    if req["v"] != V:
+        raise _bad("v", "integer-1|2" if op == "pass" else "integer-1")
+    if req["v"] not in (PASS_VERSIONS if op == "pass" else (V,)):
         actual = req["v"] if -(1 << 31) <= req["v"] < (1 << 31) else None  # never echo an unbounded value
-        raise Fail("unavailable", "unsupported-version", field="v", expected="1", actual=actual)
+        raise Fail("unavailable", "unsupported-version", field="v",
+                   expected="1|2" if op == "pass" else "1", actual=actual)
     _enum(req, "stage", STAGES)
     _session(req.get("session_id"), "session_id")
     _uuid(req.get("event_id"), "event_id")
@@ -486,7 +517,7 @@ def _validate_pass(base, req):
             if not isinstance(req.get("findings"), list):
                 raise _bad("findings", "array-required-for-completed-attempt (empty means zero)")
             for finding in req["findings"]:
-                _finding(finding)
+                _finding(finding, req["v"])
             ids = [finding["finding_id"] for finding in req["findings"]]
             if len(set(ids)) != len(ids):
                 raise _bad("findings[].finding_id", "unique-within-attempt")
@@ -1135,7 +1166,8 @@ def _unknown_totals():
     return {"accepted": None, "fixed": None, "open": None, "rejected": None, "deferred": None,
             "duplicate": None, "unclassified": None,
             "by_normalized_severity": {k: None for k in ("critical", "high", "medium", "low", "info",
-                                                         "unclassified")}}
+                                                         "unclassified")},
+            "by_part": None, "unattributed": None}
 
 
 def _finding_totals(selected, corrections, unknown, known_ids):
@@ -1147,6 +1179,8 @@ def _finding_totals(selected, corrections, unknown, known_ids):
               "duplicate": 0, "unclassified": 0,
               "by_normalized_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0,
                                          "info": 0, "unclassified": 0}}
+    by_part = {}
+    unattributed = {reason: 0 for reason in ATTRIBUTION_REASONS + ("v1-record",)}
     findings = [(p, v, a, dict(f)) for p, v, a, f in selected]
     competing = dangling = False
     chains = {}
@@ -1192,6 +1226,22 @@ def _finding_totals(selected, corrections, unknown, known_ids):
                 totals["open"] += 1
         elif adj in totals:
             totals[adj] += 1
+        if "found_by" not in finding:
+            unattributed["v1-record"] += 1  # an earlier v1 row: unknown, never reinterpreted
+        elif not finding["found_by"]:
+            unattributed[finding["attribution_reason"]] += 1
+        else:
+            for label in finding["found_by"]:  # a merged finding counts under every part that reported it
+                slot = by_part.setdefault(label, {"reported": 0, "accepted": 0, "rejected": 0})
+                slot["reported"] += 1
+                if adj in ("accepted", "rejected"):
+                    slot[adj] += 1
+    if len(by_part) > MAX_PARTS:
+        unknown.add("too-many-parts")  # not an integrity reason: the read stays ok
+        totals["by_part"] = None
+    else:
+        totals["by_part"] = {label: by_part[label] for label in sorted(by_part)}
+    totals["unattributed"] = unattributed
     return totals
 
 
@@ -1377,7 +1427,7 @@ def receipt_text(data):
 
 HELP = """Usage: gstack-extend-telemetry metrics <operation>
 Operations: begin, end, decision, pass, correction, read.
-Producers take exactly one JSON object (v=1) on stdin (16 KiB max) and print one
+Producers take exactly one JSON object (v=1; a pass alone may send v=2) on stdin (16 KiB max) and print one
 JSON result envelope; inspect its status, the launcher always exits 0.
 metrics <operation> --help shows that operation's fields. metrics read takes
 --session-id <extend-UUID> [--event-id <UUID>] and never writes.
@@ -1393,9 +1443,13 @@ OP_HELP = {
            "optional candidate context override.",
     "decision": "decision: v, stage, session_id, event_id, step_id, phase, decision=RUN|REUSE|N/A, "
                 "reason (controlled). One per visited phase; begin/end only around executed work.",
-    "pass": "pass: v, stage, session_id, event_id, pass_id, scope=local|greptile, "
+    "pass": "pass: v=1|2, stage, session_id, event_id, pass_id, scope=local|greptile, "
             "state=started|attempt|voice-complete|completed with that state's fields; a completed attempt "
-            "carries findings (empty means zero); voice-complete selects one attempt or records N/A.",
+            "carries findings (empty means zero); voice-complete selects one attempt or records N/A. "
+            "v=2 (pass only) adds found_by (at most 8 unique parts: specialist:<name>, red-team, "
+            "native-adversarial, core, qa, greptile, outside:challenge, outside:structured) and "
+            "attribution_reason (null when found_by is nonempty, else not-reported|unlisted-part|unsupported) "
+            "to every finding; v=1 findings carry neither.",
     "correction": "correction: v, stage, session_id, event_id, correction_kind=retry|fallback|parent|finding|fix-cycle "
                   "plus the explicit referenced IDs for that kind; corrections append, never rewrite.",
     "read": "read: --session-id <extend-UUID> [--event-id <UUID>]. Observation-free named-run summary "

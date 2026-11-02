@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "workflow-metrics",
-  "title": "gstack-extend workflow-metrics record (Track 24A)",
-  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. See docs/telemetry.md#workflow-metrics.",
+  "title": "gstack-extend workflow-metrics record (Track 24A; v2 attributed pass findings, Track 57A)",
+  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper and every operation stay v1 except `pass`, whose request may be v2 (findings name the part that reported them). See docs/telemetry.md#workflow-metrics.",
   "$comment": "Records, requests, contexts and findings set additionalProperties false: an unknown key is invalid input, not a forward-compatible extension. A shape or meaning change adds a new v branch and keeps v1 readable as partial/unknown, never reinterpreted.",
   "$ref": "#/definitions/record",
   "definitions": {
@@ -66,6 +66,32 @@
       "required": ["finding_id", "severity_source", "severity_rubric", "adjudication", "resolution", "duplicate_of"],
       "description": "rejected/duplicate require resolution unknown; duplicate requires duplicate_of naming another finding; finding_id is unique within one attempt. Normalized severity: P0/critical->critical, P1/high->high, P2/medium->medium, P3/low->low, info->info, unknown->unclassified. Normalization does not claim rubric equivalence."
     },
+    "part": {
+      "type": "string",
+      "pattern": "^(?:specialist:[a-z][a-z0-9-]{0,63}|red-team|native-adversarial|core|qa|greptile|outside:(?:challenge|structured))$",
+      "not": { "const": "specialist:red-team" },
+      "description": "The part that reported a finding, taken from that part's own record: specialist:<name> (the specialist field of a specialist's finding), red-team (one spelling; never specialist:red-team), native-adversarial (the in-host adversarial pass), core (the core checklist), qa (exploratory QA probes), greptile, or outside:challenge / outside:structured (an outside voice, by phase). Never inferred from finding text, file or category."
+    },
+    "finding_v2": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "finding_id": { "$ref": "#/definitions/safe_id" },
+        "severity_source": { "type": "string", "enum": ["P0", "P1", "P2", "P3", "critical", "high", "medium", "low", "info", "unknown"] },
+        "severity_rubric": { "type": "string", "enum": ["core", "specialist", "adversarial", "greptile", "gstack-review", "other", "unknown"] },
+        "adjudication": { "type": "string", "enum": ["accepted", "rejected", "deferred", "duplicate", "unclassified"] },
+        "resolution": { "type": "string", "enum": ["open", "fixed", "unknown"] },
+        "duplicate_of": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "found_by": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/definitions/part" } },
+        "attribution_reason": { "type": ["string", "null"], "enum": ["not-reported", "unlisted-part", "unsupported", null], "description": "Null exactly when found_by is nonempty. A finding that cannot be attributed sends found_by [] with a reason, never a guess. The read adds v1-record for earlier rows; a producer never sends it." }
+      },
+      "required": ["finding_id", "severity_source", "severity_rubric", "adjudication", "resolution", "duplicate_of", "found_by", "attribution_reason"],
+      "allOf": [
+        { "if": { "type": "object", "properties": { "found_by": { "type": "array", "minItems": 1 } }, "required": ["found_by"] },
+          "then": { "type": "object", "properties": { "attribution_reason": { "type": "null" } } },
+          "else": { "type": "object", "properties": { "attribution_reason": { "type": "string" } } } }
+      ],
+      "description": "The v2 finding: the v1 fields plus found_by (at most 8 unique parts, several when a merged finding was reported by several parts) and attribution_reason. The same rejected/duplicate/finding_id rules as v1 apply."
+    },
     "request_base": {
       "type": "object",
       "properties": {
@@ -75,6 +101,17 @@
         "event_id": { "$ref": "#/definitions/uuid" }
       },
       "required": ["v", "stage", "session_id", "event_id"]
+    },
+    "pass_request_base": {
+      "type": "object",
+      "properties": {
+        "v": { "type": "integer", "enum": [1, 2] },
+        "stage": { "$ref": "#/definitions/stage" },
+        "session_id": { "$ref": "#/definitions/session_id" },
+        "event_id": { "$ref": "#/definitions/uuid" }
+      },
+      "required": ["v", "stage", "session_id", "event_id"],
+      "description": "As request_base, except a pass request may be v=2. The record wrapper stays v=1."
     },
     "begin_request": {
       "type": "object", "additionalProperties": false,
@@ -122,7 +159,12 @@
     },
     "pass_request": {
       "type": "object", "additionalProperties": false,
-      "allOf": [{ "$ref": "#/definitions/request_base" }],
+      "allOf": [
+        { "$ref": "#/definitions/pass_request_base" },
+        { "if": { "type": "object", "properties": { "v": { "const": 2 } }, "required": ["v"] },
+          "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding_v2" } } } },
+          "else": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } } } } }
+      ],
       "properties": {
         "v": true, "stage": true, "session_id": true, "event_id": true,
         "pass_id": { "$ref": "#/definitions/uuid" },
@@ -133,7 +175,7 @@
         "attempt_id": { "$ref": "#/definitions/uuid" },
         "predecessor_attempt_id": { "$ref": "#/definitions/uuid_or_null" },
         "attempt_outcome": { "type": "string", "enum": ["completed", "failed", "partial"] },
-        "findings": { "type": "array", "maxItems": 256, "items": { "$ref": "#/definitions/finding" } },
+        "findings": { "type": "array", "maxItems": 256 },
         "model_context": { "$ref": "#/definitions/model_context" },
         "voice_status": { "type": "string", "enum": ["completed", "not-applicable"] },
         "selected_attempt_id": { "$ref": "#/definitions/uuid" },
@@ -141,7 +183,7 @@
         "context": { "$ref": "#/definitions/context_override" }
       },
       "required": ["pass_id", "scope", "state"],
-      "description": "Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
+      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 findings are finding_v2. Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
     },
     "correction_request": {
       "type": "object", "additionalProperties": false,
@@ -186,8 +228,8 @@
     },
     "unknown_reason": {
       "type": "string",
-      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work"],
-      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
+      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts"],
+      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase, more distinct finding parts in one scope than the read reports) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
     },
     "diagnostics": {
       "type": ["object", "null"], "additionalProperties": false,

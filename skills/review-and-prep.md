@@ -51,7 +51,7 @@ Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/m
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
 producer is `gstack-extend-telemetry metrics <begin|end|decision|pass|correction>`
-with one JSON object (`v:1`, `stage:"review-and-prep"`, the retained
+with one JSON object (`v:1`, or `v:2` for a `pass` record, `stage:"review-and-prep"`, the retained
 `session_id`, a fresh lowercase UUID `event_id` you keep stable for that
 event) on stdin. Every ID you mint is lowercase and random (below).
 The launcher always exits 0: inspect the JSON envelope's `status` for capture
@@ -196,6 +196,26 @@ library and both call forms are in
   from passes. Greptile is
   `scope:"greptile"` with its own count and its existing once-per-PR rule
   above unchanged; metrics never triggers, retries or waives it.
+- Finding attribution (`v:2`): every `pass` record sends `v:2`; every other
+  producer keeps `v:1`. Each finding in a completed attempt adds `found_by`,
+  the parts that reported it, and `attribution_reason`. Take each part from
+  that part's own record, never from the finding's text, file or category:
+  `specialist:<name>` from the `specialist` field of a specialist's finding,
+  `red-team` for a finding tagged `"specialist":"red-team"`,
+  `native-adversarial` for a finding from `/review`'s in-host adversarial pass,
+  `core` for a finding the core checklist reported, `qa` for a finding an
+  exploratory QA probe reported, `greptile` for a finding Greptile's own review
+  reported, and `outside:challenge` or `outside:structured` for an outside
+  voice's finding, by its phase. A finding several parts reported keeps every
+  part: the finding you keep lists every source upstream's merge names, and a
+  `duplicate_of` row keeps its own part. With no part to name, send
+  `found_by: []` and an `attribution_reason`: `unlisted-part` for a part
+  outside that list, `unsupported` for a name outside the grammar,
+  `not-reported` when the part's record does not say. Never guess a part. Read
+  upstream's records and `gstack-review-read`; never write, append to or edit
+  upstream's review log for attribution. An `unsupported-version` answer means
+  the installed helper predates `v:2`; that capture is unavailable, like any
+  other unrecorded call.
 - Corrections, appended as they happen: `correction_kind:"finding"` with the
   finding's `finding_id`, `pass_id`, `voice_id` and `attempt_id` when its
   resolution or adjudication changes after its attempt was recorded (a fix
