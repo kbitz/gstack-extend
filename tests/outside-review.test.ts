@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { prepare, snapshotDiff, TASKS, type Request } from '../src/outside-review/prompt';
+import { prepare, snapshotDiff, POLICY, TASKS, type Request } from '../src/outside-review/prompt';
 import { recover, type Classifier } from '../src/outside-review/recovery';
 import { run, measurement } from '../src/outside-review/run';
 import { restrictedArgs, UPSTREAM_HELPERS } from '../src/outside-review/cli';
@@ -18,7 +18,8 @@ const classify: Classifier = ({ text, gate, exit }) => {
   const findings = { highest };
   if (execution.state !== 'ran') return { execution, findings, verdict: 'unavailable', reason: 'execution_failed' };
   if (gate === 'review' && !/^Recommendation: .+ because .+/m.test(text)) return { execution, findings, verdict: 'unavailable', reason: 'missing_markers' };
-  if (!highest && !/^NO_FINDINGS$/m.test(text)) return { execution, findings, verdict: 'unverified', reason: 'untagged_review' };
+  // The stub also reads the `NO_FINDINGS: none` line that POLICY asks for.
+  if (!highest && !/^NO_FINDINGS(?:: none)?$/m.test(text)) return { execution, findings, verdict: 'unverified', reason: 'untagged_review' };
   return { execution, findings, verdict: highest === 'P0' || highest === 'P1' ? 'findings' : 'clean' };
 };
 const temporary = async (work: (dir: string) => Promise<void> | void) => {
@@ -79,6 +80,57 @@ describe('completed outside recovery', () => {
       const result = recover('[P2] advisory\nRecommendation: wait because callers are missing.\n' + marker, 'review', 0, '', classify);
       expect(result.credited).toBe(false);
       expect(result.classification.verdict).toBe('unverified');
+    }
+  });
+});
+
+describe('no-findings line the review prompt asks for', () => {
+  const gates = ['review', 'structured'] as const;
+  const NO_FINDINGS_SENTENCE = `If you have no findings, write the line "NO_FINDINGS: none" immediately before the Recommendation line, with nothing between them, and give your reason in the Recommendation's because-clause.`;
+  // A reply that follows the prompt: rationale prose, the line, then a Recommendation with its reason.
+  const NO_FINDINGS_REPLY = 'I checked every hunk of the diff against the acceptance criteria and the supplied callers.\nNO_FINDINGS: none\nRecommendation: approve because every criterion is met and no caller changes behavior.';
+  // Reconstructs the shape of the Track 64A review reply (PR #192), not its text: a bold NO_FINDINGS opening,
+  // prose, then a qualified Recommendation. The installed classifier left it uncredited.
+  const REJECTED_2026_11_02 = '**NO_FINDINGS**\n\nThe prompt change keeps every gate and the tests pin each criterion.\n\nRecommendation: approve, subject to the AC4 check, because the change is confined to the prompt text.';
+
+  // Value: protects=an outside review that follows POLICY's no-findings instruction is credited on both
+  //   gates, and the instruction keeps its place before the Recommendation line; fails_when=POLICY drops or
+  //   reorders the line, or the sentence drifts from /autoplan-lean's wording; why_new=a paid review was
+  //   discarded as untagged_review after a bold NO_FINDINGS opening; seam=none;
+  //   no_claim=that a model follows the prompt; the classifier here is the strict stub
+  test('no-findings line: POLICY asks for it and the stub credits a reply that follows it', () => {
+    expect(POLICY).toContain(NO_FINDINGS_SENTENCE);
+    expect(POLICY).not.toContain('end with NO_FINDINGS and an explicit rationale');
+    for (const retained of ['Report concrete findings with [P0], [P1], [P2] or [P3], path, evidence and impact.',
+      'End with Recommendation: <action> because <specific reason>.',
+      'If essential context is missing, return NEEDS_CONTEXT: <specific callers, contracts or tests>.',
+      'Never declare a review complete when essential context is missing.']) {
+      expect(POLICY).toContain(retained);
+    }
+    expect(POLICY.indexOf(NO_FINDINGS_SENTENCE)).toBeLessThan(POLICY.indexOf('End with Recommendation:'));
+    for (const gate of gates) {
+      const followed = recover(NO_FINDINGS_REPLY, gate, 0, '', classify);
+      expect([gate, followed.credited, followed.parse, followed.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
+      // Widening the stub for the requested line did not make it credit the old shape.
+      const old = recover(REJECTED_2026_11_02, gate, 0, '', classify);
+      expect([gate, old.credited, old.parse, old.classification.verdict]).toEqual([gate, false, 'failed', 'unverified']);
+    }
+  });
+
+  // Value: protects=the requested line is credited by the installed validator, and the 2026-11-02 reply shape
+  //   stays uncredited, so the fix stays in the prompt; fails_when=upstream's no-findings reading changes under
+  //   the prompt, or recovery starts accepting the old shape; why_new=the stub cannot show what the installed
+  //   classifier reads; seam=installed gstack lib (GSTACK_OUTSIDE_TEST_ROOT);
+  //   no_claim=that a model follows the prompt
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('no-findings line: the installed classifier credits it and still rejects the 2026-11-02 shape (installed only)', async () => {
+    const { classifyOutsideReview } = await import(join(process.env.GSTACK_OUTSIDE_TEST_ROOT!, 'lib/outside-review-result.ts'));
+    for (const gate of gates) {
+      // A parse of `valid` shows recovery took no part in crediting the reply.
+      const followed = recover(NO_FINDINGS_REPLY, gate, 0, '', classifyOutsideReview);
+      expect([gate, followed.credited, followed.parse, followed.classification.verdict]).toEqual([gate, true, 'valid', 'clean']);
+      const old = recover(REJECTED_2026_11_02, gate, 0, '', classifyOutsideReview);
+      expect([gate, old.credited, old.parse, old.classification.verdict, old.classification.reason])
+        .toEqual([gate, false, 'failed', 'unverified', 'untagged_review']);
     }
   });
 });
