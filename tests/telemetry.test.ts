@@ -19,8 +19,9 @@ const HAS_STATE_RESOLVER = (() => {
     return false;
   }
 })();
-// Hundreds of fixture homes are removed here; the default 5 s hook limit is too tight on a loaded machine.
-afterAll(cleanupTelemetryFixtures, 60_000);
+// Cleanup scans fixture files, removes hundreds of homes and re-arms the real-store guard.
+// Match the initial snapshot's two-minute budget; a full-suite cleanup took 67.6 s.
+afterAll(cleanupTelemetryFixtures, 120_000);
 const ROOT = join(import.meta.dir, '..');
 // The running checkout's release, read only. Tests that need another release build a disposable copy.
 const RELEASE = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
@@ -1873,7 +1874,7 @@ describe('execution provenance', () => {
         [{ ts: iso(Date.now() / 1000), type: 'turn_started', model_id: 'grok-other' }]);
     }, [], work).row;
     expect(picked).toMatchObject({ agent: 'grok', model: 'grok-4.7', effort: 'high' });
-  });
+  }, 30_000);
 
   test('an unreadable provenance config records nothing', () => {
     const fix = makeTelemetryFixture('off');
