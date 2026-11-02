@@ -210,10 +210,13 @@ The known exception: `skills/full-review.md` still selects
 - One sample per cell, unpaired in time, on a shared machine whose load was not
   controlled. No typical cost or saving is established.
 - Wall time is not model time.
-- A test in either mechanics suite that uses a real skill as fixture input now
-  runs only on `setup`, `bin/**` and full runs, so a defect there appears at
-  the release stage's full run and not on the skill edit. The frontmatter rules
-  those tests rely on stay covered by `tests/audit-compliance.test.ts` and
+- A test in either mechanics suite that uses a real skill as fixture input is
+  no longer guaranteed to run on that skill edit. The suites still run on
+  `setup`, their declared `bin/` inputs, their other mapped or imported
+  dependencies, and full runs; telemetry also runs on `skills/full-review.md`.
+  A defect in those mechanics may therefore wait for the release stage's full
+  run. The frontmatter rules those tests rely on stay covered by
+  `tests/audit-compliance.test.ts` and
   `tests/skill-content.test.ts`.
 - The lint that keeps pregate's literal scan clear of the mechanics suites mirrors
   the scan's two readings (a quoted path and a `join()` of quoted segments); it

@@ -980,7 +980,7 @@ describe('release-only ship path', () => {
       "--explain --out <temp-path>` without `--allow-repo-commands`",
       'Put `<temp-path>` outside the worktree',
       'never add `--policy-from head` to it',
-      'retain selection evidence from the actual head-policy run with `--explain`',
+      'retain selection evidence from the actual full pregate run with `--explain`',
       'make every declared JS lane runnable',
       'documented frozen-lockfile install',
       'A failed install stops here.',
@@ -1067,6 +1067,7 @@ describe('head-policy exception for a pregate lane rename or removal', () => {
       'the installed pregate lets a head policy only add test lanes and refuses a removed or renamed lane with `PREGATE_HEAD_POLICY_LOOSENS`',
       'so that PR runs every full pregate on the base policy and records the reason, the lane-gap probe, the `gstack-pregate validate` result and the run\'s `--explain` output.',
     ]) expect(gates).toContain(clause);
+    expect(gates).toContain('Removing a lane includes dropping a test from an existing dependency glob.');
     expect(narrow).toContain('Item 1 requires `--policy-from head` or runs the PR on the base policy under its rename-or-removal exception');
     for (const clause of [
       'and a PR that edits it needs `--policy-from head`, with one exception.',

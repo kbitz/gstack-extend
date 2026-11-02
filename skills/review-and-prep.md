@@ -1791,6 +1791,7 @@ reuse these records.
    renamed lane with `PREGATE_HEAD_POLICY_LOOSENS`, so that PR runs every full
    pregate on the base policy and records the reason, the lane-gap probe, the
    `gstack-pregate validate` result and the run's `--explain` output.
+   Removing a lane includes dropping a test from an existing dependency glob.
    Find lane gaps before the long suite with `gstack-pregate --stage tests
    --explain --out <temp-path>` without `--allow-repo-commands` (base policy
    only; that record is `incomplete` and never counts). Put `<temp-path>`
@@ -1799,7 +1800,7 @@ reuse these records.
    200 characters. This probe describes base policy only: never add
    `--policy-from head` to it, because that requires permission to execute
    lanes. Validate changed pins with `gstack-pregate validate` and retain
-   selection evidence from the actual head-policy run with `--explain`.
+   selection evidence from the actual full pregate run with `--explain`.
    A touched file with no test lane or a refused runner is preparation work:
    repair the map here and review it like any fix.
 2. **Coverage audit.** Run `/ship`'s Test Coverage Audit section, including its

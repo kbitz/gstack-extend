@@ -7,7 +7,7 @@
  * INSTALL_WARN line, the description limit, the telemetry blocks and the documented resume commands.
  * tests/helpers/touchfiles.ts declares `skills/**` for this file, so pregate's literal scan and diff selection map
  * any skill edit here. Skills are read through a computed name; the installer and telemetry suites run on `setup`,
- * `bin/**` and full runs instead.
+ * their declared `bin/` inputs and full runs instead.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
