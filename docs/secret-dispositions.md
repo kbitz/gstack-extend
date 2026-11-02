@@ -48,15 +48,35 @@ PR text, logs intended for publication, or the disposition reason.
 
 Hash the exact UTF-8 text of the complete flagged line without its LF delimiter.
 Keep indentation, trailing spaces, quotes, and any CR byte; do not trim or
-normalize. `gstack-redact` reports an **added-line index**, not the source line
-number. Use the evaluator's resolved `text` and `line_sha256`, and confirm the
-source before asking. The hash covers the entire line, not just the match.
+normalize. A finding's number is not always a source line number; see
+[finding locations](#finding-locations). Use the evaluator's resolved `text`
+and `line_sha256`, and confirm the source before asking. The hash covers the
+entire line, not just the match.
 Entries cover identical occurrences of that line under the same path/rule.
 They do not cover changed lines, renamed files, another rule, or HIGH findings.
 
 After an approved edit, commit the entries and run upstream pregate again on
 the new HEAD. The evaluator refuses uncommitted/staged disposition edits. Do
 not create a real project disposition file merely to copy this example.
+
+### Finding locations
+
+Upstream renders a finding's location in one of two forms. The evaluator accepts
+each only for the files that take it:
+
+| Form | Files | `N`, and the reported `added_line` |
+|---|---|---|
+| `line N` | A Python or Dart file (`.py`, `.pyi`, `.dart`, any case) that upstream reads whole, tracked or untracked | The line number in the working-tree file. `N` must be one of the part's `keep` numbers, the lines the branch added. |
+| `added line N` | Every other file, and a tracked Python or Dart file that upstream cannot read whole or whose working copy no longer holds the diff's added lines at their numbers | The position among that file's added lines, not a source line number. |
+
+The wrong form for a file, or `line N` outside `keep`, is the error `finding
+location does not match upstream added-line selection`, and the result stays
+unsatisfied. A finding on a line the branch did not add cannot be satisfied by
+any entry, even one whose path, rule and line hash match; that includes an
+`engine.` finding, which upstream's own filter lets through anywhere in the
+file. The JSON field keeps the name `added_line` for both forms. The
+[launch check](upstream-check.md#drift-anchor) reports DRIFT when upstream's
+rendered form changes.
 
 ## Evaluation and receipts
 
@@ -87,9 +107,9 @@ only under the coverage rule in [Grammar H-F](workflow-handoffs.md#grammar-h-f-e
 A partial `--only secrets` record cannot
 satisfy either gate. The evaluator checks the raw schema/verdict, current
 tree/HEAD/base, cleared remote obligations, other checks and the upstream
-added-line hash. It matches every blocking finding by exact path, rule and
-line hash. It verifies the current tree again after collection. A stale
-pregate record must be rerun, not repaired or relabeled.
+added-line hash. It matches every blocking finding by exact path, rule,
+accepted location form and line hash. It verifies the current tree again after
+collection. A stale pregate record must be rerun, not repaired or relabeled.
 
 Exit 0 means the **wrapper gate** is satisfied; 1 means blocked; 2 means invalid
 arguments, incompatible helpers, or unavailable evidence. JSON always includes

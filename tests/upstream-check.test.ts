@@ -7,13 +7,14 @@ import { BOUNDARY, NATIVE_CRITERIA, OUTSIDE_CRITERIA, OUTSIDE_RESULT_CONTRACT, U
 import { skipList } from '../src/autoplan-lean/outline';
 import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
-import { ANCHORS_QUALIFIED, EXEMPTIONS, FIX_FIRST_QUALIFIED, FORMAT, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, fixFirstInventory, inventory, main, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
+import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
+import { ANCHORS_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FORMAT, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, fixFirstInventory, inventory, main, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 55; // root, 4 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 57; // root, 4 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 let counter = 0;
@@ -53,6 +54,7 @@ const coverageText = () => `# coverage\n\n${TEST_GAP.coverage.join('\n')}\n`;
 const pregateBinText = () => `# gstack-pregate\n\n${PREGATE_NARROW.bin.join('\n')}\n`;
 const pregateIndexText = () => `// index\n\n${PREGATE_NARROW.index.join('\n')}\n`;
 const pregateLanesText = () => `// lanes\n\n${PREGATE_NARROW.lanes.join('\n')}\n`;
+const pregateSecretsText = () => `// secrets\n\n${UPSTREAM_FINDING_ANCHORS.join('\n')}\n`;
 
 interface Fixture { root: string; skills: string; files: Record<string, string> }
 /** A minimal installed upstream that satisfies every check, in either layout. */
@@ -69,9 +71,11 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   files.pregateBin = join(root, 'bin', 'gstack-pregate');
   files.pregateIndex = join(root, 'lib', 'pregate', 'index.ts');
   files.pregateLanes = join(root, 'lib', 'pregate', 'checks', 'lanes.ts');
+  files.pregateSecrets = join(root, 'lib', 'pregate', 'checks', 'secrets.ts');
   put(files.pregateBin, pregateBinText());
   put(files.pregateIndex, pregateIndexText());
   put(files.pregateLanes, pregateLanesText());
+  put(files.pregateSecrets, pregateSecretsText());
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
@@ -335,7 +339,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, two finding-location anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -346,6 +350,7 @@ describe('a healthy installation', () => {
       `INFO inspected fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`,
       `INFO inspected test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`,
       `INFO inspected pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`,
+      `INFO inspected finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`,
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
@@ -744,6 +749,96 @@ describe('drift', () => {
     for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor review-and-prep.pregate-narrowing.bin.${n}`);
     for (const n of [1, 2, 3, 4, 5]) expect(r.lines).toContain(`OK anchor review-and-prep.pregate-narrowing.lanes.${n}`);
   }, 30000);
+
+  const LOCATION_EFFECT = '  effect: bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked';
+  // Value: protects=the two spans of installed secrets.ts that produce the finding location the evaluator reads; fails_when=a span is edited, dropped or reordered without the drift check following; why_new=bin/secret-dispositions reads upstream's rendered location grammar; seam=none
+  test('locks the finding-location anchors exactly', () => {
+    expect(UPSTREAM_FINDING_ANCHORS).toEqual([
+      "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${f.file}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
+      'fileLine: !!part.keep',
+    ]);
+  });
+
+  // Value: protects=a changed finding-location span drifts exactly its own anchor, names its stage cost and docs link, and leaves every other gate OK; fails_when=a changed span passes, reports another gate's effect or turns another gate off; why_new=fifth upstream gate, one installed file in two layouts; seam=none
+  test.each([
+    ['nested', 1], ['nested', 2], ['sibling', 1], ['sibling', 2],
+  ] as const)('a changed finding-location span in the %s layout is drift naming secret-dispositions.location.%d', async (layout, n) => {
+    const f = upstream(layout);
+    const path = f.files.pregateSecrets!, anchor = UPSTREAM_FINDING_ANCHORS[n - 1]!, changed = `${anchor.slice(0, -2)}!!`;
+    writeFileSync(path, readFileSync(path, 'utf8').replace(anchor, () => changed));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor secret-dispositions.location.${n} `));
+    expect(at).toBeGreaterThan(-1);
+    const shown = anchor.replace(/\s+/g, ' ');
+    expect(r.lines[at]).toContain(shown.length > 70 ? `"${shown.slice(0, 69)}…"` : `"${shown}"`);
+    expect(r.lines[at + 1]).toBe(LOCATION_EFFECT);
+    expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
+    expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    // The other gates, and the other location anchor, are independent.
+    expect(r.lines).toContain(`OK anchor secret-dispositions.location.${3 - n}`);
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    for (const m of [1, 2, 3]) expect(r.lines).toContain(`OK anchor review-and-prep.incap.${m}`);
+    for (const m of [1, 2, 3, 4, 5]) expect(r.lines).toContain(`OK anchor review-and-prep.pregate-narrowing.lanes.${m}`);
+    expect(r.out).not.toContain('the in-cap delta is inactive');
+    expect(r.out).not.toContain('a pass under full-suite=external does not narrow the pregate');
+  }, 30000);
+
+  // Value: protects=a missing installed secrets.ts drifts exactly the two location anchors with a path-naming reason, in both layouts; fails_when=a missing file passes, drifts another file's anchors or reads the wrong layout path; why_new=one new installed file; seam=none
+  test.each(['nested', 'sibling'] as const)('a missing pregate secrets file in the %s layout drifts the two location anchors and nothing else', async (layout) => {
+    const f = upstream(layout);
+    const path = f.files.pregateSecrets!;
+    rmSync(path);
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=2`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual(['secret-dispositions.location.1', 'secret-dispositions.location.2']);
+    for (const line of drifts(r.lines)) expect(line).toContain(`pregate secrets check not found: ${path}`);
+    expect(r.lines.filter((l) => l.startsWith('INFO file pregate.secrets '))).toEqual([]);
+  }, 30000);
+
+  // Value: protects=a healthy secrets.ts is reported as INFO under the gstack root in both layouts; fails_when=the sibling layout reads it from the skills directory or a healthy file is not reported; why_new=secrets.ts is not in the review or ship skill directories; seam=none
+  test('the pregate secrets file is read from the gstack root and reported as INFO in both layouts', async () => {
+    for (const layout of ['nested', 'sibling'] as const) {
+      const f = upstream(layout);
+      const r = await check(rootArgs(f));
+      expect(r.lines).toContain(`INFO file pregate.secrets ${realpathSync(join(f.root, 'lib', 'pregate', 'checks', 'secrets.ts'))}`);
+      for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor secret-dispositions.location.${n}`);
+    }
+  }, 40000);
+
+  test('a missing root leaves both finding-location anchors not run', async () => {
+    const r = await check(['--gstack-root', join(scratch, 'does-not-exist-finding-location')]);
+    const anchors = drifts(r.lines).filter((l) => l.startsWith('DRIFT anchor secret-dispositions.location.'));
+    expect(anchors).toHaveLength(UPSTREAM_FINDING_ANCHORS.length);
+    for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
+  }, 30000);
+
+  // Value: protects=the finding-location anchors report after the pregate-narrowing anchors and before the skip list; fails_when=a gate moves in the report; why_new=fifth anchor group; seam=none
+  test('the finding-location anchors report after the pregate-narrowing anchors and before the skip list', async () => {
+    const r = await check(rootArgs(upstream('nested')));
+    const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
+    expect(ids.filter((id) => id.startsWith('anchor secret-dispositions.'))).toEqual(UPSTREAM_FINDING_ANCHORS.map((_, i) => `anchor secret-dispositions.location.${i + 1}`));
+    expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
+    expect(ids.indexOf('anchor secret-dispositions.location.2')).toBeLessThan(ids.indexOf('anchor autoplan-lean.skip-list'));
+  }, 30000);
+
+  // Value: protects=the check stays read-only on a healthy and on a drifted secrets.ts; fails_when=a run adds, removes or rewrites a file under the root; why_new=the check reads one more installed file; seam=none
+  test('a healthy and a drifted run leave the root\'s file list and secrets.ts bytes unchanged', async () => {
+    const f = upstream('nested');
+    const path = f.files.pregateSecrets!;
+    const listing = () => readdirSync(f.root, { recursive: true }).map(String).sort();
+    for (const drifted of [false, true]) {
+      if (drifted) writeFileSync(path, readFileSync(path, 'utf8').replace('fileLine: !!part.keep', () => 'fileLine: false'));
+      const files = listing(), bytes = readFileSync(path);
+      const r = await check(rootArgs(f));
+      expect(r.result).toBe(drifted ? `RESULT drift checks=${CHECKS} drift=1` : `RESULT ok checks=${CHECKS} drift=0`);
+      expect(listing()).toEqual(files);
+      expect(readFileSync(path).equals(bytes)).toBe(true);
+    }
+  }, 40000);
 
   test('a missing root leaves the test-gap inventory OK and every test-gap anchor not run', async () => {
     const r = await check(['--gstack-root', join(scratch, 'does-not-exist-test-gaps')]);
@@ -1320,6 +1415,11 @@ describe('launcher', () => {
 });
 
 describe('installed upstream', () => {
+  test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the finding-location anchors match the root named by GSTACK_OUTSIDE_TEST_ROOT, whatever else drifts', async () => {
+    const r = await check(['--gstack-root', process.env.GSTACK_OUTSIDE_TEST_ROOT!]);
+    for (const n of [1, 2]) expect(r.lines).toContain(`OK anchor secret-dispositions.location.${n}`);
+  }, 30000);
+
   test.skipIf(!process.env.GSTACK_OUTSIDE_TEST_ROOT)('the root named by GSTACK_OUTSIDE_TEST_ROOT passes every check', async () => {
     const r = await check(['--gstack-root', process.env.GSTACK_OUTSIDE_TEST_ROOT!]);
     expect(r.out).not.toContain('DRIFT');
@@ -1452,13 +1552,14 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
     ['Fix-First anchors', FIX_FIRST_QUALIFIED.revision, FIX_FIRST_QUALIFIED.version],
     ['Test-gap anchors', TEST_GAP_QUALIFIED.revision, TEST_GAP_QUALIFIED.version],
     ['Pregate-narrowing anchors', PREGATE_NARROW_QUALIFIED.revision, PREGATE_NARROW_QUALIFIED.version],
+    ['Secret-finding location anchors', FINDING_LOCATION_QUALIFIED.revision, FINDING_LOCATION_QUALIFIED.version],
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];

@@ -13,7 +13,8 @@ step: `/review-and-prep` records `in-cap delta: inactive` and runs the
 unmodified `/review` (or records `repair-review: inactive` and repeats every
 edited pass, or records `test-gaps: inactive` and writes tests as today, or
 records `pregate-narrowing: inactive` and runs the pregate as today),
-`bin/outside-review` refuses at dispatch, and
+`bin/outside-review` refuses at dispatch, `bin/secret-dispositions` refuses a
+reviewed finding whose location it cannot read, and
 `/autoplan-lean` records criteria drift and continues with voices that are not
 upstream-identical. The check moves that discovery ahead of the spend. It only
 describes the installation at the moment it ran.
@@ -121,6 +122,7 @@ RESULT ok|drift checks=<n> drift=<m>
 Ids contain no whitespace and come from the source position
 (`review-and-prep.incap.1`, `autoplan-lean.skip-list`,
 `outside-review.classifyOutsideReview`, `classifier.review-not-ready`,
+`secret-dispositions.location.1`,
 `criteria.eng.outside`). `INFO` keys are `extend-version`, `extend-root`,
 `inspected <contract> <revision> <version>`, `scope`, `root`,
 `upstream-version`, `upstream-revision` (the git revision when the root is a
@@ -155,7 +157,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=55 drift=1
+RESULT drift checks=57 drift=1
 ```
 
 ## What it checks
@@ -216,6 +218,18 @@ The inventory comes from this extension's own source, never a second copy:
   layouts. They are listed by `pregateNarrowInventory`, a separate check
   (`review-and-prep.pregate-narrowing`). Anchor IDs read
   `review-and-prep.pregate-narrowing.<bin|index|lanes>.<n>`.
+- **Secret-finding location anchors.** Two spans of the installed
+  `lib/pregate/checks/secrets.ts`, read as raw bytes from the root in both
+  layouts: the template that renders a finding's location, which writes
+  `line N` for a file upstream scanned whole and `added line N` for any other,
+  and the `fileLine: !!part.keep` flag that picks between them. They are the
+  exported `UPSTREAM_FINDING_ANCHORS` list in
+  `src/secret-dispositions/evaluate.ts`, beside the grammar they protect, not a
+  list in a skill, so there is no inventory check for them. Anchor IDs read
+  `secret-dispositions.location.<n>`. A healthy file prints
+  `INFO file pregate.secrets <path>`. The evaluator reads both forms (see
+  [secret dispositions](secret-dispositions.md#finding-locations)); its other
+  imports of upstream helpers fail closed when it runs and are not anchors.
 - **Exports.** `runClaudeCode`, `resolveClaudeCommand` and
   `classifyOutsideReview`, from the one list (`UPSTREAM_HELPERS`) that
   `src/outside-review/cli.ts` itself loads before any dispatch. Each module is
@@ -282,7 +296,10 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   audit write tests as today and the receipt says so, with no upstream file
   edited. For the nine pregate-narrowing anchors, a pass under
   `full-suite=external` does not narrow the pregate: it runs as today and the
-  receipt says so, with no upstream file edited. For the skip list,
+  receipt says so, with no upstream file edited. For the two secret-finding
+  location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
+  secret finding as unrecognized, so the pregate gate stays blocked; nothing is
+  approved in its place and no upstream file is edited. For the skip list,
   `autoplan-lean outline` marks no row `skip`, so `/autoplan-lean` applies
   upstream's skip list by heading itself and reads more.
 
@@ -362,6 +379,7 @@ and the test-gap routing value.
 | Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Pregate-narrowing anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
+| Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 

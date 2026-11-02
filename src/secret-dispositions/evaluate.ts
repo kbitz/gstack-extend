@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 export const DISPOSITIONS = '.gstack/secret-dispositions.json';
 export const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 export type Entry = { path: string; rule: string; line_sha256: string; reason: string; approved_by: string; approved_at: string };
-export type Part = { file: string; text: string };
+/** `keep` is upstream's whole-file marker: the file's added line numbers. Without it, `text` holds only the added lines. */
+export type Part = { file: string; text: string; keep?: number[] };
 export type Check = { id: string; status: string; code?: string; detail?: string; lines?: string[]; inputs?: Record<string, string> };
 export type Finding = { path: string; rule: string; severity: string; category: string; added_line: number; line_sha256: string; text: string };
 
@@ -34,6 +35,16 @@ export function parseEntries(value: unknown): Entry[] {
   });
 }
 
+/**
+ * The text in installed `lib/pregate/checks/secrets.ts` that produces the finding location this evaluator
+ * reads: the render template (its `line N` and `added line N` forms) and the flag that picks between them.
+ * `upstream-check` reports DRIFT when either changes; the evaluator fails closed on any line it cannot read.
+ */
+export const UPSTREAM_FINDING_ANCHORS: readonly string[] = [
+  "`${f.severity} ${f.id} [${f.category}]: ${f.description ?? ''}${f.line ? ` (${f.file ? `${f.file}, ` : ''}${f.fileLine ? 'line' : 'added line'} ${f.line})` : ''}`",
+  'fileLine: !!part.keep',
+];
+
 /** No writes or approval inference. Source texts include unchanged lines for stale detection. */
 export function evaluate(check: Check, parts: Part[], entries: Entry[], sources: Map<string, string>) {
   const stale = entries.flatMap((e, index) => sources.get(e.path)?.split('\n').some(line => sha256(line) === e.line_sha256)
@@ -49,22 +60,28 @@ export function evaluate(check: Check, parts: Part[], entries: Entry[], sources:
   const blockers: Finding[] = [];
   for (const line of check.lines ?? []) {
     // This is upstream's rendered finding grammar. Unknown output fails closed.
+    // `line N` is a source line of a whole-file part; `added line N` counts among a part's added lines.
     const m = /^(HIGH|MEDIUM) ([a-zA-Z0-9_.-]+) \[([^\]]+)\]: /.exec(line);
-    const location = /, added line ([1-9][0-9]*)\)$/.exec(line);
+    const location = /, (added line|line) ([1-9][0-9]*)\)$/.exec(line);
     if (!m || !location) { errors.push('unrecognized upstream finding line'); continue; }
     const [, severity, rule, category] = m as [string, string, string, string];
-    const number = location[1]!;
+    const kind = location[1]!, number = location[2]!, n = Number(number);
     // Descriptions and filenames may contain parentheses. Never guess a path
     // from a greedy regex: a suffix collision must not borrow another approval.
-    const candidates = parts.filter(p => line.endsWith(` (${p.file}, added line ${number})`));
+    // `keep` never breaks a tie: ambiguity is decided before the location form.
+    const candidates = parts.filter(p => line.endsWith(` (${p.file}, ${kind} ${number})`));
     if (candidates.length !== 1) { errors.push('finding path is missing or ambiguous'); continue; }
     const part = candidates[0]!, file = part.file;
-    const text = part?.text.split('\n')[Number(number) - 1];
-    if (!safePath(file) || text === undefined || !sources.get(file)?.split('\n').includes(text)) {
+    // Only an added line can be approved. Upstream's filter lets `engine.` findings through anywhere in the file.
+    if (kind === 'line' ? !part.keep?.includes(n) : part.keep !== undefined) {
+      errors.push('finding location does not match upstream added-line selection'); continue;
+    }
+    const text = part.text.split('\n')[n - 1], source = sources.get(file)?.split('\n');
+    if (!safePath(file) || text === undefined || !(kind === 'line' ? source?.[n - 1] === text : source?.includes(text))) {
       errors.push('finding does not resolve to an exact current source line'); continue;
     }
     if (severity !== 'HIGH' && category !== 'secret') continue;
-    blockers.push({ path: file, rule, severity, category, added_line: Number(number), line_sha256: sha256(text), text });
+    blockers.push({ path: file, rule, severity, category, added_line: n, line_sha256: sha256(text), text });
   }
   if (count && (Number(count[1]) !== blockers.length || count[2] !== blockers.map(f => f.rule).join(', '))) errors.push('blocking finding count or rules differ from upstream summary');
   for (const finding of blockers) {

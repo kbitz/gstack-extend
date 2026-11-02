@@ -27,6 +27,9 @@ export const TEST_GAP_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7c
 /** Upstream revision at which the anchors behind the narrowed pregate (`full-suite=external`) were qualified in both layouts. */
 export const PREGATE_NARROW_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
 
+/** Upstream revision at which the anchors behind the secret-finding location grammar were qualified in both layouts. */
+export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee036326989ea0c6bb8470e69', version: '1.92.55.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -34,7 +37,7 @@ export const PREGATE_NARROW_QUALIFIED = { revision: '41a67b996d8bbf2167996683953
  */
 export const EXEMPTIONS: readonly { file: string; includes: string; reason: string }[] = [
   { file: 'src/secret-dispositions/cli.ts', includes: "join(root, 'lib'",
-    reason: 'fails closed at call time with "incompatible installed pregate helpers"; outside the launch contracts in docs/upstream-check.md' },
+    reason: 'the helper imports fail closed at call time with "incompatible installed pregate helpers"; only the finding-location anchors are in the launch contracts in docs/upstream-check.md' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'final-gate-repair=tests-docs'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy key, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'full-suite=external'",
@@ -251,6 +254,7 @@ const STAGE = {
   testGapList: '/review-and-prep: the test-gap anchors cannot be listed, so test-gaps=record is unverified and stays inactive',
   pregateNarrow: '/review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so',
   pregateNarrowList: '/review-and-prep: the pregate-narrowing anchors cannot be listed, so narrowing is unverified and the pregate runs as today',
+  findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
   classifier: 'bin/outside-review: a reviewer\'s outside verdict may be credited differently than the golden table expects',
@@ -287,6 +291,7 @@ interface Layout {
   pregateBin: string;
   pregateIndex: string;
   pregateLanes: string;
+  pregateSecrets: string;
   autoplan: string;
   snapshot: string;
   section(phase: Phase): string;
@@ -295,7 +300,7 @@ interface Layout {
 function chooseLayout(root: string, skillsDir: string): Layout {
   const snapshot = join(root, 'bin', 'gstack-autoplan-snapshot.ts');
   // The pregate lives under the gstack root in both layouts.
-  const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts') };
+  const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
@@ -459,9 +464,9 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const layout = chooseLayout(options.root, options.skillsDir);
   if (layout.name === 'sibling') rejectRootInsideRepo(options.skillsDir, io.cwd, '--skills-dir');
   // Keep extension-owned loader failures inside main's internal-error boundary.
-  const [{ driftReport, UPSTREAM }, { skipList }, { PHASES }, { INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }] = await Promise.all([
+  const [{ driftReport, UPSTREAM }, { skipList }, { PHASES }, { INSPECTED_UPSTREAM, UPSTREAM_HELPERS }, { GOLDEN_CASES }, { UPSTREAM_FINDING_ANCHORS }] = await Promise.all([
     import('../autoplan-lean/criteria.ts'), import('../autoplan-lean/outline.ts'), import('../autoplan-lean/plan.ts'),
-    import('../outside-review/cli.ts'), import('./probe.ts'),
+    import('../outside-review/cli.ts'), import('./probe.ts'), import('../secret-dispositions/evaluate.ts'),
   ]);
 
   const infos: string[] = [];
@@ -478,6 +483,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `fix-first ${FIX_FIRST_QUALIFIED.revision} ${FIX_FIRST_QUALIFIED.version}`);
   info('inspected', `test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`);
   info('inspected', `pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`);
+  info('inspected', `finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -574,6 +580,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     narrow.bin.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.bin.${i + 1}`, bin, anchor, undefined, inactive));
     narrow.index.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.index.${i + 1}`, index, anchor, undefined, inactive));
     narrow.lanes.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.lanes.${i + 1}`, lanes, anchor, undefined, inactive));
+  }
+  {
+    const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;
+    const refused = { effect: STAGE.findingLocation, fix: UPGRADE_FIX };
+    UPSTREAM_FINDING_ANCHORS.forEach((anchor, i) => checkAnchor(`secret-dispositions.location.${i + 1}`, secrets, anchor, undefined, refused));
   }
   const autoplan = rootOk ? readOnce(layout.autoplan, 'autoplan skill', 'autoplan') : undefined;
   if (!autoplan) drift('anchor', 'autoplan-lean.skip-list', notRun!);
