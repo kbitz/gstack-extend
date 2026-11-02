@@ -626,18 +626,25 @@ describe('implement wait blocks', () => {
     t('stale identities and reused group IDs cannot signal a stranger', () => {
       const h = home(), old = start(shell,h,'echo done');
       expect(wait(shell,h,old).code).toBe(0);
-      const stranger = start(shell,h,'sleep 20', { RUN_LIMIT: '25' });
-      const id = readFileSync(join(stranger,'id'),'utf8').trim();
-      // Simulated PID reuse: a stale directory names the live stranger, but has its old token.
-      writeFileSync(join(old,'id'), `${readFileSync(join(old,'token'),'utf8').trim()} ${id.split(' ')[1]}\n`);
-      expect(wait(shell,h,old,0).out).toMatch(/^RUN: done /); // historical completion survives numeric group reuse
-      expect(stop(shell,h,old).out).toMatch(/^STOP: finished /);
-      rmSync(join(old,'resolution')); // simulate a lost completion receipt for the stale-identity safety case
-      expect(stop(shell,h,old).out).toBe('STOP: refused or survivor');
-      expect(wait(shell,h,stranger,0).out).toMatch(/^RUN: running /);
-      for (const bad of ['0','1','x1']) {
-        writeFileSync(join(old,'id'), `${readFileSync(join(old,'token'),'utf8').trim()} ${bad}\n`);
-        expect(stop(shell,h,old).out).toContain('STOP: refused');
+      const completedResolution = readFileSync(join(old,'resolution'),'utf8');
+      try {
+        const stranger = start(shell,h,'sleep 20', { RUN_LIMIT: '25' });
+        const id = readFileSync(join(stranger,'id'),'utf8').trim();
+        // Simulated PID reuse: a stale directory names the live stranger, but has its old token.
+        writeFileSync(join(old,'id'), `${readFileSync(join(old,'token'),'utf8').trim()} ${id.split(' ')[1]}\n`);
+        expect(wait(shell,h,old,0).out).toMatch(/^RUN: done /); // historical completion survives numeric group reuse
+        expect(stop(shell,h,old).out).toMatch(/^STOP: finished /);
+        rmSync(join(old,'resolution')); // simulate a lost completion receipt for the stale-identity safety case
+        expect(stop(shell,h,old).out).toBe('STOP: refused or survivor');
+        expect(wait(shell,h,stranger,0).out).toMatch(/^RUN: running /);
+        for (const bad of ['0','1','x1']) {
+          writeFileSync(join(old,'id'), `${readFileSync(join(old,'token'),'utf8').trim()} ${bad}\n`);
+          expect(stop(shell,h,old).out).toContain('STOP: refused');
+        }
+      } finally {
+        // Restore the observed completion receipt; afterEach restores the original identity.
+        // Cleanup must not re-probe a completed group whose numeric ID may have been reused.
+        writeFileSync(join(old,'resolution'),completedResolution);
       }
     });
     t('own-group refusal leaves the waiter sentinel alive', () => {
