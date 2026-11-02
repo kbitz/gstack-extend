@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.61.0] - 2026-11-02
+
+### Added
+
+- Workflow metrics now attribute review findings to the source parts they came from.
+- `docs/telemetry.md` and `docs/workflow-metrics.schema.json` describe that attribution.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. No configuration changes are needed.
+
 ## [0.60.3] - 2026-11-02
 
 ### Fixed
