@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.2] - 2026-11-02
+
+### Fixed
+
+- `bin/secret-dispositions` now accepts the `line N` location that installed gstack's secrets check writes for a Python or Dart file it reads whole, so a reviewed MEDIUM false positive on an added line of such a file can be satisfied by its recorded disposition again. Before this, any such finding read `unrecognized upstream finding line` and no approval could match it.
+- A `line N` finding is accepted only when N is one of the file's added lines and the source line matches exactly; a finding on any other line, an `engine.` finding included, cannot be satisfied even when its path, rule and line hash match. `added line N` keeps its old meaning for every other file, HIGH findings stay unapprovable, and the disposition format is unchanged.
+- `docs/secret-dispositions.md` states both location forms, which files take which, and what `added_line` means for each.
+- A test fixture in `tests/skill-protocols-implement.test.ts` restores the completion receipt it deletes, so its cleanup no longer probes a stale process group and fails a full run under load.
+
+### Added
+
+- `upstream-check` anchors the rendered finding-location grammar in installed gstack's `lib/pregate/checks/secrets.ts` (`secret-dispositions.location.1` and `.2`, qualified at 1.92.55.0), so the next upstream change to it reports `DRIFT` before a release stops on it. The check stays advisory and writes nothing.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. No configuration or disposition changes are needed.
+
 ## [0.60.1] - 2026-11-01
 
 ### Changed
