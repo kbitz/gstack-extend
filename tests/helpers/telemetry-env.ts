@@ -21,6 +21,7 @@
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, symlinkSync, chmodSync, copyFileSync, rmSync, lstatSync, readdirSync, openSync, closeSync, fstatSync, readSync, realpathSync, constants as fsConstants } from 'node:fs';
 import type { Dirent, Stats } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { basename, isAbsolute, join, sep } from 'node:path';
 import { beforeAll } from 'bun:test';
@@ -68,6 +69,32 @@ export const NO_SWEEP_LINE = '# --no-sweep\n';
 export const HELPER_BIN = join(ROOT, 'bin', 'gstack-extend-telemetry');
 export const REAL_GSTACK_ROOT = join(process.env.HOME ?? '', '.claude', 'skills', 'gstack');
 export const REAL_GSTACK_BIN = join(REAL_GSTACK_ROOT, 'bin');
+// Telemetry block runners shared by the suites that execute a skill's blocks. Nothing here names a skill file, as
+// tests/helpers/skill-protocols.ts does not: the caller passes the path, so pregate's literal scan maps a skill to the
+// suites that name it and not to every importer of this helper.
+export function skillBlock(path: string, kind: 'start' | 'finish') {
+  const text = readFileSync(path, 'utf8');
+  const marker = new RegExp('<!-- SHARED:telemetry-' + kind + ' -->[\\s\\S]*?<!-- /SHARED:telemetry-' + kind + ' -->');
+  const block = text.match(marker)?.[0];
+  if (!block) throw new Error('Missing telemetry block in ' + path);
+  const code = block.match(/```bash\n([\s\S]*?)```/)?.[1];
+  if (!code) throw new Error('Missing executable block in ' + path);
+  return code;
+}
+export const HELPER_SOURCE = join(ROOT, 'bin/lib/telemetry-call.sh');
+// What `setup` installs for the blocks to call. The fixture does not create it, because several suites assert the
+// fixture home holds no .gstack-extend; a test that runs a block asks for it, and the generated-host test leaves it
+// to the real setup.
+export function installCallHelper(home: string) {
+  const dir = join(home, '.gstack-extend/bin');
+  mkdirSync(dir, { recursive: true });
+  copyFileSync(HELPER_SOURCE, join(dir, 'telemetry-call'));
+  chmodSync(join(dir, 'telemetry-call'), 0o755);
+}
+export function executeSkillBlock(env: Record<string, string>, kind: 'start' | 'finish', path: string, cwd?: string, helper = true) {
+  if (helper) installCallHelper(env.HOME);
+  return spawnSync('bash', ['-euc', skillBlock(path, kind)], { env, cwd, encoding: 'utf8', timeout: 10_000 });
+}
 export type TelemetryTier = 'off' | 'anonymous' | 'community';
 export type FixtureMode = 'real' | 'stub' | 'absent';
 export type TelemetryFixture = {

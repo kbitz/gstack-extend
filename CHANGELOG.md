@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.1] - 2026-11-01
+
+### Changed
+
+An edit to a skill file now selects far less test work, on the runs that still select. `tests/setup-hosts.test.ts` no longer runs for a skill edit, and `tests/telemetry.test.ts` runs only for `skills/full-review.md`, the canonical source of the telemetry blocks those tests execute. The rules in those suites that read real skill text moved, with their assertions unchanged, to the new `tests/skill-content.test.ts` (19 tests), which every skill edit selects.
+
+- Measured with one sample per cell on a shared machine: an edit to `skills/roadmap.md` went from 583.6 s to 143.7 s under `bun run test` and from 601.9 s to 156.1 s under the pregate; an edit to `skills/review-and-prep.md` went from 561.8 s to 126.1 s and from 547.4 s to 119.0 s. The method and the before and after selections are in `docs/acceptance/skill-test-selection.md`.
+- This is not a pipeline saving. A review's external full-suite run, a narrowed pregate's preflight-only run and the release's single `EVALS_ALL=1 bun run test` are unchanged.
+- A skill edit that breaks an installer or telemetry test using a real skill as fixture input is now caught on a `setup` or `bin/` change or a full run, not by that edit's selection.
+- `tests/touchfiles.test.ts` adds skill-only selection checks, including a lint that stops skill-path literals returning to those two suites, because the pregate also selects tests from paths it finds in their source.
+
+### Fixed
+
+- The `--policy-from head` rule could not be followed by a pull request that removes or renames a pregate lane, or drops a test edge from one, because the installed pregate refuses that head policy with `PREGATE_HEAD_POLICY_LOOSENS`. `CLAUDE.md` and `/review-and-prep` now state the exception: such a pull request runs on the base policy and records the reason, the lane-gap probe and `gstack-pregate validate`. Its review records `pregate-narrowing: inactive — head policy` and runs the full pregate.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` skill carries the exception.
+
 ## [0.60.0] - 2026-11-01
 
 ### Changed

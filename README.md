@@ -196,6 +196,8 @@ every file prints that reason once. Editing one
 skill runs that skill's tests plus the shared skill rules. A release commit
 (VERSION, CHANGELOG.md, package.json's version) runs the release and manifest
 checks. Any other `package.json` change still runs everything.
+See the [skill-edit selection measurements](docs/acceptance/skill-test-selection.md)
+for the before/after file lists, timings, and limits.
 
 Tests never install packages. If one stops at `Cannot find package 'ajv'`, run the
 install command. [`CLAUDE.md`](CLAUDE.md) covers test selection, fixtures, and skill conventions.
