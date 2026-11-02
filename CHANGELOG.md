@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.1] - 2026-11-01
+
+### Added
+
+- `docs/acceptance/skill-test-selection.md` records which edits select which test suites, and the evidence for the pregate exception: a head policy may only add lanes, and a pull request that removes or renames a lane still runs on the base policy, with the reason on the receipt.
+
+### Changed
+
+- A skill-only edit selects that skill's suites, `tests/skill-content.test.ts`, and the shared-rule suites. `tests/setup-hosts.test.ts` no longer runs on that edit. `tests/telemetry.test.ts` still runs when `skills/full-review.md` changes, because that file is the canonical telemetry block.
+- A mechanics test that only uses a real skill as input is no longer guaranteed to run for that edit. Pregate lane selection follows the same narrower dependency list as `bun run test`.
+- The testing notes, the README, and `/review-and-prep` state those selection triggers in the same terms. There is no new policy key or value.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`, which runs `setup`, so the installed `review-and-prep` skill carries the clarified wording.
+
 ## [0.60.0] - 2026-11-01
 
 ### Changed
