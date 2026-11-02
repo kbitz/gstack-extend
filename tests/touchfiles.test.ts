@@ -27,12 +27,16 @@
  * version-only release commit selects the release and manifest checks; a
  * package.json dependency or script change still selects everything; and
  * `.gstack/pregate.json` carries the same edges as MANUAL_TOUCHFILES.
+ *
+ * Skill-only selection (Track 52A): a skill edit does not select the installer or telemetry mechanics suites
+ * (telemetry runs for the one canonical block source), neither names a repo skill path pregate's literal scan
+ * reads, and the conservative full-suite fallbacks hold on the live map.
  */
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, relative } from 'node:path';
+import { join, posix, relative } from 'node:path';
 
 import {
   GLOBAL_TOUCHFILES,
@@ -522,6 +526,160 @@ describe('per-skill selection', () => {
       if (stale.length) problems.push(`${t}: declares ${stale.join(', ')} but never names it`);
     }
     expect(problems).toEqual([]);
+  });
+});
+
+// ─── Skill-only selection (Track 52A) ───────────────────────────────────
+
+// pregate's literal scan (lib/pregate/import-graph.ts: QUOTED, JOIN and the join() branch of referencesIn) reads a
+// quoted repo path, or the quoted segments of a join() call with no nested parentheses, as a dependency of the file
+// that names it. The lint mirrors those readings for skill files; it does not import them. The samples below are
+// built with an interpolated name so the lint's own source names no skill path.
+const PREGATE_QUOTED = /['"`]((?:\.\.?\/)*[A-Za-z0-9_@][A-Za-z0-9_./@()[\]+-]*)['"`]/g;
+const PREGATE_JOIN = /\bjoin\(([^()]*)\)/g;
+
+/** The skill files `source` (a test-tree file at `rel`) names the way pregate's literal scan reads them. */
+function pregateSkillReads(rel: string, source: string, skillFiles: ReadonlySet<string>): string[] {
+  const resolveRef = (ref: string): string | null => {
+    const target = posix.normalize(/^\.\.?(?:\/|$)/.test(ref) ? posix.join(posix.dirname(rel), ref) : ref);
+    return skillFiles.has(target) ? target : null;
+  };
+  const hits = new Set<string>();
+  for (const m of source.matchAll(PREGATE_QUOTED)) {
+    const target = resolveRef(m[1]!);
+    if (target) hits.add(target);
+  }
+  for (const m of source.matchAll(PREGATE_JOIN)) {
+    const segments = [...m[1]!.matchAll(/['"`]([^'"`]+)['"`]/g)].map(segment => segment[1]!);
+    if (segments.length < 2) continue;
+    const joined = segments.join('/');
+    const target = resolveRef(joined) ?? resolveRef('./' + joined);
+    if (target) hits.add(target);
+  }
+  return [...hits].sort();
+}
+
+/** A test file and the files under tests/ it imports, transitively. */
+function testTreeClosure(testFile: string): string[] {
+  return [testFile, ...analyzeTestImports(testFile, REPO_ROOT).filter(f => f.startsWith('tests/'))];
+}
+
+describe('skill-only selection', () => {
+  const tests = listTestFiles(REPO_ROOT);
+  const suite = (name: string) => `tests/${name}.test.ts`;
+  const skillFiles = new Set(EXPECTED_SETUP_SKILLS.map(name => `skills/${name}.md`));
+
+  // Value: protects=a skill edit stops selecting the installer and telemetry mechanics suites while the real-skill
+  //   content rules and the shared protocol rules still run for it;
+  //   fails_when='skills/**' returns to the setup-hosts or telemetry entry, the content suite loses its entry, or a
+  //   skill other than full-review selects telemetry;
+  //   why_new=the per-skill test compares the selection with the map itself, so it passes with either entry; seam=none;
+  //   no_claim=wall time or pipeline saving (selection only)
+  test('a skill-only edit selects the content, protocol and compliance suites and not the mechanics suites', () => {
+    for (const name of EXPECTED_SETUP_SKILLS) {
+      const sel = computeTestSelection([`skills/${name}.md`], tests);
+      expect([name, sel.reason]).toEqual([name, 'diff']);
+      for (const wanted of ['skill-content', 'skill-protocols', 'audit-compliance']) {
+        expect([name, wanted, sel.selected.includes(suite(wanted))]).toEqual([name, wanted, true]);
+      }
+      expect([name, sel.selected.includes(suite('setup-hosts'))]).toEqual([name, false]);
+      expect([name, sel.selected.includes(suite('telemetry'))]).toEqual([name, name === 'full-review']);
+    }
+  });
+
+  // Value: protects=the installer and telemetry suites still run for the inputs they exercise, so dropping the skill
+  //   entry did not drop their other triggers;
+  //   fails_when=a setup, install-safety, installation-guide or telemetry-wrapper edit stops selecting the suite that runs it;
+  //   why_new=the skill-only test proves what is skipped, not what still runs; seam=none
+  test('the mechanics suites still run for setup, the installer helper, the installation guide and the telemetry wrapper', () => {
+    const selected = (file: string) => computeTestSelection([file], tests);
+    for (const [file, wanted] of [
+      ['setup', ['setup-hosts', 'telemetry', 'skill-content']],
+      ['docs/installation.md', ['setup-hosts']],
+      ['bin/lib/install-safety.sh', ['setup-hosts']],
+      ['bin/gstack-extend-telemetry', ['telemetry', 'skill-content']],
+    ] as const) {
+      const sel = selected(file);
+      expect([file, sel.reason]).toEqual([file, 'diff']);
+      for (const name of wanted) expect([file, name, sel.selected.includes(suite(name))]).toEqual([file, name, true]);
+    }
+  });
+
+  // Value: protects=pregate's literal scan sees no repo skill path in the installer suite or its helpers, and only
+  //   full-review in the telemetry suite or its helpers, so a pregate run narrows as `bun run test` does;
+  //   fails_when=someone writes a skill path literal or a join() of a skill name back into either suite or a helper they
+  //   import, or the content suite stops declaring skills/**;
+  //   why_new=the map entries alone leave pregate wide: its scan unions its own readings with the map; seam=none;
+  //   no_claim=upstream scan behavior beyond QUOTED and join() (the real pregate runs are in the acceptance record)
+  test('pregate\'s literal scan finds no repo skill path in the mechanics suites', () => {
+    // Positive controls: the lint reads what pregate reads, and skips what it skips.
+    const name = 'roadmap';
+    const read = (source: string, rel = 'tests/x.test.ts') => pregateSkillReads(rel, source, skillFiles);
+    const target = `skills/${name}.md`;
+    for (const sample of [
+      `join(root, 'skills', '${name}.md')`,
+      `join(other, "skills", "${name}.md")`,
+      `read('skills/${name}.md')`,
+      `read("../skills/${name}.md")`,
+      "read(`skills/" + name + ".md`)",
+      `join('..', 'skills', '${name}.md')`,
+    ]) expect([sample, read(sample)]).toEqual([sample, [target]]);
+    for (const sample of [
+      "join(root, 'skills', `${name}.md`)",
+      `join(realpathSync(ROOT), 'skills', '${name}.md')`,
+      `const dir = join(home, '.claude', 'skills')`,
+      `join(home, 'dotfiles', 'skills', 'absent.md')`,
+    ]) expect([sample, read(sample)]).toEqual([sample, []]);
+
+    const installer = suite('setup-hosts');
+    const telemetry = suite('telemetry');
+    const offenders = (root: string) => Object.fromEntries(testTreeClosure(root)
+      .map(rel => [rel, pregateSkillReads(rel, readFileSync(join(REPO_ROOT, rel), 'utf8'), skillFiles)] as const)
+      .filter(([, hits]) => hits.length > 0));
+    expect(offenders(installer)).toEqual({});
+    // telemetry.test.ts names the canonical block source, and nothing else. The path is computed here so this file
+    // gains no pregate edge to it.
+    const canonical = `skills/${'full-review'}.md`;
+    expect(offenders(telemetry)).toEqual({ [telemetry]: [canonical] });
+    expect(MANUAL_TOUCHFILES[telemetry]).toContain(canonical);
+    expect(MANUAL_TOUCHFILES[telemetry]).not.toContain('skills/**');
+    expect(MANUAL_TOUCHFILES[installer]).not.toContain('skills/**');
+    // The content suite reads every skill, so it declares them all.
+    expect(MANUAL_TOUCHFILES[suite('skill-content')]).toContain('skills/**');
+  });
+
+  // Value: protects=the conservative full-suite fallbacks on the live map: an empty diff, an unmapped path and a
+  //   global input beside a skill edit each select every test;
+  //   fails_when=narrowing a skill edit makes any of them select fewer tests;
+  //   why_new=the fixture-map tests above run the same rules on a toy map; this runs them on the real one; seam=none
+  test('the full-suite fallbacks still select every test on the live map', () => {
+    const edited = `skills/${EXPECTED_SETUP_SKILLS[0]}.md`;
+    const cases: Array<[string[], string]> = [
+      [[], 'empty-diff'],
+      [['unmapped/path.txt'], 'no-match-fallback'],
+      [[edited, 'tsconfig.json'], 'global'],
+    ];
+    for (const [diff, reason] of cases) {
+      const sel = computeTestSelection(diff, tests);
+      expect([diff, sel.reason.startsWith(reason), sel.selected]).toEqual([diff, true, tests]);
+      expect([diff, sel.skipped]).toEqual([diff, []]);
+    }
+  });
+
+  // Value: protects=the acceptance record keeps its statement: the new suite, the three runs this Track does not
+  //   change, and no end-to-end saving claim;
+  //   fails_when=the record drops the new suite's name, one of the unchanged runs, or the no-saving statement;
+  //   why_new=nothing else reads the record; seam=none;
+  //   no_claim=the record's numbers or file lists, which are point-in-time and not locked
+  test('the acceptance record names the new suite, the three unchanged runs and no end-to-end saving', () => {
+    const record = readFileSync(join(REPO_ROOT, 'docs/acceptance/skill-test-selection.md'), 'utf8').replace(/\s+/g, ' ');
+    for (const statement of [
+      'tests/skill-content.test.ts',
+      "the review's external full-suite run",
+      "the narrowed pregate's preflight-only run",
+      "the release stage's single `EVALS_ALL=1 bun run test`",
+      'no end-to-end pipeline saving',
+    ]) expect(record).toContain(statement);
   });
 });
 

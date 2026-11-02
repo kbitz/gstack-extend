@@ -17,7 +17,8 @@
     ],
     "CLAUDE.md": [
       "tests/release-manifest.test.ts",
-      "tests/skill-protocols-plan-track.test.ts"
+      "tests/skill-protocols-plan-track.test.ts",
+      "tests/skill-protocols-review-and-prep.test.ts"
     ],
     "README.md": [
       "tests/handoff-contract.test.ts",
@@ -34,6 +35,7 @@
     ],
     "bin/config": [
       "tests/setup-hosts.test.ts",
+      "tests/skill-content.test.ts",
       "tests/telemetry.test.ts",
       "tests/update.test.ts"
     ],
@@ -46,11 +48,13 @@
       "tests/init-templates.test.ts",
       "tests/quota.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
     ],
     "bin/gstack-extend-telemetry": [
+      "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
@@ -66,6 +70,7 @@
       "tests/lib-install-safety.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts",
@@ -77,6 +82,7 @@
       "tests/init-registry.test.ts",
       "tests/init-templates.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
@@ -90,6 +96,7 @@
       "tests/telemetry-contract.test.ts"
     ],
     "bin/lib/quota/common.py": [
+      "tests/skill-content.test.ts",
       "tests/telemetry.test.ts"
     ],
     "bin/lib/run-migrations.sh": [
@@ -110,12 +117,14 @@
     ],
     "bin/lib/telemetry*.py": [
       "tests/quota.test.ts",
+      "tests/skill-content.test.ts",
       "tests/telemetry-contract.test.ts",
       "tests/telemetry-doctor.test.ts",
       "tests/telemetry.test.ts"
     ],
     "bin/lib/telemetry-call.sh": [
       "tests/setup-hosts.test.ts",
+      "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry.test.ts"
     ],
@@ -184,6 +193,9 @@
     ],
     "docs/acceptance/review-fix-policy.md": [
       "tests/handoff-contract.test.ts"
+    ],
+    "docs/acceptance/skill-test-selection.md": [
+      "tests/touchfiles.test.ts"
     ],
     "docs/designs/workflow-efficiency-program.md": [
       "tests/skill-protocols-plan-track.test.ts"
@@ -264,6 +276,7 @@
       "tests/audit-compliance.test.ts",
       "tests/setup-hosts.test.ts",
       "tests/setup-init-wire.test.ts",
+      "tests/skill-content.test.ts",
       "tests/skill-protocols-plan-track.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
@@ -273,10 +286,9 @@
     ],
     "skills/**": [
       "tests/audit-compliance.test.ts",
-      "tests/setup-hosts.test.ts",
+      "tests/skill-content.test.ts",
       "tests/skill-protocols.test.ts",
       "tests/telemetry-doctor.test.ts",
-      "tests/telemetry.test.ts",
       "tests/upstream-check.test.ts"
     ],
     "skills/autoplan-lean.md": [
@@ -291,6 +303,7 @@
     ],
     "skills/full-review.md": [
       "tests/skill-protocols-full-review.test.ts",
+      "tests/telemetry.test.ts",
       "tests/update.test.ts"
     ],
     "skills/gstack-extend-upgrade.md": [

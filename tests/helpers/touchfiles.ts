@@ -201,6 +201,8 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     // Producer-side locks for the ship-and-land handoff read the consumer too.
     skill('ship-and-land'),
     'docs/telemetry.md',
+    // The head-policy exception lock compares CLAUDE.md's Testing paragraph with the lane-map gate.
+    'CLAUDE.md',
   ],
   // The routing test runs bin/roadmap-route, which sources source-tag.sh.
   'tests/skill-protocols-roadmap.test.ts': [skill('roadmap'), 'bin/roadmap-route', 'bin/lib/source-tag.sh'],
@@ -272,9 +274,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'src/audit/**',
     'scripts/init-templates/**',
   ],
+  // The installer suite copies skill fixtures and opaque inputs, not skill content: the real-skill rules it used to
+  // carry now run in tests/skill-content.test.ts, so a skill edit does not select this suite.
   'tests/setup-hosts.test.ts': [
     'setup',
-    'skills/**',
     'bin/lib/install-safety.sh',
     // Track 49A: setup copies this helper to the fixed path the blocks call.
     'bin/lib/telemetry-call.sh',
@@ -297,10 +300,13 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   // Track 13A — telemetry wrapper + per-skill emit blocks. The unit/integration
   // tests spawn bin/gstack-extend-telemetry through a shell. telemetry.test.ts also
-  // executes the shipped skills/** blocks and setup-generated host copies, so it
-  // registers skills/** and setup itself; skill-protocols registers skills/** above
-  // for the canonical-block drift assertions. The wide entries below over-select on
-  // purpose: a missed dependency is worse than an extra ~40s run.
+  // executes the canonical blocks of skills/full-review.md and the setup-generated host
+  // copies of it, so it registers that one skill and setup. It does not register
+  // skills/**: the rules that run every skill's own blocks live in
+  // tests/skill-content.test.ts, and skill-protocols registers skills/** above for the
+  // canonical-block drift assertions. The one exception is that a full-review edit still
+  // runs this suite, because that file is the canonical block source. The wide entries
+  // below over-select on purpose: a missed dependency is worse than an extra run.
   // Both telemetry suites validate rows against the published schema and assert the row's producer_version, which
   // the writer reads from VERSION: a release-only diff still runs them.
   'tests/telemetry.test.ts': [
@@ -316,8 +322,23 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/lib/telemetry-call.sh',
     'docs/stage-runs.schema.json',
     'setup',
-    'skills/**',
+    skill('full-review'),
     'VERSION',
+  ],
+  // The real-skill content rules moved out of the installer and telemetry suites (Track 52A): a skill edit selects this
+  // suite with the per-skill and shared-rule suites. No VERSION: none of its rules reads it, and declaring it would add
+  // this suite to release selections. The inputs below are what its setup runs, block executions and doctor call read.
+  'tests/skill-content.test.ts': [
+    'skills/**',
+    'setup',
+    'bin/lib/install-safety.sh',
+    'bin/lib/telemetry-call.sh',
+    'bin/gstack-extend',
+    'bin/gstack-extend-telemetry',
+    'bin/config',
+    'bin/lib/projects-registry.sh',
+    'bin/lib/telemetry*.py',
+    'bin/lib/quota/common.py',
   ],
   'tests/telemetry-contract.test.ts': [
     'bin/gstack-extend-telemetry',
@@ -360,7 +381,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   ],
   // The selection suite checks the pregate copy of this map and each split
   // protocol suite's declared skill reads against its source.
-  'tests/touchfiles.test.ts': ['.gstack/pregate.json', 'tests/skill-protocols*.test.ts'],
+  'tests/touchfiles.test.ts': ['.gstack/pregate.json', 'tests/skill-protocols*.test.ts', 'docs/acceptance/skill-test-selection.md'],
   // Live ROADMAP + shipped archive are loaded at runtime (not imported).
   'tests/parsers-phases.test.ts': [
     'docs/ROADMAP.md',

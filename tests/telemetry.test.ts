@@ -8,8 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 // Development dependency pinned in bun.lock: run `bun install --frozen-lockfile` before this suite.
 import Ajv from 'ajv';
-import { HELPER_BIN, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, makeTelemetryFixture, type TelemetryFixture } from './helpers/telemetry-env';
-import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills';
+import { HELPER_BIN, HELPER_SOURCE, NO_SWEEP_LINE, PROTOCOL_LINE, REAL_GSTACK_ROOT, cleanupTelemetryFixtures, executeSkillBlock, installCallHelper, makeTelemetryFixture, skillBlock, type TelemetryFixture } from './helpers/telemetry-env';
 
 const HAS_GSTACK = existsSync(REAL_GSTACK_ROOT);
 const HAS_STATE_RESOLVER = (() => {
@@ -27,28 +26,8 @@ const ROOT = join(import.meta.dir, '..');
 const RELEASE = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
 const validRow = new Ajv({ strict: true, allErrors: true })
   .compile(JSON.parse(readFileSync(join(ROOT, 'docs/stage-runs.schema.json'), 'utf8')));
-function skillBlock(path: string, kind: 'start' | 'finish') {
-  const text = readFileSync(path, 'utf8');
-  const marker = new RegExp('<!-- SHARED:telemetry-' + kind + ' -->[\\s\\S]*?<!-- /SHARED:telemetry-' + kind + ' -->');
-  const block = text.match(marker)?.[0];
-  if (!block) throw new Error('Missing telemetry block in ' + path);
-  const code = block.match(/```bash\n([\s\S]*?)```/)?.[1];
-  if (!code) throw new Error('Missing executable block in ' + path);
-  return code;
-}
-const HELPER_SOURCE = join(ROOT, 'bin/lib/telemetry-call.sh');
-// What `setup` installs for the blocks to call. The fixture does not create it, because several suites assert the
-// fixture home holds no .gstack-extend; a test that runs a block asks for it, and the generated-host test leaves it
-// to the real setup.
-function installCallHelper(home: string) {
-  const dir = join(home, '.gstack-extend/bin');
-  mkdirSync(dir, { recursive: true });
-  copyFileSync(HELPER_SOURCE, join(dir, 'telemetry-call'));
-  chmodSync(join(dir, 'telemetry-call'), 0o755);
-}
 function executeBlock(env: Record<string, string>, kind: 'start' | 'finish', path = join(ROOT, 'skills/full-review.md'), cwd?: string, helper = true) {
-  if (helper) installCallHelper(env.HOME);
-  return spawnSync('bash', ['-euc', skillBlock(path, kind)], { env, cwd, encoding: 'utf8', timeout: 10_000 });
+  return executeSkillBlock(env, kind, path, cwd, helper);
 }
 
 describe('shipped blocks and installation lookup', () => {
@@ -1475,35 +1454,6 @@ describe('concurrent sessions', () => {
     expect(fix.readLedger().map(row => row.session_id).sort()).toEqual(racerSessions);
     expect(handoffs(fix)).toHaveLength(12);
   }, 30_000);
-});
-
-describe('writer and reader agree for every installed skill', () => {
-  for (const mode of ['stub', 'real'] as const) {
-    test.if(mode === 'stub' || HAS_GSTACK)("each skill's own blocks produce a v1 start/finish pair the doctor counts as paired (" + mode + ')', () => {
-      const fix = makeTelemetryFixture('community', mode);
-      for (const skill of EXPECTED_SETUP_SKILLS) {
-        const path = join(ROOT, 'skills', skill + '.md');
-        expect(executeBlock(fix.env, 'start', path).status).toBe(0);
-        expect(executeBlock(fix.env, 'finish', path).status).toBe(0);
-      }
-      const rows = fix.readJsonl();
-      expect(rows).toHaveLength(EXPECTED_SETUP_SKILLS.length * 2);
-      const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'], { env: fix.env, encoding: 'utf8', timeout: 20_000 });
-      expect(doctor.status).toBe(0);
-      const report = JSON.parse(doctor.stdout);
-      for (const skill of EXPECTED_SETUP_SKILLS) {
-        const own = rows.filter(row => row.skill === 'extend:' + skill);
-        expect(own.map(row => row.event_type)).toEqual(['skill_start', 'skill_run']);
-        expect(own[1].session_id).toBe(own[0].session_id);
-        expect(report.skills.find((entry: { skill: string }) => entry.skill === skill)).toMatchObject({
-          activations: 1, completions: 1, paired: 1, denominator: 1, pairing_percent: 100, status: 'paired',
-          unpaired_start: 0, unpaired_finish: 0, deferred_finish: 0, legacy: 0,
-        });
-      }
-      // The same blocks leave one provenance row per run, named by the bare skill.
-      expect(fix.readLedger().map(row => row.stage)).toEqual([...EXPECTED_SETUP_SKILLS]);
-    }, 60_000);
-  }
 });
 
 // ─── Execution provenance: the local-only stage-runs.jsonl row ───
@@ -4376,20 +4326,6 @@ describe('gstack helper roots', () => {
 });
 
 describe('handoff adoption', () => {
-  test('RESUMABLE is exactly the skills that document their own resume command', () => {
-    const source = readFileSync(join(ROOT, 'bin/lib/telemetry.py'), 'utf8');
-    const body = source.match(/RESUMABLE = \{([^}]+)\}/)?.[1] ?? '';
-    const names = [...body.matchAll(/"([a-z0-9-]+)"/g)].map(match => match[1]);
-    expect([...names].sort()).toEqual(['full-review', 'pair-review', 'review-and-prep']);
-    for (const name of names) expect([...EXPECTED_SETUP_SKILLS]).toContain(name);
-    for (const file of readdirSync(join(ROOT, 'skills'))) {
-      if (!file.endsWith('.md')) continue;
-      const name = file.slice(0, -'.md'.length);
-      const documentsResume = readFileSync(join(ROOT, 'skills', file), 'utf8').includes('`/' + name + ' resume`');
-      expect(names.includes(name)).toBe(documentsResume);
-    }
-  });
-
   test('start records skill, root and a harness fingerprint, and traces marker names only', () => {
     const fix = makeTelemetryFixture('community', 'stub');
     const secret = 'secret-thread-value';

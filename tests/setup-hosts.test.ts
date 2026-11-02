@@ -25,12 +25,15 @@ import { join, relative } from 'node:path';
 
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { EXPECTED_SETUP_SKILLS as SKILLS } from './helpers/expected-setup-skills.ts';
-import { extractCanonicalSpan, GUARD_LINE, ROOT_RESOLVER_SKILLS } from './helpers/extend-root.ts';
 import { assertSkillDescriptionWithinLimit } from './helpers/skill-description.ts';
 import { systemPath } from './helpers/system-path.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const SETUP = join(ROOT, 'setup');
+// A skill source under a checkout, spelled through a computed name. The paths in this file are fixtures and opaque
+// inputs, not skill content, and a literal `'skills', 'x.md'` would give pregate's scan an edge from this suite to that
+// skill (tests/skill-content.test.ts reads the real skill sources).
+const skillPath = (root: string, name: string): string => join(root, 'skills', `${name}.md`);
 
 const baseTmp = makeBaseTmp('setup-hosts-');
 afterAll(() => {
@@ -308,14 +311,14 @@ describe('setup --host flags', () => {
       for (const skill of SKILLS) writeFileSync(join(fixture, 'skills', `${skill}.md`), source(skill));
       const dir = join(hostDir(home, host), 'pair-review');
       mkdirSync(dir, { recursive: true });
-      linkSync(join(fixture, 'skills', 'pair-review.md'), join(dir, 'SKILL.md'));
+      linkSync(skillPath(fixture, 'pair-review'), join(dir, 'SKILL.md'));
       writeFileSync(join(dir, '.extend-root'), `${realpathSync(fixture)}\n`);
       const result = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
         encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home },
       });
       expect(result.status).toBe(0);
-      expect(readFileSync(join(fixture, 'skills', 'pair-review.md'), 'utf8')).toBe(source('pair-review'));
-      expect(statSync(join(dir, 'SKILL.md')).ino).not.toBe(statSync(join(fixture, 'skills', 'pair-review.md')).ino);
+      expect(readFileSync(skillPath(fixture, 'pair-review'), 'utf8')).toBe(source('pair-review'));
+      expect(statSync(join(dir, 'SKILL.md')).ino).not.toBe(statSync(skillPath(fixture, 'pair-review')).ino);
       const installed = readFileSync(join(dir, 'SKILL.md'), 'utf8');
       expect(installed).toBe(host === 'opencode'
         ? source('pair-review')
@@ -323,13 +326,6 @@ describe('setup --host flags', () => {
       expect(readdirSync(dir).sort()).toEqual(['.extend-root', 'SKILL.md']);
     });
   }
-
-  // Generated copies keep source paths verbatim, so a Claude-only sibling path would ship to every host.
-  test('skill sources never hardcode a ~/.claude/skills/ path', () => {
-    for (const skill of SKILLS) {
-      expect(readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8')).not.toContain('~/.claude/skills/');
-    }
-  });
 
   for (const host of ['codex', 'opencode'] as const) {
     test.skipIf(process.getuid?.() === 0)(`${host} keeps the previous copy and leaves no temp file when a rewrite fails`, () => {
@@ -344,7 +340,7 @@ describe('setup --host flags', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'SKILL.md'), 'OLD\n');
       writeFileSync(join(dir, '.extend-root'), `${realpathSync(fixture)}\n`);
-      const src = join(fixture, 'skills', 'pair-review.md');
+      const src = skillPath(fixture, 'pair-review');
       chmodSync(src, 0o000);
       try {
         const r = spawnSync('bash', [join(fixture, 'setup'), '--host', host, '--quiet'], {
@@ -406,7 +402,7 @@ describe('setup --host flags', () => {
       if (detection === 'existing-skill') {
         const dir = join(hostDir(home, 'cursor'), 'pair-review');
         mkdirSync(dir, { recursive: true });
-        symlinkSync(join(ROOT, 'skills/pair-review.md'), join(dir, 'SKILL.md'));
+        symlinkSync(skillPath(ROOT, 'pair-review'), join(dir, 'SKILL.md'));
       }
       const path = isolatedPath(detection === 'binary' ? ['cursor'] : []);
       const r = runSetup(['--host', 'auto', '--quiet'], home, path, true);
@@ -422,27 +418,6 @@ describe('setup --host flags', () => {
       expect(existsSync(join(home, '.config', 'opencode'))).toBe(false);
     });
   }
-
-  test('--host cursor preserves skill bodies and strips allowed-tools from all skills', () => {
-    const home = join(baseTmp, 'cursor-explicit');
-    mkdirSync(home, { recursive: true });
-    expect(runSetup(['--host', 'cursor', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
-    for (const skill of SKILLS) {
-      const dir = join(hostDir(home, 'cursor'), skill);
-      const skillMd = join(dir, 'SKILL.md');
-      const source = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-      const body = readFileSync(skillMd, 'utf8');
-      expect(lstatSync(skillMd).isFile()).toBe(true);
-      expect(readFileSync(join(dir, '.extend-root'), 'utf8').trim()).toBe(realpathSync(ROOT));
-      expect(body).toMatch(new RegExp(`^---\nname: ${skill}\ndescription: \\|\n`));
-      const frontmatter = body.slice(0, body.indexOf('\n---', 4));
-      expect(frontmatter).not.toContain('allowed-tools:');
-      expect(frontmatter).not.toMatch(/^  - /m);
-      expect(body.slice(body.indexOf('\n---', 4))).toBe(source.slice(source.indexOf('\n---', 4)));
-    }
-    expect(existsSync(join(home, '.claude'))).toBe(false);
-    expect(existsSync(join(hostDir(home, 'cursor'), 'gstack-extend', 'SKILL.md'))).toBe(false);
-  });
 
   test('auto setup and uninstall preserve a user-owned Cursor skill without claiming it', () => {
     const home = join(baseTmp, 'cursor-user-owned');
@@ -539,12 +514,12 @@ describe('setup --host flags', () => {
     mkdirSync(join(other, 'bin'), { recursive: true });
     writeFileSync(join(other, 'setup'), '');
     writeFileSync(join(other, 'bin', 'update-check'), '');
-    writeFileSync(join(other, 'skills', 'roadmap.md'), 'old\n');
+    writeFileSync(skillPath(other, 'roadmap'), 'old\n');
     const roadmap = join(hostDir(home, 'claude'), 'roadmap');
     const pairReview = join(hostDir(home, 'claude'), 'pair-review');
     mkdirSync(roadmap, { recursive: true });
     mkdirSync(pairReview, { recursive: true });
-    symlinkSync(join(other, 'skills', 'roadmap.md'), join(roadmap, 'SKILL.md'));
+    symlinkSync(skillPath(other, 'roadmap'), join(roadmap, 'SKILL.md'));
     // A deleted checkout is claimed only through the pointer setup wrote beside its link.
     symlinkSync(join(home, 'gone-checkout', 'skills', 'pair-review.md'), join(pairReview, 'SKILL.md'));
     writeFileSync(join(pairReview, '.extend-root'), `${join(home, 'gone-checkout')}\n`);
@@ -590,13 +565,13 @@ describe('setup --host flags', () => {
     const dir = join(hostDir(home, 'claude'), 'roadmap');
     mkdirSync(dir, { recursive: true });
     const link = join(dir, 'SKILL.md');
-    symlinkSync(join(gone, 'skills', 'roadmap.md'), link);
+    symlinkSync(skillPath(gone, 'roadmap'), link);
     const pointer = `${join(home, 'somewhere-else')}\n`;
     writeFileSync(join(dir, '.extend-root'), pointer);
     const r = runSetup(['--host', 'claude', '--quiet'], home);
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toContain('roadmap/SKILL.md links to a missing file');
-    expect(readlinkSync(link)).toBe(join(gone, 'skills', 'roadmap.md'));
+    expect(readlinkSync(link)).toBe(skillPath(gone, 'roadmap'));
     expect(readFileSync(join(dir, '.extend-root'), 'utf8')).toBe(pointer);
     expect(existsSync(join(hostDir(home, 'claude'), 'pair-review', 'SKILL.md'))).toBe(true);
   });
@@ -608,13 +583,13 @@ describe('setup --host flags', () => {
     mkdirSync(join(other, 'bin'), { recursive: true });
     writeFileSync(join(other, 'setup'), '');
     writeFileSync(join(other, 'bin', 'update-check'), '');
-    writeFileSync(join(other, 'skills', 'roadmap.md'), 'old\n');
+    writeFileSync(skillPath(other, 'roadmap'), 'old\n');
     const dir = join(hostDir(home, 'claude'), 'roadmap');
     mkdirSync(dir, { recursive: true });
     symlinkSync('../../../other-checkout/skills/roadmap.md', join(dir, 'SKILL.md'));
     expect(runSetup(['--host', 'claude', '--quiet'], home).exitCode).toBe(0);
     expect(readlinkSync(join(dir, 'SKILL.md'))).toBe(join(realpathSync(ROOT), 'skills', 'roadmap.md'));
-    expect(readFileSync(join(other, 'skills', 'roadmap.md'), 'utf8')).toBe('old\n');
+    expect(readFileSync(skillPath(other, 'roadmap'), 'utf8')).toBe('old\n');
   });
 
   test('a relative link into a deleted checkout is repointed when the pointer names that checkout', () => {
@@ -625,7 +600,7 @@ describe('setup --host flags', () => {
     mkdirSync(join(other, 'bin'), { recursive: true });
     writeFileSync(join(other, 'setup'), '');
     writeFileSync(join(other, 'bin', 'update-check'), '');
-    writeFileSync(join(other, 'skills', 'roadmap.md'), 'old\n');
+    writeFileSync(skillPath(other, 'roadmap'), 'old\n');
     const dir = join(hostDir(home, 'claude'), 'roadmap');
     mkdirSync(dir, { recursive: true });
     symlinkSync('../../../other-checkout/skills/roadmap.md', join(dir, 'SKILL.md'));
@@ -1160,28 +1135,12 @@ describe('setup --host flags', () => {
     expect(existsSync(join(bin, 'gstack-extend-telemetry'))).toBe(false);
   });
 
-  test('generated host copies carry the extend-root resolver', () => {
-    for (const host of ['codex', 'opencode', 'cursor'] as const) {
-      const home = join(baseTmp, `resolver-copy-${host}`);
-      mkdirSync(home, { recursive: true });
-      const r = runSetup(['--host', host], home);
-      expect(r.exitCode).toBe(0);
-      for (const skill of ROOT_RESOLVER_SKILLS) {
-        const source = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
-        const copy = readFileSync(join(hostDir(home, host), skill, 'SKILL.md'), 'utf8');
-        expect(copy).toContain(`_ER_SKILL=${skill}`);
-        expect(extractCanonicalSpan(copy)).toBe(extractCanonicalSpan(source));
-        expect(copy.split(GUARD_LINE).length - 1).toBe(source.split(GUARD_LINE).length - 1);
-      }
-    }
-  });
-
   test('codex rewrite unlinks leftover SKILL.md symlink before write', () => {
     const home = join(baseTmp, 'codex-unlink');
     mkdirSync(home, { recursive: true });
     const destDir = join(hostDir(home, 'codex'), 'pair-review');
     mkdirSync(destDir, { recursive: true });
-    const source = join(ROOT, 'skills', 'pair-review.md');
+    const source = skillPath(ROOT, 'pair-review');
     const before = readFileSync(source, 'utf8');
     symlinkSync(source, join(destDir, 'SKILL.md'));
     expect(runSetup(['--host', 'codex'], home).exitCode).toBe(0);
@@ -1549,7 +1508,7 @@ describe('track 23C preserved skill copies', () => {
   test('O4 raw-equal, stripped-variant and differing copies stay observations', () => {
     // Value: protects=a preserved copy that matches neither canonical nor stripped text is recorded differs_stripped and left unchanged; fails_when=that branch is dropped or labeled matches_stripped; why_new=this test covered raw-equal and stripped-match only; seam=none
     const home = join(baseTmp, 'o4-compare');
-    const raw = readFileSync(join(ROOT, 'skills', 'roadmap.md'));
+    const raw = readFileSync(skillPath(ROOT, 'roadmap'));
     plantRegularSkill(home, 'roadmap', raw.toString());
     const strippedRun = spawnSync('/bin/bash', ['-c', `awk '
       BEGIN { fm=0; skip=0 }
@@ -1561,7 +1520,7 @@ describe('track 23C preserved skill copies', () => {
       skip==1 && /^[[:space:]]+-[[:space:]]/ { next }
       skip==1 { skip=0 }
       { print }
-    ' "$1"`, 'bash', join(ROOT, 'skills', 'roadmap.md')], { encoding: 'utf8' });
+    ' "$1"`, 'bash', skillPath(ROOT, 'roadmap')], { encoding: 'utf8' });
     expect(strippedRun.status).toBe(0);
     expect(strippedRun.stdout).not.toBe(raw.toString());
     const variantHome = join(baseTmp, 'o4-variant');
@@ -1677,7 +1636,7 @@ exec /usr/bin/mktemp "$@"
     copyFileSync(join(ROOT, 'bin', 'lib', 'install-safety.sh'), join(other, 'bin', 'lib', 'install-safety.sh'));
     copyFileSync(join(ROOT, 'bin', 'update-check'), join(other, 'bin', 'update-check'));
     chmodSync(join(other, 'bin', 'update-check'), 0o755);
-    writeFileSync(join(other, 'skills', 'implement.md'), 'other source\n');
+    writeFileSync(skillPath(other, 'implement'), 'other source\n');
     writeFileSync(join(other, 'VERSION'), '9.9.9\n');
     const otherSkill = plantRegularSkill(home, 'pair-review', 'OTHER ORIGIN\n', realpathSync(other));
     runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true);
@@ -2363,7 +2322,7 @@ exec /bin/mv "$@"
   test('M4 deleting an origin or retargeting one pointer does not clear the other path', () => {
     const home = join(baseTmp, 'm4-origin');
     const keep = plantRegularSkill(home, 'implement', 'STAY PUT\n');
-    const repair = plantRegularSkill(home, 'roadmap', readFileSync(join(ROOT, 'skills', 'roadmap.md'), 'utf8'));
+    const repair = plantRegularSkill(home, 'roadmap', readFileSync(skillPath(ROOT, 'roadmap'), 'utf8'));
     expect(runSetup(['--host', 'claude', '--quiet'], home, isolatedPath(), true).exitCode).toBe(0);
     writeFileSync(join(keep, '.extend-root'), '/missing/deleted-checkout\n');
     const backup = readFileSync(join(repair, 'SKILL.md'));
@@ -2467,11 +2426,6 @@ exec /bin/ln "$@"
     expect(docs).toContain('Tracks 27A and 27B');
     expect(docs).toContain('Do not delete `.extend-root` or `install-status`');
     expect(docs).not.toContain('rm install-status');
-    const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
-    const shared = skill.split('<!-- SHARED:upgrade-flow -->')[1]!.split('<!-- /SHARED:upgrade-flow -->')[0]!;
-    expect(shared).not.toContain('INSTALL_WARN');
-    expect(skill).toContain('INSTALL_WARN');
-    expect(skill).toContain('Tracks 27A and 27B');
 
     const retiredHome = join(baseTmp, 'm7-retired');
     const retired = plantRegularSkill(retiredHome, 'review-apparatus', 'RETIRED KEEP\n');
@@ -2729,17 +2683,6 @@ function waitChild(child: ChildProcess, ms: number): Promise<{ code: number | nu
   });
 }
 
-describe('source skill descriptions fit Codex limit', () => {
-  for (const skill of SKILLS) {
-    test(`${skill} description ≤ 1024`, () => {
-      const path = join(ROOT, 'skills', `${skill}.md`);
-      const src = readFileSync(path, 'utf8');
-      const description = assertSkillDescriptionWithinLimit(src, relative(ROOT, path));
-      expect(description.length).toBeLessThanOrEqual(1024);
-    });
-  }
-});
-
 describe('telemetry-call helper install', () => {
   const source = join(ROOT, 'bin', 'lib', 'telemetry-call.sh');
   const installed = (home: string) => join(home, '.gstack-extend', 'bin', 'telemetry-call');
@@ -2770,7 +2713,7 @@ describe('telemetry-call helper install', () => {
           expect(existsSync(skill)).toBe(false);
           mkdirSync(skill, { recursive: true });
           writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
-          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+          symlinkSync(skillPath(ROOT, 'implement'), join(skill, 'SKILL.md'));
         } else {
           expect(result.exitCode, result.stderr).toBe(0);
           expect(readFileSync(installed(home)).equals(readFileSync(source))).toBe(true);
@@ -2824,14 +2767,14 @@ describe('telemetry-call helper install', () => {
       if (uninstall) {
         mkdirSync(skill, { recursive: true });
         writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
-        symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+        symlinkSync(skillPath(ROOT, 'implement'), join(skill, 'SKILL.md'));
       }
       const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain('world-writable');
       expect(existsSync(installed(home))).toBe(false);
       expect(existsSync(skill)).toBe(uninstall);
-      if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+      if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(skillPath(ROOT, 'implement'));
     }
   });
 
@@ -2855,14 +2798,14 @@ describe('telemetry-call helper install', () => {
         if (uninstall) {
           mkdirSync(skill, { recursive: true });
           writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
-          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+          symlinkSync(skillPath(ROOT, 'implement'), join(skill, 'SKILL.md'));
         }
         const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain(unsafe === 'outside-home' ? 'outside resolved $HOME' : 'world-writable');
         expect(readFileSync(installed(home), 'utf8')).toBe(marker);
         expect(existsSync(skill)).toBe(uninstall);
-        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(skillPath(ROOT, 'implement'));
       }
     });
   }
@@ -2880,7 +2823,7 @@ describe('telemetry-call helper install', () => {
         if (uninstall) {
           mkdirSync(skill, { recursive: true });
           writeFileSync(join(skill, '.extend-root'), ROOT + '\n');
-          symlinkSync(join(ROOT, 'skills', 'implement.md'), join(skill, 'SKILL.md'));
+          symlinkSync(skillPath(ROOT, 'implement'), join(skill, 'SKILL.md'));
         }
         const result = runSetup(['--host', 'codex', '--quiet', ...(uninstall ? ['--uninstall'] : [])], home);
         expect(result.exitCode).not.toBe(0);
@@ -2889,7 +2832,7 @@ describe('telemetry-call helper install', () => {
         expect(readFileSync(join(target, 'keep'), 'utf8')).toBe('personal file');
         expect(lstatSync(installed(home)).isSymbolicLink()).toBe(leafKind === 'symlink-to-directory');
         expect(existsSync(skill)).toBe(uninstall);
-        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(join(ROOT, 'skills', 'implement.md'));
+        if (uninstall) expect(readlinkSync(join(skill, 'SKILL.md'))).toBe(skillPath(ROOT, 'implement'));
       }
     });
   }

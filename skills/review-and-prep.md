@@ -1786,6 +1786,11 @@ reuse these records.
 1. **Lane map.** Pregate reads its pin files from the base branch, so when this
    PR adds or changes `.gstack/pregate.json` or `.gstack/generated.json`, pass
    `--policy-from head` to every full pregate run and record that policy source.
+   The exception is a PR that renames or removes a pregate lane: the installed
+   pregate lets a head policy only add test lanes and refuses a removed or
+   renamed lane with `PREGATE_HEAD_POLICY_LOOSENS`, so that PR runs every full
+   pregate on the base policy and records the reason, the lane-gap probe, the
+   `gstack-pregate validate` result and the run's `--explain` output.
    Find lane gaps before the long suite with `gstack-pregate --stage tests
    --explain --out <temp-path>` without `--allow-repo-commands` (base policy
    only; that record is `incomplete` and never counts). Put `<temp-path>`
@@ -2098,7 +2103,8 @@ inactive — <reason>` in the receipt and runs item 4's pregate as today. Nothin
 else changes on that path.
 
 1. Any anchor missing: `pregate-narrowing: inactive — anchor changed (<which>)`.
-2. Item 1 requires `--policy-from head`, or a final-gate repair chain is still
+2. Item 1 requires `--policy-from head` or runs the PR on the base policy under
+   its rename-or-removal exception, or a final-gate repair chain is still
    pending: `inactive — head policy` or `inactive — pending repair`. The probe
    refuses head policy without `--allow-repo-commands`, and a repair's rerun
    line must name a ledger record with `selection`.

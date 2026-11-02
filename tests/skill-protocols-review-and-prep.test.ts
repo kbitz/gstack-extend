@@ -1039,6 +1039,43 @@ describe('release-only ship path', () => {
   });
 });
 
+// The head-policy rule has one exception, written where the rule is: the installed pregate refuses a head policy
+// that removes or renames a lane, so a PR that does that cannot follow the rule. Static prose lock (owner-approved
+// during Track 52A): no_claim=installed pregate behavior, which is upstream's.
+describe('head-policy exception for a pregate lane rename or removal', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const gates = skillSection(prep, "### Prove /ship's release gates on this head").replace(/\s+/g, ' ');
+  const narrow = skillSection(prep, '### Narrow the pregate after an accepted pass').replace(/\s+/g, ' ');
+  const project = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8').replace(/\s+/g, ' ');
+
+  // Value: protects=a PR that renames or removes a pregate lane is told to run on the base policy, with the evidence to
+  //   record, in the lane-map gate, the narrowing rule and the project's Testing paragraph;
+  //   fails_when=any of the three drops the exception, the refusal code or a recorded item, or the exception moves before
+  //   the rule it qualifies;
+  //   why_new=the lane-map lock pins the head-policy rule but not its exception, which PR #187 followed with no written
+  //   rule; seam=none; no_claim=installed pregate behavior (the refusal is upstream's)
+  test('the lane-map gate, the narrowing rule and CLAUDE.md state the base-policy exception', () => {
+    const rule = 'pass `--policy-from head` to every full pregate run and record that policy source.';
+    const exception = 'The exception is a PR that renames or removes a pregate lane:';
+    expect(gates).toContain(rule);
+    expect(gates).toContain(exception);
+    expect(gates.indexOf(exception)).toBeGreaterThan(gates.indexOf(rule));
+    // The exception stays inside item 1, before the lane-gap probe it hands the evidence to.
+    expect(gates.indexOf(exception)).toBeLessThan(gates.indexOf('Find lane gaps before the long suite'));
+    expect(gates.indexOf('1. **Lane map.**')).toBeLessThan(gates.indexOf(exception));
+    for (const clause of [
+      'the installed pregate lets a head policy only add test lanes and refuses a removed or renamed lane with `PREGATE_HEAD_POLICY_LOOSENS`',
+      'so that PR runs every full pregate on the base policy and records the reason, the lane-gap probe, the `gstack-pregate validate` result and the run\'s `--explain` output.',
+    ]) expect(gates).toContain(clause);
+    expect(narrow).toContain('Item 1 requires `--policy-from head` or runs the PR on the base policy under its rename-or-removal exception');
+    for (const clause of [
+      'and a PR that edits it needs `--policy-from head`, with one exception.',
+      'The installed pregate lets a head policy only add test lanes and refuses a removed or renamed lane with `PREGATE_HEAD_POLICY_LOOSENS`',
+      'so a PR that renames or removes a pregate lane runs on the base policy, and its receipt records that reason, the lane-gap probe and `gstack-pregate validate`.',
+    ]) expect(project).toContain(clause);
+  });
+});
+
 // Producer side of pair-review's paused check: the markers its jq program reads.
 describe('Track 23D paused-check fence', () => {
   test('review-and-prep writes the pause and receipt markers the paused check reads', () => {
