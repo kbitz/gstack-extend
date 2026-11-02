@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { makeEmptyRepo } from './helpers/fixture-repo';
-import { DISPOSITIONS, evaluate, parseEntries, sha256, type Check, type Entry } from '../src/secret-dispositions/evaluate';
+import { DISPOSITIONS, evaluate, parseEntries, sha256, type Check, type Entry, type Part } from '../src/secret-dispositions/evaluate';
 
 const root = resolve(import.meta.dir, '..');
 const temp = mkdtempSync(join(tmpdir(), 'secret-dispositions-'));
@@ -102,6 +102,140 @@ describe('exact-line disposition matching', () => {
   });
 });
 
+describe('whole-file parts', () => {
+  // Upstream hands a tracked Python or Dart file over whole: `keep` lists its added line numbers
+  // and findings render as `line N`, a source line number. Other files keep `added line N`.
+  const file = 'app/settings.py', LOCATION = 'finding location does not match upstream added-line selection';
+  const RESOLVE = 'finding does not resolve to an exact current source line', AMBIGUOUS = 'finding path is missing or ambiguous';
+  const lines = ['# existing', examples[1]!.text, '# existing', examples[2]!.text, ''];
+  const whole = (extra: Partial<Part> = { keep: [2] }): Part => ({ file, text: lines.join('\n'), ...extra });
+  const at = (loc: string, head = 'MEDIUM env.kv [secret]') => `${head}: sensitive assignment (${file}, ${loc})`;
+  const record = (ps: Part[], found: string[], rules = found.map(() => 'env.kv')): Check => ({ id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS',
+    inputs: { added_lines: sha256(JSON.stringify(ps)) }, detail: `${rules.length} credential finding(s) in added lines (${rules.join(', ')})`, lines: found });
+  const approve = (text: string, rule = 'env.kv', path = file): Entry => ({ ...entries[0]!, path, rule, line_sha256: sha256(text) });
+  const src = (text = lines.join('\n')) => new Map([[file, text]]);
+
+  test('both location forms are satisfied by matching entries in one record', () => {
+    const plain: Part = { file: 'src/other.js', text: examples[2]!.text };
+    const ps = [whole(), plain];
+    const found = [at('line 2'), `MEDIUM env.kv [secret]: sensitive assignment (${plain.file}, added line 1)`];
+    const result = evaluate(record(ps, found), ps, [approve(examples[1]!.text), approve(plain.text, 'env.kv', plain.file)],
+      new Map([[file, lines.join('\n')], [plain.file, plain.text]]));
+    expect(result.errors).toEqual([]);
+    expect(result.satisfied).toBe(true);
+    expect(result.matched.map(m => [m.finding.path, m.finding.added_line])).toEqual([[file, 2], [plain.file, 1]]);
+  });
+  test('a finding on a line that is not an added line cannot be satisfied, even with a matching entry', () => {
+    const result = evaluate(record([whole()], [at('line 4')]), [whole()], [approve(examples[2]!.text)], src());
+    expect(result.satisfied).toBe(false);
+    expect(result.errors).toContain(LOCATION);
+    expect(result.matched).toEqual([]);
+    expect(result.unmatched).toEqual([]);
+  });
+  test('engine findings follow the same location rule, including a HIGH one', () => {
+    for (const head of ['MEDIUM engine.synthetic [secret]', 'HIGH engine.input_too_large [secret]']) {
+      const rule = head.split(' ')[1]!;
+      const result = evaluate(record([whole()], [at('line 4', head)], [rule]), [whole()], [approve(examples[2]!.text, rule)], src());
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(LOCATION);
+      expect(result.matched).toEqual([]);
+      expect(result.unmatched).toEqual([]);
+    }
+  });
+  test('the wrong form for the part is an error each way', () => {
+    const plain: Part = { file, text: examples[1]!.text };
+    for (const [part, loc] of [[whole(), 'added line 2'], [plain, 'line 1']] as const) {
+      const result = evaluate(record([part], [at(loc)]), [part], [approve(examples[1]!.text)], src(part.text));
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(LOCATION);
+      expect(result.matched).toEqual([]);
+    }
+  });
+  test('a line number out of range is an error in either form', () => {
+    const outside = evaluate(record([whole()], [at('line 999')]), [whole()], [approve(examples[1]!.text)], src());
+    expect(outside.errors).toContain(LOCATION);
+    const kept = whole({ keep: [999] }), plain: Part = { file, text: examples[1]!.text };
+    for (const [part, loc] of [[kept, 'line 999'], [plain, 'added line 999']] as const) {
+      const result = evaluate(record([part], [at(loc)]), [part], [approve(examples[1]!.text)], src(part.text));
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(RESOLVE);
+      expect(result.matched).toEqual([]);
+    }
+    const zero = evaluate(record([whole()], [at('line 0')]), [whole()], [approve(examples[1]!.text)], src());
+    expect(zero.satisfied).toBe(false);
+    expect(zero.errors).toContain('unrecognized upstream finding line');
+  });
+  test('ambiguous path suffixes stay ambiguous; keep never breaks the tie', () => {
+    const a = (keep?: number[]): Part => ({ file: 'safe.py', text: examples[1]!.text, ...(keep ? { keep } : {}) });
+    const b = (keep?: number[]): Part => ({ file: 'other (safe.py', text: examples[2]!.text, ...(keep ? { keep } : {}) });
+    const sources = new Map([[a().file, a().text], [b().file, b().text]]);
+    const approvals = [approve(a().text, 'env.kv', a().file), approve(b().text, 'env.kv', b().file)];
+    const item = (p: Part, kind: string) => `MEDIUM env.kv [secret]: assignment (${p.file}, ${kind} 1)`;
+    // Both parts whole-file, then one whole-file and one plain. The second finding's line ends with the first part's suffix.
+    for (const ps of [[a([1]), b([1])], [a([1]), b()]]) {
+      const kind = ps[1]!.keep ? 'line' : 'added line';
+      const result = evaluate(record(ps, [item(ps[0]!, 'line'), item(ps[1]!, kind)]), ps, approvals, sources);
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(AMBIGUOUS);
+      expect(result.matched).toHaveLength(1);
+      expect(result.matched[0]!.finding.path).toBe('safe.py');
+    }
+  });
+  test('the added-line input hash covers keep', () => {
+    const raw = record([whole()], [at('line 2')]);
+    expect(evaluate(raw, [whole()], [approve(examples[1]!.text)], src()).satisfied).toBe(true);
+    for (const other of [whole({}), whole({ keep: [3] })]) {
+      const stale = { ...raw, inputs: { added_lines: sha256(JSON.stringify([other])) } };
+      const result = evaluate(stale, [whole()], [approve(examples[1]!.text)], src());
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain('added-line input hash differs from the raw pregate record');
+    }
+  });
+  test('the source line must be exact: absent, at another line or one byte off is refused', () => {
+    const entry = approve(examples[1]!.text), raw = record([whole()], [at('line 2')]);
+    const moved = ['# existing', '# existing', examples[1]!.text, examples[2]!.text, ''].join('\n');
+    const absent = ['# existing', '# changed', '# existing', examples[2]!.text, ''].join('\n');
+    const off = ['# existing', `${examples[1]!.text} `, '# existing', examples[2]!.text, ''].join('\n');
+    for (const text of [absent, moved, off]) {
+      const result = evaluate(raw, [whole()], [entry], src(text));
+      expect(result.satisfied).toBe(false);
+      expect(result.errors).toContain(RESOLVE);
+      expect(result.matched).toEqual([]);
+    }
+  });
+  test('the entry hash is exact on a whole-file part, including a CR', () => {
+    const crLines = ['# existing', `${examples[1]!.text}\r`, '# existing', examples[2]!.text, ''], text = crLines.join('\n');
+    const part: Part = { file, text, keep: [2] }, raw = record([part], [at('line 2')]);
+    const unmatched = evaluate(raw, [part], [approve(examples[1]!.text)], src(text));
+    expect(unmatched.satisfied).toBe(false);
+    expect(unmatched.matched).toEqual([]);
+    expect(unmatched.unmatched).toHaveLength(1);
+    expect(unmatched.unmatched[0]!.line_sha256).toBe(sha256(`${examples[1]!.text}\r`));
+    const matched = evaluate(raw, [part], [approve(`${examples[1]!.text}\r`)], src(text));
+    expect(matched.errors).toEqual([]);
+    expect(matched.satisfied).toBe(true);
+    expect(matched.matched).toHaveLength(1);
+  });
+  test('HIGH on an added line stays unapprovable', () => {
+    const head = 'HIGH env.kv [secret]';
+    const result = evaluate(record([whole()], [at('line 2', head)]), [whole()], [approve(examples[1]!.text)], src());
+    expect(result.satisfied).toBe(false);
+    expect(result.matched).toEqual([]);
+    expect(result.unmatched.map(f => f.severity)).toEqual(['HIGH']);
+  });
+  test('a MEDIUM non-secret is no blocker on an added line and a location error elsewhere', () => {
+    const advisory = (loc: string) => at(loc, 'MEDIUM hostname [internal]');
+    const kept = record([whole()], [at('line 2'), advisory('line 2')], ['env.kv']);
+    const ok = evaluate(kept, [whole()], [approve(examples[1]!.text)], src());
+    expect(ok.errors).toEqual([]);
+    expect(ok.satisfied).toBe(true);
+    const outside = record([whole()], [at('line 2'), advisory('line 4')], ['env.kv']);
+    const refused = evaluate(outside, [whole()], [approve(examples[1]!.text)], src());
+    expect(refused.satisfied).toBe(false);
+    expect(refused.errors).toContain(LOCATION);
+  });
+});
+
 function write(file: string, content: string) { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, content); }
 function git(repo: string, ...args: string[]) {
   const r = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
@@ -142,6 +276,27 @@ describe('read-only CLI gate', () => {
     const save = () => write(record, JSON.stringify(raw));
     save(); return { ...f, raw, record, save };
   }
+  test('a whole-file part reaches the evaluator with keep intact and its `line N` finding is dispositioned', () => {
+    // Same hermetic upstream, except that its scanner hands over a tracked Python file whole.
+    const wholeUpstream = join(temp, `fake-upstream-whole-${crypto.randomUUID()}`);
+    cpSync(upstream, wholeUpstream, { recursive: true });
+    const f = pythonFixture(), record = join(temp, `raw-whole-${crypto.randomUUID()}.json`);
+    const part = { file: f.file, text: `# existing\n${examples[2]!.text}\n${examples[1]!.text}\n`, keep: [3] };
+    write(join(wholeUpstream, 'lib/pregate/checks/secrets.ts'), `export const addedLines = () => ${JSON.stringify([part])};`);
+    const secrets = { id: 'secrets', status: 'fail', code: 'PREGATE_SECRETS', inputs: { added_lines: sha256(JSON.stringify([part])) },
+      detail: '1 credential finding(s) in added lines (env.kv)', lines: [`MEDIUM env.kv [secret]: sensitive assignment (${f.file}, line 3)`] };
+    write(record, JSON.stringify({ schema_version: 1, tree: 'a'.repeat(40), head: f.head, base: `origin/main@${f.base.slice(0, 12)}`, verdict: 'fail',
+      checks: ids.map(id => id === 'secrets' ? secrets : { id, status: 'pass' }), requires_remote: [] }));
+    const before = readFileSync(record, 'utf8');
+    const r = run(f.repo, wholeUpstream, record), output = JSON.parse(r.stdout);
+    expect(output.errors).toEqual([]);
+    expect(r.status).toBe(0);
+    expect(output.matched).toHaveLength(1);
+    expect(output.matched[0].finding.path).toBe(f.file);
+    expect(output.matched[0].finding.added_line).toBe(3);
+    expect(output.receipt).toContain(`${DISPOSITIONS}#/entries/0`);
+    expect(readFileSync(record, 'utf8')).toBe(before);
+  });
   test('prints raw fail, all three entry references and hashes; never changes either input', () => {
     const f = setup(), before = readFileSync(f.record, 'utf8'), approvals = readFileSync(join(f.repo, DISPOSITIONS), 'utf8');
     const r = run(f.repo, upstream, f.record), output = JSON.parse(r.stdout);
@@ -228,6 +383,13 @@ test('both wrapper instructions require user approval and preserve failed test e
   expect(ship).toContain('The native receipt then makes no pregate claim.');
 });
 
+test('the disposition document states both location forms, their files and the refusal', () => {
+  const text = readFileSync(join(root, 'docs/secret-dispositions.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const phrase of ['`line N`', '`added line N`', '`added_line`', '`.py`, `.pyi`, `.dart`',
+    'finding location does not match upstream added-line selection', 'cannot be satisfied by any entry', '`engine.` finding',
+    'accepted location form']) expect(text).toContain(phrase);
+});
+
 const installed = process.env.GSTACK_SECRET_DISPOSITIONS_INTEGRATION_ROOT;
 test.skipIf(!installed)('actual installed pregate: three examples pass only in wrapper; edit becomes stale and fails', () => {
   const f = fixture(), record = join(temp, 'installed-pregate.json');
@@ -257,4 +419,38 @@ test.skipIf(!installed)('actual installed pregate: three examples pass only in w
   expect(blocked.status).toBe(1);
   expect(output.unmatched).toHaveLength(1);
   expect(output.stale.map((e: Entry) => e.path)).toEqual([examples[0]!.file]);
+}, 180_000);
+
+// A generic tracked Python file: upstream hands the whole file to the scanner and reports `line N`.
+function pythonFixture() {
+  const repo = makeEmptyRepo(temp), file = 'app/settings.py';
+  write(join(repo, file), `# existing\n${examples[2]!.text}\n`);
+  git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'base python file');
+  const base = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', base);
+  write(join(repo, file), `# existing\n${examples[2]!.text}\n${examples[1]!.text}\n`);
+  write(join(repo, DISPOSITIONS), JSON.stringify({ version: 1, entries: [{ ...entries[1]!, path: file }] }, null, 2) + '\n');
+  git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'add a line and its approval');
+  return { repo, base, head: git(repo, 'rev-parse', 'HEAD'), file };
+}
+
+test.skipIf(!installed)('actual installed pregate: an added line of a tracked Python file satisfies its disposition', () => {
+  const f = pythonFixture(), record = join(temp, 'installed-python-pregate.json');
+  const scan = spawnSync(join(installed!, 'bin/gstack-pregate'), ['--base', 'main', '--stage', 'preflight', '--out', record],
+    { cwd: f.repo, encoding: 'utf8', timeout: 120_000, env: { ...process.env, GSTACK_STATE_ROOT: join(temp, 'gstack-state') } });
+  expect(scan.status).toBe(1);
+  const raw = readFileSync(record, 'utf8');
+  const secrets = JSON.parse(raw).checks.find((c: Check) => c.id === 'secrets');
+  expect(secrets.status).toBe('fail');
+  // Upstream dropped the non-added line 2 and rendered the whole-file form for line 3.
+  expect(secrets.lines).toHaveLength(1);
+  expect(secrets.lines[0]).toEndWith(`(${f.file}, line 3)`);
+  const allowed = run(f.repo, installed!, record, 'preflight'), output = JSON.parse(allowed.stdout);
+  expect(allowed.stderr).toBe('');
+  expect(output.errors).toEqual([]);
+  expect(allowed.status).toBe(0);
+  expect(output.matched).toHaveLength(1);
+  expect(output.matched[0].finding.path).toBe(f.file);
+  expect(output.matched[0].finding.added_line).toBe(3);
+  expect(readFileSync(record, 'utf8')).toBe(raw);
 }, 180_000);
