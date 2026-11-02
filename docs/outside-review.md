@@ -97,6 +97,8 @@ no-findings conclusion. Refusals, failed execution, ambiguous prose and missing
 context remain uncredited. A failed parse is `unverified`, not `unavailable`.
 No reformat model is needed, so malformed markers cannot cause another bill.
 
+The review policy (`POLICY` in `src/outside-review/prompt.ts`) asks a voice with no findings to write the line `NO_FINDINGS: none` immediately before its `Recommendation: <action> because <specific reason>` line, with nothing between them, and to give its reason in the because-clause. `/autoplan-lean` asks its outside voices for the same form. The installed classifier reads a no-findings statement only as the reply's last prose sentence or the Recommendation's because-clause, unqualified by contrast or exception words. A reply that opens with `NO_FINDINGS` and ends on other prose therefore stays uncredited, and recovery does not rewrite it. `GSTACK_OUTSIDE_TEST_ROOT=<installed gstack root> bun test tests/outside-review.test.ts` checks both against the installed classifier.
+
 Before a call, the helper exclusively creates a `.claim` containing only its
 hash, phase, dispatch time and prompt byte measurements. It saves the original
 provider result in a private `.json`. Repeating the same content, task and

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.60.3] - 2026-11-02
+
+### Fixed
+
+- Outside review's prompt for a review that reports no findings now matches the wording the validator accepts. Before this, the prompt and the validator disagreed on that case.
+- `docs/outside-review.md` states the aligned no-findings prompt.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. No configuration changes are needed.
+
 ## [0.60.2] - 2026-11-02
 
 ### Fixed
