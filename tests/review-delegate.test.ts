@@ -83,7 +83,7 @@ if (mode === 'findings') console.log(envelope(finding('CRITICAL', '[P1]') + '\\n
 else if (mode === 'plain') console.log(finding('CRITICAL', '[P0]') + '\\n' + rec);
 else if (mode === 'clean') console.log(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
 else if (mode === 'exit') { console.error('STDERR-MARKER boom'); process.exit(3); }
-else if (mode === 'sleep') { writeFileSync(join(state, 'pid.txt'), String(process.pid)); await new Promise((resolve) => setTimeout(resolve, 5000)); }
+else if (mode === 'sleep') { writeFileSync(join(state, 'pid.txt'), String(process.pid)); await new Promise((resolve) => setTimeout(resolve, 5000)); writeFileSync(join(state, 'finished.txt'), 'natural completion'); }
 else if (mode === 'refusal') console.log('I cannot review this.\\nRecommendation: none because I refuse.');
 else if (mode === 'needs-context') console.log('NEEDS_CONTEXT: the callers of changed.txt\\nNO_FINDINGS: none\\nRecommendation: wait because callers are missing.');
 else if (mode === 'uncredited') console.log('Looks fine to me.\\nRecommendation: merge because it reads well.');
@@ -313,6 +313,7 @@ describe('run', () => {
     let code: string | undefined;
     try { process.kill(pid, 0); } catch (error) { code = (error as NodeJS.ErrnoException).code; }
     expect(code).toBe('ESRCH'); // the owned child has exited; no scheduling-dependent elapsed bound
+    expect(existsSync(join(s.state, 'finished.txt'))).toBe(false); // natural completion cannot masquerade as timeout enforcement
   }, 30_000);
 
   test('a claim without a result is unresolved-claim and makes no call', () => {
@@ -483,11 +484,12 @@ describe('reply parsing and the receipt contract', () => {
 
   test('parseFindings rejects unparsed content and requires every label line to parse', () => {
     const line = (label: string, severity: string) => `${label} ${JSON.stringify({ severity, confidence: 5, path: 'a.ts', category: 'testing', summary: 's' })}`;
+    const complete = (body: string) => `${body}\nRecommendation: fix because findings remain.`;
     expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n\`\`\`\n[P1] not json\n\`\`\`\nprose [P1] inside a sentence`, 'testing')).toEqual({ ok: false });
-    expect(parseFindings(`${line('[P0]', 'CRITICAL')}\n${line('[P3]', 'INFORMATIONAL')}`, 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }, { severity: 'INFORMATIONAL' }] });
+    expect(parseFindings(complete(`${line('[P0]', 'CRITICAL')}\n${line('[P3]', 'INFORMATIONAL')}`), 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }, { severity: 'INFORMATIONAL' }] });
     for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":11,"path":"a","category":"c","summary":"s"}',
       '[P1] {"severity":"CRITICAL","confidence":5,"path":"","category":"c","summary":"s"}', `${line('[P1]', 'CRITICAL').slice(0, -1)},"line":0}`, `${line('[P1]', 'CRITICAL').slice(0, -1)},"fix":3}`]) {
-      expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n${bad}`, 'testing')).toEqual({ ok: false });
+      expect(parseFindings(complete(`${line('[P2]', 'INFORMATIONAL')}\n${bad}`), 'testing')).toEqual({ ok: false });
     }
   });
 
@@ -495,12 +497,32 @@ describe('reply parsing and the receipt contract', () => {
   test('review regression: finding metadata is preserved and malformed metadata is refused', () => {
     const value = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
       lines_removable: 12, evidence_paths: ['a.ts', 'b.ts'], helper_target: { path: 'shared.ts', symbol: 'helper' }, cause: { path: 'c.ts', line: 3 } };
-    const parse = (v: any, part: 'testing' | 'simplification' = 'simplification', label = '[P2]') => parseFindings(`${label} ${JSON.stringify(v)}`, part);
+    const parse = (v: any, part: 'testing' | 'simplification' = 'simplification', label = '[P2]') => parseFindings(`${label} ${JSON.stringify(v)}\nRecommendation: fix because findings remain.`, part);
     expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, specialist: 'simplification' }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'testing', '[P1]')).toMatchObject({ ok: true, findings: [{ severity: 'CRITICAL', advisory: true }] });
     expect(parse({ ...value, severity: 'CRITICAL' }, 'simplification', '[P1]')).toEqual({ ok: false });
     for (const patch of [{ advisory: 'true' }, { advisory: false }, { lines_removable: 1.5 }, { evidence_paths: [2] },
       { helper_target: { path: 'x' } }, { cause: { path: 'x', line: 0 } }]) expect(parse({ ...value, ...patch })).toEqual({ ok: false });
+  });
+
+  // Value: protects=testing's documented structured evidence survives without narrowing its unspecified value types; fails_when=valid evidence is rejected or lost; why_new=review F10; seam=upstream testing checklist
+  test('review regression: testing evidence preserves its four documented fields and string evidence', () => {
+    const finding = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.test.ts', category: 'testing', summary: 'duplicate coverage' };
+    const evidence = { detects: 'same failure', non_test_callers: [{ path: 'a.ts', count: 2 }], search_command: ['git', 'grep'], stronger_proof: null };
+    const parse = (value: unknown) => parseFindings(`[P2] ${JSON.stringify({ ...finding, evidence: value })}\nRecommendation: fix because coverage is duplicated.`, 'testing');
+    expect(parse(evidence)).toEqual({ ok: true, findings: [{ ...finding, evidence, specialist: 'testing' }] });
+    expect(parse('a textual proof')).toMatchObject({ ok: true, findings: [{ evidence: 'a textual proof' }] });
+    for (const invalid of [[], null, 3, { detects: 'incomplete' }, { ...evidence, invented: 'outside the schema' }]) expect(parse(invalid)).toEqual({ ok: false });
+  });
+
+  // Value: protects=classifier recovery cannot credit truncated replies or a recommendation without an explicit clean marker; fails_when=missing completion syntax is treated as complete; why_new=review F12; seam=reply parser after recovered classifier verdict
+  test('review regression: a reply needs its closing recommendation and explicit empty-result marker', () => {
+    const finding = '[P2] {"severity":"INFORMATIONAL","confidence":8,"path":"a.ts","category":"testing","summary":"s"}';
+    const recommendation = 'Recommendation: merge because no defects remain.';
+    for (const incomplete of ['NO_FINDINGS: none', finding, recommendation, '']) expect(parseFindings(incomplete, 'testing')).toEqual({ ok: false });
+    expect(parseFindings(`NO_FINDINGS: none\n${recommendation}`, 'testing')).toEqual({ ok: true, findings: [] });
+    expect(parseFindings(`${finding}\nRecommendation: fix because a finding remains.`, 'testing')).toMatchObject({ ok: true, findings: [{ summary: 's' }] });
+    expect(parseFindings(`${recommendation}\nNO_FINDINGS: none`, 'testing')).toEqual({ ok: false });
   });
 
   // Value: protects=no credited reply loses unsupported finding text; fails_when=an upstream clean verdict or one valid line hides other findings; why_new=review F4; seam=classifier and strict parser

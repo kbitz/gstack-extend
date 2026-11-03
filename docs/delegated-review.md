@@ -132,11 +132,16 @@ The delegate returns, in this form:
   their upstream meaning. Simplification findings require `INFORMATIONAL`
   severity and `advisory: true`. The runner overwrites `specialist` with the
   part and drops keys outside this schema;
+- `evidence` is text or the testing checklist's object with exactly `detects`,
+  `non_test_callers`, `search_command` and `stronger_proof`. Their JSON values
+  are preserved without imposing types the checklist does not specify;
 - a clean reply has `NO_FINDINGS: none` immediately before the closing
   `Recommendation: <action> because <reason>`;
 - a reply that lacks context returns `NEEDS_CONTEXT: <what>`.
 
-Blank lines are allowed; fences, prose or finding lines outside this form make
+Every reply needs its closing `Recommendation` line; a reply with no findings
+also needs the explicit `NO_FINDINGS: none` marker. Classifier recovery does
+not waive either requirement. Blank lines are allowed; fences, prose or finding lines outside this form make
 the whole reply fall back, so a partially parsed reply never loses findings.
 These response-format instructions override the checklist's output-format
 directions while preserving its schema and review criteria.

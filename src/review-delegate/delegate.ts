@@ -98,11 +98,13 @@ export function readReply(stdout: string): { reply: string; tokens: Tokens; isEr
 
 export interface Finding {
   severity: 'CRITICAL' | 'INFORMATIONAL'; confidence: number; path: string; category: string; summary: string;
-  line?: number; fix?: string; fingerprint?: string; evidence?: string; test_stub?: string; specialist: Part;
+  line?: number; fix?: string; fingerprint?: string; test_stub?: string; specialist: Part;
+  evidence?: string | { detects: unknown; non_test_callers: unknown; search_command: unknown; stronger_proof: unknown };
   advisory?: boolean; evidence_paths?: string[]; helper_target?: { path: string; symbol: string };
   cause?: { path: string; line: number }; lines_removable?: number;
 }
-const OPTIONAL_TEXT = ['fix', 'fingerprint', 'evidence', 'test_stub'] as const;
+const OPTIONAL_TEXT = ['fix', 'fingerprint', 'test_stub'] as const;
+const EVIDENCE_KEYS = ['detects', 'non_test_callers', 'search_command', 'stronger_proof'] as const;
 const LABEL_LINE = /^\s*(?:[-*+]\s+)?\[P([0-3])\][ \t]*(.*)$/;
 
 /**
@@ -130,6 +132,8 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
     if (![path, category, summary].every((text) => typeof text === 'string' && text.trim())) return { ok: false };
     if (at !== undefined && (!Number.isInteger(at) || (at as number) < 1)) return { ok: false };
     if (OPTIONAL_TEXT.some((key) => value[key] !== undefined && typeof value[key] !== 'string')) return { ok: false };
+    if (value.evidence !== undefined && typeof value.evidence !== 'string'
+      && (!isObject(value.evidence) || !exactKeys(value.evidence, EVIDENCE_KEYS))) return { ok: false };
     if (value.advisory !== undefined && typeof value.advisory !== 'boolean') return { ok: false };
     if (value.evidence_paths !== undefined && (!Array.isArray(value.evidence_paths) || !value.evidence_paths.every(nonempty))) return { ok: false };
     if (value.helper_target !== undefined && (!isObject(value.helper_target) || !exactKeys(value.helper_target, ['path', 'symbol'])
@@ -141,6 +145,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
     const finding: Finding = { severity, confidence: confidence as number, path: path as string, category: category as string, summary: summary as string, specialist: part };
     if (at !== undefined) finding.line = at as number;
     for (const key of OPTIONAL_TEXT) if (value[key] !== undefined) finding[key] = value[key] as string;
+    if (value.evidence !== undefined) finding.evidence = value.evidence as Finding['evidence'];
     if (value.advisory !== undefined) finding.advisory = value.advisory;
     if (value.evidence_paths !== undefined) finding.evidence_paths = value.evidence_paths as string[];
     if (value.helper_target !== undefined) finding.helper_target = value.helper_target as Finding['helper_target'];
@@ -148,7 +153,7 @@ export function parseFindings(reply: string, part: Part): { ok: true; findings: 
     if (value.lines_removable !== undefined) finding.lines_removable = value.lines_removable as number;
     findings.push(finding);
   }
-  return { ok: true, findings };
+  return recommendation && (clean || findings.length > 0) ? { ok: true, findings } : { ok: false };
 }
 
 /** What one provider process did, as the spawn layer observed it. */
