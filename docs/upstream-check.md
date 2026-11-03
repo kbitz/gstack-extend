@@ -369,6 +369,41 @@ prints `DRIFT <kind> …`. `autoplan-lean drift` also refuses a symlinked file
 argument, while this command resolves symlinks, so a symlinked nested layout
 (such as Claude's) is checked, not reported unreadable.
 
+### Anchors left unqualified
+
+Two anchors drift against installed gstack 1.94.39.0 (revision
+`f8085aa0e499085c411f712d6d5c00a81d1b104a`), and this extension does not
+requalify them. `delegate=<part>` and `specialists=fold` stay off on that
+install. Each is still listed in the tables above at its older revision.
+
+- **Anchors:** `review-and-prep.delegate.review.1` and
+  `review-and-prep.fold.review.1`. They share one combine line in the nested
+  `/review` and in the sibling `/review`.
+- **Old wording:** `Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.`
+- **New wording:** `Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
+  Upstream renamed Greptile to "review bot" in v1.93.33.0 (`14d7414a`). The line
+  means the same, and the rename alone would be safe to follow.
+- **Why the options stay off:** since v1.94.22.0 (`592fa0c8`) the nested
+  `/review` has a `Done means` item, `specialists-dispatched`: the specialist
+  selection is printed, then one Agent dispatch per specialist it names.
+  Delegation replaces that dispatch and the fold dispatches none, yet both
+  sections describe their change as never a gate. Upstream's opt-in
+  `skill_contracts` Stop hook (`docs/skill-routing-and-contracts.md` in the
+  gstack checkout) blocks once on an unmet item and then records a miss, and a
+  waiver also counts as a miss. The sibling `/review` omits the item, but both
+  layouts share the anchors, so one answer covers both. The hook is off by
+  default, so this is a model-facing instruction conflict rather than a measured
+  failure.
+- **What a later Track must change:** decide how the delegate and fold sections
+  meet or waive `specialists-dispatched` on the nested layout and say so in the
+  receipt; anchor that item so a further upstream change turns the options off;
+  then re-anchor both combine lines to the installed `… review bot findings.`
+  text and move `DELEGATE_QUALIFIED`, `FOLD_QUALIFIED` and their table rows.
+
+Until then `bin/upstream-check` reports `RESULT drift` for these two anchors on
+an installed 1.94.39.0 root, and the opt-in installed-root "passes every check"
+test fails on such an install.
+
 ## The 120-minute lease limit
 
 This section is bound to the inspected upstream revision recorded in
@@ -425,11 +460,11 @@ and the test-gap routing value.
 | Wrapper anchors and classifier cases (qualified by this Track) | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 | Fix-First anchors | `959c8a6a4fdafabf1186e407b76082b7f07e9f24` | 1.91.327.0 |
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
-| Pregate-narrowing anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
+| Pregate-narrowing anchors | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Delegation anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
 | Fold anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
-| Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
+| Reviewer criteria copies | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
 ## Measured startup profile
