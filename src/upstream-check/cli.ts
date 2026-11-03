@@ -33,6 +33,9 @@ export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee03632698
 /** Upstream revision at which the anchors behind `delegate=<part>` were qualified in both layouts. */
 export const DELEGATE_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
 
+/** Upstream revision at which the anchors behind `specialists=fold` were qualified; the sibling layout's revision is unknown. */
+export const FOLD_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -56,6 +59,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
   { file: 'skills/review-and-prep.md', includes: "grep -F 'Narrow the pregate",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its section heading, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'delegate=<part>'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'specialists=fold'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'src/review-delegate/cli.ts', includes: "join(root, 'lib'",
     reason: 'loads the UPSTREAM_HELPERS classifier, whose export and golden cases the export and classifier checks already cover' },
@@ -86,6 +91,20 @@ const DELEGATE_TESTING_MARK = 'its `review/specialists/testing.md` still contain
 const DELEGATE_MAINTAINABILITY_MARK = 'its `review/specialists/maintainability.md` still contains,';
 const DELEGATE_PERFORMANCE_MARK = 'its `review/specialists/performance.md` still contains,';
 const DELEGATE_SIMPLIFICATION_MARK = 'and its `review/specialists/simplification.md` still contains,';
+const FOLD_HEADING = '**Activation (`specialists=fold`).**';
+/** The checklists the fold reads, in the skill's order: each name and the mark that ends the previous list and introduces this file's. */
+export const FOLD_CHECKLISTS = [
+  { name: 'testing', mark: 'its `review/specialists/testing.md` still contains,' },
+  { name: 'maintainability', mark: 'its `review/specialists/maintainability.md` still contains,' },
+  { name: 'security', mark: 'its `review/specialists/security.md` still contains,' },
+  { name: 'performance', mark: 'its `review/specialists/performance.md` still contains,' },
+  { name: 'data-migration', mark: 'its `review/specialists/data-migration.md` still contains,' },
+  { name: 'api-contract', mark: 'its `review/specialists/api-contract.md` still contains,' },
+  { name: 'simplification', mark: 'its `review/specialists/simplification.md` still contains,' },
+  { name: 'state-machines', mark: 'its `review/specialists/state-machines.md` still contains,' },
+  { name: 'design', mark: 'and its `review/design-checklist.md` still contains,' },
+] as const;
+export type FoldName = typeof FOLD_CHECKLISTS[number]['name'];
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -142,6 +161,7 @@ export type FixFirstInventory = { ok: true; file: string; review: string[]; chec
 export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
 export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
 export type DelegateInventory = { ok: true; file: string; review: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
+export type FoldInventory = { ok: true; file: string; review: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -273,6 +293,20 @@ export function delegateInventory(extendRootPath: string): DelegateInventory {
   return { ok: true, file: found.file, review, testing, maintainability, performance, simplification };
 }
 
+/**
+ * The anchors behind `specialists=fold`: the backtick spans of its activation
+ * paragraph, ten lists (`/review` and the nine checklists the main pass reads),
+ * each opened by "byte for byte,".
+ */
+export function foldInventory(extendRootPath: string): FoldInventory {
+  const found = activationLists(extendRootPath, FOLD_HEADING,
+    [...FOLD_CHECKLISTS.map((c) => c.mark), ANCHOR_LIST_TO], ['review', ...FOLD_CHECKLISTS.map((c) => c.name)]);
+  if (!found.ok) return found;
+  const [review, ...rest] = found.lists as [string[], ...string[][]];
+  const checklists = Object.fromEntries(FOLD_CHECKLISTS.map((c, i) => [c.name, rest[i]!])) as Record<FoldName, string[]>;
+  return { ok: true, file: found.file, review, checklists };
+}
+
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
   fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
@@ -283,6 +317,8 @@ const STAGE = {
   pregateNarrowList: '/review-and-prep: the pregate-narrowing anchors cannot be listed, so narrowing is unverified and the pregate runs as today',
   delegate: '/review-and-prep: delegate=<parts> is inactive, so every specialist runs on the host model as today and the receipt says so',
   delegateList: '/review-and-prep: the delegation anchors cannot be listed, so delegate=<part> is unverified and stays inactive',
+  fold: '/review-and-prep: specialists=fold is inactive, so cycle 1 dispatches specialists as today and the receipt says so',
+  foldList: '/review-and-prep: the fold anchors cannot be listed, so specialists=fold is unverified and stays inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
@@ -319,6 +355,11 @@ interface Layout {
   maintainability: string;
   performance: string;
   simplification: string;
+  security: string;
+  dataMigration: string;
+  apiContract: string;
+  stateMachines: string;
+  design: string;
   coverage: string;
   pregateBin: string;
   pregateIndex: string;
@@ -331,6 +372,10 @@ interface Layout {
 
 function chooseLayout(root: string, skillsDir: string): Layout {
   const snapshot = join(root, 'bin', 'gstack-autoplan-snapshot.ts');
+  // The fold's extra checklists live under the gstack root in both layouts, as the delegable specialists do.
+  const fold = { security: join(root, 'review', 'specialists', 'security.md'), dataMigration: join(root, 'review', 'specialists', 'data-migration.md'),
+    apiContract: join(root, 'review', 'specialists', 'api-contract.md'), stateMachines: join(root, 'review', 'specialists', 'state-machines.md'),
+    design: join(root, 'review', 'design-checklist.md') };
   // The pregate lives under the gstack root in both layouts.
   const pregate = { pregateBin: join(root, 'bin', 'gstack-pregate'), pregateIndex: join(root, 'lib', 'pregate', 'index.ts'), pregateLanes: join(root, 'lib', 'pregate', 'checks', 'lanes.ts'), pregateSecrets: join(root, 'lib', 'pregate', 'checks', 'secrets.ts') };
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
@@ -339,14 +384,14 @@ function chooseLayout(root: string, skillsDir: string): Layout {
     return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
       testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
       performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
-      coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
+      ...fold, coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
   return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
     testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
     performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
-    coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
+    ...fold, coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -521,6 +566,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`);
   info('inspected', `finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`);
   info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
+  info('inspected', `fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -566,6 +612,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const delegate = delegateInventory(extend);
   if (delegate.ok) ok('inventory', 'review-and-prep.delegate');
   else drift('inventory', 'review-and-prep.delegate', `${delegate.reason} (${delegate.file})`, { effect: STAGE.delegateList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
+  const fold = foldInventory(extend);
+  if (fold.ok) ok('inventory', 'review-and-prep.fold');
+  else drift('inventory', 'review-and-prep.fold', `${fold.reason} (${fold.file})`, { effect: STAGE.foldList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -630,6 +680,19 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     for (const part of ['testing', 'maintainability', 'performance', 'simplification'] as const) {
       const read = rootOk ? readOnce(layout[part], `review ${part} specialist`, part) : undefined;
       delegate[part].forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.${part}.${i + 1}`, read, anchor, undefined, inactive));
+    }
+  }
+  if (fold.ok) {
+    const inactive = { effect: STAGE.fold, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    fold.review.forEach((anchor, i) => checkAnchor(`review-and-prep.fold.review.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    const files: Record<FoldName, string> = { testing: layout.testing, maintainability: layout.maintainability, security: layout.security,
+      performance: layout.performance, 'data-migration': layout.dataMigration, 'api-contract': layout.apiContract,
+      simplification: layout.simplification, 'state-machines': layout.stateMachines, design: layout.design };
+    for (const { name } of FOLD_CHECKLISTS) {
+      const read = rootOk ? readOnce(files[name], `review ${name} checklist`, name) : undefined;
+      fold.checklists[name].forEach((anchor, i) => checkAnchor(`review-and-prep.fold.${name}.${i + 1}`, read, anchor, undefined, inactive));
     }
   }
   {

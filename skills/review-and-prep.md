@@ -208,7 +208,12 @@ library and both call forms are in
   reported, and `outside:challenge` or `outside:structured` for an outside
   voice's finding, by its phase. A finding several parts reported keeps every
   part: the finding you keep lists every source upstream's merge names, and a
-  `duplicate_of` row keeps its own part. With no part to name, send
+  `duplicate_of` row keeps its own part. Under `specialists=fold`, a finding the
+  main pass recorded while applying a folded checklist names
+  `specialist:<name>` of that checklist, taken from the main pass's own record,
+  and a folded finding recorded with no checklist is `core`; neither is ever
+  inferred later from text, file or category, and no voice is declared for a
+  folded specialist. With no part to name, send
   `found_by: []` and an `attribution_reason`: `unlisted-part` for a part
   outside that list, `unsupported` for a name outside the grammar,
   `not-reported` when the part's record does not say. Never guess a part. Read
@@ -278,6 +283,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `Bound Claude Code outside calls` | `local-pass`, `voice` | none |
 | `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
 | `Delegate named specialist parts` | `voice` | `voice` (cross-call) |
+| `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |
 | `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
@@ -753,7 +759,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -836,6 +842,19 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   its other keys. The key waives no gate: it swaps a review cycle for one
   recorded repair chain that readiness still checks, and it never authorizes a
   continuation.
+- `specialists=fold` (its only value) is opt-in. It folds the original
+  invocation's full-scope cycle 1: the main review pass reads the selected
+  specialists' checklists itself and no specialist subagent is dispatched, as
+  **Fold specialist checklists into cycle 1** defines. It is active only while
+  that section's upstream anchors still match; otherwise cycle 1 dispatches
+  specialists as today and the receipt says so. Omitted, every cycle runs as
+  today. It and `delegate=` exclude each other: a line carrying both reads
+  `Review policy: none supplied` with the reason `specialists=fold excludes
+  delegate=`, so no part is reviewed twice or not at all. An installation
+  without the value reads the whole line as `none supplied`, so a caller first
+  checks the loaded copy with `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the
+  value otherwise, keeping its other keys. The value waives no gate and never
+  authorizes a continuation.
 - `test-gaps=record` (its only value) is opt-in. A test-gap finding with no
   demonstrated defect is then recorded for the next Track that touches its
   files instead of getting a test written in this invocation, as **Record
@@ -909,6 +928,9 @@ Under the light default:
   P1).
 - It never sets `delegate=`: sending review work to another model needs a
   caller that configures that provider, so it is an explicit caller opt-in.
+- It never sets `specialists=fold`: comparing the folded first cycle with
+  dispatched specialists needs a caller that measures the two arms, so it is an
+  explicit caller opt-in.
 - It never sets `full-suite=external` or `parent-io=lean`: each needs a caller
   that runs the suite or limits reads, so each is an explicit caller opt-in.
 - It never sets `repair-review=behavior-changing`: skipping a review cycle for
@@ -1244,6 +1266,92 @@ commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate attempt, then a host
 attempt that names it as its predecessor, then a `fallback` correction.
 
+### Fold specialist checklists into cycle 1
+
+**Activation (`specialists=fold`).** Apply this section only when the review policy carries that value, and only while the installed `/review` read in Step 1 still contains, byte for byte,
+`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.`
+`Core findings use the confidence gates below; Step 4.6 applies its specialist gates.`
+`If this host omits Review Army, use`
+and `without claiming specialist coverage.`,
+its `review/specialists/testing.md` still contains, byte for byte,
+`# Testing Specialist Review Checklist`
+its `review/specialists/maintainability.md` still contains, byte for byte,
+`# Maintainability Specialist Review Checklist`
+its `review/specialists/security.md` still contains, byte for byte,
+`# Security Specialist Review Checklist`
+its `review/specialists/performance.md` still contains, byte for byte,
+`# Performance Specialist Review Checklist`
+its `review/specialists/data-migration.md` still contains, byte for byte,
+`# Data Migration Specialist Review Checklist`
+its `review/specialists/api-contract.md` still contains, byte for byte,
+`# API Contract Specialist Review Checklist`
+its `review/specialists/simplification.md` still contains, byte for byte,
+`# Simplification Specialist Review Checklist`
+its `review/specialists/state-machines.md` still contains, byte for byte,
+`# State Machine Round-Trip Specialist Review Checklist`
+and its `review/design-checklist.md` still contains, byte for byte,
+`# Design Review Checklist (Lite)`
+Check each with `grep -F`.
+
+This is a **wrapper override**, not an upstream fork: it changes who applies a
+specialist checklist in cycle 1, never a gate, a checklist or `/review`'s own
+text. What a caller measures, and what this value does not claim, is in
+[the fold record](https://github.com/kbitz/gstack-extend/blob/main/docs/acceptance/review-fold.md)
+(`docs/acceptance/review-fold.md`). If folding ever needs upstream text to
+change, record that there and stop; never edit an upstream file.
+
+- **Applies to** a full-scope cycle 1 of an invocation that is not a
+  continuation. A continuation's first pass, Step 5's delta re-review and
+  `/review`'s cycles 2–3 run as today. Under `in-cap=delta`, a folded finding is
+  a main-pass finding, so the delta procedure force-dispatches no specialist
+  for it. A cycle where the fold is not applied records
+  `Review arm: dispatch — <reason>`.
+- **Nested.** Review Army's selection runs as written: scope signals,
+  small-diff skip, adaptive gating and force flags. Wherever it would launch a
+  subagent for a selected specialist, dispatch nothing. The main pass applies
+  that specialist's instructions itself, including the extra steps Review Army
+  gives State Machines and Design, and reads each checklist only when it reaches
+  it (loaded on demand, never pasted ahead).
+- **Sibling.** The sibling `/review` text carries no selection to apply, so the
+  main pass reads every listed checklist and applies it as written, including
+  its own `Scope:` or `Trigger:` line. The fold adds no Red Team of its own. A
+  sibling host that resolves Review Army from its source installation, as Step 1
+  allows for a generated copy that omits sections, runs that selection only in
+  the dispatch arm.
+- **Findings.** Folded findings are the main pass's own findings: the core
+  finding format and the core confidence gates (the second `/review` line
+  above), combined at Step 5 as core findings. Record each with the checklist
+  the main pass was applying when it found the issue, in the per-review
+  evidence.
+- **Log and gating.** No folded part is ever recorded as dispatched.
+  `/review`'s `specialists` object names only parts actually dispatched (the Red
+  Team when it ran) and is `{}` with none, as the host-omits-Review-Army lines
+  above state. Folded checklist parts add no dispatch sample to upstream's
+  adaptive gating; a dispatched Red Team still adds its own sample.
+- **Red Team, restated.** Where the host's `/review` carries a Red Team (including
+  sections resolved from its source installation in Step 1), it runs when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no
+  specialist dispatch exists to produce one. It is dispatched as `/review`
+  defines it, and the folded findings are the "already caught" list it is given.
+  On a bounded-wait host it is an activated pass stage, as **Hosts with bounded
+  subagent waits** says of cycle 1's conditional dispatch.
+- **Unchanged.** The native adversarial pass, the outside voices (including
+  **Bound Claude Code outside calls**), the light-default and bounded-wait
+  skips, the cap, the stop, `converged`/`cycles` and the completion matrix all
+  stay as they are.
+- **Activation check.** At Step 1, check every anchor above against the
+  installed files: the review file Step 1 resolved, and checklists under the
+  gstack root in both layouts (not the sibling `gstack-review` skill directory).
+  A changed anchor
+  records `Review arm: dispatch — anchor changed (<which>)`, cycle 1 runs as
+  today, and no upstream file is edited.
+- **Receipt lines,** written only when the policy carries the value:
+  `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or
+  `Review arm: dispatch — <reason>`, plus one
+  `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
+  line per checklist read. `<name>` is `testing`, `maintainability`,
+  `security`, `performance`, `data-migration`, `api-contract`, `simplification`,
+  `state-machines` or `design`; `sha256` is the SHA-256 of the file as read.
+
 ### Reopen review only for behavior-changing repairs
 
 **Activation (`repair-review=behavior-changing`).** Apply this section only
@@ -1525,6 +1633,10 @@ paragraph's inventory already covers this one). A missing anchor writes
   non-continuation delta re-review also carries the prior corroborated
   full-review row; without one it has no baseline (`record-missing`), never a
   new full-review claim.
+- **Folded cycle 1.** Under `specialists=fold`, a folded cycle 1 is a
+  full-scope cycle 1. Its stage results name each folded checklist as main-pass
+  work, and `completed=true` stays reachable. A folded checklist that was
+  selected but not applied is `reviewer-incomplete`.
 - **Gate skips.** A gate skip is a reviewer that `/review`'s own selection
   gates did not select: its small-diff, simplification, Red Team and
   structured-review size gates and its scope signals (see "Scope a re-review to
@@ -1690,7 +1802,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    continuation count. Add the `test-gaps:` status and
    each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
    line with the policy line that authorized them; a recorded gap is not listed
-   under `Unresolved:`. Add the `delegation:` status and every `Delegated part:`
+   under `Unresolved:`. Add the `Review arm:` line and every `Folded checklist:`
+   line. Add the `delegation:` status and every `Delegated part:`
    line. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
    credential/PII scan. A failed or uncertain post keeps the stop. Before a
@@ -2644,8 +2757,9 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `delegation:`
-status and every `Delegated part:` line the same way. When Greptile applies,
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+Record the `delegation:` status and every `Delegated part:` line the same way.
+When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
 already exists; otherwise retain Step 1's skip reason. Preserve any existing
 run as consumed, without requesting another. Do not enter Steps 4–5, start a
@@ -3289,7 +3403,8 @@ recorded gap is not listed under `Unresolved:`),
 the `delegation:` status line and every `Delegated part: <part>; provider=<label>; model=<model>; outcome=credited|fell-back; reason=<cause|none>; wall_ms=<n|unknown>; input_tokens=<n|unknown>; output_tokens=<n|unknown>; cache_read_input_tokens=<n|unknown>; cache_creation_input_tokens=<n|unknown>; findings=<n>; call=<sha256>`
 line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
 review evidence; the receipt names the configuration's SHA-256 and labels,
-never its path), every `External gate attestation:`
+never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
+line when the policy carries `specialists=fold`, every `External gate attestation:`
 row (each accepted result line adds one), the `pregate-narrowing:` status line and
 each `Pregate lane not run:` line, and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from

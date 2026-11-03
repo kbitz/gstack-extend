@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.0] - 2026-11-03
+
+### Added
+
+- `review-and-prep` can run an opt-in folded specialist review cycle.
+- `docs/acceptance/review-fold.md` describes when that cycle runs and how its evidence is recorded.
+
+### Changed
+
+- `docs/delegated-review.md`, `docs/upstream-check.md`, and `docs/workflow-handoffs.md` describe fold-policy compatibility, sampling, and how a folded review is reported.
+
+### Fixed
+
+- Folded review evidence and host resolution now identify the host that ran the folded cycle.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Folded specialist review is opt-in, and existing setups keep working without new configuration.
+
 ## [0.62.0] - 2026-11-03
 
 ### Added

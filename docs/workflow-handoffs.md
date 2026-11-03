@@ -338,6 +338,7 @@ classifier reports, with the expected and actual values.
 | <a id="b-neutral-repair-head"></a>`B-NEUTRAL-REPAIR-HEAD` | H-B | `Repair without review cycle:` | ADVANCE_TRUSTED | none; a receipt that records a repair which opened no review cycle still emits `review: COMPLETE`, and the repair lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-recorded-gap-head"></a>`B-RECORDED-GAP-HEAD` | H-B | `Test gap recorded:` | ADVANCE_TRUSTED | none; a receipt that records a test gap under `test-gaps=record` still emits `review: COMPLETE`, and the test-gap lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-delegated-head"></a>`B-DELEGATED-HEAD` | H-B | `Delegated part:` | ADVANCE_TRUSTED | none; a receipt that records delegated parts under `delegate=<part>` still emits `review: COMPLETE`, and the delegation lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
+| <a id="b-folded-head"></a>`B-FOLDED-HEAD` | H-B | `Review arm:` | ADVANCE_TRUSTED | none; a receipt that records a folded first cycle under `specialists=fold` still emits `review: COMPLETE`, and the arm and checklist lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-narrowed-pregate-head"></a>`B-NARROWED-PREGATE-HEAD` | H-B | `Pregate lane not run:` | ADVANCE_TRUSTED | none; a receipt that records a narrowed pregate under `full-suite=external` still emits `review: COMPLETE`, and the narrowing lines are receipt text, not handoff bindings | Start `/ship-and-land` with this prompt unchanged, or stop at the prepared PR. Neither merges anything | yes |
 | <a id="b-stopped-none-recorded"></a>`B-STOPPED-NONE-RECORDED` | H-B | `STOPPED — review cycle cap` | HOLD | `stopped`: a newer corroborated stopped record holds even when its receipt says `Unresolved: none recorded` | Preserve the stop; corroborate the review evidence or obtain the required user decision before continuing | yes |
 | <a id="f-pause"></a>`F-PAUSE` | H-F | `External gate: external-gate/v1;` | FULL_CHECK_REQUIRED | none; the caller sent `full-suite=external`, the line is well formed, head, tree and base equal its live reads, and the PR is a draft | Run the caller's own full-suite command on that head and tree outside the stage, then resume with the result line (Grammar H-F); relay nothing as verified | yes |
@@ -831,7 +832,7 @@ The policy grammar is `/review-and-prep`'s "Read an optional review policy": a v
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
 `documentation-audit` (`final`), `full-suite` (`final`, `external`), `final-gate-repair`
-(`tests-docs`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
+(`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
 `performance`, `simplification`, comma-separated, each once), `repair-review` (`behavior-changing`),
 `repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
 `9`; default 1 when `continuation` is `repair-only` or `full`, otherwise 0). Anything
@@ -924,8 +925,8 @@ written as `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0
 means supported). An installation without it reads the whole line as `none
 supplied`, an older H-E parser holds a returned policy that carries it as
 `policy-malformed`, and a caller omits it when the check fails and keeps its other
-keys. It is independent of every other value and never set by the light review
-default. It names only the four delegable parts, each once; a value naming any
+keys. It is independent of every other value except `specialists=fold`, which
+excludes it, and is never set by the light review default. It names only the four delegable parts, each once; a value naming any
 other part is an unknown value and voids the line. A caller also sends one
 `Review delegates: <absolute path>` line beside the policy; it is not part of the
 relayed H-E prompt, so a caller supplies it again beside a relayed prompt (the same
@@ -938,6 +939,30 @@ A prepared receipt that records delegated parts still emits `review: COMPLETE` i
 its H-B handoff: the `delegation:` status and `Delegated part:` lines are receipt
 text, not handoff bindings, and `/ship-and-land` reads the receipt as it would a
 plain one (`B-DELEGATED-HEAD`).
+
+`specialists=fold` follows the same rollout order and the same check, written as
+`grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported). An installation without it reads the whole line as `none supplied`,
+an older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits it when the check fails and keeps its other keys. It is
+independent of every other value except `delegate=`: the two exclude each other, so
+a line carrying both reads `none supplied` at the producer (reason
+`specialists=fold excludes delegate=`) and is `policy-malformed` at an H-E parser,
+and no part is reviewed twice or not at all. It is never set by the light review
+default. It folds the original invocation's full-scope first cycle: the main review
+pass reads the selected specialists' checklists itself and no specialist subagent is
+dispatched. The value waives no gate and never authorizes a continuation. While the
+anchors it relies on drift, cycle 1 dispatches specialists as today and the receipt
+says so. The policy grammar is v1 with fixed keys: an older producer that does not
+know the value falls back as stated above, and upstream's adaptive gating statistics
+learn only from specialist dispatches, so folded checklist parts add no sample;
+a dispatched Red Team still adds its own sample. See the
+[fold record](acceptance/review-fold.md).
+
+A prepared receipt that records a folded first cycle still emits `review: COMPLETE` in
+its H-B handoff: the `Review arm:` and `Folded checklist:` lines are receipt text, not
+handoff bindings, and `/ship-and-land` reads the receipt as it would a plain one
+(`B-FOLDED-HEAD`).
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1259,6 +1284,7 @@ or input it says is needed is for the user.
 | `Repair chain voided:` and `neutral-only baseline:` lines | receipt-present | retained in final, pause and stopped receipts; a voided neutral chain never regains coverage from a later passing gate, and a neutral exit never creates a completed baseline |
 | `test-gaps:` status and `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:` lines | receipt-present | published in the receipt under `test-gaps=record`, one `Test gap recorded:` line per recorded gap with its upstream severity unchanged and the TODOS entry that carries it; a recorded gap is not listed under `Unresolved:`, and the lines never authorize a stage or merge (`B-RECORDED-GAP-HEAD`) |
 | `delegation:` status and `Delegated part:` lines | receipt-present | published in the receipt under `delegate=<part>`, one `Delegated part:` line per delegated part with its provider label, model, outcome, fallback reason, wall time, token counts, finding count and call ID; the configuration's path never appears, and the lines never authorize a stage or merge (`B-DELEGATED-HEAD`) |
+| `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 

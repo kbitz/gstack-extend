@@ -537,7 +537,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -2379,6 +2379,169 @@ describe('review-and-prep delegate=<part>', () => {
     expect(metrics).toContain('`found_by` stays `specialist:<part>`, taken from the runner\'s stamped field');
     expect(section).toContain('A fallback is the failed delegate attempt, then a host attempt that names it as its predecessor, then a `fallback` correction.');
     expect(flat).toContain('A delegated part\'s row adds an optional, content-free `delegate` object');
+  });
+
+  // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section; why_new=CLAUDE.md skill-body rule; seam=none
+  test('the added text uses no host placeholder', () => {
+    for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+});
+
+// Track 58A: `specialists=fold` runs cycle 1 without specialist subagents; the main pass reads the checklists itself.
+describe('review-and-prep specialists=fold', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const sectionRaw = skillSection(prep, '### Fold specialist checklists into cycle 1');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `specialists=fold`'), policy.indexOf('- `test-gaps=record`'));
+  const paragraphAt = sectionRaw.indexOf('**Activation');
+  const paragraph = sectionRaw.slice(paragraphAt, sectionRaw.indexOf('\n\n', paragraphAt));
+  const rest = sectionRaw.slice(paragraphAt + paragraph.length);
+  const metrics = prep.slice(prep.indexOf('### Workflow metrics (optional, local)')).split(/\n## /)[0]!.replace(/\s+/g, ' ');
+  const baseline = skillSection(prep, "### Record cycle 1's full-review baseline").replace(/\s+/g, ' ');
+  const HEADINGS = [
+    ['testing', '# Testing Specialist Review Checklist'], ['maintainability', '# Maintainability Specialist Review Checklist'],
+    ['security', '# Security Specialist Review Checklist'], ['performance', '# Performance Specialist Review Checklist'],
+    ['data-migration', '# Data Migration Specialist Review Checklist'], ['api-contract', '# API Contract Specialist Review Checklist'],
+    ['simplification', '# Simplification Specialist Review Checklist'], ['state-machines', '# State Machine Round-Trip Specialist Review Checklist'],
+    ['design', '# Design Review Checklist (Lite)'],
+  ] as const;
+
+  // Value: protects=the one policy grammar line gains the value after final-gate-repair and keeps every locked run around it; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
+  test('the grammar line carries the value after final-gate-repair and keeps the locked runs around it', () => {
+    expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
+    expect(flat).toContain('documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
+  });
+
+  // Value: protects=the bullet's position, its only value, the exclusion with delegate and the no-waiver rule; fails_when=a second value appears silently, the exclusion reason changes or the older-install check is lost; why_new=criteria 1, 5, 7; seam=none
+  test('the policy bullet sits between final-gate-repair and test-gaps, has one value and excludes delegate', () => {
+    expect(policy.indexOf('- `final-gate-repair=tests-docs`')).toBeLessThan(policy.indexOf('- `specialists=fold`'));
+    expect(policy.indexOf('- `specialists=fold`')).toBeLessThan(policy.indexOf('- `test-gaps=record`'));
+    expect(bullet).toContain('`specialists=fold` (its only value) is opt-in.');
+    expect(bullet).toContain('the main review pass reads the selected specialists\' checklists itself and no specialist subagent is dispatched, as **Fold specialist checklists into cycle 1** defines');
+    expect(bullet).toContain('It is active only while that section\'s upstream anchors still match; otherwise cycle 1 dispatches specialists as today and the receipt says so.');
+    expect(bullet).toContain('Omitted, every cycle runs as today.');
+    expect(bullet).toContain('It and `delegate=` exclude each other: a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`, so no part is reviewed twice or not at all.');
+    expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
+    expect(bullet).toContain('`grep -F \'specialists=fold\' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value otherwise, keeping its other keys');
+    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
+    // Phrases other tests slice on belong to other bullets, so a later move cannot make them match here.
+    for (const other of ['test-gaps', 'makes no outside call', 'skips the Red Team', 'native adversarial pass', 'force-included specialists']) expect(bullet, other).not.toContain(other);
+    expect(bullet).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+
+  // Value: protects=the capability check an older installation fails; fails_when=the value is absent from the loaded copy yet the check passes; why_new=the rollout contract; seam=none
+  test('the capability check exits 0 on this skill and 1 on a copy without the value', () => {
+    const dir = makeBaseTmp('fold-capability');
+    const copy = join(dir, 'SKILL.md');
+    const check = (path: string) => spawnSync('grep', ['-F', 'specialists=fold', path]).status;
+    expect(check(join(ROOT, 'skills', 'review-and-prep.md'))).toBe(0);
+    writeFileSync(copy, prep.replaceAll('specialists=fold', 'specialists-removed'));
+    expect(check(copy)).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Value: protects=the light default never turns the fold on; fails_when=the line is dropped; why_new=explicit opt-in; seam=none
+  test('the light default never sets specialists=fold', () => {
+    expect(light).toContain('It never sets `specialists=fold`: comparing the folded first cycle with dispatched specialists needs a caller that measures the two arms, so it is an explicit caller opt-in.');
+  });
+
+  // Value: protects=the section's heading, ten anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered, split by a blank line or a backtick unbalanced; why_new=sixth activation paragraph; seam=none
+  test('the activation paragraph has the heading, ten lists each opened by byte for byte, and the grep delimiter', () => {
+    expect(paragraphAt).toBeGreaterThan(-1);
+    expect(sectionRaw.startsWith('### Fold specialist checklists into cycle 1\n\n**Activation (`specialists=fold`).**')).toBe(true);
+    expect(paragraph.match(/byte for byte,/g)).toHaveLength(10);
+    expect(paragraph.match(/`/g)!.length % 2).toBe(0);
+    expect(paragraph.trimEnd().endsWith('Check each with `grep -F`.')).toBe(true);
+    expect(paragraph).toContain('and only while the installed `/review` read in Step 1 still contains, byte for byte,\n');
+    for (const line of [
+      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.',
+      'Core findings use the confidence gates below; Step 4.6 applies its specialist gates.',
+      'If this host omits Review Army, use',
+      'without claiming specialist coverage.',
+    ]) expect(paragraph, line).toContain('`' + line + '`');
+    let at = paragraph.indexOf('byte for byte,');
+    for (const [name, heading] of HEADINGS) {
+      const file = name === 'design' ? 'review/design-checklist.md' : `review/specialists/${name}.md`;
+      const mark = name === 'design' ? `and its \`${file}\` still contains, byte for byte,` : `its \`${file}\` still contains, byte for byte,`;
+      const next = paragraph.indexOf(mark, at);
+      expect(next, mark).toBeGreaterThan(at);
+      expect(paragraph.slice(next + mark.length).trimStart().startsWith('`' + heading + '`'), heading).toBe(true);
+      at = next;
+    }
+    // The delimiters belong to the paragraph alone: nothing else in the section repeats them.
+    expect(rest).not.toContain('byte for byte');
+    expect(rest).not.toContain('grep -F');
+  });
+
+  // Value: protects=the section sits after the delegate section and before the repair-review section, and its phase row follows the delegate row; fails_when=the section moves or the phase row is lost; why_new=phase mapping closed list; seam=none
+  test('the section follows the delegate section, before the repair-review section, and the phase table maps it', () => {
+    const at = (heading: string) => prep.indexOf(heading);
+    expect(at('### Delegate named specialist parts')).toBeLessThan(at('### Fold specialist checklists into cycle 1'));
+    expect(at('### Fold specialist checklists into cycle 1')).toBeLessThan(at('### Reopen review only for behavior-changing repairs'));
+    const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
+    const table = rows.map((row) => row.split('|')[1]!.trim());
+    expect(table.indexOf('`Fold specialist checklists into cycle 1`')).toBe(table.indexOf('`Delegate named specialist parts`') + 1);
+    expect(rows).toContain('| `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |');
+  });
+
+  // Value: protects=the nested and sibling procedures: nothing dispatched, checklists read on demand, every sibling checklist read; fails_when=a selected specialist is dispatched or a checklist is pasted ahead; why_new=criteria 1 and 4; seam=none
+  test('nested dispatches nothing and reads on demand, and sibling reads every listed checklist', () => {
+    expect(section).toContain('**Applies to** a full-scope cycle 1 of an invocation that is not a continuation. A continuation\'s first pass, Step 5\'s delta re-review and `/review`\'s cycles 2–3 run as today.');
+    expect(section).toContain('A cycle where the fold is not applied records `Review arm: dispatch — <reason>`.');
+    expect(section).toContain('Review Army\'s selection runs as written: scope signals, small-diff skip, adaptive gating and force flags. Wherever it would launch a subagent for a selected specialist, dispatch nothing.');
+    expect(section).toContain('The main pass applies that specialist\'s instructions itself, including the extra steps Review Army gives State Machines and Design, and reads each checklist only when it reaches it (loaded on demand, never pasted ahead).');
+    expect(section).toContain('**Sibling.** The sibling `/review` text carries no selection to apply, so the main pass reads every listed checklist and applies it as written, including its own `Scope:` or `Trigger:` line.');
+    expect(section).toContain('The fold adds no Red Team of its own.');
+    expect(section).toContain('Under `in-cap=delta`, a folded finding is a main-pass finding, so the delta procedure force-dispatches no specialist for it.');
+  });
+
+  // Value: protects=the Red Team gate is restated for a fold, with its two arms; fails_when=the size arm or the CRITICAL-from-the-folded-pass arm is dropped; why_new=criterion 2; seam=none
+  test('the Red Team gate is restated as the size arm or a CRITICAL finding from the folded pass', () => {
+    expect(section).toContain('Where the host\'s `/review` carries a Red Team (including sections resolved from its source installation in Step 1), it runs when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no specialist dispatch exists to produce one.');
+    expect(section).toContain('It is dispatched as `/review` defines it, and the folded findings are the "already caught" list it is given.');
+    expect(section).toContain('On a bounded-wait host it is an activated pass stage, as **Hosts with bounded subagent waits** says of cycle 1\'s conditional dispatch.');
+  });
+
+  // Value: protects=the native adversarial pass, the outside voices, the cap, the stop and the completion matrix stay unchanged; fails_when=the fold waives or reroutes any of them; why_new=criterion 2; seam=none
+  test('the native adversarial pass, the outside voices, the cap and the stop stay unchanged', () => {
+    expect(section).toContain('**Unchanged.** The native adversarial pass, the outside voices (including **Bound Claude Code outside calls**), the light-default and bounded-wait skips, the cap, the stop, `converged`/`cycles` and the completion matrix all stay as they are.');
+    expect(section).toContain('If folding ever needs upstream text to change, record that there and stop; never edit an upstream file.');
+  });
+
+  // Value: protects=folded findings are main-pass findings and no folded part is ever logged as dispatched; fails_when=a folded part enters the specialists object or upstream's gating; why_new=criteria 6 and 7; seam=none
+  test('folded findings are core findings, and the specialists object names only dispatched parts', () => {
+    expect(section).toContain('Folded findings are the main pass\'s own findings: the core finding format and the core confidence gates (the second `/review` line above), combined at Step 5 as core findings.');
+    expect(section).toContain('Record each with the checklist the main pass was applying when it found the issue, in the per-review evidence.');
+    expect(section).toContain('No folded part is ever recorded as dispatched. `/review`\'s `specialists` object names only parts actually dispatched (the Red Team when it ran) and is `{}` with none, as the host-omits-Review-Army lines above state. Folded checklist parts add no dispatch sample to upstream\'s adaptive gating; a dispatched Red Team still adds its own sample.');
+  });
+
+  // Value: protects=the activation check, its inactive receipt line and the no-edit rule; fails_when=a changed anchor still folds or edits upstream; why_new=criterion 3; seam=none
+  test('a changed anchor records the dispatch arm, runs today\'s cycle and edits no upstream file', () => {
+    expect(section).toContain('**Activation check.** At Step 1, check every anchor above against the installed files: the review file Step 1 resolved, and checklists under the gstack root in both layouts (not the sibling `gstack-review` skill directory). A changed anchor records `Review arm: dispatch — anchor changed (<which>)`, cycle 1 runs as today, and no upstream file is edited.');
+  });
+
+  // Value: protects=the receipt line templates, the nine checklist names and the three receipt kinds that carry them; fails_when=a line is renamed or a receipt drops them; why_new=criterion 6; seam=none
+  test('the Review arm and Folded checklist lines are written only with the value, in every receipt kind', () => {
+    expect(section).toContain('**Receipt lines,** written only when the policy carries the value: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line per checklist read.');
+    for (const [name] of HEADINGS) expect(section, name).toContain('`' + name + '`');
+    expect(flat).toContain('Add the `Review arm:` line and every `Folded checklist:` line. Add the `delegation:` status and every `Delegated part:` line. Post it once as a comment marked');
+    expect(flat).toContain('Record the `Review arm:` line and every `Folded checklist:` line the same way. Record the `delegation:` status and every `Delegated part:` line the same way.');
+    expect(flat).toContain('the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line when the policy carries `specialists=fold`');
+  });
+
+  // Value: protects=folded attribution names the checklist from the main pass's own record, else core, never a guess; fails_when=attribution is inferred from text, file or category; why_new=criterion 6; seam=none
+  test('a folded finding names the checklist the main pass recorded, else core, and is never inferred', () => {
+    expect(metrics).toContain('Under `specialists=fold`, a finding the main pass recorded while applying a folded checklist names `specialist:<name>` of that checklist, taken from the main pass\'s own record, and a folded finding recorded with no checklist is `core`; neither is ever inferred later from text, file or category, and no voice is declared for a folded specialist.');
+    // The unchanged rule it extends.
+    expect(metrics).toContain('Never guess a part.');
+  });
+
+  // Value: protects=a folded cycle 1 is a full-review baseline and an unapplied checklist is incomplete; fails_when=a fold blocks completed=true or hides an unapplied checklist; why_new=criterion 1; seam=none
+  test('a folded cycle 1 is a full-scope baseline and an unapplied checklist is reviewer-incomplete', () => {
+    expect(baseline).toContain('**Folded cycle 1.** Under `specialists=fold`, a folded cycle 1 is a full-scope cycle 1. Its stage results name each folded checklist as main-pass work, and `completed=true` stays reachable. A folded checklist that was selected but not applied is `reviewer-incomplete`.');
   });
 
   // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section; why_new=CLAUDE.md skill-body rule; seam=none
