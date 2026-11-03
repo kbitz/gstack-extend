@@ -14,6 +14,7 @@ import { agentShells, extractFences, runShell, scopedEnv } from './helpers/exten
 import { makeBaseTmp } from './helpers/fixture-repo.ts';
 import { routeSourceTag, validateTagExpression } from '../src/audit/lib/source-tag.ts';
 import { PAUSE_MARKERS, skillSection } from './helpers/skill-protocols.ts';
+import { FALLBACK_REASONS, PARTS, PART_KEYS, RECEIPT_KEYS } from '../src/review-delegate/delegate.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
@@ -536,7 +537,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -2248,5 +2249,138 @@ describe('recorded-gap routing boundaries', () => {
   test('same-title entries cover only the same behavior and files', () => {
     expect(gap).toContain('Reuse a same-title entry only when its behavior and `files=` paths cover this gap');
     expect(gap).toContain('otherwise disambiguate the new title with its paths and append it');
+  });
+});
+
+// Track 64C: `delegate=<part>[,<part>...]` sends named specialist parts to a caller-configured provider, with a host fallback.
+describe('review-and-prep delegate=<part>', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const sectionRaw = skillSection(prep, '### Delegate named specialist parts');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `delegate=<part>[,<part>...]`'), policy.indexOf('- `final-gate-repair=tests-docs`'));
+  const paragraph = sectionRaw.slice(sectionRaw.indexOf('**Activation'), sectionRaw.indexOf('\n\n', sectionRaw.indexOf('**Activation')));
+  const metrics = prep.slice(prep.indexOf('### Workflow metrics (optional, local)')).split(/\n## /)[0]!.replace(/\s+/g, ' ');
+
+  // Value: protects=the one policy grammar line gains the value without losing a locked substring; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
+  test('the grammar line carries the value after parent-io and keeps the locked run after it', () => {
+    expect(flat).toContain('parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
+  });
+
+  // Value: protects=the bullet's position, the four delegable parts, the always-host list, the refusal wording and the no-waiver rule; fails_when=a part is added silently, an always-host part becomes delegable or the older-install check is lost; why_new=criterion 1; seam=none
+  test('the policy bullet sits between parent-io and final-gate-repair, names four parts and keeps the rest on the host', () => {
+    expect(policy.indexOf('- `parent-io=lean`')).toBeLessThan(policy.indexOf('- `delegate=<part>[,<part>...]`'));
+    expect(policy.indexOf('- `delegate=<part>[,<part>...]`')).toBeLessThan(policy.indexOf('- `final-gate-repair=tests-docs`'));
+    expect(bullet).toContain('(`testing`, `maintainability`, `performance` and `simplification`, comma-separated, each at most once) is opt-in');
+    for (const kept of ['Security', 'Red Team', 'state-machines', 'the native adversarial pass', 'the outside voices', 'the documentation and coverage audits']) expect(bullet, kept).toContain(kept);
+    expect(bullet).toContain('always stay on the host model');
+    expect(bullet).toContain('a value naming any other part is an unknown value, so the line reads `none supplied` with the reason `delegate: <name> is not delegable`');
+    expect(bullet).toContain('It needs a `Review delegates: <absolute path>` line and matching upstream anchors; otherwise every part runs on the host as today and the receipt says so');
+    expect(bullet).toContain('its path is printed in chat and never written to a receipt');
+    expect(bullet).toContain('it is not part of a relayed prompt, so a caller supplies it again beside one');
+    expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
+    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
+    expect(bullet).toContain('`grep -F \'delegate=<part>\' "<installed skill dir>/SKILL.md"` (exit 0 means supported)');
+    // the delegable names are exactly the runner's
+    for (const part of PARTS) expect(bullet, part).toContain('`' + part + '`');
+  });
+
+  // Value: protects=the capability check an older installation fails; fails_when=the value is absent from the loaded copy yet the check passes; why_new=the rollout contract; seam=none
+  test('the capability check exits 0 on this skill and 1 on a copy without the bullet', () => {
+    const dir = makeBaseTmp('delegate-capability');
+    const copy = join(dir, 'SKILL.md');
+    const check = (path: string) => spawnSync('grep', ['-F', 'delegate=<part>', path]).status;
+    expect(check(join(ROOT, 'skills', 'review-and-prep.md'))).toBe(0);
+    writeFileSync(copy, prep.replaceAll('delegate=<part>', 'delegate-removed'));
+    expect(check(copy)).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Value: protects=the light default never turns delegation on; fails_when=the line is dropped; why_new=explicit opt-in; seam=none
+  test('the light default never sets delegate', () => {
+    expect(light).toContain('It never sets `delegate=`: sending review work to another model needs a caller that configures that provider, so it is an explicit caller opt-in.');
+  });
+
+  // Value: protects=the section's position, heading, five anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered or a backtick unbalanced; why_new=fifth activation paragraph; seam=none
+  test('the activation paragraph has the heading, five lists each opened by byte for byte, and the grep delimiter', () => {
+    expect(paragraph.startsWith('**Activation (`delegate`).**')).toBe(true);
+    expect(paragraph.match(/byte for byte,/g)).toHaveLength(5);
+    const marks = ['its `review/specialists/testing.md` still contains,', 'its `review/specialists/maintainability.md` still contains,',
+      'its `review/specialists/performance.md` still contains,', 'and its `review/specialists/simplification.md` still contains,'];
+    let at = paragraph.indexOf('byte for byte,');
+    for (const mark of marks) {
+      const next = paragraph.indexOf(mark, at);
+      expect(next, mark).toBeGreaterThan(at);
+      expect(paragraph.slice(next, next + mark.length + ' byte for byte,'.length)).toBe(`${mark} byte for byte,`);
+      at = next;
+    }
+    expect(paragraph.trimEnd().endsWith('Check each with `grep -F`.')).toBe(true);
+    expect(paragraph.match(/`/g)!.length % 2).toBe(0);
+    expect(paragraph).toContain('and the installed `/review` read in Step 1\nstill contains, byte for byte,');
+  });
+
+  // Value: protects=the section sits after the delta section so the in-cap paragraph stays the first anchor list in the file, and its phase row follows the delta row; fails_when=the section moves before the in-cap paragraph or the phase row is lost; why_new=phase mapping closed list; seam=none
+  test('the section follows the delta section, before the repair-review section, and the phase table maps it', () => {
+    const at = (heading: string) => prep.indexOf(heading);
+    expect(at('### Scope a re-review to its delta')).toBeLessThan(at('### Delegate named specialist parts'));
+    expect(at('### Delegate named specialist parts')).toBeLessThan(at('### Reopen review only for behavior-changing repairs'));
+    expect(prep.indexOf('byte for byte,')).toBeGreaterThan(at('### Scope a re-review to its delta'));
+    const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
+    const table = rows.map((row) => row.split('|')[1]!.trim());
+    expect(table.indexOf('`Delegate named specialist parts`')).toBe(table.indexOf('`Scope a re-review to its delta`') + 1);
+    expect(rows).toContain('| `Delegate named specialist parts` | `voice` | `voice` (cross-call) |');
+  });
+
+  // Value: protects=every fallback cause the runner reports is named in the skill, and a fallback is never silent; fails_when=a cause is dropped or the receipt stops naming the part; why_new=criterion 4; seam=none
+  test('every fallback cause is named and a fell-back part is never sent back to the delegate', () => {
+    for (const reason of FALLBACK_REASONS) expect(section, reason).toContain('`' + reason + '`');
+    expect(section).toContain('The receipt says which part fell back and why');
+    expect(section).toContain('Never send a fell-back part back to the delegate, and never resend unchanged input.');
+    expect(section).toContain('Exit 0 means every part was credited, 4 means a part fell back, and 1 means a refusal before any call (run every part on the host and record the refusal\'s reason)');
+  });
+
+  // Value: protects=a delegated part replaces its host dispatch on either layout, the host decides every disposition, and a work-tree write stops the review; fails_when=a part runs twice, a delegate decides, or a write is reverted or committed; why_new=criteria 3, 5, 8; seam=none
+  test('a delegated part replaces its host dispatch, the host decides, and a work-tree change stops before any commit', () => {
+    expect(section).toContain('Either way a delegated part replaces that part\'s host dispatch for the cycle, however the host would have run it: never run both for one part in a cycle.');
+    expect(section).toContain('On the nested layout, the named parts that Review Army selects at Step 4.5 run through the delegate, so delegation never adds or removes a part there. On the sibling layout every named part runs through its delegate.');
+    expect(section).toContain('nested dispatches them as Review Army would, and sibling has the host apply that checklist to the frozen diff with the same output contract');
+    expect(section).toContain('The host model decides every finding\'s disposition and every fix under Fix-First, unchanged.');
+    expect(section).toContain('stop before any commit, report the change to the user and revert nothing');
+    expect(section).toContain('Their findings keep `specialist:<name>` attribution, and the receipt adds the provider label and model that produced them.');
+    expect(section).toContain('**Credited parts** enter Step 4.6 stage 1 as that specialist\'s output (nested), or the Step 5 combine as specialist findings (sibling)');
+    expect(section).toContain('The calls directory is branch-scoped under the evidence root and kept across invocations of the branch; never choose a fresh one to retry.');
+    // the section does not claim what the installed hosts do or cost
+    expect(section).not.toMatch(/runs no specialists|dispatches no specialists|adds specialist (?:work|spend)/i);
+    expect(bullet + section).not.toContain('$ARGUMENTS');
+  });
+
+  // Value: protects=the receipt line keys equal the runner's output keys and the receipt carries the status line; fails_when=a key is renamed on one side only; why_new=criterion 6; seam=src/review-delegate
+  test('the Delegated part receipt line has the runner\'s keys, in every receipt kind', () => {
+    const line = /`Delegated part: ([^`]+)`/.exec(flat)![1]!;
+    const keys = line.split('; ').map((pair, i) => (i === 0 ? 'part' : pair.split('=')[0]!));
+    expect(keys).toEqual(Object.keys(RECEIPT_KEYS));
+    for (const key of keys) expect(PART_KEYS).toContain(RECEIPT_KEYS[key]);
+    expect(flat).toContain('the `delegation:` status line and every `Delegated part:');
+    expect(flat).toContain('(the PAUSED and STOPPED receipts carry them too when they carry Step 2 review evidence; the receipt names the configuration\'s SHA-256 and labels, never its path)');
+    expect(flat).toContain('Record the `delegation:` status and every `Delegated part:` line the same way. When Greptile applies,');
+    expect(flat).toContain('Add the `delegation:` status and every `Delegated part:` line. Post it once as a comment marked');
+    for (const status of ['`delegation: active (parts=<list>; config=<sha256>)`', '`delegation: inactive — <reason>`']) expect(section.replace(/\s+/g, ' ')).toContain(status.replace(/\s+/g, ' '));
+  });
+
+  // Value: protects=the v3 sentence beside the locked v2 sentence, and the voices.jsonl delegate object; fails_when=the v2 rule is rewritten or the v3 attempt rule is lost; why_new=criterion 6; seam=none
+  test('a delegated attempt sends v3 beside the unchanged v2 rule, and the join file takes a content-free delegate object', () => {
+    expect(metrics).toContain('every `pass` record sends `v:2`; every other producer keeps `v:1`');
+    expect(metrics).toContain('Delegated attempts (`v:3`): a delegated part\'s `attempt` sends `v:3` with the runner\'s `delegate` values');
+    expect(metrics).toContain('`requested_model` from the configuration with `requested_source: launcher-config`, `reported_source: unavailable` and `unknown_reason: not-reported`');
+    expect(metrics).toContain('`found_by` stays `specialist:<part>`, taken from the runner\'s stamped field');
+    expect(section).toContain('A fallback is the failed delegate attempt, then a host attempt that names it as its predecessor, then a `fallback` correction.');
+    expect(flat).toContain('A delegated part\'s row adds an optional, content-free `delegate` object');
+  });
+
+  // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section; why_new=CLAUDE.md skill-body rule; seam=none
+  test('the added text uses no host placeholder', () => {
+    for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });

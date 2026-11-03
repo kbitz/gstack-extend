@@ -157,7 +157,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=57 drift=1
+RESULT drift checks=74 drift=1
 ```
 
 ## What it checks
@@ -218,6 +218,24 @@ The inventory comes from this extension's own source, never a second copy:
   layouts. They are listed by `pregateNarrowInventory`, a separate check
   (`review-and-prep.pregate-narrowing`). Anchor IDs read
   `review-and-prep.pregate-narrowing.<bin|index|lanes>.<n>`.
+- **Delegation anchors.** The backtick spans of the activation paragraph of
+  `skills/review-and-prep.md` (opened by `**Activation (`delegate`).**`), in
+  five lists each opened by "byte for byte,": the four after the first are
+  checked as raw bytes in the installed `/review` skill file, and the three
+  after each of the next four (following "its
+  `review/specialists/testing.md` still contains,", then the same for
+  `maintainability.md`, `performance.md` and, after "and its", `simplification.md`)
+  in that specialist's file. Each specialist file holds its heading, the line
+  `Output: JSON objects, one finding per line. Schema:` and its own
+  `"specialist":"<part>"` tag; whole-file presence is the check, so the
+  simplification tag, which that file also uses elsewhere, is not counted. The
+  four specialist files are read from the root in both layouts (the Codex root's
+  `review/specialists` links to the nested copy), and every anchor is text both
+  layouts carry: nothing is anchored in a section only one layout installs. They are listed
+  by `delegateInventory`, a separate check (`review-and-prep.delegate`). Anchor
+  IDs read `review-and-prep.delegate.<review|testing|maintainability|performance|simplification>.<n>`,
+  sixteen in all. `bin/review-delegate` repeats the specialist-file anchors for
+  the parts it is asked to run, so a part never runs partly applied.
 - **Secret-finding location anchors.** Two spans of the installed
   `lib/pregate/checks/secrets.ts`, read as raw bytes from the root in both
   layouts: the template that renders a finding's location, which writes
@@ -296,7 +314,10 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   audit write tests as today and the receipt says so, with no upstream file
   edited. For the nine pregate-narrowing anchors, a pass under
   `full-suite=external` does not narrow the pregate: it runs as today and the
-  receipt says so, with no upstream file edited. For the two secret-finding
+  receipt says so, with no upstream file edited. For the sixteen delegation
+  anchors, `delegate=<part>` is inactive: every specialist runs on the host
+  model as today and the receipt says so, with no upstream file edited; the
+  option never runs partly applied. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
   approved in its place and no upstream file is edited. For the skip list,
@@ -380,6 +401,7 @@ and the test-gap routing value.
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Pregate-narrowing anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
+| Delegation anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
 | Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 

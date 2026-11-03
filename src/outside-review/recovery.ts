@@ -14,7 +14,7 @@ const QUALIFIED_LABEL = /^(\s*(?:#{1,6}\s+|[-+*]\s+|\(?\d{1,3}[.)]\s+)?(?:\*\*|_
 export function recover(text: string, gate: 'review' | 'structured', exit: number, stderr: string, classify: Classifier) {
   const original = classify({ text, gate, exit, stderr });
   const credited = (r: Classification) => r.verdict === 'clean' || r.verdict === 'findings';
-  if (exit !== 0 || original.execution.state !== 'ran') return { classification: original, parse: 'not-applicable', credited: false };
+  if (exit !== 0 || original.execution.state !== 'ran') return { classification: original, parse: 'not-applicable', credited: false, needs_context: false };
   let fence: string | undefined;
   let needsContext = false;
   const normalized = text.replace(/\r\n/g, '\n').split('\n').map(line => {
@@ -38,7 +38,7 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
         (span, before: string | undefined, priority: string) => before === undefined ? span : `${before}P${priority}`);
   }).join('\n').replace(/^(\s*(?:[-*] |#{1,6} )?)(?:\*\*|__)?(Recommendation|Verdict)(?:\*\*|__)?\s*:\s*\n\s*/gim, '$1$2: ');
   let checked = classify({ text: normalized, gate, exit, stderr });
-  if (needsContext || fence) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false };
+  if (needsContext || fence) return { classification: { ...checked, verdict: 'unverified' as const }, parse: 'failed', credited: false, needs_context: needsContext };
   if (!credited(checked) && gate === 'review' && checked.reason === 'missing_markers') {
     // Completion recommendation is presentation, not a second review. Only recover
     // when the stricter structured gate already establishes findings/no-findings.
@@ -46,5 +46,5 @@ export function recover(text: string, gate: 'review' | 'structured', exit: numbe
     if (credited(structured)) checked = structured;
   }
   return { classification: credited(checked) ? checked : { ...checked, verdict: 'unverified' as const },
-    parse: credited(checked) ? (normalized === text && credited(original) ? 'valid' : 'recovered') : 'failed', credited: credited(checked) };
+    parse: credited(checked) ? (normalized === text && credited(original) ? 'valid' : 'recovered') : 'failed', credited: credited(checked), needs_context: false };
 }

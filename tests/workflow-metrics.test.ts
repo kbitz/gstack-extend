@@ -1973,7 +1973,7 @@ describe('Track 57A finding attribution', () => {
     for (const line of ledgerLines(fix, sid)) expect(JSON.parse(line).v).toBe(1);
   }, 120_000);
 
-  test('(c) only pass takes v2: a v2 begin, a v3 pass and a boolean version stay refused; a live v2 pass sequence reads back', () => {
+  test('(c) only pass takes v2: a v2 begin, a v4 pass and a boolean version stay refused; a live v2 pass sequence reads back', () => {
     const fix = makeTelemetryFixture('community');
     const repo = gitRepo(fix);
     const sid = start(fix, repo);
@@ -1986,7 +1986,7 @@ describe('Track 57A finding attribution', () => {
     expect(refused('correction', { ...base(sid), v: 2, correction_kind: 'fix-cycle', fix_step_id: u() }).reason).toBe('unsupported-version');
     const passId = u(), attemptId = u();
     const pass = (extra: Record<string, unknown>, v = 2) => ({ ...base(sid), v, pass_id: passId, scope: 'local', ...extra });
-    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, 3))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2', actual: 3 } });
+    expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, 4))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3', actual: 4 } });
     expect(refused('pass', pass({ state: 'started', required_voice_ids: ['testing'] }, true as any)).reason).toBe('invalid-input');
     const steps: Array<Record<string, unknown>> = [
       { state: 'started', required_voice_ids: ['testing'] },
@@ -2089,6 +2089,255 @@ describe('Track 57A finding attribution', () => {
     for (const reason of [...helper.reasons, 'v1-record', 'too-many-parts']) expect(docs, reason).toContain('`' + reason + '`');
     expect(docs).toContain(`more than ${helper.parts} distinct parts`);
     expect(docs).toContain(`at most ${helper.found_by} unique labels`);
+  });
+});
+
+// Track 64C: a delegated specialist part is a v3 `pass` attempt that carries a `delegate` object, and the read reports usage per provider label.
+describe('Track 64C delegated attempts (pass v3)', () => {
+  const att = (id: string, foundBy: string[], patch: Record<string, unknown> = {}) =>
+    finding(id, { found_by: foundBy, attribution_reason: null, ...patch });
+  const delegate = (patch: Record<string, unknown> = {}) => ({
+    provider: 'alpha', model: 'model-a', outcome: 'credited', fallback_reason: null, replay: false, wall_ms: 1200,
+    input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, ...patch,
+  });
+  const fellBack = (patch: Record<string, unknown> = {}) => delegate({ outcome: 'fell-back', fallback_reason: 'timeout', input_tokens: null, output_tokens: null,
+    cache_read_input_tokens: null, cache_creation_input_tokens: null, ...patch });
+  const attempt = (sid: string, patch: Record<string, unknown> = {}) => ({ ...base(sid), v: 3, pass_id: u(), scope: 'local', state: 'attempt', voice_id: 'testing',
+    attempt_id: u(), predecessor_attempt_id: null, attempt_outcome: 'completed', findings: [att('F1', ['specialist:testing'])], delegate: delegate(), ...patch });
+  const wrap = (request: any) => ({ v: 1, op: 'pass', event_id: request.event_id, request_digest: 'e'.repeat(64), captured_at_ms: 0, producer_version: null, request });
+  // One v3 pass whose voices each list their attempts in order; the last attempt of a voice is the selected one.
+  type Try = { outcome?: string; delegate?: Record<string, unknown>; findings?: any[] };
+  function passV3(sid: string, voices: Array<{ voice: string; tries: Try[] }>, at = 2000) {
+    const passId = u(), ids: Record<string, string[]> = {};
+    const row = (n: number, request: Record<string, unknown>) => ({ op: 'pass', at: at + n, request: { ...base(sid), v: 3, pass_id: passId, scope: 'local', ...request } });
+    const rows: any[] = [row(0, { state: 'started', required_voice_ids: voices.map(v => v.voice) })];
+    for (const { voice, tries } of voices) {
+      ids[voice] = tries.map(() => u());
+      tries.forEach((t, i) => {
+        const outcome = t.outcome ?? 'completed';
+        rows.push(row(10 + i, { state: 'attempt', voice_id: voice, attempt_id: ids[voice]![i], predecessor_attempt_id: i ? ids[voice]![i - 1] : null, attempt_outcome: outcome,
+          ...(outcome === 'completed' ? { findings: t.findings ?? [] } : {}), ...(t.delegate ? { delegate: t.delegate } : {}) }));
+      });
+      rows.push(row(20, { state: 'voice-complete', voice_id: voice, voice_status: 'completed', selected_attempt_id: ids[voice]![tries.length - 1] }));
+    }
+    rows.push(row(40, { state: 'completed' }));
+    return { passId, ids, rows };
+  }
+
+  test('a v3 attempt with a delegate records and replays, and the stored wrapper stays v1', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    beginRun(fix, repo, sid);
+    const passId = u();
+    const request = attempt(sid, { pass_id: passId });
+    expect(metrics(fix.env, 'pass', { ...base(sid), v: 3, pass_id: passId, scope: 'local', state: 'started', required_voice_ids: ['testing'] }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'pass', request, repo).envelope).toMatchObject({ status: 'recorded', reason: null });
+    expect(metrics(fix.env, 'pass', request, repo).envelope.status).toBe('replayed');
+    const stored = ledgerLines(fix, sid).map(line => JSON.parse(line)).filter(r => r.op === 'pass' && r.request.state === 'attempt');
+    expect(stored).toHaveLength(1);
+    expect(stored[0].v).toBe(1);
+    expect(stored[0].request.delegate).toEqual(request.delegate);
+    expect(validRecord(stored[0])).toBe(true);
+  }, 60_000);
+
+  test('the delegate field rules agree in the helper and the schema, and an invalid request never mutates the ledger', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    beginRun(fix, repo, sid);
+    const lines = ledgerLines(fix, sid).length;
+    const failed = { attempt_outcome: 'failed', findings: undefined };
+    const reasons = ['unresolved-claim', 'timeout', 'failed', 'refused', 'needs-context', 'uncredited', 'unparsed-finding', 'worktree-changed'];
+    const cases: Array<[string, Record<string, unknown>, Record<string, unknown>, boolean]> = [
+      ['credited', delegate(), {}, true],
+      ...reasons.map(reason => [`fell back: ${reason}`, fellBack({ fallback_reason: reason }), failed, true] as [string, Record<string, unknown>, Record<string, unknown>, boolean]),
+      ['unreported counts are null', delegate({ wall_ms: null, input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null }), {}, true],
+      ['a replay', delegate({ replay: true }), {}, true],
+      ['credited with a reason', delegate({ fallback_reason: 'timeout' }), {}, false],
+      ['credited on a failed attempt', delegate(), failed, false],
+      ['credited on a partial attempt', delegate(), { attempt_outcome: 'partial', findings: undefined }, false],
+      ['fell back on a completed attempt', fellBack(), {}, false],
+      ['fell back on a partial attempt', fellBack(), { attempt_outcome: 'partial', findings: undefined }, false],
+      ['fell back without a reason', fellBack({ fallback_reason: null }), failed, false],
+      ['an unknown reason', fellBack({ fallback_reason: 'guessed' }), failed, false],
+      ['an uppercase label', delegate({ provider: 'Alpha' }), {}, false],
+      ['a label that starts with a digit', delegate({ provider: '1a' }), {}, false],
+      ['an empty label', delegate({ provider: '' }), {}, false],
+      ['a 33-character label', delegate({ provider: 'a'.repeat(33) }), {}, false],
+      ['a 32-character label', delegate({ provider: 'a'.repeat(32) }), {}, true],
+      ['a model with a space', delegate({ model: 'model a' }), {}, false],
+      ['an empty model', delegate({ model: '' }), {}, false],
+      ['a 129-character model', delegate({ model: 'm'.repeat(129) }), {}, false],
+      ['a non-boolean replay', delegate({ replay: 'yes' }), {}, false],
+      ['a negative wall time', delegate({ wall_ms: -1 }), {}, false],
+      ['a fractional token count', delegate({ input_tokens: 1.5 }), {}, false],
+      ['a string token count', delegate({ output_tokens: '5' }), {}, false],
+      ['a token count above 2^53', delegate({ cache_read_input_tokens: 2 ** 53 }), {}, false],
+      ['a missing key', (() => { const d: any = delegate(); delete d.replay; return d; })(), {}, false],
+      ['an unknown key', delegate({ prompt: 'text' }), {}, false],
+      ['null', null as any, {}, false],
+      ['an array', [] as any, {}, false],
+    ];
+    let recorded = 0;
+    for (const [name, d, patch, valid] of cases) {
+      const request: any = attempt(sid, { delegate: d, ...patch });
+      for (const key of Object.keys(request)) if (request[key] === undefined) delete request[key];
+      expect(validRecord(wrap(request)), `${name}: schema`).toBe(valid);
+      const { envelope } = metrics(fix.env, 'pass', request, repo);
+      expect(envelope.reason, name).toBe(valid ? null : 'invalid-input');
+      expect(envelope.status, name).toBe(valid ? 'recorded' : 'unavailable');
+      if (valid) recorded += 1;
+      expect(ledgerLines(fix, sid), `${name}: ledger`).toHaveLength(lines + recorded);
+    }
+  }, 180_000);
+
+  test('delegate is refused on v1, v2 and on every other state, and v4 is unsupported', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo);
+    beginRun(fix, repo, sid);
+    const lines = ledgerLines(fix, sid).length;
+    const refused = (request: any) => metrics(fix.env, 'pass', request, repo).envelope;
+    for (const v of [1, 2]) {
+      const request: any = attempt(sid, { v, findings: [v === 1 ? finding('F1') : att('F1', ['core'])] });
+      expect(validRecord(wrap(request)), `v${v}: schema`).toBe(false);
+      expect(refused(request), `v${v}`).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
+    }
+    const passId = u(), attemptId = u();
+    const others: Array<Record<string, unknown>> = [
+      { state: 'started', required_voice_ids: ['testing'] },
+      { state: 'voice-complete', voice_id: 'testing', voice_status: 'completed', selected_attempt_id: attemptId },
+      { state: 'completed' },
+    ];
+    for (const extra of others) {
+      const request = { ...base(sid), v: 3, pass_id: passId, scope: 'local', ...extra, delegate: delegate() };
+      expect(validRecord(wrap(request)), `${extra.state}: schema`).toBe(false);
+      expect(refused(request), String(extra.state)).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
+    }
+    expect(refused(attempt(sid, { v: 4 }))).toMatchObject({ reason: 'unsupported-version', diagnostics: { expected: '1|2|3', actual: 4 } });
+    expect(ledgerLines(fix, sid)).toHaveLength(lines);
+    // v3 findings take the v2 shape: a v1-shaped finding on a v3 attempt is invalid.
+    expect(refused(attempt(sid, { findings: [finding('F1')] })).reason).toBe('invalid-input');
+  }, 90_000);
+
+  test('a read reports per provider label: usage without replays, fallbacks by reason, and found/accepted/rejected after corrections', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const first = passV3(sid, [
+      { voice: 'testing', tries: [{ delegate: delegate(), findings: [att('T1', ['specialist:testing']), att('T2', ['specialist:testing'])] }] },
+      // alpha-less fallback: beta times out, then the host runs the part and names the delegate attempt as its predecessor
+      { voice: 'maintainability', tries: [{ outcome: 'failed', delegate: fellBack({ provider: 'beta', model: 'model-b', wall_ms: 5000 }) }, { findings: [att('M1', ['specialist:maintainability'])] }] },
+      { voice: 'performance', tries: [{ delegate: delegate({ provider: 'beta', model: 'model-b', wall_ms: 2000, input_tokens: 7, output_tokens: 3, cache_read_input_tokens: null, cache_creation_input_tokens: null }),
+        findings: [att('P1', ['specialist:performance'])] }] },
+    ]);
+    const replay = passV3(sid, [
+      { voice: 'testing', tries: [{ delegate: delegate({ replay: true }), findings: [att('T3', ['specialist:testing'])] }] },
+    ], 3000);
+    craft(fix, sid, [...runRows(sid).rows, ...first.rows, ...replay.rows,
+      { op: 'correction', at: 2100, request: { ...base(sid), correction_kind: 'finding', finding_id: 'T2', pass_id: first.passId, voice_id: 'testing', attempt_id: first.ids.testing![0], adjudication: 'rejected', resolution: 'unknown' } }]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.capture).toBe('ok');
+    expect(data.local_passes).toBe(2);
+    expect(data.delegated).toEqual({
+      alpha: { attempts: 2, credited: 2, fell_back: 0, by_reason: {}, wall_ms: 1200, input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10,
+        cache_creation_input_tokens: 5, tokens_unreported: 0, reported: 3, accepted: 2, rejected: 1 },
+      beta: { attempts: 2, credited: 1, fell_back: 1, by_reason: { timeout: 1 }, wall_ms: 7000, input_tokens: 7, output_tokens: 3, cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0, tokens_unreported: 1, reported: 1, accepted: 1, rejected: 0 },
+    });
+    expect(Object.keys(data.delegated)).toEqual(['alpha', 'beta']);
+    // the part counts are untouched by delegation: the delegate's findings are the specialist's findings
+    expect(data.findings.by_part['specialist:testing']).toEqual({ reported: 3, accepted: 2, rejected: 1 });
+    expect(data.findings.by_part['specialist:maintainability']).toEqual({ reported: 1, accepted: 1, rejected: 0 });
+    expect(data.receipt_text).not.toContain('delegated'); // the receipt line is unchanged
+  }, 60_000);
+
+  test('earlier ledgers read unchanged: a v1-only and a v2-only ledger report delegated {}', () => {
+    const fix = makeTelemetryFixture('community');
+    const old = 'extend-' + u(), attributed = 'extend-' + u();
+    craft(fix, old, [...runRows(old).rows, ...passRows(old, { voices: [{ voice: 'core', findings: [finding('F1', { resolution: 'fixed' }), finding('F2')] }] }).rows]);
+    const v2 = passRows(attributed, { voices: [{ voice: 'testing', findings: [att('S1', ['specialist:testing'])] }] });
+    craft(fix, attributed, [...runRows(attributed).rows, ...v2.rows.map(r => ({ ...r, request: { ...r.request, v: 2 } }))]);
+    const before = read(fix, old).envelope.data;
+    expect(before.delegated).toEqual({});
+    expect(before.findings).toMatchObject({ accepted: 2, fixed: 1, open: 1 });
+    expect(before.findings.by_part).toEqual({});
+    const after = read(fix, attributed).envelope.data;
+    expect(after.delegated).toEqual({});
+    expect(after.findings.by_part).toEqual({ 'specialist:testing': { reported: 1, accepted: 1, rejected: 0 } });
+  }, 60_000);
+
+  test('nine provider labels null the delegated block with too-many-providers and the read stays ok; eight are reported', () => {
+    const fix = makeTelemetryFixture('community');
+    for (const [n, over] of [[8, false], [9, true]] as const) {
+      const sid = 'extend-' + u();
+      const voices = Array.from({ length: n }, (_, i) => ({ voice: `part${i}`, tries: [{ delegate: delegate({ provider: `p${i}` }), findings: [] as any[] }] }));
+      craft(fix, sid, [...runRows(sid).rows, ...passV3(sid, voices).rows]);
+      const data = read(fix, sid).envelope.data;
+      expect(data.capture).toBe('ok');
+      if (over) {
+        expect(data.delegated).toBeNull();
+        expect(data.unknown_reasons).toContain('too-many-providers');
+      } else {
+        expect(Object.keys(data.delegated)).toHaveLength(8);
+        expect(data.unknown_reasons).not.toContain('too-many-providers');
+      }
+    }
+  }, 60_000);
+
+  test('the delegated block is null under an integrity unknown, and its finding counts are null when the local findings are unknown', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u();
+    const pass = passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate(), findings: [att('T1', ['specialist:testing'])] }] }]);
+    // a correction that names no recorded finding is a missing reference: the read is partial and delegated is null
+    craft(fix, sid, [...runRows(sid).rows, ...pass.rows,
+      { op: 'correction', at: 2100, request: { ...base(sid), correction_kind: 'finding', finding_id: 'NOPE', pass_id: pass.passId, adjudication: 'rejected', resolution: 'unknown' } }]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.capture).toBe('partial');
+    expect(data.delegated).toBeNull();
+  }, 60_000);
+
+  test('validRecord accepts good v3 records and rejects bad ones', () => {
+    const sid = 'extend-' + u();
+    expect(validRecord(wrap(attempt(sid)))).toBe(true);
+    const failedAttempt: any = attempt(sid, { delegate: fellBack(), attempt_outcome: 'failed' });
+    delete failedAttempt.findings;
+    expect(validRecord(wrap(failedAttempt))).toBe(true);
+    expect(validRecord(wrap(attempt(sid, { delegate: delegate({ outcome: 'fell-back', fallback_reason: 'timeout' }) })))).toBe(false);
+    expect(validRecord(wrap(attempt(sid, { v: 2 })))).toBe(false);
+    expect(validRecord(wrap({ ...base(sid), v: 3, pass_id: u(), scope: 'local', state: 'completed', delegate: delegate() }))).toBe(false);
+    expect(validRecord(wrap(attempt(sid, { v: 4 })))).toBe(false);
+  });
+
+  test('the helper, schema, runner, docs and skill share the fallback reasons and the label grammar', async () => {
+    const dumped = spawnSync('python3', ['-B', '-I', '-c', [
+      'import importlib.util, json',
+      `spec = importlib.util.spec_from_file_location("workflow_metrics", ${JSON.stringify(join(ROOT, 'bin/lib/workflow_metrics.py'))})`,
+      'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)',
+      'print(json.dumps({"reasons": list(m.FALLBACK_REASONS), "label": m.DELEGATE_LABEL_RE.pattern, "outcomes": list(m.DELEGATE_OUTCOMES), "providers": m.MAX_PROVIDERS, "passes": list(m.PASS_VERSIONS)}))',
+    ].join('\n')], { encoding: 'utf8', timeout: 15_000 });
+    expect(dumped.status).toBe(0);
+    const helper = JSON.parse(dumped.stdout) as { reasons: string[]; label: string; outcomes: string[]; providers: number; passes: number[] };
+    const { FALLBACK_REASONS, LABEL_RE, MODEL_RE } = await import('../src/review-delegate/delegate');
+    expect(helper.reasons).toEqual([...FALLBACK_REASONS]);
+    expect(helper.label).toBe(LABEL_RE.source.replace(/^\^|\$$/g, ''));
+    expect(helper.passes).toEqual([1, 2, 3]);
+    const def = schema.definitions.delegate;
+    expect(def.properties.fallback_reason.enum.filter((r: string | null) => r !== null)).toEqual(helper.reasons);
+    expect(def.properties.outcome.enum).toEqual(helper.outcomes);
+    expect(def.properties.provider.pattern).toBe(`^${helper.label}$`);
+    expect(schema.definitions.safe_id.pattern).toBe(MODEL_RE.source);
+    expect(schema.definitions.unknown_reason.enum).toContain('too-many-providers');
+    const docs = readFileSync(join(ROOT, 'docs/telemetry.md'), 'utf8').replace(/\s+/g, ' ');
+    const skill = readFileSync(join(ROOT, 'skills/review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
+    const delegated = skill.slice(skill.indexOf('### Delegate named specialist parts'), skill.indexOf('### Reopen review only for behavior-changing repairs'));
+    for (const reason of helper.reasons) {
+      expect(docs, reason).toContain('`' + reason + '`');
+      expect(delegated, reason).toContain('`' + reason + '`');
+    }
+    expect(docs).toContain(`more than ${helper.providers} distinct provider labels`);
+    expect(docs).toContain('`too-many-providers`');
+    expect(helper.label).toBe('[a-z][a-z0-9-]{0,31}');
   });
 });
 
