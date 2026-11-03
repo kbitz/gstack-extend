@@ -925,8 +925,8 @@ written as `grep -F 'delegate=<part>' "<installed skill dir>/SKILL.md"` (exit 0
 means supported). An installation without it reads the whole line as `none
 supplied`, an older H-E parser holds a returned policy that carries it as
 `policy-malformed`, and a caller omits it when the check fails and keeps its other
-keys. It is independent of every other value and never set by the light review
-default. It names only the four delegable parts, each once; a value naming any
+keys. It is independent of every other value except `specialists=fold`, which
+excludes it, and is never set by the light review default. It names only the four delegable parts, each once; a value naming any
 other part is an unknown value and voids the line. A caller also sends one
 `Review delegates: <absolute path>` line beside the policy; it is not part of the
 relayed H-E prompt, so a caller supplies it again beside a relayed prompt (the same
