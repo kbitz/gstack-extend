@@ -227,6 +227,21 @@ recorded fallback. A fell-back part runs on the host from the same checklist: th
 nested host dispatches it as Review Army would, and a sibling host applies the
 checklist to the frozen diff with the same output contract.
 
+## With `specialists=fold`
+
+`specialists=fold` folds the first full-scope cycle into the main review pass:
+the main pass reads the selected specialists' checklists itself and no
+specialist is dispatched, to a subagent or to a delegate (see
+[the fold record](acceptance/review-fold.md)). The two values exclude each other.
+A policy line carrying both reads `none supplied` with the reason
+`specialists=fold excludes delegate=`, so every key on that line is lost, as for
+any other malformed line, and an H-E parser holds the same line as
+`policy-malformed`. A caller picks one arm per invocation. Under that rule a part
+is never reviewed twice (once folded and once delegated) and never left
+unreviewed (named by one value and run by neither), because the two never take
+effect together. A `Review delegates:` line beside a policy that carries only
+`specialists=fold` is not read: delegation needs its own value.
+
 ## Receipts and metrics
 
 - The receipt records `delegation: active (parts=<list>; config=<sha256>)` or
@@ -253,10 +268,11 @@ stop a command from reading its own.
 ## Measurement
 
 Delegation is evaluated against today's default, in which every selected part
-runs on the host, and against the opt-in folded first cycle (Track 58A). No
-saving is claimed here: record a real run's wall time and per-provider usage
-(`data.delegated`) beside the default before treating delegation as an
-optimization, as SPEC P1 requires.
+runs on the host, and against the opt-in folded first cycle
+(`specialists=fold`, Track 58A), each arm measured separately on the same heads
+because the two values exclude each other. No saving is claimed here: record a
+real run's wall time and per-provider usage (`data.delegated`) beside the
+default before treating delegation as an optimization, as SPEC P1 requires.
 
 ## Limits
 

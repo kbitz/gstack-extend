@@ -649,7 +649,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
   'documentation-audit': /^final$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
-  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/,
+  'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/,
   // The four delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
   delegate: /^(?!.*\b(testing|maintainability|performance|simplification)\b.*\b\1\b)(?:testing|maintainability|performance|simplification)(?:,(?:testing|maintainability|performance|simplification))*$/,
   'max-continuations': /^[0-9]$/,
@@ -664,6 +664,8 @@ function parsePolicy(value: string, values: Record<string, RegExp> = POLICY_VALU
     if (!kv || !values[kv[1]]?.test(kv[2]) || keys.has(kv[1])) return null;
     keys.set(kv[1], kv[2]);
   }
+  // `specialists=fold` and `delegate=` exclude each other, so a line naming both is malformed.
+  if (keys.has('specialists') && keys.has('delegate')) return null;
   return keys;
 }
 
@@ -1375,7 +1377,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2224,5 +2226,97 @@ describe('(H) delegate', () => {
     expect(has(doc, 'A prepared receipt that records delegated parts still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-DELEGATED-HEAD` | H-B | `Delegated part:` | ADVANCE_TRUSTED')).toBe(true);
     expect(has(prep, 'the `delegation:` status line and every `Delegated part:')).toBe(true);
+  });
+});
+
+// Track 58A: `specialists=fold`. It follows the rollout order of the older values and excludes `delegate=`; the fixture models
+// only the receipt-present lines and the policy grammar. no_claim=installed-agent execution.
+describe('(I) specialists=fold', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (tail: string) => `review-and-prep-policy/v1; ${tail}`;
+  const without = (...keys: string[]) => { const m = { ...POLICY_VALUES }; for (const k of keys) delete m[k]; return m; };
+
+  // Value: protects=the value parses only as fold, never twice and never beside delegate, and an older map voids the whole line; fails_when=a regex loosens, a repeat or the delegate combination parses or the older-install claim stops being true; why_new=new policy value; seam=none; no_claim=installed-agent execution
+  test('the parser accepts fold, refuses every other spelling, repeat and the delegate combination, and an older map voids the line', () => {
+    expect(parsePolicy(line('specialists=fold'))?.get('specialists')).toBe('fold');
+    const all = parsePolicy(line('in-cap=delta; specialists=fold; parent-io=lean; test-gaps=record; full-suite=external'));
+    expect(all?.get('specialists')).toBe('fold');
+    expect(all?.get('parent-io')).toBe('lean');
+    for (const bad of ['specialists=Fold', 'specialists=FOLD', 'specialists=fold,fold', 'specialists=fold,testing', 'specialists=', 'specialists', 'specialists=all',
+      'specialists=none', 'specialists=*', 'specialist=fold', 'specialists=foldx', 'specialists=xfold', 'specialists=fold; specialists=fold',
+      'specialists=fold; delegate=testing', 'delegate=testing; specialists=fold', 'delegate=testing,performance; in-cap=delta; specialists=fold']) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    // An older install's map lacks the key, so the whole line is lost with every other key.
+    expect(parsePolicy(line('in-cap=delta; specialists=fold'), without('specialists'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; delegate=testing'), without('specialists'))?.get('delegate')).toBe('testing');
+  });
+
+  // Value: protects=an H-E prompt whose policy carries the value still continues, and the delegate combination or a bad value holds; fails_when=the new value breaks the H-E path or the exclusion stops holding; why_new=new policy value through the consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries the value still continues, and the delegate combination is policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['specialists=fold', 'specialists=fold; test-gaps=record']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['specialists=Fold', 'specialists=fold; specialists=fold', 'specialists=fold; delegate=testing', 'delegate=testing; specialists=fold']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=the capability check works against the real skill, and the doc publishes it with the rollout, the exclusion, the fallback and the gating note; fails_when=the value leaves the skill, a check text drifts or the doc loses the rollout; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F finds the value in the skill and the doc publishes the check and the rollout', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'specialists=fold', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'specialists=guess', skillPath]).status).toBe(1);
+    const check = `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of ['`specialists=fold` follows the same rollout order and the same check',
+      '(exit 0 means supported)',
+      'An installation without it reads the whole line as `none supplied`',
+      'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
+      'a caller omits it when the check fails and keeps its other keys',
+      'a line carrying both reads `none supplied` at the producer (reason `specialists=fold excludes delegate=`) and is `policy-malformed` at an H-E parser',
+      'It is never set by the light review default.',
+      'The value waives no gate and never authorizes a continuation.',
+      'While the anchors it relies on drift, cycle 1 dispatches specialists as today and the receipt says so.',
+      'The policy grammar is v1 with fixed keys: an older producer that does not know the value falls back as stated above',
+      "upstream's adaptive gating statistics learn only from specialist dispatches, so a folded review adds no sample",
+      '`final-gate-repair` (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`)']) {
+      expect(has(doc, phrase), phrase).toBe(true);
+    }
+    expect(POLICY_VALUES.specialists!.test('fold')).toBe(true);
+    expect(has(prep, 'a line carrying both reads `Review policy: none supplied` with the reason `specialists=fold excludes delegate=`')).toBe(true);
+  });
+
+  // Value: protects=a receipt that carries the fold lines still hands /ship-and-land a trusted head, the fixture lines have the skill template's keys and the doc row publishes the lines; fails_when=the fixture or the doc row stops matching B-TRUSTED or the lines become handoff bindings; why_new=criterion 6; seam=none; no_claim=installed-agent execution
+  test('a folded receipt hands off review: COMPLETE exactly as a plain one', () => {
+    const plain = run('B-TRUSTED');
+    const folded = run('B-FOLDED-HEAD');
+    expect(folded.outcome).toBe(plain.outcome);
+    expect(folded.mismatches).toEqual(plain.mismatches);
+    expect(folded.parsed).toEqual(plain.parsed);
+    const body = FIX.cases['B-FOLDED-HEAD'].live?.receiptBody as string;
+    expect(body).toContain('Review arm: fold (');
+    expect(body).toContain('Folded checklist:');
+    expect(fixtureText(FIX.cases['B-FOLDED-HEAD'])).not.toContain('Folded checklist:');
+    const template = prep.match(/`Folded checklist: ([^`]+)`/)![1];
+    const keys = (text: string) => text.split('; ').map((pair, i) => (i === 0 ? 'name' : pair.split('=')[0]));
+    const rows = body.split('\n').filter((l) => l.startsWith('Folded checklist: '));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(keys(row.slice('Folded checklist: '.length))).toEqual(keys(template));
+    expect(keys(template)).toEqual(['name', 'file', 'sha256', 'findings']);
+    expect(body.split('\n')[0]).toMatch(/^Review arm: fold \(cycle 1; layout=(?:nested|sibling); checklists=2\)$/);
+    expect(body).not.toMatch(/\/Users\/|\/home\//); // the file path is under the gstack root, never an absolute local path
+    expect(has(doc, '`Review arm:` and `Folded checklist:` lines | receipt-present')).toBe(true);
+    expect(has(doc, 'the lines never authorize a stage or merge (`B-FOLDED-HEAD`)')).toBe(true);
+    expect(has(doc, 'A prepared receipt that records a folded first cycle still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
+    expect(has(doc, '`B-FOLDED-HEAD` | H-B | `Review arm:` | ADVANCE_TRUSTED')).toBe(true);
+    expect(has(prep, 'the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line when the policy carries `specialists=fold`')).toBe(true);
   });
 });

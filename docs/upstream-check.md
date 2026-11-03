@@ -12,7 +12,9 @@ Without it, a drifted contract is found when the stage reaches the affected
 step: `/review-and-prep` records `in-cap delta: inactive` and runs the
 unmodified `/review` (or records `repair-review: inactive` and repeats every
 edited pass, or records `test-gaps: inactive` and writes tests as today, or
-records `pregate-narrowing: inactive` and runs the pregate as today),
+records `pregate-narrowing: inactive` and runs the pregate as today, or
+records `Review arm: dispatch — anchor changed` and dispatches specialists as
+today),
 `bin/outside-review` refuses at dispatch, `bin/secret-dispositions` refuses a
 reviewed finding whose location it cannot read, and
 `/autoplan-lean` records criteria drift and continues with voices that are not
@@ -157,7 +159,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=74 drift=1
+RESULT drift checks=88 drift=1
 ```
 
 ## What it checks
@@ -236,6 +238,28 @@ The inventory comes from this extension's own source, never a second copy:
   IDs read `review-and-prep.delegate.<review|testing|maintainability|performance|simplification>.<n>`,
   sixteen in all. `bin/review-delegate` repeats the specialist-file anchors for
   the parts it is asked to run, so a part never runs partly applied.
+- **Fold anchors.** The backtick spans of the activation paragraph of
+  `skills/review-and-prep.md` (opened by `**Activation (`specialists=fold`).**`),
+  in ten lists each opened by "byte for byte,": the first list, four lines, is
+  checked as raw bytes in the installed `/review` skill file, and each of the next
+  nine lists holds one heading, checked in that checklist's file (following "its
+  `review/specialists/testing.md` still contains,", then the same for
+  `maintainability.md`, `security.md`, `performance.md`, `data-migration.md`,
+  `api-contract.md`, `simplification.md` and `state-machines.md`, and, after "and
+  its", `review/design-checklist.md`). The review lines are ones both layouts
+  carry, and all nine checklists are read from the root in both layouts (the
+  Codex root's `review/specialists` and `review/design-checklist.md` link to the
+  nested copy), so nothing is anchored in a section only one layout installs.
+  Three of the review lines and four of the headings (testing, maintainability,
+  performance and simplification) are also delegation anchors: a change to one of
+  them drifts both IDs, each with its own effect. They are listed by
+  `foldInventory`, a separate check (`review-and-prep.fold`). Anchor IDs read
+  `review-and-prep.fold.review.<n>` and
+  `review-and-prep.fold.<testing|maintainability|security|performance|data-migration|api-contract|simplification|state-machines|design>.1`,
+  thirteen in all. What the anchors do not cover: Review Army's selection, its
+  State Machines and Design steps and the Red Team dispatch mechanics, which
+  only the nested layout installs and which the fold uses as written, so an
+  upstream change inside `review/sections/review-army.md` is not detected here.
 - **Secret-finding location anchors.** Two spans of the installed
   `lib/pregate/checks/secrets.ts`, read as raw bytes from the root in both
   layouts: the template that renders a finding's location, which writes
@@ -317,7 +341,9 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   receipt says so, with no upstream file edited. For the sixteen delegation
   anchors, `delegate=<part>` is inactive: every specialist runs on the host
   model as today and the receipt says so, with no upstream file edited; the
-  option never runs partly applied. For the two secret-finding
+  option never runs partly applied. For the thirteen fold anchors,
+  `specialists=fold` is inactive: cycle 1 dispatches specialists as today and the
+  receipt says so, with no upstream file edited. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
   approved in its place and no upstream file is edited. For the skip list,
@@ -402,6 +428,7 @@ and the test-gap routing value.
 | Pregate-narrowing anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Delegation anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
+| Fold anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
 | Reviewer criteria copies | `514fbfdc9799376edfd2536f60659501a48ead64` | 1.91.176.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
