@@ -473,8 +473,10 @@ explicit finish for that session, which can then write again.
 Optional local step/pass measurement for `/review-and-prep` and
 `/ship-and-land` (Track 24A). It answers which phases ran, were reused, waited,
 retried or needed corrections within one invocation. It does not select
-models, change any review or release gate, trigger Greptile, or collect token
-usage (usage attribution and the efficiency study are later Tracks). Schema:
+models, change any review or release gate, or trigger Greptile. Delegated
+attempts can record provider-reported token usage; unreported counts stay
+unknown, and broader usage attribution and the efficiency study remain later
+work. Schema:
 [workflow-metrics.schema.json](workflow-metrics.schema.json). Target: from an
 installed checkout to a first understood summary in at most five minutes using
 the quickstart below (a target, not measured first-user evidence; rehearsed
@@ -578,7 +580,7 @@ pending payload leaves the affected capture unknown; IDs are never guessed.
 `gstack-extend-telemetry metrics --help` and `metrics <operation> --help`
 print the field lists without touching stdin or state. Producers (`begin`,
 `end`, `decision`, `pass`, `correction`) take one JSON object on stdin with
-`v:1` (a `pass` may send `v:2`, below; any other operation answers
+`v:1` (a `pass` may send `v:2` or `v:3`, below; any other operation answers
 `unsupported-version` to it), `stage`, `session_id` and a caller-stable UUID
 `event_id`, and print
 one envelope `{v, status, reason, session_id, event_id, data, diagnostics}`.
@@ -645,7 +647,12 @@ counts without another append, and an absent boundary stays missing.
   v2 finding missing one is too. Stored lines keep the record wrapper `v:1`
   whatever the request's `v` is, and a helper older than this change reads a
   stored v2 line as `malformed-record` (an older helper also answers
-  `unsupported-version` to a v2 `pass`, so that capture is unavailable).
+  `unsupported-version` to a v2 `pass`, so that capture is unavailable). A
+  `pass` may also send `v:3`, which is v2 plus an optional `delegate` object on
+  an `attempt` ([delegated attempts](#workflow-metrics-delegated)); a v3
+  finding takes the v2 shape, and an older helper answers
+  `unsupported-version` to a v3 `pass` and reads a stored v3 line as
+  `malformed-record`.
 - `correction`: append-only `retry|fallback|parent|finding|fix-cycle` records
   referencing existing IDs. Supersession is explicit (`supersedes_event_id`),
   acyclic and unambiguous, or the affected totals stay unknown — never
@@ -736,6 +743,47 @@ for `not-reported`, `unlisted-part`, `unsupported` and `v1-record`). More than
 reason `too-many-parts`, so the read stays `ok`. Both fields are null when the
 scope's totals are unknown.
 
+<a id="workflow-metrics-delegated"></a>
+
+#### Delegated attempts (v3 `pass`)
+
+A `/review-and-prep` part that a caller sent to a configured provider
+([delegated review](delegated-review.md)) is one `attempt`. A `pass` request with
+`v:3` may add a `delegate` object to an `attempt` and to nothing else: on a
+v1 or v2 request, or on any other state, it is `invalid-input`. The object has
+exactly these keys:
+
+- `provider`: the configuration's label (`[a-z][a-z0-9-]{0,31}`), and `model`:
+  the configured model name (the same identifier grammar as `model_context`).
+- `outcome`: `credited` or `fell-back`, and `fallback_reason`: `null` or one of
+  `unresolved-claim`, `timeout`, `failed`, `refused`, `needs-context`,
+  `uncredited`, `unparsed-finding` or `worktree-changed`. `credited` holds
+  exactly when the attempt's `attempt_outcome` is `completed` and the reason is
+  `null`; `fell-back` holds exactly when it is `failed` and the reason is set.
+- `replay`: whether the runner replayed a saved result instead of calling the
+  provider again.
+- `wall_ms`, `input_tokens`, `output_tokens`, `cache_read_input_tokens` and
+  `cache_creation_input_tokens`: non-negative integers, or `null` when the
+  provider did not report them.
+
+A fallback is the failed delegate attempt, then a host attempt whose
+`predecessor_attempt_id` names it, then a `fallback` correction. The delegate
+carries no prompt text, reply prose or finding body, and `found_by` stays
+`specialist:<part>`: the provider and model are on the attempt, never inside a
+finding.
+
+A read adds `data.delegated`: per provider label (sorted), `attempts`,
+`credited`, `fell_back`, `by_reason`, `wall_ms`, the four token sums and
+`tokens_unreported` (non-replay attempts whose input or output count was not
+reported), plus `reported`, `accepted` and `rejected` for the findings of the
+selected attempts of completed local passes, after corrections. A replay adds
+no spend, so `wall_ms` and the token sums cover non-replay attempts that
+reported them; the three finding counts are null when the local findings are
+unknown. With no delegated attempt it is `{}`, and it is null when the read is
+partial. A run with more than 8 distinct provider labels leaves it null and adds
+the non-integrity reason `too-many-providers`, so the read stays `ok`. The
+`receipt_text` line is unchanged.
+
 <a id="workflow-metrics-unknown"></a>
 
 #### Unknown reasons in a read
@@ -743,7 +791,7 @@ scope's totals are unknown.
 `data.unknown_reasons` (also printed as `unknown=` in `receipt_text`) says
 why a value is unknown. The first eight make the read `partial`; the rest
 (an in-progress run, a paused wait, a backward clock, work recorded only as a
-phase, more finding parts in one scope than the read reports) leave it `ok`.
+phase, more finding parts in one scope or more delegate providers in one run than the read reports) leave it `ok`.
 
 | Reason | Meaning |
 |---|---|
@@ -761,6 +809,7 @@ phase, more finding parts in one scope than the read reports) leave it `ok`.
 | `open-wait` | A wait ended `paused`; its duration is unknown. |
 | `unrecorded-work` | A phase ran with work recorded only as a decision (an [untimed visit](#workflow-metrics-untimed)), or a `local-pass`, `external-review` or `fix` phase ran with no pass or fix record. |
 | `too-many-parts` | One scope's findings name more than 24 distinct parts; `by_part` is null for that scope. |
+| `too-many-providers` | A run's delegated attempts name more than 8 distinct provider labels; `delegated` is null. |
 
 The envelope reasons `clock-invalid` and `candidate-changed` are reserved in
 v1: reads report clock problems through `unknown_reasons` and candidate drift
@@ -1346,6 +1395,7 @@ workflow-metrics ledger, whose v1 records accept no extra keys.
 | `metrics` | `{session_id, pass_id, attempt_id}` of the matching workflow-metrics records, or null |
 | `unknown_reason` | null, `not-reported`, `not-named` or `capture-missing` |
 | `outside` | Optional content-free Claude Code adapter measurement, described below; absent for other attempts |
+| `delegate` | Optional content-free delegated-part measurement: the [runner](delegated-review.md)'s `call_id`, `provider`, `model`, `replay`, `dispatched`, `parse`, `verdict`, `outcome`, `fallback_reason`, `wall_ms` and the four token counts (null when unreported); absent for other attempts |
 
 The [bounded outside adapter](outside-review.md) supplies `outside` with
 `call_id` (SHA-256), `phase` (`challenge` or `structured`), `replay`, `dispatched`

@@ -30,6 +30,9 @@ export const PREGATE_NARROW_QUALIFIED = { revision: '41a67b996d8bbf2167996683953
 /** Upstream revision at which the anchors behind the secret-finding location grammar were qualified in both layouts. */
 export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee036326989ea0c6bb8470e69', version: '1.92.55.0' } as const;
 
+/** Upstream revision at which the anchors behind `delegate=<part>` were qualified in both layouts. */
+export const DELEGATE_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -52,6 +55,10 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'Narrow the pregate",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its section heading, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'delegate=<part>'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'src/review-delegate/cli.ts', includes: "join(root, 'lib'",
+    reason: 'loads the UPSTREAM_HELPERS classifier, whose export and golden cases the export and classifier checks already cover' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
     reason: 'quotes the audit\'s own shell operands, not installed upstream text' },
 ];
@@ -74,6 +81,11 @@ const TEST_GAP_COVERAGE_MARK = 'and the `ship/sections/test-coverage.md` that th
 const PREGATE_NARROW_HEADING = '**Activation (narrowed pregate).**';
 const PREGATE_NARROW_INDEX_MARK = 'its `lib/pregate/index.ts` still contains,';
 const PREGATE_NARROW_LANES_MARK = 'and its `lib/pregate/checks/lanes.ts` still contains,';
+const DELEGATE_HEADING = '**Activation (`delegate`).**';
+const DELEGATE_TESTING_MARK = 'its `review/specialists/testing.md` still contains,';
+const DELEGATE_MAINTAINABILITY_MARK = 'its `review/specialists/maintainability.md` still contains,';
+const DELEGATE_PERFORMANCE_MARK = 'its `review/specialists/performance.md` still contains,';
+const DELEGATE_SIMPLIFICATION_MARK = 'and its `review/specialists/simplification.md` still contains,';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -129,6 +141,7 @@ export type Inventory = { ok: true; file: string; anchors: string[] } | { ok: fa
 export type FixFirstInventory = { ok: true; file: string; review: string[]; checklist: string[] } | { ok: false; file: string; reason: string };
 export type TestGapInventory = { ok: true; file: string; review: string[]; testing: string[]; checklist: string[]; coverage: string[] } | { ok: false; file: string; reason: string };
 export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
+export type DelegateInventory = { ok: true; file: string; review: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -246,6 +259,20 @@ export function pregateNarrowInventory(extendRootPath: string): PregateNarrowInv
   return { ok: true, file: found.file, bin, index, lanes };
 }
 
+/**
+ * The anchors behind `delegate=<part>`: the backtick spans of its activation
+ * paragraph, five lists (`/review` and the four delegable specialist
+ * checklists), each opened by "byte for byte,".
+ */
+export function delegateInventory(extendRootPath: string): DelegateInventory {
+  const found = activationLists(extendRootPath, DELEGATE_HEADING,
+    [DELEGATE_TESTING_MARK, DELEGATE_MAINTAINABILITY_MARK, DELEGATE_PERFORMANCE_MARK, DELEGATE_SIMPLIFICATION_MARK, ANCHOR_LIST_TO],
+    ['review', 'testing', 'maintainability', 'performance', 'simplification']);
+  if (!found.ok) return found;
+  const [review, testing, maintainability, performance, simplification] = found.lists as [string[], string[], string[], string[], string[]];
+  return { ok: true, file: found.file, review, testing, maintainability, performance, simplification };
+}
+
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
   fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
@@ -254,6 +281,8 @@ const STAGE = {
   testGapList: '/review-and-prep: the test-gap anchors cannot be listed, so test-gaps=record is unverified and stays inactive',
   pregateNarrow: '/review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so',
   pregateNarrowList: '/review-and-prep: the pregate-narrowing anchors cannot be listed, so narrowing is unverified and the pregate runs as today',
+  delegate: '/review-and-prep: delegate=<parts> is inactive, so every specialist runs on the host model as today and the receipt says so',
+  delegateList: '/review-and-prep: the delegation anchors cannot be listed, so delegate=<part> is unverified and stays inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
@@ -287,6 +316,9 @@ interface Layout {
   review: string;
   checklist: string;
   testing: string;
+  maintainability: string;
+  performance: string;
+  simplification: string;
   coverage: string;
   pregateBin: string;
   pregateIndex: string;
@@ -305,12 +337,16 @@ function chooseLayout(root: string, skillsDir: string): Layout {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
     return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
-      testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
+      testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
+      performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
+      coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
   return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
-    testing: join(root, 'review', 'specialists', 'testing.md'), coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
+    testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
+    performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
+    coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
 }
 
 interface Options { root: string; skillsDir: string; timeoutMs: number }
@@ -484,6 +520,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `test-gaps ${TEST_GAP_QUALIFIED.revision} ${TEST_GAP_QUALIFIED.version}`);
   info('inspected', `pregate-narrowing ${PREGATE_NARROW_QUALIFIED.revision} ${PREGATE_NARROW_QUALIFIED.version}`);
   info('inspected', `finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`);
+  info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -525,6 +562,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const narrow = pregateNarrowInventory(extend);
   if (narrow.ok) ok('inventory', 'review-and-prep.pregate-narrowing');
   else drift('inventory', 'review-and-prep.pregate-narrowing', `${narrow.reason} (${narrow.file})`, { effect: STAGE.pregateNarrowList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
+  const delegate = delegateInventory(extend);
+  if (delegate.ok) ok('inventory', 'review-and-prep.delegate');
+  else drift('inventory', 'review-and-prep.delegate', `${delegate.reason} (${delegate.file})`, { effect: STAGE.delegateList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -580,6 +621,16 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     narrow.bin.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.bin.${i + 1}`, bin, anchor, undefined, inactive));
     narrow.index.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.index.${i + 1}`, index, anchor, undefined, inactive));
     narrow.lanes.forEach((anchor, i) => checkAnchor(`review-and-prep.pregate-narrowing.lanes.${i + 1}`, lanes, anchor, undefined, inactive));
+  }
+  if (delegate.ok) {
+    const inactive = { effect: STAGE.delegate, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    delegate.review.forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.review.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    for (const part of ['testing', 'maintainability', 'performance', 'simplification'] as const) {
+      const read = rootOk ? readOnce(layout[part], `review ${part} specialist`, part) : undefined;
+      delegate[part].forEach((anchor, i) => checkAnchor(`review-and-prep.delegate.${part}.${i + 1}`, read, anchor, undefined, inactive));
+    }
   }
   {
     const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;

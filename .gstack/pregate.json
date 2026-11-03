@@ -145,6 +145,9 @@
     "bin/outside-review": [
       "tests/outside-review.test.ts"
     ],
+    "bin/review-delegate": [
+      "tests/review-delegate.test.ts"
+    ],
     "bin/roadmap-audit": [
       "tests/audit-cli-contract.test.ts",
       "tests/audit-snapshots.test.ts",
@@ -196,6 +199,9 @@
     ],
     "docs/acceptance/skill-test-selection.md": [
       "tests/touchfiles.test.ts"
+    ],
+    "docs/delegated-review.md": [
+      "tests/review-delegate.test.ts"
     ],
     "docs/designs/workflow-efficiency-program.md": [
       "tests/skill-protocols-plan-track.test.ts"
@@ -330,6 +336,7 @@
     "skills/review-and-prep.md": [
       "tests/handoff-contract.test.ts",
       "tests/outside-review.test.ts",
+      "tests/review-delegate.test.ts",
       "tests/secret-dispositions.test.ts",
       "tests/skill-protocols-project-spec.test.ts",
       "tests/skill-protocols-review-and-prep.test.ts",

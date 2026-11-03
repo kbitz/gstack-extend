@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.62.0] - 2026-11-03
+
+### Added
+
+- `review-and-prep` can send the review to a caller-configured delegate through `bin/review-delegate`.
+- `docs/delegated-review.md` describes how to configure a review delegate and how a delegated review is reported.
+
+### Changed
+
+- Workflow metrics now record delegated reviews, including their token reporting.
+- `docs/telemetry.md`, `docs/workflow-metrics.schema.json`, `docs/upstream-check.md`, and `docs/workflow-handoffs.md` describe that reporting.
+
+### Fixed
+
+- A delegate reply counts only when it matches the complete reply contract.
+- Incomplete delegated finding counts do not count as a finished review.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. A review delegate is optional, and existing setups keep working without new configuration.
+
 ## [0.61.0] - 2026-11-02
 
 ### Added

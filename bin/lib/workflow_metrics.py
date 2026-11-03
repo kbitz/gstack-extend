@@ -24,7 +24,7 @@ import traceback
 from pathlib import Path
 
 V = 1
-PASS_VERSIONS = (1, 2)  # only `pass` takes v=2 (attributed findings); the record wrapper and every other op stay v=1
+PASS_VERSIONS = (1, 2, 3)  # only `pass` takes v=2 (attributed findings) or v=3 (v=2 plus a delegated attempt); the record wrapper and every other op stay v=1
 STDIN_LIMIT = 16 * 1024
 MAX_DEPTH = 8
 MAX_ARRAY = 256
@@ -59,10 +59,17 @@ PART_RE = re.compile(r"(?:specialist:[a-z][a-z0-9-]{0,63}|red-team|native-advers
 ATTRIBUTION_REASONS = ("not-reported", "unlisted-part", "unsupported")  # producer-sendable; the read adds v1-record
 MAX_FOUND_BY = 8
 MAX_PARTS = 24  # distinct part labels per scope in a read; the full label list is 16 with every upstream specialist
+# v=3 delegated attempts (docs/telemetry.md#workflow-metrics-delegated): the provider a specialist part ran through.
+DELEGATE_LABEL_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
+DELEGATE_OUTCOMES = ("credited", "fell-back")
+FALLBACK_REASONS = ("unresolved-claim", "timeout", "failed", "refused", "needs-context", "uncredited",
+                    "unparsed-finding", "worktree-changed")
+DELEGATE_COUNTS = ("wall_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+MAX_PROVIDERS = 8  # distinct provider labels in a read
 FIX_TEXT = {
     "capture-disabled": "Detailed capture is off; no action is needed.",
     "invalid-input": "Send one valid JSON object on stdin; see the operation help.",
-    "unsupported-version": "Use v=1 (a pass alone may use v=2 for attributed findings), or upgrade gstack-extend.",
+    "unsupported-version": "Use v=1 (a pass alone may use v=2 for attributed findings or v=3 for a delegated attempt), or upgrade gstack-extend.",
     "identity-missing": "Provide the exact GE_TELEMETRY start session ID, or continue without capture.",
     "identity-mismatch": "Use the start ID from this invocation in this checkout, or continue without capture.",
     "unsafe-path": "Inspect the configured state root; nothing was moved, deleted or chmodded.",
@@ -88,7 +95,7 @@ CANDIDATE_KEYS = ("candidate_head", "candidate_tree", "candidate_base", "binding
 # Why a read summary left something unknown (data.unknown_reasons; docs/telemetry.md#workflow-metrics-unknown).
 UNKNOWN_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end",
                    "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass",
-                   "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts")
+                   "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts", "too-many-providers")
 # The subset that means the stored records contradict or orphan each other: the read is partial.
 INTEGRITY_REASONS = ("malformed-record", "partial-tail", "event-conflict", "missing-begin",
                      "missing-reference", "conflicting-terminal", "competing-correction", "cross-candidate")
@@ -393,7 +400,7 @@ def _finding(value, version=1):
     if not isinstance(value, dict):
         raise _bad("findings[]", "object")
     # v1 keeps its exact key set: found_by / attribution_reason on a v1 finding is an unknown key.
-    attribution = ("found_by", "attribution_reason") if version == 2 else ()
+    attribution = ("found_by", "attribution_reason") if version >= 2 else ()
     _keys(value, ("finding_id", "severity_source", "severity_rubric", "adjudication",
                   "resolution", "duplicate_of") + attribution, (), "findings[]")
     if not (isinstance(value["finding_id"], str) and SAFE_ID_RE.fullmatch(value["finding_id"])):
@@ -411,8 +418,38 @@ def _finding(value, version=1):
         raise _bad("findings[].duplicate_of", "required-for-duplicate")
     if value["duplicate_of"] == value["finding_id"]:
         raise _bad("findings[].duplicate_of", "another-finding")
-    if version == 2:
+    if version >= 2:
         _attribution(value)
+
+
+def _delegate(value, attempt_outcome):
+    """v3: the provider a delegated specialist part ran through. credited <=> completed <=> no fallback reason."""
+    if not isinstance(value, dict):
+        raise _bad("delegate", "object")
+    _keys(value, ("provider", "model", "outcome", "fallback_reason", "replay") + DELEGATE_COUNTS, (), "delegate")
+    if not (isinstance(value["provider"], str) and DELEGATE_LABEL_RE.fullmatch(value["provider"])):
+        raise _bad("delegate.provider", "provider-label")
+    if not (isinstance(value["model"], str) and SAFE_ID_RE.fullmatch(value["model"])):
+        raise _bad("delegate.model", "bounded-identifier")
+    _enum(value, "outcome", DELEGATE_OUTCOMES)
+    if value["fallback_reason"] is not None and value["fallback_reason"] not in FALLBACK_REASONS:
+        raise _bad("delegate.fallback_reason", "|".join(FALLBACK_REASONS) + "|null")
+    if type(value["replay"]) is not bool:
+        raise _bad("delegate.replay", "boolean")
+    for field in DELEGATE_COUNTS:
+        count = value[field]
+        if count is not None and not (type(count) is int and 0 <= count < (1 << 53)):
+            raise _bad("delegate." + field, "non-negative-integer-or-null")
+    if value["outcome"] == "credited":
+        if attempt_outcome != "completed":
+            raise _bad("delegate.outcome", "credited-needs-a-completed-attempt")
+        if value["fallback_reason"] is not None:
+            raise _bad("delegate.fallback_reason", "null-when-credited")
+    else:
+        if attempt_outcome != "failed":
+            raise _bad("delegate.outcome", "fell-back-needs-a-failed-attempt")
+        if value["fallback_reason"] is None:
+            raise _bad("delegate.fallback_reason", "required-when-fell-back")
 
 
 def _attribution(value):
@@ -436,11 +473,11 @@ def _attribution(value):
 
 def validate_request(op, req):
     if type(req.get("v")) is not int:
-        raise _bad("v", "integer-1|2" if op == "pass" else "integer-1")
+        raise _bad("v", "integer-1|2|3" if op == "pass" else "integer-1")
     if req["v"] not in (PASS_VERSIONS if op == "pass" else (V,)):
         actual = req["v"] if -(1 << 31) <= req["v"] < (1 << 31) else None  # never echo an unbounded value
         raise Fail("unavailable", "unsupported-version", field="v",
-                   expected="1|2" if op == "pass" else "1", actual=actual)
+                   expected="1|2|3" if op == "pass" else "1", actual=actual)
     _enum(req, "stage", STAGES)
     _session(req.get("session_id"), "session_id")
     _uuid(req.get("event_id"), "event_id")
@@ -506,8 +543,9 @@ def _validate_pass(base, req):
             if not (isinstance(voice, str) and VOICE_RE.fullmatch(voice)):
                 raise _bad("required_voice_ids[]", "voice-id")
     elif state == "attempt":
+        # Only a v=3 attempt may carry `delegate`; on v=1/v=2 it is an unknown key.
         _keys(req, common + ("voice_id", "attempt_id", "predecessor_attempt_id", "attempt_outcome"),
-              ("findings", "model_context", "context"), "pass.attempt")
+              ("findings", "model_context", "context") + (("delegate",) if req["v"] == 3 else ()), "pass.attempt")
         if not (isinstance(req["voice_id"], str) and VOICE_RE.fullmatch(req["voice_id"])):
             raise _bad("voice_id", "voice-id")
         _uuid(req["attempt_id"], "attempt_id")
@@ -525,6 +563,8 @@ def _validate_pass(base, req):
             raise _bad("findings", "completed-attempts-only")
         if "model_context" in req:
             _model_context(req["model_context"])
+        if "delegate" in req:
+            _delegate(req["delegate"], req["attempt_outcome"])
     elif state == "voice-complete":
         _keys(req, common + ("voice_id", "voice_status"), ("selected_attempt_id", "na_reason", "context"),
               "pass.voice-complete")
@@ -956,6 +996,7 @@ def summarize(records, malformed, partial_tail, overflow):
         corrections = {kind: None for kind in corrections}
         fix_unknown = True
     integrity = any(reason in unknown for reason in INTEGRITY_REASONS)
+    delegated = None if integrity else _delegated(effective, passes["delegate_findings"], unknown)
     data = {
         "capture": "partial" if integrity else "ok",
         "records": len(effective), "malformed_records": malformed, "partial_tail": partial_tail,
@@ -973,11 +1014,53 @@ def summarize(records, malformed, partial_tail, overflow):
         "fix_cycles": None if fix_unknown else fix_completed, "findings": passes["local"]["findings"],
         "greptile_findings": passes["greptile"]["findings"],
         "excluded_na_voices": passes["excluded_na"],
+        "delegated": delegated,
         "corrections": corrections,
         "unknown_reasons": sorted(unknown),
     }
     data["receipt_text"] = receipt_text(data)
     return data
+
+
+def _delegated(effective, finding_stats, unknown):
+    """data.delegated: per provider label, over the delegated attempts of the run ({} with none). Replays add no
+    spend, so wall time and tokens sum over non-replay attempts that reported them; reported/accepted/rejected come
+    from the selected attempts of completed local passes after corrections, null when those findings are unknown."""
+    attempts = {}
+    for record in effective:
+        req = record["request"]
+        if record["op"] == "pass" and req["state"] == "attempt" and "delegate" in req:
+            attempts.setdefault((req["pass_id"], req["attempt_id"]), req["delegate"])
+    slots = {}
+    for delegate in attempts.values():
+        slot = slots.setdefault(delegate["provider"], {
+            "attempts": 0, "credited": 0, "fell_back": 0, "by_reason": {}, "wall_ms": 0, "input_tokens": 0,
+            "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "tokens_unreported": 0})
+        slot["attempts"] += 1
+        if delegate["outcome"] == "credited":
+            slot["credited"] += 1
+        else:
+            slot["fell_back"] += 1
+            slot["by_reason"][delegate["fallback_reason"]] = slot["by_reason"].get(delegate["fallback_reason"], 0) + 1
+        if delegate["replay"]:
+            continue
+        for field in DELEGATE_COUNTS:
+            if delegate[field] is not None:
+                slot[field] += delegate[field]
+        if delegate["input_tokens"] is None or delegate["output_tokens"] is None:
+            slot["tokens_unreported"] += 1
+    if len(slots) > MAX_PROVIDERS:
+        unknown.add("too-many-providers")  # not an integrity reason: the read stays ok
+        return None
+    out = {}
+    for label in sorted(slots):
+        slot = slots[label]
+        slot["by_reason"] = {reason: slot["by_reason"][reason] for reason in sorted(slot["by_reason"])}
+        counts = None if finding_stats is None else finding_stats.get(label, {"reported": 0, "accepted": 0, "rejected": 0})
+        for field in ("reported", "accepted", "rejected"):
+            slot[field] = None if counts is None else counts[field]
+        out[label] = slot
+    return out
 
 
 def _phase_slot(phase_data, phase):
@@ -1170,11 +1253,13 @@ def _unknown_totals():
             "by_part": None, "unattributed": None}
 
 
-def _finding_totals(selected, corrections, unknown, known_ids):
+def _finding_totals(selected, corrections, unknown, known_ids, delegate_labels=None, delegate_out=None):
     """selected: [(pass_id, voice_id, attempt_id, finding)] -> totals, or all-None when a correction
     or duplicate link is ambiguous. A correction targets exactly one finding by its origin (finding_id
     plus any pass/voice/attempt it names) and applies only as one linear supersession chain in append
-    order: each later correction supersedes its predecessor. Anything else is unknown, never last-write-wins."""
+    order: each later correction supersedes its predecessor. Anything else is unknown, never last-write-wins.
+    delegate_labels ((pass_id, attempt_id) -> provider label) and delegate_out fill per-provider reported/accepted/rejected
+    counts from the same corrected findings; delegate_out stays empty when the totals are unknown."""
     totals = {"accepted": 0, "fixed": 0, "open": 0, "rejected": 0, "deferred": 0,
               "duplicate": 0, "unclassified": 0,
               "by_normalized_severity": {"critical": 0, "high": 0, "medium": 0, "low": 0,
@@ -1217,6 +1302,12 @@ def _finding_totals(selected, corrections, unknown, known_ids):
         return _unknown_totals()
     for _p, _v, _a, finding in findings:
         adj, res = finding["adjudication"], finding["resolution"]
+        attempt_key = (_p, _a)
+        if delegate_labels and delegate_out is not None and attempt_key in delegate_labels:
+            slot = delegate_out.setdefault(delegate_labels[attempt_key], {"reported": 0, "accepted": 0, "rejected": 0})
+            slot["reported"] += 1
+            if adj in ("accepted", "rejected"):
+                slot[adj] += 1
         totals["by_normalized_severity"][NORMALIZED[finding["severity_source"]]] += 1
         if adj == "accepted":
             totals["accepted"] += 1
@@ -1267,6 +1358,9 @@ def _passes(effective, by_event, run_context, unknown, ran):
     known_ids = {f["finding_id"] for r in effective
                  if r["op"] == "pass" and r["request"]["state"] == "attempt"
                  for f in r["request"].get("findings") or []}
+    delegate_labels = {(r["request"]["pass_id"], r["request"]["attempt_id"]): r["request"]["delegate"]["provider"] for r in effective
+                       if r["op"] == "pass" and r["request"]["state"] == "attempt" and "delegate" in r["request"]}
+    delegate_stats = {}
     grouped = {}
     for record in effective:
         if record["op"] != "pass":
@@ -1391,8 +1485,12 @@ def _passes(effective, by_event, run_context, unknown, ran):
             out[scope]["completed"] = None
         if out[scope]["completed"] and not scope_bad[scope]:
             out[scope]["findings"] = (_unknown_totals() if scope in tainted else
-                                      _finding_totals(selected_by_scope[scope], routed[scope], unknown, known_ids))
-    return {"local": out["local"], "greptile": out["greptile"], "excluded_na": excluded_na}
+                                      _finding_totals(selected_by_scope[scope], routed[scope], unknown, known_ids,
+                                                      delegate_labels if scope == "local" else None, delegate_stats))
+    local_totals = out["local"]["findings"]
+    known = local_totals is not None and local_totals["accepted"] is not None
+    return {"local": out["local"], "greptile": out["greptile"], "excluded_na": excluded_na,
+            "delegate_findings": delegate_stats if known else None}
 
 
 def _fmt(value):
@@ -1427,7 +1525,7 @@ def receipt_text(data):
 
 HELP = """Usage: gstack-extend-telemetry metrics <operation>
 Operations: begin, end, decision, pass, correction, read.
-Producers take exactly one JSON object (v=1; a pass alone may send v=2) on stdin (16 KiB max) and print one
+Producers take exactly one JSON object (v=1; a pass alone may send v=2 or v=3) on stdin (16 KiB max) and print one
 JSON result envelope; inspect its status, the launcher always exits 0.
 metrics <operation> --help shows that operation's fields. metrics read takes
 --session-id <extend-UUID> [--event-id <UUID>] and never writes.
@@ -1443,13 +1541,15 @@ OP_HELP = {
            "optional candidate context override.",
     "decision": "decision: v, stage, session_id, event_id, step_id, phase, decision=RUN|REUSE|N/A, "
                 "reason (controlled). One per visited phase; begin/end only around executed work.",
-    "pass": "pass: v=1|2, stage, session_id, event_id, pass_id, scope=local|greptile, "
+    "pass": "pass: v=1|2|3, stage, session_id, event_id, pass_id, scope=local|greptile, "
             "state=started|attempt|voice-complete|completed with that state's fields; a completed attempt "
             "carries findings (empty means zero); voice-complete selects one attempt or records N/A. "
             "v=2 (pass only) adds found_by (at most 8 unique parts: specialist:<name>, red-team, "
             "native-adversarial, core, qa, greptile, outside:challenge, outside:structured) and "
             "attribution_reason (null when found_by is nonempty, else not-reported|unlisted-part|unsupported) "
-            "to every finding; v=1 findings carry neither.",
+            "to every finding; v=1 findings carry neither. v=3 (pass only) is v=2 and lets an attempt carry delegate "
+            "(provider, model, outcome=credited|fell-back, fallback_reason, replay, wall_ms and four token counts, "
+            "null when unknown): credited needs a completed attempt and no reason, fell-back needs a failed one.",
     "correction": "correction: v, stage, session_id, event_id, correction_kind=retry|fallback|parent|finding|fix-cycle "
                   "plus the explicit referenced IDs for that kind; corrections append, never rewrite.",
     "read": "read: --session-id <extend-UUID> [--event-id <UUID>]. Observation-free named-run summary "

@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "workflow-metrics",
-  "title": "gstack-extend workflow-metrics record (Track 24A; v2 attributed pass findings, Track 57A)",
-  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper and every operation stay v1 except `pass`, whose request may be v2 (findings name the part that reported them). See docs/telemetry.md#workflow-metrics.",
+  "title": "gstack-extend workflow-metrics record (Track 24A; v2 attributed pass findings, Track 57A; v3 delegated attempts, Track 64C)",
+  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper and every operation stay v1 except `pass`, whose request may be v2 (findings name the part that reported them) or v3 (delegated attempts). See docs/telemetry.md#workflow-metrics.",
   "$comment": "Records, requests, contexts and findings set additionalProperties false: an unknown key is invalid input, not a forward-compatible extension. A shape or meaning change adds a new v branch and keeps v1 readable as partial/unknown, never reinterpreted.",
   "$ref": "#/definitions/record",
   "definitions": {
@@ -52,6 +52,27 @@
         { "if": { "properties": { "requested_source": { "const": "unavailable" } } }, "then": { "properties": { "requested_model": { "type": "null" }, "requested_effort": { "type": "null" } } } },
         { "if": { "properties": { "reported_source": { "const": "unavailable" } } }, "then": { "properties": { "reported_model": { "type": "null" }, "reported_effort": { "type": "null" } } } }
       ]
+    },
+    "delegate": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+        "model": { "$ref": "#/definitions/safe_id" },
+        "outcome": { "type": "string", "enum": ["credited", "fell-back"] },
+        "fallback_reason": { "type": ["string", "null"], "enum": ["unresolved-claim", "timeout", "failed", "refused", "needs-context", "uncredited", "unparsed-finding", "worktree-changed", null] },
+        "replay": { "type": "boolean" },
+        "wall_ms": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 },
+        "input_tokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 },
+        "output_tokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 },
+        "cache_read_input_tokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 },
+        "cache_creation_input_tokens": { "type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991 }
+      },
+      "required": ["provider", "model", "outcome", "fallback_reason", "replay", "wall_ms", "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"],
+      "allOf": [
+        { "if": { "type": "object", "properties": { "outcome": { "const": "credited" } } }, "then": { "type": "object", "properties": { "fallback_reason": { "type": "null" } } } },
+        { "if": { "type": "object", "properties": { "outcome": { "const": "fell-back" } } }, "then": { "type": "object", "properties": { "fallback_reason": { "type": "string" } } } }
+      ],
+      "description": "v=3 delegated attempt: the provider label and model the runner reports, its outcome and fallback reason (credited exactly when the attempt completed and there is no reason; fell-back exactly when it failed with a reason), whether the result was a replay, wall time and token counts (null when unreported). Never prompt text or reply prose. Labels and models follow the configuration grammar in docs/delegated-review.md."
     },
     "finding": {
       "type": "object", "additionalProperties": false,
@@ -105,13 +126,13 @@
     "pass_request_base": {
       "type": "object",
       "properties": {
-        "v": { "type": "integer", "enum": [1, 2] },
+        "v": { "type": "integer", "enum": [1, 2, 3] },
         "stage": { "$ref": "#/definitions/stage" },
         "session_id": { "$ref": "#/definitions/session_id" },
         "event_id": { "$ref": "#/definitions/uuid" }
       },
       "required": ["v", "stage", "session_id", "event_id"],
-      "description": "As request_base, except a pass request may be v=2. The record wrapper stays v=1."
+      "description": "As request_base, except a pass request may be v=2 or v=3. The record wrapper stays v=1."
     },
     "begin_request": {
       "type": "object", "additionalProperties": false,
@@ -161,9 +182,15 @@
       "type": "object", "additionalProperties": false,
       "allOf": [
         { "$ref": "#/definitions/pass_request_base" },
-        { "if": { "type": "object", "properties": { "v": { "const": 2 } }, "required": ["v"] },
+        { "if": { "type": "object", "properties": { "v": { "enum": [2, 3] } }, "required": ["v"] },
           "then": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding_v2" } } } },
-          "else": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } } } } }
+          "else": { "type": "object", "properties": { "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } } } } },
+        { "if": { "type": "object", "properties": { "delegate": true }, "required": ["delegate"] },
+          "then": { "type": "object", "properties": { "v": { "const": 3 }, "state": { "const": "attempt" } } } },
+        { "if": { "type": "object", "properties": { "delegate": { "type": "object", "properties": { "outcome": { "const": "credited" } }, "required": ["outcome"] } }, "required": ["delegate"] },
+          "then": { "type": "object", "properties": { "attempt_outcome": { "const": "completed" } } } },
+        { "if": { "type": "object", "properties": { "delegate": { "type": "object", "properties": { "outcome": { "const": "fell-back" } }, "required": ["outcome"] } }, "required": ["delegate"] },
+          "then": { "type": "object", "properties": { "attempt_outcome": { "const": "failed" } } } }
       ],
       "properties": {
         "v": true, "stage": true, "session_id": true, "event_id": true,
@@ -177,13 +204,14 @@
         "attempt_outcome": { "type": "string", "enum": ["completed", "failed", "partial"] },
         "findings": { "type": "array", "maxItems": 256 },
         "model_context": { "$ref": "#/definitions/model_context" },
+        "delegate": { "$ref": "#/definitions/delegate" },
         "voice_status": { "type": "string", "enum": ["completed", "not-applicable"] },
         "selected_attempt_id": { "$ref": "#/definitions/uuid" },
         "na_reason": { "type": "string", "enum": ["not-applicable", "user-deferred"] },
         "context": { "$ref": "#/definitions/context_override" }
       },
       "required": ["pass_id", "scope", "state"],
-      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 findings are finding_v2. Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
+      "description": "v=1 findings are the closed finding shape (found_by or attribution_reason on one is invalid); v=2 and v=3 findings are finding_v2. Only a v=3 attempt may carry delegate (the provider a delegated specialist part ran through). Per-state required/forbidden fields are enforced by the helper and documented in docs/telemetry.md: started requires required_voice_ids; attempt requires voice/attempt/predecessor/outcome and findings exactly when completed (empty means zero); voice-complete is exactly one of completed+selected_attempt_id or not-applicable+na_reason; completed takes no extra fields."
     },
     "correction_request": {
       "type": "object", "additionalProperties": false,
@@ -228,8 +256,8 @@
     },
     "unknown_reason": {
       "type": "string",
-      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts"],
-      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase, more distinct finding parts in one scope than the read reports) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
+      "enum": ["malformed-record", "partial-tail", "event-conflict", "missing-begin", "missing-end", "missing-reference", "conflicting-terminal", "competing-correction", "incomplete-pass", "cross-candidate", "clock-invalid", "open-wait", "unrecorded-work", "too-many-parts", "too-many-providers"],
+      "description": "Why a read summary left a value unknown. malformed-record, partial-tail, event-conflict, missing-begin, missing-reference, conflicting-terminal, competing-correction and cross-candidate make the read partial; the rest (an in-progress run, a paused wait, a backward clock, work recorded only as a phase, more distinct finding parts in one scope, or more distinct delegate providers in one run, than the read reports) leave it ok. See docs/telemetry.md#workflow-metrics-unknown."
     },
     "diagnostics": {
       "type": ["object", "null"], "additionalProperties": false,
