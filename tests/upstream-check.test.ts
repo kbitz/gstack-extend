@@ -16,8 +16,8 @@ const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
 const CHECKS = 88; // root, 6 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 16 delegate + 13 fold + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
-// Each check builds a fixture tree under `scratch`; removing them all can outlast Bun's 5 s default hook timeout on a loaded machine.
-afterAll(() => rmSync(scratch, { recursive: true, force: true }), 10000);
+// Each check builds a fixture tree under `scratch`; cleanup took 17.4 s under load, so allow 30 s for removal.
+afterAll(() => rmSync(scratch, { recursive: true, force: true }), 30000);
 let counter = 0;
 const fresh = (label: string) => { const dir = join(scratch, `${label}-${counter++}`); mkdirSync(dir, { recursive: true }); return dir; };
 const put = (path: string, body: string) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, body); };
