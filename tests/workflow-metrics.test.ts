@@ -2321,10 +2321,26 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     }
   }, 60_000);
 
+  // Coverage audit (/ship Step 7, Track 64C).
+  // Value: protects=incomplete passes retain delegate usage but leave finding counts unknown;
+  // fails_when=an incomplete pass reports zero findings or discards observed delegate usage;
+  // why_new=the existing integrity case only checks that the whole delegate block is null;
+  // seam=none; no_claim=real provider acceptance (synthetic ledger; real metrics reader).
   test('the delegated block is null under an integrity unknown, and its finding counts are null when the local findings are unknown', () => {
     const fix = makeTelemetryFixture('community');
     const sid = 'extend-' + u();
     const pass = passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate(), findings: [att('T1', ['specialist:testing'])] }] }]);
+    // An unfinished pass has valid observed spend, but no selected findings can be counted yet.
+    craft(fix, sid, [...runRows(sid).rows, ...pass.rows.filter(row => row.request.state !== 'completed')]);
+    const incomplete = read(fix, sid).envelope.data;
+    expect(incomplete.capture).toBe('ok');
+    expect(incomplete.unknown_reasons).toContain('incomplete-pass');
+    expect(incomplete.findings).toBeNull();
+    expect(incomplete.delegated).toEqual({
+      alpha: { attempts: 1, credited: 1, fell_back: 0, by_reason: {}, wall_ms: 1200, input_tokens: 100,
+        output_tokens: 50, cache_read_input_tokens: 10, cache_creation_input_tokens: 5, tokens_unreported: 0,
+        reported: null, accepted: null, rejected: null },
+    });
     // a correction that names no recorded finding is a missing reference: the read is partial and delegated is null
     craft(fix, sid, [...runRows(sid).rows, ...pass.rows,
       { op: 'correction', at: 2100, request: { ...base(sid), correction_kind: 'finding', finding_id: 'NOPE', pass_id: pass.passId, adjudication: 'rejected', resolution: 'unknown' } }]);
