@@ -374,7 +374,7 @@ argument, while this command resolves symlinks, so a symlinked nested layout
 Two anchors drift against installed gstack 1.94.39.0 (revision
 `f8085aa0e499085c411f712d6d5c00a81d1b104a`), and this extension does not
 requalify them. `delegate=<part>` and `specialists=fold` stay off on that
-install. Each is still listed in the tables above at its older revision.
+install. Each is still listed in the Inspected revisions table below at its older revision.
 
 - **Anchors:** `review-and-prep.delegate.review.1` and
   `review-and-prep.fold.review.1`. They share one combine line in the nested
