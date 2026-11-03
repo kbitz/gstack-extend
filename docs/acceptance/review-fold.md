@@ -56,9 +56,10 @@ Upstream's adaptive gating learns only from specialist dispatches.
 `gstack-specialist-stats` counts a specialist only when its log row records it as
 dispatched (`if (info.dispatched)`), and tags it `[GATE_CANDIDATE]` at ten or more
 dispatches with no findings. A folded review records no folded part as
-dispatched, so it adds no sample to any specialist's hit rate. A review-log row
-whose `specialists` object is present, even `{}`, still counts toward the
-reviewed total, so a folded review adds to that denominator and to nothing else.
+dispatched, so those checklist parts add no hit-rate sample. A Red Team that
+actually dispatches still contributes its own dispatch and findings sample. A
+review-log row whose `specialists` object is present, even `{}`, also counts
+toward the reviewed total.
 
 ## Older producers
 
@@ -138,6 +139,12 @@ specialists dispatched and whether a Red Team ran (above) so the comparison
 states what each arm covered.
 
 ## Limits
+
+- Under `in-cap=delta`, a folded finding is a main-pass finding, so its repair
+  does not force-dispatch the corresponding specialist in a later cycle. The
+  dispatch arm does force-dispatch a specialist whose finding was fixed.
+  Ordinary scope selection still applies in both arms; record later-cycle
+  selections and force-dispatches when comparing accepted and missed findings.
 
 - Review Army's selection, its State Machines and Design steps and the Red Team
   dispatch mechanics are used as written but are not anchored: only the nested

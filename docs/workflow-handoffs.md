@@ -955,7 +955,8 @@ dispatched. The value waives no gate and never authorizes a continuation. While 
 anchors it relies on drift, cycle 1 dispatches specialists as today and the receipt
 says so. The policy grammar is v1 with fixed keys: an older producer that does not
 know the value falls back as stated above, and upstream's adaptive gating statistics
-learn only from specialist dispatches, so a folded review adds no sample. See the
+learn only from specialist dispatches, so folded checklist parts add no sample;
+a dispatched Red Team still adds its own sample. See the
 [fold record](acceptance/review-fold.md).
 
 A prepared receipt that records a folded first cycle still emits `review: COMPLETE` in

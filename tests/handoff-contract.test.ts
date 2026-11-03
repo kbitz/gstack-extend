@@ -2286,7 +2286,7 @@ describe('(I) specialists=fold', () => {
       'The value waives no gate and never authorizes a continuation.',
       'While the anchors it relies on drift, cycle 1 dispatches specialists as today and the receipt says so.',
       'The policy grammar is v1 with fixed keys: an older producer that does not know the value falls back as stated above',
-      "upstream's adaptive gating statistics learn only from specialist dispatches, so a folded review adds no sample",
+      "upstream's adaptive gating statistics learn only from specialist dispatches, so folded checklist parts add no sample; a dispatched Red Team still adds its own sample",
       '`final-gate-repair` (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`)']) {
       expect(has(doc, phrase), phrase).toBe(true);
     }

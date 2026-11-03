@@ -852,8 +852,7 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   `Review policy: none supplied` with the reason `specialists=fold excludes
   delegate=`, so no part is reviewed twice or not at all. An installation
   without the value reads the whole line as `none supplied`, so a caller first
-  checks the loaded copy with `grep -F 'specialists=fold'
-  "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the
+  checks the loaded copy with `grep -F 'specialists=fold' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the
   value otherwise, keeping its other keys. The value waives no gate and never
   authorizes a continuation.
 - `test-gaps=record` (its only value) is opt-in. A test-gap finding with no
@@ -1327,10 +1326,10 @@ change, record that there and stop; never edit an upstream file.
 - **Log and gating.** No folded part is ever recorded as dispatched.
   `/review`'s `specialists` object names only parts actually dispatched (the Red
   Team when it ran) and is `{}` with none, as the host-omits-Review-Army lines
-  above state, so upstream's adaptive gating learns nothing from a folded
-  review.
-- **Red Team, restated.** Where the host's `/review` carries a Red Team, it runs
-  when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no
+  above state. Folded checklist parts add no dispatch sample to upstream's
+  adaptive gating; a dispatched Red Team still adds its own sample.
+- **Red Team, restated.** Where the host's `/review` carries a Red Team (including
+  sections resolved from its source installation in Step 1), it runs when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no
   specialist dispatch exists to produce one. It is dispatched as `/review`
   defines it, and the folded findings are the "already caught" list it is given.
   On a bounded-wait host it is an activated pass stage, as **Hosts with bounded
@@ -1340,7 +1339,9 @@ change, record that there and stop; never edit an upstream file.
   skips, the cap, the stop, `converged`/`cycles` and the completion matrix all
   stay as they are.
 - **Activation check.** At Step 1, check every anchor above against the
-  installed files, from the same root as Step 1's `/review`. A changed anchor
+  installed files: the review file Step 1 resolved, and checklists under the
+  gstack root in both layouts (not the sibling `gstack-review` skill directory).
+  A changed anchor
   records `Review arm: dispatch — anchor changed (<which>)`, cycle 1 runs as
   today, and no upstream file is edited.
 - **Receipt lines,** written only when the policy carries the value:

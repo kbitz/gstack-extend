@@ -805,7 +805,7 @@ describe('drift', () => {
     ...FOLD_NAMES.map((name) => [layout, name, 0] as const),
   ]);
   // Value: protects=a changed fold anchor in either layout is drift naming its own ID and the fold effect, with every inventory still OK; fails_when=a changed anchor passes, reports another gate's effect or drifts an unrelated neighbor; why_new=sixth upstream gate across ten files and two layouts; seam=none
-  test.each(FOLD_PICKS)('a changed anchor in the %s layout\'s fold %s list (anchor %#) is drift with the fold effect', async (layout, list, at) => {
+  test.each(FOLD_PICKS)('a changed anchor in the %s layout\'s fold %s list (zero-based anchor %i) is drift with the fold effect', async (layout, list, at) => {
     const f = upstream(layout);
     const path = foldFile(f, list);
     const anchor = (list === 'review' ? FOLD.review : FOLD.checklists[list])[at]!;
@@ -861,6 +861,7 @@ describe('drift', () => {
     expect(r.lines.filter((l) => l.startsWith('OK anchor review-and-prep.fold.'))).toHaveLength(FOLD_ANCHORS);
   }, 30000);
 
+  // Value: protects=missing roots never pass fold anchors while the local inventory remains readable; fails_when=unavailable upstream files receive OK; why_new=fold root-failure contract; seam=none
   test('a missing root leaves the fold inventory OK and every fold anchor not run', async () => {
     const r = await check(['--gstack-root', join(scratch, 'does-not-exist-fold')]);
     expect(r.lines).toContain('OK inventory review-and-prep.fold');
