@@ -2333,11 +2333,11 @@ the receipt says why.
 
 **Activation (narrowed pregate).** Apply this section only while the installed
 `bin/gstack-pregate` still contains, byte for byte,
-`--stage preflight|tests|all   default all`
+`--stage preflight|tests|guards|all   default all`
 and `--explain                     print each selected test's provenance and each uncertain mapping`,
 its `lib/pregate/index.ts` still contains, byte for byte,
 `export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];`
-and `const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));`,
+and `const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));`,
 and its `lib/pregate/checks/lanes.ts` still contains, byte for byte,
 `export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',`
 `status: 'incomplete', code: 'REPO_COMMANDS_NOT_ALLOWED'`

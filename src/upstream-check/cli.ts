@@ -25,7 +25,7 @@ export const FIX_FIRST_QUALIFIED = { revision: '959c8a6a4fdafabf1186e407b76082b7
 export const TEST_GAP_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
 
 /** Upstream revision at which the anchors behind the narrowed pregate (`full-suite=external`) were qualified in both layouts. */
-export const PREGATE_NARROW_QUALIFIED = { revision: '41a67b996d8bbf2167996683953dd2d7cd387d64', version: '1.91.367.0' } as const;
+export const PREGATE_NARROW_QUALIFIED = { revision: 'f8085aa0e499085c411f712d6d5c00a81d1b104a', version: '1.94.39.0' } as const;
 
 /** Upstream revision at which the anchors behind the secret-finding location grammar were qualified in both layouts. */
 export const FINDING_LOCATION_QUALIFIED = { revision: '2512dd7624a474fee036326989ea0c6bb8470e69', version: '1.92.55.0' } as const;

@@ -1687,10 +1687,10 @@ describe('review-and-prep narrowed pregate', () => {
   test('the activation paragraph lists the nine anchors in three lists', () => {
     const paragraph = narrowRaw.slice(narrowRaw.indexOf('**Activation (narrowed pregate).**')).split('\n\n')[0]!;
     const anchors = [
-      '--stage preflight|tests|all   default all',
+      '--stage preflight|tests|guards|all   default all',
       "--explain                     print each selected test's provenance and each uncertain mapping",
       'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
-      "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
+      "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
       "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',",
       "status: 'incomplete', code: 'REPO_COMMANDS_NOT_ALLOWED'",
       "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'",
@@ -1707,7 +1707,7 @@ describe('review-and-prep narrowed pregate', () => {
     const flatParagraph = paragraph.replace(/\s+/g, ' ');
     expect(flatParagraph).toContain('Check each with `grep -F` here, at the accepted pass,');
     expect(flatParagraph).toContain('confirm each occurs once (`grep -cF` prints 1)');
-    expect(paragraph).toContain("`--stage preflight|tests|all   default all`");
+    expect(paragraph).toContain("`--stage preflight|tests|guards|all   default all`");
     expect(paragraph).toContain("`status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'`");
     expect(paragraph).toContain("`selection: sha256(sel.tests.join('\\n'))`");
     expect(paragraph).toContain('and `file set unknown`.');

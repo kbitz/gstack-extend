@@ -297,12 +297,12 @@ describe('pregate-narrowing inventory', () => {
   // Value: protects=the activation paragraph's three anchor lists, in their three installed pregate files; fails_when=a span is added, dropped or moved between files unnoticed; why_new=a narrowed pregate gates on upstream text; seam=none
   test('locks the pregate-narrowing anchors exactly', () => {
     expect(PREGATE_NARROW.bin).toEqual([
-      '--stage preflight|tests|all   default all',
+      '--stage preflight|tests|guards|all   default all',
       "--explain                     print each selected test's provenance and each uncertain mapping",
     ]);
     expect(PREGATE_NARROW.index).toEqual([
       'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];',
-      "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
+      "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
     ]);
     expect(PREGATE_NARROW.lanes).toEqual([
       "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',",
@@ -886,10 +886,10 @@ describe('drift', () => {
   const narrowFile = (f: Fixture, file: 'bin' | 'index' | 'lanes') => f.files[`pregate${file[0]!.toUpperCase()}${file.slice(1)}`]!;
   // Value: protects=each installed pregate file's narrowing drift names its stage cost and docs link, and leaves every other gate OK; fails_when=a changed anchor passes, reports another gate's effect or turns another gate off; why_new=fourth upstream gate across three files and two layouts; seam=none
   test.each([
-    ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1', '--stage preflight|tests|all   default all'],
+    ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1', '--stage preflight|tests|guards|all   default all'],
     ['sibling', 'bin', 'review-and-prep.pregate-narrowing.bin.2', "--explain                     print each selected test's provenance and each uncertain mapping"],
     ['nested', 'index', 'review-and-prep.pregate-narrowing.index.1', 'export const CHECKS: readonly CheckDef[] = [regenCheck, secretsCheck, straysCheck, literalsCheck, timingCheck, guardsCheck, lanesCheck];'],
-    ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2', "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));"],
+    ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2', "const selected = o.stage === 'guards' ? CHECKS.filter(c => (PREPUSH_CHECK_IDS as readonly string[]).includes(c.id)) : CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));"],
     ['nested', 'lanes', 'review-and-prep.pregate-narrowing.lanes.1', "export const lanesCheck: CheckDef = { id: 'lanes', stage: 'tests',"],
     ['sibling', 'lanes', 'review-and-prep.pregate-narrowing.lanes.3', "status: 'fail', cause: 'diff', code: 'PREGATE_NO_LANE'"],
     ['nested', 'lanes', 'review-and-prep.pregate-narrowing.lanes.5', 'file set unknown'],
@@ -916,6 +916,37 @@ describe('drift', () => {
     expect(r.out).not.toContain('the in-cap delta is inactive');
     expect(r.out).not.toContain('repair-review=behavior-changing is inactive');
     expect(r.out).not.toContain('test-gaps=record is inactive');
+  }, 30000);
+
+  const OLD_PREGATE_NARROW = {
+    'review-and-prep.pregate-narrowing.bin.1': '--stage preflight|tests|all   default all',
+    'review-and-prep.pregate-narrowing.index.2': "const selected = CHECKS.filter(c => (o.stage === 'all' || c.stage === o.stage) && (!o.only || o.only.includes(c.id)));",
+  } as const;
+  // Value: protects=the requalified pregate anchors (the guards stage) report OK on the installed text and DRIFT on the 1.91.367.0 text, in both layouts, as longer spans that do not contain the old ones; fails_when=an anchor is re-loosened to a shorter or contained match, or the old text still passes; why_new=upstream added a guards stage in 1.94.27.0; seam=none
+  test.each([
+    ['nested', 'bin', 'review-and-prep.pregate-narrowing.bin.1'],
+    ['sibling', 'bin', 'review-and-prep.pregate-narrowing.bin.1'],
+    ['nested', 'index', 'review-and-prep.pregate-narrowing.index.2'],
+    ['sibling', 'index', 'review-and-prep.pregate-narrowing.index.2'],
+  ] as const)('requalified anchor in the %s layout\'s pregate %s file: OK on the new text, DRIFT on the old (%s)', async (layout, file, id) => {
+    const old = OLD_PREGATE_NARROW[id];
+    const current = file === 'bin' ? PREGATE_NARROW.bin[0]! : PREGATE_NARROW.index[1]!;
+    expect(current.length).toBeGreaterThan(old.length);
+    expect(current.includes(old)).toBe(false);
+    const ok = await check(rootArgs(upstream(layout)));
+    expect(ok.lines).toContain(`OK anchor ${id}`);
+    const f = upstream(layout);
+    const path = narrowFile(f, file);
+    const before = readFileSync(path, 'utf8');
+    expect(before.split(current)).toHaveLength(2);
+    writeFileSync(path, before.replace(current, old));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    const at = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
+    expect(at).toBeGreaterThan(-1);
+    expect(r.lines[at + 1]).toBe(NARROW_EFFECT);
   }, 30000);
 
   // Value: protects=a missing installed pregate file drifts exactly its own anchors, with a path-naming reason, in both layouts; fails_when=a missing file passes, drifts another file's anchors or reads the wrong layout path; why_new=three new installed files; seam=none
@@ -1081,6 +1112,33 @@ describe('drift', () => {
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
+  }, 30000);
+
+  // Value: protects=the requalified dx native copy reports OK on the installed wording and DRIFT on the 1.91.176.0 wording, in both layouts; fails_when=the copy keeps the old wording or the old wording passes; why_new=upstream trimmed the dx error-contract item in 1.92.50.0; seam=none
+  test.each(['nested', 'sibling'] as const)('criteria: the dx native copy is OK on the installed text and drift on the 1.91.176.0 text in the %s layout', async (layout) => {
+    const ok = await check(rootArgs(upstream(layout)));
+    expect(ok.lines).toContain('OK criteria criteria.dx.native');
+    const substitutions: [string, string, number][] = [
+      ['or what a human must provide', 'or the precise thing a human must provide', 1],
+      ['failure naming no non-interactive', 'failure that names no non-interactive', 1],
+      ['caps Error Messages at 4/10', 'caps the Error Messages score at 4/10', 1],
+      [':<item> <what fails>"', ':<item>"', 2],
+    ];
+    let old = NATIVE_CRITERIA.dx;
+    for (const [from, to, count] of substitutions) {
+      expect(old.split(from).length - 1).toBe(count);
+      old = old.split(from).join(to);
+    }
+    const f = upstream(layout);
+    const path = join(f.root, 'bin', 'gstack-autoplan-snapshot.ts');
+    const before = readFileSync(path, 'utf8');
+    expect(before.split(NATIVE_CRITERIA.dx)).toHaveLength(2);
+    writeFileSync(path, before.replace(NATIVE_CRITERIA.dx, old));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(drifts(r.lines).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['criteria criteria.dx.native']);
   }, 30000);
 
   test('criteria: a changed native criterion, a missing paragraph and a missing section are drift', async () => {
@@ -1818,6 +1876,16 @@ describe('docs and wiring', () => {
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];
+  // Value: protects=the documents say why the delegation and fold review anchors stay unqualified; fails_when=the subsection or its named IDs and blocking item are dropped; why_new=the combine-line drift was left unqualified on purpose; seam=none
+  test('the documents record the delegation and fold review anchors as left unqualified', () => {
+    const at = docs.indexOf('### Anchors left unqualified');
+    expect(at).toBeGreaterThan(-1);
+    const section = docs.slice(at, docs.indexOf('\n## ', at));
+    expect(section).toContain('review-and-prep.delegate.review.1');
+    expect(section).toContain('review-and-prep.fold.review.1');
+    expect(section).toContain('specialists-dispatched');
+  });
+
   test('the documents state the same inspected revisions as the constants', () => {
     expect(revisions(docs)).toEqual(expectedRevisions);
     expect(outside).toContain(INSPECTED_UPSTREAM.revision);

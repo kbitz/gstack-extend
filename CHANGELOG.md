@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.1] - 2026-11-03
+
+### Changed
+
+- `docs/upstream-check.md` and `docs/roadmap-future.md` now describe the upstream qualification for gstack 1.94.39.0.
+
+### Fixed
+
+- `review-and-prep`, autoplan-lean, and `upstream-check` use upstream anchors requalified against gstack 1.94.39.0.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+
 ## [0.63.0] - 2026-11-03
 
 ### Added
