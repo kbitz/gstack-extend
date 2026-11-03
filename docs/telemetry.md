@@ -473,8 +473,10 @@ explicit finish for that session, which can then write again.
 Optional local step/pass measurement for `/review-and-prep` and
 `/ship-and-land` (Track 24A). It answers which phases ran, were reused, waited,
 retried or needed corrections within one invocation. It does not select
-models, change any review or release gate, trigger Greptile, or collect token
-usage (usage attribution and the efficiency study are later Tracks). Schema:
+models, change any review or release gate, or trigger Greptile. Delegated
+attempts can record provider-reported token usage; unreported counts stay
+unknown, and broader usage attribution and the efficiency study remain later
+work. Schema:
 [workflow-metrics.schema.json](workflow-metrics.schema.json). Target: from an
 installed checkout to a first understood summary in at most five minutes using
 the quickstart below (a target, not measured first-user evidence; rehearsed

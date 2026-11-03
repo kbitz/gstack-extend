@@ -12,8 +12,9 @@ command and a model name, and the examples use placeholders.
 
 Four parts can be delegated: `testing`, `maintainability`, `performance` and
 `simplification`. Security, Red Team, state-machines, the native adversarial
-pass, the outside voices and the documentation and coverage audits always stay on
-the host model. A policy value that names any other part is an unknown value, so
+pass, the outside voices and the documentation and coverage audits are not
+delegable under this option and retain their existing routes. A policy value
+that names any other part is an unknown value, so
 the whole policy line reads `none supplied` with the reason `delegate: <name> is
 not delegable`, as for any unknown value.
 
@@ -157,8 +158,10 @@ one, loaded through the same helper list as the outside adapter.
 
 ## Fallback
 
-A part runs on the host model instead when its delegate cannot be credited. The
-first match wins:
+A part runs on the host model instead when its delegate cannot be credited.
+A detected work-tree change takes precedence over the other reasons and stops
+the review before any commit; host coverage remains incomplete until those
+parts actually run on the host. Otherwise, the first matching reason wins:
 
 | Reason | Cause |
 |---|---|

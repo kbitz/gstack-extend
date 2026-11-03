@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "workflow-metrics",
   "title": "gstack-extend workflow-metrics record (Track 24A; v2 attributed pass findings, Track 57A; v3 delegated attempts, Track 64C)",
-  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper and every operation stay v1 except `pass`, whose request may be v2 (findings name the part that reported them). See docs/telemetry.md#workflow-metrics.",
+  "description": "One line of a local per-run workflow-metrics ledger (analytics/workflow-metrics/<sha256(session_id)>.jsonl) written by `gstack-extend-telemetry metrics`. Local only; never uploaded. Wall durations derived from captured_at_ms are utc-wall and clock-sensitive; qualified elapsed is unavailable in v1. The record wrapper and every operation stay v1 except `pass`, whose request may be v2 (findings name the part that reported them) or v3 (delegated attempts). See docs/telemetry.md#workflow-metrics.",
   "$comment": "Records, requests, contexts and findings set additionalProperties false: an unknown key is invalid input, not a forward-compatible extension. A shape or meaning change adds a new v branch and keeps v1 readable as partial/unknown, never reinterpreted.",
   "$ref": "#/definitions/record",
   "definitions": {
