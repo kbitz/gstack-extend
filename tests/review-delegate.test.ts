@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { recover } from '../src/outside-review/recovery';
 import { delegateInventory } from '../src/upstream-check/cli';
 import {
-  CONFIG_SCHEMA, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, REFUSAL_REASONS, parseFindings, readReply, validateConfig,
+  CONFIG_SCHEMA, FALLBACK_REASONS, PART_KEYS, PARTS, RECEIPT_KEYS, REFUSAL_REASONS, decide, parseFindings, readReply, validateConfig,
 } from '../src/review-delegate/delegate';
 
 const REPO = join(import.meta.dir, '..');
@@ -83,7 +83,7 @@ if (mode === 'findings') console.log(envelope(finding('CRITICAL', '[P1]') + '\\n
 else if (mode === 'plain') console.log(finding('CRITICAL', '[P0]') + '\\n' + rec);
 else if (mode === 'clean') console.log(envelope('NO_FINDINGS: none\\nRecommendation: merge because nothing is wrong.', { input_tokens: 90, output_tokens: 4 }));
 else if (mode === 'exit') { console.error('STDERR-MARKER boom'); process.exit(3); }
-else if (mode === 'sleep') await new Promise((resolve) => setTimeout(resolve, 5000));
+else if (mode === 'sleep') { writeFileSync(join(state, 'pid.txt'), String(process.pid)); await new Promise((resolve) => setTimeout(resolve, 5000)); }
 else if (mode === 'refusal') console.log('I cannot review this.\\nRecommendation: none because I refuse.');
 else if (mode === 'needs-context') console.log('NEEDS_CONTEXT: the callers of changed.txt\\nNO_FINDINGS: none\\nRecommendation: wait because callers are missing.');
 else if (mode === 'uncredited') console.log('Looks fine to me.\\nRecommendation: merge because it reads well.');
@@ -93,6 +93,7 @@ else if (mode === 'missing-field') console.log('[P1] {"severity":"CRITICAL","pat
 else if (mode === 'is-error') console.log(JSON.stringify({ result: 'NO_FINDINGS: none\\nRecommendation: merge because clean.', usage: {}, is_error: true }));
 else if (mode === 'overflow') process.stdout.write('x'.repeat(1024 * 1024 + 4096));
 else if (mode === 'write') { writeFileSync(join(readFileSync(join(state, 'repo.txt'), 'utf8'), 'leak.txt'), 'x'); console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
+else if (mode === 'rewrite') { writeFileSync(readFileSync(join(state, 'target.txt'), 'utf8'), 'after\\n'); console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.'); }
 else if (mode === 'inspect') {
   writeFileSync(join(state, 'inspect.json'), JSON.stringify({ cwd: process.cwd(), entries: readdirSync(process.cwd()), env: Object.keys(process.env), prompt }));
   console.error('STDERR-MARKER inspected');
@@ -305,11 +306,13 @@ describe('run', () => {
 
   test('a delegate that outlives its timeout is killed and falls back with reason timeout', () => {
     const s = setup('sibling', { alpha: { mode: 'sleep', timeout_s: 1 } }, { testing: 'alpha' });
-    const started = Date.now();
     const r = cli(runArgs(s, 'testing'));
     expect(r.status).toBe(4);
     expect(row(r.json, 'testing')).toMatchObject({ outcome: 'fell-back', fallback_reason: 'timeout' });
-    expect(Date.now() - started).toBeLessThan(4500); // killed at about 1 s, not left to finish its 5 s sleep
+    const pid = Number(readFileSync(join(s.state, 'pid.txt'), 'utf8'));
+    let code: string | undefined;
+    try { process.kill(pid, 0); } catch (error) { code = (error as NodeJS.ErrnoException).code; }
+    expect(code).toBe('ESRCH'); // the owned child has exited; no scheduling-dependent elapsed bound
   }, 30_000);
 
   test('a claim without a result is unresolved-claim and makes no call', () => {
@@ -333,6 +336,40 @@ describe('run', () => {
       expect(row(r.json, part)).toMatchObject({ outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [] });
     }
     expect(readFileSync(join(s.repo, 'leak.txt'), 'utf8')).toBe('x'); // nothing is reverted
+  });
+
+  // Value: protects=the read-only guard detects bytes even when porcelain status stays unchanged; fails_when=dirty files are rewritten unnoticed; why_new=review F1; seam=real temporary git repository
+  test.each(['changed.txt', 'already-untracked.txt'])('review regression: changing %s bytes with unchanged status stops the run', (name) => {
+    const s = setup('nested', { alpha: { mode: 'rewrite' } }, { testing: 'alpha' });
+    const target = join(s.repo, name);
+    put(target, 'before\n');
+    put(join(s.state, 'target.txt'), target);
+    const before = git(s.repo, 'status', '--porcelain=v1', '-z').stdout;
+    const r = cli(runArgs(s, 'testing'));
+    expect(git(s.repo, 'status', '--porcelain=v1', '-z').stdout).toBe(before);
+    expect([r.status, row(r.json, 'testing').fallback_reason]).toEqual([1, 'worktree-changed']);
+    expect(readFileSync(target, 'utf8')).toBe('after\n');
+  });
+
+  // Value: protects=discarded responses never regain coverage on replay; fails_when=the raw saved response is credited after a mutation stop; why_new=review F2; seam=runner persistence
+  test('review regression: worktree-changed remains disqualified on replay without another call', () => {
+    const s = setup('nested', { alpha: { mode: 'write' }, beta: { mode: 'clean' } }, { testing: 'alpha', maintainability: 'beta' });
+    const first = cli(runArgs(s, 'testing,maintainability'));
+    expect(first.status).toBe(1);
+    const second = cli(runArgs(s, 'testing,maintainability'));
+    expect(second.status).toBe(1);
+    for (const part of ['testing', 'maintainability']) expect(row(second.json, part)).toMatchObject({ replay: true, dispatched: false, outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [] });
+    expect(spawns(s).sort()).toEqual(['clean', 'write']);
+  });
+
+  // Value: protects=local launch failures preserve one result per requested part and the no-resend claim; fails_when=temporary cwd creation rejects the aggregate; why_new=review F7; seam=invalid temporary directory
+  test('review regression: an unusable temporary root returns failed parts instead of losing the aggregate', () => {
+    const s = setup('nested', { alpha: { mode: 'clean' } }, { testing: 'alpha', maintainability: 'alpha' });
+    const r = cli(runArgs(s, 'testing,maintainability'), { TMPDIR: join(s.state, 'missing', 'temp') });
+    expect(r.status).toBe(4);
+    expect(r.json.parts).toHaveLength(2);
+    for (const part of r.json.parts) expect(part).toMatchObject({ outcome: 'fell-back', fallback_reason: 'failed' });
+    expect(spawns(s)).toEqual([]);
   });
 
   test('a moved HEAD during the calls is also a work-tree change', () => {
@@ -405,6 +442,7 @@ console.log('NO_FINDINGS: none\\nRecommendation: merge because clean.');
     expect(seen.prompt).not.toContain('CHECKLIST-MARKER-maintainability');
     expect(seen.prompt).not.toContain('REPO-ONLY-MARKER');
     expect(seen.prompt).toContain(JSON.stringify({ part: 'testing', base: s.base, candidate: s.candidate }));
+    expect(seen.prompt).toContain("These response-format instructions override the checklist's output-format instructions");
     expect(seen.prompt).not.toContain(s.repo);
     expect(seen.prompt).not.toContain(s.config);
   });
@@ -443,13 +481,36 @@ describe('reply parsing and the receipt contract', () => {
     expect(readReply('{"result":"x","is_error":true}').isError).toBe(true);
   });
 
-  test('parseFindings skips fenced lines and requires every label line to parse', () => {
+  test('parseFindings rejects unparsed content and requires every label line to parse', () => {
     const line = (label: string, severity: string) => `${label} ${JSON.stringify({ severity, confidence: 5, path: 'a.ts', category: 'testing', summary: 's' })}`;
-    expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n\`\`\`\n[P1] not json\n\`\`\`\nprose [P1] inside a sentence`, 'testing')).toMatchObject({ ok: true, findings: [{ severity: 'INFORMATIONAL', specialist: 'testing' }] });
-    expect(parseFindings(`${line('[P0]', 'CRITICAL')}\n- ${line('[P3]', 'INFORMATIONAL')}`, 'simplification')).toMatchObject({ ok: true, findings: [{ specialist: 'simplification' }, { severity: 'INFORMATIONAL' }] });
+    expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n\`\`\`\n[P1] not json\n\`\`\`\nprose [P1] inside a sentence`, 'testing')).toEqual({ ok: false });
+    expect(parseFindings(`${line('[P0]', 'CRITICAL')}\n${line('[P3]', 'INFORMATIONAL')}`, 'testing')).toMatchObject({ ok: true, findings: [{ specialist: 'testing' }, { severity: 'INFORMATIONAL' }] });
     for (const bad of [line('[P1]', 'INFORMATIONAL'), line('[P3]', 'CRITICAL'), '[P1]', '[P1] []', '[P1] {"severity":"CRITICAL","confidence":11,"path":"a","category":"c","summary":"s"}',
       '[P1] {"severity":"CRITICAL","confidence":5,"path":"","category":"c","summary":"s"}', `${line('[P1]', 'CRITICAL').slice(0, -1)},"line":0}`, `${line('[P1]', 'CRITICAL').slice(0, -1)},"fix":3}`]) {
       expect(parseFindings(`${line('[P2]', 'INFORMATIONAL')}\n${bad}`, 'testing')).toEqual({ ok: false });
+    }
+  });
+
+  // Value: protects=upstream decision metadata survives transport without severity downgrades; fails_when=advice becomes an automatic defect fix or cause/evidence identity is lost; why_new=review F3; seam=upstream finding schema
+  test('review regression: finding metadata is preserved and malformed metadata is refused', () => {
+    const value = { severity: 'INFORMATIONAL', confidence: 8, path: 'a.ts', category: 'shrink', summary: 's', advisory: true,
+      lines_removable: 12, evidence_paths: ['a.ts', 'b.ts'], helper_target: { path: 'shared.ts', symbol: 'helper' }, cause: { path: 'c.ts', line: 3 } };
+    const parse = (v: any, part: 'testing' | 'simplification' = 'simplification', label = '[P2]') => parseFindings(`${label} ${JSON.stringify(v)}`, part);
+    expect(parse(value)).toEqual({ ok: true, findings: [{ ...value, specialist: 'simplification' }] });
+    expect(parse({ ...value, severity: 'CRITICAL' }, 'testing', '[P1]')).toMatchObject({ ok: true, findings: [{ severity: 'CRITICAL', advisory: true }] });
+    expect(parse({ ...value, severity: 'CRITICAL' }, 'simplification', '[P1]')).toEqual({ ok: false });
+    for (const patch of [{ advisory: 'true' }, { advisory: false }, { lines_removable: 1.5 }, { evidence_paths: [2] },
+      { helper_target: { path: 'x' } }, { cause: { path: 'x', line: 0 } }]) expect(parse({ ...value, ...patch })).toEqual({ ok: false });
+  });
+
+  // Value: protects=no credited reply loses unsupported finding text; fails_when=an upstream clean verdict or one valid line hides other findings; why_new=review F4; seam=classifier and strict parser
+  test('review regression: partially parseable credited replies fall back without dropping findings', () => {
+    const valid = '[P3] {"severity":"INFORMATIONAL","confidence":8,"path":"a.ts","category":"testing","summary":"s"}';
+    const classify = () => ({ execution: { state: 'ran' }, findings: { highest: 'P2' }, verdict: 'clean' as const });
+    for (const reply of ['P2: unparsed prose', `${valid}\nP1: a blocking issue`, `${valid}\n\`\`\`\n[P1] hidden\n\`\`\``]) {
+      const result = decide('testing', { exit_code: 0, signal: null, timed_out: false, overflow: false, spawn_error: false,
+        stdout: `${reply}\nRecommendation: fix because defects remain.`, stderr: '', wall_ms: 1 }, classify as any);
+      expect(result).toMatchObject({ outcome: 'fell-back', fallback_reason: 'unparsed-finding', findings: [] });
     }
   });
 

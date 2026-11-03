@@ -1236,7 +1236,8 @@ or a `worktree-changed` result.
   instruction.
 - **`worktree-changed`.** A delegate must write nothing in the work tree. When
   the runner reports a change, stop before any commit, report the change to the
-  user and revert nothing; every part that call dispatched ran on the host.
+  user and revert nothing. Every dispatched result is discarded; host coverage
+  remains incomplete until those parts actually run on the host.
 
 Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's

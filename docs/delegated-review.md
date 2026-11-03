@@ -102,14 +102,20 @@ A delegated part is one bounded, read-only call:
   is recorded as the classifier's timeout code, 124), standard output capped at
   1 MiB and standard error at 64 KiB. One process per part, never retried with
   unchanged input.
-- **Work tree.** The runner records `git status --porcelain=v1 -z
-  --untracked-files=all` and HEAD before the calls and again after. Any change
+- **Work tree.** The runner hashes HEAD, `git status --porcelain=v1 -z
+  --untracked-files=all`, index entries and the bytes of tracked and nonignored
+  untracked files before the calls and again after. Symlinks contribute their
+  target text; they are never followed. Unreadable files or unsupported entries
+  (including submodule directories) refuse the run.
+  Any detected change
   discards the result of every part that call dispatched (`worktree-changed`),
   exits 1, and the review stops before any commit. Nothing is reverted.
 
 The call directory (`--calls`) is branch-scoped, private, outside the repository
 and kept across invocations of the branch. Each call writes a claim before it
-spawns and a result after; a saved result replays with no spawn, and a claim
+spawns and a result after the shared work-tree check; a saved result replays
+with no spawn. A result discarded for `worktree-changed` stays discarded on
+every replay and still exits 1. A claim
 without a result is `unresolved-claim` with no spawn. Never delete a claim or pick
 a fresh directory to retry.
 
@@ -120,12 +126,20 @@ The delegate returns, in this form:
 - one line per finding, `[P0|P1|P2|P3] <one JSON object in the checklist's
   schema>`: P0 and P1 for `severity` `CRITICAL`, P2 and P3 for `INFORMATIONAL`.
   Required fields are `confidence` (an integer from 1 to 10), `path`,
-  `category` and `summary`; `line`, `fix`, `fingerprint`, `evidence` and
-  `test_stub` are optional. The runner overwrites `specialist` with the part and
-  drops any other key;
+  `category` and `summary`; `line`, `fix`, `fingerprint`, `evidence`, `test_stub`,
+  `advisory`, `evidence_paths`, `helper_target` (`path` and `symbol`), `cause`
+  (`path` and positive `line`) and `lines_removable` are optional. These retain
+  their upstream meaning. Simplification findings require `INFORMATIONAL`
+  severity and `advisory: true`. The runner overwrites `specialist` with the
+  part and drops keys outside this schema;
 - a clean reply has `NO_FINDINGS: none` immediately before the closing
   `Recommendation: <action> because <reason>`;
 - a reply that lacks context returns `NEEDS_CONTEXT: <what>`.
+
+Blank lines are allowed; fences, prose or finding lines outside this form make
+the whole reply fall back, so a partially parsed reply never loses findings.
+These response-format instructions override the checklist's output-format
+directions while preserving its schema and review criteria.
 
 The upstream checklist's own plain JSON-line output is not credited by the
 installed classifier (it needs a `Recommendation: ... because ...` line and a
@@ -145,11 +159,11 @@ first match wins:
 |---|---|
 | `unresolved-claim` | An earlier call for the same input has a claim and no result. No call is made. |
 | `timeout` | The delegate ran past its configured timeout. |
-| `failed` | It could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
+| `failed` | Its temporary directory could not be created or cleaned up, it could not start, exited nonzero or by signal, produced more than 1 MiB, or reported `is_error`. |
 | `refused` | The installed classifier read the reply as a refusal. |
 | `needs-context` | The reply says `NEEDS_CONTEXT`. |
 | `uncredited` | The installed classifier did not credit the reply. |
-| `unparsed-finding` | A label line is not `[Pn] {json}` with the required fields, or the classifier saw findings the runner could not parse. |
+| `unparsed-finding` | Any reply content is outside the required form, a finding has malformed fields, or the classifier saw findings the runner could not parse. |
 | `worktree-changed` | The work tree or HEAD changed during the calls; applies to every part that call dispatched. |
 
 A fell-back part is never sent back to the delegate. Coverage is never lost
@@ -243,7 +257,9 @@ optimization, as SPEC P1 requires.
   allowlist, one process per part and a before-and-after work-tree check. It
   cannot see inside a configured command, so "starts no subagents and writes
   nothing" depends on that command's own configuration, and a write that lands
-  outside the work tree is not detected.
+  outside the work tree is not detected. Ignored files are outside the check.
+  A before-and-after snapshot
+  also cannot detect a write that is restored before the second snapshot.
 - After a normal exit the runner does not signal the command's process group, so
   a command that leaves a background process behind must clean it up itself.
 - Concurrent parts on one provider can hit its rate limit together and all fall

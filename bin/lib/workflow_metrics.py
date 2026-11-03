@@ -1030,7 +1030,7 @@ def _delegated(effective, finding_stats, unknown):
     for record in effective:
         req = record["request"]
         if record["op"] == "pass" and req["state"] == "attempt" and "delegate" in req:
-            attempts.setdefault(req["attempt_id"], req["delegate"])
+            attempts.setdefault((req["pass_id"], req["attempt_id"]), req["delegate"])
     slots = {}
     for delegate in attempts.values():
         slot = slots.setdefault(delegate["provider"], {
@@ -1258,7 +1258,7 @@ def _finding_totals(selected, corrections, unknown, known_ids, delegate_labels=N
     or duplicate link is ambiguous. A correction targets exactly one finding by its origin (finding_id
     plus any pass/voice/attempt it names) and applies only as one linear supersession chain in append
     order: each later correction supersedes its predecessor. Anything else is unknown, never last-write-wins.
-    delegate_labels (attempt_id -> provider label) and delegate_out fill per-provider reported/accepted/rejected
+    delegate_labels ((pass_id, attempt_id) -> provider label) and delegate_out fill per-provider reported/accepted/rejected
     counts from the same corrected findings; delegate_out stays empty when the totals are unknown."""
     totals = {"accepted": 0, "fixed": 0, "open": 0, "rejected": 0, "deferred": 0,
               "duplicate": 0, "unclassified": 0,
@@ -1302,8 +1302,9 @@ def _finding_totals(selected, corrections, unknown, known_ids, delegate_labels=N
         return _unknown_totals()
     for _p, _v, _a, finding in findings:
         adj, res = finding["adjudication"], finding["resolution"]
-        if delegate_labels and delegate_out is not None and _a in delegate_labels:
-            slot = delegate_out.setdefault(delegate_labels[_a], {"reported": 0, "accepted": 0, "rejected": 0})
+        attempt_key = (_p, _a)
+        if delegate_labels and delegate_out is not None and attempt_key in delegate_labels:
+            slot = delegate_out.setdefault(delegate_labels[attempt_key], {"reported": 0, "accepted": 0, "rejected": 0})
             slot["reported"] += 1
             if adj in ("accepted", "rejected"):
                 slot[adj] += 1
@@ -1357,7 +1358,7 @@ def _passes(effective, by_event, run_context, unknown, ran):
     known_ids = {f["finding_id"] for r in effective
                  if r["op"] == "pass" and r["request"]["state"] == "attempt"
                  for f in r["request"].get("findings") or []}
-    delegate_labels = {r["request"]["attempt_id"]: r["request"]["delegate"]["provider"] for r in effective
+    delegate_labels = {(r["request"]["pass_id"], r["request"]["attempt_id"]): r["request"]["delegate"]["provider"] for r in effective
                        if r["op"] == "pass" and r["request"]["state"] == "attempt" and "delegate" in r["request"]}
     delegate_stats = {}
     grouped = {}

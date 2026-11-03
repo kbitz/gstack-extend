@@ -6,7 +6,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -132,20 +132,55 @@ async function prepare(options: Options): Promise<Preparation> {
   return { ok: true, prepared: { config: parsed.config, sha: createHash('sha256').update(read.bytes).digest('hex'), classify: classify as Classifier, checklists } };
 }
 
-/** The frozen work-tree state: porcelain status plus HEAD, or undefined when git cannot say. */
+/** Hash HEAD, status, index entries and nonignored file bytes without following symlinks. */
 function worktreeState(repo: string): string | undefined {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
   const git = (args: string[]) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } });
   const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all']);
   const head = git(['rev-parse', 'HEAD']);
-  return status.status === 0 && head.status === 0 ? `${head.stdout.trim()}\n${status.stdout}` : undefined;
+  const index = git(['ls-files', '--stage', '-z']);
+  const files = git(['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
+  if ([status, head, index, files].some((result) => result.status !== 0)) return undefined;
+  const hash = createHash('sha256');
+  const add = (value: string | Buffer) => { hash.update(String(Buffer.byteLength(value))); hash.update(':'); hash.update(value); };
+  for (const value of [head.stdout, status.stdout, index.stdout]) add(value);
+  try {
+    for (const name of [...new Set(files.stdout.split('\0').filter(Boolean))].sort()) {
+      add(name);
+      const components = name.split('/');
+      try {
+        // A replaced parent directory must not lead the read outside the repository.
+        for (let i = 1; i < components.length; i++) if (lstatSync(join(repo, ...components.slice(0, i))).isSymbolicLink()) return undefined;
+        const path = join(repo, name);
+        const stat = lstatSync(path);
+        add(String(stat.mode));
+        if (stat.isSymbolicLink()) { add(readlinkSync(path, { encoding: 'buffer' })); continue; }
+        if (!stat.isFile()) return undefined;
+        const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          if (!fstatSync(fd).isFile()) return undefined;
+          add(readFileSync(fd));
+        } finally { closeSync(fd); }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return undefined;
+        add('missing');
+      }
+    }
+    return hash.digest('hex');
+  } catch { return undefined; }
 }
 
 /** One process in its own group, an empty private cwd, an allowlisted env and bounded output. */
 function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promise<Spawned> {
   return new Promise((settle) => {
     const started = Date.now();
-    const cwd = mkdtempSync(join(tmpdir(), 'extend-delegate-'));
+    let cwd: string;
+    try { cwd = mkdtempSync(join(tmpdir(), 'extend-delegate-')); }
+    catch {
+      settle({ exit_code: null, signal: null, timed_out: false, overflow: false, spawn_error: true,
+        stdout: '', stderr: '', wall_ms: Date.now() - started });
+      return;
+    }
     const env: Record<string, string> = {};
     for (const key of CHILD_ENV) if (process.env[key] !== undefined) env[key] = process.env[key]!;
     const out: Buffer[] = [];
@@ -162,7 +197,7 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promis
       clearTimeout(grace);
       child?.stdout?.destroy();
       child?.stderr?.destroy();
-      rmSync(cwd, { recursive: true, force: true });
+      try { rmSync(cwd, { recursive: true, force: true }); } catch { spawnError = true; }
       settle({ exit_code: timedOut ? TIMEOUT_EXIT : code, signal: timedOut ? null : signal, timed_out: timedOut, overflow, spawn_error: spawnError,
         stdout: Buffer.concat(out, outSize).toString('utf8'), stderr: Buffer.concat(err, errSize).toString('utf8'), wall_ms: Date.now() - started });
     };
@@ -193,16 +228,20 @@ function spawnProvider(argv: string[], prompt: string, timeoutS: number): Promis
   });
 }
 
-const isSaved = (value: any): value is Spawned =>
+const isSpawned = (value: any): value is Spawned =>
   !!value && typeof value === 'object' && typeof value.stdout === 'string' && typeof value.stderr === 'string' && typeof value.wall_ms === 'number'
   && typeof value.timed_out === 'boolean' && typeof value.overflow === 'boolean' && typeof value.spawn_error === 'boolean'
   && (value.exit_code === null || Number.isInteger(value.exit_code)) && (value.signal === null || typeof value.signal === 'string');
+
+interface Saved { v: 1; spawned: Spawned; worktree_changed: boolean }
+const isSaved = (value: any): value is Saved => value?.v === 1 && isSpawned(value.spawned) && typeof value.worktree_changed === 'boolean';
+interface PendingPart { result: PartResult; save?: { path: string; spawned: Spawned } }
 
 const NO_CALL = { replay: false, dispatched: false, dispatched_at: null, returned_at: null, wall_ms: null,
   input_tokens: null, output_tokens: null, cache_read_input_tokens: null, cache_creation_input_tokens: null,
   parse: 'not-applicable', verdict: 'unavailable' as string, outcome: 'fell-back' as const, findings: [] };
 
-async function runPart(part: Part, prepared: Prepared, options: Options, diff: string): Promise<PartResult> {
+async function runPart(part: Part, prepared: Prepared, options: Options, diff: string): Promise<PendingPart> {
   const label = prepared.config.parts[part]!;
   const provider = prepared.config.providers[label]!;
   const prompt = buildPrompt(part, options.base, options.candidate, diff, prepared.checklists[part]!);
@@ -210,17 +249,19 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
   const identity = { part, provider: label, model: provider.model, call_id: id };
   const saved = join(options.calls, `${id}.json`);
   const claim = join(options.calls, `${id}.claim`);
-  const fellBack = (fallback_reason: PartResult['fallback_reason'], replay = false): PartResult => ({ ...identity, ...NO_CALL, replay, fallback_reason });
+  const fellBack = (fallback_reason: PartResult['fallback_reason'], replay = false): PendingPart => ({ result: { ...identity, ...NO_CALL, replay, fallback_reason } });
   let spawned: Spawned;
   let replay = false;
   let dispatchedAt: string | null = null;
   let returnedAt: string | null = null;
+  let changed = false;
   if (existsSync(saved)) {
     // A saved result replays with no spawn, for credited and fell-back parts alike.
     let value: unknown;
     try { value = JSON.parse(readFileSync(saved, 'utf8')); } catch { value = undefined; }
     if (!isSaved(value)) return fellBack('failed', true);
-    spawned = value;
+    spawned = value.spawned;
+    changed = value.worktree_changed;
     replay = true;
   } else {
     // The claim is never removed: unknown completion never licenses another call.
@@ -229,11 +270,13 @@ async function runPart(part: Part, prepared: Prepared, options: Options, diff: s
     dispatchedAt = new Date().toISOString();
     spawned = await spawnProvider(provider.argv, prompt, provider.timeout_s);
     returnedAt = new Date().toISOString();
-    try { writeFileSync(saved, JSON.stringify(spawned), { flag: 'wx', mode: 0o600 }); } catch { /* the claim still blocks a resend */ }
   }
   const verdict = decide(part, spawned, prepared.classify);
-  return { ...identity, replay, dispatched: !replay, dispatched_at: dispatchedAt, returned_at: returnedAt, wall_ms: spawned.wall_ms,
+  const result: PartResult = { ...identity, replay, dispatched: !replay, dispatched_at: dispatchedAt, returned_at: returnedAt, wall_ms: spawned.wall_ms,
     ...verdict.tokens, parse: verdict.parse, verdict: verdict.verdict, outcome: verdict.outcome, fallback_reason: verdict.fallback_reason, findings: verdict.findings };
+  if (changed) Object.assign(result, { outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [] });
+  // Persist only after all parallel calls have passed the shared mutation check.
+  return { result, ...(!replay ? { save: { path: saved, spawned } } : {}) };
 }
 
 export function help() {
@@ -282,7 +325,8 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   try { diff = snapshotDiff({ repo: options.repo, base: options.base, candidate: options.candidate, scope: 'full' } as Request); } catch { diff = undefined; }
   if (before === undefined || diff === undefined) { print({ status: 'refused', reason: 'repo-unreadable' }); return EXIT.refused; }
   mkdirSync(options.calls, { recursive: true, mode: 0o700 });
-  const results = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff)));
+  const pending = await Promise.all(options.parts.map((part) => runPart(part, prepared.prepared, options, diff)));
+  const results = pending.map((part) => part.result);
   const changed = worktreeState(options.repo) !== before;
   if (changed) {
     // Criterion: a delegate writes nothing in the work tree. Discard what this run dispatched; the host decides what next.
@@ -290,8 +334,13 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
       if (result.dispatched) Object.assign(result, { outcome: 'fell-back', fallback_reason: 'worktree-changed', findings: [] });
     }
   }
+  for (const { save } of pending) if (save) {
+    const value: Saved = { v: 1, spawned: save.spawned, worktree_changed: changed };
+    try { writeFileSync(save.path, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); } catch { /* the claim still blocks a resend */ }
+  }
   print({ status: 'ran', config_sha256: sha, parts: results });
-  return changed ? EXIT.refused : results.some((result) => result.outcome === 'fell-back') ? EXIT.fellBack : EXIT.ok;
+  return changed || results.some((result) => result.fallback_reason === 'worktree-changed') ? EXIT.refused
+    : results.some((result) => result.outcome === 'fell-back') ? EXIT.fellBack : EXIT.ok;
 }
 
 if (import.meta.main) {

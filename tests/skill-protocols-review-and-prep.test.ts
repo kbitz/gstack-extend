@@ -2348,6 +2348,8 @@ describe('review-and-prep delegate=<part>', () => {
     expect(section).toContain('nested dispatches them as Review Army would, and sibling has the host apply that checklist to the frozen diff with the same output contract');
     expect(section).toContain('The host model decides every finding\'s disposition and every fix under Fix-First, unchanged.');
     expect(section).toContain('stop before any commit, report the change to the user and revert nothing');
+    expect(section).toContain('Every dispatched result is discarded; host coverage remains incomplete until those parts actually run on the host.');
+    expect(section).not.toContain('every part that call dispatched ran on the host');
     expect(section).toContain('Their findings keep `specialist:<name>` attribution, and the receipt adds the provider label and model that produced them.');
     expect(section).toContain('**Credited parts** enter Step 4.6 stage 1 as that specialist\'s output (nested), or the Step 5 combine as specialist findings (sibling)');
     expect(section).toContain('The calls directory is branch-scoped under the evidence root and kept across invocations of the branch; never choose a fresh one to retry.');

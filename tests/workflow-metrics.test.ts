@@ -2252,6 +2252,42 @@ describe('Track 64C delegated attempts (pass v3)', () => {
     expect(data.receipt_text).not.toContain('delegated'); // the receipt line is unchanged
   }, 60_000);
 
+  // Value: protects=provider usage and findings share the pass-scoped attempt identity;
+  // fails_when=a reused attempt ID loses a provider or transfers its findings; why_new=existing passes use distinct IDs.
+  test('reused attempt IDs in distinct passes keep provider usage and findings aligned, including replays', () => {
+    const fix = makeTelemetryFixture('community');
+    const sid = 'extend-' + u(), sharedAttempt = u();
+    const run = runRows(sid);
+    const beta = { provider: 'beta', model: 'model-b', wall_ms: 2400, input_tokens: 200, output_tokens: 100,
+      cache_read_input_tokens: 20, cache_creation_input_tokens: 10 };
+    const passes = [
+      passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate(), findings: [att('A1', ['specialist:testing'])] }] }]),
+      passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate(beta), findings: [att('B1', ['specialist:testing'])] }] }], 3000),
+      passV3(sid, [{ voice: 'testing', tries: [{ delegate: delegate({ ...beta, replay: true }), findings: [att('B2', ['specialist:testing'])] }] }], 4000),
+    ];
+    for (const pass of passes) {
+      for (const row of pass.rows) {
+        if (row.request.state === 'attempt') row.request.attempt_id = sharedAttempt;
+        if (row.request.state === 'voice-complete') row.request.selected_attempt_id = sharedAttempt;
+      }
+    }
+    craft(fix, sid, [...run.rows, ...passes.flatMap(pass => pass.rows),
+      { op: 'correction', at: 4100, request: { ...base(sid), correction_kind: 'finding', finding_id: 'B2', pass_id: passes[2]!.passId,
+        voice_id: 'testing', attempt_id: sharedAttempt, adjudication: 'rejected', resolution: 'unknown' } },
+      { op: 'end', at: 4200, request: { ...base(sid), step_id: run.step, outcome: 'completed' } }]);
+    const data = read(fix, sid).envelope.data;
+    expect(data.capture).toBe('ok');
+    expect(data.unknown_reasons).toEqual([]);
+    expect(data.local_passes).toBe(3);
+    expect(data.findings).toMatchObject({ accepted: 2, rejected: 1 });
+    expect(data.delegated).toEqual({
+      alpha: { attempts: 1, credited: 1, fell_back: 0, by_reason: {}, wall_ms: 1200, input_tokens: 100, output_tokens: 50,
+        cache_read_input_tokens: 10, cache_creation_input_tokens: 5, tokens_unreported: 0, reported: 1, accepted: 1, rejected: 0 },
+      beta: { attempts: 2, credited: 2, fell_back: 0, by_reason: {}, wall_ms: 2400, input_tokens: 200, output_tokens: 100,
+        cache_read_input_tokens: 20, cache_creation_input_tokens: 10, tokens_unreported: 0, reported: 2, accepted: 1, rejected: 1 },
+    });
+  }, 60_000);
+
   test('earlier ledgers read unchanged: a v1-only and a v2-only ledger report delegated {}', () => {
     const fix = makeTelemetryFixture('community');
     const old = 'extend-' + u(), attributed = 'extend-' + u();
