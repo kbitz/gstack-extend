@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.3] - 2026-11-04
+
+### Changed
+
+- Repository working rules now clarify recovery and handoff boundaries.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+
 ## [0.63.2] - 2026-11-04
 
 ### Added
