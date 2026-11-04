@@ -780,7 +780,12 @@ describe('skill and contract text', () => {
       '`HANDED-BACK` writes nothing: no commit, push, PR, body edit or receipt.',
       'Nothing is written before step 2 classifies the change.',
     ]) expect(skill).toContain(clause);
-    expect(skill.split('\n').length).toBeLessThan(260);
+    // The cap measures docs-ship's own text. The SHARED:upgrade-flow block every
+    // installed skill carries is locked byte for byte in tests/skill-protocols.test.ts
+    // and owned by skills/gstack-extend-upgrade.md, so it is counted there, not here.
+    const sharedFlow = /<!-- SHARED:upgrade-flow -->[\s\S]*?<!-- \/SHARED:upgrade-flow -->\n/;
+    expect(skill).toMatch(sharedFlow);
+    expect(skill.replace(sharedFlow, '').split('\n').length).toBeLessThan(260);
   });
 
   test('every helper command and contract section the skill names exists', () => {

@@ -180,7 +180,8 @@ mkdir -p <host-skills-dir>/plan-track
 ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md
 ```
 
-`/plan-track` needs nothing else from the agent. Its telemetry call does nothing until
+`/plan-track` needs nothing else from the agent. Without a managed install it skips
+the update check and says nothing about it. Its telemetry call does nothing until
 some `setup` run has installed `$HOME/.gstack-extend/bin/telemetry-call` (see above).
 `setup` and its uninstall never see these links, so remove them by hand; a link
 dangles after `setup --uninstall` or a moved checkout. Skills that call helpers in the
@@ -202,10 +203,15 @@ branch below.
 
 With `GSTACK_SESSION_KIND` set to `spawned` (or `unattended`), the flow asks nothing,
 never runs `bin/update-run` even under `auto_upgrade=true`, writes no snooze or
-config state, and puts the available version line in the run's final message before
-any fenced prompt or result, handoff, stage or pause line. Concurrent stages share
-the installed checkout, so upgrading from a spawned stage could mutate that checkout
-underneath other stages running at the same time.
+config state itself, and puts the available version line in the run's final message
+before any fenced prompt or result, handoff, stage or pause line. Concurrent stages
+share the installed checkout, so upgrading from a spawned stage could mutate that
+checkout underneath other stages running at the same time.
+
+`bin/update-check` keeps its own state in every session kind: it refreshes its cache,
+and it clears a snooze when it reports `JUST_UPGRADED` and whenever
+`/gstack-extend-upgrade` runs it with `--force`. A spawned run of either can
+therefore end a snooze early, so the next interactive stage may ask sooner.
 
 The skill reads this variable from the environment only; any other value, or none,
 uses the interactive branch. A caller that launches stages without a person must set

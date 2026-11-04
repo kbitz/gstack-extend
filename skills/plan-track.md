@@ -75,6 +75,7 @@ If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flo
 If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
 
 This skill asks no questions and installs nothing, so in the flow below it always follows the `UPGRADE_SESSION=spawned` branch, whatever the session kind.
+It runs none of the flow's commands. When the preamble prints neither an `EXTEND_ROOT:` nor an `EXTEND_ROOT_UNVERIFIED:` line, it says nothing about the install and continues, because it needs no root.
 
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
@@ -96,6 +97,7 @@ If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result,
 ```bash
 case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
 ```
+- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
 - On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
 - On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 

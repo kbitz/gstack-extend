@@ -729,6 +729,14 @@ describe('Track 10A SHARED:upgrade-flow block', () => {
     expect(spawnedPara).toContain(
       'gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.',
     );
+
+    // The guard's own output must not read as a failed upgrade with a retry command.
+    const autoSection = CANONICAL_UPGRADE_FLOW.slice(autoAt, questionAt);
+    const skippedAt = autoSection.indexOf(
+      '- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.',
+    );
+    expect(skippedAt).toBeGreaterThan(-1);
+    expect(autoSection.indexOf('- On failure:')).toBeGreaterThan(skippedAt);
   });
 });
 

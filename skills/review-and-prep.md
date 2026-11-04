@@ -98,6 +98,7 @@ If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result,
 ```bash
 case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
 ```
+- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
 - On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
 - On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 
@@ -466,8 +467,8 @@ for those routine actions. It also pre-approves the recommended option of a
 reversible fix-scope choice, under **Take recommended fix-scope options without
 asking** below. Creating or discussing this skill is not invoking it.
 
-This skill carries shared telemetry blocks but excludes the shared upgrade
-preamble, protocol, and Conductor blocks used by the review and planning
+This skill carries the shared upgrade-flow and telemetry blocks but excludes
+the shared protocol and Conductor blocks used by the review and planning
 skills. It orchestrates installed skills and stores its evidence in the PR;
 protocol tests keep these memberships separate.
 

@@ -142,6 +142,13 @@ describe('plan-track inputs are documented fields and its text is generic', () =
     const sharedAt = skill.indexOf('<!-- SHARED:upgrade-flow -->');
     expect(localAt).toBeGreaterThan(-1);
     expect(sharedAt).toBeGreaterThan(localAt);
+    // An unmanaged host (docs/installation.md "Hosts setup does not manage") prints no root line;
+    // plan-track needs none, so it must not report a missing install there.
+    const quietLine =
+      "It runs none of the flow's commands. When the preamble prints neither an `EXTEND_ROOT:` nor an `EXTEND_ROOT_UNVERIFIED:` line, it says nothing about the install and continues, because it needs no root.";
+    const quietAt = skill.indexOf(quietLine);
+    expect(quietAt).toBeGreaterThan(localAt);
+    expect(sharedAt).toBeGreaterThan(quietAt);
   });
 
   // Value: protects=the default plan path follows the one state-root rule; fails_when=the skill hardcodes the root or drops the collision stop; why_new=the state-root suite checks the expression, not the collision rule; seam=none; no_claim=none

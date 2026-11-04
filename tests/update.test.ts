@@ -272,7 +272,8 @@ describe('bin/update-run', () => {
     expect(installation).toContain('### Update checks');
     expect(installation).toContain('GSTACK_SESSION_KIND=spawned');
     expect(installation).toContain('never runs `bin/update-run`');
-    expect(installation).toContain('auto_upgrade=true');
+    expect(installation).toContain('never runs `bin/update-run` even under `auto_upgrade=true`');
+    expect(installation).toContain('`bin/update-check` keeps its own state in every session kind');
     expect(installation).toContain('The skill reads this variable from the environment only');
     expect(installation).toContain('Skill text is not enforcement');
     expect(shared).toContain('GSTACK_SESSION_KIND');
