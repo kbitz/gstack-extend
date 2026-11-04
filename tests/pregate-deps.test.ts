@@ -442,12 +442,17 @@ describe('pregate-deps', () => {
     expect(readFileSync(configPath, 'utf8')).toBe(longKeyText);
   });
 
+  // Value: protects=relative imports above the repository root add no dependency while valid imports still resolve;
+  //   fails_when=the above-root guard is removed and the existing target becomes a dependency;
+  //   why_new=the previous relative cases reached only the root and named absent targets;
+  //   seam=none; no_claim=pure parser graph fixture, not Python runtime or upstream selection acceptance
   test('(h) parser cases on inline sources', () => {
     const sources = new Map<string, string>([
       ['src/a/b.py', 'X = 1\n'],
       ['src/a/c.py', 'from ...too_high import z\n'],
       ['src/a/d.py', 'Y = 2\n'],
       ['src/a/ignored.py', 'Z = 3\n'],
+      ['src/a/outside.py', 'VALUE = 4\n'],
       [
         'tests/test_parser.py',
         [
@@ -460,6 +465,7 @@ describe('pregate-deps', () => {
           'from a \\',
           '  import d',
           'from ..outside import nope',
+          'from ...src.a.outside import VALUE',
         ].join('\n'),
       ],
     ]);
