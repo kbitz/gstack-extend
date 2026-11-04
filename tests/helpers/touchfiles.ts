@@ -101,6 +101,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/layout-scaffold', 'src/layout-scaffold/**',
     'bin/roadmap-audit', 'bin/roadmap-pack', 'bin/roadmap-touches', 'bin/roadmap-renumber',
   ],
+  'tests/pregate-deps.test.ts': [
+    'bin/pregate-deps', 'src/pregate-deps/**', 'tests/fixtures/pregate-deps/**', 'docs/pregate-deps.md',
+  ],
   'tests/autoplan-lean.test.ts': [
     'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**',
   ],

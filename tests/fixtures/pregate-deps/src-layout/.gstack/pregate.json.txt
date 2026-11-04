@@ -1,0 +1,28 @@
+{
+  "$schema": "https://gstack.dev/schemas/pregate.json",
+  "runner": "pytest",
+  "strays": {
+    "allow": [
+      "docs/**"
+    ]
+  },
+  "dependencies": {
+    "scripts/tool.py": [
+      "tests/test_other.py"
+    ],
+    "src/pkg/alpha*.py": [
+      "tests/test_gamma.py"
+    ],
+    "src/pkg/data/*.json": [
+      "tests/test_alpha.py"
+    ],
+    "src/pkg/gamma.py": [
+      "tests/test_gamma.py",
+      "tests/test_old.py"
+    ],
+    "src/pkg/gone.py": [
+      "tests/test_alpha.py"
+    ],
+    "src/pkg/orphan.py": []
+  }
+}

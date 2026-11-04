@@ -1,0 +1,7 @@
+from unittest import mock
+
+# import pkg.orphan
+LITERAL = "import pkg.orphan"
+
+with mock.patch("pkg.beta.VALUE"):
+    pass
