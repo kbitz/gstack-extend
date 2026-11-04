@@ -208,10 +208,12 @@ before any fenced prompt or result, handoff, stage or pause line. Concurrent sta
 share the installed checkout, so upgrading from a spawned stage could mutate that
 checkout underneath other stages running at the same time.
 
-`bin/update-check` keeps its own state in every session kind: it refreshes its cache,
-and it clears a snooze when it reports `JUST_UPGRADED` and whenever
-`/gstack-extend-upgrade` runs it with `--force`. A spawned run of either can
-therefore end a snooze early, so the next interactive stage may ask sooner.
+`bin/update-check` keeps its own state in every session kind: it refreshes its cache;
+it consumes the just-upgraded marker and clears a snooze when it reports
+`JUST_UPGRADED`; and it clears a snooze whenever `/gstack-extend-upgrade` runs it with
+`--force`. A spawned stage may therefore be the run that shows the "just updated"
+notice, and a spawned run can end a snooze early, so the next interactive stage may
+ask sooner.
 
 The skill reads this variable from the environment only; any other value, or none,
 uses the interactive branch. A caller that launches stages without a person must set

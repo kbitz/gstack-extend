@@ -781,8 +781,8 @@ describe('skill and contract text', () => {
       'Nothing is written before step 2 classifies the change.',
     ]) expect(skill).toContain(clause);
     // The cap measures docs-ship's own text. The SHARED:upgrade-flow block every
-    // installed skill carries is locked byte for byte in tests/skill-protocols.test.ts
-    // and owned by skills/gstack-extend-upgrade.md, so it is counted there, not here.
+    // installed skill carries is owned by skills/gstack-extend-upgrade.md and locked
+    // byte for byte in tests/skill-protocols.test.ts, so this cap leaves it out.
     const sharedFlow = /<!-- SHARED:upgrade-flow -->[\s\S]*?<!-- \/SHARED:upgrade-flow -->\n/;
     expect(skill).toMatch(sharedFlow);
     expect(skill.replace(sharedFlow, '').split('\n').length).toBeLessThan(260);
