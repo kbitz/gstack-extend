@@ -46,7 +46,9 @@ segment. An answer that lets the run continue within the same turn is not a
 pause; an answer that stops the run for a later resume is. For telemetry and
 workflow metrics only, each segment counts as its own invocation, with its own
 session ID and its own metrics run; every other per-invocation rule
-(allowances, attempt bounds, checkpoints) still spans the paused run.
+(allowances, attempt bounds, checkpoints) still spans the paused run, except
+that the provider-failure budget and the elapsed-time clock restart with each
+segment, as they do on a resume.
 
 ### Workflow metrics (optional, local)
 
@@ -2236,9 +2238,10 @@ a caller that runs elsewhere moves the commit itself. The PR stays unready.
 This pause prints no stage line: the contract freezes the `External gate:` line as
 the last line of the turn, and a line after it holds the caller.
 
-**Resume entry.** The one Telemetry start this segment needs (**Segments**,
-under Telemetry start) already ran when the skill began or the run continued;
-do not run another here. Handle any existing manual-testing or cycle-cap hold first.
+**Resume entry.** If this segment has not run Telemetry start yet (a result
+line or answer later in this same conversation), run it now (**Segments**,
+under Telemetry start); a resume invocation's own start when the skill began
+is that one. Never run a second. Handle any existing manual-testing or cycle-cap hold first.
 Otherwise an external-gate resume needs no H-C marker or PR. Read the highest
 checkpoint sequence in the evidence directory printed at the pause, reconciling
 all later attestation and repair records, including records written between pauses.
