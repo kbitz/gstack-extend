@@ -2,7 +2,22 @@
 
 ## Unprocessed
 
-None.
+### [review:files=bin/lib/telemetry.py|bin/lib/telemetry-doctor.py] Guard resumable telemetry adoption against stale and in-progress handoffs
+
+- **Description:** A start-less finish of a resumable skill adopts any open handoff of that skill in its root, at any age and from any session. Since paused runs finish their segment `blocked`, a continuation whose agent skips its restart has no handoff of its own, so its finish takes an older abandoned start's `session_id`, `started_at` and saved `work_item` (or writes nothing). A start-less retry of a failed `blocked` finish can likewise land on the newer resumed segment. The doctor files every unmatched resumable start as a deferred finish, so neither case is visible. The skill prose now says to restart; nothing in code enforces it.
+- **Hypothesis (untested):** Record the newest `blocked` completion per root, skill and harness fingerprint, and refuse a cross-session resumable candidate whose start predates it, with a debug line naming the missed restart; give the doctor a count for it.
+- **Effort:** M
+- **Priority:** P2
+- **Context:** Native adversarial and Red Team findings during /review-and-prep of Track 65A ("Record paused, blocked and resumed runs"), 2026-11-04; reproduced with the real wrapper under an isolated HOME. The plan kept unbounded resumable adoption as the documented fallback, so the guard was deferred rather than built in that PR.
+- **Revisit when:** The Future cards "Recover a telemetry finish run from a different repository root" or "In-flight marker and crash detection for extend telemetry" are planned, or a stage-runs row shows a resumable segment whose `started_at` predates its root's previous `blocked` finish.
+
+### [review:files=skills/full-review.md] full-review maps "stop for now" to DONE TRIAGING, which rejects the remaining clusters
+
+- **Description:** `/full-review`'s conversational list routes "stop" to DONE TRIAGING ("Done triaging — reject remaining"), so a user who types "stop for now" meaning a pause loses the untriaged clusters' decisions. The new PAUSE route deliberately avoided overlapping words; `/pair-review` maps "stop for now" and "continue later" to PAUSE, so the two skills now differ.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Native adversarial finding during /review-and-prep of Track 65A, 2026-11-04. Pre-existing: the same "stop" route is on `main`.
+- **Revisit when:** The next edit of `/full-review`'s Conversational Interface.
 
 ## Completed
 
