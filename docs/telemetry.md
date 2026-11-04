@@ -2136,9 +2136,11 @@ tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/analytics/stage-runs
 Conductor), not a repository identifier. The `skill_run` line below is abridged:
 upstream adds metadata fields. No event key is introduced: historical rows already
 use that key for prepared-not-started. **duration_s is session wall-clock**,
-including human waiting and pauses, not model/token spend. Upstream silently nulls
-values above 86400 seconds (gstack 1.89.1.0 source); resumable workflows will
-routinely lose their duration.
+including human waiting within a segment, not model/token spend. A deliberate pause
+ends its segment, so the time until the resume is in neither row (see Paused and
+resumed segments in the [Join contract](#join-contract)). Upstream silently nulls
+values above 86400 seconds (gstack 1.89.1.0 source), so a segment longer than a day
+loses its `skill_run` duration.
 
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
