@@ -145,6 +145,9 @@
     "bin/outside-review": [
       "tests/outside-review.test.ts"
     ],
+    "bin/pregate-deps": [
+      "tests/pregate-deps.test.ts"
+    ],
     "bin/review-delegate": [
       "tests/review-delegate.test.ts"
     ],
@@ -220,6 +223,9 @@
     "docs/outside-review.md": [
       "tests/outside-review.test.ts",
       "tests/upstream-check.test.ts"
+    ],
+    "docs/pregate-deps.md": [
+      "tests/pregate-deps.test.ts"
     ],
     "docs/quota-ledger.md": [
       "tests/quota.test.ts"
@@ -375,6 +381,9 @@
     "src/merge-gate/**": [
       "tests/merge-gate.test.ts"
     ],
+    "src/pregate-deps/**": [
+      "tests/pregate-deps.test.ts"
+    ],
     "src/secret-dispositions/**": [
       "tests/secret-dispositions.test.ts"
     ],
@@ -384,6 +393,9 @@
     ],
     "tests/fixtures/handoffs/**": [
       "tests/handoff-contract.test.ts"
+    ],
+    "tests/fixtures/pregate-deps/**": [
+      "tests/pregate-deps.test.ts"
     ],
     "tests/fixtures/quota/**": [
       "tests/quota.test.ts",

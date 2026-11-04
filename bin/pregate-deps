@@ -1,0 +1,3 @@
+#!/bin/sh
+# Python source-root import-graph dependency map generator/checker. Source: src/pregate-deps/cli.ts
+exec bun --no-env-file --no-install --config=/dev/null "$(dirname "$0")/../src/pregate-deps/cli.ts" "$@"
