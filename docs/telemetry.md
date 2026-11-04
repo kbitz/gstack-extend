@@ -258,6 +258,11 @@ before the logger ran (missing flag support, sink checks, exec) is not uncertain
 **Bounds that remain.** Each can produce a wrong pairing or a duplicate row:
 
 - Finishes arriving in a different order from their class's pairing order among equal starts (above).
+- In the resumable classes, which pair newest first, a newer open start of the same skill
+  and harness session takes the next start-less finish: a status-only invocation that
+  skipped its own finish, or a mid-run re-invocation such as `/pair-review done`. The
+  earlier start then stays open as a deferred finish, and the row carries the newer
+  start's `session_id` and a shorter duration.
 - An abandoned start in an oldest-first class can take the next run's finish;
   later serial runs can stay one start behind until that unmatched handoff is resolved.
 - A completed handoff retained after marker-write or cleanup failure still participates
@@ -356,9 +361,10 @@ a resumable skill documents `/<name> resume`, each deliberate pause finishes `bl
 and each resume runs start, so the normal pairing is one start to one finish per segment.
 Revisit the fallback when the doctor coverage report shows resumable pause durations. An unknown-fingerprint
 adoption within 24 hours can still belong to another run, so a successful join is
-not proof of attribution. A non-resumable skill resumed in a new harness session
-is refused. The resume instruction holds across sessions only for the resumable
-skills. Observed on 2026-09-29 with Claude Code 2.1.284: `CLAUDE_CODE_SESSION_ID`
+not proof of attribution. A start-less finish of a non-resumable skill from another
+harness session is refused; a resume that runs its own start, as every skill's start
+block says, pairs with that start for any skill. Unbounded cross-session adoption of
+an existing handoff stays specific to the resumable skills. Observed on 2026-09-29 with Claude Code 2.1.284: `CLAUDE_CODE_SESSION_ID`
 stayed constant across real CLI user turns and a `claude --resume`. Two start/finish
 runs paired, including a finish after resume; debug named only that marker. The
 check used isolated telemetry storage and real logger/config copies with network
@@ -1947,7 +1953,8 @@ and one `skill_run`.
   status words. `paused` and `stopped`, the `/review-and-prep` external-gate pause, an
   exit-question or configuration pause, and a `/pair-review` or `/full-review` PAUSE all
   end the segment with `blocked`. Other BLOCKED or NEEDS_CONTEXT exits keep their actual
-  outcome.
+  outcome. A status-only invocation (`/pair-review status`, `/full-review status`)
+  finishes `unknown`: it pairs its own start and reports no run outcome.
 - A resume is `/review-and-prep resume` (or the `continue` handoff), `/pair-review resume`
   or `/full-review resume`. It runs its own start, in whichever checkout or on whichever
   machine it runs, and its finish writes its own row. Work that continues later in the
@@ -2255,7 +2262,7 @@ counts, window-crossing completions, and parse diagnostics.
 | Legacy / session alias / missing v or ID | Visible separately; no invented IDs or pairing |
 | Finish without matching start | Unpaired-finish, never a crash or negative numerator |
 | pair-review, review-and-prep, full-review | Resumable: unmatched starts are deferred finishes, excluded from the ratio. A deliberate pause finishes its segment `blocked` and the resume pairs too. An unmatched resumable start can be a segment still running, an interrupted segment, a failed finish, a lost pause finish or a pause from an older release; the doctor cannot tell which, so its lifecycle stays unknown. Adoption is unbounded. Revisit when the doctor coverage report shows resumable pause durations |
-| Pause/resume | Each segment is one start and one finish: a deliberate pause finishes `blocked`, and the resume runs its own start and finishes when it completes. The resume instruction holds across harness sessions only for resumable skills. A non-resumable skill resumed in a new harness session is refused |
+| Pause/resume | Each segment is one start and one finish: a deliberate pause finishes `blocked`, and the resume runs its own start and finishes when it completes. A resume that runs its own start pairs for any skill; only resumable skills adopt an existing handoff across harness sessions, and a non-resumable start-less finish from another session is refused |
 | Other unfinished runs | Unpaired starts until finish arrives; can temporarily lower the ratio, without proving failure |
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
 | Missing transcripts | Advisory count unavailable, not zero; pairing remains measurable |

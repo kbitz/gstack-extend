@@ -824,7 +824,9 @@ STATUS: <status> | REPORT: <path>
 
 Add `STATUS: <status> | REPORT: <path>` when the phase is `complete`. Earlier runs are kept as `<project dir>/full-review-archived-<UTC timestamp>/`, each with its `report.md`.
 
-If `/full-review status`, stop here. Do not ask a branch question.
+If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status
+check pairs its own start and reports no run outcome), then stop here. Do not ask
+a branch question.
 
 If `/full-review resume`, continue from the phase chosen above.
 
@@ -847,8 +849,9 @@ PAUSE leaves untriaged clusters and `session.yaml` as they are and does not run
 Phase 5 or 6. Tell the user to continue with `/full-review resume`, then run
 Telemetry finish with `--outcome blocked`. That resume runs Telemetry start
 again. After a PAUSE, the first action in this conversation that continues the
-work (anything but STATUS) runs Telemetry start once, before it acts; any
-`/full-review` invocation's own start counts as that one.
+work (anything but STATUS) runs Telemetry start once, before it acts; a
+`/full-review` invocation that continues the work (anything but `status`) counts
+its own start as that one.
 
 ---
 

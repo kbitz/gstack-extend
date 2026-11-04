@@ -46,9 +46,8 @@ segment. An answer that lets the run continue within the same turn is not a
 pause; an answer that stops the run for a later resume is. For telemetry and
 workflow metrics only, each segment counts as its own invocation, with its own
 session ID and its own metrics run; every other per-invocation rule
-(allowances, attempt bounds, checkpoints) still spans the paused run, except
-that the provider-failure budget and the elapsed-time clock restart with each
-segment, as they do on a resume.
+(allowances, attempt bounds, checkpoints) still spans the paused run; only the
+elapsed-time clock restarts on a resume, as Boundaries says.
 
 ### Workflow metrics (optional, local)
 
@@ -253,7 +252,9 @@ library and both call forms are in
   previous correction in `supersedes_event_id`); `retry` or `fallback` with
   the new `attempt_id` when a voice attempt is retried or replaced; and
   `fix-cycle` with `fix_step_id` set to the fix step's `step_id` when a fix
-  batch closes.
+  batch closes. Corrections name only passes, voices and attempts recorded in
+  this segment's run: a finding first recorded in an earlier segment gets no
+  correction here, and its resolution shows in the receipt instead.
 - Waits as `kind:"wait"` steps (`gx_span_begin_wait`) with `wait_category`
   (`human` at the manual testing checkpoint and while a question to the user is
   open, `external-review` from the Greptile request's submission until its
