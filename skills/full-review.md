@@ -825,8 +825,9 @@ STATUS: <status> | REPORT: <path>
 Add `STATUS: <status> | REPORT: <path>` when the phase is `complete`. Earlier runs are kept as `<project dir>/full-review-archived-<UTC timestamp>/`, each with its `report.md`.
 
 If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status
-check pairs its own start and reports no run outcome), then stop here. Do not ask
-a branch question.
+check pairs its own start and reports no run outcome), then stop here. That start
+is the one Telemetry start runs when this skill begins; a status check whose start
+did not run skips this finish. Do not ask a branch question.
 
 If `/full-review resume`, continue from the phase chosen above.
 

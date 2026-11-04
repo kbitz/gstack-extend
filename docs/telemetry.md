@@ -262,7 +262,9 @@ before the logger ran (missing flag support, sink checks, exec) is not uncertain
   and harness session takes the next start-less finish: a status-only invocation that
   skipped its own finish, or a mid-run re-invocation such as `/pair-review done`. The
   earlier start then stays open as a deferred finish, and the row carries the newer
-  start's `session_id` and a shorter duration.
+  start's `session_id` and a shorter duration. The reverse holds too: a status finish
+  whose own start never ran takes the live run's handoff, and the run's own finish then
+  writes nothing.
 - An abandoned start in an oldest-first class can take the next run's finish;
   later serial runs can stay one start behind until that unmatched handoff is resolved.
 - A completed handoff retained after marker-write or cleanup failure still participates
@@ -1954,7 +1956,9 @@ and one `skill_run`.
   exit-question or configuration pause, and a `/pair-review` or `/full-review` PAUSE all
   end the segment with `blocked`. Other BLOCKED or NEEDS_CONTEXT exits keep their actual
   outcome. A status-only invocation (`/pair-review status`, `/full-review status`)
-  finishes `unknown`: it pairs its own start and reports no run outcome.
+  finishes `unknown`: it pairs its own start and reports no run outcome. A short
+  `unknown` row can therefore be a status check, not a segment outcome, even when it
+  carries the run's `work_item`.
 - A resume is `/review-and-prep resume` (or the `continue` handoff), `/pair-review resume`
   or `/full-review resume`. It runs its own start, in whichever checkout or on whichever
   machine it runs, and its finish writes its own row. Work that continues later in the

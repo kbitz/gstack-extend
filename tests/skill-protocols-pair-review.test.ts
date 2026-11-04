@@ -1028,6 +1028,6 @@ describe('pair-review PAUSE route', () => {
     expect(text).toContain('"pause" / "stop for now" / "continue later" → PAUSE');
     expect(text).toContain('PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to continue with `/pair-review resume`, then run Telemetry finish with `--outcome blocked`; that resume runs Telemetry start again.');
     expect(text).toContain('After a PAUSE, the first action in this conversation that continues the work (anything but STATUS) runs Telemetry start once, before it acts; a `/pair-review` invocation that continues the work (anything but `status`) counts its own start as that one.');
-    expect(text).toContain('If this was `/pair-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here.');
+    expect(text).toContain('If this was `/pair-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here. That start is the one Telemetry start runs when this skill begins; a status check whose start did not run skips this finish.');
   });
 });

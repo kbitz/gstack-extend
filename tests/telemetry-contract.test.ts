@@ -2279,7 +2279,7 @@ describe('paused and resumed segments', () => {
     expect(contract).toContain("is unobserved and unknown, never zero");
     expect(contract).toContain('A resume that skips its own start has no handoff: its start-less finish adopts another open handoff of that skill in that root');
     expect(contract).toContain('(an exact fingerprint match first, newest first)');
-    expect(contract).toContain('A status-only invocation (`/pair-review status`, `/full-review status`) finishes `unknown`: it pairs its own start and reports no run outcome.');
+    expect(contract).toContain('A status-only invocation (`/pair-review status`, `/full-review status`) finishes `unknown`: it pairs its own start and reports no run outcome. A short `unknown` row can therefore be a status check, not a segment outcome, even when it carries the run\'s `work_item`.');
     expect(contract).toContain('Work that continues later in the same conversation after a pause (an answered question, a result line, the first action after a PAUSE that continues the work) is a resume too and runs its own start, once.');
     expect(contract).toContain('runs start again whenever work continues after a pause, including later in the same conversation.');
 

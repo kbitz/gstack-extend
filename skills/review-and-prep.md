@@ -45,9 +45,8 @@ this same conversation, first runs Telemetry start again: that begins a new
 segment. An answer that lets the run continue within the same turn is not a
 pause; an answer that stops the run for a later resume is. For telemetry and
 workflow metrics only, each segment counts as its own invocation, with its own
-session ID and its own metrics run; every other per-invocation rule
-(allowances, attempt bounds, checkpoints) still spans the paused run; only the
-elapsed-time clock restarts on a resume, as Boundaries says.
+session ID and its own metrics run. Every other rule keeps the scope it states
+elsewhere in this skill; segments change none of them.
 
 ### Workflow metrics (optional, local)
 

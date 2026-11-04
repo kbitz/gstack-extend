@@ -1392,6 +1392,8 @@ CHECKPOINTS: <N> saved
 
 If this was `/pair-review status`, run Telemetry finish with `--outcome unknown`
 (a status check pairs its own start and reports no run outcome), then stop here.
+That start is the one Telemetry start runs when this skill begins; a status check
+whose start did not run skips this finish.
 
 If this was `/pair-review resume`, present via AskUserQuestion:
 - Question: "[Dashboard from Step 2 above]\n\nContinue where you left off, or start fresh?"
