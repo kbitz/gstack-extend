@@ -67,9 +67,10 @@ import { resolverSkillText } from './helpers/skill-protocols.ts';
 const ROOT = join(import.meta.dir, '..');
 
 // Orthogonal memberships: SHARED protocol, upgrade preamble, and telemetry.
-// Do not derive protocol membership from setup's
-// install list — project-spec, init, review-and-prep, implement, and ship-and-land are utility/workflow skills
-// without the legacy SHARED protocol / upgrade preamble / Conductor blocks.
+// Do not derive protocol membership from setup's install list — the eight
+// utility/workflow skills carry the upgrade-flow and telemetry SHARED blocks
+// without the legacy SHARED protocol or Conductor blocks. PREAMBLE_SKILLS
+// covers all 12 setup skills.
 // 16A–D: do not touch <!-- SHARED:… --> blocks. Item 2/3 of the Conductor
 // rule stay per-skill. Keep "Action receipt format".
 // 17A: SHARED:conductor-visibility-head is a Conductor host workaround,
@@ -80,9 +81,22 @@ const PROTOCOL_SKILLS = [
   'full-review',
 ] as const;
 
-const PREAMBLE_SKILLS = [...PROTOCOL_SKILLS, 'gstack-extend-upgrade'] as const;
+const PREAMBLE_SKILLS = [
+  'pair-review',
+  'roadmap',
+  'project-spec',
+  'full-review',
+  'gstack-extend-upgrade',
+  'gstack-extend-init',
+  'review-and-prep',
+  'implement',
+  'ship-and-land',
+  'autoplan-lean',
+  'docs-ship',
+  'plan-track',
+] as const;
 
-const NON_PREAMBLE_SETUP_SKILLS = [
+const UTILITY_SKILLS = [
   'project-spec',
   'gstack-extend-init',
   'review-and-prep',
@@ -536,12 +550,12 @@ describe('Track 49A state root', () => {
   });
 });
 
-// ─── Track 10A: SHARED:upgrade-flow verbatim block (drift-lock, 6 files) ──
+// ─── Track 10A: SHARED:upgrade-flow verbatim block (drift-lock, 12 files) ─
 //
-// The upgrade flow used to be inlined — and silently divergent — across the 5
+// The upgrade flow used to be inlined — and silently divergent — across the
 // workflow preambles. Track 10A consolidated it into ONE canonical block,
-// sourced from skills/gstack-extend-upgrade.md and embedded byte-identically
-// in all 6 files (5 workflow preambles + the standalone upgrade skill). The
+// sourced from skills/gstack-extend-upgrade.md and now embedded byte-identically
+// in all 12 setup skills (11 workflow/utility preambles + the standalone upgrade skill). The
 // canonical text is extracted from the upgrade skill itself rather than
 // duplicated here — the skill file IS the source of truth.
 const UPGRADE_FLOW_RE = /<!-- SHARED:upgrade-flow -->[\s\S]*?<!-- \/SHARED:upgrade-flow -->/;
@@ -629,8 +643,101 @@ describe('Track 10A SHARED:upgrade-flow block', () => {
           `${skill} drift in SHARED:upgrade-flow — propagate canonical text from skills/gstack-extend-upgrade.md`,
         );
       }
+      expect(content.split(CANONICAL_UPGRADE_FLOW)).toHaveLength(2);
     });
   }
+
+  // Byte identity above carries the spawned-session behavior to all twelve skills.
+  test('spawned-session gate classifies GSTACK_SESSION_KIND and skips update-run even under auto_upgrade=true', () => {
+    const fences = extractFences(CANONICAL_UPGRADE_FLOW);
+    const gateFence = fences.find((f) => f.body.includes('UPGRADE_SESSION='))?.body;
+    const autoRunFence = fences.find((f) => f.body.includes('bin/update-run'))?.body;
+    expect(gateFence).toBeDefined();
+    expect(autoRunFence).toBeDefined();
+
+    const tmp = makeBaseTmp('skill-protocols-spawned-');
+    try {
+      const root = join(tmp, 'checkout');
+      const home = join(tmp, 'home');
+      mkdirSync(home, { recursive: true });
+      writeUpdateCheck(root);
+      writeFileSync(join(root, 'bin', 'config'), '#!/bin/sh\necho true\n', { mode: 0o755 });
+      writeFileSync(
+        join(root, 'bin', 'update-run'),
+        '#!/bin/sh\nprintf \'%s\\n\' "$1" > "${SENTINEL:?}"\necho "UPGRADE_OK 1.0.0 2.0.0"\n',
+        { mode: 0o755 },
+      );
+      const rootLine = `_EXTEND_ROOT=${JSON.stringify(root)}`;
+
+      for (const sh of agentShells()) {
+        for (const kind of ['spawned', 'unattended']) {
+          const r = runShell(sh.shell, sh.args, `${rootLine}\n${gateFence!}`, scopedEnv(home, { GSTACK_SESSION_KIND: kind }));
+          expect(r.status, `${sh.shell} gate ${kind}`).toBe(0);
+          expect(r.stdout).toBe('UPGRADE_SESSION=spawned\nAUTO_UPGRADE=true\n');
+        }
+        for (const kind of [undefined, '', 'interactive', 'headless']) {
+          const extra: Record<string, string> = {};
+          if (kind !== undefined) extra.GSTACK_SESSION_KIND = kind;
+          const r = runShell(sh.shell, sh.args, `${rootLine}\n${gateFence!}`, scopedEnv(home, extra));
+          expect(r.status, `${sh.shell} gate ${String(kind)}`).toBe(0);
+          expect(r.stdout).toBe('UPGRADE_SESSION=interactive\nAUTO_UPGRADE=true\n');
+        }
+
+        for (const kind of ['spawned', 'unattended']) {
+          const sentinel = join(tmp, `sentinel-${sh.shell}-${kind}`);
+          rmSync(sentinel, { force: true });
+          const r = runShell(
+            sh.shell,
+            sh.args,
+            `${rootLine}\n${autoRunFence!}`,
+            scopedEnv(home, { GSTACK_SESSION_KIND: kind, SENTINEL: sentinel }),
+          );
+          expect(r.status, `${sh.shell} run ${kind}`).toBe(0);
+          expect(r.stdout).toBe('UPGRADE_SKIPPED spawned-session\n');
+          expect(existsSync(sentinel)).toBe(false);
+        }
+
+        const interactiveSentinel = join(tmp, `sentinel-${sh.shell}-unset`);
+        rmSync(interactiveSentinel, { force: true });
+        const interactiveRun = runShell(
+          sh.shell,
+          sh.args,
+          `${rootLine}\n${autoRunFence!}`,
+          scopedEnv(home, { SENTINEL: interactiveSentinel }),
+        );
+        expect(interactiveRun.status, `${sh.shell} run unset`).toBe(0);
+        expect(interactiveRun.stdout).toBe('UPGRADE_OK 1.0.0 2.0.0\n');
+        expect(readFileSync(interactiveSentinel, 'utf8').trim()).toBe(root);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('canonical block orders spawned before auto_upgrade and interactive question', () => {
+    const spawnedAt = CANONICAL_UPGRADE_FLOW.indexOf('**If `UPGRADE_SESSION=spawned`:**');
+    const autoAt = CANONICAL_UPGRADE_FLOW.indexOf('**If `AUTO_UPGRADE=true`:**');
+    const questionAt = CANONICAL_UPGRADE_FLOW.indexOf('**Otherwise**, use AskUserQuestion');
+    expect(spawnedAt).toBeGreaterThan(-1);
+    expect(autoAt).toBeGreaterThan(spawnedAt);
+    expect(questionAt).toBeGreaterThan(autoAt);
+
+    const spawnedPara = CANONICAL_UPGRADE_FLOW.slice(spawnedAt, autoAt);
+    expect(spawnedPara).toContain('never run `bin/update-run`');
+    expect(spawnedPara).toContain('whatever `AUTO_UPGRADE` says');
+    expect(spawnedPara).toContain('write no snooze or config state');
+    expect(spawnedPara).toContain(
+      'gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.',
+    );
+
+    // The guard's own output must not read as a failed upgrade with a retry command.
+    const autoSection = CANONICAL_UPGRADE_FLOW.slice(autoAt, questionAt);
+    const skippedAt = autoSection.indexOf(
+      '- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.',
+    );
+    expect(skippedAt).toBeGreaterThan(-1);
+    expect(autoSection.indexOf('- On failure:')).toBeGreaterThan(skippedAt);
+  });
 });
 
 describe('Track 10A old inline-flow content removed', () => {
@@ -730,20 +837,20 @@ describe('Track 15A setup / protocol / preamble / conductor cohorts', () => {
     }
   });
 
-  test("PREAMBLE \\ PROTOCOL === ['gstack-extend-upgrade']", () => {
-    const extra = PREAMBLE_SKILLS.filter((s) => !(PROTOCOL_SKILLS as readonly string[]).includes(s));
-    expect(extra).toEqual(['gstack-extend-upgrade']);
+  test('PREAMBLE equals SETUP as a set', () => {
+    expect(new Set(PREAMBLE_SKILLS)).toEqual(new Set(setupSkills));
+    expect(PREAMBLE_SKILLS.length).toBe(setupSkills.length);
   });
 
-  test("SETUP \\ PREAMBLE contains the utility/workflow skills", () => {
+  test('SETUP \\ PREAMBLE is empty', () => {
     const extra = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
-    expect(extra).toEqual([...NON_PREAMBLE_SETUP_SKILLS]);
+    expect(extra).toEqual([]);
   });
 
-  test('PROTOCOL and PREAMBLE exclude every non-preamble setup skill', () => {
-    for (const s of NON_PREAMBLE_SETUP_SKILLS) {
+  test('PROTOCOL excludes every utility skill and PREAMBLE includes each one', () => {
+    for (const s of UTILITY_SKILLS) {
       expect(PROTOCOL_SKILLS).not.toContain(s);
-      expect(PREAMBLE_SKILLS).not.toContain(s);
+      expect(PREAMBLE_SKILLS).toContain(s);
     }
   });
 
@@ -824,19 +931,28 @@ describe('Paseo lifecycle wording beyond the primary workflow guards', () => {
   });
 });
 
-describe('non-preamble setup skills carry only telemetry SHARED blocks', () => {
+describe('utility/workflow skills carry only upgrade-flow and telemetry SHARED blocks', () => {
   const setupSkills = parseSetupSkills(readFileSync(join(ROOT, 'setup'), 'utf8'));
-  const outside = setupSkills.filter((s) => !(PREAMBLE_SKILLS as readonly string[]).includes(s));
+  const outside = setupSkills.filter(
+    (s) => !(PROTOCOL_SKILLS as readonly string[]).includes(s) && s !== 'gstack-extend-upgrade',
+  );
 
   test('the outside set is exactly the utility/workflow cohort', () => {
-    expect(outside).toEqual([...NON_PREAMBLE_SETUP_SKILLS]);
+    expect(outside).toEqual([...UTILITY_SKILLS]);
   });
 
   for (const skill of outside) {
-    test(`${skill} has only telemetry markers and no protocol/upgrade/Conductor blocks`, () => {
+    test(`${skill} has only upgrade-flow and telemetry markers and no protocol/Conductor blocks`, () => {
       const content = readFileSync(join(ROOT, 'skills', `${skill}.md`), 'utf8');
       const markers = [...content.matchAll(/<!-- (\/?SHARED:[^ ]+) -->/g)].map(match => match[1]);
-      expect(markers).toEqual(['SHARED:telemetry-start', '/SHARED:telemetry-start', 'SHARED:telemetry-finish', '/SHARED:telemetry-finish']);
+      expect(markers).toEqual([
+        'SHARED:upgrade-flow',
+        '/SHARED:upgrade-flow',
+        'SHARED:telemetry-start',
+        '/SHARED:telemetry-start',
+        'SHARED:telemetry-finish',
+        '/SHARED:telemetry-finish',
+      ]);
     });
   }
 });
@@ -1105,7 +1221,7 @@ function runPreamble(skill: string, home: string, cwd: string, extra: Record<str
   });
 }
 
-// Init-tail skills exit 1 without a verified root and never run update-check.
+// Helper-tail skills exit 1 without a verified root and run update-check only after printing it.
 const INIT_LIKE = new Set<string>(['gstack-extend-init', 'autoplan-lean', 'docs-ship']);
 
 describe('Track 16D preamble representatives', () => {
@@ -1156,9 +1272,7 @@ describe('Track 16D preamble representatives', () => {
           } else {
             expect(r.status).toBe(0);
             expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
-            if (!INIT_LIKE.has(skill)) {
-              expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
-            }
+            expect(readFileSync(r.sentinel!, 'utf8').trim()).toBe(root);
           }
         }
       });
@@ -1186,11 +1300,7 @@ describe('Track 16D preamble representatives', () => {
         expect(r.stderr).toBe('');
         expect(r.status).toBe(0);
         expect(r.stdout).toContain(`EXTEND_ROOT: ${root}`);
-        if (skill === 'gstack-extend-init') {
-          expect(existsSync(r.sentinel ?? sentinel)).toBe(false);
-        } else {
-          expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
-        }
+        expect(readFileSync(r.sentinel ?? sentinel, 'utf8').trim()).toBe(root);
       }
     }
   });

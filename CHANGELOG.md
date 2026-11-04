@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.65.0] - 2026-11-04
+
+### Added
+
+- Every skill checks for a gstack-extend update, and a spawned session never runs the upgrade.
+
+### Fixed
+
+- The guard's skip line is clearer, and `update-check` reports its own state.
+- `docs-ship` has its structure back, and the branch opened for a spawned upgrade is tighter.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+
 ## [0.64.0] - 2026-11-04
 
 ### Added

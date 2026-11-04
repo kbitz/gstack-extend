@@ -180,12 +180,50 @@ mkdir -p <host-skills-dir>/plan-track
 ln -s <checkout>/skills/plan-track.md <host-skills-dir>/plan-track/SKILL.md
 ```
 
-`/plan-track` needs nothing else from the agent. Its telemetry call does nothing until
+`/plan-track` needs nothing else from the agent. Without a managed install it skips
+the update check and says nothing about it. Its telemetry call does nothing until
 some `setup` run has installed `$HOME/.gstack-extend/bin/telemetry-call` (see above).
 `setup` and its uninstall never see these links, so remove them by hand; a link
 dangles after `setup --uninstall` or a moved checkout. Skills that call helpers in the
 checkout need one of the four managed installs, because their resolver probes only
 those four directories.
+
+### Update checks
+
+Every installed skill runs `bin/update-check` at start and follows one shared upgrade
+flow when `UPGRADE_AVAILABLE <old> <new>` is printed.
+
+In an interactive session (`GSTACK_SESSION_KIND` unset or any value other than
+`spawned` or `unattended`), the flow checks `auto_upgrade`. With `auto_upgrade=true`
+it runs `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` without asking; otherwise it
+asks whether to upgrade now, enable auto-upgrade after a confirmed upgrade, snooze
+for 24h / 48h / 1 week, or set `update_check=false`. `/plan-track` is the exception:
+because it asks no questions and installs nothing, it always follows the spawned
+branch below.
+
+With `GSTACK_SESSION_KIND` set to `spawned` (or `unattended`), the flow asks nothing,
+never runs `bin/update-run` even under `auto_upgrade=true`, writes no snooze or
+config state itself, and puts the available version line in the run's final message
+before any fenced prompt or result, handoff, stage or pause line. Concurrent stages
+share the installed checkout, so upgrading from a spawned stage could mutate that
+checkout underneath other stages running at the same time.
+
+`bin/update-check` keeps its own state in every session kind: it refreshes its cache;
+it consumes the just-upgraded marker and clears a snooze when it reports
+`JUST_UPGRADED`; and it clears a snooze whenever `/gstack-extend-upgrade` runs it with
+`--force`. A spawned stage may therefore be the run that shows the "just updated"
+notice, and a spawned run can end a snooze early, so the next interactive stage may
+ask sooner.
+
+The skill reads this variable from the environment only; any other value, or none,
+uses the interactive branch. A caller that launches stages without a person must set
+`GSTACK_SESSION_KIND=spawned`; otherwise a stage may ask the upgrade question at
+start or auto-upgrade under `auto_upgrade=true`. Skill text is not enforcement: a
+caller that must never upgrade should deny `bin/update-run` in its own permission
+layer.
+
+To upgrade when a spawned run reports a newer version, run `/gstack-extend-upgrade`
+in an interactive session, or run `<checkout>/bin/update-run <checkout>` directly.
 
 ### Version numbers
 

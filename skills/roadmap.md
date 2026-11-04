@@ -79,20 +79,24 @@ If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just upd
 <!-- SHARED:upgrade-flow -->
 ### Inline upgrade flow
 
-Check if auto-upgrade is enabled:
+Check the session kind and whether auto-upgrade is enabled:
 ```bash
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SESSION=spawned" ;; *) echo "UPGRADE_SESSION=interactive" ;; esac
 _AUTO=$("$_EXTEND_ROOT/bin/config" get auto_upgrade 2>/dev/null || true)
 echo "AUTO_UPGRADE=${_AUTO:-false}"
 ```
 
-Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`.
+**If `UPGRADE_SESSION=spawned`:** Ask nothing, never run `bin/update-run` whatever `AUTO_UPGRADE` says, write no snooze or config state, and continue with the skill. Put this line in the run's final message, before any fenced prompt and any result, handoff, stage or pause line the skill ends with, and never inside a fence or a versioned receipt field: `gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.` The rest of this flow applies only to `UPGRADE_SESSION=interactive`; the auto-upgrade command below checks the session kind again and prints `UPGRADE_SKIPPED spawned-session` instead of running.
+
+Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`. The guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output and not a failure.
 
 If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host in your message: setup left its skill install untouched, so it may be stale. Relay setup's stderr reason with its fix: for a shared directory, **Shared-directory migration** in the checkout's `docs/installation.md`; for an unsafe directory, the directory fix setup printed. Never say every host was refreshed.
 
 **If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
 ```bash
-"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
 ```
+- On `UPGRADE_SKIPPED spawned-session`: this is not a failure. Show no retry command; follow the `UPGRADE_SESSION=spawned` branch above.
 - On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
 - On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
 
