@@ -80,7 +80,9 @@ Prints sorted diff lines, a summary count, and the final status:
 
 ### Refusals
 
-All usage and validation refusals write `ERROR <code>: <detail>` and `FIX: <action>` to `stderr`, leave `.gstack/pregate.json` untouched, and exit `2` (for example: outside a Git work tree, missing `--root` directory, missing `.gstack/pregate.json` where `FIX:` recommends `gstack-pregate init`, invalid JSON or `dependencies` shape, stale owned entries without `--prune`, or exceeding upstream's 256-entry / 256-character caps).
+All usage and validation refusals write `ERROR <code>: <detail>` and `FIX: <action>` to `stderr`, leave `.gstack/pregate.json` untouched, and exit `2` (for example: outside a Git work tree, missing `--root` directory, missing `.gstack/pregate.json` where `FIX:` recommends `gstack-pregate init`, invalid JSON or `dependencies` shape, stale owned entries without `--prune`, or exceeding upstream's 256-entry / 256-character caps). A policy file resolving outside the repository is refused, including through a symlinked parent directory. Generated module paths containing `*` or `?` are refused because upstream interprets those characters as globs, not literal paths.
+
+Writes use a temporary file beside the resolved policy and rename it into place only after the write completes, preserving the original policy on a partial write failure. Git's global excludes are respected when scanning untracked Python files.
 
 ### Exit codes
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { cleanGitEnv, generate, isPyTestFile, readPythonSources } from './graph.ts';
 
 export const PREGATE_CONFIG_REL = '.gstack/pregate.json';
@@ -184,6 +184,10 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
     if (!existsSync(configPath) || !statSync(configPath).isFile()) {
       return refuse(io, 'missing_config', `${PREGATE_CONFIG_REL} does not exist`, `run ${INIT_CMD} to create ${PREGATE_CONFIG_REL} first`);
     }
+    const realConfigPath = realpathSync(configPath);
+    if (!realConfigPath.startsWith(`${realTop}/`)) {
+      return refuse(io, 'invalid_config', `${PREGATE_CONFIG_REL} resolves outside repository`, 'use a policy file inside the repository');
+    }
 
     const rawConfig = readFileSync(configPath, 'utf8');
     let configObj: Record<string, unknown>;
@@ -197,7 +201,7 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
       return refuse(io, 'invalid_config', `${PREGATE_CONFIG_REL} is not valid JSON: ${(err as Error).message}`, `fix JSON syntax in ${PREGATE_CONFIG_REL}`);
     }
 
-    const prevDeps: Record<string, string[]> = {};
+    const prevDeps: Record<string, string[]> = Object.create(null);
     if ('dependencies' in configObj && configObj.dependencies !== undefined) {
       const rawDeps = configObj.dependencies;
       if (!rawDeps || typeof rawDeps !== 'object' || Array.isArray(rawDeps)) {
@@ -218,9 +222,14 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
 
     const sources = readPythonSources(repoRoot, io.env);
     const generatedRaw = generate(sources, parsedArgs.roots);
+    for (const key of Object.keys(generatedRaw)) {
+      if (key.includes('*') || key.includes('?')) {
+        return refuse(io, 'unsupported_path', `module path contains glob characters: ${key}`, 'rename the source path to avoid * and ? before generating literal dependency keys');
+      }
+    }
 
-    const owned: Record<string, string[]> = {};
-    const kept: Record<string, string[]> = {};
+    const owned: Record<string, string[]> = Object.create(null);
+    const kept: Record<string, string[]> = Object.create(null);
     for (const [k, v] of Object.entries(prevDeps)) {
       if (isOwnedKey(k, v, parsedArgs.roots)) {
         owned[k] = v;
@@ -229,7 +238,7 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
       }
     }
 
-    const generated: Record<string, string[]> = {};
+    const generated: Record<string, string[]> = Object.create(null);
     for (const [k, v] of Object.entries(generatedRaw)) {
       if (!(k in kept)) generated[k] = v;
     }
@@ -312,7 +321,14 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
       ...configObj,
       dependencies: sortedDependencies,
     };
-    writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`);
+    const scratch = mkdtempSync(join(dirname(realConfigPath), '.pregate-deps-'));
+    try {
+      const replacement = join(scratch, 'pregate.json');
+      writeFileSync(replacement, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: statSync(realConfigPath).mode & 0o777 });
+      renameSync(replacement, realConfigPath);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
 
     const lines: string[] = [
       ...missing.map(m => `ADDED ${m}`),

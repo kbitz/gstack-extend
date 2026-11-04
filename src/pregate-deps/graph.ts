@@ -62,7 +62,8 @@ function pyFromBase(rel: string, spec: string): string | null {
   if (!dots) return rest;
   const pkg = posix.dirname(rel).split('/').filter(s => s !== '.');
   if (dots - 1 > pkg.length) return null;
-  return [...pkg.slice(0, pkg.length - (dots - 1)), ...(rest ? [rest] : [])].join('.');
+  // Relative filesystem ancestors may contain dots (for example src.v2/).
+  return [...pkg.slice(0, pkg.length - (dots - 1)), ...(rest ? rest.split('.') : [])].join('/');
 }
 
 export interface PyImportSpec {
@@ -84,14 +85,14 @@ export function pythonImports(rel: string, source: string): PyImportSpec[] {
     if (base === null) continue;
     if (base) out.push({ mod: base, relative });
     for (const name of pyNames(m[2]!)) {
-      out.push({ mod: base ? `${base}.${name}` : name, relative });
+      out.push({ mod: base ? `${base}${relative ? '/' : '.'}${relative ? name.replaceAll('.', '/') : name}` : name, relative });
     }
   }
   return out;
 }
 
-function pythonModuleFilesInBase(files: Set<string>, base: string, dotted: string, maxDepth: number): string[] {
-  const parts = dotted.split('.');
+function pythonModuleFilesInBase(files: Set<string>, base: string, dotted: string, maxDepth: number, relative = false): string[] {
+  const parts = dotted.split(relative ? '/' : '.');
   if (parts.length > maxDepth || parts.some(p => !p)) return [];
   const prefix = base ? `${base}/` : '';
   const p = `${prefix}${parts.join('/')}`;
@@ -142,7 +143,7 @@ export function generate(sources: Map<string, string>, roots: string[] = ['src']
     if (!files.has(rel)) continue;
     for (const { mod, relative } of pythonImports(rel, source)) {
       if (relative) {
-        for (const target of pythonModuleFilesInBase(files, '', mod, maxDepth)) addEdge(target, rel);
+        for (const target of pythonModuleFilesInBase(files, '', mod, maxDepth, true)) addEdge(target, rel);
       } else {
         for (const base of bases) {
           for (const target of pythonModuleFilesInBase(files, base, mod, maxDepth)) addEdge(target, rel);
@@ -184,8 +185,10 @@ export function generate(sources: Map<string, string>, roots: string[] = ['src']
 }
 
 export function cleanGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const cleaned = Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('GIT_')));
-  return { ...cleaned, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  // Drop repository/index redirection, while retaining normal Git configuration
+  // (notably global excludes and safe.directory) for --exclude-standard parity.
+  const configKeys = new Set(['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM']);
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith('GIT_') || configKeys.has(k)));
 }
 
 /**

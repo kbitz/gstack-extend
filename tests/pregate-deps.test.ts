@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { help, main } from '../src/pregate-deps/cli.ts';
 import { generate } from '../src/pregate-deps/graph.ts';
@@ -82,6 +82,87 @@ const EXPECTED_HAND: Record<string, string[]> = {
 };
 
 describe('pregate-deps', () => {
+  test('preserves prototype-named unowned dependency keys', () => {
+    const repo = materializeFixtureRepo();
+    const configPath = join(repo, '.gstack/pregate.json');
+    for (const args of [[], ['--prune']]) {
+      writeFileSync(configPath, '{"dependencies":{"__proto__":["tests/test_other.py"]}}');
+      expect(runCli(repo, args).status).toBe(0);
+      const deps = JSON.parse(readFileSync(configPath, 'utf8')).dependencies;
+      expect(Object.hasOwn(deps, '__proto__')).toBe(true);
+      expect(deps.__proto__).toEqual(['tests/test_other.py']);
+    }
+  });
+
+  test('refuses config symlinks escaping through either the file or its directory', () => {
+    for (const linkDirectory of [false, true]) {
+      const repo = materializeFixtureRepo();
+      const external = join(baseTmp, `external-${linkDirectory}`);
+      mkdirSync(external);
+      const target = join(external, 'pregate.json');
+      const before = '{"sentinel":true}';
+      writeFileSync(target, before);
+      const configPath = join(repo, '.gstack/pregate.json');
+      if (linkDirectory) {
+        rmSync(join(repo, '.gstack'), { recursive: true });
+        symlinkSync(external, join(repo, '.gstack'));
+      } else {
+        unlinkSync(configPath);
+        symlinkSync(target, configPath);
+      }
+      expect(runCli(repo, []).status).toBe(2);
+      expect(readFileSync(target, 'utf8')).toBe(before);
+    }
+  });
+
+  test('relative imports preserve dotted source-root directory segments', () => {
+    const repo = materializeFixtureRepo();
+    renameSync(join(repo, 'src'), join(repo, 'src.v2'));
+    expect(runCli(repo, ['--root', 'src.v2', '--prune']).status).toBe(0);
+    const deps = JSON.parse(readFileSync(join(repo, '.gstack/pregate.json'), 'utf8')).dependencies;
+    expect(deps['src.v2/pkg/beta.py']).toEqual([
+      'tests/test_alpha.py', 'tests/test_gamma.py', 'tests/test_patch.py',
+    ]);
+  });
+
+  test('respects global Git excludes while scanning untracked sources', () => {
+    const repo = materializeFixtureRepo();
+    mkdirSync(join(repo, 'scratch'));
+    writeFileSync(join(repo, 'scratch/test_private.py'), 'import pkg.beta\n');
+    const excludes = join(baseTmp, 'global-ignore');
+    writeFileSync(excludes, 'scratch/\n');
+    const config = join(baseTmp, 'synthetic.gitconfig');
+    writeFileSync(config, `[core]\n excludesFile = ${excludes}\n`);
+    expect(main(['--prune'], { cwd: repo, env: { ...GIT_ENV, GIT_CONFIG_GLOBAL: config }, stdout: () => {}, stderr: () => {} })).toBe(0);
+    const deps = JSON.parse(readFileSync(join(repo, '.gstack/pregate.json'), 'utf8')).dependencies;
+    expect(deps['src/pkg/beta.py']).not.toContain('scratch/test_private.py');
+  });
+
+  test('refuses generated module paths that upstream would interpret as globs', () => {
+    const repo = materializeFixtureRepo();
+    renameSync(join(repo, 'src'), join(repo, 'src?'));
+    const configPath = join(repo, '.gstack/pregate.json');
+    const before = readFileSync(configPath, 'utf8');
+    expect(runCli(repo, ['--root', 'src?', '--prune']).status).toBe(2);
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+  });
+
+  test('a partial filesystem write failure leaves the original policy intact', () => {
+    const repo = materializeFixtureRepo();
+    const configPath = join(repo, '.gstack/pregate.json');
+    const before = '{}\n';
+    writeFileSync(configPath, before);
+    for (let i = 0; i < 30; i++) {
+      writeFileSync(join(repo, `tests/test_write_${i}.py`), 'import pkg.beta\n');
+    }
+    // Force a real partial write using the child process's file-size limit.
+    const result = spawnSync('bash', ['-c', 'ulimit -c 0; ulimit -f 1; exec "$1"', 'write-limit', BIN_PATH], {
+      cwd: repo, env: GIT_ENV, encoding: 'utf8', timeout: 15_000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+  });
+
   test('(a) write mode: refuses removals without --prune, applies them with --prune, preserves hand entries and top-level keys, and preserves a hand-written link under an owned key on plain write', () => {
     const repo = materializeFixtureRepo();
     const configPath = join(repo, '.gstack/pregate.json');
