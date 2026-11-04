@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.64.0] - 2026-11-04
+
+### Added
+
+- `pregate-deps` scans a repository's Python imports and writes or checks `.gstack/pregate.json` dependency entries for modules under `src/` or other `--root` directories.
+
+### Fixed
+
+- Replacing `.gstack/pregate.json` keeps the file's existing permissions.
+- Generated dependency entries keep the rest of the dependency policy and stay inside the declared source roots.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+
 ## [0.63.3] - 2026-11-04
 
 ### Changed
