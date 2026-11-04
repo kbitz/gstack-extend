@@ -1027,6 +1027,6 @@ describe('pair-review PAUSE route', () => {
     const text = flatProse(pairSkill);
     expect(text).toContain('"pause" / "stop for now" / "continue later" → PAUSE');
     expect(text).toContain('PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to continue with `/pair-review resume`, then run Telemetry finish with `--outcome blocked`; that resume runs Telemetry start again.');
-    expect(text).toContain('So does a RESUME later in this conversation, before it continues.');
+    expect(text).toContain('After a PAUSE, any further action in this conversation (RESUME, PASS, FAIL, DONE or any other) also runs Telemetry start first.');
   });
 });

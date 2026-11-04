@@ -37,6 +37,15 @@ true
 ```
 <!-- /SHARED:telemetry-start -->
 
+**Segments.** Each deliberate pause below (manual testing, cycle stop, exit
+question or configuration pause, external gate) runs Telemetry finish with
+`--outcome blocked`, which ends that segment. Whatever continues the run
+afterwards, a resume invocation or the user's answer or a result line later in
+this same conversation, first runs Telemetry start again: that begins a new
+segment. A question answered before the turn ends is not a pause. Each segment
+counts as its own invocation below, with its own session ID and its own
+workflow metrics run.
+
 ### Workflow metrics (optional, local)
 
 Step/pass capture for this workflow lives beside the legacy telemetry above and
@@ -47,12 +56,9 @@ solely as the `session_id` of `metrics` calls in this invocation. Never replay
 or alter a legacy start/finish call, never use an ID from another invocation,
 and never start a new legacy run to feed metrics. If the ID is unavailable,
 metrics capture is unavailable; continue the workflow. A resume prints its own
-ID and records its own metrics run.
-Each deliberate pause below (manual testing, cycle stop, exit question or
-configuration pause, external gate) finishes its segment `blocked`. Whatever
-continues the run afterwards, a resume invocation or the user's answer or a
-result line later in this same conversation, first runs Telemetry start and
-then records a new metrics run under the ID that start printed.
+ID and records its own metrics run. After a pause, the continuation's new start
+prints the ID that the new run (and its single run `begin`) uses, as
+**Segments** above says.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
@@ -262,9 +268,10 @@ library and both call forms are in
   If any metrics call after the run `begin` ended without `recorded` or
   `replayed` and was not reconciled, also add the literal line
   `Workflow metrics (local, optional): capture=partial (<reason>).` beside
-  the snapshot, since the read cannot see a dropped call. After a resume the
-  snapshot counts that segment only, so also add the literal line
-  `Workflow metrics (local, optional): this segment only; earlier segments are in their own pause receipts.`
+  the snapshot, since the read cannot see a dropped call. When this segment
+  continues a paused run (its Telemetry start ran after a pause), the snapshot
+  counts this segment only, so also add the literal line
+  `Workflow metrics (local, optional): this segment only; earlier segments are recorded under their own session IDs.`
   `end` the run step just before the legacy telemetry finish; at a deliberate
   pause end it `paused`, before the `blocked` finish. Never write or edit a PR body or comment only to refresh
   metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
@@ -2227,7 +2234,8 @@ a caller that runs elsewhere moves the commit itself. The PR stays unready.
 This pause prints no stage line: the contract freezes the `External gate:` line as
 the last line of the turn, and a line after it holds the caller.
 
-**Resume entry.** Handle any existing manual-testing or cycle-cap hold first.
+**Resume entry.** Telemetry start runs before this entry, because the pause
+ended its segment (**Segments**, under Telemetry start). Handle any existing manual-testing or cycle-cap hold first.
 Otherwise an external-gate resume needs no H-C marker or PR. Read the highest
 checkpoint sequence in the evidence directory printed at the pause, reconciling
 all later attestation and repair records, including records written between pauses.
