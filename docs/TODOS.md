@@ -13,6 +13,17 @@
 - **Effort:** ? (user triages in /roadmap)
 - **Revisit when:** The next Track touches these files.
 
+### [review:files=tests/skill-protocols.test.ts] Test gap: update-check trigger lines, notice placement and output echo
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Three text paths around the shared upgrade flow have no lock of their own. The `If output shows UPGRADE_AVAILABLE` and `If JUST_UPGRADED` lines that send eight skills into the flow are not asserted per skill. The spawned branch's placement clause (before any fenced prompt, never inside a fence or a versioned receipt field) is not pinned. No test shows `bin/update-check` output reaching stdout through the preamble's `echo "$_UPD"` line; only the verbatim tail lock covers it.
+- **Hypothesis (untested):** Loop over the skills that run update-check and assert both trigger lines precede `<!-- SHARED:upgrade-flow -->`; add the placement clause to the spawned-paragraph assertions; have the Track 16D stub print `UPGRADE_AVAILABLE 1.0.0 2.0.0` and assert it reaches stdout. Re-verify the wording first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/skill-protocols.test.ts (Track 10A and Track 16D describes)
+- **Evidence:** Track 66A /review-and-prep coverage audit (audit-only, 86% value-weighted); 580 tests run green, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/6598a207 at 697f811, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
 ### [review:files=skills/gstack-extend-upgrade.md|skills/project-spec.md|bin/update-run] Decide whether an interactive upgrade at stage start should wait until the stage ends
 
 - **Description:** Track 66A runs the shared upgrade flow at the start of all twelve skills. An interactive stage that upgrades there (an answered question, or `auto_upgrade=true`) keeps the skill text it already loaded but calls helpers and reads docs from the upgraded checkout for the rest of the run, so a release that changes a helper's output (`docs-ship`, `secret-dispositions`, `outside-review`) can be misread mid-stage. `/project-spec` already defers `/roadmap`'s upgrade until composition finishes, but its own start-of-run flow can now upgrade before composition.
