@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=CLAUDE.md] Test gap: working-rule agent scenarios
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Reader suites preserve existing contracts but do not exercise the new priority reporting, README-only handoff, judgment/mechanics boundary, two-host storage, timeout diagnosis or near-full pregate selection instructions.
+- **Hypothesis (untested):** Evaluate these six agent scenarios against their observable outcomes; string-presence tests would only mirror the prose. Re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** CLAUDE.md, Product scope and releases / Design / Testing
+- **Evidence:** Coverage audit read the diff and reader assertions; no executable regression was demonstrated.
+- **Context:** /review-and-prep on branch mmm/e3debc6c at 57983ef, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches CLAUDE.md working rules.
+
 ### [review:files=bin/lib/telemetry.py|bin/lib/telemetry-doctor.py] Guard resumable telemetry adoption against stale and in-progress handoffs
 
 - **Description:** A start-less finish of a resumable skill adopts any open handoff of that skill in its root, at any age and from any session. Since paused runs finish their segment `blocked`, a continuation whose agent skips its restart has no handoff of its own, so its finish takes an older abandoned start's `session_id`, `started_at` and saved `work_item` (or writes nothing). A start-less retry of a failed `blocked` finish can likewise land on the newer resumed segment. The doctor files every unmatched resumable start as a deferred finish, so neither case is visible. The skill prose now says to restart; nothing in code enforces it.
