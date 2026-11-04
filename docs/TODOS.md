@@ -2,6 +2,116 @@
 
 ## Unprocessed
 
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: CLI option combinations
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Equivalent root spellings, duplicate roots, short help, and check/prune precedence lack dedicated cases.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:85:optional-flag-combinations
+- **Evidence:** Coverage audit G01; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Root and policy file kinds
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Root files, root symlinks, and a policy directory lack boundary cases; escaping policy symlinks are already covered.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:172:root-and-config-file-kinds
+- **Evidence:** Coverage audit G02; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Nested dependency shapes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Nested null, array, scalar and mixed-type dependency values lack dedicated refusal cases; top-level nonobject and non-array values are tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:207:nested-dependency-shapes
+- **Evidence:** Coverage audit G03; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/graph.ts|tests/pregate-deps.test.ts] Test gap: Python reader filter boundaries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Per-file size, type, symlink and Git-redirection filters lack direct cases; global ignores are tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/graph.ts:199:reader-filter-boundaries
+- **Evidence:** Coverage audit G04; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/graph.ts|tests/pregate-deps.test.ts] Test gap: Cyclic and terminal import closure
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Self/cyclic imports and test-to-test traversal lack direct cases; helper transitivity is tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/graph.ts:133:cyclic-and-terminal-closure
+- **Evidence:** Coverage audit G06; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/graph.ts|src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Empty Python source closure
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Empty source sets lack a dedicated check/write/prune lifecycle case; orphan omission in populated graphs is tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/graph.ts:123:empty-source-closure
+- **Evidence:** Coverage audit G07; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Dependency value length boundaries
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Test-path value lengths at 256 and 257 lack direct cases; key length and entry-count refusals are tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:266:test-path-length-limit
+- **Evidence:** Coverage audit G08; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Kept dependency collisions
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** An imported module colliding with an unowned empty declaration and source-root test-file keys lack direct cases.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:243:kept-entry-precedence
+- **Evidence:** Coverage audit G09; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: Ordinary filesystem error output
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Ordinary caught I/O failures lack a direct ERROR/FIX and cleanup assertion; partial-write preservation is tested.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** src/pregate-deps/cli.ts:345:internal-error-contract
+- **Evidence:** Coverage audit G10; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=tests/helpers/touchfiles.ts|tests/pregate-deps.test.ts] Test gap: Pregate helper selection edges
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Generic reachability and sync invariants do not independently pin all four new manual selection edges.
+- **Hypothesis (untested):** Extend existing fixture cases at the public boundary with the audit proposal; re-verify the behavior first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/helpers/touchfiles.ts:104:pregate-deps-selection-edges
+- **Evidence:** Coverage audit W01; source and existing tests inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/ea9b305e at 27ad120, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
 ### [review:files=CLAUDE.md] Test gap: working-rule agent scenarios
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Reader suites preserve existing contracts but do not exercise the new priority reporting, README-only handoff, judgment/mechanics boundary, two-host storage, timeout diagnosis or near-full pregate selection instructions.
