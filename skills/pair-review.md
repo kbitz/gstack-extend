@@ -1739,7 +1739,8 @@ language to the appropriate action. In practice, users will say things like:
 
 PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to
 continue with `/pair-review resume`, then run Telemetry finish with
-`--outcome blocked`; that resume runs Telemetry start again.
+`--outcome blocked`; that resume runs Telemetry start again. So does a RESUME
+later in this conversation, before it continues.
 
 When ambiguous, ask.
 

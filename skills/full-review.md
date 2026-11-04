@@ -845,7 +845,8 @@ free-text (via "Other" or as a direct message), map natural language:
 
 PAUSE leaves untriaged clusters and `session.yaml` as they are and does not run
 Phase 5 or 6. Tell the user to continue with `/full-review resume`, then run
-Telemetry finish with `--outcome blocked`.
+Telemetry finish with `--outcome blocked`. That resume, or a RESUME later in
+this conversation, runs Telemetry start again before it continues.
 
 ---
 

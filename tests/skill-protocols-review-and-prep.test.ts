@@ -2565,4 +2565,9 @@ describe('review-and-prep pause points finish blocked', () => {
     expect(text).toContain('A resume prints its own ID and records its own metrics run.');
     expect(text).not.toContain('leave it open at a pause');
   });
+  // Value: protects=work that continues after a blocked finish starts its own segment, in or out of the conversation; fails_when=an in-session continuation drops the restart or the post-resume receipt loses its segment label; why_new=a blocked finish consumes the handoff, so a continuation without a start adopts a stale one or writes nothing; seam=none; no_claim=agent behavior (static prose lock)
+  test('a continuation after a pause starts a new segment, and its receipt says it covers one segment', () => {
+    expect(text).toContain('Whatever continues the run afterwards, a resume invocation or the user\'s answer or a result line later in this same conversation, first runs Telemetry start and then records a new metrics run under the ID that start printed.');
+    expect(text).toContain('`Workflow metrics (local, optional): this segment only; earlier segments are in their own pause receipts.`');
+  });
 });

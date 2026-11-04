@@ -410,8 +410,8 @@ def pick_adoption(candidates):
     """The adoptable candidate that pairs first, or None.
 
     Order: resumable-exact NEWEST first, resumable-other NEWEST first (each resume starts its own segment, so the
-    newest open start is the current one; an older open start is a lost pause finish or a pause from an older
-    release and must not capture it), then exact and unknown-fingerprint candidates oldest first. Ties break on
+    newest open start is the current one; an older open start may be an interrupted segment, a lost pause finish
+    or a pause from an older release, and must not capture it), then exact and unknown-fingerprint candidates oldest first. Ties break on
     arrival (sort_key), never on session id alone."""
     adoptable = [item for item in candidates if item.classification[0] == "adopt"]
     if not adoptable:

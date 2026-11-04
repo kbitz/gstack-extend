@@ -130,7 +130,9 @@ does not, writes nothing, keeps the handoff, and (in debug mode) says to upgrade
 gstack. Start never invokes the logger, so an old logger does not affect it. Start
 rows are ordinary rows in gstack's shared sink, which gstack's own dashboards
 (`gstack-analytics`, `/retro`) do not know about, so they may count a start as a
-run; the old activation rows behaved the same way.
+run; the old activation rows behaved the same way. Those dashboards also count each
+paused segment's `skill_run` (outcome `blocked`) as a run that did not succeed, so a
+run that pauses once and then succeeds shows there as two runs, one successful.
 
 Routing activation through the logger would put background network sync on the
 skill-start critical path, a cost identified in the earlier design. Direct
@@ -206,8 +208,9 @@ adoptable handoff wins, and the debug line names that reason.
 
 Two missing fingerprints are unknown, never equal. A resumable finish takes the newest
 start in its class because each resume starts its own segment, so the newest open start
-is the current segment. An older open start is a lost pause finish, or a pause recorded
-by an older release, and must not capture the current segment's finish. "Oldest" and "newest" are the saved
+is the current segment. An older open start may be an interrupted segment, a lost pause
+finish or a pause recorded by an older release, and must not capture the current
+segment's finish. "Oldest" and "newest" are the saved
 `seq`, so starts in the same second still pair in the order they began. When nothing is
 adoptable the finish is refused and the refusal is recorded on the newest handoff with a
 valid `start`; a handoff without one is never adopted and never takes the record. Debug
@@ -565,8 +568,9 @@ from the checkout) and stores the binding in the run record, so reads keep
 working after legacy finish consumes the handoff; a finish *before* any bind
 leaves capture unavailable. The wrapper keeps the ID for metrics only — the
 SHARED start/finish blocks are byte-identical and their no-copying rule still
-governs legacy calls. Resuming without the retained ID is capture-unavailable,
-never a fresh legacy start. Joining to a stage-runs row is by that ID; it does
+governs legacy calls. A paused run's resume runs its own legacy start and
+records a new run under the ID that start printed; it never reuses the paused
+segment's ID, and a read of the new run counts only its own segment. Joining to a stage-runs row is by that ID; it does
 not retroactively prove an ambiguous implicit legacy finish was attributed
 correctly.
 
@@ -704,7 +708,8 @@ without `recorded` or `replayed` and was not reconciled, it adds the literal
 see a dropped call. The `receipt_text` reports local passes, Greptile passes,
 fix cycles, local and Greptile finding counts separately, and excluded `N/A`
 voices. It ends the run step just before its legacy finish;
-at a deliberate pause it ends the step `paused`, just before the `blocked` finish. No PR body, comment or report is written or
+at a deliberate pause it ends the step `paused`, just before the `blocked` finish. After a
+resume the snapshot counts that segment only, and the receipt says so. No PR body, comment or report is written or
 edited only to refresh metrics — never after readiness or merge, and the
 metrics line comes before a readiness report's merge decision. It preserves
 every existing receipt/handoff label and cannot authorize readiness, landing
@@ -1279,7 +1284,8 @@ retained session ID and its bound run; one observed phase interval; one
 `REUSE` decision with no new interval; one wait (manual pause or external
 review); one retry/correction when the run naturally has one; the receipt
 metrics line; and a deliberate missing-capture case
-(`GSTACK_EXTEND_WORKFLOW_METRICS=off`, and resume without the retained ID)
+(`GSTACK_EXTEND_WORKFLOW_METRICS=off`, and a run whose retained ID was lost, for
+example after context compaction)
 read as disabled/unknown rather than zero. Also record the added tool calls
 and agent turns versus the same workflow with capture disabled, noting which
 metrics calls shared an existing tool call; where a comparable enabled/disabled
@@ -1950,9 +1956,15 @@ and one `skill_run`.
   `started_at` order are a hint, never identity.
 - The time between a `blocked` row's end and the next segment's `started_at` is
   unobserved and unknown, never zero. A consumer that summed one `duration_s` per paused
-  run now sees several shorter segments.
+  run now sees several shorter segments, and gstack's own dashboards count each `blocked`
+  segment as a run that did not succeed.
 - A pause recorded by an older release leaves an open handoff and no `blocked` row. A
-  segment whose agent skipped the pause finish stays an open handoff the same way.
+  segment whose agent skipped the pause finish stays an open handoff the same way. A
+  resume that skips its own start has no handoff: its start-less finish adopts the newest
+  open handoff in that root, which can be an older abandoned start whose `session_id`,
+  `started_at` and saved `work_item` the row then carries, or writes nothing when none is
+  open. Each skill therefore runs start again whenever work continues after a pause,
+  including later in the same conversation.
 - The schema is unchanged: legacy, v1 and v2 readers are unchanged, and legacy and v1
   rows never carry `blocked`.
 - Future cards: segments cover the resumable cross-checkout case. "Recover a telemetry
@@ -2239,7 +2251,7 @@ counts, window-crossing completions, and parse diagnostics.
 | Start outside window | An in-window finish is crossing-window, not unpaired |
 | Legacy / session alias / missing v or ID | Visible separately; no invented IDs or pairing |
 | Finish without matching start | Unpaired-finish, never a crash or negative numerator |
-| pair-review, review-and-prep, full-review | Resumable: unmatched starts are deferred finishes, excluded from the ratio. A deliberate pause finishes its segment `blocked` and the resume pairs too, so an unmatched resumable start now means a lost pause finish or a pause from an older release. Adoption is unbounded. Revisit when the doctor coverage report shows resumable pause durations |
+| pair-review, review-and-prep, full-review | Resumable: unmatched starts are deferred finishes, excluded from the ratio. A deliberate pause finishes its segment `blocked` and the resume pairs too. An unmatched resumable start can be a segment still running, an interrupted segment, a failed finish, a lost pause finish or a pause from an older release; the doctor cannot tell which, so its lifecycle stays unknown. Adoption is unbounded. Revisit when the doctor coverage report shows resumable pause durations |
 | Pause/resume | Each segment is one start and one finish: a deliberate pause finishes `blocked`, and the resume runs its own start and finishes when it completes. The resume instruction holds across harness sessions only for resumable skills. A non-resumable skill resumed in a new harness session is refused |
 | Other unfinished runs | Unpaired starts until finish arrives; can temporarily lower the ratio, without proving failure |
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |

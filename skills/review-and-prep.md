@@ -48,6 +48,11 @@ or alter a legacy start/finish call, never use an ID from another invocation,
 and never start a new legacy run to feed metrics. If the ID is unavailable,
 metrics capture is unavailable; continue the workflow. A resume prints its own
 ID and records its own metrics run.
+Each deliberate pause below (manual testing, cycle stop, exit question or
+configuration pause, external gate) finishes its segment `blocked`. Whatever
+continues the run afterwards, a resume invocation or the user's answer or a
+result line later in this same conversation, first runs Telemetry start and
+then records a new metrics run under the ID that start printed.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
@@ -257,7 +262,9 @@ library and both call forms are in
   If any metrics call after the run `begin` ended without `recorded` or
   `replayed` and was not reconciled, also add the literal line
   `Workflow metrics (local, optional): capture=partial (<reason>).` beside
-  the snapshot, since the read cannot see a dropped call.
+  the snapshot, since the read cannot see a dropped call. After a resume the
+  snapshot counts that segment only, so also add the literal line
+  `Workflow metrics (local, optional): this segment only; earlier segments are in their own pause receipts.`
   `end` the run step just before the legacy telemetry finish; at a deliberate
   pause end it `paused`, before the `blocked` finish. Never write or edit a PR body or comment only to refresh
   metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
