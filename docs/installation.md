@@ -187,6 +187,36 @@ dangles after `setup --uninstall` or a moved checkout. Skills that call helpers 
 checkout need one of the four managed installs, because their resolver probes only
 those four directories.
 
+### Update checks
+
+Every installed skill runs `bin/update-check` at start and follows one shared upgrade
+flow when `UPGRADE_AVAILABLE <old> <new>` is printed.
+
+In an interactive session (`GSTACK_SESSION_KIND` unset or any value other than
+`spawned` or `unattended`), the flow checks `auto_upgrade`. With `auto_upgrade=true`
+it runs `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` without asking; otherwise it
+asks whether to upgrade now, enable auto-upgrade after a confirmed upgrade, snooze
+for 24h / 48h / 1 week, or set `update_check=false`. `/plan-track` is the exception:
+because it asks no questions and installs nothing, it always follows the spawned
+branch below.
+
+With `GSTACK_SESSION_KIND` set to `spawned` (or `unattended`), the flow asks nothing,
+never runs `bin/update-run` even under `auto_upgrade=true`, writes no snooze or
+config state, and puts the available version line in the run's final message before
+any fenced prompt or result, handoff, stage or pause line. Concurrent stages share
+the installed checkout, so upgrading from a spawned stage could mutate that checkout
+underneath other stages running at the same time.
+
+The skill reads this variable from the environment only; any other value, or none,
+uses the interactive branch. A caller that launches stages without a person must set
+`GSTACK_SESSION_KIND=spawned`; otherwise a stage may ask the upgrade question at
+start or auto-upgrade under `auto_upgrade=true`. Skill text is not enforcement: a
+caller that must never upgrade should deny `bin/update-run` in its own permission
+layer.
+
+To upgrade when a spawned run reports a newer version, run `/gstack-extend-upgrade`
+in an interactive session, or run `<checkout>/bin/update-run <checkout>` directly.
+
 ### Version numbers
 
 gstack-extend's own VERSION uses `MAJOR.MINOR.PATCH` without prefixes or suffixes

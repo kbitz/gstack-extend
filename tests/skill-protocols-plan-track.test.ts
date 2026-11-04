@@ -11,6 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EXPECTED_SETUP_SKILLS } from './helpers/expected-setup-skills.ts';
+import { extractCanonicalSpan, HANDOFF_PARAGRAPH } from './helpers/extend-root.ts';
 import { parseSetupSkills } from './helpers/parse-setup-skills.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -129,7 +130,18 @@ describe('plan-track inputs are documented fields and its text is generic', () =
 
   // Value: protects=the shipped text names no host or product; fails_when=a public host name enters the skill; why_new=the consumer-independence rule has no test for this skill; seam=none; no_claim=consumer names are absent (checked outside the committed tests)
   test('names no workspace host or agent product', () => {
-    expect(skill).not.toMatch(/paseo|conductor|claude|codex|cursor|opencode|antigravity/i);
+    const withoutResolver = skill.replace(extractCanonicalSpan(skill), '').replace(HANDOFF_PARAGRAPH, '');
+    expect(withoutResolver).not.toMatch(/paseo|conductor|claude|codex|cursor|opencode|antigravity/i);
+  });
+
+  // Value: protects=plan-track never asks an upgrade question or runs setup in any session kind; fails_when=the local spawned-branch directive is removed or moved after the shared upgrade flow; why_new=the shared block includes interactive branches that plan-track's tool and install rules forbid; seam=none; no_claim=an installed agent obeys the directive
+  test('directs the skill to follow the spawned upgrade branch before SHARED:upgrade-flow', () => {
+    const localLine =
+      'This skill asks no questions and installs nothing, so in the flow below it always follows the `UPGRADE_SESSION=spawned` branch, whatever the session kind.';
+    const localAt = skill.indexOf(localLine);
+    const sharedAt = skill.indexOf('<!-- SHARED:upgrade-flow -->');
+    expect(localAt).toBeGreaterThan(-1);
+    expect(sharedAt).toBeGreaterThan(localAt);
   });
 
   // Value: protects=the default plan path follows the one state-root rule; fails_when=the skill hardcodes the root or drops the collision stop; why_new=the state-root suite checks the expression, not the collision rule; seam=none; no_claim=none

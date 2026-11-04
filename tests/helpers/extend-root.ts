@@ -17,12 +17,22 @@ export const ROOT_RESOLVER_SKILLS = [
   'gstack-extend-init',
   'autoplan-lean',
   'docs-ship',
+  'implement',
+  'review-and-prep',
+  'ship-and-land',
+  'project-spec',
+  'plan-track',
 ] as const;
 
 export const WORKFLOW_SKILLS = [
   'pair-review',
   'full-review',
   'roadmap',
+  'implement',
+  'review-and-prep',
+  'ship-and-land',
+  'project-spec',
+  'plan-track',
 ] as const;
 
 export const SPAN_START = '_er_ok() {';
@@ -99,6 +109,8 @@ export const INIT_TAIL = [
   'fi',
   'echo "EXTEND_ROOT: $_EXTEND_ROOT"',
   "printf '_EXTEND_ROOT=%q\\n' \"$_EXTEND_ROOT\"",
+  '_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)',
+  '[ -n "$_UPD" ] && echo "$_UPD" || true',
   'unset _ER_UNVERIFIED _ER_SKILL',
 ].join('\n');
 

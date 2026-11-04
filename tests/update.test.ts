@@ -265,6 +265,19 @@ describe('bin/update-run', () => {
     expect(after).toContain('`"<root>/bin/update-run" "<root>"`');
   });
 
+  test('docs/installation.md and the canonical upgrade flow document GSTACK_SESSION_KIND=spawned', () => {
+    const installation = readFileSync(join(ROOT, 'docs', 'installation.md'), 'utf8').replace(/\s+/g, ' ');
+    const skill = readFileSync(join(ROOT, 'skills', 'gstack-extend-upgrade.md'), 'utf8');
+    const shared = skill.split('<!-- SHARED:upgrade-flow -->')[1]!.split('<!-- /SHARED:upgrade-flow -->')[0]!;
+    expect(installation).toContain('### Update checks');
+    expect(installation).toContain('GSTACK_SESSION_KIND=spawned');
+    expect(installation).toContain('never runs `bin/update-run`');
+    expect(installation).toContain('auto_upgrade=true');
+    expect(installation).toContain('The skill reads this variable from the environment only');
+    expect(installation).toContain('Skill text is not enforcement');
+    expect(shared).toContain('GSTACK_SESSION_KIND');
+  });
+
   describe('missing-arg + non-git rejection', () => {
     test('rejects missing repo root argument', () => {
       const r = spawnSync(UPDATE_RUN, [], { encoding: 'utf8' });

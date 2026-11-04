@@ -72,12 +72,79 @@ if [ ! -f "$_EXTEND_ROOT/bin/autoplan-lean" ] || [ ! -x "$_EXTEND_ROOT/bin/autop
 fi
 echo "EXTEND_ROOT: $_EXTEND_ROOT"
 printf '_EXTEND_ROOT=%q\n' "$_EXTEND_ROOT"
+_UPD=$(GSTACK_EXTEND_DIR="$_EXTEND_ROOT" "$_EXTEND_ROOT/bin/update-check" 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true
 unset _ER_UNVERIFIED _ER_SKILL
 ```
 
 Shell variables do not survive between commands. Every later command that uses `$_EXTEND_ROOT` (a fenced block, or an inline command in prose or `SHARED:upgrade-flow`) starts with the `_EXTEND_ROOT=…` line the preamble printed, copied verbatim. Commands shown to the user use the literal root path, never `$_EXTEND_ROOT`. Init's later blocks call `"$_EXTEND_ROOT/bin/gstack-extend"` directly. If the printed lines are no longer in context, re-run this preamble block. When re-running it only to recover the root, ignore its update-check output. If no `EXTEND_ROOT:` line was printed, never guess a root. Relay the `EXTEND_ROOT_UNVERIFIED:` fix if one was printed. If neither line was printed, tell the user: `No gstack-extend install found under ~/.claude, ~/.codex, ~/.config/opencode or ~/.cursor. Project-local (vendored) installs are not supported. Fix: run setup --host auto from your gstack-extend checkout (README: Installation).` roadmap, pair-review and full-review then stop, because their tool and session-state steps need the root.
 
 In this skill, an `ERROR:` line from the preamble replaces the no-install message above: relay that line verbatim and stop.
+
+If output shows `UPGRADE_AVAILABLE <old> <new>`: follow the **Inline upgrade flow** below.
+If `JUST_UPGRADED <from> <to>`: tell user "Running gstack-extend v{to} (just updated!)" and continue.
+
+<!-- SHARED:upgrade-flow -->
+### Inline upgrade flow
+
+Check the session kind and whether auto-upgrade is enabled:
+```bash
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SESSION=spawned" ;; *) echo "UPGRADE_SESSION=interactive" ;; esac
+_AUTO=$("$_EXTEND_ROOT/bin/config" get auto_upgrade 2>/dev/null || true)
+echo "AUTO_UPGRADE=${_AUTO:-false}"
+```
+
+**If `UPGRADE_SESSION=spawned`:** Ask nothing, never run `bin/update-run` whatever `AUTO_UPGRADE` says, write no snooze or config state, and continue with the skill. Put this line in the run's final message, before any fenced prompt and any result, handoff, stage or pause line the skill ends with, and never inside a fence or a versioned receipt field: `gstack-extend v{new} is available (running v{old}); not upgraded in this spawned session. To upgrade, run /gstack-extend-upgrade in an interactive session.` The rest of this flow applies only to `UPGRADE_SESSION=interactive`; the auto-upgrade command below checks the session kind again and prints `UPGRADE_SKIPPED spawned-session` instead of running.
+
+Read `bin/update-run`'s output before reporting anything: a literal `UPGRADE_OK <old> <new>` line means success. **Treat absent `UPGRADE_OK` as failure** — an `UPGRADE_FAILED <reason>` line, or no recognizable result line at all, both count as failure. Never report success without `UPGRADE_OK`.
+
+If that output also has a `SETUP_SKIPPED_HOSTS <csv>` line, whatever the result, name each listed host in your message: setup left its skill install untouched, so it may be stale. Relay setup's stderr reason with its fix: for a shared directory, **Shared-directory migration** in the checkout's `docs/installation.md`; for an unsafe directory, the directory fix setup printed. Never say every host was refreshed.
+
+**If `AUTO_UPGRADE=true`:** Skip asking. Log "Auto-upgrading gstack-extend v{old} → v{new}..." and run:
+```bash
+case "${GSTACK_SESSION_KIND:-}" in spawned|unattended) echo "UPGRADE_SKIPPED spawned-session" ;; *) "$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT" ;; esac
+```
+- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}." Use the versions from the `UPGRADE_OK` line.
+- On failure: tell user "Auto-upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
+
+**Otherwise**, use AskUserQuestion:
+- Question: "gstack-extend **v{new}** is available (you're on v{old}). Upgrade now?"
+- Options: ["Yes, upgrade now", "Always keep me up to date", "Not now", "Never ask again"]
+
+**If "Yes, upgrade now":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"`.
+- On `UPGRADE_OK <old> <new>`: tell user "Update installed (v{old} → v{new}). You're running the previous version for this session; next invocation will use v{new}."
+- On failure: tell user "Upgrade failed: {reason}. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
+
+**If "Always keep me up to date":** Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` first. **Only on a confirmed `UPGRADE_OK <old> <new>`, enable auto-upgrade:**
+```bash
+"$_EXTEND_ROOT/bin/config" set auto_upgrade true
+```
+Then tell user "Update installed (v{old} → v{new}). Auto-upgrade enabled — future updates install automatically." On failure, do **not** enable auto-upgrade; tell user "Upgrade failed: {reason}. Auto-upgrade not enabled. Run `"$_EXTEND_ROOT/bin/update-run" "$_EXTEND_ROOT"` to retry." Continue with the skill.
+
+**If "Not now":** Write snooze state, then continue with the skill:
+```bash
+_SNOOZE_FILE=~/.gstack-extend/update-snoozed
+_REMOTE_VER="{new}"
+_CUR_LEVEL=0
+if [ -f "$_SNOOZE_FILE" ]; then
+  _SNOOZED_VER=$(awk '{print $(1)}' "$_SNOOZE_FILE")
+  if [ "$_SNOOZED_VER" = "$_REMOTE_VER" ]; then
+    _CUR_LEVEL=$(awk '{print $(2)}' "$_SNOOZE_FILE")
+    case "$_CUR_LEVEL" in *[!0-9]*) _CUR_LEVEL=0 ;; esac
+  fi
+fi
+_NEW_LEVEL=$((_CUR_LEVEL + 1))
+[ "$_NEW_LEVEL" -gt 3 ] && _NEW_LEVEL=3
+echo "$_REMOTE_VER $_NEW_LEVEL $(date +%s)" > "$_SNOOZE_FILE"
+```
+Note: `{new}` is the remote version from the `UPGRADE_AVAILABLE` output. Tell user the snooze duration (24h/48h/1 week).
+
+**If "Never ask again":**
+```bash
+"$_EXTEND_ROOT/bin/config" set update_check false
+```
+Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/config` and changing `update_check=false` to `update_check=true`."
+<!-- /SHARED:upgrade-flow -->
 
 ---
 
