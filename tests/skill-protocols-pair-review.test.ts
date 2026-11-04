@@ -949,7 +949,7 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
     expect(flatProse(pairNext)).toContain('Omit `Paused at:` when `PAUSE_SHA` is empty; include `Keep the PR draft.` only when `PR_DRAFT=true`.');
     expect(handoff.filter(l => !l.startsWith('Paused at:') && l !== 'Keep the PR draft.')).toHaveLength(6);
     expect(flatProse(pairNext)).toContain('Continue to /review-and-prep resume runs it in this session; the fenced handoff is for a fresh session.');
-    expect(flatProse(pairNext)).toContain('Track 24B owns the future canonical hold/resume detector and may replace this check.');
+    expect(flatProse(pairNext)).toContain('The published stage-handoff contract (`docs/workflow-handoffs.md`) owns the canonical hold/resume rules; a detector built on it may replace this check.');
   }, TIMEOUT_23D);
 
   test('all hold routes keep their exact questions, reason fixes and permitted labels', () => {
@@ -1019,4 +1019,15 @@ describe('Track 23D routing, archive callers and tag clauses', () => {
     expect(flatProse(pairSkill)).not.toContain('route to PRIMARY in-flight');
     expect(flatProse(pairSkill)).toContain('`group=` names the test group that surfaced the bug; `pre-test` records that it was parked before testing.');
   }, TIMEOUT_23D);
+});
+
+describe('pair-review PAUSE route', () => {
+  // Value: protects=a deliberate pause keeps the session and closes the segment blocked; fails_when=PAUSE is dropped, finishes another way or runs the done rollup; why_new=segments replace deferred finishes; seam=none; no_claim=agent behavior (static prose lock)
+  test('PAUSE keeps session.yaml, points to resume and finishes blocked', () => {
+    const text = flatProse(pairSkill);
+    expect(text).toContain('"pause" / "stop for now" / "continue later" → PAUSE');
+    expect(text).toContain('PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to continue with `/pair-review resume`, then run Telemetry finish with `--outcome blocked`; that resume runs Telemetry start again.');
+    expect(text).toContain('After a PAUSE, the first action in this conversation that continues the work (anything but STATUS) runs Telemetry start once, before it acts; a `/pair-review` invocation that continues the work (anything but `status`) counts its own start as that one.');
+    expect(text).toContain('If this was `/pair-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here. That start is the one Telemetry start runs when this skill begins; a status check whose start did not run skips this finish.');
+  });
 });

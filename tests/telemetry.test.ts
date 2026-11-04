@@ -4904,7 +4904,7 @@ telemetry.main(["start", "--skill", "extend:roadmap"])
     expect(runSessions(fix)).toEqual(sessions);
   }, 30_000);
 
-  // Value: protects=resumable exact matches pair FIFO before pooled candidates; fails_when=rank zero selects newest;
+  // Value: protects=resumable exact matches pair newest first before pooled candidates; fails_when=rank zero selects oldest;
   // why_new=one exact candidate could only prove class priority; seam=none;
   // no_claim=live harness attribution (synthetic session markers).
   test('resumable skills pair exact fingerprints first, then everything else newest first', () => {
@@ -4921,16 +4921,16 @@ telemetry.main(["start", "--skill", "extend:roadmap"])
     expect(adoptionLine(pooled.stderr)).toContain('candidates=4');
     // An exact fingerprint beats the newer pooled start even though the other start is older.
     const exact = finishRun(fix, 'success', skill, { ...DEBUG, CODEX_THREAD_ID: 'thread-a' });
-    expect(adoptionLine(exact.stderr)).toContain(`session=${old}`);
+    expect(adoptionLine(exact.stderr)).toContain(`session=${laterExact}`);
     expect(adoptionLine(exact.stderr)).toContain('pairing=resumable (exact)');
     expect(adoptionLine(exact.stderr)).toContain('candidates=3');
     const secondExact = finishRun(fix, 'error', skill, { ...DEBUG, CODEX_THREAD_ID: 'thread-a' });
-    expect(adoptionLine(secondExact.stderr)).toContain(`session=${laterExact}`);
+    expect(adoptionLine(secondExact.stderr)).toContain(`session=${old}`);
     expect(adoptionLine(secondExact.stderr)).toContain('pairing=resumable (exact)');
     expect(finishRun(fix, 'success', skill).status).toBe(0);
-    expect(runSessions(fix)).toEqual([newest, old, laterExact, middle]);
+    expect(runSessions(fix)).toEqual([newest, laterExact, old, middle]);
     expect(fix.readLedger().map(row => [row.session_id, row.outcome])).toEqual([
-      [newest, 'success'], [old, 'success'], [laterExact, 'error'], [middle, 'success'],
+      [newest, 'success'], [laterExact, 'success'], [old, 'error'], [middle, 'success'],
     ]);
     expect(handoffs(fix)).toHaveLength(0);
   }, 30_000);
@@ -6168,4 +6168,82 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     expect(failed.stderr).toContain('HOST_MARKERS_CONFLICT');
     expect(failed.stderr).not.toMatch(/row still records|append succeeded/);
   }, 30_000);
+});
+
+// ─── Track 53A: paused and resumed runs are segments ───
+
+describe('deliberate pauses finish as blocked, and each resume is its own segment', () => {
+  // Value: protects=a deliberate pause leaves one blocked row per resumable skill; fails_when=OUTCOMES drops blocked or
+  // the logger sees another value; why_new=the contract reserved blocked but nothing emitted it; seam=none;
+  // no_claim=live harness attribution.
+  test('a blocked finish records blocked in the ledger and the logger for every resumable skill', () => {
+    for (const name of ['review-and-prep', 'pair-review', 'full-review']) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const skill = `extend:${name}`;
+      const sid = startRun(fix, skill);
+      expect(finishRun(fix, 'blocked', skill).status).toBe(0);
+      const rows = fix.readLedger();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ stage: name, outcome: 'blocked', schema_version: 2, session_id: sid });
+      expect(fix.readStubArgs().some(line => line.split('\t').join(' ').includes('--outcome blocked'))).toBe(true);
+      const runs = skillRuns(fix);
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ outcome: 'blocked', session_id: sid });
+      expect(handoffs(fix)).toHaveLength(0);
+    }
+  }, 30_000);
+
+  test('an outcome outside the vocabulary still records unknown', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    startRun(fix, 'extend:pair-review');
+    expect(finishRun(fix, 'paused', 'extend:pair-review').status).toBe(0);
+    expect(fix.readLedger().map(row => row.outcome)).toEqual(['unknown']);
+  }, 30_000);
+
+  test('a start-less finish of a resumable skill adopts the newest exact segment and leaves the older start open', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const skill = 'extend:pair-review';
+    const older = startRun(fix, skill, { CODEX_THREAD_ID: 'thread-a' });
+    const newer = startRun(fix, skill, { CODEX_THREAD_ID: 'thread-a' });
+    const done = finishRun(fix, 'success', skill, { ...DEBUG, CODEX_THREAD_ID: 'thread-a' });
+    expect(done.status).toBe(0);
+    expect(adoptionLine(done.stderr)).toContain(`session=${newer}`);
+    expect(adoptionLine(done.stderr)).toContain('pairing=resumable (exact)');
+    expect(runSessions(fix)).toEqual([newer]);
+    expect(openHandoffs(fix).map(item => item.state.session_id)).toEqual([older]);
+  }, 30_000);
+
+  test('a paused run resumed in another checkout records each segment, and each start pairs with exactly one finish', () => {
+    for (const withItem of [true, false]) {
+      const fix = makeTelemetryFixture('community', 'stub');
+      const rootA = gitRepo(fix, 'root-a');
+      const rootB = gitRepo(fix, 'root-b');
+      const skill = 'extend:review-and-prep';
+      const item = withItem ? { GSTACK_EXTEND_WORK_ITEM: 'W-53A' } : {};
+      const call = (cwd: string, args: string[], env: Record<string, string>) =>
+        runHelper({ ...fix.env, ...item, ...env }, args, cwd);
+      expect(call(rootA, ['start', '--skill', skill], { CODEX_THREAD_ID: 'thread-a' }).status).toBe(0);
+      expect(call(rootA, ['finish', '--skill', skill, '--outcome', 'blocked'], { CODEX_THREAD_ID: 'thread-a' }).status).toBe(0);
+      expect(call(rootB, ['start', '--skill', skill], { CODEX_THREAD_ID: 'thread-b' }).status).toBe(0);
+      expect(call(rootB, ['finish', '--skill', skill, '--outcome', 'success'], { CODEX_THREAD_ID: 'thread-b' }).status).toBe(0);
+      const rows = fix.readJsonl();
+      const starts = rows.filter(row => row.event_type === 'skill_start');
+      const runs = rows.filter(row => row.event_type === 'skill_run');
+      expect(starts).toHaveLength(2);
+      expect(runs).toHaveLength(2);
+      expect(runs.map(row => row.outcome)).toEqual(['blocked', 'success']);
+      expect(new Set(starts.map(row => row.session_id)).size).toBe(2);
+      expect(runs.map(row => row.session_id)).toEqual(starts.map(row => row.session_id));
+      const ledger = fix.readLedger();
+      expect(ledger.map(row => row.outcome)).toEqual(['blocked', 'success']);
+      expect(ledger.map(row => row.work_item)).toEqual(withItem ? ['W-53A', 'W-53A'] : [null, null]);
+      expect(handoffs(fix)).toHaveLength(0);
+      const doctor = spawnSync(join(ROOT, 'bin/gstack-extend'), ['doctor', 'telemetry', '--json'], { env: fix.env, encoding: 'utf8', timeout: 20_000 });
+      expect(doctor.status).toBe(0);
+      const entry = JSON.parse(doctor.stdout).skills.find((skillEntry: { skill: string }) => skillEntry.skill === 'review-and-prep');
+      expect(entry).toMatchObject({
+        activations: 2, completions: 2, paired: 2, deferred_finish: 0, unpaired_start: 0, unpaired_finish: 0,
+      });
+    }
+  }, 60_000);
 });

@@ -130,7 +130,9 @@ does not, writes nothing, keeps the handoff, and (in debug mode) says to upgrade
 gstack. Start never invokes the logger, so an old logger does not affect it. Start
 rows are ordinary rows in gstack's shared sink, which gstack's own dashboards
 (`gstack-analytics`, `/retro`) do not know about, so they may count a start as a
-run; the old activation rows behaved the same way.
+run; the old activation rows behaved the same way. Those dashboards also count each
+paused segment's `skill_run` (outcome `blocked`) as a run that did not succeed, so
+paused runs lower their success rate.
 
 Routing activation through the logger would put background network sync on the
 skill-start critical path, a cost identified in the earlier design. Direct
@@ -185,7 +187,7 @@ is bounded.** Attribution is exact whenever pairing is unambiguous: an explicit
 `--session-id` finish, a single adoptable handoff, or several handoffs that the
 fingerprint rule narrows to one. Among indistinguishable open starts (same class, same
 or unknown fingerprint) a start-less finish pairs deterministically: oldest first,
-except that resumable starts outside an exact fingerprint match pair newest first.
+except that resumable starts pair newest first (exact fingerprint matches first).
 An outcome can land on the wrong start when finishes arrive in a different order from
 their class's pairing order. The skill call shapes carry no identity
 that could do better, so this limit is documented and test-locked, not repaired, and
@@ -199,14 +201,16 @@ adoptable handoff wins, and the debug line names that reason.
 
 | Order | Class | Within the class | Debug reason |
 |---|---|---|---|
-| 1 | Resumable skill, fingerprints equal (both known) | oldest start first | `resumable (exact)` |
+| 1 | Resumable skill, fingerprints equal (both known) | newest start first | `resumable (exact)` |
 | 2 | Resumable skill, any other fingerprint (unknown, or a different known session) | newest start first | `resumable (newest)` |
 | 3 | Non-resumable skill, fingerprints equal (both known) | oldest start first | `exact fingerprint` |
 | 4 | Non-resumable skill, either fingerprint unknown, at most 86400 seconds old | oldest start first | `unknown fingerprint` |
 
-Two missing fingerprints are unknown, never equal. A resumable finish outside an exact
-match takes the newest start because a cross-session resume continues the latest paused
-run, while abandoned resumable starts accumulate. "Oldest" and "newest" are the saved
+Two missing fingerprints are unknown, never equal. A resumable finish takes the newest
+start in its class because each resume starts its own segment, so the newest open start
+is the current segment. An older open start may be an interrupted segment, a lost pause
+finish or a pause recorded by an older release, and must not capture the current
+segment's finish. "Oldest" and "newest" are the saved
 `seq`, so starts in the same second still pair in the order they began. When nothing is
 adoptable the finish is refused and the refusal is recorded on the newest handoff with a
 valid `start`; a handoff without one is never adopted and never takes the record. Debug
@@ -254,6 +258,13 @@ before the logger ran (missing flag support, sink checks, exec) is not uncertain
 **Bounds that remain.** Each can produce a wrong pairing or a duplicate row:
 
 - Finishes arriving in a different order from their class's pairing order among equal starts (above).
+- In the resumable classes, which pair newest first, a newer open start of the same skill
+  and harness session takes the next start-less finish: a status-only invocation that
+  skipped its own finish, or a mid-run re-invocation such as `/pair-review done`. The
+  earlier start then stays open as a deferred finish, and the row carries the newer
+  start's `session_id` and a shorter duration. The reverse holds too: a status finish
+  whose own start never ran takes the live run's handoff, and the run's own finish then
+  writes nothing.
 - An abandoned start in an oldest-first class can take the next run's finish;
   later serial runs can stay one start behind until that unmatched handoff is resolved.
 - A completed handoff retained after marker-write or cleanup failure still participates
@@ -283,11 +294,12 @@ before the logger ran (missing flag support, sink checks, exec) is not uncertain
 **If you need exactness today:** finish with explicit `--session-id` and `--start` from the
 `GE_TELEMETRY:` line or keep one open start per root+skill. With several indistinguishable
 starts, start-order finishes are exact only in the oldest-first classes; resumable
-starts outside an exact match require reverse start order.
+starts require reverse start order.
 Explicit `--session-id` and `--start` together also remain the escape hatch when no
 handoff exists. Different checkouts have different roots and separate stores. A finish
-never reads another root's handoffs. Handoffs are local: cross-machine resumes must carry
-explicit values to emit an identifiable completion; that row may remain unpaired locally.
+never reads another root's handoffs. Handoffs are local. A resume in another checkout or
+on another machine runs its own start and records through its own segment, so the paused
+segment's `blocked` row and the resumed segment's row each pair inside their own root.
 
 ### Handoff adoption
 
@@ -346,12 +358,15 @@ start in the same root at any age. Subagents inherit the parent's session marker
 and count as the same session. A finish inside a nested harness (`codex exec`
 launched from Claude Code) carries an extra marker and counts as another session,
 so a non-resumable finish there is refused. Resumable adoption stays unbounded,
-so a start-less finish can adopt an abandoned resumable start; revisit that when
-the doctor coverage report shows resumable pause durations. An unknown-fingerprint
+so a start-less finish can adopt an abandoned resumable start. That is the fallback:
+a resumable skill documents `/<name> resume`, each deliberate pause finishes `blocked`
+and each resume runs start, so the normal pairing is one start to one finish per segment.
+Revisit the fallback when the doctor coverage report shows resumable pause durations. An unknown-fingerprint
 adoption within 24 hours can still belong to another run, so a successful join is
-not proof of attribution. A non-resumable skill resumed in a new harness session
-is refused. The resume instruction holds across sessions only for the resumable
-skills. Observed on 2026-09-29 with Claude Code 2.1.284: `CLAUDE_CODE_SESSION_ID`
+not proof of attribution. A start-less finish of a non-resumable skill from another
+harness session is refused; a resume that runs its own start, as every skill's start
+block says, pairs with that start for any skill. Unbounded cross-session adoption of
+an existing handoff stays specific to the resumable skills. Observed on 2026-09-29 with Claude Code 2.1.284: `CLAUDE_CODE_SESSION_ID`
 stayed constant across real CLI user turns and a `claude --resume`. Two start/finish
 runs paired, including a finish after resume; debug named only that marker. The
 check used isolated telemetry storage and real logger/config copies with network
@@ -561,8 +576,9 @@ from the checkout) and stores the binding in the run record, so reads keep
 working after legacy finish consumes the handoff; a finish *before* any bind
 leaves capture unavailable. The wrapper keeps the ID for metrics only — the
 SHARED start/finish blocks are byte-identical and their no-copying rule still
-governs legacy calls. Resuming without the retained ID is capture-unavailable,
-never a fresh legacy start. Joining to a stage-runs row is by that ID; it does
+governs legacy calls. A paused run's resume runs its own legacy start and
+records a new run under the ID that start printed; it never reuses the paused
+segment's ID, and a read of the new run counts only its own segment. Joining to a stage-runs row is by that ID; it does
 not retroactively prove an ambiguous implicit legacy finish was attributed
 correctly.
 
@@ -699,8 +715,9 @@ without `recorded` or `replayed` and was not reconciled, it adds the literal
 `capture=partial (<reason>)` line beside the snapshot, because a read cannot
 see a dropped call. The `receipt_text` reports local passes, Greptile passes,
 fix cycles, local and Greptile finding counts separately, and excluded `N/A`
-voices. It ends the run step just before its legacy finish
-and leaves it open at a pause. No PR body, comment or report is written or
+voices. It ends the run step just before its legacy finish;
+at a deliberate pause it ends the step `paused`, just before the `blocked` finish. After a
+resume the snapshot counts that segment only, and the receipt says so. No PR body, comment or report is written or
 edited only to refresh metrics — never after readiness or merge, and the
 metrics line comes before a readiness report's merge decision. It preserves
 every existing receipt/handoff label and cannot authorize readiness, landing
@@ -1275,7 +1292,8 @@ retained session ID and its bound run; one observed phase interval; one
 `REUSE` decision with no new interval; one wait (manual pause or external
 review); one retry/correction when the run naturally has one; the receipt
 metrics line; and a deliberate missing-capture case
-(`GSTACK_EXTEND_WORKFLOW_METRICS=off`, and resume without the retained ID)
+(`GSTACK_EXTEND_WORKFLOW_METRICS=off`, and a run whose retained ID was lost, for
+example after context compaction)
 read as disabled/unknown rather than zero. Also record the added tool calls
 and agent turns versus the same workflow with capture disabled, noting which
 metrics calls shared an existing tool call; where a comparable enabled/disabled
@@ -1451,7 +1469,7 @@ table below is the reader's reference; the schema is authoritative where they di
 | `model` | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
 | `effort` | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
-| `outcome` | `success`, `error`, `abort`, or `unknown`, plus reserved `blocked`; this producer maps other values, including the reserved outcome, to unknown |
+| `outcome` | `success`, `error`, `abort`, `blocked` or `unknown`; a paused segment ends blocked (see Paused and resumed segments in the join contract); this producer maps other values to unknown |
 | `started_at` | UTC start; null when an explicit `--start` or a legacy `--duration` cannot be represented as a UTC time |
 | `duration_s` | Session wall-clock seconds including human waits, never capped |
 | `session_id` | Wrapper-issued IDs are `extend-<uuid>`; an explicit `--session-id` can be any valid ID |
@@ -1633,11 +1651,12 @@ model and effort first, so an omitted `--model` or `--effort` is then null and
 `unknown`. `source` is the writer label; the three `*_source` fields are evidence
 origins. A `flag` label records who supplied the value, not that it is correct.
 
-The v2 schema reserves outcome `blocked` and source `requested` for non-null
+The v2 schema allows outcome `blocked` and reserves source `requested` for non-null
 model/effort only; agent_source remains flag/detected/unknown and every null value
-requires unknown. Track 26A does not emit blocked lifecycle events or read
-GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT. Tracks 27A/29A own those producers;
-synthetic reserved-vocabulary fixtures demonstrate shape only. Existing flags,
+requires unknown. `blocked` is emitted at a deliberate pause (see Paused and resumed
+segments in the join contract below). Source `requested` stays reserved: nothing reads
+GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT yet, and the planned requested-model telemetry
+work owns that producer; synthetic reserved-vocabulary fixtures demonstrate its shape only. Existing flags,
 detection, optional capture and upstream skill-usage behavior are unchanged.
 
 **Switch.** Provenance is on by default and independent of gstack's tier, because
@@ -1928,6 +1947,46 @@ same `session_id`.
 5. Sort per dataset. Stage-runs file order is finish order: sort by `started_at`, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
 6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2 row missing a required key is malformed.
 
+**Paused and resumed segments.** A run that pauses is several segments. Each segment is
+one start and one finish: one stage-runs row and, with the tier on, one `skill_start`
+and one `skill_run`.
+
+- Pauses map to segment outcomes using the [stage-handoff contract](workflow-handoffs.md)'s
+  status words. `paused` and `stopped`, the `/review-and-prep` external-gate pause, an
+  exit-question or configuration pause, and a `/pair-review` or `/full-review` PAUSE all
+  end the segment with `blocked`. Other BLOCKED or NEEDS_CONTEXT exits keep their actual
+  outcome. A status-only invocation (`/pair-review status`, `/full-review status`)
+  finishes `unknown`: it pairs its own start and reports no run outcome. A short
+  `unknown` row can therefore be a status check, not a segment outcome, even when it
+  carries the run's `work_item`.
+- A resume is `/review-and-prep resume` (or the `continue` handoff), `/pair-review resume`
+  or `/full-review resume`. It runs its own start, in whichever checkout or on whichever
+  machine it runs, and its finish writes its own row. Work that continues later in the
+  same conversation after a pause (an answered question, a result line, the first action
+  after a PAUSE that continues the work) is a resume too and runs its own start, once.
+- Segments link by `work_item` when the launcher set it for every segment. Without it
+  the segments are unlinked, which is unknown, not an error. `(stage, repo, branch)` and
+  `started_at` order are a hint, never identity.
+- The time between a `blocked` row's end and the next segment's `started_at` is
+  unobserved and unknown, never zero. A consumer that summed one `duration_s` per paused
+  run now sees several shorter segments, and gstack's own dashboards count each `blocked`
+  segment as a run that did not succeed.
+- A pause recorded by an older release leaves an open handoff and no `blocked` row. A
+  segment whose agent skipped the pause finish stays an open handoff the same way. A
+  resume that skips its own start has no handoff: its start-less finish adopts another
+  open handoff of that skill in that root by the [Collision limit](#collision-limit) order
+  (an exact fingerprint match first, newest first), which can be an older abandoned start whose `session_id`,
+  `started_at` and saved `work_item` the row then carries, or writes nothing when none is
+  open. Each skill therefore runs start again whenever work continues after a pause,
+  including later in the same conversation.
+- The schema is unchanged: legacy, v1 and v2 readers are unchanged, and legacy and v1
+  rows never carry `blocked`.
+- Future cards: segments cover the resumable cross-checkout case. "Recover a telemetry
+  finish run from a different repository root" keeps only a start-less finish whose own
+  start ran in another root. "In-flight marker and crash detection for extend telemetry"
+  stays deferred: `blocked` records only a deliberate pause, and an interrupted segment
+  stays an open handoff.
+
 Session IDs match `[A-Za-z0-9][A-Za-z0-9._:-]{0,199}` (the wrapper's `valid_session`).
 gstack-extend's `ts` and `started_at` use UTC `YYYY-MM-DDTHH:MM:SSZ` at second
 precision, so string order equals time order. Upstream `skill_run.ts` uses the
@@ -1946,7 +2005,8 @@ the current wrapper's handling of a logger whose source lacks that flag.
 | Retry spans an upgrade | The retry appends the saved row unchanged: `producer_version` and the sources name the attempt that constructed it, and a row saved by a pre-version writer stays a legacy row | Do not read `producer_version` as the release that appended the row | `a retried row keeps its construction metadata across an upgrade; a saved legacy row stays legacy` in tests/telemetry.test.ts |
 | Start without `skill_start` | Tier off, gstack unavailable at start, a transient gstack-config failure, or a failed append: the handoff records `usage: false` when provenance is on, so finish sends no `skill_run` even if the tier is on by then. With provenance off, a start that wrote no `skill_start` saves no handoff | Expected when the tier is off, not a failure | `a failed skill-usage start does not invent a completion; provenance off writes no handoff` in tests/telemetry.test.ts |
 | Tier turned off before finish | Consumes the handoff and leaves that `skill_start` unpaired permanently. With provenance off, turning the tier off before finish leaves the handoff (`usage: true`) for a later start-less finish to adopt under the rule | Do not treat the unpaired start as a crash | `tier turned off before finish consumes the handoff and leaves that skill_start unpaired` in tests/telemetry.test.ts |
-| Same-root collision | Each start keeps its own handoff. Attribution is exact when pairing is unambiguous (explicit finishes, one adoptable handoff, fingerprints that narrow to one). Among indistinguishable open starts a start-less finish pairs oldest first (resumable skills outside an exact match: newest first), which can attach an outcome to the wrong start when finishes arrive in a different order from the selected class | A join is not proof of attribution; for exactness pass explicit ids or keep one open start per root+skill; start-order finishes work only in the oldest-first classes | `same-root collision keeps each invocation: finishes pair first start with first finish, with their own identity` in tests/telemetry-contract.test.ts; `indistinguishable starts pair oldest first, and out-of-order finishes keep that documented limit`, `resumable skills pair exact fingerprints first, then everything else newest first` and `a fingerprinted same-root collision pairs each session with its own start; a third session is refused` in tests/telemetry.test.ts |
+| Same-root collision | Each start keeps its own handoff. Attribution is exact when pairing is unambiguous (explicit finishes, one adoptable handoff, fingerprints that narrow to one). Among indistinguishable open starts a start-less finish pairs oldest first (resumable skills: newest first, exact fingerprint first), which can attach an outcome to the wrong start when finishes arrive in a different order from the selected class | A join is not proof of attribution; for exactness pass explicit ids or keep one open start per root+skill; start-order finishes work only in the oldest-first classes | `same-root collision keeps each invocation: finishes pair first start with first finish, with their own identity` in tests/telemetry-contract.test.ts; `indistinguishable starts pair oldest first, and out-of-order finishes keep that documented limit`, `resumable skills pair exact fingerprints first, then everything else newest first` and `a fingerprinted same-root collision pairs each session with its own start; a third session is refused` in tests/telemetry.test.ts |
+| Paused and resumed segments | A deliberate pause finishes its segment `blocked`; the resume, possibly in another checkout, starts and finishes its own segment. Each start pairs with exactly one finish, and `work_item` links the segments only when the launcher set it | Treat segments as separate runs; the gap between them is unknown; do not sum or merge them without `work_item` | `a blocked finish records blocked in the ledger and the logger for every resumable skill` and `a paused run resumed in another checkout records each segment, and each start pairs with exactly one finish` in tests/telemetry.test.ts; `paused and resumed segments` in tests/telemetry-contract.test.ts |
 | Finish whose own start never ran | Adopts the same-root handoff only under [Handoff adoption](#handoff-adoption). An unknown fingerprint within 24 hours still joins while outcome and duration can belong to a different run | A join is not proof this finish's start wrote the handoff | `an unknown-fingerprint handoff within 24 hours is adopted and a join is not proof` in tests/telemetry.test.ts |
 | Finish from a different repository root | Writes nothing. Debug says `no handoff for this repository root`. The other root's handoff is untouched. A same-skill handoff already in the destination root is judged by the adoption rule | Do not search other roots to repair it | `a finish from a different repository root writes nothing` and `a cross-root finish into an occupied destination slot is judged by the rule` in tests/telemetry.test.ts |
 | Upstream logger exits 0 without writing | Its own tier read or a failed append: the wrapper records the completion as delivered and the `skill_start` stays unpaired | A delivered completion is not a `skill_run` row | untested |
@@ -2009,7 +2069,9 @@ binaries directly:
 `gstack_config` field is the resolved path of gstack's config helper, or null.
 A skill that pauses across harness sessions has to be listed in `RESUMABLE` in
 `bin/lib/telemetry.py`. Today that set is `pair-review`, `review-and-prep`, and
-`full-review`. Other skills are refused when a later session finishes a start-less
+`full-review`. A resumable skill documents `/<name> resume`; each deliberate pause
+finishes `blocked`, and each resume runs start. Unbounded cross-session adoption remains
+as the fallback. Other skills are refused when a later session finishes a start-less
 run. See [Handoff adoption](#handoff-adoption), including the upgrade note for
 handoffs written before that rule.
 
@@ -2074,9 +2136,11 @@ tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/analytics/stage-runs
 Conductor), not a repository identifier. The `skill_run` line below is abridged:
 upstream adds metadata fields. No event key is introduced: historical rows already
 use that key for prepared-not-started. **duration_s is session wall-clock**,
-including human waiting and pauses, not model/token spend. Upstream silently nulls
-values above 86400 seconds (gstack 1.89.1.0 source); resumable workflows will
-routinely lose their duration.
+including human waiting within a segment, not model/token spend. A deliberate pause
+ends its segment, so the time until the resume is in neither row (see Paused and
+resumed segments in the [Join contract](#join-contract)). Upstream silently nulls
+values above 86400 seconds (gstack 1.89.1.0 source), so a segment longer than a day
+loses its `skill_run` duration.
 
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
@@ -2112,7 +2176,7 @@ helper only when no host keeps an `.extend-root` pointer.
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
 
-Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -2125,7 +2189,7 @@ true
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
-Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run when this invocation completes or deliberately pauses. Set `--outcome` to the actual result (`success`, `error`, `abort`, `blocked`, or `unknown`). Use `blocked` at a deliberate pause, where the run stops for a person and a later resume continues it. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -2203,8 +2267,8 @@ counts, window-crossing completions, and parse diagnostics.
 | Start outside window | An in-window finish is crossing-window, not unpaired |
 | Legacy / session alias / missing v or ID | Visible separately; no invented IDs or pairing |
 | Finish without matching start | Unpaired-finish, never a crash or negative numerator |
-| pair-review, review-and-prep, full-review | Resumable: unmatched starts are deferred finishes, excluded from the ratio. Adoption is unbounded. Revisit when the doctor coverage report shows resumable pause durations |
-| Pause/resume | One invocation: skip another start for the same paused run; finish when complete. The resume instruction holds across harness sessions only for resumable skills. A non-resumable skill resumed in a new harness session is refused |
+| pair-review, review-and-prep, full-review | Resumable: unmatched starts are deferred finishes, excluded from the ratio. A deliberate pause finishes its segment `blocked` and the resume pairs too. An unmatched resumable start can be a segment still running, an interrupted segment, a failed finish, a lost pause finish or a pause from an older release; the doctor cannot tell which, so its lifecycle stays unknown. Adoption is unbounded. Revisit when the doctor coverage report shows resumable pause durations |
+| Pause/resume | Each segment is one start and one finish: a deliberate pause finishes `blocked`, and the resume runs its own start and finishes when it completes. A resume that runs its own start pairs for any skill; only resumable skills adopt an existing handoff across harness sessions, and a non-resumable start-less finish from another session is refused |
 | Other unfinished runs | Unpaired starts until finish arrives; can temporarily lower the ratio, without proving failure |
 | Disabled telemetry | No new observations; historical rows still display; no inferred disabled-period invocations |
 | Missing transcripts | Advisory count unavailable, not zero; pairing remains measurable |
@@ -2474,7 +2538,7 @@ strict on a real install, or the quota reader's
 millisecond heuristic (magnitude above `100000000000`, plus numeric strings)
 diverges from this explicit-unit contract. Also reconsider it if
 `ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt)
-Conductor stages in receipt 2 or Track 27A evidence, a SQLite shard reaches the
+Conductor stages in receipt 2 or the Conductor host-qualification evidence, a SQLite shard reaches the
 row cap, a run status other than RUNNING, FINISHED or CANCELLED appears, or
 `malformed-bounds` shows on every SQLite run, which suggests the timestamp
 format changed without a schema change. That is a revisit trigger, not a

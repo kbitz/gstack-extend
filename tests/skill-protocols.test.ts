@@ -351,6 +351,23 @@ describe('Track 13A telemetry blocks (per-skill, byte-identical modulo skill nam
     expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('"$_GE_CALL" finish --skill');
     expect(TELEMETRY_CALL_HELPER).toContain('bin/gstack-extend-telemetry');
   });
+  test('the shared blocks make a resume its own segment and a pause a blocked finish', () => {
+    expect(CANONICAL_TELEMETRY_PREAMBLE).toContain('each resume starts its own segment');
+    expect(CANONICAL_TELEMETRY_PREAMBLE).not.toContain('skip another start');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('`blocked`');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).toContain('deliberately pauses');
+    expect(CANONICAL_TELEMETRY_EPILOGUE).not.toContain('defers finish');
+  });
+  test('no skill keeps the old defer-finish or skip-start wording', () => {
+    const stale = ['defers finish', 'defer `SHARED:telemetry-finish`', 'defer Telemetry finish', 'skip another start'];
+    const hits: string[] = [];
+    for (const name of readdirSync(join(ROOT, 'skills'))) {
+      if (!name.endsWith('.md')) continue;
+      const content = readFileSync(join(ROOT, 'skills', name), 'utf8');
+      for (const needle of stale) if (content.includes(needle)) hits.push(`${name}: ${needle}`);
+    }
+    expect(hits).toEqual([]);
+  });
   // Drift locks use content.includes(), which cannot see a duplicated block, a finish that precedes
   // its start, or a skill whose frontmatter forbids the Bash tool the blocks need. Duplicated starts
   // would emit an unpaired activation per invocation; a missing Bash grant silently disables telemetry.

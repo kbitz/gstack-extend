@@ -2,7 +2,40 @@
 
 ## Unprocessed
 
-None.
+### [review:files=bin/lib/telemetry.py|bin/lib/telemetry-doctor.py] Guard resumable telemetry adoption against stale and in-progress handoffs
+
+- **Description:** A start-less finish of a resumable skill adopts any open handoff of that skill in its root, at any age and from any session. Since paused runs finish their segment `blocked`, a continuation whose agent skips its restart has no handoff of its own, so its finish takes an older abandoned start's `session_id`, `started_at` and saved `work_item` (or writes nothing). A start-less retry of a failed `blocked` finish can likewise land on the newer resumed segment. The doctor files every unmatched resumable start as a deferred finish, so neither case is visible. The skill prose now says to restart; nothing in code enforces it.
+- **Hypothesis (untested):** Record the newest `blocked` completion per root, skill and harness fingerprint, and refuse a cross-session resumable candidate whose start predates it, with a debug line naming the missed restart; give the doctor a count for it.
+- **Effort:** M
+- **Priority:** P2
+- **Context:** Native adversarial and Red Team findings during /review-and-prep of Track 65A ("Record paused, blocked and resumed runs"), 2026-11-04; reproduced with the real wrapper under an isolated HOME. The plan kept unbounded resumable adoption as the documented fallback, so the guard was deferred rather than built in that PR.
+- **Revisit when:** The Future cards "Recover a telemetry finish run from a different repository root" or "In-flight marker and crash detection for extend telemetry" are planned, or a stage-runs row shows a resumable segment whose `started_at` predates its root's previous `blocked` finish.
+
+### [review:files=skills/pair-review.md|skills/full-review.md|docs/telemetry.md] Tighten the status-check telemetry wording
+
+- **Description:** `/pair-review status` and `/full-review status` finish `--outcome unknown` and say the paired start "is the one Telemetry start runs when this skill begins". Read literally inside an ongoing conversation, that names the skill's earlier start, so a STATUS action that ran no start of its own would still finish and take the live run's handoff. Separately, `docs/telemetry.md` "Bounds that remain" says the run's own finish "then writes nothing" in that reverse case, but it adopts another open handoff of that skill when one exists.
+- **Hypothesis (untested):** Tie the start to the status invocation ("the one this `/pair-review status` invocation ran when it began; a STATUS action later in a conversation runs no start and skips this finish") and reuse the Segments bullet's "adopts another open handoff … or writes nothing when none is open" wording in the bound.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Native adversarial findings in the last delta pass of /review-and-prep for Track 65A, 2026-11-04. Deferred under the stop rule for prose review tails; both affect only how an optional local telemetry row pairs.
+- **Revisit when:** The next edit of either skill's status path, or when the wrapper adoption guard above is planned (it is the code fix for this pairing class).
+
+### [review:files=docs/telemetry.md|skills/review-and-prep.md] Name the telemetry outcome for BLOCKED and NEEDS_CONTEXT exits that are not pauses
+
+- **Description:** The shared finish block defines `blocked` as a deliberate pause that a later resume continues, and the join contract says other BLOCKED or NEEDS_CONTEXT exits "keep their actual outcome" without naming it. Some BLOCKED exits (for example `/review-and-prep`'s provider-failure stop) also end with a resume line, so agents may record `blocked` for them and consumers can no longer read `blocked` as a deliberate pause only.
+- **Hypothesis (untested):** The owner picks one mapping (for example `error` for a non-pause BLOCKED exit, `unknown` for NEEDS_CONTEXT), states it once in the shared finish line and the join contract, and locks it.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Native adversarial finding in the full re-review of Track 65A, 2026-11-04; needs an owner decision, so it was deferred rather than decided in that PR.
+- **Revisit when:** The next change to the shared telemetry finish block, or the first consumer report that relies on `blocked` meaning a deliberate pause.
+
+### [review:files=skills/full-review.md] full-review maps "stop for now" to DONE TRIAGING, which rejects the remaining clusters
+
+- **Description:** `/full-review`'s conversational list routes "stop" to DONE TRIAGING ("Done triaging — reject remaining"), so a user who types "stop for now" meaning a pause loses the untriaged clusters' decisions. The new PAUSE route deliberately avoided overlapping words; `/pair-review` maps "stop for now" and "continue later" to PAUSE, so the two skills now differ.
+- **Effort:** S
+- **Priority:** P3
+- **Context:** Native adversarial finding during /review-and-prep of Track 65A, 2026-11-04. Pre-existing: the same "stop" route is on `main`.
+- **Revisit when:** The next edit of `/full-review`'s Conversational Interface.
 
 ## Completed
 

@@ -622,3 +622,15 @@ describe('Track 22D init state block', () => {
     }
   });
 });
+
+describe('full-review PAUSE route', () => {
+  const skill = flatProse(readFileSync(join(ROOT, 'skills', 'full-review.md'), 'utf8'));
+  // Value: protects=a deliberate pause keeps the triage state and closes the segment blocked; fails_when=PAUSE is dropped, overlaps another route or runs Phase 5 or 6; why_new=segments replace deferred finishes; seam=none; no_claim=agent behavior (static prose lock)
+  test('PAUSE leaves the session alone, points to resume and finishes blocked', () => {
+    expect(skill).toContain('"pause" / "pause the review" / "split into sessions" → PAUSE');
+    expect(skill).toContain('PAUSE leaves untriaged clusters and `session.yaml` as they are and does not run Phase 5 or 6. Tell the user to continue with `/full-review resume`, then run Telemetry finish with `--outcome blocked`.');
+    expect(skill).toContain('accepting the split pauses the review the same way as PAUSE');
+    expect(skill).toContain('That resume runs Telemetry start again. After a PAUSE, the first action in this conversation that continues the work (anything but STATUS) runs Telemetry start once, before it acts; a `/full-review` invocation that continues the work (anything but `status`) counts its own start as that one.');
+    expect(skill).toContain('If `/full-review status`, run Telemetry finish with `--outcome unknown` (a status check pairs its own start and reports no run outcome), then stop here. That start is the one Telemetry start runs when this skill begins; a status check whose start did not run skips this finish.');
+  });
+});

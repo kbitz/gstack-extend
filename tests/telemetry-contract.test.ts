@@ -498,7 +498,7 @@ describe('docs/telemetry.md join contract', () => {
     const outcomes = backtickedValues(valueCell(doc, 'outcome'));
     const routes = backtickedValues(valueCell(doc, 'route'));
     if (!same(agents, constants.harnesses)) mismatch('agent values differ from HARNESSES', agents, constants.harnesses);
-    if (!same(outcomes, [...constants.outcomes, 'blocked'])) mismatch('outcome values differ from v2 vocabulary', outcomes, [...constants.outcomes, 'blocked']);
+    if (!same(outcomes, constants.outcomes)) mismatch('outcome values differ from v2 vocabulary', outcomes, constants.outcomes);
     if (!same(routes, constants.routes)) mismatch('route values differ from ROUTES', routes, constants.routes);
     for (const field of ['agent_source', 'model_source', 'effort_source']) {
       const values = backtickedValues(valueCell(doc, field));
@@ -745,7 +745,10 @@ describe('docs/stage-runs.schema.json', () => {
     expect(defs.agent.enum).toContain(null);
     const agents = defs.agent.enum.filter((value: unknown) => value !== null);
     if (!same(agents, constants.harnesses)) mismatch('schema agent enum differs from HARNESSES', agents, constants.harnesses);
-    if (!same(defs.outcome.enum, constants.outcomes)) mismatch('schema outcome enum differs from OUTCOMES', defs.outcome.enum, constants.outcomes);
+    // v1 rows never carry blocked; the v2 vocabulary is the writer's whole OUTCOMES.
+    const v1Outcomes = constants.outcomes.filter((value: string) => value !== 'blocked');
+    if (!same(defs.outcome.enum, v1Outcomes)) mismatch('schema v1 outcome enum differs from OUTCOMES without blocked', defs.outcome.enum, v1Outcomes);
+    if (!same(defs.outcome_2.enum, constants.outcomes)) mismatch('schema v2 outcome enum differs from OUTCOMES', defs.outcome_2.enum, constants.outcomes);
     if (!same(defs.route.enum, constants.routes)) mismatch('schema route enum differs from ROUTES', defs.route.enum, constants.routes);
     if (!same(defs.evidence_source.enum, constants.sources)) mismatch('schema evidence_source enum differs from SOURCES', defs.evidence_source.enum, constants.sources);
     expect(defs.schema_version.const).toBe(1);
@@ -1397,7 +1400,7 @@ describe('Conductor Cursor ledger recipe', () => {
     expect(flat).toContain('Certification needs exactly one Conductor prompt');
     expect(flat).toContain('A stage that spans several prompts in one conversation stays unknown (`ambiguous-candidates`) by design');
     expect(flat).toContain('the SQLite schema or file layout changes');
-    expect(flat).toContain('`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt) Conductor stages in receipt 2 or Track 27A evidence');
+    expect(flat).toContain('`ambiguous-candidates` is the usual result for ordinary interactive (multi-prompt) Conductor stages in receipt 2 or the Conductor host-qualification evidence');
     expect(flat).toContain('a SQLite shard reaches the row cap, a run status other than RUNNING, FINISHED or CANCELLED appears');
     expect(flat).toContain('`malformed-bounds` shows on every SQLite run');
     expect(flat).toContain('Cursor offers low, medium, high and xhigh, so `none` is not a valid expectation');
@@ -2138,7 +2141,7 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
       expect([result.status, result.stdout, result.stderr]).toEqual([0, '', '']);
       const row = fix.readLedger().at(-1)!;
       expect(row).toMatchObject({ schema_version: 2, workspace_host: host, host_agent_id: id, agent, route,
-        model: 'fixture-model', effort: 'high', model_source: 'flag', effort_source: 'flag', outcome: 'unknown' });
+        model: 'fixture-model', effort: 'high', model_source: 'flag', effort_source: 'flag', outcome: 'blocked' });
       expect(Object.keys(row)).toEqual(V2_FIELDS);
       expect(verdict(row).ok).toBe(true);
       rows.push(row);
@@ -2266,4 +2269,43 @@ describe('Track 26A v2 regression bundles G1–G5/G8', () => {
     for (const secret of ['PRIVATE-ID', 'PRIVATE-EXTRA']) expect(result.stderr + result.stdout).not.toContain(secret);
     expect(readFileSync(result.file!, 'utf8')).toBe(text);
   });
+});
+
+describe('paused and resumed segments', () => {
+  test('paused and resumed segments: the join contract states the rules, and two checkouts leave two valid v2 rows', () => {
+    const contract = section(docText(), '## Join contract').replace(/\s+/g, ' ');
+    expect(contract).toContain('Segments link by `work_item` when the launcher set it for every segment.');
+    expect(contract).toContain('the segments are unlinked, which is unknown');
+    expect(contract).toContain("is unobserved and unknown, never zero");
+    expect(contract).toContain('A resume that skips its own start has no handoff: its start-less finish adopts another open handoff of that skill in that root');
+    expect(contract).toContain('(an exact fingerprint match first, newest first)');
+    expect(contract).toContain('A status-only invocation (`/pair-review status`, `/full-review status`) finishes `unknown`: it pairs its own start and reports no run outcome. A short `unknown` row can therefore be a status check, not a segment outcome, even when it carries the run\'s `work_item`.');
+    expect(contract).toContain('Work that continues later in the same conversation after a pause (an answered question, a result line, the first action after a PAUSE that continues the work) is a resume too and runs its own start, once.');
+    expect(contract).toContain('runs start again whenever work continues after a pause, including later in the same conversation.');
+
+    const fix = makeTelemetryFixture('off');
+    const checkoutA = initCheckout(fix.home, fix.env, 'checkout-a', 'git@github.com:acme/widget.git');
+    const checkoutB = initCheckout(fix.home, fix.env, 'checkout-b', 'git@github.com:acme/widget.git');
+    const env = { ...fix.env, GSTACK_EXTEND_WORK_ITEM: 'item-53a' };
+    const skill = 'extend:review-and-prep';
+    expect(runTelemetry({ ...env, CODEX_THREAD_ID: 'thread-a' }, checkoutA, ['start', '--skill', skill]).status).toBe(0);
+    expect(runTelemetry({ ...env, CODEX_THREAD_ID: 'thread-a' }, checkoutA, ['finish', '--skill', skill, '--outcome', 'blocked']).status).toBe(0);
+    expect(runTelemetry({ ...env, CODEX_THREAD_ID: 'thread-b' }, checkoutB, ['start', '--skill', skill]).status).toBe(0);
+    expect(runTelemetry({ ...env, CODEX_THREAD_ID: 'thread-b' }, checkoutB, ['finish', '--skill', skill, '--outcome', 'success']).status).toBe(0);
+
+    const rows = fix.readLedger();
+    expect(rows.map(row => row.outcome)).toEqual(['blocked', 'success']);
+    expect(new Set(rows.map(row => row.session_id)).size).toBe(2);
+    expect(rows.map(row => row.work_item)).toEqual(['item-53a', 'item-53a']);
+    for (const row of rows) {
+      expect(row.schema_version).toBe(2);
+      expect(verdict(row)).toEqual({ ok: true, errors: [] });
+    }
+
+    const v1 = historicalRow();
+    const all = [legacyOf(v1), v1, ...rows];
+    const result = runValidation(all.map(row => JSON.stringify(row)).join('\n') + '\n');
+    expect(result.status).toBe(0);
+    expect(result.summary).toBe(summaryOf({ rows: 4, v2: 2, v1: 1, legacy: 1 }));
+  }, 60_000);
 });
