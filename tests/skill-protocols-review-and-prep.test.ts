@@ -2567,9 +2567,10 @@ describe('review-and-prep pause points finish blocked', () => {
   });
   // Value: protects=work that continues after a blocked finish starts its own segment, in or out of the conversation; fails_when=an in-session continuation drops the restart or the post-resume receipt loses its segment label; why_new=a blocked finish consumes the handoff, so a continuation without a start adopts a stale one or writes nothing; seam=none; no_claim=agent behavior (static prose lock)
   test('a continuation after a pause starts a new segment, and its receipt says it covers one segment', () => {
-    expect(text).toContain('Whatever continues the run afterwards, a resume invocation or the user\'s answer or a result line later in this same conversation, first runs Telemetry start again: that begins a new segment. A question answered before the turn ends is not a pause. Each segment counts as its own invocation below, with its own session ID and its own workflow metrics run.');
+    expect(text).toContain('Whatever continues the run afterwards, a resume invocation or the user\'s answer or a result line later in this same conversation, first runs Telemetry start again: that begins a new segment. An answer that lets the run continue within the same turn is not a pause; an answer that stops the run for a later resume is. For telemetry and workflow metrics only, each segment counts as its own invocation, with its own session ID and its own metrics run; every other per-invocation rule (allowances, attempt bounds, checkpoints) still spans the paused run.');
     expect(text).toContain('`Workflow metrics (local, optional): this segment only; earlier segments are recorded under their own session IDs.`');
-    expect(text).toContain('**Resume entry.** Telemetry start runs before this entry, because the pause ended its segment');
+    expect(text).toContain('**Resume entry.** The one Telemetry start this segment needs (**Segments**, under Telemetry start) already ran when the skill began or the run continued; do not run another here.');
+    expect(text).toContain('Pause/resume continues the same invocation and retains its consumed allowance');
     expect(text).not.toContain('earlier segments are in their own pause receipts');
     const segments = text.indexOf('**Segments.**');
     expect(segments).toBeGreaterThan(text.indexOf('<!-- /SHARED:telemetry-start -->'));

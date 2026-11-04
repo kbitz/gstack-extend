@@ -1739,9 +1739,10 @@ language to the appropriate action. In practice, users will say things like:
 
 PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to
 continue with `/pair-review resume`, then run Telemetry finish with
-`--outcome blocked`; that resume runs Telemetry start again. After a PAUSE, any
-further action in this conversation (RESUME, PASS, FAIL, DONE or any other)
-also runs Telemetry start first.
+`--outcome blocked`; that resume runs Telemetry start again. After a PAUSE, the
+first action in this conversation that continues the work (anything but STATUS)
+runs Telemetry start once, before it acts; a `/pair-review resume` invocation's
+own start counts as that one.
 
 When ambiguous, ask.
 

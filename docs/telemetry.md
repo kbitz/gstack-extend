@@ -1951,8 +1951,8 @@ and one `skill_run`.
 - A resume is `/review-and-prep resume` (or the `continue` handoff), `/pair-review resume`
   or `/full-review resume`. It runs its own start, in whichever checkout or on whichever
   machine it runs, and its finish writes its own row. Work that continues later in the
-  same conversation after a pause (an answered question, a result line, any action after
-  a PAUSE) is a resume too and runs its own start.
+  same conversation after a pause (an answered question, a result line, the first action
+  after a PAUSE that continues the work) is a resume too and runs its own start, once.
 - Segments link by `work_item` when the launcher set it for every segment. Without it
   the segments are unlinked, which is unknown, not an error. `(stage, repo, branch)` and
   `started_at` order are a hint, never identity.
@@ -1964,7 +1964,7 @@ and one `skill_run`.
   segment whose agent skipped the pause finish stays an open handoff the same way. A
   resume that skips its own start has no handoff: its start-less finish adopts another
   open handoff of that skill in that root by the [Collision limit](#collision-limit) order
-  (a same-session start first, newest first), which can be an older abandoned start whose `session_id`,
+  (an exact fingerprint match first, newest first), which can be an older abandoned start whose `session_id`,
   `started_at` and saved `work_item` the row then carries, or writes nothing when none is
   open. Each skill therefore runs start again whenever work continues after a pause,
   including later in the same conversation.
