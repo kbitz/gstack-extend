@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.63.2] - 2026-11-04
+
+### Added
+
+- Telemetry records paused and resumed runs as blocked segments.
+
+### Changed
+
+- Work that continues after a pause restarts telemetry on every continuation, and `docs/telemetry.md` corrects the `duration_s` note for paused segments.
+
+### Fixed
+
+- Status checks stay paired within a bound, and metrics corrections remain in their segment.
+- Segment restarts apply to telemetry and a single start, so other scopes are left unchanged.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+
 ## [0.63.1] - 2026-11-03
 
 ### Changed
