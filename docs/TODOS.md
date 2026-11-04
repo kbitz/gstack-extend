@@ -2,6 +2,25 @@
 
 ## Unprocessed
 
+### [review:files=tests/skill-protocols.test.ts|tests/update.test.ts] Test gap: spawned-skip wording and update-check state notes
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** No assertion pins the shared upgrade flow's sentence that the guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output, or the installation guide's clauses about `bin/update-check` consuming the just-upgraded marker. The twelve copies stay byte-identical, so the sentences could be removed from all of them at once without a failing test.
+- **Hypothesis (untested):** Add `toContain` checks for both sentences next to the existing spawned-session ordering lock and the installation-guide lock; re-verify the wording first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** tests/skill-protocols.test.ts:733 and tests/update.test.ts:276
+- **Evidence:** Track 66A /review-and-prep cycle 3 native adversarial pass; both sentences read in place, the lock suites inspected, no failure reproduced.
+- **Context:** /review-and-prep, branch mmm/6598a207 at 0b75aa1, 2026-11-04; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
+### [review:files=skills/gstack-extend-upgrade.md|skills/project-spec.md|bin/update-run] Decide whether an interactive upgrade at stage start should wait until the stage ends
+
+- **Description:** Track 66A runs the shared upgrade flow at the start of all twelve skills. An interactive stage that upgrades there (an answered question, or `auto_upgrade=true`) keeps the skill text it already loaded but calls helpers and reads docs from the upgraded checkout for the rest of the run, so a release that changes a helper's output (`docs-ship`, `secret-dispositions`, `outside-review`) can be misread mid-stage. `/project-spec` already defers `/roadmap`'s upgrade until composition finishes, but its own start-of-run flow can now upgrade before composition.
+- **Hypothesis (untested):** After `UPGRADE_OK` in a workflow stage, either stop and ask for a fresh invocation, or defer the upgrade until the stage's final message, as `/project-spec` does for `/roadmap`.
+- **Effort:** ? (user triages in /roadmap)
+- **Context:** Native adversarial and Red Team findings during /review-and-prep of Track 66A, 2026-11-04. The approved plan keeps interactive behavior unchanged in every skill (criteria 2 and 3), so changing when an interactive upgrade happens was out of scope.
+- **Revisit when:** A release changes the output format of a helper that stage skills read, or a user reports a stage failing right after an upgrade at its start.
+
 ### [review:files=src/pregate-deps/cli.ts|tests/pregate-deps.test.ts] Test gap: CLI option combinations
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Equivalent root spellings, duplicate roots, short help, and check/prune precedence lack dedicated cases.
