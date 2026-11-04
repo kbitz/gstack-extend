@@ -27,7 +27,7 @@ allowed-tools:
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
 
-Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -45,8 +45,9 @@ legacy start/finish calls only. As the one metrics-only exception, retain the
 opaque session ID this invocation's start printed (`GE_TELEMETRY: session=…`)
 solely as the `session_id` of `metrics` calls in this invocation. Never replay
 or alter a legacy start/finish call, never use an ID from another invocation,
-and never start a new legacy run to feed metrics. If the ID is unavailable (for
-example on resume), metrics capture is unavailable; continue the workflow.
+and never start a new legacy run to feed metrics. If the ID is unavailable,
+metrics capture is unavailable; continue the workflow. A resume prints its own
+ID and records its own metrics run.
 Full contract: [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md#workflow-metrics).
 
 Resolve `gstack-extend-telemetry` exactly as the telemetry blocks do. Every
@@ -257,8 +258,8 @@ library and both call forms are in
   `replayed` and was not reconciled, also add the literal line
   `Workflow metrics (local, optional): capture=partial (<reason>).` beside
   the snapshot, since the read cannot see a dropped call.
-  `end` the run step just before the legacy telemetry finish, and leave it
-  open at a pause. Never write or edit a PR body or comment only to refresh
+  `end` the run step just before the legacy telemetry finish; at a deliberate
+  pause end it `paused`, before the `blocked` finish. Never write or edit a PR body or comment only to refresh
   metrics, and never after `gh pr ready`. Existing receipt and handoff labels,
   markers and the manual-testing rules are unchanged; the metrics line cannot
   authorize readiness. An interrupted run that produces no receipt needs none
@@ -1983,8 +1984,8 @@ Then run what that authorized policy names: `repair-only`, a fresh
 `/review` as a delta re-review from the delta base with the unresolved findings
 as context; `full`, a fresh full-scope `/review`. `stop`, `none supplied` or
 `k` above `n` holds for the user. A new cycle stop repeats this procedure.
-A cycle stop is a deliberate pause: defer `SHARED:telemetry-finish` as the
-manual-testing pause does.
+A cycle stop is a deliberate pause: run `SHARED:telemetry-finish` with
+`--outcome blocked`, as the manual-testing pause does.
 
 ### Enforce completion, beyond `/review`'s informational audit
 
@@ -2203,7 +2204,8 @@ supply a new policy or result line.
 
 **Pause.** Write the line below and the policy line to the evidence directory.
 Open a wait span with category `checks` and end it `paused` at the actual pause,
-not earlier. Leave the metrics run open and defer Telemetry finish. Print
+not earlier. End the metrics run step `paused`, then run Telemetry finish with
+`--outcome blocked`. Print
 `Evidence directory: <absolute path>` and every auto-choice line, then print
 this line, unfenced, as the last line of the turn:
 
@@ -2782,6 +2784,9 @@ are the H-C hold of the published
 marker, the `Resume with` line and the prompt's first line byte-identical for
 callers.
 
+This stop is a deliberate pause: run Telemetry finish with `--outcome blocked`;
+`/review-and-prep resume` starts a new segment.
+
 Finish with the draft PR URL, the pending checks, and a recommendation to run
 `/pair-review` (or `/pair-review resume` for an existing matching session).
 Do not automatically launch that interactive session. Provide a copyable
@@ -3032,8 +3037,9 @@ leaves a draft PR, also post Step 3's paused comment, including the pending
 question, and retry a failed post on the next resume.
 
 A stop on an exit question, or a configuration pause under **Marking ready
-would start a second run.** (E1(a)), is a deliberate pause. Defer
-`SHARED:telemetry-finish` as the manual-testing pause does.
+would start a second run.** (E1(a)), is a deliberate pause. Run
+`SHARED:telemetry-finish` with `--outcome blocked`, as the manual-testing pause
+does.
 
 Every exit question uses this template:
 
@@ -3562,7 +3568,7 @@ carry it across sessions.
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
-Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run when this invocation completes or deliberately pauses. Set `--outcome` to the actual result (`success`, `error`, `abort`, `blocked`, or `unknown`). Use `blocked` at a deliberate pause, where the run stops for a person and a later resume continues it. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"

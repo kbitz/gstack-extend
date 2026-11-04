@@ -135,7 +135,7 @@ Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/confi
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
 
-Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -1471,8 +1471,9 @@ Write report to `<SESSION_DIR>/report.md`.
 ### Step 3: Offer next steps
 
 First run this read-only paused-preparation check. It reads only the branch PR's
-status and pause signals; it never prints bodies or comment text. Track 24B owns
-the future canonical hold/resume detector and may replace this check.
+status and pause signals; it never prints bodies or comment text. The published
+stage-handoff contract (`docs/workflow-handoffs.md`) owns the canonical
+hold/resume rules; a detector built on it may replace this check.
 
 ```bash
 PR_CLASS=lookup-failure
@@ -1734,6 +1735,11 @@ language to the appropriate action. In practice, users will say things like:
 - "where was I" → RESUME
 - "what's left" → STATUS
 - "done" / "that's everything" → DONE
+- "pause" / "stop for now" / "continue later" → PAUSE
+
+PAUSE keeps `session.yaml` as it is and skips the done rollup. Tell the user to
+continue with `/pair-review resume`, then run Telemetry finish with
+`--outcome blocked`; that resume runs Telemetry start again.
 
 When ambiguous, ask.
 
@@ -1849,7 +1855,7 @@ The mini-table runs at each group boundary so the Conductor action-receipt patte
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
-Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run when this invocation completes or deliberately pauses. Set `--outcome` to the actual result (`success`, `error`, `abort`, `blocked`, or `unknown`). Use `blocked` at a deliberate pause, where the run stops for a person and a later resume continues it. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"

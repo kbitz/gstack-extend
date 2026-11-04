@@ -32,7 +32,7 @@ LOGGER_TIMEOUT_S = 15  # the delegated completion logger
 PROTOCOL_MARKER = b"telemetry-protocol: start-finish-v1"
 MIN_GSTACK_FOR_NO_SWEEP = "1.80.0.0"  # first gstack release whose gstack-telemetry-log honors --no-sweep
 HARNESSES = ("claude", "codex", "grok", "cursor")
-OUTCOMES = ("success", "error", "abort", "unknown")
+OUTCOMES = ("success", "error", "abort", "blocked", "unknown")
 ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "conductor", "sdk", "unknown"
 ROUTES = (ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN)
 # Where a row's agent, model or effort value came from. A null value is always unknown.
@@ -409,15 +409,16 @@ def classify(candidate, skill, now, current):
 def pick_adoption(candidates):
     """The adoptable candidate that pairs first, or None.
 
-    Order: resumable-exact oldest first, resumable-other NEWEST first (a cross-session resume continues the latest
-    paused run; abandoned resumable starts accumulate and must not capture it), then exact and unknown-fingerprint
-    candidates oldest first. Ties break on arrival (sort_key), never on session id alone."""
+    Order: resumable-exact NEWEST first, resumable-other NEWEST first (each resume starts its own segment, so the
+    newest open start is the current one; an older open start is a lost pause finish or a pause from an older
+    release and must not capture it), then exact and unknown-fingerprint candidates oldest first. Ties break on
+    arrival (sort_key), never on session id alone."""
     adoptable = [item for item in candidates if item.classification[0] == "adopt"]
     if not adoptable:
         return None
     rank = min(item.classification[2] for item in adoptable)
     tier = [item for item in adoptable if item.classification[2] == rank]
-    return (max if rank == 1 else min)(tier, key=lambda item: item.sort_key)
+    return (max if rank <= 1 else min)(tier, key=lambda item: item.sort_key)
 
 
 def adopt_candidate(store, legacy_file, skill, slot_root, current):
@@ -2053,7 +2054,7 @@ def main(args):
         return
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
-        print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|unknown]")
+        print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
         print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
@@ -2062,8 +2063,9 @@ def main(args):
         print("  Adoption: resumable skills (pair-review, review-and-prep, full-review) adopt at any age;")
         print("  a non-resumable skill adopts the same harness session at any age, refuses a different known session,")
         print("  and adopts an unknown fingerprint only within 24 hours. A finish never reads another root's handoff.")
-        print("  Pairing: resumable exact matches oldest first, other resumable starts newest first;")
+        print("  Pairing: resumable starts newest first, exact matches first;")
         print("  non-resumable exact matches, then unknown fingerprints, each oldest first. See docs/telemetry.md.")
+        print("  A deliberate pause finishes with --outcome blocked, and a resume starts a new segment.")
         print("  Explicit --session-id is never age-bounded; --start alone does not bypass adoption.")
         print("  An explicit finish repeated for the same skill and repository root writes nothing after completion")
         print("  (until its marker is pruned).")

@@ -23,7 +23,7 @@ allowed-tools:
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
 
-Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -613,7 +613,7 @@ when no single plan file was readable.
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
-Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run when this invocation completes or deliberately pauses. Set `--outcome` to the actual result (`success`, `error`, `abort`, `blocked`, or `unknown`). Use `blocked` at a deliberate pause, where the run stops for a person and a later resume continues it. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"

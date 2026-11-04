@@ -444,7 +444,7 @@ describe('review-and-prep drift-locks', () => {
     );
     expect(normalized).toContain('mutually exclusive by run state');
     expect(normalized).toContain(
-      'is a deliberate pause. Defer `SHARED:telemetry-finish` as the manual-testing pause does.',
+      'is a deliberate pause. Run `SHARED:telemetry-finish` with `--outcome blocked`, as the manual-testing pause does.',
     );
   });
 
@@ -1520,7 +1520,7 @@ describe('review-and-prep external full-suite gate', () => {
     expect(pause).toContain('`External gate: external-gate/v1; head: <40-hex>; tree: <40-hex>; base: <40-hex>`');
     expect(pause).toContain('then print this line, unfenced, as the last line of the turn');
     expect(pause).toContain('Open a wait span with category `checks` and end it `paused` at the actual pause, not earlier.');
-    expect(pause).toContain('Leave the metrics run open and defer Telemetry finish.');
+    expect(pause).toContain('End the metrics run step `paused`, then run Telemetry finish with `--outcome blocked`.');
     expect(pause).toContain('At the pause run no full pregate (only Preflight has run), push nothing, write nothing to the PR, never run `gh pr ready`, post no `review-and-prep:paused:` comment, and never write the word `PAUSED`');
     expect(pause).toContain('The PR stays unready.');
     expect(pause).toContain('; with no way to ask, stop BLOCKED and name the paths');
@@ -2547,5 +2547,22 @@ describe('review-and-prep specialists=fold', () => {
   // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section; why_new=CLAUDE.md skill-body rule; seam=none
   test('the added text uses no host placeholder', () => {
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+});
+
+describe('review-and-prep pause points finish blocked', () => {
+  const text = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8').replace(/\s+/g, ' ');
+  // Value: protects=every deliberate pause closes its segment with a blocked finish; fails_when=a pause point loses its blocked finish or a pause leaves the metrics run open; why_new=segments replace deferred finishes; seam=none; no_claim=agent behavior (static prose lock)
+  test('the manual-testing, cycle-stop, exit-question and external-gate pauses each say --outcome blocked', () => {
+    expect(text).toContain('This stop is a deliberate pause: run Telemetry finish with `--outcome blocked`; `/review-and-prep resume` starts a new segment.');
+    expect(text).toContain('A cycle stop is a deliberate pause: run `SHARED:telemetry-finish` with `--outcome blocked`, as the manual-testing pause does.');
+    expect(text).toContain('is a deliberate pause. Run `SHARED:telemetry-finish` with `--outcome blocked`, as the manual-testing pause does.');
+    expect(text).toContain('End the metrics run step `paused`, then run Telemetry finish with `--outcome blocked`.');
+  });
+  test('a pause ends the metrics run step paused, and a resume records its own run', () => {
+    expect(text).toContain('at a deliberate pause end it `paused`, before the `blocked` finish');
+    expect(text).not.toContain('for example on resume');
+    expect(text).toContain('A resume prints its own ID and records its own metrics run.');
+    expect(text).not.toContain('leave it open at a pause');
   });
 });

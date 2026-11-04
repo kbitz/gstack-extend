@@ -136,7 +136,7 @@ Tell user: "Update checks disabled. Re-enable by editing `~/.gstack-extend/confi
 <!-- SHARED:telemetry-start -->
 ### Telemetry start
 
-Run once when this skill begins. On resuming a paused invocation in the same repository, keep its existing handoff and skip another start. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run once when this skill begins, and again when it resumes after a deliberate pause: each resume starts its own segment, in whichever checkout it runs. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
@@ -841,6 +841,11 @@ free-text (via "Other" or as a direct message), map natural language:
 - "done" / "that's enough" / "stop" / "finish up" → DONE TRIAGING
 - "where was I" / "resume" / "continue" → RESUME
 - "what's left" / "status" / "how many left" → STATUS
+- "pause" / "pause the review" / "split into sessions" → PAUSE
+
+PAUSE leaves untriaged clusters and `session.yaml` as they are and does not run
+Phase 5 or 6. Tell the user to continue with `/full-review resume`, then run
+Telemetry finish with `--outcome blocked`.
 
 ---
 
@@ -872,7 +877,7 @@ It is always OK to stop and say "this is too hard for me" or "I'm not confident 
 
 - If an agent has been retried 3 times without producing usable output, follow the Phase 1 Step 3 agent-failure prompt: after 3 retries the Retry option is removed, and if all three agents still fail the run stops as BLOCKED without another question.
 - If you are uncertain whether a cluster represents a real issue or a false positive, STOP and present the evidence.
-- If the scope of findings exceeds what can be sensibly triaged in one session, STOP and escalate (offer to split into multiple sessions).
+- If the scope of findings exceeds what can be sensibly triaged in one session, STOP and escalate (offer to split into multiple sessions; accepting the split pauses the review the same way as PAUSE).
 
 <!-- SHARED:escalation-format -->
 Escalation format:
@@ -932,7 +937,7 @@ Status comes from the Completion Status Protocol rollup above. Verdict shapes:
 <!-- SHARED:telemetry-finish -->
 ### Telemetry finish
 
-Run when this invocation completes. Set `--outcome` to the actual result (`success`, `error`, `abort`, or `unknown`). A deliberate pause defers finish until completion. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
+Run when this invocation completes or deliberately pauses. Set `--outcome` to the actual result (`success`, `error`, `abort`, `blocked`, or `unknown`). Use `blocked` at a deliberate pause, where the run stops for a person and a later resume continues it. Telemetry is optional; see [docs/telemetry.md](https://github.com/kbitz/gstack-extend/blob/main/docs/telemetry.md). State, tier gating, and session wall-clock duration are handled by the binary; do not copy session values between calls.
 
 ```bash
 _GE_CALL="$HOME/.gstack-extend/bin/telemetry-call"
