@@ -6,16 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Every skill checks for a gstack-extend update, and a spawned session never runs the upgrade.
-
-### Fixed
-
-- The guard's skip line is clearer, and `update-check` reports its own state.
-- `docs-ship` has its structure back, and the branch opened for a spawned upgrade is tighter.
+- Eight more skills run `bin/update-check` at start and follow the shared upgrade flow: `/implement`, `/review-and-prep`, `/ship-and-land`, `/project-spec`, `/plan-track`, `/autoplan-lean`, `/docs-ship` and `/gstack-extend-init`. `/roadmap`, `/pair-review`, `/full-review` and `/gstack-extend-upgrade` already did, so all twelve installed skills now carry the flow.
+- The shared upgrade flow has a spawned branch, chosen when `GSTACK_SESSION_KIND` is `spawned` or `unattended` in the environment. It asks nothing, never runs `bin/update-run` even under `auto_upgrade=true`, writes no snooze or config state, and puts one line in the run's final message naming the newer version. `/plan-track` always follows this branch because it asks no questions and installs nothing; without a managed install it says nothing about updates. The skill text enforces this, the harness does not.
+- The shared flow names `UPGRADE_SKIPPED spawned-session` as the skill's own guard output, not `bin/update-run` output and not a failed upgrade. `docs/installation.md` has a new "Update checks" section that documents the flow and the caller contract, including that `bin/update-check`, which this release does not change, keeps its own state (cache, the just-upgraded marker, snooze) in every session kind.
 
 ### Upgrade notes
 
-- Upgrade with `bin/update-run`. Existing setups keep working without new configuration.
+- Upgrade with `bin/update-run`.
+- Existing setups do not all keep working unchanged. A caller that launches stage skills without a person and leaves `GSTACK_SESSION_KIND` unset now takes the interactive branch of the flow in the eight stages above: a stage can show the upgrade question at its start, and with `auto_upgrade=true` it can run `bin/update-run` and upgrade the installed checkout while other stages are using it. Interactive use is unchanged apart from those eight stages now running the check.
+- To keep unattended stages from asking or upgrading, set `GSTACK_SESSION_KIND=spawned` (or `unattended`) in the environment of every launched session. The same variable makes `/roadmap`, `/pair-review`, `/full-review` and `/gstack-extend-upgrade` skip the upgrade, so upgrade through `/gstack-extend-upgrade` in an interactive session or run `bin/update-run` directly. A caller that must never upgrade should also deny `bin/update-run` in its own permission layer, since skill text is not enforcement. `update_check=false` in the config silences the check.
+- See [Update checks](docs/installation.md#update-checks).
 
 ## [0.64.0] - 2026-11-04
 
