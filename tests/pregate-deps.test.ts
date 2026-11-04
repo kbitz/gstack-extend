@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { help, main } from '../src/pregate-deps/cli.ts';
 import { generate } from '../src/pregate-deps/graph.ts';
@@ -82,6 +82,18 @@ const EXPECTED_HAND: Record<string, string[]> = {
 };
 
 describe('pregate-deps', () => {
+  test('replacement preserves policy permissions despite a restrictive umask', () => {
+    const repo = materializeFixtureRepo();
+    const configPath = join(repo, '.gstack/pregate.json');
+    chmodSync(configPath, 0o664);
+    const previous = process.umask(0o077);
+    try {
+      expect(runCli(repo, ['--prune']).status).toBe(0);
+      expect(statSync(configPath).mode & 0o777).toBe(0o664);
+    } finally {
+      process.umask(previous);
+    }
+  });
   test('preserves prototype-named unowned dependency keys', () => {
     const repo = materializeFixtureRepo();
     const configPath = join(repo, '.gstack/pregate.json');

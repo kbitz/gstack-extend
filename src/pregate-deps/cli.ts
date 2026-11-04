@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { cleanGitEnv, generate, isPyTestFile, readPythonSources } from './graph.ts';
 
@@ -324,7 +324,9 @@ export function main(argv: string[], overrides: Partial<CliIo> = {}): number {
     const scratch = mkdtempSync(join(dirname(realConfigPath), '.pregate-deps-'));
     try {
       const replacement = join(scratch, 'pregate.json');
-      writeFileSync(replacement, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode: statSync(realConfigPath).mode & 0o777 });
+      const mode = statSync(realConfigPath).mode & 0o777;
+      writeFileSync(replacement, `${JSON.stringify(nextConfig, null, 2)}\n`, { mode });
+      chmodSync(replacement, mode);
       renameSync(replacement, realConfigPath);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
