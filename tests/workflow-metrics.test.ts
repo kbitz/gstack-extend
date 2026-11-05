@@ -2767,6 +2767,18 @@ describe('Track 67A run token usage capture and read --usage', () => {
     const corrData = JSON.parse(readUsage(fix, sid1).stdout).data;
     expect(corrData.children.correlated).toBe(2);
     expect(corrData.totals.correlated).toMatchObject({ input: 300, cache_read: 30, output: 50 });
+    expect(corrData.by_pass).toEqual([
+      expect.objectContaining({ pass_id: null, pass: 1, attempt_id: null, attempt: 1,
+        voice_id: 'outside-challenge', link_evidence: 'correlated', input: 100, output: 20 }),
+      expect.objectContaining({ pass_id: null, pass: 1, attempt_id: null, attempt: 1,
+        voice_id: 'outside-structured', link_evidence: 'correlated', input: 200, output: 30 }),
+    ]);
+    const correlatedSources = ledgerLines(fix, sid1).map(line => JSON.parse(line))
+      .find(row => row.op === 'usage').request.sources.filter((s: any) => s.relation === 'cross-harness');
+    expect(correlatedSources.map((s: any) => ({ link: s.link, evidence: s.link_evidence })))
+      .toEqual(expect.arrayContaining(['outside-challenge', 'outside-structured'].map(voice_id => ({
+        link: { pass_id: null, pass: 1, attempt_id: null, attempt: 1, voice_id }, evidence: 'correlated',
+      }))));
 
     // Case 2: Plant a foreign session already active before T0 and still active after T0 in the same checkout.
     writeFileSync(join(projDir, 'syn-foreign-active.jsonl'), [
@@ -3051,14 +3063,15 @@ describe('Track 67A run token usage capture and read --usage', () => {
       `print(json.dumps(tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})))`,
     ]);
     const linked = req.sources.some((s: any) => s.relation === 'subagent');
-    expect(linked || (req.status === 'partial' && req.reasons.length > 0)).toBe(true);
+    expect(linked || (req.status === 'partial' && req.reasons.some((reason: string) =>
+      ['log-truncated', 'scan-budget'].includes(reason)))).toBe(true);
   });
 
   test('review regression: capacity-discarded buckets project unknown totals instead of zero', () => {
     const { fix, repo } = ownClaudeFixture();
     const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
     const result = runPythonCollect(fix, [
-      'wm.MAX_USAGE_RECORD_BYTES = 1', 'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      'wm.MAX_USAGE_RECORD_BYTES = 1024', 'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
       `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
     ]);
     expect(result).toBe('recorded');
@@ -3225,6 +3238,125 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(limited.projection.totals.unknown.output).toBe(40);
     expect(limited.projection.totals.correlated.output).toBe(0);
     expect(limited.projection.by_pass).toEqual([]);
+  });
+
+  test('continuation regression: child usage after run end stays counted and is marked may-continue', () => {
+    const { fix, repo, project } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-syn-claude-sub-001.jsonl'),
+      loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }).replace('00:00:20Z', '00:00:50Z'));
+    const sid = 'extend-' + u(), run = runRows(sid, T0);
+    craft(fix, sid, [...run.rows, { op: 'end', at: T0 + 40_000,
+      request: { ...base(sid), step_id: run.step, outcome: 'completed' } }]);
+    expect(runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ])).toBe('recorded');
+    const req = ledgerLines(fix, sid).map(line => JSON.parse(line)).find(row => row.op === 'usage').request;
+    const index = req.sources.findIndex((s: any) => s.relation === 'subagent');
+    expect(req.sources[index]).toMatchObject({ complete: false, reasons: expect.arrayContaining(['may-continue']) });
+    expect(req.buckets.filter((b: any) => b.source === index)).toEqual([
+      expect.objectContaining({ input: 300, output: 75 }),
+    ]);
+    expect(JSON.parse(readUsage(fix, sid).stdout).data).toMatchObject({ capture: 'partial', children: { 'may-continue': 1 } });
+  });
+
+  test.each(['own', 'child'])('continuation regression: unreadable Claude %s log keeps totals unknown', (failedSource) => {
+    const { fix, repo, project, own, collect } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    const child = join(sub, 'agent-syn-claude-sub-001.jsonl');
+    writeFileSync(child, loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = []',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if str(path) == ${JSON.stringify(failedSource === 'own' ? own : child)} and mode == "rb":`,
+      '        attempts.append(True)', '        raise PermissionError("synthetic owned read failure")',
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = ${collect}`, 'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False), "attempts": attempts}))',
+    ]);
+    expect(result.attempts).not.toEqual([]);
+    expect(result.request.sources.find((s: any) => s.relation === (failedSource === 'own' ? 'own' : 'subagent')))
+      .toMatchObject({ complete: false, reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.data.capture).toBe('partial');
+    expect(result.data.totals.direct).toMatchObject({ input: null, output: null, null_reasons: expect.arrayContaining(['log-missing']) });
+    // Other sources' observed facts survive; an unknown total does not erase evidence.
+    expect(result.request.buckets.length).toBeGreaterThan(0);
+  });
+
+  test('continuation regression: model metadata cannot exceed the serialized record cap', () => {
+    const { fix, repo, project } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    for (let child = 0; child < 63; child++) {
+      const rows = Array.from({ length: 16 }, (_, model) => ({
+        type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: `syn-child-${child}`,
+        isSidechain: true, timestamp: '2026-01-01T00:00:20Z', cwd: repo,
+        message: { id: `syn-message-${child}-${model}`, role: 'assistant', model: `m${String(model).padStart(2, '0')}-` + 'x'.repeat(124),
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 } },
+      }));
+      writeFileSync(join(sub, `agent-syn-child-${child}.jsonl`), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    }
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    expect(runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ])).toBe('recorded');
+    const line = ledgerLines(fix, sid).find(line => JSON.parse(line).op === 'usage')!;
+    expect(Buffer.byteLength(line + '\n')).toBeLessThanOrEqual(65536);
+    expect(validRecord(JSON.parse(line))).toBe(true);
+    expect(JSON.parse(line).request).toMatchObject({ status: 'partial', reasons: expect.arrayContaining(['capacity']), buckets: [] });
+    expect(JSON.parse(readUsage(fix, sid).stdout).data.totals.direct.input).toBeNull();
+  });
+
+  test.each(['own', 'child'])('continuation regression: unreadable Codex %s log keeps totals unknown', (failedSource) => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'codex-unreadable'), sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001', child = '01940000-0000-7000-8000-000000000002';
+    const ownPath = join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`);
+    const childPath = join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`);
+    writeFileSync(ownPath, loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(childPath, loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }));
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = [0]',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if str(path) == ${JSON.stringify(failedSource === 'own' ? ownPath : childPath)} and mode == "rb":`,
+      '        attempts[0] += 1',
+      // Child discovery reads session_meta first; fail the subsequent full-log read.
+      `        if attempts[0] > ${failedSource === 'own' ? 0 : 1}: raise PermissionError("synthetic owned read failure")`,
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})`,
+      'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False)}))',
+    ]);
+    expect(result.request.sources.find((s: any) => s.relation === (failedSource === 'own' ? 'own' : 'subagent')))
+      .toMatchObject({ complete: false, reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.data.capture).toBe('partial');
+    expect(result.data.totals.direct).toMatchObject({ input: null, output: null, null_reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.request.buckets.length).toBeGreaterThan(0);
+  });
+
+  test('continuation regression: an unmatched in-harness voice is not an outside-call interval', () => {
+    const { fix } = ownClaudeFixture();
+    const sid = 'extend-' + u();
+    const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep');
+    mkdirSync(dir, { recursive: true });
+    const rows = ['agent-id', 'outside-process'].map((kind, i) => ({
+      stage: 'review-and-prep', voice_id: i ? 'outside-challenge' : 'testing', pass: 1, attempt: 1,
+      metrics: { session_id: sid }, subagent_ref: { kind, id: i ? null : 'missing-child' },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    }));
+    writeFileSync(join(dir, 'voices.jsonl'), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const result = runPythonCollect(fix, [
+      `links, intervals, reported = tu._read_voices_join(tu.Path(${JSON.stringify(fix.home)}), "review-and-prep", ${JSON.stringify(sid)}, ${T0}, set(), tu._Budget(3.0, 64 * 1024 * 1024), set())`,
+      'print(json.dumps([interval[2]["voice_id"] for interval in intervals]))',
+    ]);
+    expect(result).toEqual(['outside-challenge']);
   });
 
   test('sys.addaudithook guard proves zero network, subprocess, sqlite or credential-file access during capture, plus static import check', () => {

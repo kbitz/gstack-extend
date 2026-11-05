@@ -500,6 +500,9 @@ def _parse_claude_file(
 ) -> bool:
     line0, lines, offset, hit_budget, ok = _read_file_lines(path, budget, tail=tail, is_codex=False)
     if not ok:
+        acc.complete = False
+        acc.reasons.add("log-missing")
+        top_reasons.add("log-missing")
         return False
     if hit_budget:
         acc.complete = False
@@ -691,6 +694,9 @@ def _parse_codex_file(
 ) -> bool:
     line0, lines, offset, hit_budget, ok = _read_file_lines(path, budget, tail=tail, is_codex=True)
     if not ok:
+        acc.complete = False
+        acc.reasons.add("log-missing")
+        top_reasons.add("log-missing")
         return False
     if hit_budget:
         acc.complete = False
@@ -1038,8 +1044,7 @@ def _read_voices_join(
             # Outside-process call interval for cross-harness correlation.
             sub_kind = sub_ref.get("kind")
             is_outside_row = (
-                not matched_direct_child
-                or sub_kind == "outside-process"
+                sub_kind == "outside-process"
                 or isinstance(row.get("outside"), dict)
                 or isinstance(row.get("delegate"), dict)
             )
@@ -1150,6 +1155,7 @@ def collect(
     sid: str,
     steps: dict[str, tuple[int, int | None, str | None]] | None,
     home: str | Path | None = None,
+    run_end_ms: int | None = None,
 ) -> dict[str, Any]:
     """Collect token usage across own, subagent, nested and cross-harness logs for one run."""
     b_ms = max(0, int(begin_ms))
@@ -1674,7 +1680,11 @@ def collect(
                 step_hi = s_acc.first_fact_step_hi
                 if step_hi is not None and s_acc.all_fact_last_ms is not None and s_acc.all_fact_last_ms > step_hi:
                     s_acc.reasons.add("outlived-step")
-            if s_acc.post_end_record:
+            past_run_end = (
+                type(run_end_ms) is int and run_end_ms >= b_ms
+                and s_acc.all_last_ms is not None and s_acc.all_last_ms > run_end_ms
+            )
+            if s_acc.post_end_record or past_run_end:
                 s_acc.reasons.add("may-continue")
                 s_acc.complete = False
         if s_acc.agent == "codex":
@@ -1695,6 +1705,7 @@ def collect(
         top_reasons.add("scan-budget")
 
     partial_triggers = {
+        "log-missing",
         "log-truncated",
         "scan-budget",
         "malformed-record",

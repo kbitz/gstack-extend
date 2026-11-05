@@ -567,11 +567,12 @@ configuration is a requested source only: a reported value needs
 values. Nothing here
 scans credentials, process tables or vendor usage services. The two carve-outs
 are finish usage capture for a bound `/review-and-prep` or `/ship-and-land` run
-([Run token usage](#workflow-metrics-usage)), which reads only token, model,
-window and parent-link records from the listed harness session logs
+([Run token usage](#workflow-metrics-usage)), which reads the listed harness session logs
 (`~/.claude/projects/` and `~/.codex/sessions/`) and `voices.jsonl`, never
-prompt or reply prose, credentials, process tables, the quota store or the
-network, and the manual installed smoke below, which may read only tool-call
+credentials, process tables, the quota store or the network. It parses records
+in memory, retaining only token, model, window and parent-link data; prompt and
+reply prose is not stored. The other carve-out is the manual installed smoke
+below, which may read only tool-call
 IDs and timestamps from its own session's local log, never content.
 
 ### Caller identity
@@ -873,7 +874,9 @@ projection.
   `by_phase.unattributed`. Phase names come from the ledger's begin records,
   not stored bucket fields. A child whose facts continue past the end of the
   step holding its first fact gets `outlived-step`. A child with an observed
-  record at or after the capture window's end gets `may-continue`.
+  record after the run step's end gets `may-continue`, while its usage through
+  finish stays counted. Records at or after the capture window's end also get
+  the flag, including when no run end was recorded.
 - **Windows.** For each Codex source and slot (`primary` or `secondary`),
   capture retains the first and last in-window rate-limit reading (one when
   only one exists), up to eight observations overall. Each entry contains
@@ -897,7 +900,9 @@ projection.
   `(source, model)`, setting `step_id: null` and `placement: "outside-steps"`
   with `too-many-buckets`. If still too large, buckets are cleared with
   `capacity`; projected token totals are null with that reason, never zero
-  consumption. Source/pass links are retained.
+  consumption. Source/pass links are retained when they fit. If metadata alone
+  still exceeds 64 KiB, sources, windows and provider-reported observations are
+  cleared too, leaving a compact partial capture with `capacity`.
 - **`read --usage` projection.** Returns `capture` (`ok`, `partial` or
   `missing`), `reasons`, `stage`, `harness`, `window` (`{begin_ms, end_ms}`),
   `observed_through_ms`, and `totals` (`{direct, correlated, unknown}`). Each
@@ -928,7 +933,7 @@ projection.
 |---|---|
 | `unverified-source` | The detected harness (`cursor` or `grok`) has no verified local token log format. |
 | `harness-session-unknown` | The parent harness session ID was not supplied and could not be uniquely resolved. |
-| `log-missing` | No local log file was found for the parent session. |
+| `log-missing` | A local log was missing or could not be read. An unreadable source is incomplete and its evidence-grade token totals are null. |
 | `log-truncated` | The 32 MiB tail window started after `begin_ms`, so earlier in-window events may be missing. |
 | `scan-budget` | Capture exhausted its cooperative 3 s budget or 64 MiB input-byte budget. |
 | `malformed-record` | A log, `voices.jsonl` or ledger line failed JSON or schema validation. |
@@ -936,7 +941,7 @@ projection.
 | `unsupported` | A log record carried an identifier outside the bounded safe-ID grammar. |
 | `ambiguous` | Multiple candidate sessions or `voices.jsonl` intervals matched without a unique link, or a foreign session was active in the checkout. |
 | `outlived-step` | A child session logged events after its initial step's `end` boundary. |
-| `may-continue` | A child session logged events after `finish`, so later tokens may be uncounted. |
+| `may-continue` | A child logged events after the run step ended, or at/after capture ended. Usage observed before capture ended stays counted; later tokens may be uncounted. |
 | `window-not-reported` | The harness log did not report account rate-limit window percentages. |
 | `too-many-buckets` | Buckets were merged by `(source, model)` to stay within the 256-bucket or 64 KiB record cap. |
 | `too-many-sources` | More than 64 sources were discovered; extras were truncated. |

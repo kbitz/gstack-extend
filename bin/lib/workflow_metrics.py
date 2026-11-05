@@ -1174,7 +1174,10 @@ def capture_usage(sid, stage, begin_s, end_s, agent, root, home=None):
         else:
             harness_session = None
         tu = _load_telemetry_usage()
-        req = tu.collect(agent, harness_session, begin_ms, end_ms, root, stage, sid, steps, home=home)
+        run_ends = ends.get(run_step_id, [])
+        run_end_ms = run_ends[0]["captured_at_ms"] if run_ends else None
+        req = tu.collect(agent, harness_session, begin_ms, end_ms, root, stage, sid, steps,
+                         home=home, run_end_ms=run_end_ms)
         req["event_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, "gstack-extend:usage:" + sid))
 
         def _line_len(candidate_req):
@@ -1194,6 +1197,14 @@ def capture_usage(sid, stage, begin_s, end_s, agent, root, home=None):
             req["reasons"] = sorted(set(req["reasons"]) | {"capacity"})
             if req["status"] == "ok":
                 req["status"] = "partial"
+        if _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            # Source models/links and provider observations can exceed the cap
+            # without any buckets. Keep a compact, explicitly unknown capture.
+            req["sources"] = []
+            req["windows"] = []
+            req["cli_reported"] = []
+        if _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            return None
         validate_request("usage", req)
         status, _ = mutate("usage", req)
         return status
@@ -1940,7 +1951,12 @@ def summarize_usage(records, malformed, partial_tail, overflow):
         "correlated": _sum_usage_buckets(by_ev["correlated"], unavailable=unavail),
         "unknown": _sum_usage_buckets(by_ev["unknown"], unavailable=unavail),
     }
-    missing_counts = {"capacity", "scan-budget"} & reasons
+    for source in sources:
+        if "log-missing" in source["reasons"]:
+            total = totals[source["evidence"]]
+            total.update({key: None for key in USAGE_CLASSES})
+            total["null_reasons"] = sorted(set(total["null_reasons"]) | {"log-missing"})
+    missing_counts = {"capacity", "scan-budget", "log-missing"} & reasons
     if not buckets and missing_counts:
         # Discarded or unobserved usage is unknown, not zero work.
         for total in totals.values():
