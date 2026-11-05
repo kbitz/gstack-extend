@@ -286,8 +286,8 @@ class _Facts(dict):
                 source.first_fact_step_hi = self.steps[step_id][1] if placement == "step" else None
         if self.compacted:
             placement, step_id = "outside-steps", None
-        key = (source.ref, model, placement, step_id)
-        if key not in self.groups and len(self.groups) >= MAX_BUCKETS and not self.compacted:
+        bucket_group = (source.ref, model, placement, step_id)
+        if bucket_group not in self.groups and len(self.groups) >= MAX_BUCKETS and not self.compacted:
             compact = {}
             for (ref, old_model, _placement, _step), old in self.groups.items():
                 merged = compact.setdefault((ref, old_model, "outside-steps", None),
@@ -298,12 +298,12 @@ class _Facts(dict):
                     merged["nulls"][cls] += old["nulls"][cls]
             self.groups = compact
             self.compacted = True
-            key = (source.ref, model, "outside-steps", None)
-        if key not in self.groups and len(self.groups) >= MAX_SOURCES * MAX_MODELS_PER_SOURCE:
+            bucket_group = (source.ref, model, "outside-steps", None)
+        if bucket_group not in self.groups and len(self.groups) >= MAX_SOURCES * MAX_MODELS_PER_SOURCE:
             self.capacity = True
             self.groups.clear()
             return
-        group = self.groups.setdefault(key, {"responses": 0, "sums": {c: 0 for c in CLASSES}, "nulls": {c: 0 for c in CLASSES}})
+        group = self.groups.setdefault(bucket_group, {"responses": 0, "sums": {c: 0 for c in CLASSES}, "nulls": {c: 0 for c in CLASSES}})
         group["responses"] += sign
         for cls in CLASSES:
             value = fact["tokens"].get(cls)
@@ -312,7 +312,7 @@ class _Facts(dict):
             else:
                 group["sums"][cls] += sign * int(value)
         if not group["responses"]:
-            del self.groups[key]
+            del self.groups[bucket_group]
 
     def __setitem__(self, key, value):
         if key in self:
@@ -1213,9 +1213,9 @@ def collect(
     for path in _own_logs(agent, harness_session, claude_cfg if agent == "claude" else codex_cfg, budget):
         info = _safe_stat_regular(path)
         if info is not None:
-            key = (info.st_mtime, str(path))
-            if own_key is None or key > own_key:
-                own_key, own_log = key, path
+            log_order = (info.st_mtime, str(path))
+            if own_key is None or log_order > own_key:
+                own_key, own_log = log_order, path
     if own_log is None:
         if budget.exhausted:
             return _empty_result("partial", ["scan-budget"])
@@ -1225,7 +1225,7 @@ def collect(
 
     own_acc = _SourceAcc(agent=agent, raw_id=harness_session, relation="own", evidence="direct")
     direct_sources: list[_SourceAcc] = [own_acc]
-    direct_by_key: dict[tuple[str, str], _SourceAcc] = {(agent, harness_session): own_acc}
+    direct_sources_by_identity: dict[tuple[str, str], _SourceAcc] = {(agent, harness_session): own_acc}
 
     if agent == "claude":
         inline_children: dict[str, _SourceAcc] = {}
@@ -1306,7 +1306,7 @@ def collect(
                 top_reasons=top_reasons,
             )
             direct_sources.append(child_acc)
-            direct_by_key[("claude", raw_sub_id)] = child_acc
+            direct_sources_by_identity[("claude", raw_sub_id)] = child_acc
 
         for rem_id in inline_children:
             if len(direct_sources) >= MAX_SOURCES:
@@ -1319,7 +1319,7 @@ def collect(
                 c_acc.reasons.add("scan-budget")
                 top_reasons.add("scan-budget")
             direct_sources.append(c_acc)
-            direct_by_key[("claude", rem_id)] = c_acc
+            direct_sources_by_identity[("claude", rem_id)] = c_acc
 
         # Resolve nested Claude subagents via toolUseId -> another subagent's tool_use ids, or spawnDepth > 1.
         child_list = [s for s in direct_sources if s.relation != "own"]
@@ -1426,7 +1426,7 @@ def collect(
             rel, ptid = _codex_lineage(tid)
             if rel is None or ptid is None:
                 continue
-            if ("codex", tid) in direct_by_key:
+            if ("codex", tid) in direct_sources_by_identity:
                 continue
             if len(direct_sources) >= MAX_SOURCES:
                 top_reasons.add("too-many-sources")
@@ -1450,7 +1450,7 @@ def collect(
                 top_reasons=top_reasons,
             )
             direct_sources.append(c_acc)
-            direct_by_key[("codex", tid)] = c_acc
+            direct_sources_by_identity[("codex", tid)] = c_acc
 
     # Cross-harness and foreign session scan (Claude top-level logs in root/cwd project dirs + remaining Codex rollouts).
     try:
@@ -1479,7 +1479,7 @@ def collect(
             raw_cid = cpath.stem
             if not SESSION_ID_RE.fullmatch(raw_cid):
                 continue
-            if ("claude", raw_cid) in direct_by_key:
+            if ("claude", raw_cid) in direct_sources_by_identity:
                 continue
             cand_acc = _SourceAcc(
                 agent="claude",
@@ -1526,7 +1526,7 @@ def collect(
         if not budget.check():
             top_reasons.add("scan-budget")
             break
-        if ("codex", tid) in direct_by_key:
+        if ("codex", tid) in direct_sources_by_identity:
             continue
         cand_acc = _SourceAcc(
             agent="codex",
