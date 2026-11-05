@@ -3359,7 +3359,7 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(result).toEqual(['outside-challenge']);
   });
 
-  test.each(['claude-log', 'codex-header', 'voices-file', 'malformed-voices'])('continuation discovery: unreadable %s prevents false correlation', (kind) => {
+  test.each(['claude-log', 'codex-header', 'voices-file', 'malformed-voices', 'disappeared-voices', 'unreadable-directory'])('continuation discovery: unreadable %s prevents false correlation', (kind) => {
     const { fix, repo, project, own, collect } = ownClaudeFixture();
     const rows = readFileSync(own, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     writeFileSync(join(project, 'outside-candidate.jsonl'), JSON.stringify({
@@ -3393,8 +3393,20 @@ describe('Track 67A run token usage capture and read --usage', () => {
     }
     const result = runPythonCollect(fix, [
       'original_open = tu.Path.open', 'attempts = []',
+      'original_stat = tu._safe_stat_regular', 'stat_attempts = []',
+      'def fail_stat(path):',
+      `    if ${kind === 'disappeared-voices' ? 'True' : 'False'} and str(path) == ${JSON.stringify(unreadable)}:`,
+      '        stat_attempts.append(True)',
+      '        if len(stat_attempts) == 2:',
+      '            attempts.append(True)', '            return None',
+      '    return original_stat(path)', 'tu._safe_stat_regular = fail_stat',
+      'original_scandir = tu.os.scandir',
+      'def fail_scandir(path):',
+      `    if ${kind === 'unreadable-directory' ? 'True' : 'False'} and str(path) == str(tu.Path(${JSON.stringify(unreadable)}).parent):`,
+      '        attempts.append(True)', '        raise PermissionError("synthetic directory discovery failure")',
+      '    return original_scandir(path)', 'tu.os.scandir = fail_scandir',
       'def fail_read(path, mode="r", *args, **kwargs):',
-      `    if str(path) == ${JSON.stringify(unreadable)} and mode == "rb":`,
+      `    if ${['disappeared-voices', 'unreadable-directory'].includes(kind) ? 'False' : 'True'} and str(path) == ${JSON.stringify(unreadable)} and mode == "rb":`,
       '        attempts.append(True)',
       `        if ${kind === 'malformed-voices' ? 'False' : 'True'}: raise PermissionError("synthetic discovery read failure")`,
       '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',

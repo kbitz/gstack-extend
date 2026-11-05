@@ -851,7 +851,8 @@ projection.
   session is active in the checkout. Both alternatives require a known original
   session start and complete discovery within the scan and capacity limits.
   Missing, unreadable, truncated or malformed discovery input also suppresses
-  correlation while retaining observed usage.
+  correlation while retaining observed usage. This includes failed directory
+  enumeration and a discovered join file disappearing before it can be read.
   Ambiguous candidates are `unknown` with `ambiguous`. The three grades have
   separate totals and are never summed into one exact figure.
 - **Pass join via `voices.jsonl` and `cli_reported`.** Capture searches under

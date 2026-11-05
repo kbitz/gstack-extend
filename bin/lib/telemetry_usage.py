@@ -71,6 +71,7 @@ class _Budget:
         self.byte_limit = byte_limit
         self.bytes_read = 0
         self.exhausted = False
+        self.discovery_failed = False
 
     def check(self) -> bool:
         if self.exhausted:
@@ -111,6 +112,7 @@ def _entries(path: Path, budget: _Budget):
                     return
                 yield entry
     except OSError:
+        budget.discovery_failed = True
         return
 
 
@@ -926,6 +928,8 @@ def _find_voices_files(home_path: Path, stage: str, begin_ms: int, budget: _Budg
             p = Path(entry.path)
             if entry.name == "voices.jsonl" and entry.is_file(follow_symlinks=False):
                 st = _safe_stat_regular(p)
+                if st is None:
+                    top_reasons.add("log-missing")
                 if st is not None and st.st_size > 0 and st.st_mtime >= min_mtime:
                     if st.st_size > VOICES_MAX_BYTES:
                         top_reasons.add("capacity")
@@ -985,6 +989,7 @@ def _read_voices_join(
             break
         st = _safe_stat_regular(vpath)
         if st is None:
+            top_reasons.add("log-missing")
             continue
         if st.st_size > VOICES_MAX_BYTES:
             top_reasons.add("capacity")
@@ -1578,6 +1583,8 @@ def collect(
         budget,
         top_reasons,
     )
+    if budget.discovery_failed:
+        top_reasons.add("log-missing")
 
     # Apply direct links to subagents, then propagate to linked nested children if unlinked.
     raw_to_direct: dict[str, _SourceAcc] = {s.raw_id: s for s in direct_sources}
