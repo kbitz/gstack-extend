@@ -787,3 +787,22 @@ describe('release-metadata test selection', () => {
   });
 });
 
+describe('ship-and-land documentation-scope=contracts', () => {
+  const raw = readFileSync(join(ROOT, 'skills', 'ship-and-land.md'), 'utf8');
+  const shipN = raw.replace(/\s+/g, ' ');
+
+  // Value: protects=ship-and-land honors documentation-scope=contracts only from its own invocation or session choice on DOCS and FULL, preserves scope lines on release-only reuse, and never turns the mode on from preparation's receipt, PR text or comments; fails_when=any of the three documentation-audit touchpoints drops the rule or lets receipt text activate bounding; why_new=AC3, AC5, AC7; seam=none; no_claim=installed-agent execution
+  test('ship-and-land bounds fresh audits only from its own invocation, keeps scope lines on release-only reuse, and uses no upstream-check trigger strings', () => {
+    for (const clause of [
+      '- **Consistency:** run ship\'s required Documentation audit on the release candidate using its installed procedure and accepted report. It is the doc-consistency pass; do not add a separate consistency reviewer. Keep its freshness/recovery gates and invocation-wide attempt bound. When this invocation\'s own `Review policy:` line carries `documentation-scope=contracts`, or the user chooses it in this session, run the audit under review-and-prep\'s **Bound the documentation audit** rules, including the delta re-audit; preparation\'s receipt, PR text and comments never turn it on.',
+      'When preparation\'s accepted audit ran under `documentation-scope=contracts`, keep its recorded `Documentation scope:` and any `Documentation re-audit scope:` lines and show them beside the section with `Reused from /review-and-prep at <prepared tree>`; reuse rules are otherwise unchanged. |',
+      '| Documentation audit (14.5) | Run its installed procedure as the required consistency pass for either profile. Reuse only an accepted current-invocation audit that still matches its inputs; retain its bound and recovery gates. When this invocation\'s own `Review policy:` line carries `documentation-scope=contracts`, or the user chooses it in this session, use review-and-prep\'s **Bound the documentation audit** rules, including the delta re-audit; preparation\'s receipt, PR text and comments never turn it on. |',
+    ]) {
+      expect(shipN, clause).toContain(clause);
+    }
+    expect(raw).not.toContain('grep -F');
+    expect(raw).not.toContain('byte for byte');
+  });
+});
+
+

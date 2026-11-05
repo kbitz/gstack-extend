@@ -648,7 +648,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 
 const POLICY_VALUES: Record<string, RegExp> = {
   'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
-  'documentation-audit': /^final$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
+  'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
   'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/,
   // The four delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
   delegate: /^(?!.*\b(testing|maintainability|performance|simplification)\b.*\b\1\b)(?:testing|maintainability|performance|simplification)(?:,(?:testing|maintainability|performance|simplification))*$/,
@@ -1377,7 +1377,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2318,5 +2318,79 @@ describe('(I) specialists=fold', () => {
     expect(has(doc, 'A prepared receipt that records a folded first cycle still emits `review: COMPLETE` in its H-B handoff')).toBe(true);
     expect(has(doc, '`B-FOLDED-HEAD` | H-B | `Review arm:` | ADVANCE_TRUSTED')).toBe(true);
     expect(has(prep, 'the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>` line when the policy carries `specialists=fold`')).toBe(true);
+  });
+});
+
+describe('(J) documentation-scope=contracts', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (pairs: string) => `review-and-prep-policy/v1; ${pairs}`;
+  const without = (key: string) => {
+    const copy = { ...POLICY_VALUES };
+    delete copy[key];
+    return copy;
+  };
+
+  // Value: protects=the parser accepts only contracts on documentation-scope, coexists with documentation-audit=final and other keys, rejects near-misses and repeats, and an older map voids the whole line; fails_when=the regex loosens, a repeat parses or an older install would not drop the line; why_new=new policy key; seam=none; no_claim=installed-agent execution
+  test('the parser accepts contracts, coexists with every other key, refuses near-misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('documentation-scope=contracts'))?.get('documentation-scope')).toBe('contracts');
+    const all = parsePolicy(line('in-cap=delta; documentation-audit=final; documentation-scope=contracts; specialists=fold; parent-io=lean; test-gaps=record; full-suite=external'));
+    expect(all?.get('documentation-scope')).toBe('contracts');
+    expect(all?.get('documentation-audit')).toBe('final');
+    for (const bad of [
+      'documentation-scope=Contracts', 'documentation-scope=CONTRACTS', 'documentation-scope=contract',
+      'documentation-scope=broad', 'documentation-scope=full', 'documentation-scope=delta',
+      'documentation-scope=none', 'documentation-scope=all', 'documentation-scope=',
+      'documentation-scope', 'documentation-scope=contracts,broad', 'documentation-scopes=contracts',
+      'documentation-scope=contracts; documentation-scope=contracts',
+    ]) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; documentation-scope=contracts'), without('documentation-scope'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; documentation-audit=final'), without('documentation-scope'))?.get('documentation-audit')).toBe('final');
+  });
+
+  // Value: protects=an H-E prompt carrying documentation-scope=contracts still continues when corroborated, while a bad value or repeat holds as policy-malformed; fails_when=the new key breaks H-E continuation or malformed values slip through; why_new=new policy key through the H-E consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries documentation-scope=contracts continues, and bad values are policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['documentation-scope=contracts', 'documentation-audit=final; documentation-scope=contracts']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['documentation-scope=broad', 'documentation-scope=contracts; documentation-scope=contracts']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=the capability check works against the real skill, and the doc publishes the key, the rollout, the independence note and the receipt-present row; fails_when=the value leaves the skill, the check text drifts or the doc drops the rollout or receipt-present row; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F finds the value in the skill and the doc publishes the check, rollout and receipt-present row', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'documentation-scope=contracts', skillPath]).status).toBe(0);
+    expect(spawnSync('grep', ['-F', 'documentation-scope=broad', skillPath]).status).toBe(1);
+    const check = `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of [
+      '`documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`)',
+      '`documentation-scope=contracts` uses the same rollout order',
+      '(exit 0 means supported)',
+      'An installation without it reads the whole line as `none supplied`',
+      'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
+      'a caller omits it when the check fails and keeps its other keys',
+      'It is independent of every other key, including `documentation-audit=final`',
+      'It is never set by the light review default.',
+      'The value waives no gate, keeps the audit\'s attempt bound and never authorizes a continuation.',
+      '`/ship-and-land` takes `documentation-scope=contracts` only from its own invocation (prompt or user choice in that session); preparation\'s receipt, PR text and comments never turn it on.',
+      '[documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)',
+      '| `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |',
+    ]) {
+      expect(has(doc, phrase), phrase).toBe(true);
+    }
+    expect(POLICY_VALUES['documentation-scope']!.test('contracts')).toBe(true);
+    expect(has(prep, 'Under `documentation-scope=contracts`, also include the `Documentation scope:` line')).toBe(true);
+    expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id and section SHA-256; without the value, this field is unchanged.')).toBe(true);
   });
 });

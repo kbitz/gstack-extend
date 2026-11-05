@@ -537,7 +537,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -2412,7 +2412,7 @@ describe('review-and-prep specialists=fold', () => {
   // Value: protects=the one policy grammar line gains the value after final-gate-repair and keeps every locked run around it; fails_when=the value moves, is dropped or splits a locked run; why_new=new policy value; seam=none
   test('the grammar line carries the value after final-gate-repair and keeps the locked runs around it', () => {
     expect(flat).toContain('final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>');
-    expect(flat).toContain('documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
+    expect(flat).toContain('documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
   });
 
   // Value: protects=the bullet's position, its only value, the exclusion with delegate and the no-waiver rule; fails_when=a second value appears silently, the exclusion reason changes or the older-install check is lost; why_new=criteria 1, 5, 7; seam=none
@@ -2576,5 +2576,71 @@ describe('review-and-prep pause points finish blocked', () => {
     const segments = text.indexOf('**Segments.**');
     expect(segments).toBeGreaterThan(text.indexOf('<!-- /SHARED:telemetry-start -->'));
     expect(segments).toBeLessThan(text.indexOf('### Workflow metrics (optional, local)'));
+  });
+});
+
+describe('review-and-prep documentation-scope=contracts', () => {
+  const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+  const raw = readFileSync(skillPath, 'utf8');
+  const flat = raw.replace(/\s+/g, ' ');
+  const slice = (from: string, to: string) => {
+    const start = raw.indexOf(from);
+    expect(start, `missing: ${from}`).toBeGreaterThan(-1);
+    const end = raw.indexOf(to, start);
+    expect(end, `missing after ${from}: ${to}`).toBeGreaterThan(start);
+    return raw.slice(start, end);
+  };
+  const policy = slice('### Read an optional review policy', '### Use the light review default').replace(/\s+/g, ' ');
+  const bullet = slice('- `documentation-scope=contracts`', '- `parent-io=lean`').replace(/\s+/g, ' ');
+  const light = slice('### Use the light review default', '## 2. Review and verify locally').replace(/\s+/g, ' ');
+  const section = slice('### Bound the documentation audit', '### Pause for an external full-suite gate').replace(/\s+/g, ' ');
+
+  // Value: protects=the policy bullet sits between full-suite=external and parent-io=lean, is opt-in with one value, independent of documentation-audit=final, and publishes the grep -F check; fails_when=the bullet moves, drops the capability check or claims a gate waiver; why_new=AC5, AC7, AC8; seam=none; no_claim=installed-agent execution
+  test('the policy bullet sits between full-suite=external and parent-io=lean, is opt-in and publishes the capability check', () => {
+    expect(policy.indexOf('- `full-suite=external`')).toBeLessThan(policy.indexOf('- `documentation-scope=contracts`'));
+    expect(policy.indexOf('- `documentation-scope=contracts`')).toBeLessThan(policy.indexOf('- `parent-io=lean`'));
+    expect(bullet).toContain('`documentation-scope=contracts` (its only value) is opt-in.');
+    expect(bullet).toContain('It bounds the documentation audit\'s read list and its one re-audit as **Bound the documentation audit** defines; omitted, the audit runs as today.');
+    expect(bullet).toContain('It waives no gate, keeps the audit\'s attempt bound and never authorizes a continuation.');
+    expect(bullet).toContain('It is independent of every other key, including `documentation-audit=final`: a caller may pass either key without the other or both together.');
+    const check = `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`;
+    expect(bullet).toContain(check);
+    expect(spawnSync('grep', ['-F', 'documentation-scope=contracts', skillPath]).status).toBe(0);
+    expect(light).toContain('It never sets `documentation-scope=contracts`: bounding the audit\'s reads needs a caller that accepts the retained-quality risk until the acceptance record supports a default (`SPEC P1`).');
+  });
+
+  // Value: protects=Bound the documentation audit defines activation, the four read-list inputs, the broad fallback triggers, whole-tree snapshot dispatch, delta re-audit rules and unchanged attempt/status bounds; fails_when=any input, fallback trigger, delta rule or receipt line is dropped; why_new=AC1, AC2, AC3; seam=none; no_claim=installed-agent execution
+  test('Bound the documentation audit locks the four read-list inputs, broad fallback, delta re-audit and unchanged attempt bound', () => {
+    expect(flat).toContain('3. **Documentation audit.** Run `/ship`\'s Documentation audit section with its candidate snapshot, subagent dispatch, validation, attempt bound and blocked recovery. Review its doc edits like any fix. Keep its accepted status, files, base and documentation section. It covers every changed path, so a later edit spends its one re-audit. Under `documentation-scope=contracts`, bound its reads and delta re-audit as **Bound the documentation audit** below defines.');
+    for (const clause of [
+      '1. **Activation.** Only under `documentation-scope=contracts`. Without it, run `/ship`\'s Documentation audit section unchanged.',
+      '2. **Initial read list.** Still inventory every documentation file (`README.md`, `CLAUDE.md`, `CHANGELOG.md`, `VERSION`, `TODOS.md`, `ROADMAP.md`, `PROGRESS.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md` and `docs/**`)',
+      'changed paths in the candidate diff that are themselves documentation files;',
+      'contract terms in the candidate diff (exported symbols, CLI flags, environment variables, schema fields, command names, skill names, policy keys and repository-relative file paths), adding each inventoried documentation file that mentions one;',
+      'authorities linked from `README.md`, `CLAUDE.md` or `docs/SPEC.md` for a changed area, and every doc linked from or linking to a doc already on the list;',
+      '`README.md`, `CLAUDE.md` and `docs/SPEC.md` always, plus `CHANGELOG.md` and `VERSION` when the candidate diff touches release metadata or when this audit runs at `/ship`\'s release gate.',
+      '3. **Broad fallback.** Use the full inventoried documentation set instead of the bounded read list when relevance is uncertain:',
+      'the candidate diff touches `CLAUDE.md`, `docs/SPEC.md`, `README.md`\'s architecture or skill-routing tables, a shared template under `scripts/init-templates/`, or a build/test/install entry point (`package.json`, `bin/setup-*`, `bin/gstack-*`);',
+      'no contract term can be extracted from a non-test code or skill change;',
+      'the bounded read list would omit a doc that a changed test, plan or card criterion names;',
+      'or the child reports that a listed doc depends on an unlisted doc to judge a claim (the child may read that doc and records the expansion).',
+      '4. **Dispatch.** Take the candidate snapshot of the whole working tree (`gstack-doc-audit snapshot` with no `--select`, because `--select` narrows ownership comparison rather than the child\'s read list).',
+      '5. **Re-audit follows the fix delta.** When the initial audit is accepted (`current` or `updated` with `blocked` empty) and a later fix batch, Greptile fix or final-gate repair changes the tree before the one allowed re-audit, compute the fix delta from the accepted audit\'s post-child snapshot to the current candidate.',
+      'the files changed in the fix delta;',
+      'the docs that the initial audit updated;',
+      'and the docs selected by the fix delta\'s own changed paths, contract terms and linked authorities, carrying forward the initial audit\'s accepted findings on untouched docs without rereading them.',
+      'If the initial audit was `blocked`, failed validation, or used the broad fallback, or if the fix delta triggers the broad fallback or merges a new base commit, the re-audit runs on the full candidate scope (bounded by the full candidate\'s read list, or broad when fallback applies).',
+      '6. **Bound and truth.** The attempt bound (`initial + one re-audit`, never a third) and the meanings of `current`, `updated` and `blocked` are unchanged; bounding never adds or refunds an attempt.',
+      'Record `Documentation scope: contracts (inventoried=<N>; read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes; extra-reads=<E>; fallback=<none|reason>)`',
+      '`Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs, <B2> bytes; carried-from=<audit_id> <section-sha256>)`',
+    ]) {
+      expect(section, clause).toContain(clause);
+    }
+    expect(flat).toContain('Under `documentation-scope=contracts`, also include the `Documentation scope:` line (arm, inventoried doc count, listed docs count and bytes, reviewed docs count and bytes, reads outside the list, and fallback reason) and any `Documentation re-audit scope:` line with the carried audit\'s id and section SHA-256; without the value, this field is unchanged.');
+  });
+
+  // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section, bullet or light-default line; why_new=CLAUDE.md skill-body rule; seam=none
+  test('the added text uses no host placeholder', () => {
+    for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });

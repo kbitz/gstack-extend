@@ -895,7 +895,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -935,6 +935,16 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   whole line as `none supplied`. To see whether the loaded copy narrows, it runs
   `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
   pregate as today, and the policy line stays unchanged.
+- `documentation-scope=contracts` (its only value) is opt-in. It bounds the
+  documentation audit's read list and its one re-audit as **Bound the
+  documentation audit** defines; omitted, the audit runs as today. It waives no
+  gate, keeps the audit's attempt bound and never authorizes a continuation. It
+  is independent of every other key, including `documentation-audit=final`: a
+  caller may pass either key without the other or both together. An installation
+  without this value reads a line carrying it as `none supplied`, so a caller
+  checks the loaded copy with `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
+  (exit 0 means supported) and omits the value otherwise, keeping its other
+  keys.
 - `parent-io=lean` (its only value) is opt-in. While a local command or
   subagent this invocation started is live (a test lane, the pregate, an audit
   or a reviewer), the parent waits in blocking calls, each up to the host's
@@ -1075,6 +1085,9 @@ Under the light default:
 - It never sets `test-gaps=record`: recording a gap instead of writing its test
   needs a caller that accepts the coverage risk, so it is an explicit caller
   opt-in.
+- It never sets `documentation-scope=contracts`: bounding the audit's reads
+  needs a caller that accepts the retained-quality risk until the acceptance
+  record supports a default (`SPEC P1`).
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -2227,7 +2240,8 @@ reuse these records.
    candidate snapshot, subagent dispatch, validation, attempt bound and blocked
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
    base and documentation section. It covers every changed path, so a later edit
-   spends its one re-audit.
+   spends its one re-audit. Under `documentation-scope=contracts`, bound its
+   reads and delta re-audit as **Bound the documentation audit** below defines.
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
    for an external full-suite gate** below; this item's own steps run only on
    an accepted pass. Before the full pregate run, make every declared
@@ -2273,6 +2287,70 @@ final pregate record, the audit's post-child snapshot and its documentation
 section to an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise
 `~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
 receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
+
+### Bound the documentation audit
+
+1. **Activation.** Only under `documentation-scope=contracts`. Without it, run
+   `/ship`'s Documentation audit section unchanged.
+2. **Initial read list.** Still inventory every documentation file (`README.md`,
+   `CLAUDE.md`, `CHANGELOG.md`, `VERSION`, `TODOS.md`, `ROADMAP.md`,
+   `PROGRESS.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md` and `docs/**`) so the
+   child knows the repository's doc surface. Build the audit's read list from
+   four inputs:
+   - changed paths in the candidate diff that are themselves documentation
+     files;
+   - contract terms in the candidate diff (exported symbols, CLI flags,
+     environment variables, schema fields, command names, skill names, policy
+     keys and repository-relative file paths), adding each inventoried
+     documentation file that mentions one;
+   - authorities linked from `README.md`, `CLAUDE.md` or `docs/SPEC.md` for a
+     changed area, and every doc linked from or linking to a doc already on the
+     list;
+   - `README.md`, `CLAUDE.md` and `docs/SPEC.md` always, plus `CHANGELOG.md` and
+     `VERSION` when the candidate diff touches release metadata or when this
+     audit runs at `/ship`'s release gate.
+3. **Broad fallback.** Use the full inventoried documentation set instead of the
+   bounded read list when relevance is uncertain:
+   - the candidate diff touches `CLAUDE.md`, `docs/SPEC.md`, `README.md`'s
+     architecture or skill-routing tables, a shared template under
+     `scripts/init-templates/`, or a build/test/install entry point
+     (`package.json`, `bin/setup-*`, `bin/gstack-*`);
+   - no contract term can be extracted from a non-test code or skill change;
+   - the bounded read list would omit a doc that a changed test, plan or card
+     criterion names;
+   - or the child reports that a listed doc depends on an unlisted doc to judge
+     a claim (the child may read that doc and records the expansion).
+4. **Dispatch.** Take the candidate snapshot of the whole working tree
+   (`gstack-doc-audit snapshot` with no `--select`, because `--select` narrows
+   ownership comparison rather than the child's read list). Pass the child the
+   full doc inventory (paths only), the bounded read list (or `broad fallback:
+   <reason>`), and the extracted contract terms. Instruct the child to read only
+   the listed docs and changed files unless it triggers the fallback above, and
+   to list any extra doc it read in `files_reviewed` and in its summary.
+5. **Re-audit follows the fix delta.** When the initial audit is accepted
+   (`current` or `updated` with `blocked` empty) and a later fix batch, Greptile
+   fix or final-gate repair changes the tree before the one allowed re-audit,
+   compute the fix delta from the accepted audit's post-child snapshot to the
+   current candidate. If the delta touches only paths whose contract terms and
+   linked authorities are already covered or adds a narrow set of new contract
+   terms, the one re-audit reads only:
+   - the files changed in the fix delta;
+   - the docs that the initial audit updated;
+   - and the docs selected by the fix delta's own changed paths, contract terms
+     and linked authorities, carrying forward the initial audit's accepted
+     findings on untouched docs without rereading them.
+   If the initial audit was `blocked`, failed validation, or used the broad
+   fallback, or if the fix delta triggers the broad fallback or merges a new
+   base commit, the re-audit runs on the full candidate scope (bounded by the
+   full candidate's read list, or broad when fallback applies).
+6. **Bound and truth.** The attempt bound (`initial + one re-audit`, never a
+   third) and the meanings of `current`, `updated` and `blocked` are unchanged;
+   bounding never adds or refunds an attempt. Record `Documentation scope:
+   contracts (inventoried=<N>; read-list=<M> docs, <B> bytes; reviewed=<K> docs,
+   <R> bytes; extra-reads=<E>; fallback=<none|reason>)` (and on a delta re-audit
+   `Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs,
+   <B2> bytes; carried-from=<audit_id> <section-sha256>)`) in the receipt and
+   beside the Documentation section.
 
 ### Pause for an external full-suite gate
 
@@ -3575,7 +3653,12 @@ hash it followed:
   post-child snapshot's path and SHA-256, and its documentation section's
   exact text, durable path and SHA-256, or the user's named-risk decision with
   the same section evidence. Bind each audit or decision to the final HEAD,
-  Git tree and reviewed base.
+  Git tree and reviewed base. Under `documentation-scope=contracts`, also
+  include the `Documentation scope:` line (arm, inventoried doc count, listed
+  docs count and bytes, reviewed docs count and bytes, reads outside the list,
+  and fallback reason) and any `Documentation re-audit scope:` line with the
+  carried audit's id and section SHA-256; without the value, this field is
+  unchanged.
 
 When Greptile applies, include its single run/review links, original trigger
 time, reviewed SHA/base, and local verification covering any later delta, or

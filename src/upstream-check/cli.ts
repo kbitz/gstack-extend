@@ -62,6 +62,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'specialists=fold'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'documentation-scope=contracts'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'src/review-delegate/cli.ts', includes: "join(root, 'lib'",
     reason: 'loads the UPSTREAM_HELPERS classifier, whose export and golden cases the export and classifier checks already cover' },
   { file: 'skills/roadmap.md', includes: 'copied byte for byte',
