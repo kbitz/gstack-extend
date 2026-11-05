@@ -15,16 +15,26 @@ two measured arms, all ahead of the paused and resumed telemetry Track ("Yes -
 your rec sounds good, let's fix" and "1"). That order ran Tracks 64A, 64B, 57A,
 64C and 58A (v0.60.2 to v0.63.0). The edges from 57A and 58A to the bounded
 documentation-audit Track (then 56A, now 68A) were priority choices, and that
-order superseded them. The paused and resumed telemetry Track (then 53A, now
-65A) is next again; after it the roadmap's own order resumes: test savings,
-telemetry, then audit and review optimizations.
+order superseded them. Groups 65 and 66 then shipped in full on 2026-11-03 and
+2026-11-04 (Tracks 65C, 65A, 65D, 65B, 66A and 66B, v0.63.1 to v0.66.0), under
+the owner's "Yes go" (65B, 2026-11-04), "Merge when ready and keep going"
+(2026-11-04) and "Yes and then start 66b" (2026-11-04). The roadmap's own order
+continues with run and child usage telemetry (67A), then audit and review
+optimizations.
 
-**Labels.** The regeneration of 2026-11-03 relabels the nine remaining Groups
-53 to 56 and 59 to 63 as Groups 65 to 73 in packer order, with unchanged
-partitions and letters (`53A` became `65A`, `56A` became `68A`, `63A`
-became `73A`; the full map is in that commit message). Shipped numbers 33,
-47 to 52, 57, 58 and 64 are reserved by tombstones; 64 was never a roadmap
-Group, and its three Tracks were numbered when they were launched.
+**Freeze.** The owner has frozen new work while the development setup moves
+to a new machine (the Linux move): no new item starts until the owner says the
+move is done. The regeneration of 2026-11-04 ran during the freeze with the owner's
+permission; it starts no Track.
+
+**Labels.** The regeneration of 2026-11-03 relabelled the nine remaining Groups
+53 to 56 and 59 to 63 as Groups 65 to 73 in packer order (`53A` became `65A`,
+`56A` became `68A`, `63A` became `73A`; the full map is in that commit
+message). The regeneration of 2026-11-04 keeps Groups 67 to 73 and their
+letters unchanged: the packer's bins for the remainder are the same. Shipped
+numbers 33, 47 to 52, 57, 58 and 64 to 66 are reserved by tombstones; 64 was
+never a roadmap Group, and Tracks 65C and 65D were added inside Group 65 when
+they were launched.
 
 **Dropped: Track 35B.** The `full-suite=before-audit` value was dropped rather
 than renumbered (2026-10-31): under `full-suite=final` and
@@ -64,101 +74,42 @@ owner acceptance remain distinct. No new spend or unattended merge is authorized
 
 No Group is in progress, and no working branch, session or PR is declared active.
 Every shipped Track is recorded independently in shipped history; the latest
-are 52A (v0.60.1), 64A (v0.60.2), 64B (v0.60.3), 57A (v0.61.0), 64C (v0.62.0)
-and 58A (v0.63.0). Track 28A's required published-release upgrade
+are 65C (v0.63.1), 65A (v0.63.2), 65D (v0.63.3), 65B (v0.64.0), 66A (v0.65.0)
+and 66B (v0.66.0). New work is frozen until the owner ends the Linux-move
+freeze. Track 28A's required published-release upgrade
 acceptance remains in Future; its revisit trigger, the first published
 three-part release, was met by v0.48.0 and the item awaits an owner
 reassessment. O1 and O3–O5 remain pending.
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64_
-
-### Group 65: Paused and resumed telemetry ∥ Python source-root test selection
-
-_Depends on: none_
-
-**This group delivers:** Truthful blocked/completed segments with stable run identity across resumes, and generated, checkable pregate dependency maps for Python source-root layouts.
-
-##### Track 65A: Record paused, blocked and resumed runs
-_2 tasks . ~300 LOC incl. tests . medium risk_
-**Outcome:** An external caller can tell a run that stopped for a person from one that never ran, and a run resumed in another checkout still records its completion.
-**Supports:** [SPEC](SPEC.md) O4 criteria 2–3, O3 and O1.2 — blocked work must be explicit and starts and finishes must keep their run identity; today a deliberate pause defers finish, and a resume in a new worktree finds no handoff in its root and writes nothing.
-**Done when:** A deliberate pause in `/review-and-prep`, `/pair-review` or `/full-review` writes one row with outcome `blocked`; a resumed run that completes writes its own row, including from a different checkout root; each start pairs with exactly one finish; every installed skill copy carries the same updated start/finish wording; the join contract describes how segments link, and v1, v2 and legacy rows stay readable.
-_touches: bin/lib/telemetry.py, docs/telemetry.md, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/skill-protocols.test.ts, skills/_
-_blocked-by: Track 23H, Track 23I, Track 26A, Track 31A, Track 52A_
-**Scheduling:** Owner order, 2026-11-02 ("Yes - your rec sounds good, let's fix" and "1"): Tracks 64A, 64B, 57A, 64C and 58A ran ahead of this Track; it is next again, and the roadmap's own order resumes after it. Owner-selected order: telemetry follows test savings, which shipped as 52A (v0.60.1). Complete paused/resumed segments before their dependent requested-model and usage work. Split from the former paused/resumed and update-check card under the card-size rule; the update check now has its own Tracks.
-_read-first: 23H, 23I, 26A, docs/telemetry.md_
-- **Close each paused segment with a blocked row** -- Replace "A deliberate pause defers finish" at the pause points of the three resumable skills with a finish that records `blocked`, the outcome stage-runs schema v2 has reserved since 0.37.0.0. Update the shared start/finish wording in all twelve skill copies (`skills/plan-track.md`, added in 0.57.0, is the twelfth), including `skills/autoplan-lean.md` (added in 0.40.0.0), and the `RESUMABLE` adoption rule with it. Since 0.56.0 each copy is a 12-line block that calls the installed `telemetry-call` helper, so the copied-line share of the estimate below predates the shrink; restate it when the card is planned by counting the lines between each skill's `SHARED:telemetry-start` and `SHARED:telemetry-finish` markers with `awk`. While editing, re-anchor two stale Track references to their current owners in words rather than IDs: `skills/pair-review.md` ("Track 24B owns the future canonical hold/resume detector", written when 24B was the stage-handoff contract Track, since shipped as 23I) and `docs/telemetry.md` (2026-10-25 source text: "receipt 2 or Track 27A evidence", which means the Conductor host qualification). Evidence (2026-10-16): no review-and-prep row for five of seven recent orchestrated PRs, and 5 review-and-prep handoffs among 24 leftover starts. Source: `[manual] Give paused and blocked /review-and-prep runs a stage-runs row`. _~180 lines._ (M)
-- **Record a resumed completion in any checkout** -- A resume starts its own segment, linked to the paused one by an identifier settled at planning (run identity or the launcher's work item), so a resume in a new worktree records its completion; use the status words of the stage-handoff contract. Align step/pass boundaries with the companion ledger from Track 24A; interrupted or unobserved intervals stay unknown. Settle at planning how this relates to the Future cards "Recover a telemetry finish run from a different repository root" and "In-flight marker and crash detection for extend telemetry". _~120 lines._ (M)
-
-##### Track 65B: Generate and check pregate dependency maps for Python source-root layouts
-_2 tasks . ~380 authored LOC incl. tests . medium risk_
-**Outcome:** A repository whose Python code lives under a source root such as `src/<pkg>` gets import-graph test selection from pregate without hand-maintaining its dependency map, and a stale map fails visibly.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 (test savings); owner-approved addition, 2026-10-26.
-**Done when:** An opt-in gstack-extend helper that a consumer runs scans the repository's Python imports, maps each module under a declared source root (`src/` by default, or roots the repository declares) to the test files that import it, and writes those entries into `.gstack/pregate.json` `dependencies` while preserving hand-written entries and every other key. A check mode changes nothing and exits nonzero naming stale or missing entries. A fixture repository with a `src/<pkg>` layout gets import-graph selection for a change to one module through the generated map; hand-written entries survive regeneration; check mode reports a stale map. Nothing runs automatically, upstream pregate's selection is neither forked nor wrapped, and a repository that does not run the helper is unchanged.
-_touches: bin/pregate-deps (new), src/pregate-deps/ (new), tests/pregate-deps.test.ts (new), tests/fixtures/pregate-deps/ (new), tests/helpers/touchfiles.ts, .gstack/pregate.json, docs/pregate-deps.md (new), CLAUDE.md_
-_blocked-by: Track 31A, Track 52A_
-**Scheduling:** Test-savings work, owner-approved 2026-10-26. It followed the skill-test narrowing, shipped as 52A (v0.60.1), because both edit this repository's touchfile map and pregate copy; that edge ordered a collision, was not a prerequisite and is now satisfied. Kept as one Track at ~380 authored lines under the card-size rule: the generator and its check mode edit the same files and would have to run one after another anyway.
-_Source: owner-approved 2026-10-26; installed upstream pregate resolves Python imports from the repository root only, and its CHANGELOG documents `dependencies` declarations for `src/` layouts_
-_read-first: scripts/sync-pregate-deps.ts_
-- **Generate the map from Python imports** -- Read the declared source roots, resolve each test file's imports to modules under a root, emit module-path to test-file entries, and merge them into `.gstack/pregate.json` `dependencies`, keeping hand-written entries and other keys under a documented ownership rule; `scripts/sync-pregate-deps.ts`, this repository's own map sync, is the precedent. Settle at planning whether transitive imports count; the generated map must not select fewer tests than a root-layout import graph would. _~240 lines incl. tests._ (M)
-- **Check mode and fixture proof** -- Add a check mode that changes nothing and exits nonzero naming stale or missing entries; build a `src/<pkg>` fixture repository showing selection for a one-module change through the generated map, hand-written entries surviving regeneration and a stale map failing; document the helper and give its launcher the Bun flags every `bin/` launcher passes. _~140 lines incl. tests._ (M)
-
-### Group 66: Update check in every skill ∥ requested-model provenance
-
-_Depends on: Group 65_
-
-**This group delivers:** An update notice in all twelve skills that never upgrades a shared checkout from a spawned session, and requested model values recorded separately from observed ones.
-
-##### Track 66A: Check for gstack-extend updates in every skill, never upgrading from a spawned session
-_2 tasks . ~200 authored LOC incl. tests, plus ~640 copied shared-block lines . medium risk_
-**Outcome:** Every installed skill reports an available gstack-extend update, and a skill running in a spawned or unattended session never prompts and never upgrades the installed checkout that concurrently running stages share.
-**Supports:** [SPEC](SPEC.md) O1.2 and O3.2 (a stage never loses work); owner-approved update check, 2026-10-26 — today only four of the twelve installed skills run it, so a caller that launches only workflow stages never learns of an update.
-**Done when:** The shared upgrade flow gains one spawned-session branch: when `GSTACK_SESSION_KIND=spawned` it asks nothing, never runs `bin/update-run` (including under `auto_upgrade=true`) and carries the available version into the receipt or final message; interactive behavior, including `auto_upgrade`, is unchanged; `docs/installation.md` documents it. Every installed skill runs `bin/update-check` at start with that flow byte for byte: the four that run it today (`/pair-review`, `/roadmap`, `/full-review`, `/gstack-extend-upgrade`) take the updated block, the three that already carry the extend-root resolver (`/autoplan-lean`, `/docs-ship`, `/gstack-extend-init`) add the check, and the five that lack it (`/implement`, `/review-and-prep`, `/ship-and-land`, `/project-spec`, `/plan-track`) add the resolver and the check. The upgrade-preamble cohort lock (`PREAMBLE_SKILLS` in `tests/skill-protocols.test.ts`) covers all twelve skills and a spawned-session case.
-_touches: skills/pair-review.md, skills/roadmap.md, skills/full-review.md, skills/gstack-extend-upgrade.md, skills/autoplan-lean.md, skills/docs-ship.md, skills/gstack-extend-init.md, skills/implement.md, skills/project-spec.md, skills/review-and-prep.md, skills/ship-and-land.md, skills/plan-track.md, docs/installation.md, tests/skill-protocols.test.ts_
-_blocked-by: Track 65A_
-**Scheduling:** One Track under the card-size rule: about 200 authored lines, and the ~640 byte-copied shared-block lines do not count (the earlier ~530 was for seven skills; `/plan-track`, added in 0.57.0, adds the roughly 110-line resolver preamble and upgrade flow it lacks, the span `skills/roadmap.md` holds from `## Preamble (run first)` through `<!-- /SHARED:upgrade-flow -->`, 112 lines at this base, counted with `awk`). Splitting it would leave Tracks that edit the same cohort test and skill files and must run one after another anyway. The spawned-session branch lands in the same change as the new update checks, so no workflow stage gains the check without it. The paused/resumed edge orders the shared skill files.
-_Source: owner-approved, 2026-10-26_
-_read-first: docs/installation.md_
-- **Add the spawned-session branch to the shared upgrade flow** -- When `GSTACK_SESSION_KIND=spawned`, ask nothing, never run `bin/update-run` (including under `auto_upgrade=true`) and carry the available version into the receipt or final message; cover a spawned-session case in the cohort lock; document it in `docs/installation.md`. _~120 authored lines incl. tests._ (S)
-- **Run the update check in all twelve skills** -- Add the extend-root resolver where it is missing, then the update-check call and the shared upgrade flow to the eight skills outside the cohort, move them into it and assert all twelve are covered. _~80 authored lines plus ~640 copied shared-block lines the protocol tests lock byte for byte._ (M)
-
-##### Track 66B: Record a caller-requested model where detection finds none
-_1 task . ~120 LOC incl. tests . low risk_
-**Outcome:** A launcher can record the model and effort it requested for a stage whose harness log names none, and readers can tell that value from an observed one.
-**Supports:** [SPEC](SPEC.md) O4 criterion 3 — requested-versus-observed model evidence must be distinguishable; every local `cursor-agent` row (29 ship-and-land rows, releases 0.34.2.0 to 0.36.8.0) has model null with source unknown.
-**Done when:** `GSTACK_EXTEND_MODEL` and `GSTACK_EXTEND_EFFORT` fill only a null detected value and carry the requested source label, never `detected`; detection and finish flags still win; a `cursor-agent` fixture covers the route; `docs/telemetry.md` documents both variables.
-_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/stage-runs.schema.json_
-_blocked-by: Track 26A, Track 65A_
-**Scheduling:** This is the second telemetry step after test savings; preserve the paused-segment prerequisite.
-_read-first: 26A, docs/telemetry.md_
-- **Record the caller's requested model and effort** -- Stage-runs schema v2 (0.37.0.0) already reserves the `requested` source for non-null model and effort; this Track is its first producer. On Cursor's CLI route (`CURSOR_INVOKED_AS` set) `_observe_cursor_store()` skips the store and `cursor_turns()` returns only a transcript mtime. A local check on 2026-10-16 found no model in `cursor-agent` transcripts or chat-store metadata, and `~/.cursor/cli-config.json` holds only a configured default, which provenance must not record. Check whether `cursor-agent --output-format json` events name the model before relying on the environment alone. Source: `[manual] Accept a caller-supplied model when detection finds none, labeled as requested`. _~120 lines._ (S)
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66_
 
 ### Group 67: Run and child usage telemetry
 
-_Depends on: Group 65, Group 66_
+_Depends on: none_
 
 **This group delivers:** Per-run token usage from the harness's own logs, with child and outside-reviewer usage attributed to it and explicit uncertainty throughout.
 
 ##### Track 67A: Record each run's token usage, parent and child, from the harness's own logs
-_3 tasks . ~600 LOC incl. tests . medium risk_
+_4 tasks . ~640 LOC incl. tests . medium risk_
 **Outcome:** The maintainer can compare each run's total token usage, parent and child together, by workflow, step and recorded model, with explicit uncertainty where a source cannot support it or attribution.
 **Supports:** [SPEC](SPEC.md) P1 and owner-selected usage capture, 2026-10-19; promotes the retained run-usage and outside-voice Future commitments without enabling quota routing or vendor usage API calls.
 **Done when:** A local report combines step/pass events with disjoint token classes and available plan-window observations; fixtures cover streaming copies and cumulative counter resets; each recorded child or outside-reviewer call joins its invocation and pass, with direct evidence distinguished from time/directory correlation and ambiguous or overlapping usage excluded from exact totals; fixtures cover nested children and concurrent sessions; unknown values remain null with reasons; legacy, v1 and v2 stage rows stay immutable and readable, a closed schema gains a version branch and never a silent field, and capture makes no credential or network calls.
 _touches: bin/lib/telemetry.py, bin/lib/workflow_metrics.py, bin/lib/quota/usage.py, docs/workflow-metrics.schema.json, docs/telemetry.md, docs/stage-runs.schema.json, tests/workflow-metrics.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/quota.test.ts, tests/fixtures/quota/, tests/helpers/touchfiles.ts_
 _blocked-by: Track 24A, Track 26A, Track 65A, Track 66B, Track 31A_
-**Scheduling:** The third telemetry step after test savings, before bounded audits and review overlap. Run usage and child and outside-reviewer attribution were two Tracks (~300 lines each) under the card-size rule; the attribution Track edited the same telemetry, metrics and schema files and joined the usage records the first one writes, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~600 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
+**Scheduling:** The third telemetry step after test savings, before bounded audits and review overlap; its paused-segment and requested-model prerequisites shipped as 65A (v0.63.2) and 66B (v0.66.0). Run usage and child and outside-reviewer attribution were two Tracks (~300 lines each) under the card-size rule; the attribution Track edited the same telemetry, metrics and schema files and joined the usage records the first one writes, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~600 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
 _Source: absorbs "Record each run's token usage and plan-window readings from the harness's own logs" and "Record outside-voice calls' vendor, model, tokens and window readings"_
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 _produces: comparable per-run and per-voice local usage projections, source/attribution grades and a replayable sanitized fixture corpus_
 - **Reuse the local log parser for run usage** -- Absorb "Record each run's token usage and plan-window readings from the harness's own logs". Reuse or isolate the existing quota usage parser rather than introduce a third parser. Record uncached input, cache read/write and output; reasoning is a subset, never added twice. Retain logged start/end rate-limit readings with reset and concurrency caveats; account-wide percentage changes are not attributable stage consumption. Cursor/Grok sources remain unknown until verified. Read only session logs and CLI output: no credentials, identity/capacity readers or vendor usage services. _~240 lines._ (M)
 - **Attribute child and outside-reviewer usage** -- Absorb "Record outside-voice calls' vendor, model, tokens and window readings". Join each recorded call to its invocation and pass using direct parent/session evidence when available, including the local `voices.jsonl` reviewer join (host subagent identifier, parent-observed dispatch/return times) that 0.38.0.0 added; mark directory/time matches as correlation and ambiguous shared-worktree matches as unknown. Deduplicate native subagents and cross-harness children, account for children that outlive the step, and preserve every contributing model/source. Do not modify upstream commands or claim observed/billed models from requested labels. _~240 lines._ (M)
 - **Preserve schema, parser and child-record compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1/v2 stage rows. Coordinate any stage-row reference fields with the stage-runs v2 schema shipped in 0.37.0.0; never add fields silently to a published closed schema. Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. When editing `bin/lib/workflow_metrics.py`, weigh the Future item "Slim the workflow-metrics helper without dropping requirements"; adopting it is optional. _~120 lines._ (S)
+- **Cover the recorded requested-telemetry lifecycle variants** -- Recorded test gap, no demonstrated defect (Track 66B review, `test-gaps=record`): direct cases do not vary requested values between start and first finish or after a saved failed finish, combine requests with a different valid `--agent`, or cover a requested model with independently detected or flagged effort. Re-verify the behavior first, then extend the existing provenance and retry fixtures in `tests/telemetry.test.ts` (finish-time sampling, immutable saved rows, agent reset before fallback, reverse mixed-field precedence). Source: `[review:files=bin/lib/telemetry.py|tests/telemetry.test.ts]`. Placed here by the recorded-test-gap rule; it does not change the card-size reason above. _~40 lines._ (S)
 
 ### Group 68: Bound audit effort
 
-_Depends on: Group 66, Group 67_
+_Depends on: Group 67_
 
 **This group delivers:** Fewer irrelevant documentation reads with real drift detection retained.
 
@@ -169,7 +120,7 @@ _1 tasks . ~220 LOC incl. tests . medium risk_
 **Done when:** The scope includes changed-path and contract references, linked authorities and safe broad fallback when relevance is uncertain; the one re-audit follows only the fix delta. Before/after time, read volume and retained finding quality are recorded before any default activation.
 _touches: skills/review-and-prep.md, skills/ship-and-land.md, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-ship-and-land.test.ts, docs/acceptance/documentation-audit-efficiency.md (new)_
 _blocked-by: Track 31A, Track 67A, Track 66A_
-**Scheduling:** Owner-selected order places telemetry after test savings, then bounded documentation audits; the usage edge is a priority choice. The update-check edge orders the shared skill files. Tracks 57A and 58A, which the 2026-11-01 plan placed after this Track, ran first under the owner's 2026-11-02 order; their edges to it were priority choices that order superseded.
+**Scheduling:** Owner-selected order places telemetry after test savings, then bounded documentation audits; the usage edge is a priority choice. The update-check edge ordered the shared skill files and is satisfied (66A, v0.65.0). Tracks 57A and 58A, which the 2026-11-01 plan placed after this Track, ran first under the owner's 2026-11-02 order; their edges to it were priority choices that order superseded.
 _Source: program E4 / research R4_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Constrain discovery and re-audit inputs** -- Keep current/updated/blocked truthful and the existing attempt bound; compare the bounded audit against representative known documentation drift. If public-quality evidence is insufficient, expose an explicit option and retain the default. _~220 lines._ (M)
@@ -187,7 +138,7 @@ _1 tasks . ~230 LOC incl. tests . medium risk_
 **Done when:** E1 establishes a baseline; one immutable scope feeds concurrent specialists, native adversarial and outside pair, with the pair internally sequential and Red Team after merged findings. Host-cap fallback and incomplete voices preserve holds. Before/after wall time and finding quality support activation.
 _touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts, tests/workflow-metrics.test.ts, docs/acceptance/review-concurrency.md (new)_
 _blocked-by: Track 31A, Track 29A, Track 68A, Track 57A_
-**Scheduling:** Owner order, 2026-10-25: after the per-finding attribution Track (shipped as 57A, v0.61.0), whose per-part finding quality this Track's activation evidence needs. The folded first cycle shipped first as an opt-in arm (58A, `specialists=fold`, v0.63.0), beside caller-configured delegation (64C, `delegate=`, v0.62.0), the two measured arms of the owner's 2026-11-02 order. Settle at planning how overlap behaves when either value is set, and whether their measured runs still leave overlap worth building.
+**Scheduling:** Owner order, 2026-10-25: after the per-finding attribution Track (shipped as 57A, v0.61.0), whose per-part finding quality this Track's activation evidence needs. The folded first cycle shipped first as an opt-in arm (58A, `specialists=fold`, v0.63.0), beside caller-configured delegation (64C, `delegate=`, v0.62.0), the two measured arms of the owner's 2026-11-02 order. Settle at planning how overlap behaves when either value is set, and whether their measured runs still leave overlap worth building. Since installed gstack 1.94.39.0 both values stay off: Track 65C (v0.63.1) left their anchors unqualified because upstream `/review`'s "Done means" contract requires one Agent dispatch per selected specialist, and the Future entry "Reconcile `delegate=` and `specialists=fold` with upstream /review's specialist-dispatch contract" owns that reconciliation, so neither arm's measured run can happen until it lands.
 _Source: program E5 / research R2_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Overlap only verified-independent inputs** -- Recheck upstream dependencies; preserve no-fix-before-collection, deduplication, cycle cap, stop and outside-call policy; qualify both hosts and retain the old default behind an option until public activation evidence exists. _~230 lines._ (M)
@@ -212,7 +163,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 - **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach installed-host qualification to the two existing host Tracks. _~70 lines._ (S)
 
 ##### Track 70B: Prove release-only reuse mechanically and credit a prepared full run across a release-only delta
-_3 tasks . ~520 LOC incl. tests . medium risk_
+_4 tasks . ~560 LOC incl. tests . medium risk_
 **Outcome:** A policy-equipped repository gets mechanical stamp-hunk proof before release gate reuse, and an opted-in caller whose preparation already ran the full suite on the prepared head does not run it again for a release-only commit.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved release-only credit, 2026-10-26; O3/O5 release integrity.
 **Done when:** The verified base ship policy drives gstack-tree-receipt; eligible per-lane proof and current evidence are required; same-file functional edits, unreadable policy, stale evidence and stamp-sensitive tests cannot reuse improperly; repositories without policy keep the documented existing path. Under an opt-in policy value (named at planning), when `full-suite=final` is recorded `/ship-and-land` credits a verified full run of the prepared head (same tree, the documented full command, exit 0, tests ran, recorded in the ledger) across a release-only delta and runs only what that delta selects, instead of the full form a second time; without the value, `full-suite=final` keeps today's meaning. An opt-in per-repository list of extra release files keeps a release commit that also edits such a file (for example an acceptance record) on the release-only path; omitted, the release files stay VERSION, the CHANGELOG entry and the files `/ship`'s version tool writes. Under the same opt-in and `full-suite=final`, a verified pregate selection may stand as preparation's main-suite run when the main test command does not select from the diff (today `/review-and-prep`'s coverage rule then runs the full main command). Release edits follow one rule: only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it. Omitted-policy behavior and an older producer's fallback are documented, and before/after test time is measured on a real run.
@@ -224,6 +175,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 - **Integrate mechanical eligibility** -- Record the exact upstream source and helper result, retain required checks and receipt compatibility, and demonstrate valid version-only changes versus invalid hunks without authoring any consumer ship policy. _~210 lines._ (M)
 - **Credit a prepared full run across a release-only delta** -- Under the opt-in value, accept a verified full run of the prepared head plus the release-delta selection at Verification Gate (16); add the opt-in per-repository release-file list as a documented project setting; state that rule (only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it); update the handoff grammar and this repository's release-selection note in `CLAUDE.md`. _~230 lines incl. tests._ (M)
 - **Let a verified pregate selection stand when the main command does not select** -- Under the same opt-in and `full-suite=final`, let preparation's verified pregate selection (complete selection retained, tests ran) satisfy its main-suite run when the main command is not a selector, instead of the full main command; partial or unknown coverage keeps today's rule. _~80 lines incl. tests._ (S)
+- **Check the recorded working-rule scenarios** -- Recorded test gap, no demonstrated defect (Track 65D review, `test-gaps=record`): the reader suites keep the existing `CLAUDE.md` contracts but do not exercise six working rules 65D added (priority reporting, the README-only handoff, the judgment/mechanics boundary, two-host storage, timeout diagnosis and near-full pregate selection). Re-verify first; check the scenarios against their observable outcomes where one exists, since string-presence tests would only mirror the prose, and name no test file until one is chosen. No paid evaluation is authorized. Source: `[review:files=CLAUDE.md]`. Placed here by the recorded-test-gap rule because this is the first Track whose `_touches:` cover `CLAUDE.md`; it does not change the card-size reason above. _~40 lines._ (S)
 
 ### Group 71: Machine-readable planning artifacts
 
@@ -245,7 +197,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 
 ### Group 72: Supporting contracts and equal host acceptance
 
-_Depends on: Group 65, Group 66, Group 71_
+_Depends on: Group 71_
 
 **This group delivers:** A stable-interface catalog, evidence/recovery design and independent qualification on both hosts.
 
@@ -324,18 +276,16 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 65 ← {}
-- Group 66 ← {65}
-- Group 67 ← {65, 66}
-- Group 68 ← {66, 67}
+- Group 67 ← {}
+- Group 68 ← {67}
 - Group 69 ← {68}
 - Group 70 ← {69}
 - Group 71 ← {70}
-- Group 72 ← {65, 66, 71}
+- Group 72 ← {71}
 - Group 73 ← {67, 72}
 ```
 
-**9 Groups / 15 Tracks remaining.** None is In Progress; all 9 Groups are in
+**7 Groups / 11 Tracks remaining.** None is In Progress; all 7 Groups are in
 the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
@@ -343,7 +293,7 @@ The published-upgrade obligation remains open and is not waived; its revisit tri
 
 ## Future
 
-Deferred: docs/roadmap-future.md (73 items)
+Deferred: docs/roadmap-future.md (81 items)
 
 ## Shipped
 
