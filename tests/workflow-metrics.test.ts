@@ -201,7 +201,7 @@ describe('C2/E3 exact invocation binding', () => {
     expect(runRaw(fix.env, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo).status).toBe(0);
     const after = read(fix, sid).envelope;
     expect(after.status).toBe('ok');
-    expect(after.data.records).toBe(1);
+    expect(after.data.records).toBe(2);
     // Later records need no git: a decision from outside any checkout still records.
     const dec = metrics(fix.env, 'decision', { ...base(sid), step_id: step, phase: 'readiness', decision: 'RUN', reason: 'required' }, fix.home).envelope;
     expect(dec.status).toBe('recorded');
@@ -854,6 +854,9 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     const launcher = join(linkDir, 'gstack-extend-telemetry');
     const repo = gitRepo(fix);
     writeFileSync(join(repo, 'workflow_metrics.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
+    writeFileSync(join(repo, 'telemetry_usage.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
+    mkdirSync(join(repo, 'quota'), { recursive: true });
+    writeFileSync(join(repo, 'quota/__init__.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
     const env = { ...fix.env, PYTHONPATH: '.' };
     const started = spawnSync(launcher, ['start', '--skill', 'extend:ship-and-land'], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
     const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)?.[1]!;
@@ -863,9 +866,13 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     });
     expect(began.stdout + began.stderr).not.toContain('PLANTED');
     expect(JSON.parse(began.stdout).status).toBe('recorded');
+    const finished = spawnSync(launcher, ['finish', '--skill', 'extend:ship-and-land', '--outcome', 'success'], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect(finished.status).toBe(0);
+    expect(finished.stdout + finished.stderr).not.toContain('PLANTED');
     const readBack = spawnSync(launcher, ['metrics', 'read', '--session-id', sid], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
     expect(JSON.parse(readBack.stdout).data.stage).toBe('ship-and-land');
     expect(existsSync(join(install, 'bin/lib/workflow_metrics.py'))).toBe(true);
+    expect(existsSync(join(install, 'bin/lib/telemetry_usage.py'))).toBe(true);
   }, 30_000);
   test('a stalled git lookup bounds the first bind instead of waiting', () => {
     const fix = makeTelemetryFixture('community');
@@ -2473,3 +2480,452 @@ test('ambiguous finding corrections leave both scopes attribution unknown', () =
     expect(totals.unattributed).toBeNull();
   }
 }, 120_000);
+
+describe('Track 67A run token usage capture and read --usage', () => {
+  const FIXTURE_DIR = join(ROOT, 'tests/fixtures/run-usage');
+  const T0 = Date.parse('2026-01-01T00:00:00Z');
+  const T_END = Date.parse('2026-01-01T00:01:00Z');
+
+  function readUsage(fix: TelemetryFixture, sid: string, extraArgs: string[] = []) {
+    return runRaw(fix.env, ['metrics', 'read', '--session-id', sid, '--usage', ...extraArgs]);
+  }
+
+  function loadFixtureText(name: string, replacements: Record<string, string> = {}) {
+    let text = readFileSync(join(FIXTURE_DIR, name), 'utf8');
+    for (const [k, v] of Object.entries(replacements)) {
+      text = text.split(k).join(v);
+    }
+    return text;
+  }
+
+  function runPythonCollect(fix: TelemetryFixture, scriptLines: string[]) {
+    const driver = join(fix.home, `collect-${randomUUID()}.py`);
+    writeFileSync(driver, [
+      'import importlib.util, json, os, sys',
+      `sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})`,
+      'import telemetry_usage as tu, workflow_metrics as wm',
+      ...scriptLines,
+    ].join('\n'));
+    const res = spawnSync('python3', ['-B', '-I', driver], { env: fix.env, cwd: fix.home, encoding: 'utf8', timeout: 15_000 });
+    expect(res.status, res.stderr || res.stdout).toBe(0);
+    return JSON.parse(res.stdout);
+  }
+
+  test('Claude streaming dedup, nested toolUseId linkage, voices join, cli_reported separation, and privacy sentinels', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'work-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/work-repo');
+    const subDir = join(projDir, 'syn-claude-parent-001/subagents');
+    mkdirSync(subDir, { recursive: true });
+
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-sub-001.jsonl'), loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-001.jsonl'), loadFixtureText('claude-nested-linked.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-001.meta.json'), JSON.stringify({ spawnDepth: 2, toolUseId: 'toolu_nested_001' }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-unlinked.jsonl'), loadFixtureText('claude-nested-unlinked.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-unlinked.meta.json'), JSON.stringify({ spawnDepth: 2, toolUseId: 'toolu_missing_999' }));
+
+    const sid = 'extend-' + u();
+    const stepLocal = u(), stepTests = u();
+    const run = runRows(sid, T0);
+    const p = passRows(sid, { at: T0 + 13_000, voices: [{ voice: 'red-team', findings: [] }] });
+    const passId = p.passId;
+    const attemptId = p.attempts['red-team']!;
+    const voicesDir = join(fix.home, '.gstack/projects/work-repo/review-and-prep');
+    mkdirSync(voicesDir, { recursive: true });
+    writeFileSync(join(voicesDir, 'voices.jsonl'), loadFixtureText('voices.jsonl', {
+      __SESSION_ID__: sid,
+      '22222222-2222-4222-8222-222222222222': passId,
+      '33333333-3333-4333-8333-333333333333': attemptId,
+    }));
+
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'begin', at: T0 + 2_000, request: { ...base(sid), step_id: stepLocal, parent_step_id: run.step, kind: 'phase', phase: 'local-pass' } },
+      { op: 'end', at: T0 + 40_000, request: { ...base(sid), step_id: stepLocal, outcome: 'completed' } },
+      { op: 'begin', at: T0 + 42_000, request: { ...base(sid), step_id: stepTests, parent_step_id: run.step, kind: 'phase', phase: 'tests' } },
+      { op: 'end', at: T0 + 58_000, request: { ...base(sid), step_id: stepTests, outcome: 'completed' } },
+      ...p.rows,
+    ]);
+
+    const collected = runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      `print(json.dumps({"status": status}))`,
+    ]);
+    expect(collected.status).toBe('recorded');
+
+    const lines = ledgerLines(fix, sid).map(l => JSON.parse(l));
+    const usageLine = lines[lines.length - 1]!;
+    expect(usageLine.v).toBe(2);
+    expect(usageLine.op).toBe('usage');
+    expect(validRecord(usageLine)).toBe(true);
+
+    // Criterion 11 privacy check: no raw session/agent IDs, paths or content sentinels in stored line or projection.
+    const rawLedgerText = readFileSync(ledgerFile(fix, sid), 'utf8');
+    const usageRead = readUsage(fix, sid);
+    const usageEnv = JSON.parse(usageRead.stdout);
+    expect(usageEnv.status).toBe('ok');
+    for (const forbidden of [
+      'syn-claude-parent-001',
+      'syn-claude-sub-001',
+      'syn-claude-nested-001',
+      'syn-claude-nested-unlinked',
+      'SYNTHETIC_PROMPT_SENTINEL_DO_NOT_STORE',
+      'SYNTHETIC_REPLY_SENTINEL',
+      repo,
+    ]) {
+      expect(rawLedgerText).not.toContain(forbidden);
+      expect(usageRead.stdout).not.toContain(forbidden);
+    }
+
+    // Streaming dedup: msg-stream-1 output counted once at 40 (+ msg-turn-2 output 60 + subagent 75 + nested 15 + unlinked 12 = 202).
+    // Input: 100 + 200 + 300 + 50 + 40 = 690. Cache read: 50 + 80 + 10 + 0 + 0 = 140. Cache write: 20 + 0 + 5 + 0 + 0 = 25. Reasoning: null (not-reported on Claude).
+    const uData = usageEnv.data;
+    expect(uData.harness).toBe('claude');
+    expect(uData.reasons).toContain('window-not-reported');
+    expect(uData.reasons).toContain('not-reported');
+    expect(uData.totals.direct).toMatchObject({
+      input: 690,
+      cache_read: 140,
+      cache_write: 25,
+      output: 202,
+      reasoning: null,
+      null_reasons: ['not-reported'],
+    });
+    expect(uData.by_phase['local-pass'].direct).toMatchObject({ input: 490, output: 142 });
+    expect(uData.by_phase['tests'].direct).toMatchObject({ input: 200, output: 60 });
+    expect(uData.children).toMatchObject({ direct: 3, correlated: 0, unknown: 0 });
+
+    // Nested linked child has parent_ref pointing to subagent; unlinked depth-2 child has parent_ref null.
+    const nestedSources = usageLine.request.sources.filter((s: any) => s.relation === 'nested');
+    expect(nestedSources).toHaveLength(2);
+    expect(nestedSources.filter((s: any) => s.parent_ref !== null)).toHaveLength(1);
+    expect(nestedSources.filter((s: any) => s.parent_ref === null)).toHaveLength(1);
+
+    // Voices join & cli_reported kept separate from log totals.
+    expect(uData.by_pass).toHaveLength(1);
+    expect(uData.by_pass[0]).toMatchObject({
+      pass_id: passId,
+      attempt_id: attemptId,
+      voice_id: 'red-team',
+      link_evidence: 'direct',
+      input: 350, // subagent (300) + linked nested child (50)
+      output: 90, // subagent (75) + linked nested child (15)
+    });
+    expect(uData.cli_reported).toEqual([{
+      voice_id: 'red-team',
+      link: { pass_id: passId, attempt_id: attemptId, voice_id: 'red-team', pass: 1, attempt: 1 },
+      input_tokens: 315,
+      output_tokens: 75,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 5,
+    }]);
+  }, 60_000);
+
+  test('Codex cumulative deltas, counter reset epoch, subagent_history_start_ordinal, grandchild lineage, mid-file tail seed, and window reset_crossed', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'codex-repo');
+    mkdirSync(repo, { recursive: true });
+    const sessDir = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(sessDir, { recursive: true });
+
+    const parentTid = '01940000-0000-7000-8000-000000000001';
+    const childTid = '01940000-0000-7000-8000-000000000002';
+    const grandTid = '01940000-0000-7000-8000-000000000003';
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-00-${parentTid}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-12-${childTid}.jsonl`), loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-19-${grandTid}.jsonl`), loadFixtureText('codex-grandchild.jsonl', { __CWD__: repo }));
+
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    craft(fix, sid, run.rows);
+
+    const res = runPythonCollect(fix, [
+      `os.environ["CODEX_THREAD_ID"] = ${JSON.stringify(parentTid)}`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "codex", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      `print(json.dumps({"status": status}))`,
+    ]);
+    expect(res.status).toBe('recorded');
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    const uData = usageEnv.data;
+    // Parent: turn 1 (input 400 uncached + 100 cached, out 80, reasoning 20)
+    //       + turn 2 delta (input 200 uncached + 200 cached, out 70, reasoning 30)
+    //       + turn 3 reset epoch (input 200 uncached + 50 cached, out 40, reasoning 10)
+    //       = parent input 800, cache_read 350, output 190, reasoning 60
+    // Child (ordinals 0 and 1 skipped because subagent_history_start_ordinal=2):
+    //       ordinal 2 (total 160, cached 40 -> input 120, cache_read 40, output 35, reasoning 5)
+    // Grandchild (depth 2 via parent_thread_id chain):
+    //       (total 90, cached 10 -> input 80, cache_read 10, output 25, reasoning 5)
+    expect(uData.totals.direct).toMatchObject({
+      input: 1000,
+      cache_read: 400,
+      cache_write: null,
+      output: 250,
+      reasoning: 70,
+      null_reasons: ['not-reported'],
+    });
+    expect(uData.children).toMatchObject({ direct: 2, correlated: 0, unknown: 0 });
+    expect(uData.windows.length).toBeGreaterThanOrEqual(2);
+    for (const w of uData.windows) {
+      expect(w.attributable).toBe(false);
+      expect(w).not.toHaveProperty('credits');
+      expect(w).not.toHaveProperty('plan_type');
+    }
+
+    // Also test mid-file tail seed and reset_crossed on Codex rate_limits.
+    const midRes = runPythonCollect(fix, [
+      'tu.MAX_TAIL_BYTES = 750', // force mid-file seek on parent log while keeping last 2 token_count lines
+      `req = tu.collect("codex", ${JSON.stringify(parentTid)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(midRes.reasons).toContain('log-truncated');
+  }, 60_000);
+
+  test('concurrent foreign session makes unlinked cross-harness candidates unknown/ambiguous; distinct voices.jsonl intervals correlate two outside calls', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'shared-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/shared-repo');
+    const codexDir = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(projDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+
+    // Two outside Codex rollouts in the same worktree during the run window.
+    const out1 = '01940000-0000-7000-8000-000000000011';
+    const out2 = '01940000-0000-7000-8000-000000000012';
+    writeFileSync(join(codexDir, `rollout-2026-01-01T00-00-15-${out1}.jsonl`), [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:15Z', type: 'session_meta', payload: { id: out1, cwd: repo, model: 'gpt-5.4' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:18Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 110, cached_input_tokens: 10, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 130 } } } }),
+    ].join('\n') + '\n');
+    writeFileSync(join(codexDir, `rollout-2026-01-01T00-00-40-${out2}.jsonl`), [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:40Z', type: 'session_meta', payload: { id: out2, cwd: repo, model: 'gpt-5.4' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:44Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 220, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 0, total_tokens: 250 } } } }),
+    ].join('\n') + '\n');
+
+    // Case 1: With two distinct voices.jsonl intervals and no foreign session, both outside calls are correlated.
+    const sid1 = 'extend-' + u();
+    const voicesDir = join(fix.home, '.gstack/projects/shared-repo/review-and-prep');
+    mkdirSync(voicesDir, { recursive: true });
+    writeFileSync(join(voicesDir, 'voices.jsonl'), [
+      JSON.stringify({
+        v: 1, stage: 'review-and-prep', recorded_at: '2026-01-01T00:00:20Z', pass: 1, attempt: 1, scope: 'full',
+        voice_id: 'outside-challenge', host: 'codex', subagent_ref: { kind: 'outside-process', id: null, name: 'codex' },
+        dispatched_at: '2026-01-01T00:00:14Z', returned_at: '2026-01-01T00:00:20Z', time_basis: 'parent-observed',
+        outcome: 'completed', metrics: { session_id: sid1, pass_id: null, attempt_id: null },
+      }),
+      JSON.stringify({
+        v: 1, stage: 'review-and-prep', recorded_at: '2026-01-01T00:00:46Z', pass: 1, attempt: 1, scope: 'full',
+        voice_id: 'outside-structured', host: 'codex', subagent_ref: { kind: 'outside-process', id: null, name: 'codex' },
+        dispatched_at: '2026-01-01T00:00:39Z', returned_at: '2026-01-01T00:00:46Z', time_basis: 'parent-observed',
+        outcome: 'completed', metrics: { session_id: sid1, pass_id: null, attempt_id: null },
+      }),
+    ].join('\n') + '\n');
+
+    craft(fix, sid1, runRows(sid1, T0).rows);
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid1)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const corrData = JSON.parse(readUsage(fix, sid1).stdout).data;
+    expect(corrData.children.correlated).toBe(2);
+    expect(corrData.totals.correlated).toMatchObject({ input: 300, cache_read: 30, output: 50 });
+
+    // Case 2: Plant a foreign session already active before T0 and still active after T0 in the same checkout.
+    writeFileSync(join(projDir, 'syn-foreign-active.jsonl'), [
+      JSON.stringify({ type: 'user', sessionId: 'syn-foreign-active', timestamp: '2025-12-31T23:59:00Z', cwd: repo, message: { role: 'user', content: 'foreign' } }),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-foreign-active', timestamp: '2026-01-01T00:00:30Z', cwd: repo, message: { id: 'm-for', role: 'assistant', model: 'claude-opus-4-6', usage: { input_tokens: 999, output_tokens: 999 } } }),
+    ].join('\n') + '\n');
+
+    const sid2 = 'extend-' + u();
+    craft(fix, sid2, runRows(sid2, T0).rows);
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid2)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const ambData = JSON.parse(readUsage(fix, sid2).stdout).data;
+    expect(ambData.reasons).toContain('ambiguous');
+    expect(ambData.children.correlated).toBe(0);
+    expect(ambData.children.unknown).toBe(2);
+    expect(ambData.totals.correlated.input).toBe(0);
+    expect(ambData.totals.unknown.input).toBe(300);
+  }, 60_000);
+
+  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Cursor/Grok unverified-source; scan-budget and too-many-buckets fallback', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'edge-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/edge-repo');
+    const subDir = join(projDir, 'syn-claude-parent-001/subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    // Subagent starts at T0+15s (inside stepA [T0+5s, T0+25s]), logs a second turn at T0+30s (outliving stepA),
+    // and logs a record at T_END+2s (post-finish -> may-continue).
+    writeFileSync(join(subDir, 'agent-syn-claude-sub-001.jsonl'), [
+      loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }).trim(),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: 'syn-claude-sub-001', isSidechain: true, timestamp: '2026-01-01T00:00:30Z', cwd: repo, message: { id: 'msg-sub-2', role: 'assistant', model: 'claude-sonnet-4-6', usage: { input_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } }),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: 'syn-claude-sub-001', isSidechain: true, timestamp: '2026-01-01T00:01:05Z', cwd: repo, message: { id: 'msg-sub-3', role: 'assistant', model: 'claude-sonnet-4-6', usage: { input_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } }),
+    ].join('\n') + '\n');
+
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    const stepA = u(), stepB = u();
+    // Overlapping sibling steps [T0+5s, T0+25s] and [T0+8s, T0+18s] cover parent turn 1 at T0+12s.
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'begin', at: T0 + 5_000, request: { ...base(sid), step_id: stepA, parent_step_id: run.step, kind: 'phase', phase: 'scope' } },
+      { op: 'end', at: T0 + 25_000, request: { ...base(sid), step_id: stepA, outcome: 'completed' } },
+      { op: 'begin', at: T0 + 8_000, request: { ...base(sid), step_id: stepB, parent_step_id: run.step, kind: 'phase', phase: 'evidence' } },
+      { op: 'end', at: T0 + 18_000, request: { ...base(sid), step_id: stepB, outcome: 'completed' } },
+    ]);
+
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const edgeData = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(edgeData.reasons).toEqual(expect.arrayContaining(['outlived-step', 'may-continue']));
+    expect(edgeData.children['outlived-step']).toBe(1);
+    expect(edgeData.children['may-continue']).toBe(1);
+    expect(edgeData.by_phase.unattributed).toBeDefined();
+
+    // Cursor and Grok return unavailable with unverified-source.
+    for (const unsupportedAgent of ['cursor', 'grok']) {
+      const uSid = 'extend-' + u();
+      craft(fix, uSid, runRows(uSid, T0).rows);
+      runPythonCollect(fix, [
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(uSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, ${JSON.stringify(unsupportedAgent)}, ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+      ]);
+      const uRead = JSON.parse(readUsage(fix, uSid).stdout).data;
+      expect(uRead.harness).toBe(unsupportedAgent);
+      expect(uRead.reasons).toContain('unverified-source');
+      expect(uRead.totals.direct.input).toBeNull();
+    }
+
+    // Tiny scan budget triggers scan-budget.
+    const budgetRes = runPythonCollect(fix, [
+      'tu.SCAN_BUDGET_BYTES = 64',
+      `req = tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(budgetRes.status).toBe('partial');
+    expect(budgetRes.reasons).toContain('scan-budget');
+
+    // Oversize bucket count (> MAX_USAGE_BUCKETS) merges by (source, model) with too-many-buckets.
+    const mergeSid = 'extend-' + u();
+    craft(fix, mergeSid, runRows(mergeSid, T0).rows);
+    runPythonCollect(fix, [
+      'wm.MAX_USAGE_BUCKETS = 1',
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(mergeSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const mergedData = JSON.parse(readUsage(fix, mergeSid).stdout).data;
+    expect(mergedData.reasons).toContain('too-many-buckets');
+  }, 60_000);
+
+  test('end-to-end launcher flow: start -> metrics begin -> phase begin/end -> finish, plus no-capture gates and --usage/--event-id exclusion', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo, 'review-and-prep');
+    const { step: runStep } = beginRun(fix, repo, sid, 'review-and-prep');
+    const phaseStep = u();
+    expect(metrics(fix.env, 'begin', { ...base(sid), step_id: phaseStep, parent_step_id: runStep, kind: 'phase', phase: 'pregate' }, repo).envelope.status).toBe('recorded');
+
+    // Plant a Claude session log with timestamp inside the active run window.
+    const nowIso = new Date().toISOString();
+    const claudeProj = join(fix.home, '.claude/projects/e2e-proj');
+    mkdirSync(claudeProj, { recursive: true });
+    writeFileSync(join(claudeProj, 'e2e-claude-sess.jsonl'), [
+      JSON.stringify({ type: 'assistant', sessionId: 'e2e-claude-sess', timestamp: nowIso, cwd: repo, message: { id: 'm-e2e-1', role: 'assistant', model: 'claude-opus-4-6', usage: { input_tokens: 123, cache_read_input_tokens: 45, cache_creation_input_tokens: 6, output_tokens: 78 } } }),
+    ].join('\n') + '\n');
+
+    expect(metrics(fix.env, 'end', { ...base(sid), step_id: phaseStep, outcome: 'completed' }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'end', { ...base(sid), step_id: runStep, outcome: 'completed' }, repo).envelope.status).toBe('recorded');
+
+    const beforePlain = read(fix, sid).envelope;
+    const fin = runRaw({ ...fix.env, CLAUDE_CODE_SESSION_ID: 'e2e-claude-sess' }, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo);
+    expect(fin.status).toBe(0);
+    expect(fin.stdout).toBe('');
+
+    const afterPlain = read(fix, sid).envelope;
+    expect(afterPlain.status).toBe('ok');
+    expect(afterPlain.data.records).toBe(beforePlain.data.records + 1);
+    expect(afterPlain.data.receipt_text).toBe(beforePlain.data.receipt_text);
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    expect(usageEnv.data.totals.direct).toMatchObject({ input: 123, cache_read: 45, cache_write: 6, output: 78 });
+    expect(usageEnv.data.by_phase.pregate.direct).toMatchObject({ input: 123, output: 78 });
+
+    // --usage and --event-id together are rejected as invalid-input.
+    const both = JSON.parse(readUsage(fix, sid, ['--event-id', u()]).stdout);
+    expect(both).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
+
+    // No capture for extend:roadmap, an unbound ledger, or GSTACK_EXTEND_WORKFLOW_METRICS=off.
+    const roadSid = start(fix, repo, 'roadmap');
+    expect(runRaw(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(existsSync(ledgerFile(fix, roadSid))).toBe(false);
+
+    const unboundSid = start(fix, repo, 'review-and-prep');
+    expect(runRaw(fix.env, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(existsSync(ledgerFile(fix, unboundSid))).toBe(false);
+
+    const offSid = start(fix, repo, 'ship-and-land');
+    beginRun(fix, repo, offSid, 'ship-and-land');
+    expect(runRaw({ ...fix.env, GSTACK_EXTEND_WORKFLOW_METRICS: 'off' }, ['finish', '--skill', 'extend:ship-and-land', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(ledgerLines(fix, offSid)).toHaveLength(1);
+  }, 60_000);
+
+  test('sys.addaudithook guard proves zero network, subprocess, sqlite or credential-file access during capture, plus static import check', () => {
+    // Static check on bin/lib/telemetry_usage.py.
+    const src = readFileSync(join(ROOT, 'bin/lib/telemetry_usage.py'), 'utf8');
+    expect(src).not.toContain('CURSOR_API_KEY');
+    for (const forbiddenMod of ['quota.claude', 'quota.codex', 'quota.cursor', 'quota.store', 'quota.Lock', 'socket', 'subprocess', 'sqlite3', 'urllib', 'http']) {
+      expect(src).not.toContain(forbiddenMod);
+    }
+
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'audit-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/audit-repo');
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+
+    // Plant credential-named files inside the fixture HOME to prove capture never opens them.
+    writeFileSync(join(fix.home, '.claude.json'), '{"oauthToken":" planted "}');
+    writeFileSync(join(fix.home, '.claude/.credentials.json'), '{"secret":" planted "}');
+    mkdirSync(join(fix.home, '.codex'), { recursive: true });
+    writeFileSync(join(fix.home, '.codex/auth.json'), '{"token":" planted "}');
+    mkdirSync(join(fix.home, '.ssh'), { recursive: true });
+    writeFileSync(join(fix.home, '.ssh/id_ed25519'), 'planted');
+    mkdirSync(join(fix.home, 'Library/Keychains'), { recursive: true });
+    writeFileSync(join(fix.home, 'Library/Keychains/login.keychain-db'), 'planted');
+
+    const sid = 'extend-' + u();
+    craft(fix, sid, runRows(sid, T0).rows);
+
+    const audited = runPythonCollect(fix, [
+      'violations = []',
+      'FORBIDDEN_OPEN = (".claude.json", ".credentials.json", "auth.json", "hosts.yml", "cli-config.json", "jev.json")',
+      'def hook(event, args):',
+      '    if event.startswith("socket.") or event in ("subprocess.Popen", "os.system", "sqlite3.connect"):',
+      '        violations.append((event, str(args)))',
+      '    elif event == "open" and args:',
+      '        p = str(args[0])',
+      '        base_name = os.path.basename(p)',
+      '        if base_name in FORBIDDEN_OPEN or "/.ssh/" in p or "/Keychains/" in p:',
+      '            violations.append((event, p))',
+      'sys.addaudithook(hook)',
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps({"status": status, "violations": violations}))',
+    ]);
+    expect(audited.status).toBe('recorded');
+    expect(audited.violations).toEqual([]);
+  }, 60_000);
+});

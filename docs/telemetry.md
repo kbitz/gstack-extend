@@ -7,13 +7,15 @@ Consumers joining the files: [Join contract](#join-contract).
 Anyone checking claims: [Evidence](#evidence).
 Step/pass timing for `/review-and-prep` and `/ship-and-land`:
 [Workflow metrics](#workflow-metrics); their reviewer subagent join keys:
-[Reviewer join file](#reviewer-join-file).
+[Reviewer join file](#reviewer-join-file); their finish-captured token usage:
+[Run token usage](#workflow-metrics-usage).
 
 All twelve installed skills carry optional start and finish calls. They record local
 frequency, session wall-clock duration, and reported outcome, and finish records
 which harness, model, and effort level ran the skill (see
 [Execution provenance](#execution-provenance)). They do not measure token spend or
-output quality. Python 3.9+ provides JSON escaping and state handling; missing
+output quality (for `/review-and-prep` and `/ship-and-land`, finish records run
+token usage in the bound step ledger; see [Run token usage](#workflow-metrics-usage)). Python 3.9+ provides JSON escaping and state handling; missing
 Python skips telemetry without failing the skill, and missing gstack skips only the
 skill-usage rows.
 
@@ -34,7 +36,8 @@ skill-usage rows.
   telemetry ratio.
 - A fourth, local-only companion: **workflow-metrics ledgers** (one file per
   invocation under `analytics/workflow-metrics/`) hold optional step/pass
-  events for `/review-and-prep` and `/ship-and-land` only. They are never
+  events for `/review-and-prep` and `/ship-and-land` only, and their finishes
+  record run usage in the step ledger when a run is bound. They are never
   uploaded, never joined for you, and never change what the three datasets
   above record. See [Workflow metrics](#workflow-metrics).
 
@@ -562,8 +565,13 @@ their sources; anything else is null with a controlled reason). Launcher
 configuration is a requested source only: a reported value needs
 `reported_source:"tool-result"`, and an `unavailable` source carries null
 values. Nothing here
-scans transcripts, credentials, process tables or vendor usage services. The
-one carve-out is the manual installed smoke below, which may read only tool-call
+scans credentials, process tables or vendor usage services. The two carve-outs
+are finish usage capture for a bound `/review-and-prep` or `/ship-and-land` run
+([Run token usage](#workflow-metrics-usage)), which reads only token, model,
+window and parent-link records from the listed harness session logs
+(`~/.claude/projects/` and `~/.codex/sessions/`) and `voices.jsonl`, never
+prompt or reply prose, credentials, process tables, the quota store or the
+network, and the manual installed smoke below, which may read only tool-call
 IDs and timestamps from its own session's local log, never content.
 
 ### Caller identity
@@ -684,10 +692,15 @@ counts without another append, and an absent boundary stays missing.
   attempt was recorded (a fix lands: `resolution:"fixed"`), `retry` or
   `fallback` when a voice attempt is retried or replaced, and `fix-cycle`
   when a fix batch closes.
-- `read --session-id <id> [--event-id <uuid>]`: the only reader, for one named
+- `read --session-id <id> [--event-id <uuid> | --usage]`: the only reader, for one named
   run. It creates nothing, takes no lock, and returns compact phase/wait/pass
   summaries (never raw events), the clock qualification above, and a
   `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
+  With `--usage` (mutually exclusive with `--event-id`; passing both is
+  `invalid-input`) it returns the [run token usage projection](#workflow-metrics-usage)
+  from the latest valid `v:2` `usage` record (`record_v2`) written at finish;
+  a plain `read` ignores `v:2` `usage` records except for counting the line in
+  `data.records`, leaving `receipt_text` and all v1 fields unchanged.
   The local and Greptile finding totals each add `by_part` (per part:
   `reported`, `accepted`, `rejected`) and `unattributed` (counts by reason,
   including the read-only `v1-record`); see
@@ -800,6 +813,113 @@ unknown. With no delegated attempt it is `{}`, and it is null when the read is
 partial. A run with more than 8 distinct provider labels leaves it null and adds
 the non-integrity reason `too-many-providers`, so the read stays `ok`. The
 `receipt_text` line is unchanged.
+
+<a id="workflow-metrics-usage"></a>
+
+#### Run token usage (v2 `usage` record and `read --usage`)
+
+When a first (non-retried) `finish` for `extend:review-and-prep` or
+`extend:ship-and-land` runs on a bound workflow-metrics ledger and workflow
+metrics are enabled, the finish helper inspects local harness session logs and
+`voices.jsonl` and appends one `v:2` `usage` record (`record_v2` in
+`docs/workflow-metrics.schema.json`) with deterministic `event_id`
+`uuid5(NAMESPACE_URL, f"gstack-extend:usage:{session_id}")`. Plain `metrics read`
+ignores `v:2` `usage` records except in `data.records` (`receipt_text` is
+unchanged); `metrics read --session-id <id> --usage` returns the usage
+projection.
+
+- **Sources and relations.** Every discovered log is hashed to a 64-hex
+  `source_hash` (`sha256` of `<harness>:<raw_session_id>`); raw session IDs,
+  thread IDs, agent IDs, file paths and message bodies are never stored. Each
+  source has `relation`: `own` (the parent session, `depth: 0`), `subagent`
+  (direct child, `depth: 1`), `nested` (grandchild or deeper, `depth >= 2`,
+  with `parent_source_hash` when linked), or `cross-harness` (outside-voice CLI
+  session in the other harness, `depth: 1`). Claude streaming duplicates of one
+  message ID keep the record with the largest output tokens; Codex cumulative
+  `token_count` totals are converted to per-event deltas with counter resets
+  treated as a new epoch and copied subagent history below
+  `subagent_history_start_ordinal` skipped.
+- **Evidence grades.** Every source and bucket carries `evidence`: `direct`
+  (parent session, or a child linked by explicit `parentUuid`/`toolUseId`,
+  `subagent_notification` or `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`,
+  or a `voices.jsonl` row whose `metrics.session_id` matches the run),
+  `correlated` (matched by worktree path and time window without a competing
+  foreign session, or by a single `voices.jsonl` row), or `unknown`
+  (unverified harness, missing log, or ambiguous shared-worktree candidate).
+  `unknown` records are never added to `direct` or `correlated` totals.
+- **Pass join via `voices.jsonl` and `cli_reported`.** Same-stage rows in
+  `<state-root>/telemetry/voices.jsonl` whose `metrics.session_id` matches the
+  run (`link_evidence: "direct"`) or whose `head` and interval match the run
+  (`link_evidence: "correlated"`) link a source or bucket to `{pass, attempt, voice_id, scope}`
+  by `subagent_ref.id` or unique `(host, [dispatched_at, returned_at])` overlap.
+  Rows with `metrics.tokens` also populate `cli_reported`, kept separate and
+  never added to `totals`, `by_model`, `by_phase`, `by_pass` or `children`.
+- **Step placement.** Each usage event is placed against non-run step intervals
+  from the ledger: `placement: "step"` when it falls inside a single step
+  (`step_id` and `phase` set), `"overlapping"` when two or more sibling steps
+  cover the timestamp (`step_id` and `phase` null; counted under `unattributed`
+  in `by_phase`), or `"outside-steps"` (`unattributed`). Child logs with events
+  after the linked step's `end` add `outlived-step`; child logs whose last
+  event is within 5 seconds of `finish_ms` or after `finish_ms` add
+  `may-continue`.
+- **Windows.** Codex `rate_limits.primary` and `rate_limits.secondary` are
+  projected onto the `0..100` `used_percent` scale (`first_used_percent`,
+  `last_used_percent`, `delta_used_percent`, `window_minutes`, `resets_at`,
+  `reset_crossed`, and `attributable: false` because rate-limit windows are
+  account-wide rather than isolated to one run). When `reset_crossed` is true,
+  `delta_used_percent` is `null` and `window-reset-crossed` is recorded. Plan
+  names, credit balances and account identifiers are dropped. Claude logs do
+  not report rate-limit windows (`windows.primary` and `windows.secondary` are
+  `null` with reason `window-not-reported`).
+- **Budgets.** Capture is bounded by 3 seconds wall-clock, 64 MiB read across at
+  most 256 files, and 32 MiB tail per file (seeding Codex's cumulative baseline
+  from the first record in the tail when starting mid-file); exceeding a scan
+  limit sets `status: "partial"` with `scan-budget`. Before writing, if the
+  serialized record exceeds 64 KiB, buckets are merged by dropping `step_id`
+  and `link` (`too-many-buckets`); if still above 64 KiB, buckets and sources
+  are cleared to `status: "unavailable"` with `capacity`.
+- **`read --usage` projection.** Returns `capture` (`ok`, `partial`,
+  `unavailable` or `disabled`), `reasons`, `stage`, `harness`, `window`
+  (`{begin_ms, end_ms}`), `observed_through_ms`, `totals` (`{direct, correlated, unknown}`
+  over the five token classes `input`, `cache_read`, `cache_write`, `output`,
+  `reasoning`), `by_model` (up to 16 models; extras fold into `other` with
+  `too-many-buckets`), `by_phase` (each phase plus `unattributed`), `by_pass`
+  (up to 32 `(pass, voice_id, attempt)` entries; extras fold with
+  `too-many-buckets`), `children` (`{own, subagent, nested, cross_harness}` with
+  `sources`, `direct`, `correlated`, `outlived_step`, `may_continue`),
+  `cli_reported`, and `windows`.
+- **Limits.** Cursor and Grok lack verified local per-turn token logs and
+  record `status: "unavailable"` with `unverified-source`; Claude windows are
+  `null` with `window-not-reported`; events written after `finish` are not
+  counted (`may-continue`); concurrent foreign sessions in the same checkout
+  leave unlinked cross-harness candidates `unknown` with `ambiguous`;
+  `cli_reported` is never summed into log totals; and a helper older than this
+  schema reads a stored `v:2` line as `malformed-record` (`partial`).
+
+| Reason | Meaning |
+|---|---|
+| `unverified-source` | The detected harness (`cursor`, `grok`, or `unknown`) has no verified local token log format. |
+| `harness-session-unknown` | The parent harness session ID was not supplied and could not be uniquely resolved. |
+| `log-missing` | No local log file was found for the parent session. |
+| `log-truncated` | The 32 MiB tail window started after `begin_ms`, so earlier in-window events may be missing. |
+| `scan-budget` | Capture stopped at the 3 s, 64 MiB or 32 MiB-per-file scan limit. |
+| `malformed-record` | A log, `voices.jsonl` or ledger line failed JSON or schema validation. |
+| `not-reported` | A token class (such as `reasoning` on Claude or `cache_write` on Codex) is not reported by that harness. |
+| `unsupported` | A log record carried an identifier outside the bounded safe-ID grammar. |
+| `ambiguous` | Multiple candidate sessions or `voices.jsonl` intervals matched without a unique link, or a foreign session was active in the checkout. |
+| `outlived-step` | A child session logged events after its initial step's `end` boundary. |
+| `may-continue` | A child session logged events after `finish`, so later tokens may be uncounted. |
+| `window-not-reported` | The harness log did not report account rate-limit window percentages. |
+| `too-many-buckets` | Buckets were merged by `(source, model)` to stay within the 256-bucket or 64 KiB record cap. |
+| `too-many-sources` | More than 64 sources were discovered; extras were truncated. |
+| `too-many-models` | More than 16 `(model, evidence)` groups appeared in `read --usage`, leaving `by_model` null. |
+| `too-many-passes` | More than 32 pass/attempt groups appeared in `read --usage`, leaving `by_pass` null. |
+| `capacity` | Even after bucket merging the record exceeded 64 KiB, so `buckets` was cleared. |
+| `no-usage-record` | `read --usage` ran on a ledger that has no `v:2` `usage` record (`capture: "missing"`). |
+| `missing-reference` | A bucket or link references a `step_id`, `pass_id` or `attempt_id` absent from the ledger. |
+| `conflicting-usage` | More than one `v:2` `usage` record or a conflicting `event_id` was present. |
+| `partial-tail` | The ledger ends with a torn line or exceeds 8 MiB. |
+| `event-conflict` | One `event_id` in the ledger holds two different payloads. |
 
 <a id="workflow-metrics-unknown"></a>
 
@@ -1392,7 +1512,8 @@ from what it observed; no helper validates it. It is optional, local and
 best-effort: a missing or failed write never changes a review, a gate or a
 handoff, and the file is never uploaded, put in a PR body or quoted in a
 receipt (a receipt may name its local path). It is separate from the
-workflow-metrics ledger, whose v1 records accept no extra keys.
+workflow-metrics ledger, whose v1 records accept no extra keys; finish usage
+capture joins to it and to stage-runs by `session_id`, with no stage-row field.
 
 | Field | Value |
 |---|---|
@@ -1940,8 +2061,9 @@ lockfile change runs the full suite.
 Optional workflow-metrics v1 records already bind to the same session_id, including
 after the start handoff is consumed. Join on that ID; no companion pointer is
 needed. A join identifies associated optional records, not complete capture.
-Missing companion capture means unknown, never zero work. Detailed metrics stay
-in their unchanged companion format.
+Missing companion capture means unknown, never zero work. Detailed metrics and
+run token usage (`metrics read --usage`) stay in the workflow-metrics ledger
+and join by `session_id`, with no stage-row field.
 
 For a wrapper-issued start plus a finish that recovers both values from the
 handoff, where one finish attempt both built the stage-runs row and delegated
@@ -2068,7 +2190,8 @@ says `requested`. Legacy
 rows do not mark overrides, so any legacy value may have come from a flag. Neither
 a `flag`, `detected`, or `requested` label nor schema validity proves that a value is correct,
 that capture was complete, or that attribution is right. These rows alone
-cannot certify that a review had an independent voice.
+cannot certify that a review had an independent voice. Run token usage joins
+from the workflow-metrics ledger by `session_id`, with no stage-row field.
 
 ## Author quickstart
 

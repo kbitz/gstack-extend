@@ -1970,7 +1970,7 @@ def workspace_host():
     return host, agent_id
 
 
-def provenance_row(stage, sid, start, duration, values, root, work_item=None):
+def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None):
     # Read the mutable store before sampling the observation end, then share that one selection.
     captured = capture_cursor_store() if _observe_cursor_store() else None
     now = time.time()
@@ -1983,6 +1983,8 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
     cursor_selection = select_cursor(captured, cwd, session, begin, now) if captured is not None else None
     agent, model, effort = detect(begin, now, root, cursor_selection)
     detected_agent = agent
+    if isinstance(observed, dict):
+        observed.update(begin=begin, end=now, agent=detected_agent)
     # A source labels the value finally written, so a rejected flag leaves the detected value's source in place.
     flagged = set()
     explicit = values.get("--agent")
@@ -2043,6 +2045,15 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
                 effort_source=source("effort", effort), workspace_host=host, host_agent_id=host_id)
 
 
+def _load_workflow_metrics():
+    import importlib.util
+    target = Path(__file__).resolve().parent / "workflow_metrics.py"
+    spec = importlib.util.spec_from_file_location("workflow_metrics", target)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _metrics_dispatch(args):
     """Track 24A: route `metrics ...` to the installation-adjacent workflow_metrics.py.
 
@@ -2051,12 +2062,7 @@ def _metrics_dispatch(args):
     so it works under the launcher's `python3 -I`. A failed load or a crash with no
     envelope means capture is unavailable; metrics never change a workflow outcome."""
     try:
-        import importlib.util
-        target = Path(__file__).resolve().parent / "workflow_metrics.py"
-        spec = importlib.util.spec_from_file_location("workflow_metrics", target)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        module.main(args)
+        _load_workflow_metrics().main(args)
     except Exception:
         # Fixed text only: no exception, path or input reaches the caller. Callers that
         # need capture state treat a missing/invalid envelope as unavailable, never success.
@@ -2266,10 +2272,13 @@ def main(args):
     # A delegate that timed out or exited nonzero may already have written: retries check the sink before delegating.
     uncertain = state.get("usage_uncertain") is True
     if provenance and "provenance" not in done:
+        was_saved = saved is not None
+        observed = {}
         # Reuse the first attempt's row so a retry does not re-detect the model or stretch duration_s. A saved row is
         # appended as saved, even by a later release: its version, producer and sources describe its construction.
         row = saved or provenance_row(skill.removeprefix("extend:"), sid, start, duration, values, root,
-                                      resolve_work_item(values.get("--work-item"), state.get("work_item")))
+                                      resolve_work_item(values.get("--work-item"), state.get("work_item")),
+                                      observed=observed)
         trace(f"provenance agent={row['agent']} model={row['model']} effort={row['effort']}")
         if append_row(ledger, row, "provenance sink"):
             done.append("provenance")
@@ -2277,6 +2286,15 @@ def main(args):
             persist_handoff(handoff, done, saved, uncertain)
         else:
             saved = row
+        if not was_saved and skill in ("extend:review-and-prep", "extend:ship-and-land"):
+            try:
+                cap = _load_workflow_metrics().capture_usage(
+                    sid, skill.removeprefix("extend:"), observed.get("begin"), observed.get("end"),
+                    observed.get("agent"), slot_root)
+                if cap is not None:
+                    trace(f"workflow-metrics usage={cap}")
+            except Exception:
+                pass
     if logger and usage_ok and "usage" not in done:
         result, uncertain_now = deliver_usage(logger, skill, sid, duration, values, uncertain)
         if result == "done":
