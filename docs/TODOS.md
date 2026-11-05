@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry.py|tests/telemetry.test.ts] Test gap: requested telemetry lifecycle and mixed-field variants
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Direct cases do not vary requested values between start and first finish or after a saved failed finish, combine requests with a different valid `--agent`, or cover requested model with independently detected/flagged effort.
+- **Hypothesis (untested):** Extend existing provenance and retry fixtures to check finish-time sampling, immutable saved rows, agent reset before fallback, and reverse mixed-field precedence. Re-verify behavior before adding cases.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/lib/telemetry.py:1973; tests/telemetry.test.ts:6119
+- **Evidence:** Track 66B outside structured review and coverage audit (12 of 16 behavior paths covered). Source and existing tests inspected; no failure reproduced. Existing preservation tests remain unchanged; these combinations were not required new tests in the approved plan.
+- **Context:** /review-and-prep, branch mmm/97a7264a at ee52a8c, 2026-11-05; PR pending.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these files.
+
 ### [review:files=tests/skill-protocols.test.ts|tests/update.test.ts] Test gap: spawned-skip wording and update-check state notes
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** No assertion pins the shared upgrade flow's sentence that the guard's `UPGRADE_SKIPPED spawned-session` line is not `bin/update-run` output, or the installation guide's clauses about `bin/update-check` consuming the just-upgraded marker. The twelve copies stay byte-identical, so the sentences could be removed from all of them at once without a failing test.

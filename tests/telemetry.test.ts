@@ -6116,10 +6116,92 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
     }
   }, 30_000);
 
-  test('reserved requested environment values do not become producer observations', () => {
-    const fix = makeTelemetryFixture('off');
-    const { row } = provenanceRun(fix, { GSTACK_EXTEND_MODEL: 'SENTINEL-REQUESTED-MODEL', GSTACK_EXTEND_EFFORT: 'max' });
-    expect(row).toMatchObject({ model: null, effort: null, model_source: 'unknown', effort_source: 'unknown' });
+  describe('Track 66B: requested model and effort fill only null values', () => {
+    // Value: protects=launcher-requested GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT fill only null model/effort with source requested while detection, flags and the CLI store-skip win;
+    // fails_when=requested values overwrite detected/flag values, label as detected, read the Conductor store on cursor-agent, or leak rejected values;
+    // why_new=Track 26A reserved the requested label without a producer; seam=none; no_claim=live cursor-agent invocation.
+    test('cursor-agent route fills null model and effort from the launcher variables without reading the Conductor store, and finish flags win', () => {
+      const env = {
+        CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-1', CURSOR_INVOKED_AS: 'cursor-agent',
+        GSTACK_EXTEND_MODEL: 'requested-model', GSTACK_EXTEND_EFFORT: 'high',
+      };
+      const plant = (fix: TelemetryFixture) => (start: number, cwd: string) => {
+        writeJsonl(join(fix.home, '.cursor/projects/project/agent-transcripts/conv-1/transcript.jsonl'),
+          [{ role: 'assistant', message: 'fixture' }]);
+        const root = join(fix.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-a');
+        writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-1', cwd }]);
+        writeJsonl(join(root, 'runs.ndjson'), [{
+          agentId: 'conv-1', runId: 'run-1', startedAt: (start - 20) * 1000, updatedAt: start * 1000,
+          endedAt: (start + 20) * 1000, model: { id: 'store-model', params: { effort: 'low' } },
+        }]);
+      };
+      const first = makeTelemetryFixture('off');
+      const { row } = cursorFinish(first, env, plant(first));
+      expect(row).toMatchObject({
+        agent: 'cursor', route: 'cli', model: 'requested-model', effort: 'high',
+        agent_source: 'detected', model_source: 'requested', effort_source: 'requested',
+      });
+      expect(Object.keys(row)).toEqual(SCHEMA);
+      expect(validRow(row)).toBe(true);
+      expect(JSON.stringify(row)).not.toContain('store-model');
+
+      const second = makeTelemetryFixture('off');
+      const flagged = cursorFinish(second, env, plant(second), ['--model', 'flag-model']);
+      expect(flagged.row).toMatchObject({
+        agent: 'cursor', route: 'cli', model: 'flag-model', effort: 'high',
+        agent_source: 'detected', model_source: 'flag', effort_source: 'requested',
+      });
+    });
+
+    test('detection and finish flags win per field over the requested variables', () => {
+      const fix = makeTelemetryFixture('off');
+      const sid = '0c7f2e29-0000-4000-8000-000000000066';
+      const env = {
+        CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid,
+        GSTACK_EXTEND_MODEL: 'requested-model', GSTACK_EXTEND_EFFORT: 'high',
+      };
+      const log = (start: number) => {
+        writeJsonl(join(fix.home, '.claude/projects/-w', sid + '.jsonl'),
+          [claudeTurn(start, 'c1', 'claude-fixture', null)]);
+      };
+      const detected = provenanceRun(fix, env, log);
+      expect(detected.row).toMatchObject({
+        agent: 'claude', model: 'claude-fixture', effort: 'high',
+        agent_source: 'detected', model_source: 'detected', effort_source: 'requested',
+      });
+      const flagged = provenanceRun(fix, env, log, ['--model', 'flag-model', '--effort', 'max']);
+      expect(flagged.row).toMatchObject({
+        agent: 'claude', model: 'flag-model', effort: 'max',
+        agent_source: 'detected', model_source: 'flag', effort_source: 'flag',
+      });
+    });
+
+    test('rejected blank, non-printable and over-200-character values stay null/unknown and debug mode names only the variable and bound', () => {
+      const fix = makeTelemetryFixture('off');
+      const cwd = cursorWork(fix);
+      const blankModel = '   \t  ';
+      const longEffort = 'E'.repeat(201);
+      const env = { ...fix.env, ...DEBUG, GSTACK_EXTEND_MODEL: blankModel, GSTACK_EXTEND_EFFORT: longEffort };
+      const start = spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env, cwd, encoding: 'utf8', timeout: 15_000 });
+      expect(start.status).toBe(0);
+      const finish = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env, cwd, encoding: 'utf8', timeout: 15_000 });
+      expect([finish.status, finish.stdout]).toEqual([0, '']);
+      const row = fix.readLedger().at(-1)!;
+      expect(row).toMatchObject({ model: null, effort: null, model_source: 'unknown', effort_source: 'unknown' });
+      expect(finish.stderr).toContain('ignored GSTACK_EXTEND_MODEL (blank; expected 1 to 200 printable characters)');
+      expect(finish.stderr).toContain('ignored GSTACK_EXTEND_EFFORT (over 200 characters; expected 1 to 200 printable characters)');
+      expect(finish.stderr).not.toContain(blankModel);
+      expect(finish.stderr).not.toContain(longEffort);
+
+      const controlVal = 'SECRET-MODEL\nBAD';
+      const env2 = { ...fix.env, ...DEBUG, GSTACK_EXTEND_MODEL: controlVal };
+      expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: env2, cwd, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      const finish2 = spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: env2, cwd, encoding: 'utf8', timeout: 15_000 });
+      expect([finish2.status, finish2.stdout]).toEqual([0, '']);
+      expect(fix.readLedger().at(-1)!).toMatchObject({ model: null, effort: null, model_source: 'unknown', effort_source: 'unknown' });
+      expect(finish2.stderr).toContain('ignored GSTACK_EXTEND_MODEL (contains non-printable characters; expected 1 to 200 printable characters)');
+      expect(finish2.stderr).not.toContain('SECRET-MODEL');
+    });
   });
 
   test('host and producer faults give fixed next-invocation advice without values, paths or premature success', () => {

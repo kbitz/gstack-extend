@@ -37,6 +37,7 @@ ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN = "cli", "conductor", "sdk"
 ROUTES = (ROUTE_CLI, ROUTE_CONDUCTOR, ROUTE_SDK, ROUTE_UNKNOWN)
 # Where a row's agent, model or effort value came from. A null value is always unknown.
 SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN = "flag", "detected", "unknown"
+SOURCE_REQUESTED = "requested"
 SOURCES = (SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN)
 # The stage-runs row format in docs/stage-runs.schema.json. Bump it, and add a schema branch, when the row's
 # shape or meaning changes; a release alone does not. Unrelated to skill-usage's v and PROTOCOL_MARKER.
@@ -97,6 +98,8 @@ HANDOFF_NAME_RE = re.compile(r"[0-9a-f]{64}\.json")  # a per-invocation handoff:
 MARKER_RETENTION_S = 30 * 86400  # a completion marker outlives its handoff this long, for explicit retries
 MARKER_OUTPUTS = ("provenance", "usage")
 WORK_ITEM_ENV = "GSTACK_EXTEND_WORK_ITEM"
+REQUESTED_MODEL_ENV, REQUESTED_EFFORT_ENV = "GSTACK_EXTEND_MODEL", "GSTACK_EXTEND_EFFORT"
+REQUESTED_ENV = (("model", REQUESTED_MODEL_ENV), ("effort", REQUESTED_EFFORT_ENV))
 # GROK_SESSION_ID counts only when GROK_AGENT=1, matching detect().
 SESSION_MARKERS = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID", "GROK_SESSION_ID")
 HELPER_FIX = ("install gstack for this host (run ./setup --host <host> in the gstack checkout) "
@@ -531,6 +534,15 @@ def accepted_work_item(value, source):
     cleaned = clean(value)
     if cleaned is None and value is not None:
         trace(f"ignored {source} work item ({work_item_problem(value)}; expected 1 to 200 printable characters)")
+    return cleaned
+
+
+def requested_value(name):
+    """clean(os.environ.get(name)), saying why a value that was present but unusable is ignored (debug mode only)."""
+    value = os.environ.get(name)
+    cleaned = clean(value)
+    if cleaned is None and value is not None:
+        trace(f"ignored {name} ({work_item_problem(value)}; expected 1 to 200 printable characters)")
     return cleaned
 
 
@@ -1988,9 +2000,19 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None):
     if effort_flag is not None:
         effort = effort_flag
         flagged.add("effort")
+    requested = set()
+    if model is None:
+        model = requested_value(REQUESTED_MODEL_ENV)
+        if model is not None:
+            requested.add("model")
+    if effort is None:
+        effort = requested_value(REQUESTED_EFFORT_ENV)
+        if effort is not None:
+            requested.add("effort")
 
     def source(field, value):
-        return SOURCE_UNKNOWN if value is None else SOURCE_FLAG if field in flagged else SOURCE_DETECTED
+        return (SOURCE_UNKNOWN if value is None else SOURCE_FLAG if field in flagged
+                else SOURCE_REQUESTED if field in requested else SOURCE_DETECTED)
 
     repo = branch = None
     if root:
