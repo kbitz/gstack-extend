@@ -167,7 +167,7 @@
       "not": {"type": "string", "pattern": "^ *$"}
     },
     "model_evidence_2": {
-      "description": "Null requires unknown; a non-null value permits flag, detected or reserved requested.",
+      "description": "Null requires unknown; a non-null value permits flag, detected or requested (from GSTACK_EXTEND_MODEL).",
       "type": "object",
       "if": {
         "type": "object",
@@ -184,7 +184,7 @@
       }
     },
     "effort_evidence_2": {
-      "description": "Null requires unknown; a non-null value permits flag, detected or reserved requested.",
+      "description": "Null requires unknown; a non-null value permits flag, detected or requested (from GSTACK_EXTEND_EFFORT).",
       "type": "object",
       "if": {
         "type": "object",

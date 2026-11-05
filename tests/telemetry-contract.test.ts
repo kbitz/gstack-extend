@@ -794,6 +794,41 @@ describe('docs/stage-runs.schema.json', () => {
     }
   }, 30_000);
 
+  test('requested model and effort rows validate against the schema and documented reader, and detection wins', () => {
+    const fix = makeTelemetryFixture('off');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-dir', 'git@github.com:acme/widget.git');
+    const requestedEnv = { ...fix.env, GSTACK_EXTEND_MODEL: 'requested-model', GSTACK_EXTEND_EFFORT: 'high' };
+    expect(runTelemetry(requestedEnv, repo, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    expect(runTelemetry(requestedEnv, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const requestedRow = fix.readLedger().at(-1)!;
+    expect(Object.keys(requestedRow)).toEqual(V2_FIELDS);
+    expect(requestedRow).toMatchObject({ model: 'requested-model', effort: 'high' });
+    expect([requestedRow.agent_source, requestedRow.model_source, requestedRow.effort_source]).toEqual([
+      'unknown', 'requested', 'requested',
+    ]);
+    expect(verdict(requestedRow)).toEqual({ ok: true, errors: [] });
+    const validated = runValidation(JSON.stringify(requestedRow));
+    expect([validated.status, validated.summary]).toEqual([0, summaryOf({ rows: 1, v2: 1 })]);
+
+    const sid = '0c7f2e29-0000-4000-8000-0000000000c2';
+    const claudeEnv = { ...requestedEnv, CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: sid };
+    expect(runTelemetry(claudeEnv, repo, ['start', '--skill', 'extend:roadmap']).status).toBe(0);
+    const at = new Date().toISOString();
+    const transcript = join(fix.home, '.claude/projects/-w', sid + '.jsonl');
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, JSON.stringify({
+      type: 'assistant', timestamp: at, effort: 'xhigh',
+      message: { id: 'm-' + at, model: 'claude-opus-5', role: 'assistant' },
+    }) + '\n');
+    expect(runTelemetry(claudeEnv, repo, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']).status).toBe(0);
+    const detectedRow = fix.readLedger().at(-1)!;
+    expect(detectedRow).toMatchObject({ agent: 'claude', model: 'claude-opus-5', effort: 'xhigh' });
+    expect([detectedRow.agent_source, detectedRow.model_source, detectedRow.effort_source]).toEqual([
+      'detected', 'detected', 'detected',
+    ]);
+    expect(verdict(detectedRow)).toEqual({ ok: true, errors: [] });
+  }, 30_000);
+
   test('v2 three-part producers pass schema and documented reader; malformed widths fail', () => {
     for (const producer_version of ['0.47.0', '1.0.0', '0.47', '0.47.0.0.0']) {
       const row = { ...quickstartRow(), producer_version };

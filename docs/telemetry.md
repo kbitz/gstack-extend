@@ -1482,8 +1482,8 @@ table below is the reader's reference; the schema is authoritative where they di
 | `schema_version` | `2`: the row format, not a release |
 | `producer_version` | Release in the VERSION file of the gstack-extend installation that constructed the row; null when unknown |
 | `agent_source` | `flag`, `detected`, or `unknown`: where `agent` came from |
-| `model_source` | `flag`, `detected`, `requested` (reserved), or `unknown`: where `model` came from |
-| `effort_source` | `flag`, `detected`, `requested` (reserved), or `unknown`: where `effort` came from |
+| `model_source` | `flag`, `detected`, `requested`, or `unknown`: where `model` came from |
+| `effort_source` | `flag`, `detected`, `requested`, or `unknown`: where `effort` came from |
 | `workspace_host` | `paseo`, `conductor`, or `unknown`: explicit inherited launch context |
 | `host_agent_id` | Exact host launch ID (1–200 printable Unicode code points, not blank), or null; unknown host requires null |
 
@@ -1498,6 +1498,17 @@ finish, keeps null. A saved retry row keeps the work item of its first construct
 value stays local: the handoff, stage-runs, and start's `GE_TELEMETRY:` line; it is
 removed from the environment of the delegated skill-usage logger and never forwarded.
 See the [quick-start](#work-item-and-launcher-quick-start).
+
+**Requested model and effort.** Set `GSTACK_EXTEND_MODEL` and `GSTACK_EXTEND_EFFORT` in the
+agent's environment before the harness starts. Finish reads them from its own environment when
+it constructs the row; start does not save them. Each variable fills only a `model` or `effort`
+still null after detection and finish flags, with source `requested`. Each value must be 1 to
+200 printable characters; a rejected value counts as absent, and debug mode prints a line
+naming the variable and the bound, never the value. A saved retry row keeps its first
+construction. Nested harnesses and subagents inherit the variables, so `requested` states the
+launch request, not which harness served it. Configured defaults such as Cursor's CLI
+configuration are never read. On the `cursor-agent` route these variables are the only in-band
+source, because the run's `--output-format json` result names no model.
 
 <a id="host-attribution"></a>
 
@@ -1640,7 +1651,9 @@ gstack's logger.
 `agent_source`, `model_source`, and `effort_source` label the value the row
 actually holds. `flag` means an accepted flag supplied it, even one equal to the
 detected value. `detected` labels that acquisition path, never proof of a served
-or billed model.
+or billed model. `requested` means the launcher's `GSTACK_EXTEND_MODEL` or
+`GSTACK_EXTEND_EFFORT` variable supplied a value that detection and flags left
+null; it is never proof of a served or billed model.
 Existing Cursor SDK metadata is requested configuration even when the historical
 detector labels it `detected`.
 `unknown` means the value is null, and a null value is always `unknown`. A
@@ -1648,15 +1661,16 @@ rejected flag changes nothing, so the detected value keeps `detected`: an
 `--agent` outside the four harnesses, or a blank, non-printable, or over-200-character
 `--model` or `--effort`. A valid `--agent` naming another harness drops the detected
 model and effort first, so an omitted `--model` or `--effort` is then null and
-`unknown`. `source` is the writer label; the three `*_source` fields are evidence
-origins. A `flag` label records who supplied the value, not that it is correct.
+`unknown` unless `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT` fills it as
+`requested`. `source` is the writer label; the three `*_source` fields are evidence
+origins. A `flag` or `requested` label records who supplied the value, not that it is correct.
 
-The v2 schema allows outcome `blocked` and reserves source `requested` for non-null
+The v2 schema allows outcome `blocked` and source `requested` for non-null
 model/effort only; agent_source remains flag/detected/unknown and every null value
 requires unknown. `blocked` is emitted at a deliberate pause (see Paused and resumed
-segments in the join contract below). Source `requested` stays reserved: nothing reads
-GSTACK_EXTEND_MODEL/GSTACK_EXTEND_EFFORT yet, and the planned requested-model telemetry
-work owns that producer; synthetic reserved-vocabulary fixtures demonstrate its shape only. Existing flags,
+segments in the join contract below). `requested` is emitted only from
+`GSTACK_EXTEND_MODEL` and `GSTACK_EXTEND_EFFORT` when detection and finish flags leave
+a field null. Existing flags,
 detection, optional capture and upstream skill-usage behavior are unchanged.
 
 **Switch.** Provenance is on by default and independent of gstack's tier, because
@@ -2047,9 +2061,11 @@ ancestor when several harness markers are present, otherwise the latest
 comparable harness log when ancestry is unavailable. Model and effort are the pair behind the most turns in the
 window. Subagent (sidechain) turns are skipped. Nested reviewer voices
 (outside-voice CLIs, subagents, external review services) write no row. In a v1/v2
-row an accepted `--agent`, `--model`, or `--effort` override says `flag`. Legacy
+row an accepted `--agent`, `--model`, or `--effort` override says `flag`, and in a v2
+row a null `model` or `effort` filled from `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT`
+says `requested`. Legacy
 rows do not mark overrides, so any legacy value may have come from a flag. Neither
-a `flag` or `detected` label nor schema validity proves that a value is correct,
+a `flag`, `detected`, or `requested` label nor schema validity proves that a value is correct,
 that capture was complete, or that attribution is right. These rows alone
 cannot certify that a review had an independent voice.
 
@@ -2317,14 +2333,15 @@ finish never start a quota sampler or write quota records. Only explicit quota
 commands read vendor usage. The quota runs CLI is not this ledger: it fills
 stage, agent, model, effort, and route from provenance and does not print
 source labels. A quota row can name a model while the stage-runs source is
-`unknown`. That is not a substitute for this row and not permission to sample.
+`unknown`, or take its model and effort from a `requested` stage-runs value. That is not a substitute for this row and not permission to sample.
 
 The repair does not change supported Paseo behavior or Cursor CLI behavior,
 except that a Cursor transcript read failure now prints the fixed
 `transcript-unreadable` reason instead of exception text, and that a CLI row no
 longer takes model or effort from a matching store (next sentences).
 `CURSOR_INVOKED_AS` is CLI. Finish does not copy model or effort from a matching
-store on that path; an explicit `--model` or `--effort` stays `flag`. A row
+store on that path; they stay null unless finish flags (`flag`) or the requested
+variables (`requested`) supply them. A row
 whose only Cursor signal is `--agent cursor` has `agent_source` `flag` and
 cannot become `route` `conductor` from a store that happens to be nearby.
 Inherited `CLAUDECODE` or `CODEX_THREAD_ID` keep the existing order: a unique
@@ -2526,7 +2543,7 @@ reads SQLite shards, shows a reader gap, not run evidence: its null model, null 
 `unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
 from a matching store record of any shape; those stay null unless finish flags
-supply them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
+or the requested variables supply them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
@@ -2549,7 +2566,9 @@ second reader and not a quota change.
 ### Sources, nulls, and native acceptance
 
 `detected` means this reader or the transcript supplied the value. `flag` means
-an accepted finish flag supplied it. `unknown` means the value is null. A null
+an accepted finish flag supplied it. `requested` means `GSTACK_EXTEND_MODEL` or
+`GSTACK_EXTEND_EFFORT` supplied a value that detection and flags left null.
+`unknown` means the value is null. A null
 is always `unknown`. Effort is the effort Conductor requested for the run. None of those labels, and no schema-valid row, proves the
 served model or that the window was right. Installed Conductor acceptance is
 pending. Fixture output is not that acceptance. The next already-planned
@@ -2660,6 +2679,7 @@ The projections below are synthetic. They are not native evidence.
 |---|---|
 | detected | `model_source` and `effort_source` are `detected`, and a unique in-window store match can set `route` to `conductor` |
 | flag | `model_source` or `effort_source` is `flag` because finish passed `--model` or `--effort`. CLI stays `route` `cli` |
+| requested | `model_source` or `effort_source` is `requested` because `GSTACK_EXTEND_MODEL` or `GSTACK_EXTEND_EFFORT` filled a null value after detection and flags. CLI stays `route` `cli` |
 | unknown | `model` and `effort` are null and those sources are `unknown`. The route is certified only when one store run matched; such a run can still carry no usable model or effort |
 
 Several stage-runs lines for one session are a ledger choice: narrow with
