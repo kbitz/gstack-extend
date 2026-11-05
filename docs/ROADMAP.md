@@ -293,7 +293,7 @@ The published-upgrade obligation remains open and is not waived; its revisit tri
 
 ## Future
 
-Deferred: docs/roadmap-future.md (81 items)
+Deferred: docs/roadmap-future.md (80 items)
 
 ## Shipped
 
