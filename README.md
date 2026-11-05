@@ -54,7 +54,10 @@ git clone https://github.com/kbitz/gstack-extend.git ~/.claude/skills/gstack-ext
 `--host codex`, `--host opencode`, or `--host cursor`. Without a host flag,
 setup installs for Claude only.
 
-Update with `/gstack-extend-upgrade`. Uninstall with:
+Update with `/gstack-extend-upgrade`. Every skill checks for updates when it
+starts. A caller that launches skills without a person sets
+`GSTACK_SESSION_KIND=spawned` so a stage never asks or upgrades; see
+[Update checks](docs/installation.md#update-checks). Uninstall with:
 
 ```bash
 ~/.claude/skills/gstack-extend/setup --host auto --uninstall
