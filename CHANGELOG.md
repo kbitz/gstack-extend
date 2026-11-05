@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.66.0] - 2026-11-04
+
+### Added
+
+- Local stage-run telemetry now records the requested model and the requested effort. docs/telemetry.md describes how those values are detected and the fallback that applies, and the stage-runs schema documents the same record.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. Skill sessions behave as before, and the new values appear only in local stage-run telemetry written after the upgrade. Read docs/telemetry.md for the record layout.
+
 ## [0.65.0] - 2026-11-04
 
 ### Added
