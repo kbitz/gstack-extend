@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.67.0] - 2026-11-05
+
+### Added
+
+- Review-run workflow metrics now record token usage read from that run's session logs. docs/telemetry.md describes how sessions are discovered and how usage is recorded, and the workflow-metrics schema documents the same record.
+- When session discovery is incomplete, that failure is kept and usage is not attributed to the run. Usage that cannot be attributed with certainty stays uncertain, and each capture is bounded.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. Review runs behave as before, and token usage appears only in workflow metrics written after the upgrade. Read docs/telemetry.md for the record layout.
+
 ## [0.66.0] - 2026-11-04
 
 ### Added
