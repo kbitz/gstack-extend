@@ -698,7 +698,7 @@ counts without another append, and an absent boundary stays missing.
   `receipt_text` of at most 2 KiB built from safe counts, statuses and IDs.
   With `--usage` (mutually exclusive with `--event-id`; passing both is
   `invalid-input`) it returns the [run token usage projection](#workflow-metrics-usage)
-  from the latest valid `v:2` `usage` record (`record_v2`) written at finish;
+  from the `v:2` `usage` record (`record_v2`) written at finish;
   a plain `read` ignores `v:2` `usage` records except for counting the line in
   `data.records`, leaving `receipt_text` and all v1 fields unchanged.
   The local and Greptile finding totals each add `by_part` (per part:
@@ -828,81 +828,109 @@ ignores `v:2` `usage` records except in `data.records` (`receipt_text` is
 unchanged); `metrics read --session-id <id> --usage` returns the usage
 projection.
 
-- **Sources and relations.** Every discovered log is hashed to a 64-hex
-  `source_hash` (`sha256` of `<harness>:<raw_session_id>`); raw session IDs,
-  thread IDs, agent IDs, file paths and message bodies are never stored. Each
-  source has `relation`: `own` (the parent session, `depth: 0`), `subagent`
-  (direct child, `depth: 1`), `nested` (grandchild or deeper, `depth >= 2`,
-  with `parent_source_hash` when linked), or `cross-harness` (outside-voice CLI
-  session in the other harness, `depth: 1`). Claude streaming duplicates of one
-  message ID keep the record with the largest output tokens; Codex cumulative
-  `token_count` totals are converted to per-event deltas with counter resets
-  treated as a new epoch and copied subagent history below
-  `subagent_history_start_ordinal` skipped.
-- **Evidence grades.** Every source and bucket carries `evidence`: `direct`
-  (parent session, or a child linked by explicit `parentUuid`/`toolUseId`,
-  `subagent_notification` or `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`,
-  or a `voices.jsonl` row whose `metrics.session_id` matches the run),
-  `correlated` (matched by worktree path and time window without a competing
-  foreign session, or by a single `voices.jsonl` row), or `unknown`
-  (unverified harness, missing log, or ambiguous shared-worktree candidate).
-  `unknown` records are never added to `direct` or `correlated` totals.
-- **Pass join via `voices.jsonl` and `cli_reported`.** Same-stage rows in
-  `<state-root>/telemetry/voices.jsonl` whose `metrics.session_id` matches the
-  run (`link_evidence: "direct"`) or whose `head` and interval match the run
-  (`link_evidence: "correlated"`) link a source or bucket to `{pass, attempt, voice_id, scope}`
-  by `subagent_ref.id` or unique `(host, [dispatched_at, returned_at])` overlap.
-  Rows with `metrics.tokens` also populate `cli_reported`, kept separate and
-  never added to `totals`, `by_model`, `by_phase`, `by_pass` or `children`.
-- **Step placement.** Each usage event is placed against non-run step intervals
-  from the ledger: `placement: "step"` when it falls inside a single step
-  (`step_id` and `phase` set), `"overlapping"` when two or more sibling steps
-  cover the timestamp (`step_id` and `phase` null; counted under `unattributed`
-  in `by_phase`), or `"outside-steps"` (`unattributed`). Child logs with events
-  after the linked step's `end` add `outlived-step`; child logs whose last
-  event is within 5 seconds of `finish_ms` or after `finish_ms` add
-  `may-continue`.
-- **Windows.** Codex `rate_limits.primary` and `rate_limits.secondary` are
-  projected onto the `0..100` `used_percent` scale (`first_used_percent`,
-  `last_used_percent`, `delta_used_percent`, `window_minutes`, `resets_at`,
-  `reset_crossed`, and `attributable: false` because rate-limit windows are
-  account-wide rather than isolated to one run). When `reset_crossed` is true,
-  `delta_used_percent` is `null` and `window-reset-crossed` is recorded. Plan
-  names, credit balances and account identifiers are dropped. Claude logs do
-  not report rate-limit windows (`windows.primary` and `windows.secondary` are
-  `null` with reason `window-not-reported`).
-- **Budgets.** Capture is bounded by 3 seconds wall-clock, 64 MiB read across at
-  most 256 files, and 32 MiB tail per file (seeding Codex's cumulative baseline
-  from the first record in the tail when starting mid-file); exceeding a scan
-  limit sets `status: "partial"` with `scan-budget`. Before writing, if the
-  serialized record exceeds 64 KiB, buckets are merged by dropping `step_id`
-  and `link` (`too-many-buckets`); if still above 64 KiB, buckets and sources
-  are cleared to `status: "unavailable"` with `capacity`.
-- **`read --usage` projection.** Returns `capture` (`ok`, `partial`,
-  `unavailable` or `disabled`), `reasons`, `stage`, `harness`, `window`
-  (`{begin_ms, end_ms}`), `observed_through_ms`, `totals` (`{direct, correlated, unknown}`
-  over the five token classes `input`, `cache_read`, `cache_write`, `output`,
-  `reasoning`), `by_model` (up to 16 models; extras fold into `other` with
-  `too-many-buckets`), `by_phase` (each phase plus `unattributed`), `by_pass`
-  (up to 32 `(pass, voice_id, attempt)` entries; extras fold with
-  `too-many-buckets`), `children` (`{own, subagent, nested, cross_harness}` with
-  `sources`, `direct`, `correlated`, `outlived_step`, `may_continue`),
-  `cli_reported`, and `windows`.
-- **Limits.** Cursor and Grok lack verified local per-turn token logs and
-  record `status: "unavailable"` with `unverified-source`; Claude windows are
-  `null` with `window-not-reported`; events written after `finish` are not
-  counted (`may-continue`); concurrent foreign sessions in the same checkout
-  leave unlinked cross-harness candidates `unknown` with `ambiguous`;
-  `cli_reported` is never summed into log totals; and a helper older than this
-  schema reads a stored `v:2` line as `malformed-record` (`partial`).
+- **Sources and relations.** Each source stores a 64-hex `ref`
+  (`sha256` of `<harness>:<raw_session_id>`), its `agent`, and a `parent_ref`
+  when linked; raw harness IDs, paths and message bodies are never stored.
+  `relation` is `own` for the harness session, `subagent` for a direct child,
+  `nested` for a descendant, or `cross-harness` for another session considered
+  by path and time. Claude children come from the session's `subagents/`
+  directory or inline `isSidechain` records. Nested Claude links use
+  `toolUseId`; an unlinked `spawnDepth > 1` child remains nested with an
+  unknown pass. Codex descendants follow `parent_thread_id` chains.
+  Only usage facts in `begin_ms <= ts < end_ms` count. Claude streaming
+  copies of one message ID keep the largest in-window output count. Codex
+  cumulative counters become deltas, with decreases starting a new epoch
+  and copied history below `subagent_history_start_ordinal` skipped.
+- **Evidence grades.** A source carries `evidence`; its buckets refer to it
+  through a `source` index. The parent and explicitly linked children are
+  `direct`. Other sessions must start inside the window, have no parent link,
+  and have a cwd inside the run's root to become candidates. A unique candidate
+  contained in a unique outside-call interval is `correlated`. Independently,
+  candidates can correlate to the run without a pass link when no foreign
+  session is active in the checkout. Both alternatives require a known original
+  session start and complete discovery within the scan and capacity limits.
+  Ambiguous candidates are `unknown` with `ambiguous`. The three grades have
+  separate totals and are never summed into one exact figure.
+- **Pass join via `voices.jsonl` and `cli_reported`.** Capture searches under
+  `<state-root>/projects/*/<stage>/` and `~/scratch/<stage>/`, where state root
+  follows `GSTACK_STATE_ROOT`, then `GSTACK_HOME`, then `~/.gstack`. Discovery
+  reaches depth 4 and reads at most 64 recent matching files of at most 1 MiB
+  each. Exceeding either file limit adds `capacity` and suppresses correlation
+  from incomplete discovery while retaining observed usage. A same-stage row
+  is kept when `metrics.session_id` matches the run,
+  or when `subagent_ref.id` names its child and no different session ID is
+  supplied. Matching a child's ID gives `link_evidence: "direct"`; unique
+  outside-call containment gives `link_evidence: "correlated"`. Links hold
+  `pass_id`, `attempt_id`, `voice_id`, `pass` and `attempt`, with unknown
+  members null. Linked nested children inherit an ancestor's pass link.
+  Provider-reported `outside` and `delegate` token counts populate the
+  separate `cli_reported` list. Their class disjointness is unverified, so
+  they are never added to log totals or used as observed model labels.
+- **Step placement.** Each fact goes to the innermost containing non-run
+  step, with `placement: "step"` and its `step_id`. Containing steps that do
+  not nest produce `"overlapping"`; no containing step produces
+  `"outside-steps"`. Both have a null `step_id` and appear under
+  `by_phase.unattributed`. Phase names come from the ledger's begin records,
+  not stored bucket fields. A child whose facts continue past the end of the
+  step holding its first fact gets `outlived-step`. A child with an observed
+  record at or after the capture window's end gets `may-continue`.
+- **Windows.** For each Codex source and slot (`primary` or `secondary`),
+  capture retains the first and last in-window rate-limit reading (one when
+  only one exists), up to eight observations overall. Each entry contains
+  `slot`, `limit_id`, `window_minutes`, `used_percent`, `resets_at`, `ts_ms`,
+  `reset_crossed` and `attributable: false`. The last reading's
+  `reset_crossed` is true when a reset time moved by more than 60 seconds or
+  a percentage fell between readings. These are raw account-wide
+  observations, not a run's consumption or a calculated percentage delta.
+  Plan names, credit balances and account identifiers are dropped. Claude
+  reports no window observations (`windows: []` when it is the only source)
+  and adds `window-not-reported`; no percentage is inferred.
+- **Budgets.** Capture uses a 3-second cooperative wall-clock budget and a
+  64 MiB input-byte budget, with a 32 MiB tail per log. The time budget is
+  checked between bounded units of work; a single file operation cannot be
+  interrupted by that check. The byte limit bounds input read, not peak
+  memory. Exhausting either budget leaves `status: "partial"` with
+  `scan-budget`. Original first-record metadata is retained separately for
+  session eligibility. When a Codex tail starts mid-file, its first
+  `token_count` seeds the baseline and emits no fact. If more than 256 buckets
+  or a serialized record above 64 KiB remain, buckets are merged by
+  `(source, model)`, setting `step_id: null` and `placement: "outside-steps"`
+  with `too-many-buckets`. If still too large, buckets are cleared with
+  `capacity`; projected token totals are null with that reason, never zero
+  consumption. Source/pass links are retained.
+- **`read --usage` projection.** Returns `capture` (`ok`, `partial` or
+  `missing`), `reasons`, `stage`, `harness`, `window` (`{begin_ms, end_ms}`),
+  `observed_through_ms`, and `totals` (`{direct, correlated, unknown}`). Each
+  total has the five token classes `input`, `cache_read`, `cache_write`,
+  `output` and `reasoning`, plus `null_reasons`; reasoning is a subset of
+  output and is never added twice. `by_model` groups by model and evidence
+  (at most 16 groups, otherwise null with `too-many-models`). `by_phase`
+  groups by phase with separate direct/correlated classes. `by_pass` holds
+  pass/attempt IDs or numbers, voice, link evidence and classes (at most 32
+  groups, otherwise null with `too-many-passes`). `children` holds counts
+  named `direct`, `correlated`, `unknown`, `outlived-step` and `may-continue`.
+  `cli_reported` and `windows` remain separate. Missing usage records yield
+  `capture: "missing"` and `no-usage-record`. Broken references or multiple
+  usage records make capture partial with the corresponding reason.
+- **Limits.** Cursor and Grok record `status: "unavailable"` with
+  `unverified-source`; their projection has partial capture and null token
+  totals. Missing logs and unknown harness IDs also leave totals null.
+  Unreported token classes are null with `not-reported`. Claude window
+  percentages remain unknown. Events written after `finish` are not counted;
+  `may-continue` can only flag records already observed by capture, not
+  predict later writes. Concurrent foreign sessions in the same checkout
+  prevent run-only correlation; unique outside-call containment can still
+  establish a correlated pass link. `cli_reported` is never summed
+  into log totals. Helpers predating this schema read a stored `v:2` line as
+  `malformed-record` (`partial`).
 
 | Reason | Meaning |
 |---|---|
-| `unverified-source` | The detected harness (`cursor`, `grok`, or `unknown`) has no verified local token log format. |
+| `unverified-source` | The detected harness (`cursor` or `grok`) has no verified local token log format. |
 | `harness-session-unknown` | The parent harness session ID was not supplied and could not be uniquely resolved. |
 | `log-missing` | No local log file was found for the parent session. |
 | `log-truncated` | The 32 MiB tail window started after `begin_ms`, so earlier in-window events may be missing. |
-| `scan-budget` | Capture stopped at the 3 s, 64 MiB or 32 MiB-per-file scan limit. |
+| `scan-budget` | Capture exhausted its cooperative 3 s budget or 64 MiB input-byte budget. |
 | `malformed-record` | A log, `voices.jsonl` or ledger line failed JSON or schema validation. |
 | `not-reported` | A token class (such as `reasoning` on Claude or `cache_write` on Codex) is not reported by that harness. |
 | `unsupported` | A log record carried an identifier outside the bounded safe-ID grammar. |
@@ -914,7 +942,7 @@ projection.
 | `too-many-sources` | More than 64 sources were discovered; extras were truncated. |
 | `too-many-models` | More than 16 `(model, evidence)` groups appeared in `read --usage`, leaving `by_model` null. |
 | `too-many-passes` | More than 32 pass/attempt groups appeared in `read --usage`, leaving `by_pass` null. |
-| `capacity` | Even after bucket merging the record exceeded 64 KiB, so `buckets` was cleared. |
+| `capacity` | A voices-file limit prevented complete discovery, or bucket count or record size still exceeded capacity after merging. Incomplete discovery suppresses correlation; cleared buckets leave projected token totals null. |
 | `no-usage-record` | `read --usage` ran on a ledger that has no `v:2` `usage` record (`capture: "missing"`). |
 | `missing-reference` | A bucket or link references a `step_id`, `pass_id` or `attempt_id` absent from the ledger. |
 | `conflicting-usage` | More than one `v:2` `usage` record or a conflicting `event_id` was present. |

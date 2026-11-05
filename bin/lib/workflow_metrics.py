@@ -1940,6 +1940,12 @@ def summarize_usage(records, malformed, partial_tail, overflow):
         "correlated": _sum_usage_buckets(by_ev["correlated"], unavailable=unavail),
         "unknown": _sum_usage_buckets(by_ev["unknown"], unavailable=unavail),
     }
+    missing_counts = {"capacity", "scan-budget"} & reasons
+    if not buckets and missing_counts:
+        # Discarded or unobserved usage is unknown, not zero work.
+        for total in totals.values():
+            total.update({key: None for key in USAGE_CLASSES})
+            total["null_reasons"] = sorted(missing_counts)
 
     model_groups = {}
     for b in buckets:

@@ -22,7 +22,7 @@ if not sys.path or sys.path[0] != _LIB_DIR:
 
 from quota.common import CLASSES  # noqa: E402
 from quota.usage import parse_record, prefer, tokens  # noqa: E402
-from telemetry import claude_logs, codex_logs, parse_ts  # noqa: E402
+from telemetry import parse_ts  # noqa: E402
 
 MAX_TAIL_BYTES = 32 * 1024 * 1024
 SCAN_BUDGET_S = 3.0
@@ -75,7 +75,14 @@ class _Budget:
     def check(self) -> bool:
         if self.exhausted:
             return False
-        if time.monotonic() >= self.deadline or self.bytes_read >= self.byte_limit:
+        if not self.check_time() or self.bytes_read >= self.byte_limit:
+            self.exhausted = True
+            return False
+        return True
+
+    def check_time(self) -> bool:
+        # Reaching the input limit stops reads, not processing of buffered facts.
+        if time.monotonic() >= self.deadline:
             self.exhausted = True
             return False
         return True
@@ -84,15 +91,48 @@ class _Budget:
         if not self.check():
             return 0
         remaining = self.byte_limit - self.bytes_read
-        if requested > remaining:
-            self.exhausted = True
-            return max(0, remaining)
-        return requested
+        # readline may consume far less than its allowance; charge actual bytes.
+        return max(0, min(requested, remaining))
 
     def charge(self, count: int) -> None:
         self.bytes_read += count
-        if self.bytes_read > self.byte_limit or time.monotonic() >= self.deadline:
+        if self.bytes_read >= self.byte_limit or time.monotonic() >= self.deadline:
             self.exhausted = True
+
+
+def _entries(path: Path, budget: _Budget):
+    """Bound directory discovery too; eager glob/sorted(scandir()) cannot stop."""
+    if not budget.check():
+        return
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if not budget.check():
+                    return
+                yield entry
+    except OSError:
+        return
+
+
+def _own_logs(agent: str, session: str, config: Path, budget: _Budget):
+    # Same directory layouts as telemetry.claude_logs/codex_logs, walked lazily
+    # because their list-returning globs run outside the capture deadline.
+    levels = 1 if agent == "claude" else 3
+    root = config / ("projects" if agent == "claude" else "sessions")
+
+    def walk(directory: Path, depth: int):
+        for entry in _entries(directory, budget):
+            if entry.is_symlink():
+                continue
+            if depth and entry.is_dir(follow_symlinks=False):
+                yield from walk(Path(entry.path), depth - 1)
+            elif not depth and entry.is_file(follow_symlinks=False):
+                name = entry.name
+                if (agent == "claude" and name == session + ".jsonl") or (
+                    agent == "codex" and name.startswith("rollout-") and name.endswith("-" + session + ".jsonl")
+                ):
+                    yield Path(entry.path)
+    yield from walk(root, levels)
 
 
 def _source_ref(agent: str, raw_id: str) -> str:
@@ -183,6 +223,7 @@ class _SourceAcc:
         self.cwd: str | None = None
         self.parent_thread_id: str | None = None
         self.has_parent_link = False
+        self.original_start_known = False
         self.spawn_depth: int | None = None
         self.tool_use_id: str | None = None
         self.emitted_tool_use_ids: set[str] = set()
@@ -191,7 +232,9 @@ class _SourceAcc:
         self.in_first_ms: int | None = None
         self.in_last_ms: int | None = None
         self.post_end_record = False
-        self.all_fact_ts_ms: list[int] = []
+        self.all_fact_last_ms: int | None = None
+        self.first_fact_ms: int | None = None
+        self.first_fact_step_hi: int | None = None
         self.rate_readings: dict[str, list[dict[str, Any]]] = {"primary": [], "secondary": []}
 
     def note_record_ts(self, ts_ms: int, begin_ms: int, end_ms: int) -> None:
@@ -206,6 +249,95 @@ class _SourceAcc:
                 self.in_last_ms = ts_ms
         if ts_ms >= end_ms:
             self.post_end_record = True
+
+    def note_fact_ts(self, ts_ms: int, begin_ms: int, end_ms: int) -> None:
+        self.all_fact_last_ms = max(self.all_fact_last_ms or ts_ms, ts_ms)
+        if begin_ms <= ts_ms < end_ms:
+            self.first_fact_ms = min(self.first_fact_ms or ts_ms, ts_ms)
+        self.note_record_ts(ts_ms, begin_ms, end_ms)
+
+
+class _Facts(dict):
+    """Deduplicated facts with incremental aggregates; deadline finalization is bounded."""
+    def __init__(self, steps, budget):
+        super().__init__()
+        self.steps = steps
+        self.budget = budget
+        self.groups = {}
+        self.compacted = False
+        self.capacity = False
+
+    def _adjust(self, item, sign):
+        if self.capacity:
+            return
+        source, fact = item
+        model, invalid = _clean_model(fact.get("model"))
+        if invalid:
+            source.reasons.add("unsupported")
+        if sign < 0:
+            placement, step_id = fact.get("_usage_placement", ("outside-steps", None))
+        else:
+            timestamp = int(round(float(fact["ts"]) * 1000))
+            placement, step_id = _place_step(timestamp, self.steps, self.budget)
+            fact["_usage_placement"] = (placement, step_id)
+            if timestamp == source.first_fact_ms:
+                source.first_fact_step_hi = self.steps[step_id][1] if placement == "step" else None
+        if self.compacted:
+            placement, step_id = "outside-steps", None
+        key = (source.ref, model, placement, step_id)
+        if key not in self.groups and len(self.groups) >= MAX_BUCKETS and not self.compacted:
+            compact = {}
+            for (ref, old_model, _placement, _step), old in self.groups.items():
+                merged = compact.setdefault((ref, old_model, "outside-steps", None),
+                                           {"responses": 0, "sums": {c: 0 for c in CLASSES}, "nulls": {c: 0 for c in CLASSES}})
+                merged["responses"] += old["responses"]
+                for cls in CLASSES:
+                    merged["sums"][cls] += old["sums"][cls]
+                    merged["nulls"][cls] += old["nulls"][cls]
+            self.groups = compact
+            self.compacted = True
+            key = (source.ref, model, "outside-steps", None)
+        if key not in self.groups and len(self.groups) >= MAX_SOURCES * MAX_MODELS_PER_SOURCE:
+            self.capacity = True
+            self.groups.clear()
+            return
+        group = self.groups.setdefault(key, {"responses": 0, "sums": {c: 0 for c in CLASSES}, "nulls": {c: 0 for c in CLASSES}})
+        group["responses"] += sign
+        for cls in CLASSES:
+            value = fact["tokens"].get(cls)
+            if value is None:
+                group["nulls"][cls] += sign
+            else:
+                group["sums"][cls] += sign * int(value)
+        if not group["responses"]:
+            del self.groups[key]
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self._adjust(self[key], -1)
+        super().__setitem__(key, value)
+        self._adjust(value, 1)
+
+    def __delitem__(self, key):
+        self._adjust(self[key], -1)
+        super().__delitem__(key)
+
+
+def _merge_fact(facts, source, fact):
+    previous = facts.get(fact["id"])
+    if previous is None:
+        facts[fact["id"]] = (source, fact)
+        return
+    old_source, old_fact = previous
+    # Direct membership wins over a merely correlated candidate, including copies
+    # in a resumed session. Within direct sources preserve child ownership.
+    if old_source.evidence == "direct" and source.evidence != "direct":
+        return
+    if old_source.evidence != "direct" and source.evidence == "direct":
+        facts[fact["id"]] = (source, fact)
+        return
+    owner = source if old_source.relation == "own" and source.relation != "own" else old_source
+    facts[fact["id"]] = (owner, prefer(old_fact, fact))
 
 
 def _extract_codex_windows(
@@ -242,7 +374,7 @@ def _extract_codex_windows(
                 parsed_r = parse_ts(raw_resets)
                 if parsed_r is not None and parsed_r >= 0:
                     resets_at = int(round(parsed_r))
-            acc.rate_readings[slot_name].append({
+            reading = {
                 "slot": slot_name,
                 "limit_id": limit_id,
                 "window_minutes": win_mins,
@@ -251,7 +383,22 @@ def _extract_codex_windows(
                 "ts_ms": ts_ms,
                 "reset_crossed": False,
                 "attributable": False,
-            })
+            }
+            readings = acc.rate_readings[slot_name]
+            if not readings:
+                readings.append(reading)
+            else:
+                previous = readings[-1]
+                crossed = previous["reset_crossed"]
+                if previous["resets_at"] is not None and resets_at is not None:
+                    crossed = crossed or abs(previous["resets_at"] - resets_at) > 60
+                if previous["used_percent"] is not None and used_pct is not None:
+                    crossed = crossed or used_pct < previous["used_percent"]
+                ordered = sorted(readings + [reading], key=lambda r: r["ts_ms"])
+                first, last = dict(ordered[0]), dict(ordered[-1])
+                first["reset_crossed"] = False
+                last["reset_crossed"] = crossed
+                acc.rate_readings[slot_name] = [first, last]
 
 
 def _build_windows_for_source(acc: _SourceAcc) -> list[dict[str, Any]]:
@@ -267,7 +414,7 @@ def _build_windows_for_source(acc: _SourceAcc) -> list[dict[str, Any]]:
             out.append(first)
             continue
         last = dict(readings_sorted[-1])
-        crossed = False
+        crossed = last["reset_crossed"]
         pairs = list(zip(readings_sorted, readings_sorted[1:])) + [(first, last)]
         for prev_r, next_r in pairs:
             r1, r2 = prev_r.get("resets_at"), next_r.get("resets_at")
@@ -306,8 +453,8 @@ def _read_file_lines(
     line0: bytes | None = None
     try:
         with path.open("rb") as stream:
-            if is_codex and offset > 0:
-                allow0 = budget.reserve(min(65536, offset))
+            if offset > 0:
+                allow0 = budget.reserve(min(MAX_TAIL_BYTES, size))
                 if allow0 <= 0 and budget.exhausted:
                     return None, [], offset, True, True
                 raw0 = stream.readline(allow0)
@@ -351,7 +498,7 @@ def _parse_claude_file(
     tail: bool,
     top_reasons: set[str],
 ) -> bool:
-    _, lines, offset, hit_budget, ok = _read_file_lines(path, budget, tail=tail, is_codex=False)
+    line0, lines, offset, hit_budget, ok = _read_file_lines(path, budget, tail=tail, is_codex=False)
     if not ok:
         return False
     if hit_budget:
@@ -361,10 +508,36 @@ def _parse_claude_file(
 
     states: dict[str, dict[str, Any]] = {acc.raw_id: {}}
     first_seen_ts_ms: int | None = None
+    original_first_pending = offset == 0
+    # A tail's first timestamp is not the session's start. Keep the real header
+    # for foreign-session checks without feeding its usage into the tail.
+    if offset > 0:
+        try:
+            first = json.loads(line0) if line0 is not None else None
+        except (ValueError, RecursionError):
+            first = None
+        if isinstance(first, dict):
+            acc.cwd = first.get("cwd") if isinstance(first.get("cwd"), str) else None
+            acc.has_parent_link = first.get("isSidechain") is True
+            first_ts = parse_ts(first.get("timestamp", first.get("ts")))
+            if first_ts is not None:
+                acc.original_start_known = True
+                acc.note_record_ts(int(round(first_ts * 1000)), begin_ms, end_ms)
+        if not acc.original_start_known:
+            acc.complete = False
+            acc.reasons.add("log-truncated")
+            top_reasons.add("log-truncated")
 
     for idx, raw_line in enumerate(lines):
+        if not budget.check_time():
+            acc.complete = False
+            acc.reasons.add("scan-budget")
+            top_reasons.add("scan-budget")
+            break
         if not raw_line.strip():
             continue
+        is_original_first = original_first_pending
+        original_first_pending = False
         try:
             row = json.loads(raw_line)
         except (ValueError, RecursionError):
@@ -386,6 +559,9 @@ def _parse_claude_file(
                 if SESSION_ID_RE.fullmatch(norm_aid):
                     target_acc = inline_children.get(norm_aid)
                     if target_acc is None:
+                        if len(inline_children) >= MAX_SOURCES - 1:
+                            top_reasons.add("too-many-sources")
+                            continue
                         target_acc = _SourceAcc(
                             agent="claude",
                             raw_id=norm_aid,
@@ -426,6 +602,8 @@ def _parse_claude_file(
 
         rec_ts = parse_ts(row.get("timestamp", row.get("ts")))
         if rec_ts is not None:
+            if is_original_first:
+                acc.original_start_known = True
             rec_ts_ms = int(round(rec_ts * 1000))
             if first_seen_ts_ms is None:
                 first_seen_ts_ms = rec_ts_ms
@@ -442,19 +620,13 @@ def _parse_claude_file(
 
         if fact is not None:
             f_ts_ms = int(round(float(fact["ts"]) * 1000))
-            target_acc.all_fact_ts_ms.append(f_ts_ms)
-            target_acc.note_record_ts(f_ts_ms, begin_ms, end_ms)
-            fid = fact["id"]
-            prev = facts_by_id.get(fid)
-            if prev is None:
-                facts_by_id[fid] = (target_acc, fact)
-            else:
-                prev_acc, prev_fact = prev
-                chosen = prefer(prev_fact, fact)
-                chosen_acc = target_acc if prev_acc.relation == "own" and target_acc.relation != "own" else prev_acc
-                facts_by_id[fid] = (chosen_acc, chosen)
+            target_acc.note_fact_ts(f_ts_ms, begin_ms, end_ms)
+            if begin_ms <= f_ts_ms < end_ms:
+                _merge_fact(facts_by_id, target_acc, fact)
 
-    if offset > 0 and (first_seen_ts_ms is None or first_seen_ts_ms > begin_ms):
+    if (offset > 0 and (first_seen_ts_ms is None or first_seen_ts_ms > begin_ms)) or (
+        acc.relation == "cross-harness" and not acc.original_start_known
+    ):
         acc.complete = False
         acc.reasons.add("log-truncated")
         top_reasons.add("log-truncated")
@@ -470,7 +642,7 @@ def _peek_codex_meta(path: Path, budget: _Budget) -> dict[str, Any] | None:
         return None
     try:
         with path.open("rb") as stream:
-            allow = budget.reserve(min(65536, st.st_size))
+            allow = budget.reserve(min(MAX_TAIL_BYTES, st.st_size))
             if allow <= 0:
                 return None
             raw0 = stream.readline(allow)
@@ -549,6 +721,7 @@ def _parse_codex_file(
                 start_ordinal = sho
         rec_ts = parse_ts(row0.get("timestamp", row0.get("ts")))
         if rec_ts is not None:
+            acc.original_start_known = True
             acc.note_record_ts(int(round(rec_ts * 1000)), begin_ms, end_ms)
         try:
             parse_record(_SHIM, "codex", row0, state, 0)
@@ -572,6 +745,11 @@ def _parse_codex_file(
     need_seed = offset > 0
 
     for idx, raw_line in enumerate(lines):
+        if not budget.check_time():
+            acc.complete = False
+            acc.reasons.add("scan-budget")
+            top_reasons.add("scan-budget")
+            break
         if not raw_line.strip():
             continue
         try:
@@ -600,8 +778,12 @@ def _parse_codex_file(
 
         ordinal = row.get("ordinal")
         if start_ordinal is not None:
-            eff_ordinal = ordinal if type(ordinal) is int else line_index
-            if eff_ordinal < start_ordinal:
+            eff_ordinal = ordinal if type(ordinal) is int else (line_index if offset == 0 else None)
+            if eff_ordinal is None:
+                acc.complete = False
+                acc.reasons.add("log-truncated")
+                top_reasons.add("log-truncated")
+            elif eff_ordinal < start_ordinal:
                 continue
 
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
@@ -615,26 +797,21 @@ def _parse_codex_file(
             top_reasons.add("malformed-record")
             continue
 
+        _extract_codex_windows(acc, state.pop("percent", []), begin_ms, end_ms)
+
         if need_seed and is_token_count:
             need_seed = False
             continue
 
         if fact is not None:
             f_ts_ms = int(round(float(fact["ts"]) * 1000))
-            acc.all_fact_ts_ms.append(f_ts_ms)
-            acc.note_record_ts(f_ts_ms, begin_ms, end_ms)
-            fid = fact["id"]
-            prev = facts_by_id.get(fid)
-            if prev is None:
-                facts_by_id[fid] = (acc, fact)
-            else:
-                prev_acc, prev_fact = prev
-                facts_by_id[fid] = (prev_acc, prefer(prev_fact, fact))
+            acc.note_fact_ts(f_ts_ms, begin_ms, end_ms)
+            if begin_ms <= f_ts_ms < end_ms:
+                _merge_fact(facts_by_id, acc, fact)
 
-    if isinstance(state.get("percent"), list):
-        _extract_codex_windows(acc, state["percent"], begin_ms, end_ms)
-
-    if offset > 0 and (first_seen_ts_ms is None or first_seen_ts_ms > begin_ms):
+    if (offset > 0 and (first_seen_ts_ms is None or first_seen_ts_ms > begin_ms)) or (
+        acc.relation == "cross-harness" and not acc.original_start_known
+    ):
         acc.complete = False
         acc.reasons.add("log-truncated")
         top_reasons.add("log-truncated")
@@ -642,7 +819,7 @@ def _parse_codex_file(
     return True
 
 
-def _codex_date_dirs(codex_cfg: Path, begin_ms: int, end_ms: int, extra_dir: Path | None = None) -> list[Path]:
+def _codex_date_dirs(codex_cfg: Path, begin_ms: int, end_ms: int, extra_dir: Path | None = None, budget: _Budget | None = None) -> list[Path]:
     sessions_root = codex_cfg / "sessions"
     dirs: list[Path] = []
     seen: set[Path] = set()
@@ -660,6 +837,8 @@ def _codex_date_dirs(codex_cfg: Path, begin_ms: int, end_ms: int, extra_dir: Pat
         lo_date = hi_date - datetime.timedelta(days=14)
     cur = lo_date
     while cur <= hi_date:
+        if budget is not None and not budget.check():
+            break
         d = sessions_root / f"{cur.year:04d}" / f"{cur.month:02d}" / f"{cur.day:02d}"
         if d not in seen and d.is_dir() and not d.is_symlink():
             dirs.append(d)
@@ -668,7 +847,7 @@ def _codex_date_dirs(codex_cfg: Path, begin_ms: int, end_ms: int, extra_dir: Pat
     return dirs
 
 
-def _claude_project_dirs(claude_cfg: Path, root: str | None, cwd: str | None, extra_dir: Path | None = None) -> list[Path]:
+def _claude_project_dirs(claude_cfg: Path, root: str | None, cwd: str | None, extra_dir: Path | None = None, budget: _Budget | None = None) -> list[Path]:
     proj_root = claude_cfg / "projects"
     dirs: list[Path] = []
     seen: set[Path] = set()
@@ -677,22 +856,6 @@ def _claude_project_dirs(claude_cfg: Path, root: str | None, cwd: str | None, ex
         seen.add(extra_dir)
     if not proj_root.is_dir() or proj_root.is_symlink():
         return dirs
-    try:
-        subdirs = [
-            Path(entry.path)
-            for entry in os.scandir(proj_root)
-            if not entry.is_symlink() and entry.is_dir(follow_symlinks=False)
-        ]
-    except OSError:
-        return dirs
-    subdirs.sort()
-    if len(subdirs) <= 16:
-        for d in subdirs:
-            if d not in seen:
-                dirs.append(d)
-                seen.add(d)
-        return dirs
-
     slugs: set[str] = set()
     for place in (root, cwd):
         if not isinstance(place, str) or not place:
@@ -701,7 +864,10 @@ def _claude_project_dirs(claude_cfg: Path, root: str | None, cwd: str | None, ex
             slugs.add(variant.replace("/", "-"))
             slugs.add(re.sub(r"[^A-Za-z0-9-]", "-", variant))
             slugs.add(re.sub(r"[^A-Za-z0-9-]", "-", variant).strip("-"))
-    for d in subdirs:
+    for entry in _entries(proj_root, budget):
+        if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+            continue
+        d = Path(entry.path)
         if d not in seen and d.name in slugs:
             dirs.append(d)
             seen.add(d)
@@ -719,7 +885,7 @@ def _codex_thread_id_from_path(path: Path) -> str | None:
     return None
 
 
-def _find_voices_files(home_path: Path, stage: str, begin_ms: int) -> list[Path]:
+def _find_voices_files(home_path: Path, stage: str, begin_ms: int, budget: _Budget, top_reasons: set[str]) -> list[Path]:
     state_override = os.environ.get("GSTACK_STATE_ROOT") or os.environ.get("GSTACK_HOME")
     if state_override and os.path.isabs(state_override) and home_path == Path.home():
         state_root = Path(state_override)
@@ -730,7 +896,7 @@ def _find_voices_files(home_path: Path, stage: str, begin_ms: int) -> list[Path]
     projects_dir = state_root / "projects"
     if projects_dir.is_dir() and not projects_dir.is_symlink():
         try:
-            for entry in sorted(os.scandir(projects_dir), key=lambda e: e.name):
+            for entry in _entries(projects_dir, budget):
                 if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
                     continue
                 stage_dir = Path(entry.path) / stage
@@ -748,18 +914,21 @@ def _find_voices_files(home_path: Path, stage: str, begin_ms: int) -> list[Path]
     def _walk(curr: Path, depth: int) -> None:
         if depth > VOICES_MAX_DEPTH:
             return
-        try:
-            entries = sorted(os.scandir(curr), key=lambda e: e.name)
-        except OSError:
-            return
-        for entry in entries:
+        for entry in _entries(curr, budget):
             if entry.is_symlink():
                 continue
             p = Path(entry.path)
             if entry.name == "voices.jsonl" and entry.is_file(follow_symlinks=False):
                 st = _safe_stat_regular(p)
-                if st is not None and 0 < st.st_size <= VOICES_MAX_BYTES and st.st_mtime >= min_mtime:
+                if st is not None and st.st_size > 0 and st.st_mtime >= min_mtime:
+                    if st.st_size > VOICES_MAX_BYTES:
+                        top_reasons.add("capacity")
+                        continue
                     found.append((st.st_mtime, str(p), p))
+                    if len(found) > VOICES_MAX_FILES:
+                        top_reasons.add("capacity")
+                        found.sort(reverse=True)
+                        del found[VOICES_MAX_FILES:]
             elif depth < VOICES_MAX_DEPTH and entry.is_dir(follow_symlinks=False):
                 _walk(p, depth + 1)
 
@@ -799,7 +968,7 @@ def _read_voices_join(
     top_reasons: set[str],
 ) -> tuple[dict[str, dict[str, Any]], list[tuple[int, int, dict[str, Any]]], list[dict[str, Any]]]:
     """Return (direct_links_by_raw_id, outside_intervals, cli_reported)."""
-    files = _find_voices_files(home_path, stage, begin_ms)
+    files = _find_voices_files(home_path, stage, begin_ms, budget, top_reasons)
     direct_links: dict[str, dict[str, Any]] = {}
     outside_intervals: list[tuple[int, int, dict[str, Any]]] = []
     cli_reported: list[dict[str, Any]] = []
@@ -809,18 +978,25 @@ def _read_voices_join(
             top_reasons.add("scan-budget")
             break
         st = _safe_stat_regular(vpath)
-        if st is None or st.st_size > VOICES_MAX_BYTES:
+        if st is None:
+            continue
+        if st.st_size > VOICES_MAX_BYTES:
+            top_reasons.add("capacity")
             continue
         allow = budget.reserve(st.st_size)
         if allow < st.st_size:
             top_reasons.add("scan-budget")
             break
         try:
-            raw = vpath.read_bytes()
+            with vpath.open("rb") as stream:
+                raw = stream.read(allow)
         except OSError:
             continue
         budget.charge(len(raw))
         for raw_line in raw.splitlines():
+            if not budget.check_time():
+                top_reasons.add("scan-budget")
+                break
             if not raw_line.strip():
                 continue
             try:
@@ -871,11 +1047,15 @@ def _read_voices_join(
                 d_ts = parse_ts(row.get("dispatched_at") or row.get("started_at"))
                 r_ts = parse_ts(row.get("returned_at") or row.get("finished_at") or row.get("recorded_at"))
                 if d_ts is not None and r_ts is not None and r_ts >= d_ts:
-                    outside_intervals.append((
+                    interval = (
                         int(round(d_ts * 1000)),
                         int(round(r_ts * 1000)),
                         link_obj,
-                    ))
+                    )
+                    if len(outside_intervals) < MAX_CLI_REPORTED:
+                        outside_intervals.append(interval)
+                    else:
+                        top_reasons.add("capacity")
 
             # Provider-reported outside / delegate token counts go to cli_reported.
             for block_key in ("outside", "delegate"):
@@ -917,10 +1097,13 @@ def _read_voices_join(
 def _place_step(
     ts_ms: int,
     steps: dict[str, tuple[int, int | None, str | None]],
+    budget: _Budget | None = None,
 ) -> tuple[str, str | None]:
     """Return (placement, step_id) for ts_ms given step_id -> (lo_ms, hi_ms, parent_step_id)."""
     containing: list[str] = []
     for step_id, bounds in steps.items():
+        if budget is not None and not budget.check_time():
+            return "outside-steps", None
         if not isinstance(bounds, (tuple, list)) or len(bounds) < 2:
             continue
         lo_ms = bounds[0]
@@ -941,6 +1124,8 @@ def _place_step(
         seen: set[str] = {step_id}
         curr = steps[step_id][2] if len(steps[step_id]) > 2 else None
         while isinstance(curr, str) and curr not in seen:
+            if budget is not None and not budget.check_time():
+                return "outside-steps", None
             seen.add(curr)
             if curr in containing_set:
                 ancestors_of_containing.add(curr)
@@ -1010,20 +1195,21 @@ def collect(
         else home_path / ".codex"
     )
 
-    own_logs = (
-        claude_logs(harness_session, config_dir=claude_cfg)
-        if agent == "claude"
-        else codex_logs(harness_session, codex_home=codex_cfg)
-    )
-    valid_own_logs = [p for p in own_logs if _safe_stat_regular(p) is not None]
-    if not valid_own_logs:
-        return _empty_result("unavailable", ["log-missing"])
-    valid_own_logs.sort(key=lambda p: (_safe_stat_regular(p).st_mtime if _safe_stat_regular(p) else 0.0, str(p)))
-    own_log = valid_own_logs[-1]
-
     budget = _Budget(SCAN_BUDGET_S, SCAN_BUDGET_BYTES)
+    own_log = None
+    own_key = None
+    for path in _own_logs(agent, harness_session, claude_cfg if agent == "claude" else codex_cfg, budget):
+        info = _safe_stat_regular(path)
+        if info is not None:
+            key = (info.st_mtime, str(path))
+            if own_key is None or key > own_key:
+                own_key, own_log = key, path
+    if own_log is None:
+        if budget.exhausted:
+            return _empty_result("partial", ["scan-budget"])
+        return _empty_result("unavailable", ["log-missing"])
     top_reasons: set[str] = set()
-    facts_by_id: dict[str, tuple[_SourceAcc, dict[str, Any]]] = {}
+    facts_by_id = _Facts(step_map, budget)
 
     own_acc = _SourceAcc(agent=agent, raw_id=harness_session, relation="own", evidence="direct")
     direct_sources: list[_SourceAcc] = [own_acc]
@@ -1047,7 +1233,7 @@ def collect(
         sub_files: list[Path] = []
         if sub_dir.is_dir() and not sub_dir.is_symlink():
             try:
-                for entry in sorted(os.scandir(sub_dir), key=lambda e: e.name):
+                for entry in _entries(sub_dir, budget):
                     if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
                         continue
                     if entry.name.startswith("agent-") and entry.name.endswith(".jsonl"):
@@ -1056,6 +1242,9 @@ def collect(
                 pass
 
         for sfile in sub_files:
+            if len(direct_sources) >= MAX_SOURCES:
+                top_reasons.add("too-many-sources")
+                break
             if not budget.check():
                 top_reasons.add("scan-budget")
                 break
@@ -1079,7 +1268,8 @@ def collect(
                 allow_m = budget.reserve(meta_st.st_size)
                 if allow_m >= meta_st.st_size:
                     try:
-                        meta_bytes = meta_path.read_bytes()
+                        with meta_path.open("rb") as stream:
+                            meta_bytes = stream.read(allow_m)
                         budget.charge(len(meta_bytes))
                         meta_obj = json.loads(meta_bytes)
                         if isinstance(meta_obj, dict):
@@ -1106,17 +1296,30 @@ def collect(
             direct_sources.append(child_acc)
             direct_by_key[("claude", raw_sub_id)] = child_acc
 
-        for rem_id in sorted(inline_children):
+        for rem_id in inline_children:
+            if len(direct_sources) >= MAX_SOURCES:
+                top_reasons.add("too-many-sources")
+                break
             c_acc = inline_children[rem_id]
+            if not budget.check():
+                # These bounded accumulators already contain observed facts.
+                c_acc.complete = False
+                c_acc.reasons.add("scan-budget")
+                top_reasons.add("scan-budget")
             direct_sources.append(c_acc)
             direct_by_key[("claude", rem_id)] = c_acc
 
         # Resolve nested Claude subagents via toolUseId -> another subagent's tool_use ids, or spawnDepth > 1.
         child_list = [s for s in direct_sources if s.relation != "own"]
         for c_acc in child_list:
+            if not budget.check():
+                top_reasons.add("scan-budget")
+                break
             linked_parent: _SourceAcc | None = None
             if c_acc.tool_use_id:
                 for other in child_list:
+                    if not budget.check():
+                        break
                     if other is not c_acc and c_acc.tool_use_id in other.emitted_tool_use_ids:
                         linked_parent = other
                         break
@@ -1144,17 +1347,13 @@ def collect(
 
     # Scan Codex date directories covering the window for Codex children/nested and cross-harness candidates.
     codex_Extra = own_log.parent if agent == "codex" else None
-    codex_dirs = _codex_date_dirs(codex_cfg, b_ms, e_ms, extra_dir=codex_Extra)
+    codex_dirs = _codex_date_dirs(codex_cfg, b_ms, e_ms, extra_dir=codex_Extra, budget=budget)
     codex_rollouts: list[tuple[Path, str, dict[str, Any]]] = []
     for ddir in codex_dirs:
         if not budget.check():
             top_reasons.add("scan-budget")
             break
-        try:
-            entries = sorted(os.scandir(ddir), key=lambda e: e.name)
-        except OSError:
-            continue
-        for entry in entries:
+        for entry in _entries(ddir, budget):
             if not budget.check():
                 top_reasons.add("scan-budget")
                 break
@@ -1164,6 +1363,11 @@ def collect(
             if agent == "codex" and rpath == own_log:
                 continue
             meta = _peek_codex_meta(rpath, budget)
+            if meta is None:
+                # Missing/truncated lineage must not turn a child into a guessed
+                # cross-harness session. Keep capture explicitly incomplete.
+                top_reasons.add("log-truncated")
+                continue
             tid = (meta.get("id") if meta else None) or _codex_thread_id_from_path(rpath)
             if not tid or not SESSION_ID_RE.fullmatch(tid):
                 continue
@@ -1175,6 +1379,9 @@ def collect(
         # Follow parent_thread_id chains starting from harness_session.
         parent_map: dict[str, str] = {}
         for _rpath, tid, meta in codex_rollouts:
+            if not budget.check():
+                top_reasons.add("scan-budget")
+                break
             ptid = meta.get("parent_thread_id")
             if isinstance(ptid, str) and SESSION_ID_RE.fullmatch(ptid):
                 parent_map[tid] = ptid
@@ -1209,6 +1416,9 @@ def collect(
                 continue
             if ("codex", tid) in direct_by_key:
                 continue
+            if len(direct_sources) >= MAX_SOURCES:
+                top_reasons.add("too-many-sources")
+                break
             c_acc = _SourceAcc(
                 agent="codex",
                 raw_id=tid,
@@ -1242,16 +1452,12 @@ def collect(
 
     # 1. Claude top-level logs
     claude_extra = own_log.parent if agent == "claude" else None
-    claude_dirs = _claude_project_dirs(claude_cfg, effective_root, proc_cwd, extra_dir=claude_extra)
+    claude_dirs = _claude_project_dirs(claude_cfg, effective_root, proc_cwd, extra_dir=claude_extra, budget=budget)
     for cdir in claude_dirs:
         if not budget.check():
             top_reasons.add("scan-budget")
             break
-        try:
-            entries = sorted(os.scandir(cdir), key=lambda e: e.name)
-        except OSError:
-            continue
-        for entry in entries:
+        for entry in _entries(cdir, budget):
             if not budget.check():
                 top_reasons.add("scan-budget")
                 break
@@ -1270,11 +1476,12 @@ def collect(
                 evidence="unknown",
                 parent_ref=None,
             )
+            candidate_facts = {}
             if not _parse_claude_file(
                 cpath,
                 cand_acc,
                 None,
-                facts_by_id,
+                candidate_facts,
                 b_ms,
                 e_ms,
                 budget,
@@ -1283,23 +1490,24 @@ def collect(
             ):
                 continue
             if not _inside_root(cand_acc.cwd, effective_root):
-                # Discard any facts parsed from a session outside root.
-                for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                    del facts_by_id[fid]
                 continue
             if cand_acc.all_first_ms is None:
                 continue
+            if not cand_acc.original_start_known and cand_acc.in_first_ms is not None:
+                foreign_session_active = True
             if cand_acc.all_first_ms < b_ms:
                 if not cand_acc.has_parent_link and (cand_acc.all_last_ms is None or cand_acc.all_last_ms >= b_ms):
                     foreign_session_active = True
-                for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                    del facts_by_id[fid]
                 continue
             if b_ms <= cand_acc.all_first_ms < e_ms and not cand_acc.has_parent_link:
+                if len(direct_sources) + len(candidate_sources) >= MAX_SOURCES:
+                    top_reasons.add("too-many-sources")
+                    continue
                 candidate_sources.append(cand_acc)
-            else:
-                for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                    del facts_by_id[fid]
+                for source, fact in candidate_facts.values():
+                    if not budget.check_time():
+                        break
+                    _merge_fact(facts_by_id, source, fact)
 
     # 2. Remaining Codex rollouts not already claimed as direct sources
     for rpath, tid, _meta in codex_rollouts:
@@ -1315,10 +1523,11 @@ def collect(
             evidence="unknown",
             parent_ref=None,
         )
+        candidate_facts = {}
         if not _parse_codex_file(
             rpath,
             cand_acc,
-            facts_by_id,
+            candidate_facts,
             b_ms,
             e_ms,
             budget,
@@ -1327,35 +1536,24 @@ def collect(
         ):
             continue
         if not _inside_root(cand_acc.cwd, effective_root):
-            for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                del facts_by_id[fid]
             continue
         if cand_acc.all_first_ms is None:
             continue
+        if not cand_acc.original_start_known and cand_acc.in_first_ms is not None:
+            foreign_session_active = True
         if cand_acc.all_first_ms < b_ms:
             if not cand_acc.has_parent_link and (cand_acc.all_last_ms is None or cand_acc.all_last_ms >= b_ms):
                 foreign_session_active = True
-            for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                del facts_by_id[fid]
             continue
         if b_ms <= cand_acc.all_first_ms < e_ms and not cand_acc.has_parent_link:
+            if len(direct_sources) + len(candidate_sources) >= MAX_SOURCES:
+                top_reasons.add("too-many-sources")
+                continue
             candidate_sources.append(cand_acc)
-        else:
-            for fid in [k for k, v in facts_by_id.items() if v[0] is cand_acc]:
-                del facts_by_id[fid]
-
-    # Filter in-window facts per source.
-    in_window_facts_by_source: dict[str, list[dict[str, Any]]] = {}
-    for _fid, (s_acc, fact) in facts_by_id.items():
-        f_ts_ms = int(round(float(fact["ts"]) * 1000))
-        if b_ms <= f_ts_ms < e_ms:
-            in_window_facts_by_source.setdefault(s_acc.ref, []).append(fact)
-
-    # Keep only candidates that actually have in-window records/facts.
-    candidate_sources = [
-        c for c in candidate_sources
-        if c.ref in in_window_facts_by_source or (c.in_first_ms is not None and c.in_last_ms is not None)
-    ]
+            for source, fact in candidate_facts.values():
+                if not budget.check_time():
+                    break
+                _merge_fact(facts_by_id, source, fact)
 
     # Pass join via voices.jsonl.
     direct_child_ids: set[str] = set()
@@ -1416,19 +1614,18 @@ def collect(
         for c_acc in candidate_sources:
             matching_ivs = cand_to_intervals.get(c_acc.ref, [])
             if (
-                not foreign_session_active
-                and len(matching_ivs) == 1
+                c_acc.original_start_known
+                and not budget.exhausted
+                and not ({"scan-budget", "too-many-sources", "capacity"} & top_reasons)
+                and
+                len(matching_ivs) == 1
                 and len(interval_to_cands[matching_ivs[0]]) == 1
             ):
                 iv_idx = matching_ivs[0]
                 c_acc.evidence = "correlated"
                 c_acc.link = outside_intervals[iv_idx][2]
                 c_acc.link_evidence = "correlated"
-            elif (
-                not foreign_session_active
-                and len(candidate_sources) == 1
-                and len(outside_intervals) == 0
-            ):
+            elif c_acc.original_start_known and not foreign_session_active and not budget.exhausted and not ({"scan-budget", "too-many-sources", "capacity"} & top_reasons):
                 c_acc.evidence = "correlated"
                 c_acc.link = None
                 c_acc.link_evidence = None
@@ -1444,94 +1641,54 @@ def collect(
         all_sources = all_sources[:MAX_SOURCES]
         top_reasons.add("too-many-sources")
 
-    # Build buckets and evaluate step placement, outlived-step, may-continue, models, and windows.
+    # Parsing built bounded aggregates incrementally. Finalize at most 64 sources
+    # and 1024 groups even after the input deadline, retaining observed work.
     sources_out: list[dict[str, Any]] = []
-    # Group key: (source_idx, model, placement, step_id)
-    bucket_groups: dict[tuple[int, str | None, str, str | None], list[dict[str, Any]]] = {}
     windows_out: list[dict[str, Any]] = []
+    buckets_out: list[dict[str, Any]] = []
+    source_indices = {src.ref: idx for idx, src in enumerate(all_sources)}
+    models_by_source = {}
+    for (ref, model, placement, step_id), group in facts_by_id.groups.items():
+        if ref not in source_indices:
+            continue
+        if model is not None:
+            models = models_by_source.setdefault(ref, set())
+            if len(models) < MAX_MODELS_PER_SOURCE:
+                models.add(model)
+        classes = {cls: None if group["nulls"][cls] else group["sums"][cls] for cls in CLASSES}
+        null_reasons = ["not-reported"] if any(value is None for value in classes.values()) else []
+        top_reasons.update(null_reasons)
+        buckets_out.append({
+            "source": source_indices[ref], "model": model, "step_id": step_id,
+            "placement": placement, **classes, "null_reasons": null_reasons,
+            "responses": group["responses"],
+        })
+    if facts_by_id.compacted:
+        top_reasons.add("too-many-buckets")
+    if facts_by_id.capacity:
+        top_reasons.add("capacity")
 
-    for src_idx, s_acc in enumerate(all_sources):
-        src_facts = sorted(
-            in_window_facts_by_source.get(s_acc.ref, []),
-            key=lambda f: int(round(float(f["ts"]) * 1000)),
-        )
-        observed_models: set[str] = set()
-        first_fact_step_hi: int | None = None
-        checked_first_fact = False
-
-        for fact in src_facts:
-            f_ts_ms = int(round(float(fact["ts"]) * 1000))
-            clean_m, invalid_m = _clean_model(fact.get("model"))
-            if invalid_m:
-                s_acc.reasons.add("unsupported")
-                top_reasons.add("unsupported")
-            if clean_m is not None and len(observed_models) < MAX_MODELS_PER_SOURCE:
-                observed_models.add(clean_m)
-
-            placement, step_id = _place_step(f_ts_ms, step_map)
-            if not checked_first_fact:
-                checked_first_fact = True
-                if placement == "step" and step_id is not None and step_id in step_map:
-                    first_fact_step_hi = step_map[step_id][1]
-
-            bkey = (src_idx, clean_m, placement, step_id)
-            bucket_groups.setdefault(bkey, []).append(fact)
-
+    for s_acc in all_sources:
         if s_acc.relation in ("subagent", "nested"):
-            if first_fact_step_hi is not None and any(ts > first_fact_step_hi for ts in s_acc.all_fact_ts_ms):
-                s_acc.reasons.add("outlived-step")
-                top_reasons.add("outlived-step")
+            if s_acc.first_fact_ms is not None:
+                step_hi = s_acc.first_fact_step_hi
+                if step_hi is not None and s_acc.all_fact_last_ms is not None and s_acc.all_fact_last_ms > step_hi:
+                    s_acc.reasons.add("outlived-step")
             if s_acc.post_end_record:
                 s_acc.reasons.add("may-continue")
                 s_acc.complete = False
-                top_reasons.add("may-continue")
-
         if s_acc.agent == "codex":
-            for w in _build_windows_for_source(s_acc):
+            for window in _build_windows_for_source(s_acc):
                 if len(windows_out) < MAX_WINDOWS:
-                    windows_out.append(w)
-
+                    windows_out.append(window)
         top_reasons.update(s_acc.reasons)
         sources_out.append({
-            "ref": s_acc.ref,
-            "agent": s_acc.agent,
-            "relation": s_acc.relation,
-            "evidence": s_acc.evidence,
-            "parent_ref": s_acc.parent_ref,
-            "link": s_acc.link,
-            "link_evidence": s_acc.link_evidence,
-            "models": sorted(observed_models),
-            "first_ms": s_acc.in_first_ms,
-            "last_ms": s_acc.in_last_ms,
-            "complete": s_acc.complete,
-            "reasons": sorted(s_acc.reasons),
-        })
-
-    buckets_out: list[dict[str, Any]] = []
-    for (src_idx, model, placement, step_id), flist in bucket_groups.items():
-        class_totals: dict[str, int | None] = {}
-        null_reasons: set[str] = set()
-        for cls_key in CLASSES:
-            vals = [(f.get("tokens") or {}).get(cls_key) for f in flist]
-            if any(v is None for v in vals):
-                class_totals[cls_key] = None
-                null_reasons.add("not-reported")
-            else:
-                class_totals[cls_key] = sum(int(v) for v in vals if v is not None)
-        if null_reasons:
-            top_reasons.update(null_reasons)
-        buckets_out.append({
-            "source": src_idx,
-            "model": model,
-            "step_id": step_id,
-            "placement": placement,
-            "input": class_totals["input"],
-            "cache_read": class_totals["cache_read"],
-            "cache_write": class_totals["cache_write"],
-            "output": class_totals["output"],
-            "reasoning": class_totals["reasoning"],
-            "null_reasons": sorted(null_reasons),
-            "responses": len(flist),
+            "ref": s_acc.ref, "agent": s_acc.agent, "relation": s_acc.relation,
+            "evidence": s_acc.evidence, "parent_ref": s_acc.parent_ref,
+            "link": s_acc.link, "link_evidence": s_acc.link_evidence,
+            "models": sorted(models_by_source.get(s_acc.ref, ())),
+            "first_ms": s_acc.in_first_ms, "last_ms": s_acc.in_last_ms,
+            "complete": s_acc.complete, "reasons": sorted(s_acc.reasons),
         })
 
     if budget.exhausted:

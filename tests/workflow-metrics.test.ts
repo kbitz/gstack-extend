@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv from 'ajv';
 import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
-import { appendFileSync, realpathSync, truncateSync } from 'node:fs';
+import { appendFileSync, realpathSync, truncateSync, utimesSync } from 'node:fs';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
@@ -2622,6 +2622,17 @@ describe('Track 67A run token usage capture and read --usage', () => {
       cache_read_input_tokens: 10,
       cache_creation_input_tokens: 5,
     }]);
+
+    // A child ID alone admits an older voice row without a metrics session ID.
+    const childOnly = JSON.parse(readFileSync(join(voicesDir, 'voices.jsonl'), 'utf8'));
+    delete childOnly.metrics.session_id;
+    writeFileSync(join(voicesDir, 'voices.jsonl'), JSON.stringify(childOnly) + '\n');
+    const fallback = runPythonCollect(fix, [
+      `req = tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(fallback.sources.find((s: any) => s.relation === 'subagent').link).toMatchObject({ pass_id: passId, attempt_id: attemptId });
+    expect(fallback.cli_reported).toEqual(uData.cli_reported);
   }, 60_000);
 
   test('Codex cumulative deltas, counter reset epoch, subagent_history_start_ordinal, grandchild lineage, mid-file tail seed, and window reset_crossed', () => {
@@ -2676,13 +2687,34 @@ describe('Track 67A run token usage capture and read --usage', () => {
       expect(w).not.toHaveProperty('plan_type');
     }
 
-    // Also test mid-file tail seed and reset_crossed on Codex rate_limits.
+    // Keep exactly the final two counter rows: the first seeds, the second starts a new epoch.
+    const parentLines = loadFixtureText('codex-parent.jsonl', { __CWD__: repo }).trim().split('\n');
+    const tailBytes = Buffer.byteLength(parentLines.slice(-2).join('\n') + '\n') + 1;
     const midRes = runPythonCollect(fix, [
-      'tu.MAX_TAIL_BYTES = 750', // force mid-file seek on parent log while keeping last 2 token_count lines
+      `tu.MAX_TAIL_BYTES = ${tailBytes}`,
       `req = tu.collect("codex", ${JSON.stringify(parentTid)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
       'print(json.dumps(req))',
     ]);
     expect(midRes.reasons).toContain('log-truncated');
+    expect(midRes.buckets.filter((b: any) => midRes.sources[b.source].relation === 'own')).toEqual([
+      expect.objectContaining({ input: 200, cache_read: 50, output: 40, reasoning: 10, responses: 1 }),
+    ]);
+
+    // Account reset is independent of cumulative token counter reset.
+    const resetRows = parentLines.map(line => JSON.parse(line));
+    const finalLimits = resetRows.at(-1).payload.rate_limits;
+    finalLimits.primary.resets_at += 120;
+    finalLimits.secondary.used_percent = 2;
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-00-${parentTid}.jsonl`), resetRows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const resetRes = runPythonCollect(fix, [
+      `req = tu.collect("codex", ${JSON.stringify(parentTid)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    for (const slot of ['primary', 'secondary']) {
+      const windows = resetRes.windows.filter((w: any) => w.slot === slot);
+      expect(windows[0].reset_crossed).toBe(false);
+      expect(windows.at(-1).reset_crossed).toBe(true);
+    }
   }, 60_000);
 
   test('concurrent foreign session makes unlinked cross-harness candidates unknown/ambiguous; distinct voices.jsonl intervals correlate two outside calls', () => {
@@ -2792,7 +2824,13 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(edgeData.reasons).toEqual(expect.arrayContaining(['outlived-step', 'may-continue']));
     expect(edgeData.children['outlived-step']).toBe(1);
     expect(edgeData.children['may-continue']).toBe(1);
-    expect(edgeData.by_phase.unattributed).toBeDefined();
+    expect(edgeData.by_phase.unattributed.direct).toMatchObject({ input: 350, output: 110 });
+    expect(edgeData.by_phase.scope.direct).toMatchObject({ input: 300, output: 75 });
+    expect(edgeData.by_phase.evidence).toBeUndefined();
+    const overlapBuckets = ledgerLines(fix, sid).map(line => JSON.parse(line)).find(row => row.op === 'usage').request.buckets;
+    expect(overlapBuckets.filter((b: any) => b.placement === 'overlapping')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step_id: null, input: 100, output: 40 }),
+    ]));
 
     // Cursor and Grok return unavailable with unverified-source.
     for (const unsupportedAgent of ['cursor', 'grok']) {
@@ -2856,6 +2894,7 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(afterPlain.status).toBe('ok');
     expect(afterPlain.data.records).toBe(beforePlain.data.records + 1);
     expect(afterPlain.data.receipt_text).toBe(beforePlain.data.receipt_text);
+    expect({ ...afterPlain.data, records: beforePlain.data.records }).toEqual(beforePlain.data);
 
     const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
     expect(usageEnv.status).toBe('ok');
@@ -2881,11 +2920,318 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(ledgerLines(fix, offSid)).toHaveLength(1);
   }, 60_000);
 
+  // Value: protects=finish-time accounting under truncation, competing logs and resource limits;
+  // fails_when=out-of-window/foreign copies replace direct facts, or partial collection claims complete totals;
+  // why_new=the original corpus exercises small stable files only; seam=isolated Python clock/stream injection.
+  function ownClaudeFixture() {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'review-regression');
+    const project = join(fix.home, '.claude/projects/review-regression');
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(project, { recursive: true });
+    const own = join(project, 'syn-claude-parent-001.jsonl');
+    writeFileSync(own, loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    const collect = `tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})`;
+    return { fix, repo, project, own, collect };
+  }
+
+  test('review regression: the parsing loop stops when its injected time budget expires', () => {
+    const { fix, collect } = ownClaudeFixture();
+    const result = runPythonCollect(fix, [
+      'clock = [0.0]', 'calls = [0]', 'tu.SCAN_BUDGET_S = 1.0',
+      'tu.time.monotonic = lambda: clock[0]', 'original_parse = tu.parse_record',
+      'def counted_parse(*args, **kwargs):',
+      '    calls[0] += 1', '    clock[0] += 1.0',
+      '    return original_parse(*args, **kwargs)',
+      'tu.parse_record = counted_parse', `req = ${collect}`,
+      'print(json.dumps({"calls": calls[0], "request": req}))',
+    ]);
+    expect(result.request.reasons).toContain('scan-budget');
+    expect(result.calls).toBeLessThanOrEqual(1);
+  });
+
+  test('review regression: voices and child metadata reads stay bounded if files grow after stat', () => {
+    const { fix, repo, project, collect } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-child.jsonl'), loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    const meta = join(sub, 'agent-child.meta.json');
+    writeFileSync(meta, '{}');
+    const voiceDir = join(fix.home, '.gstack/projects/review-regression/review-and-prep');
+    mkdirSync(voiceDir, { recursive: true });
+    const voices = join(voiceDir, 'voices.jsonl');
+    writeFileSync(voices, '{}\n');
+    const result = runPythonCollect(fix, [
+      'import io', `targets = {${JSON.stringify(meta)}: 65536, ${JSON.stringify(voices)}: 1024 * 1024}`,
+      'read_sizes = {}', 'original_open = tu.Path.open',
+      'class GrowingStream(io.BytesIO):',
+      '    def __init__(self, name):',
+      '        self.name = name', '        super().__init__(b"{}" + b" " * (targets[name] * 2))',
+      '    def read(self, size=-1):',
+      '        data = super().read(size)',
+      '        read_sizes[self.name] = read_sizes.get(self.name, 0) + len(data)',
+      '        return data',
+      'def growing_open(path, *args, **kwargs):',
+      '    if str(path) in targets: return GrowingStream(str(path))',
+      '    return original_open(path, *args, **kwargs)',
+      'tu.Path.open = growing_open', `req = ${collect}`,
+      'print(json.dumps({"sizes": read_sizes, "request": req}))',
+    ]);
+    expect(result.sizes[meta]).toBeLessThanOrEqual(65536);
+    expect(result.sizes[voices]).toBeLessThanOrEqual(1024 * 1024);
+  });
+
+  test('review regression: a streaming copy after finish cannot replace an in-window fact', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const late = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    late.timestamp = '2026-01-01T00:01:01Z';
+    late.message.usage.output_tokens = 999;
+    appendFileSync(own, JSON.stringify(late) + '\n');
+    const req = runPythonCollect(fix, [`print(json.dumps(${collect}))`]);
+    expect(req.buckets.reduce((sum: number, b: any) => sum + b.output, 0)).toBe(100);
+  });
+
+  test('review regression: rejected foreign copies cannot overwrite direct usage', () => {
+    const { fix, own, project, collect } = ownClaudeFixture();
+    const foreign = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    foreign.cwd = join(fix.home, 'unrelated-repository');
+    foreign.sessionId = 'foreign';
+    foreign.message.usage.output_tokens = 999;
+    writeFileSync(join(project, 'foreign.jsonl'), JSON.stringify(foreign) + '\n');
+    const req = runPythonCollect(fix, [`print(json.dumps(${collect}))`]);
+    expect(req.buckets.reduce((sum: number, b: any) => sum + b.output, 0)).toBe(100);
+  });
+
+  test('review regression: a truncated Claude session keeps its original foreign start', () => {
+    const { fix, repo, project, collect } = ownClaudeFixture();
+    const parent = loadFixtureText('claude-parent.jsonl', { __CWD__: repo }).trim().split('\n').map(line => JSON.parse(line));
+    const early = { ...parent[0], sessionId: 'foreign', timestamp: '2025-12-31T23:59:00Z' };
+    const pad = { ...early, message: { content: 'x'.repeat(4000) } };
+    const last = { ...parent[3], sessionId: 'foreign', message: { ...parent[3].message, id: 'foreign-only' } };
+    writeFileSync(join(project, 'foreign.jsonl'), [early, pad, last].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, ['tu.MAX_TAIL_BYTES = 3000', `print(json.dumps(${collect}))`]);
+    expect(req.sources.filter((s: any) => s.evidence === 'correlated')).toEqual([]);
+  });
+
+  test('review regression: child tail indices cannot masquerade as copied-history ordinals', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'child-tail');
+    const sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001';
+    const child = '01940000-0000-7000-8000-000000000002';
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    const meta = { timestamp: '2026-01-01T00:00:12Z', type: 'session_meta', payload: { id: child, cwd: repo, parent_thread_id: parent, subagent_history_start_ordinal: 10 } };
+    const counter = (second: number, input: number, output: number) => ({ timestamp: `2026-01-01T00:00:${second}Z`, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } } } });
+    const tail = [counter(30, 100, 10), counter(40, 150, 20)].map(row => JSON.stringify(row)).join('\n') + '\n';
+    const padding = Array.from({ length: 12 }, () => JSON.stringify({ type: 'notice', text: 'x'.repeat(500) })).join('\n');
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`), JSON.stringify(meta) + '\n' + padding + '\n' + tail);
+    const req = runPythonCollect(fix, [
+      `tu.MAX_TAIL_BYTES = ${Buffer.byteLength(tail) + 1}`,
+      `print(json.dumps(tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(req.buckets.filter((b: any) => req.sources[b.source].relation === 'subagent')).toEqual([
+      expect.objectContaining({ input: 50, output: 10, responses: 1 }),
+    ]);
+    expect(req.status).toBe('partial');
+  });
+
+  test('review regression: oversized Codex metadata either preserves lineage or reports partial coverage', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'large-meta');
+    const sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001';
+    const child = '01940000-0000-7000-8000-000000000002';
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    const rows = loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }).trim().split('\n').map(line => JSON.parse(line));
+    rows[0].payload.instructions = 'x'.repeat(70000);
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, [
+      `print(json.dumps(tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const linked = req.sources.some((s: any) => s.relation === 'subagent');
+    expect(linked || (req.status === 'partial' && req.reasons.length > 0)).toBe(true);
+  });
+
+  test('review regression: capacity-discarded buckets project unknown totals instead of zero', () => {
+    const { fix, repo } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const result = runPythonCollect(fix, [
+      'wm.MAX_USAGE_RECORD_BYTES = 1', 'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.reasons).toContain('capacity');
+    expect(usage.totals.direct.input).toBeNull();
+    expect(usage.totals.direct.null_reasons).toContain('capacity');
+  });
+
+  test('review batch 2: discovery deadline before any usage projects null totals', () => {
+    const { fix, repo } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const result = runPythonCollect(fix, [
+      'clock = [0.0]', 'tu.SCAN_BUDGET_S = 1.0', 'tu.time.monotonic = lambda: clock[0]',
+      'original_entries = tu._entries',
+      'def slow_entries(path, budget):',
+      '    clock[0] = 2.0', '    yield from original_entries(path, budget)',
+      'tu._entries = slow_entries', 'wm._load_telemetry_usage = lambda: tu',
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.reasons).toContain('scan-budget');
+    for (const total of Object.values(usage.totals)) {
+      expect(total).toEqual({ input: null, cache_read: null, cache_write: null, output: null, reasoning: null, null_reasons: ['scan-budget'] });
+    }
+  });
+
+  test('review batch 2: unknown original Claude start retains usage with unknown evidence', () => {
+    const { fix, repo, own, project, collect } = ownClaudeFixture();
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    for (const [i, header] of [JSON.stringify({ cwd: repo }), '{broken'].entries()) {
+      const tail = { ...row, sessionId: `unknown-start-${i}`, message: { ...row.message, id: `unknown-start-${i}` } };
+      writeFileSync(join(project, `unknown-start-${i}.jsonl`), header + '\n' + JSON.stringify({ text: 'x'.repeat(4000) }) + '\n' + JSON.stringify(tail) + '\n');
+    }
+    const req = runPythonCollect(fix, ['tu.MAX_TAIL_BYTES = 3000', `print(json.dumps(${collect}))`]);
+    const candidates = req.sources.filter((s: any) => s.relation === 'cross-harness');
+    expect(candidates).toHaveLength(2);
+    expect(candidates.every((s: any) => s.evidence === 'unknown' && !s.complete)).toBe(true);
+    expect(req.status).toBe('partial');
+    expect(req.reasons).toEqual(expect.arrayContaining(['log-truncated', 'ambiguous']));
+    expect(req.buckets.filter((b: any) => req.sources[b.source].evidence === 'unknown').reduce((sum: number, b: any) => sum + b.output, 0)).toBe(80);
+  });
+
+  test('review batch 2: already collected inline child survives deadline finalization', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const parent = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const child = { ...parent, agentId: 'inline-child', isSidechain: true, message: { ...parent.message, id: 'inline-only', usage: { input_tokens: 17, output_tokens: 9 } } };
+    writeFileSync(own, [parent, child].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, [
+      'clock = [0.0]', 'tu.SCAN_BUDGET_S = 1.0', 'tu.time.monotonic = lambda: clock[0]',
+      'original_parse = tu.parse_record',
+      'def expire_after_child(store, agent, row, state, index):',
+      '    fact = original_parse(store, agent, row, state, index)',
+      '    if row.get("agentId") == "inline-child": clock[0] = 2.0',
+      '    return fact', 'tu.parse_record = expire_after_child',
+      `print(json.dumps(${collect}))`,
+    ]);
+    expect(req.reasons).toContain('scan-budget');
+    expect(req.sources.filter((s: any) => s.relation === 'subagent')).toHaveLength(1);
+    expect(req.buckets.filter((b: any) => req.sources[b.source].relation === 'subagent')).toEqual([
+      expect.objectContaining({ input: 17, output: 9, responses: 1 }),
+    ]);
+  });
+
+  test('review batch 2: short header reserves actual bytes and buffered facts survive byte exhaustion', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const header = JSON.stringify({ timestamp: '2025-12-31T23:59:00Z' }) + '\n';
+    const tail = JSON.stringify(row) + '\n';
+    writeFileSync(own, header + JSON.stringify({ text: 'x'.repeat(4000) }) + '\n' + tail);
+    const retained = runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'tu.MAX_TAIL_BYTES = 3000',
+      `tu.SCAN_BUDGET_BYTES = ${Buffer.byteLength(header) + Buffer.byteLength(tail) + 1}`,
+      // Tail starts inside padding; after dropping it, retain one complete usage line.
+      `tu.MAX_TAIL_BYTES = ${Buffer.byteLength(tail) + 1}`,
+      `print(json.dumps(${collect}))`,
+    ]);
+    expect(retained.reasons).toContain('scan-budget');
+    expect(retained.buckets).toEqual([expect.objectContaining({ input: 100, output: 40, responses: 1 })]);
+
+    // A readline allowance may exceed remaining capacity without consuming it.
+    const reservation = runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'budget = tu._Budget(3.0, 100)',
+      'budget.charge(80)', 'allow = budget.reserve(1000)', 'budget.charge(5)',
+      'print(json.dumps({"allow": allow, "remaining": budget.reserve(1000), "exhausted": budget.exhausted}))',
+    ]);
+    expect(reservation).toEqual({ allow: 20, remaining: 15, exhausted: false });
+  });
+
+  test('review batch 2: integral float counts survive dedup replacement and schema validation', () => {
+    const { fix, repo, own } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const previous = { ...row, message: { ...row.message, usage: { input_tokens: 90, output_tokens: 10 } } };
+    const next = { ...row, message: { ...row.message, usage: { input_tokens: 100, output_tokens: 40 } } };
+    writeFileSync(own, [previous, next].map(item => JSON.stringify(item).replace(/"(input_tokens|output_tokens)":(\d+)/g, '"$1":$2.0')).join('\n') + '\n');
+    const result = runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.totals.direct).toMatchObject({ input: 100, output: 40 });
+    expect(ledgerLines(fix, sid).map(line => JSON.parse(line)).find(item => item.op === 'usage').request.buckets[0].responses).toBe(1);
+  });
+
+  test.each(['file-count', 'file-size'])('review batch 3: voices %s omission cannot manufacture a unique pass link', (limit) => {
+    const { fix, repo, own, project, collect } = ownClaudeFixture();
+    const parentRows = readFileSync(own, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const candidate = { ...parentRows[3], sessionId: 'outside-candidate', message: { ...parentRows[3].message, id: 'outside-only' } };
+    writeFileSync(join(project, 'outside-candidate.jsonl'), JSON.stringify(candidate) + '\n');
+    // A foreign session prevents fallback to a run-only correlation.
+    writeFileSync(join(project, 'already-active.jsonl'), [
+      { ...parentRows[0], sessionId: 'already-active', timestamp: '2025-12-31T23:59:00Z' },
+      { ...parentRows[0], sessionId: 'already-active', timestamp: '2026-01-01T00:00:30Z' },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const sid = 'extend-11111111-1111-4111-8111-111111111111';
+    const voice = (voice_id: string, session_id = sid) => ({
+      stage: 'review-and-prep', voice_id, pass: 1, attempt: 1,
+      metrics: { session_id }, subagent_ref: { kind: 'outside-process', id: null },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    });
+    const putVoice = (name: string, row: any, modifiedSeconds: number) => {
+      const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep', name);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, 'voices.jsonl');
+      writeFileSync(path, JSON.stringify(row) + '\n');
+      utimesSync(path, T0 / 1000 + modifiedSeconds, T0 / 1000 + modifiedSeconds);
+      return path;
+    };
+    putVoice('retained', voice('outside-first'), 62);
+    const omitted = putVoice('omitted', voice('outside-second'), 61);
+    const capture = () => runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'opened = []', 'original_open = tu.Path.open',
+      'def track_open(path, *args, **kwargs):',
+      '    if path.name == "voices.jsonl": opened.append(str(path))',
+      '    return original_open(path, *args, **kwargs)', 'tu.Path.open = track_open',
+      `req = ${collect}`,
+      'record = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "projection": wm.summarize_usage([record], 0, False, False), "opened": opened}))',
+    ]);
+    const complete = capture();
+    expect(complete.projection.totals.unknown.output).toBe(40);
+    expect(complete.projection.by_pass).toEqual([]);
+    expect(complete.request.reasons).not.toContain('capacity');
+
+    if (limit === 'file-count') {
+      // Both matching rows are recent and small; 63 newer unrelated runs evict the second one.
+      for (let i = 0; i < 63; i++) putVoice(`other-${i}`, voice('other-run', 'extend-' + u()), 100 + i);
+    } else {
+      appendFileSync(omitted, JSON.stringify({ note: 'x'.repeat(1024 * 1024) }) + '\n');
+      utimesSync(omitted, T0 / 1000 + 61, T0 / 1000 + 61);
+    }
+    const limited = capture();
+    expect(limited.opened).toHaveLength(limit === 'file-count' ? 64 : 1);
+    expect(limited.opened).not.toContain(omitted);
+    const source = limited.request.sources.find((s: any) => s.relation === 'cross-harness');
+    expect(source).toMatchObject({ evidence: 'unknown', link: null, link_evidence: null });
+    expect(limited.request.status).toBe('partial');
+    expect(limited.request.reasons).toEqual(expect.arrayContaining(['capacity', 'ambiguous']));
+    expect(limited.projection.totals.direct.output).toBe(100);
+    expect(limited.projection.totals.unknown.output).toBe(40);
+    expect(limited.projection.totals.correlated.output).toBe(0);
+    expect(limited.projection.by_pass).toEqual([]);
+  });
+
   test('sys.addaudithook guard proves zero network, subprocess, sqlite or credential-file access during capture, plus static import check', () => {
     // Static check on bin/lib/telemetry_usage.py.
     const src = readFileSync(join(ROOT, 'bin/lib/telemetry_usage.py'), 'utf8');
     expect(src).not.toContain('CURSOR_API_KEY');
-    for (const forbiddenMod of ['quota.claude', 'quota.codex', 'quota.cursor', 'quota.store', 'quota.Lock', 'socket', 'subprocess', 'sqlite3', 'urllib', 'http']) {
+    for (const forbiddenMod of ['quota.claude', 'quota.codex', 'quota.cursor', 'quota.store', 'quota.Lock', 'quota.identity', 'quota.index', 'quota.samples', 'quota.readers', 'socket', 'subprocess', 'sqlite3', 'urllib', 'http']) {
       expect(src).not.toContain(forbiddenMod);
     }
 
