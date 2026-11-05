@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 V = 1
@@ -36,6 +37,29 @@ RECEIPT_LIMIT = 2 * 1024
 STDIN_DEADLINE_S = 0.25
 GIT_DEADLINE_S = 0.25
 OPS = ("begin", "end", "decision", "pass", "correction", "read")
+RECORD_OPS = ("begin", "end", "decision", "pass", "correction", "usage")
+USAGE_STATUSES = ("ok", "partial", "unavailable")
+USAGE_HARNESSES = ("claude", "codex", "cursor", "grok", "unknown")
+USAGE_RELATIONS = ("own", "subagent", "nested", "cross-harness")
+USAGE_EVIDENCE = ("direct", "correlated", "unknown")
+USAGE_LINK_EVIDENCE = ("direct", "correlated")
+USAGE_PLACEMENTS = ("step", "overlapping", "outside-steps")
+USAGE_SLOTS = ("primary", "secondary")
+USAGE_CLASSES = ("input", "cache_read", "cache_write", "output", "reasoning")
+USAGE_REASONS = (
+    "unverified-source", "harness-session-unknown", "log-missing", "log-truncated",
+    "scan-budget", "malformed-record", "not-reported", "unsupported", "ambiguous",
+    "outlived-step", "may-continue", "window-not-reported", "too-many-buckets",
+    "too-many-sources", "too-many-models", "too-many-passes", "capacity",
+    "no-usage-record", "missing-reference", "conflicting-usage",
+    "partial-tail", "event-conflict",
+)
+MAX_USAGE_SOURCES = 64
+MAX_USAGE_BUCKETS = 256
+MAX_USAGE_WINDOWS = 8
+MAX_USAGE_MODELS = 16
+MAX_USAGE_PASSES = 32
+MAX_USAGE_RECORD_BYTES = 65536
 STAGES = ("review-and-prep", "ship-and-land")
 PHASES = ("run", "evidence", "scope", "base-integration", "local-pass", "voice",
           "completion", "pregate", "coverage", "documentation", "tests", "commit",
@@ -523,6 +547,8 @@ def validate_request(op, req):
         _validate_pass(base, req)
     elif op == "correction":
         _validate_correction(base, req)
+    elif op == "usage":
+        _validate_usage(base, req)
     else:
         raise _bad("operation", "|".join(OPS))
     return req
@@ -615,6 +641,160 @@ def _validate_correction(base, req):
         raise _bad("correction", "finding needs finding_id and adjudication or resolution")
     if kind == "fix-cycle" and not req.get("fix_step_id"):
         raise _bad("fix_step_id", "required-for-fix-cycle")
+
+
+def _validate_usage_link(link, where):
+    if link is None:
+        return
+    if not isinstance(link, dict):
+        raise _bad(where, "object-or-null")
+    _keys(link, ("pass_id", "attempt_id", "voice_id", "pass", "attempt"), (), where)
+    for field in ("pass_id", "attempt_id"):
+        if link[field] is not None:
+            _uuid(link[field], where + "." + field)
+    if link["voice_id"] is not None and not (
+            isinstance(link["voice_id"], str) and SAFE_ID_RE.fullmatch(link["voice_id"])):
+        raise _bad(where + ".voice_id", "bounded-identifier-or-null")
+    for field in ("pass", "attempt"):
+        val = link[field]
+        if val is not None and not (type(val) is int and 1 <= val < (1 << 31)):
+            raise _bad(where + "." + field, "positive-integer-or-null")
+
+
+def _validate_usage(base, req):
+    _keys(req, base + ("status", "reasons", "harness", "window", "observed_through_ms",
+                       "sources", "buckets", "windows"), ("cli_reported",), "usage")
+    _enum(req, "status", USAGE_STATUSES)
+    _enum(req, "harness", USAGE_HARNESSES)
+    reasons = req["reasons"]
+    if not isinstance(reasons, list) or len(reasons) > len(USAGE_REASONS) or len(set(reasons)) != len(reasons):
+        raise _bad("reasons", "unique-controlled-reasons")
+    for r in reasons:
+        if r not in USAGE_REASONS:
+            raise _bad("reasons[]", "|".join(USAGE_REASONS))
+    window = req["window"]
+    if not isinstance(window, dict):
+        raise _bad("window", "object")
+    _keys(window, ("begin_ms", "end_ms"), (), "window")
+    for f in ("begin_ms", "end_ms"):
+        if type(window[f]) is not int or not (0 <= window[f] < (1 << 53)):
+            raise _bad("window." + f, "non-negative-integer")
+    if window["end_ms"] < window["begin_ms"]:
+        raise _bad("window.end_ms", "end_ms>=begin_ms")
+    if type(req["observed_through_ms"]) is not int or not (0 <= req["observed_through_ms"] < (1 << 53)):
+        raise _bad("observed_through_ms", "non-negative-integer")
+    sources = req["sources"]
+    if not isinstance(sources, list) or len(sources) > MAX_USAGE_SOURCES:
+        raise _bad("sources", "array-of-at-most-%d" % MAX_USAGE_SOURCES)
+    for src in sources:
+        if not isinstance(src, dict):
+            raise _bad("sources[]", "object")
+        _keys(src, ("ref", "agent", "relation", "evidence", "parent_ref", "link", "link_evidence",
+                    "models", "first_ms", "last_ms", "complete", "reasons"), (), "sources[]")
+        if not (isinstance(src["ref"], str) and SHA256_RE.fullmatch(src["ref"])):
+            raise _bad("sources[].ref", "hex64")
+        _enum(src, "agent", USAGE_HARNESSES)
+        _enum(src, "relation", USAGE_RELATIONS)
+        _enum(src, "evidence", USAGE_EVIDENCE)
+        if src["parent_ref"] is not None and not (
+                isinstance(src["parent_ref"], str) and SHA256_RE.fullmatch(src["parent_ref"])):
+            raise _bad("sources[].parent_ref", "hex64-or-null")
+        _validate_usage_link(src["link"], "sources[].link")
+        if src["link"] is None:
+            if src["link_evidence"] is not None:
+                raise _bad("sources[].link_evidence", "null-when-unlinked")
+        elif src["link_evidence"] not in USAGE_LINK_EVIDENCE:
+            raise _bad("sources[].link_evidence", "|".join(USAGE_LINK_EVIDENCE))
+        models = src["models"]
+        if not isinstance(models, list) or len(models) > MAX_USAGE_MODELS or len(set(models)) != len(models):
+            raise _bad("sources[].models", "unique-models")
+        for m in models:
+            if not (isinstance(m, str) and SAFE_ID_RE.fullmatch(m)):
+                raise _bad("sources[].models[]", "bounded-identifier")
+        for tf in ("first_ms", "last_ms"):
+            if src[tf] is not None and not (type(src[tf]) is int and 0 <= src[tf] < (1 << 53)):
+                raise _bad("sources[]." + tf, "non-negative-integer-or-null")
+        if type(src["complete"]) is not bool:
+            raise _bad("sources[].complete", "boolean")
+        sreasons = src["reasons"]
+        if not isinstance(sreasons, list) or len(set(sreasons)) != len(sreasons):
+            raise _bad("sources[].reasons", "unique-controlled-reasons")
+        for r in sreasons:
+            if r not in USAGE_REASONS:
+                raise _bad("sources[].reasons[]", "|".join(USAGE_REASONS))
+    buckets = req["buckets"]
+    if not isinstance(buckets, list) or len(buckets) > MAX_USAGE_BUCKETS:
+        raise _bad("buckets", "array-of-at-most-%d" % MAX_USAGE_BUCKETS)
+    for b in buckets:
+        if not isinstance(b, dict):
+            raise _bad("buckets[]", "object")
+        _keys(b, ("source", "model", "step_id", "placement", "input", "cache_read", "cache_write",
+                  "output", "reasoning", "null_reasons", "responses"), (), "buckets[]")
+        if type(b["source"]) is not int or not (0 <= b["source"] < len(sources)):
+            raise _bad("buckets[].source", "valid-source-index")
+        if b["model"] is not None and not (isinstance(b["model"], str) and SAFE_ID_RE.fullmatch(b["model"])):
+            raise _bad("buckets[].model", "bounded-identifier-or-null")
+        _enum(b, "placement", USAGE_PLACEMENTS)
+        if b["placement"] == "step":
+            _uuid(b["step_id"], "buckets[].step_id")
+        elif b["step_id"] is not None:
+            raise _bad("buckets[].step_id", "null-when-not-step-placement")
+        for cls_key in USAGE_CLASSES:
+            cval = b[cls_key]
+            if cval is not None and not (type(cval) is int and 0 <= cval < (1 << 53)):
+                raise _bad("buckets[]." + cls_key, "non-negative-integer-or-null")
+        nreasons = b["null_reasons"]
+        if not isinstance(nreasons, list) or len(set(nreasons)) != len(nreasons):
+            raise _bad("buckets[].null_reasons", "unique-controlled-reasons")
+        for r in nreasons:
+            if r not in USAGE_REASONS:
+                raise _bad("buckets[].null_reasons[]", "|".join(USAGE_REASONS))
+        if any(b[k] is None for k in USAGE_CLASSES) and not nreasons:
+            raise _bad("buckets[].null_reasons", "required-when-a-class-is-null")
+        if type(b["responses"]) is not int or not (1 <= b["responses"] < (1 << 53)):
+            raise _bad("buckets[].responses", "positive-integer")
+    windows = req["windows"]
+    if not isinstance(windows, list) or len(windows) > MAX_USAGE_WINDOWS:
+        raise _bad("windows", "array-of-at-most-%d" % MAX_USAGE_WINDOWS)
+    for w in windows:
+        if not isinstance(w, dict):
+            raise _bad("windows[]", "object")
+        _keys(w, ("slot", "limit_id", "window_minutes", "used_percent", "resets_at",
+                  "ts_ms", "reset_crossed", "attributable"), (), "windows[]")
+        _enum(w, "slot", USAGE_SLOTS)
+        if w["limit_id"] is not None and not (
+                isinstance(w["limit_id"], str) and SAFE_ID_RE.fullmatch(w["limit_id"])):
+            raise _bad("windows[].limit_id", "bounded-identifier-or-null")
+        if w["window_minutes"] is not None and not (type(w["window_minutes"]) is int and 1 <= w["window_minutes"] < (1 << 31)):
+            raise _bad("windows[].window_minutes", "positive-integer-or-null")
+        up = w["used_percent"]
+        if up is not None and not (type(up) in (int, float) and math.isfinite(up) and 0 <= up <= 1000):
+            raise _bad("windows[].used_percent", "percentage-or-null")
+        if w["resets_at"] is not None and not (type(w["resets_at"]) is int and 0 <= w["resets_at"] < (1 << 53)):
+            raise _bad("windows[].resets_at", "non-negative-integer-or-null")
+        if type(w["ts_ms"]) is not int or not (0 <= w["ts_ms"] < (1 << 53)):
+            raise _bad("windows[].ts_ms", "non-negative-integer")
+        if type(w["reset_crossed"]) is not bool:
+            raise _bad("windows[].reset_crossed", "boolean")
+        if w["attributable"] is not False:
+            raise _bad("windows[].attributable", "false")
+    if "cli_reported" in req:
+        cli = req["cli_reported"]
+        if not isinstance(cli, list) or len(cli) > MAX_USAGE_SOURCES:
+            raise _bad("cli_reported", "array-of-at-most-%d" % MAX_USAGE_SOURCES)
+        for item in cli:
+            if not isinstance(item, dict):
+                raise _bad("cli_reported[]", "object")
+            _keys(item, ("voice_id", "link", "input_tokens", "output_tokens",
+                         "cache_read_input_tokens", "cache_creation_input_tokens"), (), "cli_reported[]")
+            if item["voice_id"] is not None and not (
+                    isinstance(item["voice_id"], str) and SAFE_ID_RE.fullmatch(item["voice_id"])):
+                raise _bad("cli_reported[].voice_id", "bounded-identifier-or-null")
+            _validate_usage_link(item["link"], "cli_reported[].link")
+            for cf in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                cval = item[cf]
+                if cval is not None and not (type(cval) is int and 0 <= cval < (1 << 53)):
+                    raise _bad("cli_reported[]." + cf, "non-negative-integer-or-null")
 
 
 def request_digest(op, req):
@@ -746,10 +926,11 @@ def _validate_record(record):
         raise ValueError("record")
     _keys(record, ("v", "op", "event_id", "request_digest", "captured_at_ms", "producer_version", "request"),
           (), "record")
-    if type(record["v"]) is not int or record["v"] != V:
-        raise ValueError("version")
-    if record["op"] not in OPS or record["op"] == "read":
+    if record["op"] not in RECORD_OPS:
         raise ValueError("op")
+    expected_v = 2 if record["op"] == "usage" else V
+    if type(record["v"]) is not int or record["v"] != expected_v:
+        raise ValueError("version")
     _uuid(record["event_id"], "event_id")
     if not (isinstance(record["request_digest"], str) and SHA256_RE.fullmatch(record["request_digest"])):
         raise ValueError("digest")
@@ -872,7 +1053,8 @@ def mutate(op, req):
         if not initial and bound is None:
             raise Fail("unavailable", "capture-missing", cause="no-bound-run")
         captured = _now_ms()
-        record = {"v": V, "op": op, "event_id": req["event_id"], "request_digest": digest,
+        rec_v = 2 if op == "usage" else V
+        record = {"v": rec_v, "op": op, "event_id": req["event_id"], "request_digest": digest,
                   "captured_at_ms": captured, "producer_version": producer_version(), "request": req}
         line = (json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n").encode()
         if len(records) >= MAX_RECORDS or len(data) + len(line) > MAX_BYTES:
@@ -903,6 +1085,131 @@ def mutate(op, req):
         if read_fd is not None:
             os.close(read_fd)
         os.close(lock_fd)
+
+
+def _load_telemetry_usage():
+    import importlib.util
+    target = Path(__file__).resolve().parent / "telemetry_usage.py"
+    spec = importlib.util.spec_from_file_location("telemetry_usage", target)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _merge_buckets_by_source_model(buckets):
+    grouped = {}
+    for b in buckets:
+        key = (b["source"], b["model"])
+        grouped.setdefault(key, []).append(b)
+    merged = []
+    for (src_idx, model), items in grouped.items():
+        out = {"source": src_idx, "model": model, "step_id": None, "placement": "outside-steps"}
+        null_reasons = set()
+        for cls_key in USAGE_CLASSES:
+            vals = [it.get(cls_key) for it in items]
+            if any(v is None for v in vals):
+                out[cls_key] = None
+                null_reasons.add("not-reported")
+                for it in items:
+                    if it.get(cls_key) is None:
+                        null_reasons.update(it.get("null_reasons") or ("not-reported",))
+            else:
+                out[cls_key] = sum(vals)
+        out["null_reasons"] = sorted(null_reasons)
+        out["responses"] = sum(it.get("responses", 1) for it in items)
+        merged.append(out)
+    return merged
+
+
+def capture_usage(sid, stage, begin_s, end_s, agent, root, home=None):
+    """Capture run token usage at finish for a bound workflow-metrics ledger. Never raises."""
+    try:
+        disabled, _ = metrics_disabled()
+        if disabled:
+            return None
+        if stage not in STAGES or not isinstance(sid, str) or not SESSION_RE.fullmatch(sid):
+            return None
+        paths = run_paths(sid)
+        if not os.path.lexists(paths["ledger"]):
+            return None
+        read_fd = _open_ledger_read(paths)
+        if read_fd is None:
+            return None
+        try:
+            data, overflow = _read_snapshot(read_fd)
+        finally:
+            os.close(read_fd)
+        records, _malformed, _partial_tail = parse_ledger(data, overflow)
+        bound = next((r for r in records if r["op"] == "begin" and r["request"].get("kind") == "run"), None)
+        if bound is None or bound["request"].get("stage") != stage:
+            return None
+        run_step_id = bound["request"]["step_id"]
+        begins, ends = {}, {}
+        for r in records:
+            req = r["request"]
+            if r["op"] == "begin":
+                begins.setdefault(req["step_id"], []).append(r)
+            elif r["op"] == "end":
+                ends.setdefault(req["step_id"], []).append(r)
+        steps = {}
+        for step_id, starts in begins.items():
+            first_req = starts[0]["request"]
+            if first_req.get("kind") == "run":
+                continue
+            lo_ms = starts[0]["captured_at_ms"]
+            finishes = ends.get(step_id, [])
+            hi_ms = finishes[0]["captured_at_ms"] if finishes and finishes[0]["captured_at_ms"] >= lo_ms else None
+            parent_id = first_req.get("parent_step_id")
+            if parent_id == run_step_id:
+                parent_id = None
+            steps[step_id] = (lo_ms, hi_ms, parent_id)
+        begin_ms = int(round(float(begin_s) * 1000)) if begin_s is not None else bound["captured_at_ms"]
+        end_ms = int(round(float(end_s) * 1000)) if end_s is not None else _now_ms()
+        if end_ms < begin_ms:
+            end_ms = begin_ms
+        if agent == "claude":
+            harness_session = os.environ.get("CLAUDE_CODE_SESSION_ID")
+        elif agent == "codex":
+            harness_session = os.environ.get("CODEX_THREAD_ID")
+        else:
+            harness_session = None
+        tu = _load_telemetry_usage()
+        run_ends = ends.get(run_step_id, [])
+        run_end_ms = run_ends[0]["captured_at_ms"] if run_ends else None
+        req = tu.collect(agent, harness_session, begin_ms, end_ms, root, stage, sid, steps,
+                         home=home, run_end_ms=run_end_ms)
+        req["event_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, "gstack-extend:usage:" + sid))
+
+        def _line_len(candidate_req):
+            rec = {"v": 2, "op": "usage", "event_id": candidate_req["event_id"],
+                   "request_digest": request_digest("usage", candidate_req),
+                   "captured_at_ms": _now_ms(), "producer_version": producer_version(),
+                   "request": candidate_req}
+            return len((json.dumps(rec, ensure_ascii=True, separators=(",", ":")) + "\n").encode())
+
+        if len(req["buckets"]) > MAX_USAGE_BUCKETS or _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            req["buckets"] = _merge_buckets_by_source_model(req["buckets"])
+            req["reasons"] = sorted(set(req["reasons"]) | {"too-many-buckets"})
+            if req["status"] == "ok":
+                req["status"] = "partial"
+        if len(req["buckets"]) > MAX_USAGE_BUCKETS or _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            req["buckets"] = []
+            req["reasons"] = sorted(set(req["reasons"]) | {"capacity"})
+            if req["status"] == "ok":
+                req["status"] = "partial"
+        if _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            # Source models/links and provider observations can exceed the cap
+            # without any buckets. Keep a compact, explicitly unknown capture.
+            req["sources"] = []
+            req["windows"] = []
+            req["cli_reported"] = []
+        if _line_len(req) > MAX_USAGE_RECORD_BYTES:
+            return None
+        validate_request("usage", req)
+        status, _ = mutate("usage", req)
+        return status
+    except Exception:
+        return None
 
 
 # --- read projection: raw observations in, qualified summaries out ---
@@ -962,6 +1269,9 @@ def summarize(records, malformed, partial_tail, overflow):
         unknown.add("event-conflict")
         effective = [r for r in effective if r["event_id"] not in conflicts]
         by_event = {r["event_id"]: r for r in effective}
+    total_records = len(effective)
+    effective = [r for r in effective if r["op"] != "usage"]
+    by_event = {r["event_id"]: r for r in effective}
     stages = {r["request"]["stage"] for r in effective}
     run_begins = [r for r in effective if r["op"] == "begin" and r["request"].get("kind") == "run"]
     run_context = run_begins[0]["request"]["context"] if len(run_begins) == 1 else None
@@ -999,7 +1309,7 @@ def summarize(records, malformed, partial_tail, overflow):
     delegated = None if integrity else _delegated(effective, passes["delegate_findings"], unknown)
     data = {
         "capture": "partial" if integrity else "ok",
-        "records": len(effective), "malformed_records": malformed, "partial_tail": partial_tail,
+        "records": total_records, "malformed_records": malformed, "partial_tail": partial_tail,
         "conflicting_event_ids": len(conflicts),
         "stage": stages.pop() if len(stages) == 1 else None,
         "clock_basis": "utc-wall", "clock_quality": "clock-sensitive",
@@ -1523,12 +1833,247 @@ def receipt_text(data):
     return text
 
 
+def _sum_usage_buckets(buckets, unavailable=False):
+    if unavailable:
+        out = {k: None for k in USAGE_CLASSES}
+        out["null_reasons"] = ["not-reported"]
+        return out
+    if not buckets:
+        out = {k: 0 for k in USAGE_CLASSES}
+        out["null_reasons"] = []
+        return out
+    out = {}
+    null_reasons = set()
+    for cls_key in USAGE_CLASSES:
+        vals = [b.get(cls_key) for b in buckets]
+        if any(v is None for v in vals):
+            out[cls_key] = None
+            null_reasons.add("not-reported")
+            for b in buckets:
+                if b.get(cls_key) is None:
+                    null_reasons.update(b.get("null_reasons") or ("not-reported",))
+        else:
+            out[cls_key] = sum(vals)
+    out["null_reasons"] = sorted(null_reasons)
+    return out
+
+
+def summarize_usage(records, malformed, partial_tail, overflow):
+    reasons = set()
+    if malformed:
+        reasons.add("malformed-record")
+    if partial_tail or overflow:
+        reasons.add("partial-tail")
+    by_event, effective = {}, []
+    conflicts = set()
+    usage_conflict = False
+    for record in records:
+        prior = by_event.get(record["event_id"])
+        if prior is None:
+            by_event[record["event_id"]] = record
+            effective.append(record)
+        elif prior["request_digest"] != record["request_digest"]:
+            conflicts.add(record["event_id"])
+            if record["op"] == "usage" or prior["op"] == "usage":
+                usage_conflict = True
+    if conflicts:
+        reasons.add("event-conflict")
+        effective = [r for r in effective if r["event_id"] not in conflicts or r["op"] == "usage"]
+    if usage_conflict:
+        reasons.add("conflicting-usage")
+    non_usage = [r for r in effective if r["op"] != "usage" and r["event_id"] not in conflicts]
+    stages = {r["request"]["stage"] for r in non_usage}
+    stage = next(iter(stages)) if len(stages) == 1 else None
+    step_phases = {}
+    known_passes = set()
+    known_attempts = set()
+    for r in non_usage:
+        req_r = r["request"]
+        if r["op"] == "begin" and req_r.get("kind") != "run":
+            step_phases.setdefault(req_r["step_id"], req_r.get("phase") or req_r.get("wait_category") or "unattributed")
+        elif r["op"] == "pass":
+            known_passes.add(req_r["pass_id"])
+            if req_r.get("attempt_id"):
+                known_attempts.add(req_r["attempt_id"])
+    usage_recs = [r for r in effective if r["op"] == "usage"]
+    if not usage_recs:
+        reasons.add("no-usage-record")
+        return {
+            "capture": "missing",
+            "reasons": sorted(reasons),
+            "stage": stage,
+            "harness": None,
+            "window": None,
+            "observed_through_ms": None,
+            "totals": {
+                "direct": _sum_usage_buckets([], unavailable=True),
+                "correlated": _sum_usage_buckets([], unavailable=True),
+                "unknown": _sum_usage_buckets([], unavailable=True),
+            },
+            "by_model": [],
+            "by_phase": {},
+            "by_pass": [],
+            "children": {"direct": 0, "correlated": 0, "unknown": 0, "outlived-step": 0, "may-continue": 0},
+            "cli_reported": [],
+            "windows": [],
+        }
+    if len(usage_recs) > 1:
+        reasons.add("conflicting-usage")
+    req = usage_recs[0]["request"]
+    reasons.update(req.get("reasons") or ())
+    sources = req["sources"]
+    buckets = req["buckets"]
+    unavail = req["status"] == "unavailable"
+    for src in sources:
+        link = src.get("link")
+        if isinstance(link, dict):
+            if link.get("pass_id") is not None and link["pass_id"] not in known_passes:
+                reasons.add("missing-reference")
+            if link.get("attempt_id") is not None and link["attempt_id"] not in known_attempts:
+                reasons.add("missing-reference")
+    for item in req.get("cli_reported") or ():
+        link = item.get("link")
+        if isinstance(link, dict):
+            if link.get("pass_id") is not None and link["pass_id"] not in known_passes:
+                reasons.add("missing-reference")
+            if link.get("attempt_id") is not None and link["attempt_id"] not in known_attempts:
+                reasons.add("missing-reference")
+    for b in buckets:
+        if b["placement"] == "step" and b["step_id"] not in step_phases:
+            reasons.add("missing-reference")
+
+    by_ev = {"direct": [], "correlated": [], "unknown": []}
+    for b in buckets:
+        ev = sources[b["source"]]["evidence"]
+        by_ev[ev].append(b)
+    totals = {
+        "direct": _sum_usage_buckets(by_ev["direct"], unavailable=unavail),
+        "correlated": _sum_usage_buckets(by_ev["correlated"], unavailable=unavail),
+        "unknown": _sum_usage_buckets(by_ev["unknown"], unavailable=unavail),
+    }
+    for source in sources:
+        if "log-missing" in source["reasons"]:
+            total = totals[source["evidence"]]
+            total.update({key: None for key in USAGE_CLASSES})
+            total["null_reasons"] = sorted(set(total["null_reasons"]) | {"log-missing"})
+    missing_counts = {"capacity", "scan-budget", "log-missing"} & reasons
+    if not buckets and missing_counts:
+        # Discarded or unobserved usage is unknown, not zero work.
+        for total in totals.values():
+            total.update({key: None for key in USAGE_CLASSES})
+            total["null_reasons"] = sorted(missing_counts)
+
+    model_groups = {}
+    for b in buckets:
+        ev = sources[b["source"]]["evidence"]
+        model_groups.setdefault((b["model"], ev), []).append(b)
+    if len(model_groups) > MAX_USAGE_MODELS:
+        by_model = None
+        reasons.add("too-many-models")
+    else:
+        by_model = []
+        for (model, ev) in sorted(model_groups, key=lambda k: (k[0] or "", k[1])):
+            cls_obj = _sum_usage_buckets(model_groups[(model, ev)])
+            by_model.append({
+                "model": model,
+                "evidence": ev,
+                "classes": cls_obj,
+                **cls_obj,
+            })
+
+    phase_groups = {}
+    for b in buckets:
+        ev = sources[b["source"]]["evidence"]
+        if ev not in ("direct", "correlated"):
+            continue
+        if b["placement"] == "step" and b["step_id"] in step_phases:
+            phase_name = step_phases[b["step_id"]]
+        else:
+            phase_name = "unattributed"
+        phase_groups.setdefault(phase_name, {"direct": [], "correlated": []})[ev].append(b)
+    by_phase = {}
+    for phase_name in sorted(phase_groups):
+        by_phase[phase_name] = {
+            "direct": _sum_usage_buckets(phase_groups[phase_name]["direct"]),
+            "correlated": _sum_usage_buckets(phase_groups[phase_name]["correlated"]),
+        }
+
+    pass_groups = {}
+    for b in buckets:
+        src = sources[b["source"]]
+        link = src.get("link")
+        link_ev = src.get("link_evidence")
+        if not isinstance(link, dict) or link_ev not in ("direct", "correlated"):
+            continue
+        pkey = (
+            link.get("pass_id"),
+            link.get("pass"),
+            link.get("attempt_id"),
+            link.get("attempt"),
+            link.get("voice_id"),
+            link_ev,
+        )
+        pass_groups.setdefault(pkey, []).append(b)
+    if len(pass_groups) > MAX_USAGE_PASSES:
+        by_pass = None
+        reasons.add("too-many-passes")
+    else:
+        by_pass = []
+        for pkey in sorted(
+            pass_groups,
+            key=lambda k: (k[1] or 0, k[0] or "", k[3] or 0, k[2] or "", k[4] or "", k[5] or ""),
+        ):
+            pid, pnum, aid, anum, vid, lev = pkey
+            cls_obj = _sum_usage_buckets(pass_groups[pkey])
+            by_pass.append({
+                "pass_id": pid,
+                "pass": pnum,
+                "attempt_id": aid,
+                "attempt": anum,
+                "voice_id": vid,
+                "link_evidence": lev,
+                "classes": cls_obj,
+                **cls_obj,
+            })
+
+    child_sources = [s for s in sources if s["relation"] != "own"]
+    children = {
+        "direct": sum(1 for s in child_sources if s["evidence"] == "direct"),
+        "correlated": sum(1 for s in child_sources if s["evidence"] == "correlated"),
+        "unknown": sum(1 for s in child_sources if s["evidence"] == "unknown"),
+        "outlived-step": sum(1 for s in child_sources if "outlived-step" in (s.get("reasons") or ())),
+        "may-continue": sum(1 for s in child_sources if "may-continue" in (s.get("reasons") or ())),
+    }
+
+    read_partial_reasons = {
+        "conflicting-usage", "missing-reference", "too-many-models", "too-many-passes",
+        "malformed-record", "partial-tail", "event-conflict",
+    }
+    capture_status = "ok" if req["status"] == "ok" and not (reasons & read_partial_reasons) else "partial"
+
+    return {
+        "capture": capture_status,
+        "reasons": sorted(reasons),
+        "stage": req["stage"],
+        "harness": req["harness"],
+        "window": req["window"],
+        "observed_through_ms": req["observed_through_ms"],
+        "totals": totals,
+        "by_model": by_model,
+        "by_phase": by_phase,
+        "by_pass": by_pass,
+        "children": children,
+        "cli_reported": list(req.get("cli_reported") or ()),
+        "windows": list(req["windows"]),
+    }
+
+
 HELP = """Usage: gstack-extend-telemetry metrics <operation>
 Operations: begin, end, decision, pass, correction, read.
 Producers take exactly one JSON object (v=1; a pass alone may send v=2 or v=3) on stdin (16 KiB max) and print one
 JSON result envelope; inspect its status, the launcher always exits 0.
 metrics <operation> --help shows that operation's fields. metrics read takes
---session-id <extend-UUID> [--event-id <UUID>] and never writes.
+--session-id <extend-UUID> [--event-id <UUID> | --usage] and never writes.
 Detailed capture inherits provenance and GSTACK_EXTEND_WORKFLOW_METRICS=off disables
 it. Wall durations are utc-wall and clock-sensitive; qualified elapsed is unavailable.
 See docs/telemetry.md#workflow-metrics."""
@@ -1552,13 +2097,13 @@ OP_HELP = {
             "null when unknown): credited needs a completed attempt and no reason, fell-back needs a failed one.",
     "correction": "correction: v, stage, session_id, event_id, correction_kind=retry|fallback|parent|finding|fix-cycle "
                   "plus the explicit referenced IDs for that kind; corrections append, never rewrite.",
-    "read": "read: --session-id <extend-UUID> [--event-id <UUID>]. Observation-free named-run summary "
-            "(16 KiB max) or one event's digest/timestamp for reconciliation. Receipt text is at most 2 KiB.",
+    "read": "read: --session-id <extend-UUID> [--event-id <UUID> | --usage]. Observation-free named-run summary "
+            "(16 KiB max), per-run token usage projection (--usage), or one event's digest/timestamp for reconciliation. Receipt text is at most 2 KiB.",
 }
 
 
 def read_op(args):
-    session_id, event_id = None, None
+    session_id, event_id, want_usage = None, None, False
     items = list(args)
     while items:
         flag = items.pop(0)
@@ -1566,10 +2111,14 @@ def read_op(args):
             session_id = items.pop(0)
         elif flag == "--event-id" and items and event_id is None:
             event_id = items.pop(0)
+        elif flag == "--usage" and not want_usage:
+            want_usage = True
         else:
             raise Fail("unavailable", "invalid-input", field="argv", cause="unexpected-argv")
     if session_id is None or not SESSION_RE.fullmatch(session_id):
         raise Fail("unavailable", "invalid-input", field="session_id", expected="extend-uuid")
+    if want_usage and event_id is not None:
+        raise Fail("unavailable", "invalid-input", field="argv", cause="usage-with-event-id")
     if event_id is not None and not UUID_RE.fullmatch(event_id):
         raise Fail("unavailable", "invalid-input", field="event_id", expected="uuid")
     paths = run_paths(session_id)
@@ -1581,6 +2130,17 @@ def read_op(args):
     finally:
         os.close(fd)
     records, malformed, partial_tail = parse_ledger(data, overflow)
+    if want_usage:
+        usage_data = summarize_usage(records, malformed, partial_tail, overflow)
+        if partial_tail:
+            status, reason = "partial", "partial-tail"
+        elif malformed or overflow or "missing-reference" in usage_data["reasons"] or "conflicting-usage" in usage_data["reasons"]:
+            status, reason = "partial", "malformed-record"
+        elif "event-conflict" in usage_data["reasons"]:
+            status, reason = "partial", "event-conflict"
+        else:
+            status, reason = "ok", None
+        return status, reason, usage_data
     summary = summarize(records, malformed, partial_tail, overflow)
     valid_snapshot = not malformed and not partial_tail and not overflow
     if event_id is not None:

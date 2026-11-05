@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv from 'ajv';
 import { HELPER_BIN, cleanupTelemetryFixtures, compareRealStores, harvestSessionIds, makeTelemetryFixture, realStoreSpecs, snapshotRealStores, assertRealStoresUntouched, type StoreSpec, type TelemetryFixture } from './helpers/telemetry-env';
-import { appendFileSync, realpathSync, truncateSync } from 'node:fs';
+import { appendFileSync, realpathSync, truncateSync, utimesSync } from 'node:fs';
 
 afterAll(cleanupTelemetryFixtures, 60_000);
 const ROOT = join(import.meta.dir, '..');
@@ -201,7 +201,7 @@ describe('C2/E3 exact invocation binding', () => {
     expect(runRaw(fix.env, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo).status).toBe(0);
     const after = read(fix, sid).envelope;
     expect(after.status).toBe('ok');
-    expect(after.data.records).toBe(1);
+    expect(after.data.records).toBe(2);
     // Later records need no git: a decision from outside any checkout still records.
     const dec = metrics(fix.env, 'decision', { ...base(sid), step_id: step, phase: 'readiness', decision: 'RUN', reason: 'required' }, fix.home).envelope;
     expect(dec.status).toBe('recorded');
@@ -854,6 +854,9 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     const launcher = join(linkDir, 'gstack-extend-telemetry');
     const repo = gitRepo(fix);
     writeFileSync(join(repo, 'workflow_metrics.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
+    writeFileSync(join(repo, 'telemetry_usage.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
+    mkdirSync(join(repo, 'quota'), { recursive: true });
+    writeFileSync(join(repo, 'quota/__init__.py'), 'print("PLANTED")\nraise SystemExit(9)\n');
     const env = { ...fix.env, PYTHONPATH: '.' };
     const started = spawnSync(launcher, ['start', '--skill', 'extend:ship-and-land'], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
     const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)?.[1]!;
@@ -863,9 +866,13 @@ describe('C7 installed copies resolve the adjacent module under -I', () => {
     });
     expect(began.stdout + began.stderr).not.toContain('PLANTED');
     expect(JSON.parse(began.stdout).status).toBe('recorded');
+    const finished = spawnSync(launcher, ['finish', '--skill', 'extend:ship-and-land', '--outcome', 'success'], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
+    expect(finished.status).toBe(0);
+    expect(finished.stdout + finished.stderr).not.toContain('PLANTED');
     const readBack = spawnSync(launcher, ['metrics', 'read', '--session-id', sid], { env, cwd: repo, encoding: 'utf8', timeout: 15_000 });
     expect(JSON.parse(readBack.stdout).data.stage).toBe('ship-and-land');
     expect(existsSync(join(install, 'bin/lib/workflow_metrics.py'))).toBe(true);
+    expect(existsSync(join(install, 'bin/lib/telemetry_usage.py'))).toBe(true);
   }, 30_000);
   test('a stalled git lookup bounds the first bind instead of waiting', () => {
     const fix = makeTelemetryFixture('community');
@@ -2473,3 +2480,997 @@ test('ambiguous finding corrections leave both scopes attribution unknown', () =
     expect(totals.unattributed).toBeNull();
   }
 }, 120_000);
+
+describe('Track 67A run token usage capture and read --usage', () => {
+  const FIXTURE_DIR = join(ROOT, 'tests/fixtures/run-usage');
+  const T0 = Date.parse('2026-01-01T00:00:00Z');
+  const T_END = Date.parse('2026-01-01T00:01:00Z');
+
+  function readUsage(fix: TelemetryFixture, sid: string, extraArgs: string[] = []) {
+    return runRaw(fix.env, ['metrics', 'read', '--session-id', sid, '--usage', ...extraArgs]);
+  }
+
+  function loadFixtureText(name: string, replacements: Record<string, string> = {}) {
+    let text = readFileSync(join(FIXTURE_DIR, name), 'utf8');
+    for (const [k, v] of Object.entries(replacements)) {
+      text = text.split(k).join(v);
+    }
+    return text;
+  }
+
+  function runPythonCollect(fix: TelemetryFixture, scriptLines: string[]) {
+    const driver = join(fix.home, `collect-${randomUUID()}.py`);
+    writeFileSync(driver, [
+      'import importlib.util, json, os, sys',
+      `sys.path.insert(0, ${JSON.stringify(join(ROOT, 'bin/lib'))})`,
+      'import telemetry_usage as tu, workflow_metrics as wm',
+      ...scriptLines,
+    ].join('\n'));
+    const res = spawnSync('python3', ['-B', '-I', driver], { env: fix.env, cwd: fix.home, encoding: 'utf8', timeout: 15_000 });
+    expect(res.status, res.stderr || res.stdout).toBe(0);
+    return JSON.parse(res.stdout);
+  }
+
+  test('Claude streaming dedup, nested toolUseId linkage, voices join, cli_reported separation, and privacy sentinels', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'work-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/work-repo');
+    const subDir = join(projDir, 'syn-claude-parent-001/subagents');
+    mkdirSync(subDir, { recursive: true });
+
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-sub-001.jsonl'), loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-001.jsonl'), loadFixtureText('claude-nested-linked.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-001.meta.json'), JSON.stringify({ spawnDepth: 2, toolUseId: 'toolu_nested_001' }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-unlinked.jsonl'), loadFixtureText('claude-nested-unlinked.jsonl', { __CWD__: repo }));
+    writeFileSync(join(subDir, 'agent-syn-claude-nested-unlinked.meta.json'), JSON.stringify({ spawnDepth: 2, toolUseId: 'toolu_missing_999' }));
+
+    const sid = 'extend-' + u();
+    const stepLocal = u(), stepTests = u();
+    const run = runRows(sid, T0);
+    const p = passRows(sid, { at: T0 + 13_000, voices: [{ voice: 'red-team', findings: [] }] });
+    const passId = p.passId;
+    const attemptId = p.attempts['red-team']!;
+    const voicesDir = join(fix.home, '.gstack/projects/work-repo/review-and-prep');
+    mkdirSync(voicesDir, { recursive: true });
+    writeFileSync(join(voicesDir, 'voices.jsonl'), loadFixtureText('voices.jsonl', {
+      __SESSION_ID__: sid,
+      '22222222-2222-4222-8222-222222222222': passId,
+      '33333333-3333-4333-8333-333333333333': attemptId,
+    }));
+
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'begin', at: T0 + 2_000, request: { ...base(sid), step_id: stepLocal, parent_step_id: run.step, kind: 'phase', phase: 'local-pass' } },
+      { op: 'end', at: T0 + 40_000, request: { ...base(sid), step_id: stepLocal, outcome: 'completed' } },
+      { op: 'begin', at: T0 + 42_000, request: { ...base(sid), step_id: stepTests, parent_step_id: run.step, kind: 'phase', phase: 'tests' } },
+      { op: 'end', at: T0 + 58_000, request: { ...base(sid), step_id: stepTests, outcome: 'completed' } },
+      ...p.rows,
+    ]);
+
+    const collected = runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      `print(json.dumps({"status": status}))`,
+    ]);
+    expect(collected.status).toBe('recorded');
+
+    const lines = ledgerLines(fix, sid).map(l => JSON.parse(l));
+    const usageLine = lines[lines.length - 1]!;
+    expect(usageLine.v).toBe(2);
+    expect(usageLine.op).toBe('usage');
+    expect(validRecord(usageLine)).toBe(true);
+
+    // Criterion 11 privacy check: no raw session/agent IDs, paths or content sentinels in stored line or projection.
+    const rawLedgerText = readFileSync(ledgerFile(fix, sid), 'utf8');
+    const usageRead = readUsage(fix, sid);
+    const usageEnv = JSON.parse(usageRead.stdout);
+    expect(usageEnv.status).toBe('ok');
+    for (const forbidden of [
+      'syn-claude-parent-001',
+      'syn-claude-sub-001',
+      'syn-claude-nested-001',
+      'syn-claude-nested-unlinked',
+      'SYNTHETIC_PROMPT_SENTINEL_DO_NOT_STORE',
+      'SYNTHETIC_REPLY_SENTINEL',
+      repo,
+    ]) {
+      expect(rawLedgerText).not.toContain(forbidden);
+      expect(usageRead.stdout).not.toContain(forbidden);
+    }
+
+    // Streaming dedup: msg-stream-1 output counted once at 40 (+ msg-turn-2 output 60 + subagent 75 + nested 15 + unlinked 12 = 202).
+    // Input: 100 + 200 + 300 + 50 + 40 = 690. Cache read: 50 + 80 + 10 + 0 + 0 = 140. Cache write: 20 + 0 + 5 + 0 + 0 = 25. Reasoning: null (not-reported on Claude).
+    const uData = usageEnv.data;
+    expect(uData.harness).toBe('claude');
+    expect(uData.reasons).toContain('window-not-reported');
+    expect(uData.reasons).toContain('not-reported');
+    expect(uData.totals.direct).toMatchObject({
+      input: 690,
+      cache_read: 140,
+      cache_write: 25,
+      output: 202,
+      reasoning: null,
+      null_reasons: ['not-reported'],
+    });
+    expect(uData.by_phase['local-pass'].direct).toMatchObject({ input: 490, output: 142 });
+    expect(uData.by_phase['tests'].direct).toMatchObject({ input: 200, output: 60 });
+    expect(uData.children).toMatchObject({ direct: 3, correlated: 0, unknown: 0 });
+
+    // Nested linked child has parent_ref pointing to subagent; unlinked depth-2 child has parent_ref null.
+    const nestedSources = usageLine.request.sources.filter((s: any) => s.relation === 'nested');
+    expect(nestedSources).toHaveLength(2);
+    expect(nestedSources.filter((s: any) => s.parent_ref !== null)).toHaveLength(1);
+    expect(nestedSources.filter((s: any) => s.parent_ref === null)).toHaveLength(1);
+
+    // Voices join & cli_reported kept separate from log totals.
+    expect(uData.by_pass).toHaveLength(1);
+    expect(uData.by_pass[0]).toMatchObject({
+      pass_id: passId,
+      attempt_id: attemptId,
+      voice_id: 'red-team',
+      link_evidence: 'direct',
+      input: 350, // subagent (300) + linked nested child (50)
+      output: 90, // subagent (75) + linked nested child (15)
+    });
+    expect(uData.cli_reported).toEqual([{
+      voice_id: 'red-team',
+      link: { pass_id: passId, attempt_id: attemptId, voice_id: 'red-team', pass: 1, attempt: 1 },
+      input_tokens: 315,
+      output_tokens: 75,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 5,
+    }]);
+
+    // A child ID alone admits an older voice row without a metrics session ID.
+    const childOnly = JSON.parse(readFileSync(join(voicesDir, 'voices.jsonl'), 'utf8'));
+    delete childOnly.metrics.session_id;
+    writeFileSync(join(voicesDir, 'voices.jsonl'), JSON.stringify(childOnly) + '\n');
+    const fallback = runPythonCollect(fix, [
+      `req = tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(fallback.sources.find((s: any) => s.relation === 'subagent').link).toMatchObject({ pass_id: passId, attempt_id: attemptId });
+    expect(fallback.cli_reported).toEqual(uData.cli_reported);
+  }, 60_000);
+
+  test('Codex cumulative deltas, counter reset epoch, subagent_history_start_ordinal, grandchild lineage, mid-file tail seed, and window reset_crossed', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'codex-repo');
+    mkdirSync(repo, { recursive: true });
+    const sessDir = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(sessDir, { recursive: true });
+
+    const parentTid = '01940000-0000-7000-8000-000000000001';
+    const childTid = '01940000-0000-7000-8000-000000000002';
+    const grandTid = '01940000-0000-7000-8000-000000000003';
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-00-${parentTid}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-12-${childTid}.jsonl`), loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }));
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-19-${grandTid}.jsonl`), loadFixtureText('codex-grandchild.jsonl', { __CWD__: repo }));
+
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    craft(fix, sid, run.rows);
+
+    const res = runPythonCollect(fix, [
+      `os.environ["CODEX_THREAD_ID"] = ${JSON.stringify(parentTid)}`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "codex", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      `print(json.dumps({"status": status}))`,
+    ]);
+    expect(res.status).toBe('recorded');
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    const uData = usageEnv.data;
+    // Parent: turn 1 (input 400 uncached + 100 cached, out 80, reasoning 20)
+    //       + turn 2 delta (input 200 uncached + 200 cached, out 70, reasoning 30)
+    //       + turn 3 reset epoch (input 200 uncached + 50 cached, out 40, reasoning 10)
+    //       = parent input 800, cache_read 350, output 190, reasoning 60
+    // Child (ordinals 0 and 1 skipped because subagent_history_start_ordinal=2):
+    //       ordinal 2 (total 160, cached 40 -> input 120, cache_read 40, output 35, reasoning 5)
+    // Grandchild (depth 2 via parent_thread_id chain):
+    //       (total 90, cached 10 -> input 80, cache_read 10, output 25, reasoning 5)
+    expect(uData.totals.direct).toMatchObject({
+      input: 1000,
+      cache_read: 400,
+      cache_write: null,
+      output: 250,
+      reasoning: 70,
+      null_reasons: ['not-reported'],
+    });
+    expect(uData.children).toMatchObject({ direct: 2, correlated: 0, unknown: 0 });
+    expect(uData.windows.length).toBeGreaterThanOrEqual(2);
+    for (const w of uData.windows) {
+      expect(w.attributable).toBe(false);
+      expect(w).not.toHaveProperty('credits');
+      expect(w).not.toHaveProperty('plan_type');
+    }
+
+    // Keep exactly the final two counter rows: the first seeds, the second starts a new epoch.
+    const parentLines = loadFixtureText('codex-parent.jsonl', { __CWD__: repo }).trim().split('\n');
+    const tailBytes = Buffer.byteLength(parentLines.slice(-2).join('\n') + '\n') + 1;
+    const midRes = runPythonCollect(fix, [
+      `tu.MAX_TAIL_BYTES = ${tailBytes}`,
+      `req = tu.collect("codex", ${JSON.stringify(parentTid)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(midRes.reasons).toContain('log-truncated');
+    expect(midRes.buckets.filter((b: any) => midRes.sources[b.source].relation === 'own')).toEqual([
+      expect.objectContaining({ input: 200, cache_read: 50, output: 40, reasoning: 10, responses: 1 }),
+    ]);
+
+    // Account reset is independent of cumulative token counter reset.
+    const resetRows = parentLines.map(line => JSON.parse(line));
+    const finalLimits = resetRows.at(-1).payload.rate_limits;
+    finalLimits.primary.resets_at += 120;
+    finalLimits.secondary.used_percent = 2;
+    writeFileSync(join(sessDir, `rollout-2026-01-01T00-00-00-${parentTid}.jsonl`), resetRows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const resetRes = runPythonCollect(fix, [
+      `req = tu.collect("codex", ${JSON.stringify(parentTid)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    for (const slot of ['primary', 'secondary']) {
+      const windows = resetRes.windows.filter((w: any) => w.slot === slot);
+      expect(windows[0].reset_crossed).toBe(false);
+      expect(windows.at(-1).reset_crossed).toBe(true);
+    }
+  }, 60_000);
+
+  test('concurrent foreign session makes unlinked cross-harness candidates unknown/ambiguous; distinct voices.jsonl intervals correlate two outside calls', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'shared-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/shared-repo');
+    const codexDir = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(projDir, { recursive: true });
+    mkdirSync(codexDir, { recursive: true });
+
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+
+    // Two outside Codex rollouts in the same worktree during the run window.
+    const out1 = '01940000-0000-7000-8000-000000000011';
+    const out2 = '01940000-0000-7000-8000-000000000012';
+    writeFileSync(join(codexDir, `rollout-2026-01-01T00-00-15-${out1}.jsonl`), [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:15Z', type: 'session_meta', payload: { id: out1, cwd: repo, model: 'gpt-5.4' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:18Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 110, cached_input_tokens: 10, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 130 } } } }),
+    ].join('\n') + '\n');
+    writeFileSync(join(codexDir, `rollout-2026-01-01T00-00-40-${out2}.jsonl`), [
+      JSON.stringify({ timestamp: '2026-01-01T00:00:40Z', type: 'session_meta', payload: { id: out2, cwd: repo, model: 'gpt-5.4' } }),
+      JSON.stringify({ timestamp: '2026-01-01T00:00:44Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 220, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 0, total_tokens: 250 } } } }),
+    ].join('\n') + '\n');
+
+    // Case 1: With two distinct voices.jsonl intervals and no foreign session, both outside calls are correlated.
+    const sid1 = 'extend-' + u();
+    const voicesDir = join(fix.home, '.gstack/projects/shared-repo/review-and-prep');
+    mkdirSync(voicesDir, { recursive: true });
+    writeFileSync(join(voicesDir, 'voices.jsonl'), [
+      JSON.stringify({
+        v: 1, stage: 'review-and-prep', recorded_at: '2026-01-01T00:00:20Z', pass: 1, attempt: 1, scope: 'full',
+        voice_id: 'outside-challenge', host: 'codex', subagent_ref: { kind: 'outside-process', id: null, name: 'codex' },
+        dispatched_at: '2026-01-01T00:00:14Z', returned_at: '2026-01-01T00:00:20Z', time_basis: 'parent-observed',
+        outcome: 'completed', metrics: { session_id: sid1, pass_id: null, attempt_id: null },
+      }),
+      JSON.stringify({
+        v: 1, stage: 'review-and-prep', recorded_at: '2026-01-01T00:00:46Z', pass: 1, attempt: 1, scope: 'full',
+        voice_id: 'outside-structured', host: 'codex', subagent_ref: { kind: 'outside-process', id: null, name: 'codex' },
+        dispatched_at: '2026-01-01T00:00:39Z', returned_at: '2026-01-01T00:00:46Z', time_basis: 'parent-observed',
+        outcome: 'completed', metrics: { session_id: sid1, pass_id: null, attempt_id: null },
+      }),
+    ].join('\n') + '\n');
+
+    craft(fix, sid1, runRows(sid1, T0).rows);
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid1)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const corrData = JSON.parse(readUsage(fix, sid1).stdout).data;
+    expect(corrData.children.correlated).toBe(2);
+    expect(corrData.totals.correlated).toMatchObject({ input: 300, cache_read: 30, output: 50 });
+    expect(corrData.by_pass).toEqual([
+      expect.objectContaining({ pass_id: null, pass: 1, attempt_id: null, attempt: 1,
+        voice_id: 'outside-challenge', link_evidence: 'correlated', input: 100, output: 20 }),
+      expect.objectContaining({ pass_id: null, pass: 1, attempt_id: null, attempt: 1,
+        voice_id: 'outside-structured', link_evidence: 'correlated', input: 200, output: 30 }),
+    ]);
+    const correlatedSources = ledgerLines(fix, sid1).map(line => JSON.parse(line))
+      .find(row => row.op === 'usage').request.sources.filter((s: any) => s.relation === 'cross-harness');
+    expect(correlatedSources.map((s: any) => ({ link: s.link, evidence: s.link_evidence })))
+      .toEqual(expect.arrayContaining(['outside-challenge', 'outside-structured'].map(voice_id => ({
+        link: { pass_id: null, pass: 1, attempt_id: null, attempt: 1, voice_id }, evidence: 'correlated',
+      }))));
+
+    // Case 2: Plant a foreign session already active before T0 and still active after T0 in the same checkout.
+    writeFileSync(join(projDir, 'syn-foreign-active.jsonl'), [
+      JSON.stringify({ type: 'user', sessionId: 'syn-foreign-active', timestamp: '2025-12-31T23:59:00Z', cwd: repo, message: { role: 'user', content: 'foreign' } }),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-foreign-active', timestamp: '2026-01-01T00:00:30Z', cwd: repo, message: { id: 'm-for', role: 'assistant', model: 'claude-opus-4-6', usage: { input_tokens: 999, output_tokens: 999 } } }),
+    ].join('\n') + '\n');
+
+    const sid2 = 'extend-' + u();
+    craft(fix, sid2, runRows(sid2, T0).rows);
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid2)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const ambData = JSON.parse(readUsage(fix, sid2).stdout).data;
+    expect(ambData.reasons).toContain('ambiguous');
+    expect(ambData.children.correlated).toBe(0);
+    expect(ambData.children.unknown).toBe(2);
+    expect(ambData.totals.correlated.input).toBe(0);
+    expect(ambData.totals.unknown.input).toBe(300);
+  }, 60_000);
+
+  test('overlapping sibling steps go to unattributed; outlived-step and may-continue flags; Cursor/Grok unverified-source; scan-budget and too-many-buckets fallback', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'edge-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/edge-repo');
+    const subDir = join(projDir, 'syn-claude-parent-001/subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    // Subagent starts at T0+15s (inside stepA [T0+5s, T0+25s]), logs a second turn at T0+30s (outliving stepA),
+    // and logs a record at T_END+2s (post-finish -> may-continue).
+    writeFileSync(join(subDir, 'agent-syn-claude-sub-001.jsonl'), [
+      loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }).trim(),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: 'syn-claude-sub-001', isSidechain: true, timestamp: '2026-01-01T00:00:30Z', cwd: repo, message: { id: 'msg-sub-2', role: 'assistant', model: 'claude-sonnet-4-6', usage: { input_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } }),
+      JSON.stringify({ type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: 'syn-claude-sub-001', isSidechain: true, timestamp: '2026-01-01T00:01:05Z', cwd: repo, message: { id: 'msg-sub-3', role: 'assistant', model: 'claude-sonnet-4-6', usage: { input_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } }),
+    ].join('\n') + '\n');
+
+    const sid = 'extend-' + u();
+    const run = runRows(sid, T0);
+    const stepA = u(), stepB = u();
+    // Overlapping sibling steps [T0+5s, T0+25s] and [T0+8s, T0+18s] cover parent turn 1 at T0+12s.
+    craft(fix, sid, [
+      ...run.rows,
+      { op: 'begin', at: T0 + 5_000, request: { ...base(sid), step_id: stepA, parent_step_id: run.step, kind: 'phase', phase: 'scope' } },
+      { op: 'end', at: T0 + 25_000, request: { ...base(sid), step_id: stepA, outcome: 'completed' } },
+      { op: 'begin', at: T0 + 8_000, request: { ...base(sid), step_id: stepB, parent_step_id: run.step, kind: 'phase', phase: 'evidence' } },
+      { op: 'end', at: T0 + 18_000, request: { ...base(sid), step_id: stepB, outcome: 'completed' } },
+    ]);
+
+    runPythonCollect(fix, [
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const edgeData = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(edgeData.reasons).toEqual(expect.arrayContaining(['outlived-step', 'may-continue']));
+    expect(edgeData.children['outlived-step']).toBe(1);
+    expect(edgeData.children['may-continue']).toBe(1);
+    expect(edgeData.by_phase.unattributed.direct).toMatchObject({ input: 350, output: 110 });
+    expect(edgeData.by_phase.scope.direct).toMatchObject({ input: 300, output: 75 });
+    expect(edgeData.by_phase.evidence).toBeUndefined();
+    const overlapBuckets = ledgerLines(fix, sid).map(line => JSON.parse(line)).find(row => row.op === 'usage').request.buckets;
+    expect(overlapBuckets.filter((b: any) => b.placement === 'overlapping')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ step_id: null, input: 100, output: 40 }),
+    ]));
+
+    // Cursor and Grok return unavailable with unverified-source.
+    for (const unsupportedAgent of ['cursor', 'grok']) {
+      const uSid = 'extend-' + u();
+      craft(fix, uSid, runRows(uSid, T0).rows);
+      runPythonCollect(fix, [
+        `print(json.dumps(wm.capture_usage(${JSON.stringify(uSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, ${JSON.stringify(unsupportedAgent)}, ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+      ]);
+      const uRead = JSON.parse(readUsage(fix, uSid).stdout).data;
+      expect(uRead.harness).toBe(unsupportedAgent);
+      expect(uRead.reasons).toContain('unverified-source');
+      expect(uRead.totals.direct.input).toBeNull();
+    }
+
+    // Tiny scan budget triggers scan-budget.
+    const budgetRes = runPythonCollect(fix, [
+      'tu.SCAN_BUDGET_BYTES = 64',
+      `req = tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", ${JSON.stringify(sid)}, {}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps(req))',
+    ]);
+    expect(budgetRes.status).toBe('partial');
+    expect(budgetRes.reasons).toContain('scan-budget');
+
+    // Oversize bucket count (> MAX_USAGE_BUCKETS) merges by (source, model) with too-many-buckets.
+    const mergeSid = 'extend-' + u();
+    craft(fix, mergeSid, runRows(mergeSid, T0).rows);
+    runPythonCollect(fix, [
+      'wm.MAX_USAGE_BUCKETS = 1',
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(mergeSid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const mergedData = JSON.parse(readUsage(fix, mergeSid).stdout).data;
+    expect(mergedData.reasons).toContain('too-many-buckets');
+  }, 60_000);
+
+  test('end-to-end launcher flow: start -> metrics begin -> phase begin/end -> finish, plus no-capture gates and --usage/--event-id exclusion', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = gitRepo(fix);
+    const sid = start(fix, repo, 'review-and-prep');
+    const { step: runStep } = beginRun(fix, repo, sid, 'review-and-prep');
+    const phaseStep = u();
+    expect(metrics(fix.env, 'begin', { ...base(sid), step_id: phaseStep, parent_step_id: runStep, kind: 'phase', phase: 'pregate' }, repo).envelope.status).toBe('recorded');
+
+    // Plant a Claude session log with timestamp inside the active run window.
+    const nowIso = new Date().toISOString();
+    const claudeProj = join(fix.home, '.claude/projects/e2e-proj');
+    mkdirSync(claudeProj, { recursive: true });
+    writeFileSync(join(claudeProj, 'e2e-claude-sess.jsonl'), [
+      JSON.stringify({ type: 'assistant', sessionId: 'e2e-claude-sess', timestamp: nowIso, cwd: repo, message: { id: 'm-e2e-1', role: 'assistant', model: 'claude-opus-4-6', usage: { input_tokens: 123, cache_read_input_tokens: 45, cache_creation_input_tokens: 6, output_tokens: 78 } } }),
+    ].join('\n') + '\n');
+
+    expect(metrics(fix.env, 'end', { ...base(sid), step_id: phaseStep, outcome: 'completed' }, repo).envelope.status).toBe('recorded');
+    expect(metrics(fix.env, 'end', { ...base(sid), step_id: runStep, outcome: 'completed' }, repo).envelope.status).toBe('recorded');
+
+    const beforePlain = read(fix, sid).envelope;
+    const fin = runRaw({ ...fix.env, CLAUDE_CODE_SESSION_ID: 'e2e-claude-sess' }, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo);
+    expect(fin.status).toBe(0);
+    expect(fin.stdout).toBe('');
+
+    const afterPlain = read(fix, sid).envelope;
+    expect(afterPlain.status).toBe('ok');
+    expect(afterPlain.data.records).toBe(beforePlain.data.records + 1);
+    expect(afterPlain.data.receipt_text).toBe(beforePlain.data.receipt_text);
+    expect({ ...afterPlain.data, records: beforePlain.data.records }).toEqual(beforePlain.data);
+
+    const usageEnv = JSON.parse(readUsage(fix, sid).stdout);
+    expect(usageEnv.status).toBe('ok');
+    expect(usageEnv.data.totals.direct).toMatchObject({ input: 123, cache_read: 45, cache_write: 6, output: 78 });
+    expect(usageEnv.data.by_phase.pregate.direct).toMatchObject({ input: 123, output: 78 });
+
+    // --usage and --event-id together are rejected as invalid-input.
+    const both = JSON.parse(readUsage(fix, sid, ['--event-id', u()]).stdout);
+    expect(both).toMatchObject({ status: 'unavailable', reason: 'invalid-input' });
+
+    // No capture for extend:roadmap, an unbound ledger, or GSTACK_EXTEND_WORKFLOW_METRICS=off.
+    const roadSid = start(fix, repo, 'roadmap');
+    expect(runRaw(fix.env, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(existsSync(ledgerFile(fix, roadSid))).toBe(false);
+
+    const unboundSid = start(fix, repo, 'review-and-prep');
+    expect(runRaw(fix.env, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(existsSync(ledgerFile(fix, unboundSid))).toBe(false);
+
+    const offSid = start(fix, repo, 'ship-and-land');
+    beginRun(fix, repo, offSid, 'ship-and-land');
+    expect(runRaw({ ...fix.env, GSTACK_EXTEND_WORKFLOW_METRICS: 'off' }, ['finish', '--skill', 'extend:ship-and-land', '--outcome', 'success'], '', repo).status).toBe(0);
+    expect(ledgerLines(fix, offSid)).toHaveLength(1);
+  }, 60_000);
+
+  // Value: protects=finish-time accounting under truncation, competing logs and resource limits;
+  // fails_when=out-of-window/foreign copies replace direct facts, or partial collection claims complete totals;
+  // why_new=the original corpus exercises small stable files only; seam=isolated Python clock/stream injection.
+  function ownClaudeFixture() {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'review-regression');
+    const project = join(fix.home, '.claude/projects/review-regression');
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(project, { recursive: true });
+    const own = join(project, 'syn-claude-parent-001.jsonl');
+    writeFileSync(own, loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+    const collect = `tu.collect("claude", "syn-claude-parent-001", ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})`;
+    return { fix, repo, project, own, collect };
+  }
+
+  test('review regression: the parsing loop stops when its injected time budget expires', () => {
+    const { fix, collect } = ownClaudeFixture();
+    const result = runPythonCollect(fix, [
+      'clock = [0.0]', 'calls = [0]', 'tu.SCAN_BUDGET_S = 1.0',
+      'tu.time.monotonic = lambda: clock[0]', 'original_parse = tu.parse_record',
+      'def counted_parse(*args, **kwargs):',
+      '    calls[0] += 1', '    clock[0] += 1.0',
+      '    return original_parse(*args, **kwargs)',
+      'tu.parse_record = counted_parse', `req = ${collect}`,
+      'print(json.dumps({"calls": calls[0], "request": req}))',
+    ]);
+    expect(result.request.reasons).toContain('scan-budget');
+    expect(result.calls).toBeLessThanOrEqual(1);
+  });
+
+  test('review regression: voices and child metadata reads stay bounded if files grow after stat', () => {
+    const { fix, repo, project, collect } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-child.jsonl'), loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    const meta = join(sub, 'agent-child.meta.json');
+    writeFileSync(meta, '{}');
+    const voiceDir = join(fix.home, '.gstack/projects/review-regression/review-and-prep');
+    mkdirSync(voiceDir, { recursive: true });
+    const voices = join(voiceDir, 'voices.jsonl');
+    writeFileSync(voices, '{}\n');
+    const result = runPythonCollect(fix, [
+      'import io', `targets = {${JSON.stringify(meta)}: 65536, ${JSON.stringify(voices)}: 1024 * 1024}`,
+      'read_sizes = {}', 'original_open = tu.Path.open',
+      'class GrowingStream(io.BytesIO):',
+      '    def __init__(self, name):',
+      '        self.name = name', '        super().__init__(b"{}" + b" " * (targets[name] * 2))',
+      '    def read(self, size=-1):',
+      '        data = super().read(size)',
+      '        read_sizes[self.name] = read_sizes.get(self.name, 0) + len(data)',
+      '        return data',
+      'def growing_open(path, *args, **kwargs):',
+      '    if str(path) in targets: return GrowingStream(str(path))',
+      '    return original_open(path, *args, **kwargs)',
+      'tu.Path.open = growing_open', `req = ${collect}`,
+      'print(json.dumps({"sizes": read_sizes, "request": req}))',
+    ]);
+    expect(result.sizes[meta]).toBeLessThanOrEqual(65536);
+    expect(result.sizes[voices]).toBeLessThanOrEqual(1024 * 1024);
+  });
+
+  test('review regression: a streaming copy after finish cannot replace an in-window fact', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const late = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    late.timestamp = '2026-01-01T00:01:01Z';
+    late.message.usage.output_tokens = 999;
+    appendFileSync(own, JSON.stringify(late) + '\n');
+    const req = runPythonCollect(fix, [`print(json.dumps(${collect}))`]);
+    expect(req.buckets.reduce((sum: number, b: any) => sum + b.output, 0)).toBe(100);
+  });
+
+  test('review regression: rejected foreign copies cannot overwrite direct usage', () => {
+    const { fix, own, project, collect } = ownClaudeFixture();
+    const foreign = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    foreign.cwd = join(fix.home, 'unrelated-repository');
+    foreign.sessionId = 'foreign';
+    foreign.message.usage.output_tokens = 999;
+    writeFileSync(join(project, 'foreign.jsonl'), JSON.stringify(foreign) + '\n');
+    const req = runPythonCollect(fix, [`print(json.dumps(${collect}))`]);
+    expect(req.buckets.reduce((sum: number, b: any) => sum + b.output, 0)).toBe(100);
+  });
+
+  test('review regression: a truncated Claude session keeps its original foreign start', () => {
+    const { fix, repo, project, collect } = ownClaudeFixture();
+    const parent = loadFixtureText('claude-parent.jsonl', { __CWD__: repo }).trim().split('\n').map(line => JSON.parse(line));
+    const early = { ...parent[0], sessionId: 'foreign', timestamp: '2025-12-31T23:59:00Z' };
+    const pad = { ...early, message: { content: 'x'.repeat(4000) } };
+    const last = { ...parent[3], sessionId: 'foreign', message: { ...parent[3].message, id: 'foreign-only' } };
+    writeFileSync(join(project, 'foreign.jsonl'), [early, pad, last].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, ['tu.MAX_TAIL_BYTES = 3000', `print(json.dumps(${collect}))`]);
+    expect(req.sources.filter((s: any) => s.evidence === 'correlated')).toEqual([]);
+  });
+
+  test('review regression: child tail indices cannot masquerade as copied-history ordinals', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'child-tail');
+    const sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001';
+    const child = '01940000-0000-7000-8000-000000000002';
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    const meta = { timestamp: '2026-01-01T00:00:12Z', type: 'session_meta', payload: { id: child, cwd: repo, parent_thread_id: parent, subagent_history_start_ordinal: 10 } };
+    const counter = (second: number, input: number, output: number) => ({ timestamp: `2026-01-01T00:00:${second}Z`, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } } } });
+    const tail = [counter(30, 100, 10), counter(40, 150, 20)].map(row => JSON.stringify(row)).join('\n') + '\n';
+    const padding = Array.from({ length: 12 }, () => JSON.stringify({ type: 'notice', text: 'x'.repeat(500) })).join('\n');
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`), JSON.stringify(meta) + '\n' + padding + '\n' + tail);
+    const req = runPythonCollect(fix, [
+      `tu.MAX_TAIL_BYTES = ${Buffer.byteLength(tail) + 1}`,
+      `print(json.dumps(tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(req.buckets.filter((b: any) => req.sources[b.source].relation === 'subagent')).toEqual([
+      expect.objectContaining({ input: 50, output: 10, responses: 1 }),
+    ]);
+    expect(req.status).toBe('partial');
+  });
+
+  test('review regression: oversized Codex metadata either preserves lineage or reports partial coverage', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'large-meta');
+    const sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001';
+    const child = '01940000-0000-7000-8000-000000000002';
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`), loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    const rows = loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }).trim().split('\n').map(line => JSON.parse(line));
+    rows[0].payload.instructions = 'x'.repeat(70000);
+    writeFileSync(join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, [
+      `print(json.dumps(tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    const linked = req.sources.some((s: any) => s.relation === 'subagent');
+    expect(linked || (req.status === 'partial' && req.reasons.some((reason: string) =>
+      ['log-truncated', 'scan-budget'].includes(reason)))).toBe(true);
+  });
+
+  test('review regression: capacity-discarded buckets project unknown totals instead of zero', () => {
+    const { fix, repo } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const result = runPythonCollect(fix, [
+      'wm.MAX_USAGE_RECORD_BYTES = 1024', 'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.reasons).toContain('capacity');
+    expect(usage.totals.direct.input).toBeNull();
+    expect(usage.totals.direct.null_reasons).toContain('capacity');
+  });
+
+  test('review batch 2: discovery deadline before any usage projects null totals', () => {
+    const { fix, repo } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const result = runPythonCollect(fix, [
+      'clock = [0.0]', 'tu.SCAN_BUDGET_S = 1.0', 'tu.time.monotonic = lambda: clock[0]',
+      'original_entries = tu._entries',
+      'def slow_entries(path, budget):',
+      '    clock[0] = 2.0', '    yield from original_entries(path, budget)',
+      'tu._entries = slow_entries', 'wm._load_telemetry_usage = lambda: tu',
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.reasons).toContain('scan-budget');
+    for (const total of Object.values(usage.totals)) {
+      expect(total).toEqual({ input: null, cache_read: null, cache_write: null, output: null, reasoning: null, null_reasons: ['scan-budget'] });
+    }
+  });
+
+  test('review batch 2: unknown original Claude start retains usage with unknown evidence', () => {
+    const { fix, repo, own, project, collect } = ownClaudeFixture();
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    for (const [i, header] of [JSON.stringify({ cwd: repo }), '{broken'].entries()) {
+      const tail = { ...row, sessionId: `unknown-start-${i}`, message: { ...row.message, id: `unknown-start-${i}` } };
+      writeFileSync(join(project, `unknown-start-${i}.jsonl`), header + '\n' + JSON.stringify({ text: 'x'.repeat(4000) }) + '\n' + JSON.stringify(tail) + '\n');
+    }
+    const req = runPythonCollect(fix, ['tu.MAX_TAIL_BYTES = 3000', `print(json.dumps(${collect}))`]);
+    const candidates = req.sources.filter((s: any) => s.relation === 'cross-harness');
+    expect(candidates).toHaveLength(2);
+    expect(candidates.every((s: any) => s.evidence === 'unknown' && !s.complete)).toBe(true);
+    expect(req.status).toBe('partial');
+    expect(req.reasons).toEqual(expect.arrayContaining(['log-truncated', 'ambiguous']));
+    expect(req.buckets.filter((b: any) => req.sources[b.source].evidence === 'unknown').reduce((sum: number, b: any) => sum + b.output, 0)).toBe(80);
+  });
+
+  test('review batch 2: already collected inline child survives deadline finalization', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const parent = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const child = { ...parent, agentId: 'inline-child', isSidechain: true, message: { ...parent.message, id: 'inline-only', usage: { input_tokens: 17, output_tokens: 9 } } };
+    writeFileSync(own, [parent, child].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const req = runPythonCollect(fix, [
+      'clock = [0.0]', 'tu.SCAN_BUDGET_S = 1.0', 'tu.time.monotonic = lambda: clock[0]',
+      'original_parse = tu.parse_record',
+      'def expire_after_child(store, agent, row, state, index):',
+      '    fact = original_parse(store, agent, row, state, index)',
+      '    if row.get("agentId") == "inline-child": clock[0] = 2.0',
+      '    return fact', 'tu.parse_record = expire_after_child',
+      `print(json.dumps(${collect}))`,
+    ]);
+    expect(req.reasons).toContain('scan-budget');
+    expect(req.sources.filter((s: any) => s.relation === 'subagent')).toHaveLength(1);
+    expect(req.buckets.filter((b: any) => req.sources[b.source].relation === 'subagent')).toEqual([
+      expect.objectContaining({ input: 17, output: 9, responses: 1 }),
+    ]);
+  });
+
+  test('review batch 2: short header reserves actual bytes and buffered facts survive byte exhaustion', () => {
+    const { fix, own, collect } = ownClaudeFixture();
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const header = JSON.stringify({ timestamp: '2025-12-31T23:59:00Z' }) + '\n';
+    const tail = JSON.stringify(row) + '\n';
+    writeFileSync(own, header + JSON.stringify({ text: 'x'.repeat(4000) }) + '\n' + tail);
+    const retained = runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'tu.MAX_TAIL_BYTES = 3000',
+      `tu.SCAN_BUDGET_BYTES = ${Buffer.byteLength(header) + Buffer.byteLength(tail) + 1}`,
+      // Tail starts inside padding; after dropping it, retain one complete usage line.
+      `tu.MAX_TAIL_BYTES = ${Buffer.byteLength(tail) + 1}`,
+      `print(json.dumps(${collect}))`,
+    ]);
+    expect(retained.reasons).toContain('scan-budget');
+    expect(retained.buckets).toEqual([expect.objectContaining({ input: 100, output: 40, responses: 1 })]);
+
+    // A readline allowance may exceed remaining capacity without consuming it.
+    const reservation = runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'budget = tu._Budget(3.0, 100)',
+      'budget.charge(80)', 'allow = budget.reserve(1000)', 'budget.charge(5)',
+      'print(json.dumps({"allow": allow, "remaining": budget.reserve(1000), "exhausted": budget.exhausted}))',
+    ]);
+    expect(reservation).toEqual({ allow: 20, remaining: 15, exhausted: false });
+  });
+
+  test('review batch 2: integral float counts survive dedup replacement and schema validation', () => {
+    const { fix, repo, own } = ownClaudeFixture();
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    const row = JSON.parse(readFileSync(own, 'utf8').trim().split('\n')[3]!);
+    const previous = { ...row, message: { ...row.message, usage: { input_tokens: 90, output_tokens: 10 } } };
+    const next = { ...row, message: { ...row.message, usage: { input_tokens: 100, output_tokens: 40 } } };
+    writeFileSync(own, [previous, next].map(item => JSON.stringify(item).replace(/"(input_tokens|output_tokens)":(\d+)/g, '"$1":$2.0')).join('\n') + '\n');
+    const result = runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ]);
+    expect(result).toBe('recorded');
+    const usage = JSON.parse(readUsage(fix, sid).stdout).data;
+    expect(usage.totals.direct).toMatchObject({ input: 100, output: 40 });
+    expect(ledgerLines(fix, sid).map(line => JSON.parse(line)).find(item => item.op === 'usage').request.buckets[0].responses).toBe(1);
+  });
+
+  test.each(['file-count', 'file-size'])('review batch 3: voices %s omission cannot manufacture a unique pass link', (limit) => {
+    const { fix, repo, own, project, collect } = ownClaudeFixture();
+    const parentRows = readFileSync(own, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const candidate = { ...parentRows[3], sessionId: 'outside-candidate', message: { ...parentRows[3].message, id: 'outside-only' } };
+    writeFileSync(join(project, 'outside-candidate.jsonl'), JSON.stringify(candidate) + '\n');
+    // A foreign session prevents fallback to a run-only correlation.
+    writeFileSync(join(project, 'already-active.jsonl'), [
+      { ...parentRows[0], sessionId: 'already-active', timestamp: '2025-12-31T23:59:00Z' },
+      { ...parentRows[0], sessionId: 'already-active', timestamp: '2026-01-01T00:00:30Z' },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const sid = 'extend-11111111-1111-4111-8111-111111111111';
+    const voice = (voice_id: string, session_id = sid) => ({
+      stage: 'review-and-prep', voice_id, pass: 1, attempt: 1,
+      metrics: { session_id }, subagent_ref: { kind: 'outside-process', id: null },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    });
+    const putVoice = (name: string, row: any, modifiedSeconds: number) => {
+      const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep', name);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, 'voices.jsonl');
+      writeFileSync(path, JSON.stringify(row) + '\n');
+      utimesSync(path, T0 / 1000 + modifiedSeconds, T0 / 1000 + modifiedSeconds);
+      return path;
+    };
+    putVoice('retained', voice('outside-first'), 62);
+    const omitted = putVoice('omitted', voice('outside-second'), 61);
+    const capture = () => runPythonCollect(fix, [
+      'tu.time.monotonic = lambda: 0.0', 'opened = []', 'original_open = tu.Path.open',
+      'def track_open(path, *args, **kwargs):',
+      '    if path.name == "voices.jsonl": opened.append(str(path))',
+      '    return original_open(path, *args, **kwargs)', 'tu.Path.open = track_open',
+      `req = ${collect}`,
+      'record = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "projection": wm.summarize_usage([record], 0, False, False), "opened": opened}))',
+    ]);
+    const complete = capture();
+    expect(complete.projection.totals.unknown.output).toBe(40);
+    expect(complete.projection.by_pass).toEqual([]);
+    expect(complete.request.reasons).not.toContain('capacity');
+
+    if (limit === 'file-count') {
+      // Both matching rows are recent and small; 63 newer unrelated runs evict the second one.
+      for (let i = 0; i < 63; i++) putVoice(`other-${i}`, voice('other-run', 'extend-' + u()), 100 + i);
+    } else {
+      appendFileSync(omitted, JSON.stringify({ note: 'x'.repeat(1024 * 1024) }) + '\n');
+      utimesSync(omitted, T0 / 1000 + 61, T0 / 1000 + 61);
+    }
+    const limited = capture();
+    expect(limited.opened).toHaveLength(limit === 'file-count' ? 64 : 1);
+    expect(limited.opened).not.toContain(omitted);
+    const source = limited.request.sources.find((s: any) => s.relation === 'cross-harness');
+    expect(source).toMatchObject({ evidence: 'unknown', link: null, link_evidence: null });
+    expect(limited.request.status).toBe('partial');
+    expect(limited.request.reasons).toEqual(expect.arrayContaining(['capacity', 'ambiguous']));
+    expect(limited.projection.totals.direct.output).toBe(100);
+    expect(limited.projection.totals.unknown.output).toBe(40);
+    expect(limited.projection.totals.correlated.output).toBe(0);
+    expect(limited.projection.by_pass).toEqual([]);
+  });
+
+  test('continuation regression: child usage after run end stays counted and is marked may-continue', () => {
+    const { fix, repo, project } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, 'agent-syn-claude-sub-001.jsonl'),
+      loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }).replace('00:00:20Z', '00:00:50Z'));
+    const sid = 'extend-' + u(), run = runRows(sid, T0);
+    craft(fix, sid, [...run.rows, { op: 'end', at: T0 + 40_000,
+      request: { ...base(sid), step_id: run.step, outcome: 'completed' } }]);
+    expect(runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ])).toBe('recorded');
+    const req = ledgerLines(fix, sid).map(line => JSON.parse(line)).find(row => row.op === 'usage').request;
+    const index = req.sources.findIndex((s: any) => s.relation === 'subagent');
+    expect(req.sources[index]).toMatchObject({ complete: false, reasons: expect.arrayContaining(['may-continue']) });
+    expect(req.buckets.filter((b: any) => b.source === index)).toEqual([
+      expect.objectContaining({ input: 300, output: 75 }),
+    ]);
+    expect(JSON.parse(readUsage(fix, sid).stdout).data).toMatchObject({ capture: 'partial', children: { 'may-continue': 1 } });
+  });
+
+  test.each(['own', 'child'])('continuation regression: unreadable Claude %s log keeps totals unknown', (failedSource) => {
+    const { fix, repo, project, own, collect } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    const child = join(sub, 'agent-syn-claude-sub-001.jsonl');
+    writeFileSync(child, loadFixtureText('claude-subagent.jsonl', { __CWD__: repo }));
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = []',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if str(path) == ${JSON.stringify(failedSource === 'own' ? own : child)} and mode == "rb":`,
+      '        attempts.append(True)', '        raise PermissionError("synthetic owned read failure")',
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = ${collect}`, 'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False), "attempts": attempts}))',
+    ]);
+    expect(result.attempts).not.toEqual([]);
+    expect(result.request.sources.find((s: any) => s.relation === (failedSource === 'own' ? 'own' : 'subagent')))
+      .toMatchObject({ complete: false, reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.data.capture).toBe('partial');
+    expect(result.data.totals.direct).toMatchObject({ input: null, output: null, null_reasons: expect.arrayContaining(['log-missing']) });
+    // Other sources' observed facts survive; an unknown total does not erase evidence.
+    expect(result.request.buckets.length).toBeGreaterThan(0);
+  });
+
+  test('continuation regression: model metadata cannot exceed the serialized record cap', () => {
+    const { fix, repo, project } = ownClaudeFixture();
+    const sub = join(project, 'syn-claude-parent-001/subagents');
+    mkdirSync(sub, { recursive: true });
+    for (let child = 0; child < 63; child++) {
+      const rows = Array.from({ length: 16 }, (_, model) => ({
+        type: 'assistant', sessionId: 'syn-claude-parent-001', agentId: `syn-child-${child}`,
+        isSidechain: true, timestamp: '2026-01-01T00:00:20Z', cwd: repo,
+        message: { id: `syn-message-${child}-${model}`, role: 'assistant', model: `m${String(model).padStart(2, '0')}-` + 'x'.repeat(124),
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 } },
+      }));
+      writeFileSync(join(sub, `agent-syn-child-${child}.jsonl`), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    }
+    const sid = 'extend-' + u(); craft(fix, sid, runRows(sid, T0).rows);
+    expect(runPythonCollect(fix, [
+      'os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"',
+      `print(json.dumps(wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})))`,
+    ])).toBe('recorded');
+    const line = ledgerLines(fix, sid).find(line => JSON.parse(line).op === 'usage')!;
+    expect(Buffer.byteLength(line + '\n')).toBeLessThanOrEqual(65536);
+    expect(validRecord(JSON.parse(line))).toBe(true);
+    expect(JSON.parse(line).request).toMatchObject({ status: 'partial', reasons: expect.arrayContaining(['capacity']), buckets: [] });
+    expect(JSON.parse(readUsage(fix, sid).stdout).data.totals.direct.input).toBeNull();
+  });
+
+  test.each(['own', 'child'])('continuation regression: unreadable Codex %s log keeps totals unknown', (failedSource) => {
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'codex-unreadable'), sessions = join(fix.home, '.codex/sessions/2026/01/01');
+    mkdirSync(repo, { recursive: true }); mkdirSync(sessions, { recursive: true });
+    const parent = '01940000-0000-7000-8000-000000000001', child = '01940000-0000-7000-8000-000000000002';
+    const ownPath = join(sessions, `rollout-2026-01-01T00-00-00-${parent}.jsonl`);
+    const childPath = join(sessions, `rollout-2026-01-01T00-00-12-${child}.jsonl`);
+    writeFileSync(ownPath, loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+    writeFileSync(childPath, loadFixtureText('codex-subagent.jsonl', { __CWD__: repo }));
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = [0]',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if str(path) == ${JSON.stringify(failedSource === 'own' ? ownPath : childPath)} and mode == "rb":`,
+      '        attempts[0] += 1',
+      // Child discovery reads session_meta first; fail the subsequent full-log read.
+      `        if attempts[0] > ${failedSource === 'own' ? 0 : 1}: raise PermissionError("synthetic owned read failure")`,
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = tu.collect("codex", ${JSON.stringify(parent)}, ${T0}, ${T_END}, ${JSON.stringify(repo)}, "review-and-prep", "extend-11111111-1111-4111-8111-111111111111", {}, home=${JSON.stringify(fix.home)})`,
+      'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False)}))',
+    ]);
+    expect(result.request.sources.find((s: any) => s.relation === (failedSource === 'own' ? 'own' : 'subagent')))
+      .toMatchObject({ complete: false, reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.data.capture).toBe('partial');
+    expect(result.data.totals.direct).toMatchObject({ input: null, output: null, null_reasons: expect.arrayContaining(['log-missing']) });
+    expect(result.request.buckets.length).toBeGreaterThan(0);
+  });
+
+  test('continuation regression: an unmatched in-harness voice is not an outside-call interval', () => {
+    const { fix } = ownClaudeFixture();
+    const sid = 'extend-' + u();
+    const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep');
+    mkdirSync(dir, { recursive: true });
+    const rows = ['agent-id', 'outside-process'].map((kind, i) => ({
+      stage: 'review-and-prep', voice_id: i ? 'outside-challenge' : 'testing', pass: 1, attempt: 1,
+      metrics: { session_id: sid }, subagent_ref: { kind, id: i ? null : 'missing-child' },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    }));
+    writeFileSync(join(dir, 'voices.jsonl'), rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+    const result = runPythonCollect(fix, [
+      `links, intervals, reported = tu._read_voices_join(tu.Path(${JSON.stringify(fix.home)}), "review-and-prep", ${JSON.stringify(sid)}, ${T0}, set(), tu._Budget(3.0, 64 * 1024 * 1024), set())`,
+      'print(json.dumps([interval[2]["voice_id"] for interval in intervals]))',
+    ]);
+    expect(result).toEqual(['outside-challenge']);
+  });
+
+  test.each(['claude-log', 'codex-header', 'voices-file', 'malformed-voices', 'disappeared-voices', 'unreadable-directory'])('continuation discovery: unreadable %s prevents false correlation', (kind) => {
+    const { fix, repo, project, own, collect } = ownClaudeFixture();
+    const rows = readFileSync(own, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    writeFileSync(join(project, 'outside-candidate.jsonl'), JSON.stringify({
+      ...rows[3], sessionId: 'outside-candidate', message: { ...rows[3].message, id: 'outside-only' },
+    }) + '\n');
+    const sid = 'extend-11111111-1111-4111-8111-111111111111';
+    const voice = (voice_id: string) => ({
+      stage: 'review-and-prep', voice_id, pass: 1, attempt: 1,
+      metrics: { session_id: sid }, subagent_ref: { kind: 'outside-process', id: null },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    });
+    const putVoice = (name: string) => {
+      const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep', name);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, 'voices.jsonl'); writeFileSync(path, JSON.stringify(voice(name)) + '\n');
+      return path;
+    };
+    let unreadable: string;
+    if (kind === 'claude-log') {
+      unreadable = join(project, 'already-active.jsonl');
+      writeFileSync(unreadable, ['2025-12-31T23:59:00Z', '2026-01-01T00:00:30Z'].map(timestamp =>
+        JSON.stringify({ ...rows[0], sessionId: 'already-active', timestamp })).join('\n') + '\n');
+    } else if (kind === 'codex-header') {
+      const dir = join(fix.home, '.codex/sessions/2026/01/01'); mkdirSync(dir, { recursive: true });
+      unreadable = join(dir, 'rollout-2026-01-01T00-00-15-01940000-0000-7000-8000-000000000099.jsonl');
+      writeFileSync(unreadable, loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+      putVoice('outside-available');
+    } else {
+      putVoice('outside-available'); unreadable = putVoice('outside-unreadable');
+      if (kind === 'malformed-voices') writeFileSync(unreadable, 'not-json\n');
+    }
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = []',
+      'original_stat = tu._safe_stat_regular', 'stat_attempts = []',
+      'def fail_stat(path):',
+      `    if ${kind === 'disappeared-voices' ? 'True' : 'False'} and str(path) == ${JSON.stringify(unreadable)}:`,
+      '        stat_attempts.append(True)',
+      '        if len(stat_attempts) == 2:',
+      '            attempts.append(True)', '            return None',
+      '    return original_stat(path)', 'tu._safe_stat_regular = fail_stat',
+      'original_scandir = tu.os.scandir',
+      'def fail_scandir(path):',
+      `    if ${kind === 'unreadable-directory' ? 'True' : 'False'} and str(path) == str(tu.Path(${JSON.stringify(unreadable)}).parent):`,
+      '        attempts.append(True)', '        raise PermissionError("synthetic directory discovery failure")',
+      '    return original_scandir(path)', 'tu.os.scandir = fail_scandir',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if ${['disappeared-voices', 'unreadable-directory'].includes(kind) ? 'False' : 'True'} and str(path) == ${JSON.stringify(unreadable)} and mode == "rb":`,
+      '        attempts.append(True)',
+      `        if ${kind === 'malformed-voices' ? 'False' : 'True'}: raise PermissionError("synthetic discovery read failure")`,
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = ${collect}`, 'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False), "attempts": attempts}))',
+    ]);
+    expect(result.attempts).not.toEqual([]);
+    expect(result.request.sources.find((s: any) => s.relation === 'cross-harness'))
+      .toMatchObject({ evidence: 'unknown', link: null, link_evidence: null });
+    expect(result.data.capture).toBe('partial');
+    const reason = kind === 'codex-header' ? 'log-truncated' : kind === 'malformed-voices' ? 'malformed-record' : 'log-missing';
+    expect(result.data.reasons).toEqual(expect.arrayContaining(['ambiguous', reason]));
+    expect(result.data.totals.direct.output).toBe(100);
+    expect(result.data.totals.correlated.output).toBe(0);
+    expect(result.data.totals.unknown.output).toBe(40);
+    expect(result.data.by_pass).toEqual([]);
+  });
+
+  test('sys.addaudithook guard proves zero network, subprocess, sqlite or credential-file access during capture, plus static import check', () => {
+    // Static check on bin/lib/telemetry_usage.py.
+    const src = readFileSync(join(ROOT, 'bin/lib/telemetry_usage.py'), 'utf8');
+    expect(src).not.toContain('CURSOR_API_KEY');
+    for (const forbiddenMod of ['quota.claude', 'quota.codex', 'quota.cursor', 'quota.store', 'quota.Lock', 'quota.identity', 'quota.index', 'quota.samples', 'quota.readers', 'socket', 'subprocess', 'sqlite3', 'urllib', 'http']) {
+      expect(src).not.toContain(forbiddenMod);
+    }
+
+    const fix = makeTelemetryFixture('community');
+    const repo = join(fix.home, 'audit-repo');
+    mkdirSync(repo, { recursive: true });
+    const projDir = join(fix.home, '.claude/projects/audit-repo');
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(join(projDir, 'syn-claude-parent-001.jsonl'), loadFixtureText('claude-parent.jsonl', { __CWD__: repo }));
+
+    // Plant credential-named files inside the fixture HOME to prove capture never opens them.
+    writeFileSync(join(fix.home, '.claude.json'), '{"oauthToken":" planted "}');
+    writeFileSync(join(fix.home, '.claude/.credentials.json'), '{"secret":" planted "}');
+    mkdirSync(join(fix.home, '.codex'), { recursive: true });
+    writeFileSync(join(fix.home, '.codex/auth.json'), '{"token":" planted "}');
+    mkdirSync(join(fix.home, '.ssh'), { recursive: true });
+    writeFileSync(join(fix.home, '.ssh/id_ed25519'), 'planted');
+    mkdirSync(join(fix.home, 'Library/Keychains'), { recursive: true });
+    writeFileSync(join(fix.home, 'Library/Keychains/login.keychain-db'), 'planted');
+
+    const sid = 'extend-' + u();
+    craft(fix, sid, runRows(sid, T0).rows);
+
+    const audited = runPythonCollect(fix, [
+      'violations = []',
+      'FORBIDDEN_OPEN = (".claude.json", ".credentials.json", "auth.json", "hosts.yml", "cli-config.json", "jev.json")',
+      'def hook(event, args):',
+      '    if event.startswith("socket.") or event in ("subprocess.Popen", "os.system", "sqlite3.connect"):',
+      '        violations.append((event, str(args)))',
+      '    elif event == "open" and args:',
+      '        p = str(args[0])',
+      '        base_name = os.path.basename(p)',
+      '        if base_name in FORBIDDEN_OPEN or "/.ssh/" in p or "/Keychains/" in p:',
+      '            violations.append((event, p))',
+      'sys.addaudithook(hook)',
+      `os.environ["CLAUDE_CODE_SESSION_ID"] = "syn-claude-parent-001"`,
+      `status = wm.capture_usage(${JSON.stringify(sid)}, "review-and-prep", ${T0 / 1000}, ${T_END / 1000}, "claude", ${JSON.stringify(repo)}, home=${JSON.stringify(fix.home)})`,
+      'print(json.dumps({"status": status, "violations": violations}))',
+    ]);
+    expect(audited.status).toBe('recorded');
+    expect(audited.violations).toEqual([]);
+  }, 60_000);
+});

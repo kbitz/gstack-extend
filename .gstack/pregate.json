@@ -95,9 +95,18 @@
       "tests/quota.test.ts",
       "tests/telemetry-contract.test.ts"
     ],
+    "bin/lib/quota/__init__.py": [
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
     "bin/lib/quota/common.py": [
       "tests/skill-content.test.ts",
-      "tests/telemetry.test.ts"
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
+    ],
+    "bin/lib/quota/usage.py": [
+      "tests/telemetry.test.ts",
+      "tests/workflow-metrics.test.ts"
     ],
     "bin/lib/run-migrations.sh": [
       "tests/update.test.ts"
@@ -131,12 +140,16 @@
     "bin/lib/telemetry.py": [
       "tests/workflow-metrics.test.ts"
     ],
+    "bin/lib/telemetry_usage.py": [
+      "tests/workflow-metrics.test.ts"
+    ],
     "bin/lib/workflow-span.sh": [
       "tests/telemetry-contract.test.ts"
     ],
     "bin/lib/workflow_metrics.py": [
       "tests/skill-protocols.test.ts",
       "tests/telemetry-contract.test.ts",
+      "tests/telemetry.test.ts",
       "tests/workflow-metrics.test.ts"
     ],
     "bin/merge-gate": [
@@ -400,6 +413,9 @@
     "tests/fixtures/quota/**": [
       "tests/quota.test.ts",
       "tests/telemetry-contract.test.ts"
+    ],
+    "tests/fixtures/run-usage/**": [
+      "tests/workflow-metrics.test.ts"
     ],
     "tests/fixtures/source-tag-hash-corpus.json": [
       "tests/source-tag.test.ts"

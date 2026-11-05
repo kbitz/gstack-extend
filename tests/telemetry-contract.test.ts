@@ -2344,3 +2344,159 @@ describe('paused and resumed segments', () => {
     expect(result.summary).toBe(summaryOf({ rows: 4, v2: 2, v1: 1, legacy: 1 }));
   }, 60_000);
 });
+
+describe('Track 67A usage capture and workflow-metrics v2 schema contract', () => {
+  test('review-and-prep finish with capture preserves stage-runs v2 key order and saved-row retry byte identity, while legacy and v1 fixtures still validate', () => {
+    const fix = makeTelemetryFixture('community');
+    const repo = initCheckout(fix.home, fix.env, 'checkout-67a', 'git@github.com:acme/widget.git');
+    const started = runTelemetry(fix.env, repo, ['start', '--skill', 'extend:review-and-prep']);
+    const sid = /session=(extend-[0-9a-f-]{36})/.exec(started.stdout)![1];
+
+    const begin = spawnSync(WRAPPER, ['metrics', 'begin'], {
+      cwd: repo,
+      env: fix.env,
+      encoding: 'utf8',
+      timeout: 15_000,
+      input: JSON.stringify({
+        v: 1,
+        stage: 'review-and-prep',
+        session_id: sid,
+        event_id: randomUUID(),
+        step_id: randomUUID(),
+        parent_step_id: null,
+        kind: 'run',
+        phase: 'run',
+        context: {
+          candidate_head: null,
+          candidate_tree: null,
+          candidate_base: null,
+          binding: 'unknown',
+          skill_sha256: null,
+          parent_session_id: null,
+        },
+      }),
+    });
+    expect(JSON.parse(begin.stdout).status).toBe('recorded');
+
+    // First attempt fails stage-runs append by blocking the analytics dir, saving the constructed row in the handoff.
+    const analyticsDir = join(fix.home, '.gstack-extend/analytics');
+    const stageRunsPath = join(analyticsDir, 'stage-runs.jsonl');
+    mkdirSync(stageRunsPath, { recursive: true }); // directory at file path causes append to fail
+    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
+
+    // Inspect the saved row inside the handoff file before retrying.
+    const telRoot = join(fix.home, '.gstack-extend/telemetry');
+    const slotDirs = readdirSync(telRoot);
+    expect(slotDirs).toHaveLength(1);
+    const slotDir = join(telRoot, slotDirs[0]!);
+    const handoffFile = join(slotDir, readdirSync(slotDir)[0]!);
+    const savedRow = JSON.parse(readFileSync(handoffFile, 'utf8')).row;
+    expect(savedRow).toBeTruthy();
+    const expectedLine = JSON.stringify(savedRow) + '\n';
+
+    // Remove the obstacle and retry finish with capture enabled: appended bytes must equal the saved row byte-for-byte.
+    rmSync(stageRunsPath, { recursive: true, force: true });
+    expect(runTelemetry(fix.env, repo, ['finish', '--skill', 'extend:review-and-prep', '--outcome', 'success']).status).toBe(0);
+    const rawStageRuns = readFileSync(stageRunsPath, 'utf8');
+    expect(rawStageRuns).toBe(expectedLine);
+
+    const row = fix.readLedger()[0]!;
+    expect(Object.keys(row)).toEqual(Object.keys(quickstartRow()));
+    expect(verdict(row)).toEqual({ ok: true, errors: [] });
+
+    // Existing legacy and v1 fixtures still validate alongside the new v2 row.
+    const v1 = historicalRow();
+    const leg = legacyOf(v1);
+    expect(verdict(v1)).toEqual({ ok: true, errors: [] });
+    expect(verdict(leg)).toEqual({ ok: true, errors: [] });
+  }, 60_000);
+
+  test('workflow-metrics schema validates v1 records and v2 usage records, and rejects v:1+usage, v:2+begin, and extra keys in usage_request', () => {
+    const metricsSchema = JSON.parse(readFileSync(join(ROOT, 'docs/workflow-metrics.schema.json'), 'utf8'));
+    const ajv = new Ajv({ strict: true, allErrors: true });
+    const validate = ajv.compile(metricsSchema);
+
+    const sid = `extend-${randomUUID()}`;
+    const eid = randomUUID();
+    const stepId = randomUUID();
+    const digest = 'a'.repeat(64);
+
+    const v1Begin = {
+      v: 1,
+      op: 'begin',
+      event_id: eid,
+      request_digest: digest,
+      captured_at_ms: 1000,
+      producer_version: '0.57.0',
+      request: {
+        v: 1,
+        stage: 'review-and-prep',
+        session_id: sid,
+        event_id: eid,
+        step_id: stepId,
+        parent_step_id: null,
+        kind: 'phase',
+        phase: 'tests',
+      },
+    };
+    expect(validate(v1Begin)).toBe(true);
+
+    const v2Usage = {
+      v: 2,
+      op: 'usage',
+      event_id: eid,
+      request_digest: digest,
+      captured_at_ms: 2000,
+      producer_version: '0.57.0',
+      request: {
+        v: 1,
+        stage: 'review-and-prep',
+        session_id: sid,
+        event_id: eid,
+        status: 'ok',
+        reasons: ['not-reported', 'window-not-reported'],
+        harness: 'claude',
+        window: { begin_ms: 1000, end_ms: 2000 },
+        observed_through_ms: 2000,
+        sources: [{
+          ref: 'b'.repeat(64),
+          agent: 'claude',
+          relation: 'own',
+          evidence: 'direct',
+          parent_ref: null,
+          link: null,
+          link_evidence: null,
+          models: ['claude-opus-4-6'],
+          first_ms: 1100,
+          last_ms: 1900,
+          complete: true,
+          reasons: ['window-not-reported'],
+        }],
+        buckets: [{
+          source: 0,
+          model: 'claude-opus-4-6',
+          step_id: stepId,
+          placement: 'step',
+          input: 100,
+          cache_read: 50,
+          cache_write: 10,
+          output: 40,
+          reasoning: null,
+          null_reasons: ['not-reported'],
+          responses: 1,
+        }],
+        windows: [],
+        cli_reported: [],
+      },
+    };
+    expect(validate(v2Usage)).toBe(true);
+
+    // v:1 + usage is invalid; v:2 + begin is invalid; extra key in usage_request is invalid.
+    expect(validate({ ...v2Usage, v: 1 })).toBe(false);
+    expect(validate({ ...v1Begin, v: 2 })).toBe(false);
+    expect(validate({
+      ...v2Usage,
+      request: { ...v2Usage.request, extra_key: true },
+    })).toBe(false);
+  });
+});

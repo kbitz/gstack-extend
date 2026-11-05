@@ -316,13 +316,16 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   // the writer reads from VERSION: a release-only diff still runs them.
   'tests/telemetry.test.ts': [
     'bin/config',
+    'bin/lib/quota/__init__.py',
     'bin/lib/quota/common.py',
+    'bin/lib/quota/usage.py',
     'bin/gstack-extend-telemetry',
     'bin/gstack-extend',
     // bin/gstack-extend sources these at startup; the round-trip test runs its doctor subcommand.
     'bin/lib/install-safety.sh',
     'bin/lib/projects-registry.sh',
     'bin/lib/telemetry*.py',
+    'bin/lib/workflow_metrics.py',
     // Track 49A: the blocks call the helper `setup` installs; the suite copies it into each fixture home.
     'bin/lib/telemetry-call.sh',
     'docs/stage-runs.schema.json',
@@ -378,7 +381,12 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/workflow-metrics.test.ts': [
     'bin/gstack-extend-telemetry',
     'bin/lib/telemetry.py',
+    'bin/lib/telemetry_usage.py',
     'bin/lib/workflow_metrics.py',
+    'bin/lib/quota/__init__.py',
+    'bin/lib/quota/common.py',
+    'bin/lib/quota/usage.py',
+    'tests/fixtures/run-usage/**',
     'docs/workflow-metrics.schema.json',
     'docs/telemetry.md',
     skill('review-and-prep'),

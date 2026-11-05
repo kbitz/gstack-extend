@@ -6202,6 +6202,85 @@ describe('Track 26A construction/replay and safe diagnostics G6–G8', () => {
       expect(finish2.stderr).toContain('ignored GSTACK_EXTEND_MODEL (contains non-printable characters; expected 1 to 200 printable characters)');
       expect(finish2.stderr).not.toContain('SECRET-MODEL');
     });
+
+    test('lifecycle variants: start vs finish env differences, saved-row retry byte identity, --agent override with requested values, and independent effort detection/flagging', () => {
+      // (a) GSTACK_EXTEND_MODEL/EFFORT differ between start and first finish, and are unset at finish.
+      const fixA = makeTelemetryFixture('off');
+      const cwdA = cursorWork(fixA);
+      const startEnvA1 = { ...fixA.env, GSTACK_EXTEND_MODEL: 'start-model', GSTACK_EXTEND_EFFORT: 'low' };
+      const finEnvA1 = { ...fixA.env, GSTACK_EXTEND_MODEL: 'finish-model', GSTACK_EXTEND_EFFORT: 'high' };
+      expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: startEnvA1, cwd: cwdA, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: finEnvA1, cwd: cwdA, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      expect(fixA.readLedger().at(-1)!).toMatchObject({
+        model: 'finish-model', effort: 'high', model_source: 'requested', effort_source: 'requested',
+      });
+
+      // Unset at finish -> null/unknown even though set at start.
+      expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: startEnvA1, cwd: cwdA, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: fixA.env, cwd: cwdA, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      expect(fixA.readLedger().at(-1)!).toMatchObject({
+        model: null, effort: null, model_source: 'unknown', effort_source: 'unknown',
+      });
+
+      // (b) A saved failed finish, then a retry with different requested values: appended row equals saved row byte-for-byte.
+      const fixB = makeTelemetryFixture('off');
+      const cwdB = cursorWork(fixB);
+      const envB1 = { ...fixB.env, GSTACK_EXTEND_MODEL: 'first-req-model', GSTACK_EXTEND_EFFORT: 'medium' };
+      expect(spawnSync(HELPER_BIN, ['start', '--skill', 'extend:roadmap'], { env: envB1, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      const stageRunsPathB = join(fixB.home, '.gstack-extend/analytics/stage-runs.jsonl');
+      mkdirSync(stageRunsPathB, { recursive: true }); // block append so first finish saves the constructed row
+      expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: envB1, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      const savedHandoffs = openHandoffs(fixB);
+      expect(savedHandoffs).toHaveLength(1);
+      const savedLine = JSON.stringify(savedHandoffs[0]!.state.row) + '\n';
+      rmSync(stageRunsPathB, { recursive: true, force: true });
+      const envB2 = { ...fixB.env, GSTACK_EXTEND_MODEL: 'retry-req-model', GSTACK_EXTEND_EFFORT: 'max' };
+      expect(spawnSync(HELPER_BIN, ['finish', '--skill', 'extend:roadmap', '--outcome', 'success'], { env: envB2, cwd: cwdB, encoding: 'utf8', timeout: 15_000 }).status).toBe(0);
+      expect(readFileSync(stageRunsPathB, 'utf8')).toBe(savedLine);
+
+      // (c) A valid --agent that differs from the detected agent, with requests set: agent flag, model and effort requested.
+      const fixC = makeTelemetryFixture('off');
+      const envC = {
+        CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: '0c7f2e29-0000-4000-8000-000000000067',
+        GSTACK_EXTEND_MODEL: 'req-model-c', GSTACK_EXTEND_EFFORT: 'high',
+      };
+      const resC = provenanceRun(fixC, envC, () => {}, ['--agent', 'codex']);
+      expect(resC.row).toMatchObject({
+        agent: 'codex', agent_source: 'flag',
+        model: 'req-model-c', model_source: 'requested',
+        effort: 'high', effort_source: 'requested',
+      });
+
+      // (d) Requested model with effort detected independently (Cursor Conductor store run whose model has params.effort and no id, without CURSOR_INVOKED_AS),
+      // plus requested model with flagged --effort and no detection.
+      const fixD1 = makeTelemetryFixture('off');
+      const envD1 = {
+        CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'conv-d1',
+        GSTACK_EXTEND_MODEL: 'req-cursor-model', GSTACK_EXTEND_EFFORT: 'low',
+      };
+      const resD1 = cursorFinish(fixD1, envD1, (start: number, cwd: string) => {
+        writeJsonl(join(fixD1.home, '.cursor/projects/project/agent-transcripts/conv-d1/transcript.jsonl'),
+          [{ role: 'assistant', message: 'fixture' }]);
+        const root = join(fixD1.home, 'Library/Application Support/com.conductor.app/cursor-sdk-store/shard-d1');
+        writeJsonl(join(root, 'agents.ndjson'), [{ agentId: 'conv-d1', cwd }]);
+        writeJsonl(join(root, 'runs.ndjson'), [{
+          agentId: 'conv-d1', runId: 'run-d1', startedAt: (start - 20) * 1000, updatedAt: start * 1000,
+          endedAt: (start + 20) * 1000, model: { params: { effort: 'xhigh' } },
+        }]);
+      });
+      expect(resD1.row).toMatchObject({
+        agent: 'cursor', route: 'conductor',
+        model: 'req-cursor-model', model_source: 'requested',
+        effort: 'xhigh', effort_source: 'detected',
+      });
+
+      const fixD2 = makeTelemetryFixture('off');
+      const resD2 = provenanceRun(fixD2, { GSTACK_EXTEND_MODEL: 'req-only-model' }, () => {}, ['--effort', 'flagged-effort']);
+      expect(resD2.row).toMatchObject({
+        model: 'req-only-model', model_source: 'requested',
+        effort: 'flagged-effort', effort_source: 'flag',
+      });
+    }, 30_000);
   });
 
   test('host and producer faults give fixed next-invocation advice without values, paths or premature success', () => {
