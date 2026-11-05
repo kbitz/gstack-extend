@@ -2,6 +2,46 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry_usage.py|tests/workflow-metrics.test.ts] Test gap: Nested step attribution
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Usage tests cover individual and overlapping sibling steps, but not selection among nested containing steps.
+- **Hypothesis (untested):** Add nested synthetic intervals and verify that the deepest containing step owns usage; re-verify the contract first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/telemetry_usage.py:1112`
+- **Evidence:** Coverage audit read the collector and existing assertions; no failure was reproduced. This is additional protection, not a missing approved fixture requirement.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/206 at `4be08b0` (2026-11-05).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/workflow_metrics.py|tests/workflow-metrics.test.ts] Test gap: Missing usage projection
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** No-capture tests check ledger absence without directly asserting the missing-usage projection.
+- **Hypothesis (untested):** Read usage from a ledger without a usage row and verify missing capture, its controlled reason and null totals; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/workflow_metrics.py:1900`
+- **Evidence:** Coverage audit read the reader and no-capture cases; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/206 at `4be08b0` (2026-11-05).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/workflow_metrics.py|tests/workflow-metrics.test.ts] Test gap: Usage projection integrity reasons
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Plain-reader integrity tests do not directly assert usage projections for conflicting usage rows or dangling step, pass and attempt references.
+- **Hypothesis (untested):** Extend a table with synthetic integrity failures and verify partial capture with controlled reasons rather than complete or double-counted usage; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/workflow_metrics.py:1883`
+- **Evidence:** Coverage audit compared reader integrity branches with existing assertions; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/206 at `4be08b0` (2026-11-05).
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/workflow_metrics.py|tests/workflow-metrics.test.ts] Test gap: Usage projection group limits
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Record-cap tests discard buckets before directly exercising the projection limits of 16 model groups and 32 pass groups.
+- **Hypothesis (untested):** Test each limit and limit plus one, checking that overflow makes the respective projection null rather than silently truncating it; re-verify first.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** `bin/lib/workflow_metrics.py:1972`
+- **Evidence:** Coverage audit read the projection caps and record-cap tests; no failure was reproduced.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/206 at `4be08b0` (2026-11-05).
+- **Effort:** ? (user triages in /roadmap)
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
