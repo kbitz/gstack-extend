@@ -1466,8 +1466,8 @@ table below is the reader's reference; the schema is authoritative where they di
 |---|---|
 | `stage` | Skill name without `extend:`, e.g. `roadmap` |
 | `agent` | `claude`, `codex`, `grok`, or `cursor`; null when unverifiable |
-| `model` | Model ID the harness logged, e.g. `claude-opus-5`, `gpt-6-astra` |
-| `effort` | Effort level the harness logged, in its own vocabulary (`xhigh`, `high`) |
+| `model` | Model ID from detection, a finish flag, or `GSTACK_EXTEND_MODEL`; see `model_source` |
+| `effort` | Effort level from detection, a finish flag, or `GSTACK_EXTEND_EFFORT`, in that source's vocabulary (`xhigh`, `high`); see `effort_source` |
 | `rung` | Always 0: a hand-run skill has no fallback chain |
 | `outcome` | `success`, `error`, `abort`, `blocked` or `unknown`; a paused segment ends blocked (see Paused and resumed segments in the join contract); this producer maps other values to unknown |
 | `started_at` | UTC start; null when an explicit `--start` or a legacy `--duration` cannot be represented as a UTC time |
@@ -1503,7 +1503,7 @@ See the [quick-start](#work-item-and-launcher-quick-start).
 agent's environment before the harness starts. Finish reads them from its own environment when
 it constructs the row; start does not save them. Each variable fills only a `model` or `effort`
 still null after detection and finish flags, with source `requested`. Each value must be 1 to
-200 printable characters; a rejected value counts as absent, and debug mode prints a line
+200 printable characters and must not be blank; a rejected value counts as absent, and debug mode prints a line
 naming the variable and the bound, never the value. A saved retry row keeps its first
 construction. Nested harnesses and subagents inherit the variables, so `requested` states the
 launch request, not which harness served it. Configured defaults such as Cursor's CLI
@@ -1608,7 +1608,8 @@ Installed two-host acceptance remains with Tracks 30B/30C; the real
 published-release upgrade and owner-confirmed O5 acceptance remain pending.
 
 **Acquisition and unknowns.** Existing detectors read harness markers and
-session logs for the stage window; unavailable values remain null:
+session logs for the stage window; unavailable detected values remain null
+until finish flags or requested variables supply them:
 
 - **Claude Code** exports CLAUDECODE and CLAUDE_CODE_SESSION_ID. The transcript
   `~/.claude/projects/*/<session>.jsonl` (CLAUDE_CONFIG_DIR honored) records model
@@ -2357,8 +2358,8 @@ never certifies Cursor by itself.
 
 Certification needs exactly one Conductor prompt (one run) overlapping the
 stage. A stage that spans several prompts in one conversation stays unknown
-(`ambiguous-candidates`) by design, so most interactive stages record no model
-or effort. The values are the model and effort Conductor requested for the
+(`ambiguous-candidates`) by design, so the store supplies no model
+or effort for those stages. The values are the model and effort Conductor requested for the
 run, not served-model proof; OpenTelemetry's GenAI conventions draw the same
 line between `gen_ai.request.model` and `gen_ai.response.model`.
 
@@ -2434,7 +2435,7 @@ inverted interval, `updatedAt` before `startedAt`, or `updatedAt` after the
 captured end rejects that run. A run that ended before the stage does not
 supply metadata. An open run that began earlier can. One eligible run can
 certify `route` `conductor` and supply whatever model and effort survived
-cleaning. Zero eligible runs, or more than one, leave model and effort null and
+cleaning. Zero eligible runs, or more than one, leave detected model and effort null and
 do not certify the route. A still-open stale run can overlap a later stage and
 make the result honestly ambiguous. There is no freshness TTL.
 
@@ -2542,11 +2543,13 @@ build, whose `producer_version` predates `0.36.7.0`, the first release that
 reads SQLite shards, shows a reader gap, not run evidence: its null model, null effort and
 `unknown` route say nothing about the run. Invalid or ambiguous store evidence may now yield `route` `unknown`,
 and an explicit CLI row (`CURSOR_INVOKED_AS`) no longer takes model or effort
-from a matching store record of any shape; those stay null unless finish flags
-or the requested variables supply them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
+from a matching store record of any shape; those stayed null unless finish flags
+supplied them. That 0.36.2.0 repair left the row schema, field order, source labels and finish flags
 unchanged, and `unknown` was already a valid route, so the spec's 0.x policy
 treats this as a fix. A consumer that relied on the old overbroad label or
 those CLI values should read the `0.36.2.0` entry in the CHANGELOG.
+Current finish can also fill otherwise-null CLI values from the requested variables;
+that fallback was added later.
 
 Reconsider this private reader if a supported host publishes an official
 run-metadata contract, a qualified native shape changes, the SQLite schema or
@@ -2569,7 +2572,7 @@ second reader and not a quota change.
 an accepted finish flag supplied it. `requested` means `GSTACK_EXTEND_MODEL` or
 `GSTACK_EXTEND_EFFORT` supplied a value that detection and flags left null.
 `unknown` means the value is null. A null
-is always `unknown`. Effort is the effort Conductor requested for the run. None of those labels, and no schema-valid row, proves the
+is always `unknown`. A detected store effort is the effort Conductor requested for the run. None of those labels, and no schema-valid row, proves the
 served model or that the window was right. Installed Conductor acceptance is
 pending. Fixture output is not that acceptance. The next already-planned
 Conductor Cursor run is the check: installed revision, host, harness, and
@@ -2594,7 +2597,8 @@ Start here:
 
 1. Read the row's model, effort, route and sources with the
    [ledger recipe](#cursor-ledger-recipe).
-2. Values with source `detected` are the requested configuration. Stop.
+2. Values with source `detected` are the configuration found by the reader;
+   `flag` and `requested` identify caller-supplied values. Stop for each non-null value.
 3. If they are unknown, the row itself cannot say why. Unless debug lines were
    captured for that finish, report "historical cause unavailable".
 4. To classify the next occurrence, capture debug on the next normal finish
@@ -2620,6 +2624,9 @@ the ledger path, the logger and config paths, skipped-output reasons, other
 harnesses' detection errors, and the `provenance agent=… model=… effort=…`
 line with the values the row records. Copy only lines that begin
 `telemetry: cursor-sdk` into a receipt.
+
+The tables describe detection before finish flags and requested-variable fallback.
+Either can fill otherwise-null model or effort; neither certifies the route.
 
 | Reason | Problem | Cause | Safe action |
 |---|---|---|---|
@@ -2647,10 +2654,10 @@ on a subsequent normal finish. *Store-changed* means Conductor changed its
 store. *Persistent* stays until the store or environment changes. *Reader-bug*
 is ours. Escalate a transient or store-changed cause that repeats across
 finishes: a crash-left `-wal`, an abandoned empty directory or a mid-creation
-shard can each persist. In every case, never delete or edit store files. The
-only way to record values while the store stays incomplete is the existing
-`--model` and `--effort` flags, which are labeled `flag` and never certify the
-route.
+shard can each persist. In every case, never delete or edit store files. To
+record values while the store stays incomplete, use `--model` and `--effort`
+(source `flag`) or the requested variables (source `requested`); neither
+certifies the route.
 
 | Token | Meaning | Class | Safe action |
 |---|---|---|---|
@@ -2684,8 +2691,9 @@ The projections below are synthetic. They are not native evidence.
 
 Several stage-runs lines for one session are a ledger choice: narrow with
 `stage` and `started_at`. Do not keep the last line because it is last.
-Several SDK runs are a different event: model and effort stay null and the
-route is not certified. The recipe never reads the SDK store, never prints an
+Several SDK runs are a different event: detection leaves model and effort null and the
+route is not certified. Finish flags or requested variables can still fill those values.
+The recipe never reads the SDK store, never prints an
 unlisted key, and never writes.
 
 ```python
