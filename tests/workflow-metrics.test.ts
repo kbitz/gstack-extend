@@ -3359,6 +3359,61 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(result).toEqual(['outside-challenge']);
   });
 
+  test.each(['claude-log', 'codex-header', 'voices-file', 'malformed-voices'])('continuation discovery: unreadable %s prevents false correlation', (kind) => {
+    const { fix, repo, project, own, collect } = ownClaudeFixture();
+    const rows = readFileSync(own, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    writeFileSync(join(project, 'outside-candidate.jsonl'), JSON.stringify({
+      ...rows[3], sessionId: 'outside-candidate', message: { ...rows[3].message, id: 'outside-only' },
+    }) + '\n');
+    const sid = 'extend-11111111-1111-4111-8111-111111111111';
+    const voice = (voice_id: string) => ({
+      stage: 'review-and-prep', voice_id, pass: 1, attempt: 1,
+      metrics: { session_id: sid }, subagent_ref: { kind: 'outside-process', id: null },
+      dispatched_at: '2026-01-01T00:00:10Z', returned_at: '2026-01-01T00:00:20Z',
+    });
+    const putVoice = (name: string) => {
+      const dir = join(fix.home, '.gstack/projects/review-regression/review-and-prep', name);
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, 'voices.jsonl'); writeFileSync(path, JSON.stringify(voice(name)) + '\n');
+      return path;
+    };
+    let unreadable: string;
+    if (kind === 'claude-log') {
+      unreadable = join(project, 'already-active.jsonl');
+      writeFileSync(unreadable, ['2025-12-31T23:59:00Z', '2026-01-01T00:00:30Z'].map(timestamp =>
+        JSON.stringify({ ...rows[0], sessionId: 'already-active', timestamp })).join('\n') + '\n');
+    } else if (kind === 'codex-header') {
+      const dir = join(fix.home, '.codex/sessions/2026/01/01'); mkdirSync(dir, { recursive: true });
+      unreadable = join(dir, 'rollout-2026-01-01T00-00-15-01940000-0000-7000-8000-000000000099.jsonl');
+      writeFileSync(unreadable, loadFixtureText('codex-parent.jsonl', { __CWD__: repo }));
+      putVoice('outside-available');
+    } else {
+      putVoice('outside-available'); unreadable = putVoice('outside-unreadable');
+      if (kind === 'malformed-voices') writeFileSync(unreadable, 'not-json\n');
+    }
+    const result = runPythonCollect(fix, [
+      'original_open = tu.Path.open', 'attempts = []',
+      'def fail_read(path, mode="r", *args, **kwargs):',
+      `    if str(path) == ${JSON.stringify(unreadable)} and mode == "rb":`,
+      '        attempts.append(True)',
+      `        if ${kind === 'malformed-voices' ? 'False' : 'True'}: raise PermissionError("synthetic discovery read failure")`,
+      '    return original_open(path, mode, *args, **kwargs)', 'tu.Path.open = fail_read',
+      `req = ${collect}`, 'wm.validate_request("usage", req)',
+      'rec = {"op": "usage", "event_id": req["event_id"], "request_digest": wm.request_digest("usage", req), "request": req}',
+      'print(json.dumps({"request": req, "data": wm.summarize_usage([rec], 0, False, False), "attempts": attempts}))',
+    ]);
+    expect(result.attempts).not.toEqual([]);
+    expect(result.request.sources.find((s: any) => s.relation === 'cross-harness'))
+      .toMatchObject({ evidence: 'unknown', link: null, link_evidence: null });
+    expect(result.data.capture).toBe('partial');
+    const reason = kind === 'codex-header' ? 'log-truncated' : kind === 'malformed-voices' ? 'malformed-record' : 'log-missing';
+    expect(result.data.reasons).toEqual(expect.arrayContaining(['ambiguous', reason]));
+    expect(result.data.totals.direct.output).toBe(100);
+    expect(result.data.totals.correlated.output).toBe(0);
+    expect(result.data.totals.unknown.output).toBe(40);
+    expect(result.data.by_pass).toEqual([]);
+  });
+
   test('sys.addaudithook guard proves zero network, subprocess, sqlite or credential-file access during capture, plus static import check', () => {
     // Static check on bin/lib/telemetry_usage.py.
     const src = readFileSync(join(ROOT, 'bin/lib/telemetry_usage.py'), 'utf8');

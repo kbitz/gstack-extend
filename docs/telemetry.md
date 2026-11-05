@@ -850,6 +850,8 @@ projection.
   candidates can correlate to the run without a pass link when no foreign
   session is active in the checkout. Both alternatives require a known original
   session start and complete discovery within the scan and capacity limits.
+  Missing, unreadable, truncated or malformed discovery input also suppresses
+  correlation while retaining observed usage.
   Ambiguous candidates are `unknown` with `ambiguous`. The three grades have
   separate totals and are never summed into one exact figure.
 - **Pass join via `voices.jsonl` and `cli_reported`.** Capture searches under
@@ -933,7 +935,7 @@ projection.
 |---|---|
 | `unverified-source` | The detected harness (`cursor` or `grok`) has no verified local token log format. |
 | `harness-session-unknown` | The parent harness session ID was not supplied and could not be uniquely resolved. |
-| `log-missing` | A local log was missing or could not be read. An unreadable source is incomplete and its evidence-grade token totals are null. |
+| `log-missing` | A local log or join file was missing or could not be read. An unreadable source is incomplete and its evidence-grade token totals are null. |
 | `log-truncated` | The 32 MiB tail window started after `begin_ms`, so earlier in-window events may be missing. |
 | `scan-budget` | Capture exhausted its cooperative 3 s budget or 64 MiB input-byte budget. |
 | `malformed-record` | A log, `voices.jsonl` or ledger line failed JSON or schema validation. |

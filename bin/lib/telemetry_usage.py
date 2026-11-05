@@ -997,6 +997,7 @@ def _read_voices_join(
             with vpath.open("rb") as stream:
                 raw = stream.read(allow)
         except OSError:
+            top_reasons.add("log-missing")
             continue
         budget.charge(len(raw))
         for raw_line in raw.splitlines():
@@ -1604,6 +1605,10 @@ def collect(
 
     # Correlate cross-harness candidates.
     if candidate_sources:
+        correlation_complete = not budget.exhausted and not ({
+            "scan-budget", "too-many-sources", "capacity",
+            "log-missing", "log-truncated", "malformed-record",
+        } & top_reasons)
         # Map each interval index to the candidates whose first and last records fall inside it.
         interval_to_cands: dict[int, list[_SourceAcc]] = {i: [] for i in range(len(outside_intervals))}
         cand_to_intervals: dict[str, list[int]] = {c.ref: [] for c in candidate_sources}
@@ -1621,8 +1626,7 @@ def collect(
             matching_ivs = cand_to_intervals.get(c_acc.ref, [])
             if (
                 c_acc.original_start_known
-                and not budget.exhausted
-                and not ({"scan-budget", "too-many-sources", "capacity"} & top_reasons)
+                and correlation_complete
                 and
                 len(matching_ivs) == 1
                 and len(interval_to_cands[matching_ivs[0]]) == 1
@@ -1631,7 +1635,7 @@ def collect(
                 c_acc.evidence = "correlated"
                 c_acc.link = outside_intervals[iv_idx][2]
                 c_acc.link_evidence = "correlated"
-            elif c_acc.original_start_known and not foreign_session_active and not budget.exhausted and not ({"scan-budget", "too-many-sources", "capacity"} & top_reasons):
+            elif c_acc.original_start_known and not foreign_session_active and correlation_complete:
                 c_acc.evidence = "correlated"
                 c_acc.link = None
                 c_acc.link_evidence = None
