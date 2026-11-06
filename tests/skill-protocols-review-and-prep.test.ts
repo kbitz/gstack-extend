@@ -2411,9 +2411,12 @@ describe('review-and-prep delegate=<part>', () => {
       '`specialists-dispatched: not declared (delegate)`',
       '`specialists-dispatched: unmet (delegate; waive failed: <cause>)`',
     ]) expect(itemRule, template).toContain(template);
-    expect(flat).toContain('Add the `specialists-dispatched:` line when the policy carries `delegate=` or `specialists=fold`.');
-    expect(flat).toContain('Record the `specialists-dispatched:` line the same way.');
-    expect(flat).toContain('the `specialists-dispatched:` line when the policy carries `delegate=` or `specialists=fold`,');
+    expect(flat).toContain("Add the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active.");
+    expect(flat).toContain("Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active.");
+    expect(flat).toContain("the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active,");
+    expect(itemRule).toContain('The leading status reports the current upstream item result: a met selection outranks an earlier waiver.');
+    expect(itemRule).toContain('`; history=<cycle>:<outcome>[,...]`');
+    expect(itemRule).toContain("retaining each successful waiver's parts and each failed call's cause.");
   });
 });
 
@@ -2601,6 +2604,7 @@ describe('review-and-prep specialists=fold', () => {
       '`specialists-dispatched: not declared (fold)`',
       '`specialists-dispatched: unmet (fold; waive failed: <cause>)`',
     ]) expect(section, template).toContain(template);
+    expect(section).toContain("Apply the delegation section's current-result and mixed-cycle history rule to this line too, preserving the folded checklists as the waiver's parts.");
   });
 });
 

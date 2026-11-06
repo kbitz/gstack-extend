@@ -1456,12 +1456,18 @@ dispatch a placeholder Agent to satisfy the item. If upstream's opt-in contract
 hook blocks on the item, answer with the recorded waiver, never a late dispatch;
 upstream counts a waiver as a miss in its follow record. A failed waive call is
 recorded and changes nothing else. When the installed `/review` contains none of
-the item lines (as on the Codex sibling copy), waive nothing. Record one line in
-the receipt:
+the item lines (as on the Codex sibling copy), waive nothing. While this section
+is active, record one line in the receipt:
 `specialists-dispatched: waived (delegate; cycles=<n>[,<n>...]; parts=<part>[,<part>...])`,
 `specialists-dispatched: met (delegate; <reason>)`,
 `specialists-dispatched: not declared (delegate)` or
 `specialists-dispatched: unmet (delegate; waive failed: <cause>)`.
+The leading status reports the current upstream item result: a met selection
+outranks an earlier waiver. When cycles have different outcomes, append
+`; history=<cycle>:<outcome>[,...]` to that same line, retaining each successful
+waiver's parts and each failed call's cause. A later failed call does not erase
+an earlier successful waiver. This preserves the call history even when the
+current result is `met` or `waived`.
 
 Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
@@ -1585,6 +1591,8 @@ change, record that there and stop; never edit an upstream file.
   `specialists-dispatched: met (fold; <reason>)`,
   `specialists-dispatched: not declared (fold)` or
   `specialists-dispatched: unmet (fold; waive failed: <cause>)`.
+  Apply the delegation section's current-result and mixed-cycle history rule
+  to this line too, preserving the folded checklists as the waiver's parts.
 
 ### Overlap independent first-cycle reviewers
 
@@ -2138,8 +2146,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
    line with the policy line that authorized them; a recorded gap is not listed
    under `Unresolved:`. Add the `Review overlap:` line when the policy carries
-   `first-cycle=overlap`. Add the `specialists-dispatched:` line when the policy
-   carries `delegate=` or `specialists=fold`. Add the `Review arm:` line and every `Folded checklist:`
+   `first-cycle=overlap`. Add the `specialists-dispatched:` line only while the
+   policy's `delegate=` or `specialists=fold` section is active. Add the `Review arm:` line and every `Folded checklist:`
    line. Add the `delegation:` status and every `Delegated part:`
    line. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
@@ -3245,7 +3253,7 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line the same way. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line only while the policy's `delegate=` or `specialists=fold` section is active. Record the `Review arm:` line and every `Folded checklist:` line the same way.
 Record the `delegation:` status and every `Delegated part:` line the same way.
 When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
@@ -3897,7 +3905,7 @@ line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
 review evidence; the receipt names the configuration's SHA-256 and labels,
 never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
 line when the policy carries `specialists=fold`, the `specialists-dispatched:`
-line when the policy carries `delegate=` or `specialists=fold`, the `Review overlap:` line when
+line only while the policy's `delegate=` or `specialists=fold` section is active, the `Review overlap:` line when
 the policy carries `first-cycle=overlap`, every `External gate attestation:`
 row (each accepted result line adds one), the `pregate-narrowing:` status line and
 each `Pregate lane not run:` line, and the elapsed

@@ -253,6 +253,11 @@ effect together. A `Review delegates:` line beside a policy that carries only
   `provider`, `model`, `outcome`, `reason`, `wall_ms`, the four token counts,
   `findings` and `call` (the call id). Unknown values read `unknown`. The PAUSED
   and STOPPED receipts carry the same lines.
+- The `specialists-dispatched:` status describes the current upstream item
+  result; a met selection outranks an earlier waiver. Mixed cycle outcomes
+  append `; history=<cycle>:<outcome>[,...]` to that line, retaining successful
+  waivers' parts and failed calls' causes even when the current result is met
+  or waived. A later failed call does not erase an earlier successful waiver.
 - Findings enter the review as that specialist's findings and keep the
   `specialist:<part>` attribution; the provider and model are recorded on the
   part, not inside a finding.

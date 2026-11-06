@@ -420,7 +420,10 @@ off by default (`docs/skill-routing-and-contracts.md` in the gstack checkout).
   selection line (which outranks an earlier waiver in `lib/skill-contract.ts`).
   Neither option prints a narrowed or zero-count selection line or dispatches a
   placeholder Agent. Upstream counts a waiver as a miss (`met_waived`) in its
-  follow record, and the receipt records one `specialists-dispatched:` line.
+  follow record, and the receipt records one `specialists-dispatched:` line
+  while the option is active. It names the current item result, with a
+  `; history=<cycle>:<outcome>[,...]` suffix for mixed cycle outcomes so later
+  met results or failed calls do not hide earlier waiver history.
 - **All-or-none item anchors.** Both activation paragraphs list
   `specialists-dispatched`, `Dispatching N specialists:` and `then one Agent
   dispatch per specialist it names (none when a small diff skips them).` under
