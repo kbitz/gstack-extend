@@ -2,6 +2,17 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md] Test gap: installed-agent specialist waiver and receipt history
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Static prompt locks and CLI probes do not execute the new delegate/fold waiver and mixed-cycle receipt instructions.
+- **Hypothesis (untested):** Exercise active delegation and folding with declared and absent dispatch items, successful and failed waiver calls, and later fully dispatched cycles; inspect actual dispatches, waiver commands and retained receipt history.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** skills/review-and-prep.md:1446
+- **Evidence:** The coverage audit traced 17 of 18 paths to valuable tests. The remaining path is installed-agent behavior; no failure was reproduced, and the acceptance record claims no live-agent proof.
+- **Context:** Filed by /review-and-prep on branch `mmm/c424e0f7` at `b52ad298` (2026-11-06), before PR creation.
+- **Effort:** ? (user triages in /roadmap)
+- **Revisit when:** The next Track touches these waiver or receipt instructions.
+
 ## Completed
 
 ### [manual] Cut repeated review work in /review-and-prep without changing gstack
