@@ -26,10 +26,10 @@ external orchestrators without requiring a particular orchestrator.
   acceptance evidence. Skill and helper code that still names Conductor is
   legacy until a later change removes it (Future). A critical Paseo failure
   blocks 1.0.
-- Initial acceptance conditions: local macOS development, Git repositories,
-  GitHub PRs through authenticated `gh`, supported Bun, installed gstack and
-  existing authorized agent accounts. Other operating systems remain unverified
-  until a named profile is qualified; this adoption does not remove existing
+- Initial acceptance conditions: Git repositories, GitHub PRs through
+  authenticated `gh`, supported Bun, installed gstack and existing authorized
+  agent accounts. Acceptance evidence names the operating system it ran on, and
+  no other system is claimed; this adoption does not remove existing
   installation support for Claude Code, Codex, Cursor or OpenCode.
 - Qualify Codex implementation, Cursor review and Claude planning/shipping on
   Paseo where those routes are provided. Record concrete host,
