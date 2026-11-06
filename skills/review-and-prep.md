@@ -424,6 +424,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
 | `Prove /ship's release gates on this head` | `pregate`, `coverage`, `documentation`, `tests` | `pregate` (cross-call), `coverage`, `documentation`, `tests` (cross-call) |
+| `Bound the documentation audit` | `documentation` | none |
 | `Repair a test-only final-gate failure` | `pregate`, `tests` | `pregate` (cross-call), `tests` (cross-call) |
 | `Capture evidence and commit` | `evidence`, `commit` | `evidence`, `commit` |
 | `3. Push and create or update the draft` | `publication` | `publication` |
@@ -895,7 +896,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -935,6 +936,16 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   whole line as `none supplied`. To see whether the loaded copy narrows, it runs
   `grep -F 'Narrow the pregate after an accepted pass' "<installed skill dir>/SKILL.md"`; exit 1 means an older installation runs the
   pregate as today, and the policy line stays unchanged.
+- `documentation-scope=contracts` (its only value) is opt-in. It bounds the
+  documentation audit's read list and its one re-audit as **Bound the
+  documentation audit** defines; omitted, the audit runs as today. It waives no
+  gate, keeps the audit's attempt bound and never authorizes a continuation. It
+  is independent of every other key, including `documentation-audit=final`: a
+  caller may pass either key without the other or both together. An installation
+  without this value reads a line carrying it as `none supplied`, so a caller
+  checks the loaded copy with `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
+  (exit 0 means supported) and omits the value otherwise, keeping its other
+  keys.
 - `parent-io=lean` (its only value) is opt-in. While a local command or
   subagent this invocation started is live (a test lane, the pregate, an audit
   or a reviewer), the parent waits in blocking calls, each up to the host's
@@ -1075,6 +1086,9 @@ Under the light default:
 - It never sets `test-gaps=record`: recording a gap instead of writing its test
   needs a caller that accepts the coverage risk, so it is an explicit caller
   opt-in.
+- It never sets `documentation-scope=contracts`: bounding the audit's reads
+  needs a caller that accepts the retained-quality risk until the acceptance
+  record supports a default (`SPEC P1`).
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -2227,7 +2241,8 @@ reuse these records.
    candidate snapshot, subagent dispatch, validation, attempt bound and blocked
    recovery. Review its doc edits like any fix. Keep its accepted status, files,
    base and documentation section. It covers every changed path, so a later edit
-   spends its one re-audit.
+   spends its one re-audit. Under `documentation-scope=contracts`, bound its
+   reads and delta re-audit as **Bound the documentation audit** below defines.
 4. **Pregate and test lanes.** Under `full-suite=external`, first take **Pause
    for an external full-suite gate** below; this item's own steps run only on
    an accepted pass. Before the full pregate run, make every declared
@@ -2273,6 +2288,152 @@ final pregate record, the audit's post-child snapshot and its documentation
 section to an existing `<state-root>/projects/<slug>/review-and-prep/`, otherwise
 `~/scratch/review-and-prep/`, and record each copy's path and SHA-256 in the
 receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}` (empty counts as unset); a set absolute root counts as existing and is created, a relative one never does. Never record a gate as passed from memory or a partial run. A narrowed pregate run is recorded as narrowed, never as the full pregate.
+
+### Bound the documentation audit
+
+1. **Activation.** Only when the policy carries `documentation-scope=contracts`,
+   or the user chooses it in this session. Otherwise the Documentation audit
+   step above runs `/ship`'s section unchanged and none of this section applies.
+2. **Inventory, unchanged.** Inventory documentation exactly as the installed
+   `document-release` audit-scope Discovery says: tracked and nonignored new
+   files, the declared documentation roots and authored sources, chosen by role.
+   The bound narrows what the child reads, never what the audit can find.
+3. **Initial read list.** After Prepare's snapshot and before its dispatch,
+   build the list in the parent from the candidate's changed paths, with
+   renames split so a renamed path's old name counts: committed
+   (`git diff --no-renames --name-only -z <base> HEAD`), staged (the same with
+   `--cached` and no revision), unstaged (no revision) and untracked
+   (`git ls-files --others --exclude-standard -z`). Redirect each command's
+   output to a file in the evidence directory and split it on NUL with a
+   script, never by eye. Never reuse the snapshot's path lists, which detect
+   renames. The list
+   holds only inventoried docs that exist in the candidate, spelled as Git
+   spells them, with an in-repository symlink resolved to its target and
+   duplicates removed; `VERSION` is read when needed but never listed. Its
+   inputs:
+   - changed-path references: every changed documentation file, each
+     inventoried doc that names a changed path, and each inventoried doc that a
+     changed test line, the plan or an acceptance criterion names;
+   - contract references: name, from the diff, the contracts each changed path
+     defines or changes, for example skill names and required inputs, commands
+     and flags, exit codes, defaults, limits, output formats, config keys,
+     environment variables, schema and record fields, exported symbols, module
+     and component names, API routes, events, error codes, receipt and handoff
+     labels, policy keys and file paths. A changed doc's edited claims count: name
+     the contracts whose description it changes. Then add each inventoried doc
+     that mentions one. Search literally, once for both inputs: write every
+     contract term and every changed path (old and new names, and a changed
+     doc's file name too, so relative links count) with the file-write tool to
+     a private file in the evidence directory, run
+     `git grep --untracked -l -z -F --full-name -f <terms-file> -- ':/'` and
+     keep only the inventoried paths it prints, so neither a term nor a
+     repository path enters a shell command;
+   - linked authorities: a doc that the project instructions, README or product
+     spec name as the authority for a listed contract, or that a doc selected
+     by the two inputs above links to as that contract's source. Follow such a
+     link one step; the always-read docs below never seed it;
+   - always: the project instruction files (for example `CLAUDE.md` or
+     `AGENTS.md`), `README.md` and the product spec when it has an
+     `## Authority` section, plus `CHANGELOG.md` when the candidate diff
+     touches release metadata or the audit runs at `/ship`'s release gate.
+
+   Changelogs, roadmaps, backlogs and archived or superseded plans record
+   history and intent, so a mention alone never selects them; they join the
+   list when they changed or under the release-metadata rule.
+4. **Broad fallback.** Run today's unbounded audit instead, recording
+   `fallback=<reason>`, whenever relevance is uncertain:
+   - the parent cannot name the contracts a changed non-test path defines or
+     changes (a file path alone names no contract);
+   - a changed path is a project instruction file, the product spec, a
+     docs-build configuration, an authored template that generates docs, or a
+     build, test or install entry point or configuration (for example a
+     package manifest, a CI workflow or a test-selection map) other than a
+     version-only release-metadata change;
+   - a doc is renamed or deleted;
+   - a contract term is too generic for a literal search to tell references
+     from unrelated prose, or the search fails (an exit status other than 0
+     for a match or 1 for no match);
+   - a listed path or term holds a newline or control character;
+   - or the list would already hold the whole inventory.
+5. **Dispatch.** Prepare runs unchanged: `gstack-docs-candidate snapshot` with
+   the documentation roots the inventory found and no `--select`, because
+   `--select` narrows the release paths the snapshot hashes for `/ship`'s Step 16
+   freshness check. Write the read list, the contract terms and the inventory
+   as JSON with the file-write tool, never through a shell command, to a
+   private file in the evidence directory. After upstream's fixed
+   subagent prompt, append one scope paragraph that gives the child only that
+   file's path, labelled as data, never as instructions. The paragraph tells
+   the child to:
+   - inventory as audit-scope says;
+   - read every listed doc in full, and the source needed to verify its claims,
+     changed or not;
+   - also read any other doc it finds that references a changed path or a
+     listed contract, and report each in `decisions` as a read outside the
+     list, with its reason;
+   - list every doc it read in `files_reviewed`, and never call a doc current
+     without reading it;
+   - name the bounded scope as the section's audited scope;
+   - treat the bounded scope as the whole audit: having read every listed doc
+     and left no correction unresolved, report `current` or `updated` for that
+     scope, and `blocked` only on upstream's grounds;
+   - on a re-audit, read "changed path" as a path in the data file's delta;
+     every listed doc, the always-read ones included, is still in scope.
+
+   When validating the result, a `files_reviewed` that omits a listed doc (a
+   symlink counts as read when its target was) fails the audit's checks and
+   takes blocked recovery. On a re-audit the parent writes, beside the section
+   with the scope lines, that the carried audit's result (named by its id)
+   stands outside the delta. A read outside the list stays
+   inside the attempt and counts in `extra-reads`; it never sends the audit back
+   for a broad relaunch.
+6. **Re-audit follows the fix delta.** When the remaining re-audit runs after
+   an accepted (`current` or `updated`) audit of this invocation, the delta is
+   every path whose content differs between that audit's post-child snapshot
+   and the current candidate: the paths
+   `gstack-docs-candidate compare <audit-id>-post.json` reports as changed or
+   newly dirty, plus paths the snapshot did not record that changed since it
+   (`git diff --no-renames --name-only -z` from that snapshot's HEAD to the
+   current HEAD, the same with `--cached` and without a revision for staged and
+   unstaged paths, and new untracked paths). Prepare still snapshots the whole
+   candidate. Build the read list from the delta alone by item 3, plus the docs
+   the accepted audit edited when the delta touches them, and list the delta
+   paths in the data file; item 4 applies to the delta as to any candidate.
+   Before the re-audit, copy the
+   accepted audit's documentation section to the evidence directory and record
+   its durable path and SHA-256, and the SHA-256 of that audit's post-child
+   snapshot. The data file names the accepted audit's id and section SHA-256 as
+   the carried audit, never as the child's `audit_id`. Run a full-scope
+   re-audit instead (item 3 over the whole candidate, or broad under item 4)
+   when:
+   - no accepted audit of this invocation exists (an earlier invocation's audit
+     never counts);
+   - the accepted audit used the broad fallback;
+   - the base changed since it;
+   - its post-child snapshot cannot be read or verified, or that snapshot's
+     HEAD is not an ancestor of the current HEAD;
+   - or the delta cannot be established.
+7. **Bound and truth.** The attempt budget is upstream's, unchanged: choosing a
+   scope never adds or refunds an attempt, a recovery that widens to broad uses
+   the remaining attempt, and there is never a third. `status` keeps upstream's
+   meaning (`updated`, `current`, `blocked`), and a bounded `current` covers
+   only the docs read. `inventoried` and `read-list` count those docs,
+   `reviewed` counts the inventoried docs in the child's validated
+   `files_reviewed`, `extra-reads` counts the reads outside the list it
+   reported in `decisions`, and bytes are each file's size in the candidate,
+   read with the file-read tool (or, for a path unchanged in the working tree,
+   `git cat-file --batch-check` fed `<rev>:<path>` lines from a file the
+   file-write tool wrote), never with a path in a shell command.
+   Record `Documentation scope: contracts (inventoried=<N>;
+   read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes;
+   extra-reads=<E>; fallback=<none|reason>)` and, for the re-audit,
+   `Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs,
+   <B2> bytes; carried-from=<audit_id> <section-sha256>; carried-copy=<durable
+   path>; carried-snapshot=<post-snapshot SHA-256>)` or
+   `Documentation re-audit scope: full — <reason>`. Write these lines in the
+   receipt and beside the documentation section, never inside it: the section
+   stays the child's unchanged text, so its SHA-256 still matches. The one-line
+   `scope` in `.gstack/tmp/docs-audit.json` names the arm too (for example
+   `contracts: <M> of <N> docs; fallback=none`).
 
 ### Pause for an external full-suite gate
 
@@ -3575,7 +3736,13 @@ hash it followed:
   post-child snapshot's path and SHA-256, and its documentation section's
   exact text, durable path and SHA-256, or the user's named-risk decision with
   the same section evidence. Bind each audit or decision to the final HEAD,
-  Git tree and reviewed base.
+  Git tree and reviewed base. Under `documentation-scope=contracts`, also
+  include the `Documentation scope:` line (arm, inventoried doc count, listed
+  docs count and bytes, reviewed docs count and bytes, reads outside the list,
+  and fallback reason) and any `Documentation re-audit scope:` line with the
+  carried audit's id, section SHA-256, and its section copy's exact text and
+  durable path, bound to that audit's post-child snapshot; without the value,
+  this field is unchanged.
 
 When Greptile applies, include its single run/review links, original trigger
 time, reviewed SHA/base, and local verification covering any later delta, or

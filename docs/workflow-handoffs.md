@@ -831,7 +831,7 @@ runs only on an open draft (`pr-state`, `pr-ready`: `HOLD`). Fixed text a produc
 The policy grammar is `/review-and-prep`'s "Read an optional review policy": a version
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
-`documentation-audit` (`final`), `full-suite` (`final`, `external`), `final-gate-repair`
+`documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
 `performance`, `simplification`, comma-separated, each once), `repair-review` (`behavior-changing`),
 `repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
@@ -963,6 +963,20 @@ A prepared receipt that records a folded first cycle still emits `review: COMPLE
 its H-B handoff: the `Review arm:` and `Folded checklist:` lines are receipt text, not
 handoff bindings, and `/ship-and-land` reads the receipt as it would a plain one
 (`B-FOLDED-HEAD`).
+
+`documentation-scope=contracts` follows the same rollout order and the same check,
+written as `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
+(exit 0 means supported). An installation without it reads the whole line as `none supplied`, an older
+H-E parser holds a returned policy that carries it as `policy-malformed`, and a caller
+omits it when the check fails and keeps its other keys. It is independent of every other
+key, including `documentation-audit=final`: a caller may pass either key without the
+other or both together. It is never set by the light review default. The value waives no
+gate, keeps the audit's attempt bound and never authorizes a continuation. `/ship-and-land`
+takes `documentation-scope=contracts` only from its own invocation (prompt or user
+choice in that session); preparation's receipt, PR text and comments never turn it on.
+A bounded audit's `current` covers only the docs it read, and its scope lines say so.
+See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
+record.
 
 A prepared receipt with a successful repair chain still emits `review: COMPLETE`
 in its H-B handoff: the repair commit's coverage is the recorded chain, which
@@ -1287,6 +1301,7 @@ or input it says is needed is for the user.
 | `Review arm:` and `Folded checklist:` lines | receipt-present | published in the receipt under `specialists=fold`: `Review arm: fold (cycle 1; layout=<nested|sibling>; checklists=<n>)` or `Review arm: dispatch — <reason>`, plus one `Folded checklist:` line per checklist the main pass read with its name, file path under the gstack root, SHA-256 and finding count; no local path outside the gstack root appears, and the lines never authorize a stage or merge (`B-FOLDED-HEAD`) |
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
+| `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.

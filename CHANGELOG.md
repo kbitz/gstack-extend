@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.68.0] - 2026-11-05
+
+### Added
+
+- review-and-prep accepts an opt-in review policy value, documentation-scope=contracts.
+
+### Fixed
+
+- The bounded documentation audit collects the committed changes, splits renames, and binds the re-audit to that delta. It settles VERSION, relative links, and the re-audit statement.
+- Repository strings stay out of the shell. The audit data is written to a file, and ship-and-land can load that audit.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. documentation-scope=contracts applies only when you set it. Bounded documentation audits run after the upgrade follow the corrected procedure.
+
 ## [0.67.0] - 2026-11-05
 
 ### Added
