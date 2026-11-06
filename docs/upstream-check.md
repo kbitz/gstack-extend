@@ -129,7 +129,8 @@ Ids contain no whitespace and come from the source position
 `criteria.eng.outside`). `INFO` keys are `extend-version`, `extend-root`,
 `inspected <contract> <revision> <version>`, `scope`, `root`,
 `upstream-version`, `upstream-revision` (the git revision when the root is a
-checkout, `unknown` otherwise), `layout` and `file <id> <path>`. A difference
+checkout, `unknown` otherwise), `layout`, `file <id> <path>` and
+`not-declared <list> <path>`. A difference
 between an inspected and the installed revision is `INFO`, never `DRIFT`.
 Within v1 new kinds and `INFO` keys may appear; consume the exit status, the
 `DRIFT` prefix and `RESULT`. Any other grammar change bumps the version.
@@ -158,9 +159,9 @@ the module path and a reason the checker owns. To see the raw message run
 
 ```text
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
-  effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
+  effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=97 drift=1
+RESULT drift checks=107 drift=1
 ```
 
 ## What it checks
@@ -191,8 +192,8 @@ The inventory comes from this extension's own source, never a second copy:
   (`review-and-prep.fix-first`) from the in-cap list. Their anchor results are
   independent, but activation is not: the paragraph also requires the first two
   in-cap anchors, which the in-cap list already checks. Drift in either of those
-  disables both values even while the six Fix-First anchor checks say OK; the
-  existing in-cap effect line names only the delta consequence.
+  disables both values even while the six Fix-First anchor checks say OK, and
+  the in-cap effect line for those two anchors names both consequences.
 - **Test-gap anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation
   (`test-gaps=record`).**`), in four lists each opened by "byte for byte,": the
@@ -223,41 +224,46 @@ The inventory comes from this extension's own source, never a second copy:
   `review-and-prep.pregate-narrowing.<bin|index|lanes>.<n>`.
 - **Delegation anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation (`delegate`).**`), in
-  five lists each opened by "byte for byte,": the four after the first are
-  checked as raw bytes in the installed `/review` skill file, and the three
-  after each of the next four (following "its
-  `review/specialists/testing.md` still contains,", then the same for
-  `maintainability.md`, `performance.md` and, after "and its", `simplification.md`)
-  in that specialist's file. Each specialist file holds its heading, the line
-  `Output: JSON objects, one finding per line. Schema:` and its own
-  `"specialist":"<part>"` tag; whole-file presence is the check, so the
+  six lists each opened by "byte for byte,": the six after the first (including
+  the two waive-instruction lines every copy carries) are checked as raw bytes in
+  the installed `/review` skill file; the three after the second (following "and,
+  where that `/review` contains any line of the next list, it still contains
+  every line of it,") are checked all-or-none in that same `/review` file,
+  reporting `OK` plus `INFO not-declared review-and-prep.delegate.dispatch-item <path>`
+  when none of the three is present; and the three after each of the next four
+  (following "its `review/specialists/testing.md` still contains,", then the same
+  for `maintainability.md`, `performance.md` and, after "and its",
+  `simplification.md`) in that specialist's file. Each specialist file holds its
+  heading, the line `Output: JSON objects, one finding per line. Schema:` and its
+  own `"specialist":"<part>"` tag; whole-file presence is the check, so the
   simplification tag, which that file also uses elsewhere, is not counted. The
   four specialist files are read from the root in both layouts (the Codex root's
-  `review/specialists` links to the nested copy), and every anchor is text both
-  layouts carry: nothing is anchored in a section only one layout installs. They are listed
-  by `delegateInventory`, a separate check (`review-and-prep.delegate`). Anchor
-  IDs read `review-and-prep.delegate.<review|testing|maintainability|performance|simplification>.<n>`,
-  sixteen in all. `bin/review-delegate` repeats the specialist-file anchors for
+  `review/specialists` links to the nested copy). They are listed by
+  `delegateInventory`, a separate check (`review-and-prep.delegate`). Anchor IDs
+  read `review-and-prep.delegate.<review|dispatch-item|testing|maintainability|performance|simplification>.<n>`,
+  twenty-one in all. `bin/review-delegate` repeats the specialist-file anchors for
   the parts it is asked to run, so a part never runs partly applied.
 - **Fold anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation (`specialists=fold`).**`),
-  in ten lists each opened by "byte for byte,": the first list, four lines, is
-  checked as raw bytes in the installed `/review` skill file, and each of the next
-  nine lists holds one heading, checked in that checklist's file (following "its
-  `review/specialists/testing.md` still contains,", then the same for
-  `maintainability.md`, `security.md`, `performance.md`, `data-migration.md`,
-  `api-contract.md`, `simplification.md` and `state-machines.md`, and, after "and
-  its", `review/design-checklist.md`). The review lines are ones both layouts
-  carry, and all nine checklists are read from the root in both layouts (the
-  Codex root's `review/specialists` and `review/design-checklist.md` link to the
-  nested copy), so nothing is anchored in a section only one layout installs.
-  Three of the review lines and four of the headings (testing, maintainability,
-  performance and simplification) are also delegation anchors: a change to one of
-  them drifts both IDs, each with its own effect. They are listed by
+  in eleven lists each opened by "byte for byte,": the first list, six lines, is
+  checked as raw bytes in the installed `/review` skill file; the second list,
+  three lines, is checked all-or-none in that same `/review` file with `OK` plus
+  `INFO not-declared review-and-prep.fold.dispatch-item <path>` when none is
+  present; and each of the next nine lists holds one heading, checked in that
+  checklist's file (following "its `review/specialists/testing.md` still
+  contains,", then the same for `maintainability.md`, `security.md`,
+  `performance.md`, `data-migration.md`, `api-contract.md`, `simplification.md`
+  and `state-machines.md`, and, after "and its", `review/design-checklist.md`).
+  All nine checklists are read from the root in both layouts (the Codex root's
+  `review/specialists` and `review/design-checklist.md` link to the nested copy).
+  Five of the review lines, the three item lines and four of the headings
+  (testing, maintainability, performance and simplification) are also delegation
+  anchors, and the combine line is also an overlap anchor: a change to one of
+  them drifts every shared ID, each with its own effect. They are listed by
   `foldInventory`, a separate check (`review-and-prep.fold`). Anchor IDs read
-  `review-and-prep.fold.review.<n>` and
+  `review-and-prep.fold.review.<n>`, `review-and-prep.fold.dispatch-item.<n>` and
   `review-and-prep.fold.<testing|maintainability|security|performance|data-migration|api-contract|simplification|state-machines|design>.1`,
-  thirteen in all. What the anchors do not cover: Review Army's selection, its
+  eighteen in all. What the anchors do not cover: Review Army's selection, its
   State Machines and Design steps and the Red Team dispatch mechanics, which
   only the nested layout installs and which the fold uses as written, so an
   upstream change inside `review/sections/review-army.md` is not detected here.
@@ -347,17 +353,20 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
 <a id="drift-anchor"></a>
 - **`anchor`.** For the three `/review` anchors, the in-cap delta is inactive
   and `/review` runs unmodified (full repeat cycles); the first two also gate
-  `repair-review=behavior-changing`, which then records `repair-review: inactive`.
+  `repair-review=behavior-changing`, which then records `repair-review: inactive`,
+  and the effect line for those two anchors states both consequences.
   For the six Fix-First anchors, that value is inactive: every edited pass repeats
   as today and the receipt says so, with no upstream file edited. For the sixteen
   test-gap anchors, `test-gaps=record` is inactive: the review and the coverage
   audit write tests as today and the receipt says so, with no upstream file
   edited. For the nine pregate-narrowing anchors, a pass under
   `full-suite=external` does not narrow the pregate: it runs as today and the
-  receipt says so, with no upstream file edited. For the sixteen delegation
-  anchors, `delegate=<part>` is inactive: every specialist runs on the host
+  receipt says so, with no upstream file edited. For the twenty-one delegation
+  anchors (including the three all-or-none item lines when at least one is
+  present), `delegate=<part>` is inactive: every specialist runs on the host
   model as today and the receipt says so, with no upstream file edited; the
-  option never runs partly applied. For the thirteen fold anchors,
+  option never runs partly applied. For the eighteen fold anchors (including the
+  three all-or-none item lines when at least one is present),
   `specialists=fold` is inactive: cycle 1 dispatches specialists as today and the
   receipt says so, with no upstream file edited. For the eight overlap anchors,
   `first-cycle=overlap` is inactive: cycle 1 runs in today's order and the
@@ -387,40 +396,44 @@ prints `DRIFT <kind> …`. `autoplan-lean drift` also refuses a symlinked file
 argument, while this command resolves symlinks, so a symlinked nested layout
 (such as Claude's) is checked, not reported unreadable.
 
-### Anchors left unqualified
+### Upstream's specialist-dispatch item
 
-Two anchors drift against installed gstack 1.94.39.0 (revision
-`f8085aa0e499085c411f712d6d5c00a81d1b104a`), and this extension does not
-requalify them. `delegate=<part>` and `specialists=fold` stay off on that
-install. Each is still listed in the Inspected revisions table below at its older revision.
+Since upstream gstack 1.94.22.0 (`592fa0c8`), the nested `/review` (and the
+Cursor sibling copy generated from it; grep counts on 2026-11-06 across nested /
+Cursor / Codex: `specialists-dispatched` 2/1/0, `Dispatching N specialists:`
+2/2/0, `then one Agent dispatch … skips them).` 1/1/0) declares the `Done means`
+item `specialists-dispatched`: print the `Dispatching N specialists:` selection,
+then one Agent dispatch per specialist it names. The frontmatter contract and its
+`skill_contracts` Stop hook exist only in the nested Claude Code copy and are
+off by default (`docs/skill-routing-and-contracts.md` in the gstack checkout).
 
-- **Anchors:** `review-and-prep.delegate.review.1` and
-  `review-and-prep.fold.review.1`. They share one combine line in the nested
-  `/review` and in the sibling `/review`.
-- **Old wording:** `Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.`
-- **New wording:** `Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
-  Upstream renamed Greptile to "review bot" in v1.93.33.0 (`14d7414a`). The line
-  means the same, and the rename alone would be safe to follow.
-- **Why the options stay off:** since v1.94.22.0 (`592fa0c8`) the nested
-  `/review` has a `Done means` item, `specialists-dispatched`: the specialist
-  selection is printed, then one Agent dispatch per specialist it names.
-  Delegation replaces that dispatch and the fold dispatches none, yet both
-  sections describe their change as never a gate. Upstream's opt-in
-  `skill_contracts` Stop hook (`docs/skill-routing-and-contracts.md` in the
-  gstack checkout) blocks once on an unmet item and then records a miss, and a
-  waiver also counts as a miss. The sibling `/review` omits the item, but both
-  layouts share the anchors, so one answer covers both. The hook is off by
-  default, so this is a model-facing instruction conflict rather than a measured
-  failure.
-- **What a later Track must change:** decide how the delegate and fold sections
-  meet or waive `specialists-dispatched` on the nested layout and say so in the
-  receipt; anchor that item so a further upstream change turns the options off;
-  then re-anchor both combine lines to the installed `… review bot findings.`
-  text and move `DELEGATE_QUALIFIED`, `FOLD_QUALIFIED` and their table rows.
-
-Until then `bin/upstream-check` reports `RESULT drift` for these two anchors on
-an installed 1.94.39.0 root, and the opt-in installed-root "passes every check"
-test fails on such an install.
+- **Why both options waive it.** A delegated part that the delegate credits gets
+  no Agent dispatch, and a folded cycle 1 dispatches no specialist Agent, so
+  neither option can meet `specialists-dispatched` for those parts. Both options
+  waive the item through upstream's own command (`gstack-skill-contract waive
+  specialists-dispatched --reason "<why>"`, without `--skill`, anchored in both
+  activation paragraphs by `For an item that truly does not apply, run` and
+  `(this session only; it counts as a miss).`): once per cycle where the
+  delegate credited at least one part, and once in a folded cycle 1 that applied
+  at least one checklist. Parts that run on the host keep their Agent dispatch,
+  and a later cycle that dispatches as today meets the item from its own later
+  selection line (which outranks an earlier waiver in `lib/skill-contract.ts`).
+  Neither option prints a narrowed or zero-count selection line or dispatches a
+  placeholder Agent. Upstream counts a waiver as a miss (`met_waived`) in its
+  follow record, and the receipt records one `specialists-dispatched:` line.
+- **All-or-none item anchors.** Both activation paragraphs list
+  `specialists-dispatched`, `Dispatching N specialists:` and `then one Agent
+  dispatch per specialist it names (none when a small diff skips them).` under
+  `review-and-prep.delegate.dispatch-item.<1..3>` and
+  `review-and-prep.fold.dispatch-item.<1..3>`. Because the Codex sibling copy
+  declares none of the three lines, the list passes when the review file contains
+  all three or none of them, and the none case prints `INFO not-declared
+  review-and-prep.<delegate|fold>.dispatch-item <path>` with `OK` for each ID. If
+  some lines are present and others are missing, or the review file cannot be
+  read, the missing IDs drift and turn that option off. Detection gap: an
+  upstream change that renames the item and rewrites its marker and bullet prose
+  all at once (all three lines gone together) reads as `not-declared`, so the
+  options stay on while a renamed item exists.
 
 ## The 120-minute lease limit
 
@@ -480,8 +493,8 @@ and the test-gap routing value.
 | Test-gap anchors | `41a67b996d8bbf2167996683953dd2d7cd387d64` | 1.91.367.0 |
 | Pregate-narrowing anchors | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
-| Delegation anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
-| Fold anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
+| Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
+| Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Overlap anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Reviewer criteria copies | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |

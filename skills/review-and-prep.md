@@ -1059,7 +1059,11 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
 - A policy never waives a gate or changes its bound: Greptile-once, manual testing, the
   completion matrix, readiness, `/review`'s cap and stop, and `/ship`'s bounds
   all stand. Without a policy every default in this skill is unchanged, unless
-  the light review default below applies.
+  the light review default below applies. Those are this skill's gates; upstream
+  `/review`'s `specialists-dispatched` contract item, checked by upstream's
+  opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`,
+  only where the installed `/review` declares it, through upstream's own waive
+  command, and the receipt records it.
 - Record the line verbatim and its source in the receipt, and copy it
   unchanged into any continuation prompt.
 
@@ -1355,10 +1359,16 @@ each cycle as `full` or `delta from <snapshot>` and put
 **Activation (`delegate`).** Apply this section only when the review policy
 carries that value, a `Review delegates:` line is present, and the installed `/review` read in Step 1
 still contains, byte for byte,
-`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.`
+`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
 `For every combined finding, including core, specialist, exploratory QA, adversarial and valid actionable Greptile findings, check:`
 `If this host omits Review Army, use`
-and `without claiming specialist coverage.`,
+`without claiming specialist coverage.`
+`For an item that truly does not apply, run`
+and `(this session only; it counts as a miss).`,
+and, where that `/review` contains any line of the next list, it still contains every line of it, byte for byte,
+`specialists-dispatched`
+`Dispatching N specialists:`
+and `then one Agent dispatch per specialist it names (none when a small diff skips them).`,
 its `review/specialists/testing.md` still contains, byte for byte,
 `# Testing Specialist Review Checklist`
 `Output: JSON objects, one finding per line. Schema:`
@@ -1379,14 +1389,17 @@ Check each with `grep -F`.
 
 Read [the delegate contract](https://github.com/kbitz/gstack-extend/blob/main/docs/delegated-review.md)
 (`docs/delegated-review.md`) before the first use. This is a **wrapper
-override**, not an upstream fork: it changes who runs a part, never a gate,
-a checklist or `/review`'s own text. Resolve this extension's root from this
-installed skill's `.extend-root`, and the upstream root from the installed
-`/review` used in Step 1.
+override**, not an upstream fork: it changes who runs a part, never a gate of
+this skill, a checklist or `/review`'s own text; the one upstream contract item
+a credited part cannot meet is waived as **Upstream's dispatch item** states.
+Resolve this extension's root from this installed skill's `.extend-root`, and
+the upstream root from the installed `/review` used in Step 1.
 
 **Step 1.** Check the anchors above with the installed files, then run
 `"<extend-root>/bin/review-delegate" check --config "<Review delegates path>" --gstack-root "<upstream-root>" --parts <list>`
-once. Exit 0 with every anchor matching records
+once. The item list matches when that `/review` contains all of its lines or
+none of them, and none means it declares no `specialists-dispatched` item. Exit
+0 with every anchor matching records
 `delegation: active (parts=<list>; config=<sha256>)`. Anything else records
 `delegation: inactive — <reason>` (the changed anchor, the check's `reason`, or
 no `Review delegates:` line), every part runs on the host model as today, and no
@@ -1429,6 +1442,27 @@ or a `worktree-changed` result.
   user and revert nothing. Every dispatched result is discarded; host coverage
   remains incomplete until those parts actually run on the host.
 
+**Upstream's dispatch item.** Where the installed `/review` declares the
+`specialists-dispatched` item in its `Done means`, a credited delegated part has
+no Agent dispatch and cannot meet that item on its own. In each cycle where the
+delegate credited at least one part, waive the item once after those parts are
+credited, using the waive command that `/review`'s `Done means` gives
+(`gstack-skill-contract waive specialists-dispatched --reason "<why>"`, with no
+`--skill` flag and a reason naming `delegate=` and the credited parts). Parts
+that run on the host model, including fell-back parts, keep their Agent
+dispatch, and a cycle with no credited part waives nothing and meets the item as
+upstream defines it. Never print a narrowed or zero-count selection line or
+dispatch a placeholder Agent to satisfy the item. If upstream's opt-in contract
+hook blocks on the item, answer with the recorded waiver, never a late dispatch;
+upstream counts a waiver as a miss in its follow record. A failed waive call is
+recorded and changes nothing else. When the installed `/review` contains none of
+the item lines (as on the Codex sibling copy), waive nothing. Record one line in
+the receipt:
+`specialists-dispatched: waived (delegate; cycles=<n>[,<n>...]; parts=<part>[,<part>...])`,
+`specialists-dispatched: met (delegate; <reason>)`,
+`specialists-dispatched: not declared (delegate)` or
+`specialists-dispatched: unmet (delegate; waive failed: <cause>)`.
+
 Record each part in `voices.jsonl` and the receipt as **Capture evidence and
 commit** describes, and in the workflow metrics as an attempt with the runner's
 `delegate` values. A fallback is the failed delegate attempt, then a host
@@ -1437,10 +1471,16 @@ attempt that names it as its predecessor, then a `fallback` correction.
 ### Fold specialist checklists into cycle 1
 
 **Activation (`specialists=fold`).** Apply this section only when the review policy carries that value, and only while the installed `/review` read in Step 1 still contains, byte for byte,
-`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.`
+`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
 `Core findings use the confidence gates below; Step 4.6 applies its specialist gates.`
 `If this host omits Review Army, use`
-and `without claiming specialist coverage.`,
+`without claiming specialist coverage.`
+`For an item that truly does not apply, run`
+and `(this session only; it counts as a miss).`,
+and, where that `/review` contains any line of the next list, it still contains every line of it, byte for byte,
+`specialists-dispatched`
+`Dispatching N specialists:`
+and `then one Agent dispatch per specialist it names (none when a small diff skips them).`,
 its `review/specialists/testing.md` still contains, byte for byte,
 `# Testing Specialist Review Checklist`
 its `review/specialists/maintainability.md` still contains, byte for byte,
@@ -1462,8 +1502,10 @@ and its `review/design-checklist.md` still contains, byte for byte,
 Check each with `grep -F`.
 
 This is a **wrapper override**, not an upstream fork: it changes who applies a
-specialist checklist in cycle 1, never a gate, a checklist or `/review`'s own
-text. What a caller measures, and what this value does not claim, is in
+specialist checklist in cycle 1, never a gate of this skill, a checklist or
+`/review`'s own text; the one upstream contract item a folded cycle 1 cannot
+meet is waived as **Upstream's dispatch item** states. What a caller measures,
+and what this value does not claim, is in
 [the fold record](https://github.com/kbitz/gstack-extend/blob/main/docs/acceptance/review-fold.md)
 (`docs/acceptance/review-fold.md`). If folding ever needs upstream text to
 change, record that there and stop; never edit an upstream file.
@@ -1496,6 +1538,25 @@ change, record that there and stop; never edit an upstream file.
   Team when it ran) and is `{}` with none, as the host-omits-Review-Army lines
   above state. Folded checklist parts add no dispatch sample to upstream's
   adaptive gating; a dispatched Red Team still adds its own sample.
+- **Upstream's dispatch item.** Where the installed `/review` declares the
+  `specialists-dispatched` item in its `Done means` (the item list matches when
+  that `/review` contains all of its lines or none of them), a folded cycle 1
+  that applies at least one checklist dispatches no specialist Agent and cannot
+  meet that item on its own. Waive it once in that folded cycle 1, after Review
+  Army's selection line where one is printed, using the waive command that
+  `/review`'s `Done means` gives (`gstack-skill-contract waive
+  specialists-dispatched --reason "<why>"`, with no `--skill` flag and a reason
+  naming `specialists=fold` and the folded checklists). A nested selection of
+  zero specialists meets the item as upstream defines it and waives nothing. A
+  later cycle that dispatches specialists as today meets the item from its own,
+  later selection line, which upstream's checker reads first, and a met item
+  outranks an earlier waiver. Never print a narrowed or zero-count selection
+  line or dispatch a placeholder Agent to satisfy the item. If upstream's opt-in
+  contract hook blocks on the item, answer with the recorded waiver, never a
+  late dispatch; upstream counts a waiver as a miss in its follow record. A
+  failed waive call is recorded and changes nothing else. When the installed
+  `/review` contains none of the item lines (as on the Codex sibling copy),
+  waive nothing.
 - **Red Team, restated.** Where the host's `/review` carries a Red Team (including
   sections resolved from its source installation in Step 1), it runs when DIFF_LINES > 200 or the folded pass reports a CRITICAL finding, since no
   specialist dispatch exists to produce one. It is dispatched as `/review`
@@ -1519,6 +1580,11 @@ change, record that there and stop; never edit an upstream file.
   line per checklist read. `<name>` is `testing`, `maintainability`,
   `security`, `performance`, `data-migration`, `api-contract`, `simplification`,
   `state-machines` or `design`; `sha256` is the SHA-256 of the file as read.
+  Also write one `specialists-dispatched:` line when the section is active:
+  `specialists-dispatched: waived (fold; cycles=1; parts=<checklist>[,<checklist>...])`,
+  `specialists-dispatched: met (fold; <reason>)`,
+  `specialists-dispatched: not declared (fold)` or
+  `specialists-dispatched: unmet (fold; waive failed: <cause>)`.
 
 ### Overlap independent first-cycle reviewers
 
@@ -2072,7 +2138,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
    line with the policy line that authorized them; a recorded gap is not listed
    under `Unresolved:`. Add the `Review overlap:` line when the policy carries
-   `first-cycle=overlap`. Add the `Review arm:` line and every `Folded checklist:`
+   `first-cycle=overlap`. Add the `specialists-dispatched:` line when the policy
+   carries `delegate=` or `specialists=fold`. Add the `Review arm:` line and every `Folded checklist:`
    line. Add the `delegation:` status and every `Delegated part:`
    line. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
@@ -3178,7 +3245,7 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `specialists-dispatched:` line the same way. Record the `Review arm:` line and every `Folded checklist:` line the same way.
 Record the `delegation:` status and every `Delegated part:` line the same way.
 When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
@@ -3829,7 +3896,8 @@ the `delegation:` status line and every `Delegated part: <part>; provider=<label
 line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
 review evidence; the receipt names the configuration's SHA-256 and labels,
 never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
-line when the policy carries `specialists=fold`, the `Review overlap:` line when
+line when the policy carries `specialists=fold`, the `specialists-dispatched:`
+line when the policy carries `delegate=` or `specialists=fold`, the `Review overlap:` line when
 the policy carries `first-cycle=overlap`, every `External gate attestation:`
 row (each accepted result line adds one), the `pregate-narrowing:` status line and
 each `Pregate lane not run:` line, and the elapsed

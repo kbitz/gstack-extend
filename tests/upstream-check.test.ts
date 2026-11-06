@@ -14,7 +14,7 @@ import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 97; // root, 7 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 16 delegate + 13 fold + 8 overlap + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 107; // root, 7 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 21 delegate + 18 fold + 8 overlap + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 // Each check builds a fixture tree under `scratch`; cleanup took 17.4 s under load, so allow 30 s for removal.
 afterAll(() => rmSync(scratch, { recursive: true, force: true }), 30000);
@@ -31,8 +31,8 @@ const FOLD_HEADING = '**Activation (`specialists=fold`).**';
 const OVERLAP_HEADING = '**Activation (`first-cycle=overlap`).**';
 const TEST_GAP_ANCHORS = 16;
 const PREGATE_NARROW_ANCHORS = 9;
-const DELEGATE_ANCHORS = 16;
-const FOLD_ANCHORS = 13;
+const DELEGATE_ANCHORS = 21;
+const FOLD_ANCHORS = 18;
 const OVERLAP_ANCHORS = 8;
 const FOLD_NAMES = FOLD_CHECKLISTS.map((c) => c.name);
 const DELEGATE_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
@@ -59,7 +59,7 @@ const MODULES = {
 const snapshotText = () => PHASES.map((p) => `  ${p}: \`${NATIVE_CRITERIA[p]}\`,`).join('\n') + '\n';
 const sectionText = (p: (typeof PHASES)[number]) => [BOUNDARY, OUTSIDE_RESULT_CONTRACT, ...OUTSIDE_CRITERIA[p]].join('\n\n') + '\n';
 const SKIP = '**Section skip list (apply these):**\n\n- Preamble\n- Telemetry\n';
-const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.join('\n')}\n`;
+const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${DELEGATE.dispatchItem.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.join('\n')}\n`;
 const adversarialText = () => `# adversarial\n\n${OVERLAP.adversarial.join('\n')}\n`;
 const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
 const testingText = () => `# testing\n\n${TEST_GAP.testing.join('\n')}\n${DELEGATE.testing.join('\n')}\n${FOLD.checklists.testing.join('\n')}\n`;
@@ -368,7 +368,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, sixteen delegate anchors, thirteen fold anchors, eight overlap anchors, two finding-location anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, twenty-one delegate anchors, eighteen fold anchors, eight overlap anchors, two finding-location anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -478,6 +478,8 @@ test.skipIf(process.getuid?.() === 0)('an inaccessible upstream root reports dri
 }, 30000);
 
 describe('drift', () => {
+  const INCAP_REPAIR_EFFECT = '  effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so';
+  const INCAP_ONLY_EFFECT = '  effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified';
   test('a missing or changed anchor names the stage cost and a fix', async () => {
     const f = upstream('nested');
     writeFileSync(f.files.review!, reviewText().replace('Allow at most 3 fix cycles', 'Allow at most 4 fix cycles'));
@@ -488,10 +490,28 @@ describe('drift', () => {
     const at = r.lines.findIndex((l) => l.startsWith('DRIFT anchor review-and-prep.incap.2 '));
     expect(at).toBeGreaterThan(-1);
     expect(r.lines[at]).toContain('"Allow at most 3 fix cycles"');
-    expect(r.lines[at + 1]).toBe('  effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified');
+    expect(r.lines[at + 1]).toBe(INCAP_REPAIR_EFFECT);
     expect(r.lines[at + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
     expect(r.lines[at + 2]).toContain('docs/upstream-check.md#drift-anchor');
     expect(r.lines).toContain('OK anchor review-and-prep.incap.1');
+  }, 30000);
+
+  test('incap.1 names both in-cap and repair-review effects, while incap.3 names only the in-cap effect', async () => {
+    const f1 = upstream('nested');
+    writeFileSync(f1.files.review!, reviewText().replace('A pass covers Steps 3–5, including all reviewers before fixes.', 'A pass covers Steps 3–5.'));
+    const r1 = await check(rootArgs(f1));
+    expectAgreement(r1);
+    const at1 = r1.lines.findIndex((l) => l.startsWith('DRIFT anchor review-and-prep.incap.1 '));
+    expect(at1).toBeGreaterThan(-1);
+    expect(r1.lines[at1 + 1]).toBe(INCAP_REPAIR_EFFECT);
+
+    const f3 = upstream('nested');
+    writeFileSync(f3.files.review!, reviewText().replace('DIFF_BASE=$(git merge-base origin/<base> HEAD)', 'DIFF_BASE=$(git merge-base main HEAD)'));
+    const r3 = await check(rootArgs(f3));
+    expectAgreement(r3);
+    const at3 = r3.lines.findIndex((l) => l.startsWith('DRIFT anchor review-and-prep.incap.3 '));
+    expect(at3).toBeGreaterThan(-1);
+    expect(r3.lines[at3 + 1]).toBe(INCAP_ONLY_EFFECT);
   }, 30000);
 
   test('anchors compare raw bytes: a normalized lookalike does not match', async () => {
@@ -577,7 +597,7 @@ describe('drift', () => {
     expect(drifts(r.lines)[0]).toContain('review checklist is not a regular file');
   }, 30000);
 
-  test('an emptied review file drifts the in-cap and Fix-First review anchors, not the checklist anchors', async () => {
+  test('an emptied review file drifts the in-cap and Fix-First review anchors, leaves the all-or-none item lists OK, and leaves the checklist anchors OK', async () => {
     const f = upstream('nested');
     writeFileSync(f.files.review!, '# nothing\n');
     const r = await check(rootArgs(f));
@@ -589,6 +609,10 @@ describe('drift', () => {
       ...FOLD.review.map((_, i) => `review-and-prep.fold.review.${i + 1}`),
       ...OVERLAP.review.map((_, i) => `review-and-prep.overlap.review.${i + 1}`),
     ]);
+    for (const n of [1, 2, 3]) {
+      expect(r.lines).toContain(`OK anchor review-and-prep.delegate.dispatch-item.${n}`);
+      expect(r.lines).toContain(`OK anchor review-and-prep.fold.dispatch-item.${n}`);
+    }
     for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
   }, 30000);
 
@@ -704,53 +728,71 @@ describe('drift', () => {
     ]);
     expect(ids.indexOf('anchor review-and-prep.test-gaps.coverage.4')).toBeLessThan(ids.indexOf('anchor review-and-prep.pregate-narrowing.bin.1'));
     expect(ids.indexOf('anchor review-and-prep.pregate-narrowing.lanes.5')).toBeLessThan(ids.indexOf('anchor autoplan-lean.skip-list'));
+    expect(ids.filter((id) => id.startsWith('anchor review-and-prep.delegate.'))).toEqual([
+      ...DELEGATE.review.map((_, i) => `anchor review-and-prep.delegate.review.${i + 1}`),
+      ...DELEGATE.dispatchItem.map((_, i) => `anchor review-and-prep.delegate.dispatch-item.${i + 1}`),
+      ...DELEGATE_PARTS.flatMap((part) => DELEGATE[part].map((_, i) => `anchor review-and-prep.delegate.${part}.${i + 1}`)),
+    ]);
   }, 30000);
 
-  // Value: protects=the delegate activation paragraph lists exactly the sixteen anchors both layouts carry, in five lists; fails_when=a list is dropped, merged or gains a backtick; why_new=fifth activation paragraph; seam=none
-  test('the delegation inventory parses five lists of 4, 3, 3, 3 and 3 anchors', () => {
-    expect([DELEGATE.review.length, DELEGATE.testing.length, DELEGATE.maintainability.length, DELEGATE.performance.length, DELEGATE.simplification.length]).toEqual([4, 3, 3, 3, 3]);
-    expect(DELEGATE.review.length + DELEGATE.testing.length + DELEGATE.maintainability.length + DELEGATE.performance.length + DELEGATE.simplification.length).toBe(DELEGATE_ANCHORS);
+  // Value: protects=the delegate activation paragraph lists the six review anchors, the three all-or-none item anchors, and the twelve specialist anchors across six lists; fails_when=a list is dropped, merged or gains a backtick; why_new=fifth activation paragraph; seam=none
+  test('the delegation inventory parses six lists of 6, 3, 3, 3, 3 and 3 anchors', () => {
+    expect([DELEGATE.review.length, DELEGATE.dispatchItem.length, DELEGATE.testing.length, DELEGATE.maintainability.length, DELEGATE.performance.length, DELEGATE.simplification.length]).toEqual([6, 3, 3, 3, 3, 3]);
+    expect(DELEGATE.review.length + DELEGATE.dispatchItem.length + DELEGATE.testing.length + DELEGATE.maintainability.length + DELEGATE.performance.length + DELEGATE.simplification.length).toBe(DELEGATE_ANCHORS);
     expect(DELEGATE.review).toEqual([
-      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.',
+      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
       'For every combined finding, including core, specialist, exploratory QA, adversarial and valid actionable Greptile findings, check:',
       'If this host omits Review Army, use',
       'without claiming specialist coverage.',
+      'For an item that truly does not apply, run',
+      '(this session only; it counts as a miss).',
+    ]);
+    expect(DELEGATE.dispatchItem).toEqual([
+      'specialists-dispatched',
+      'Dispatching N specialists:',
+      'then one Agent dispatch per specialist it names (none when a small diff skips them).',
     ]);
     for (const part of DELEGATE_PARTS) {
       expect(DELEGATE[part]).toEqual([`# ${part[0]!.toUpperCase()}${part.slice(1)} Specialist Review Checklist`, 'Output: JSON objects, one finding per line. Schema:', `"specialist":"${part}"`]);
     }
-    for (const anchor of [...DELEGATE.review, ...DELEGATE.testing, ...DELEGATE.maintainability, ...DELEGATE.performance, ...DELEGATE.simplification]) expect(anchor).not.toContain('`');
+    for (const anchor of [...DELEGATE.review, ...DELEGATE.dispatchItem, ...DELEGATE.testing, ...DELEGATE.maintainability, ...DELEGATE.performance, ...DELEGATE.simplification]) expect(anchor).not.toContain('`');
     expect(delegateInventory(join(scratch, 'no-such-extension')).ok).toBe(false);
   });
 
   const DELEGATE_EFFECT = '  effect: /review-and-prep: delegate=<parts> is inactive, so every specialist runs on the host model as today and the receipt says so';
-  const delegateFile = (f: Fixture, list: 'review' | (typeof DELEGATE_PARTS)[number]) => (list === 'review' ? f.files.review : f.files[list])!;
-  const DELEGATE_PICKS = (['review', ...DELEGATE_PARTS] as const).flatMap((list) =>
-    ([['nested', 0], ['nested', DELEGATE[list].length - 1], ['sibling', 0], ['sibling', DELEGATE[list].length - 1]] as const).map(([layout, at]) => [layout, list, at] as const));
-  // Value: protects=a changed delegation anchor in either layout is drift naming its own ID and the delegate effect, and no other gate turns off; fails_when=a changed anchor passes, reports another gate's effect or drifts a neighbor; why_new=fifth upstream gate across five files and two layouts; seam=none
+  type DelegateList = 'review' | 'dispatch-item' | (typeof DELEGATE_PARTS)[number];
+  const delegateList = (list: DelegateList) => list === 'dispatch-item' ? DELEGATE.dispatchItem : DELEGATE[list];
+  const delegateFile = (f: Fixture, list: DelegateList) => (list === 'review' || list === 'dispatch-item' ? f.files.review : f.files[list])!;
+  const DELEGATE_PICKS = (['review', 'dispatch-item', ...DELEGATE_PARTS] as const).flatMap((list) =>
+    ([['nested', 0], ['nested', delegateList(list).length - 1], ['sibling', 0], ['sibling', delegateList(list).length - 1]] as const).map(([layout, at]) => [layout, list, at] as const));
+  // Value: protects=a changed delegation anchor in either layout is drift naming its own ID and the delegate effect, and no unrelated gate turns off; fails_when=a changed anchor passes, reports an unrelated gate's effect or drifts an unshared neighbor; why_new=fifth upstream gate across five files and two layouts; seam=none
   test.each(DELEGATE_PICKS)('a changed anchor in the %s layout\'s %s list (anchor %#) is drift with the delegate effect', async (layout, list, at) => {
     const f = upstream(layout);
     const path = delegateFile(f, list);
-    const anchor = DELEGATE[list][at]!;
+    const anchor = delegateList(list)[at]!;
     // The simplification tag is used five times upstream; replace every copy, as a reworded file would.
     writeFileSync(path, readFileSync(path, 'utf8').split(anchor).join(`${anchor.slice(0, -2)}!!`));
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
-    // An anchor the fold also lists (a shared review line or a checklist heading) drifts its fold ID too.
-    const shared = (list === 'review' ? FOLD.review : FOLD.checklists[list]).indexOf(anchor);
-    const foldId = shared < 0 ? [] : [`review-and-prep.fold.${list}.${shared + 1}`];
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + foldId.length}`);
-    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([`review-and-prep.delegate.${list}.${at + 1}`, ...foldId]);
+    // Anchors that fold or overlap also list drift their IDs too, in report order: delegate → fold → overlap.
+    const folded = (list === 'review' ? FOLD.review : list === 'dispatch-item' ? FOLD.dispatchItem : FOLD.checklists[list]).indexOf(anchor);
+    const foldId = folded < 0 ? [] : [`review-and-prep.fold.${list}.${folded + 1}`];
+    const overlapped = list === 'review' ? OVERLAP.review.indexOf(anchor) : -1;
+    const overlapId = overlapped < 0 ? [] : [`review-and-prep.overlap.review.${overlapped + 1}`];
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + foldId.length + overlapId.length}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([`review-and-prep.delegate.${list}.${at + 1}`, ...foldId, ...overlapId]);
     const id = `review-and-prep.delegate.${list}.${at + 1}`;
     const line = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${id} `));
     expect(line).toBeGreaterThan(-1);
     expect(r.lines[line + 1]).toBe(DELEGATE_EFFECT);
     expect(r.lines[line + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
     expect(r.lines[line + 2]).toContain('docs/upstream-check.md#drift-anchor');
-    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'overlap']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
     expect(r.out).not.toContain('the in-cap delta is inactive');
     expect(r.out).not.toContain('test-gaps=record is inactive');
+    if (!foldId.length) expect(r.out).not.toContain('specialists=fold is inactive');
+    if (!overlapId.length) expect(r.out).not.toContain('first-cycle=overlap is inactive');
   }, 30000);
 
   // Value: protects=a missing specialist file drifts exactly its three anchors, in both layouts, with a path-naming reason; fails_when=a missing file passes or drifts another file's anchors; why_new=three specialist files read from the root in both layouts; seam=none
@@ -781,14 +823,17 @@ describe('drift', () => {
     expect(r.lines).toContain(`INFO inspected delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   }, 30000);
 
-  // Value: protects=the fold activation paragraph lists exactly the thirteen anchors both layouts carry, in ten lists; fails_when=a list is dropped, merged or gains a backtick; why_new=sixth activation paragraph; seam=none
-  test('the fold inventory parses ten lists of 4 review anchors and one heading per checklist', () => {
+  // Value: protects=the fold activation paragraph lists the six review anchors, the three all-or-none item anchors, and one heading per checklist across eleven lists; fails_when=a list is dropped, merged or gains a backtick; why_new=sixth activation paragraph; seam=none
+  test('the fold inventory parses eleven lists of 6 review anchors, 3 item anchors and one heading per checklist', () => {
     expect(FOLD.review).toEqual([
-      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.',
+      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
       'Core findings use the confidence gates below; Step 4.6 applies its specialist gates.',
       'If this host omits Review Army, use',
       'without claiming specialist coverage.',
+      'For an item that truly does not apply, run',
+      '(this session only; it counts as a miss).',
     ]);
+    expect(FOLD.dispatchItem).toEqual(DELEGATE.dispatchItem);
     expect(FOLD.checklists).toEqual({
       testing: ['# Testing Specialist Review Checklist'],
       maintainability: ['# Maintainability Specialist Review Checklist'],
@@ -801,43 +846,108 @@ describe('drift', () => {
       design: ['# Design Review Checklist (Lite)'],
     });
     expect(FOLD_NAMES).toEqual(Object.keys(FOLD.checklists));
-    expect(FOLD.review.length + FOLD_NAMES.reduce((n, name) => n + FOLD.checklists[name].length, 0)).toBe(FOLD_ANCHORS);
-    for (const anchor of [...FOLD.review, ...FOLD_NAMES.flatMap((name) => FOLD.checklists[name])]) expect(anchor).not.toContain('`');
+    expect(FOLD.review.length + FOLD.dispatchItem.length + FOLD_NAMES.reduce((n, name) => n + FOLD.checklists[name].length, 0)).toBe(FOLD_ANCHORS);
+    for (const anchor of [...FOLD.review, ...FOLD.dispatchItem, ...FOLD_NAMES.flatMap((name) => FOLD.checklists[name])]) expect(anchor).not.toContain('`');
     expect(foldInventory(join(scratch, 'no-such-extension')).ok).toBe(false);
   });
 
   const FOLD_EFFECT = '  effect: /review-and-prep: specialists=fold is inactive, so cycle 1 dispatches specialists as today and the receipt says so';
-  const foldFile = (f: Fixture, list: 'review' | (typeof FOLD_NAMES)[number]) => (list === 'review' ? f.files.review : f.files[list])!;
-  // The review lines 1, 2 and 4, the first and last of the lines both layouts carry (1 and 4 also belong to delegation), and every checklist's heading.
+  type FoldList = 'review' | 'dispatch-item' | (typeof FOLD_NAMES)[number];
+  const foldList = (list: FoldList) => list === 'review' ? FOLD.review : list === 'dispatch-item' ? FOLD.dispatchItem : FOLD.checklists[list];
+  const foldFile = (f: Fixture, list: FoldList) => (list === 'review' || list === 'dispatch-item' ? f.files.review : f.files[list])!;
+  // Review lines 1, 2, 4 and 6, the first and last dispatch-item lines, and every checklist's heading.
   const FOLD_PICKS = (['nested', 'sibling'] as const).flatMap((layout) => [
-    ...[0, 1, 3].map((at) => [layout, 'review', at] as const),
+    ...[0, 1, 3, 5].map((at) => [layout, 'review', at] as const),
+    ...[0, 2].map((at) => [layout, 'dispatch-item', at] as const),
     ...FOLD_NAMES.map((name) => [layout, name, 0] as const),
   ]);
-  // Value: protects=a changed fold anchor in either layout is drift naming its own ID and the fold effect, with every inventory still OK; fails_when=a changed anchor passes, reports another gate's effect or drifts an unrelated neighbor; why_new=sixth upstream gate across ten files and two layouts; seam=none
+  // Value: protects=a changed fold anchor in either layout is drift naming its own ID and the fold effect, with every inventory still OK; fails_when=a changed anchor passes, reports an unrelated gate's effect or drifts an unshared neighbor; why_new=sixth upstream gate across ten files and two layouts; seam=none
   test.each(FOLD_PICKS)('a changed anchor in the %s layout\'s fold %s list (zero-based anchor %i) is drift with the fold effect', async (layout, list, at) => {
     const f = upstream(layout);
     const path = foldFile(f, list);
-    const anchor = (list === 'review' ? FOLD.review : FOLD.checklists[list])[at]!;
+    const anchor = foldList(list)[at]!;
     writeFileSync(path, readFileSync(path, 'utf8').split(anchor).join(`${anchor.slice(0, -2)}!!`));
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
-    // Anchors that delegation lists too drift its ID as well, in report order: delegation before fold.
-    const delegated = list === 'review' ? DELEGATE.review.indexOf(anchor) : (DELEGATE_PARTS as readonly string[]).includes(list) ? DELEGATE[list as (typeof DELEGATE_PARTS)[number]].indexOf(anchor) : -1;
+    // Anchors that delegation or overlap list too drift their IDs as well, in report order: delegation → fold → overlap.
+    const delegated = list === 'review' ? DELEGATE.review.indexOf(anchor) : list === 'dispatch-item' ? DELEGATE.dispatchItem.indexOf(anchor) : (DELEGATE_PARTS as readonly string[]).includes(list) ? DELEGATE[list as (typeof DELEGATE_PARTS)[number]].indexOf(anchor) : -1;
     const delegateId = delegated < 0 ? [] : [`review-and-prep.delegate.${list}.${delegated + 1}`];
+    const overlapped = list === 'review' ? OVERLAP.review.indexOf(anchor) : -1;
+    const overlapId = overlapped < 0 ? [] : [`review-and-prep.overlap.review.${overlapped + 1}`];
     const foldId = `review-and-prep.fold.${list}.${at + 1}`;
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + delegateId.length}`);
-    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([...delegateId, foldId]);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + delegateId.length + overlapId.length}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([...delegateId, foldId, ...overlapId]);
     const line = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${foldId} `));
     expect(line).toBeGreaterThan(-1);
     expect(r.lines[line]).toContain(`anchor not found byte for byte in ${realpathSync(path)}`);
     expect(r.lines[line + 1]).toBe(FOLD_EFFECT);
     expect(r.lines[line + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
     expect(r.lines[line + 2]).toContain('docs/upstream-check.md#drift-anchor');
-    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'overlap']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
     expect(r.out).not.toContain('the in-cap delta is inactive');
     expect(r.out).not.toContain('test-gaps=record is inactive');
     if (!delegateId.length) expect(r.out).not.toContain('delegate=<parts> is inactive');
+    if (!overlapId.length) expect(r.out).not.toContain('first-cycle=overlap is inactive');
+  }, 30000);
+
+  // Value: protects=all-or-none item lists pass with INFO not-declared when none of the three lines is in the review file, drift when any subset is missing, and drift when the review file cannot be read; fails_when=Codex's item-free copy drifts or a partial/unreadable review file passes; why_new=criterion 1, 4, 7; seam=none
+  test.each(['nested', 'sibling'] as const)('all-or-none dispatch-item anchors in the %s layout report OK + INFO not-declared when absent, and drift when partial or unreadable', async (layout) => {
+    const withoutItem = upstream(layout);
+    let body = readFileSync(withoutItem.files.review!, 'utf8');
+    for (const line of DELEGATE.dispatchItem) body = body.split(line).join('');
+    writeFileSync(withoutItem.files.review!, body);
+    const ok = await check(rootArgs(withoutItem));
+    expectAgreement(ok);
+    expect(ok.code).toBe(0);
+    expect(ok.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
+    const real = realpathSync(withoutItem.files.review!);
+    expect(ok.lines.filter((l) => l.startsWith('INFO not-declared '))).toEqual([
+      `INFO not-declared review-and-prep.delegate.dispatch-item ${real}`,
+      `INFO not-declared review-and-prep.fold.dispatch-item ${real}`,
+    ]);
+    for (const n of [1, 2, 3]) {
+      expect(ok.lines).toContain(`OK anchor review-and-prep.delegate.dispatch-item.${n}`);
+      expect(ok.lines).toContain(`OK anchor review-and-prep.fold.dispatch-item.${n}`);
+    }
+
+    // Only `specialists-dispatched` removed (the other two present) drifts .1 in both lists.
+    const partial = upstream(layout);
+    writeFileSync(partial.files.review!, readFileSync(partial.files.review!, 'utf8').split('specialists-dispatched').join(''));
+    const rPartial = await check(rootArgs(partial));
+    expectAgreement(rPartial);
+    expect(rPartial.code).toBe(4);
+    expect(rPartial.lines.filter((l) => l.startsWith('INFO not-declared '))).toEqual([]);
+    expect(drifts(rPartial.lines).map((l) => l.split(' ')[2])).toEqual([
+      'review-and-prep.delegate.dispatch-item.1',
+      'review-and-prep.fold.dispatch-item.1',
+    ]);
+    const dLine = rPartial.lines.findIndex((l) => l.startsWith('DRIFT anchor review-and-prep.delegate.dispatch-item.1 '));
+    expect(rPartial.lines[dLine + 1]).toBe(DELEGATE_EFFECT);
+    const fLine = rPartial.lines.findIndex((l) => l.startsWith('DRIFT anchor review-and-prep.fold.dispatch-item.1 '));
+    expect(rPartial.lines[fLine + 1]).toBe(FOLD_EFFECT);
+
+    // Reworded third item line drifts .3 in both lists.
+    const third = upstream(layout);
+    writeFileSync(third.files.review!, readFileSync(third.files.review!, 'utf8').split(DELEGATE.dispatchItem[2]!).join('then one Agent dispatch per specialist.'));
+    const rThird = await check(rootArgs(third));
+    expectAgreement(rThird);
+    expect(drifts(rThird.lines).map((l) => l.split(' ')[2])).toEqual([
+      'review-and-prep.delegate.dispatch-item.3',
+      'review-and-prep.fold.dispatch-item.3',
+    ]);
+
+    // Missing review file drifts all six item IDs (read failure is never not-declared).
+    const missing = upstream(layout);
+    rmSync(missing.files.review!);
+    const rMissing = await check(rootArgs(missing));
+    expectAgreement(rMissing);
+    expect(rMissing.lines.filter((l) => l.startsWith('INFO not-declared '))).toEqual([]);
+    const driftedIds = drifts(rMissing.lines).map((l) => l.split(' ')[2]);
+    for (const n of [1, 2, 3]) {
+      expect(driftedIds).toContain(`review-and-prep.delegate.dispatch-item.${n}`);
+      expect(driftedIds).toContain(`review-and-prep.fold.dispatch-item.${n}`);
+    }
   }, 30000);
 
   // Value: protects=a missing checklist only the fold reads drifts exactly its own heading, in both layouts, with a path-naming reason and no INFO file; fails_when=a missing file passes, drifts another file's anchors or reads the wrong layout path; why_new=five new installed files read from the root in both layouts; seam=none
@@ -885,6 +995,7 @@ describe('drift', () => {
     const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
     expect(ids.filter((id) => id.startsWith('anchor review-and-prep.fold.'))).toEqual([
       ...FOLD.review.map((_, i) => `anchor review-and-prep.fold.review.${i + 1}`),
+      ...FOLD.dispatchItem.map((_, i) => `anchor review-and-prep.fold.dispatch-item.${i + 1}`),
       ...FOLD_NAMES.map((name) => `anchor review-and-prep.fold.${name}.1`),
     ]);
     expect(ids.indexOf('anchor review-and-prep.delegate.simplification.3')).toBeLessThan(ids.indexOf('anchor review-and-prep.fold.review.1'));
@@ -925,9 +1036,13 @@ describe('drift', () => {
     const r = await check(rootArgs(f));
     expectAgreement(r);
     expect(r.code).toBe(4);
+    const delegated = list === 'review' ? DELEGATE.review.indexOf(anchor) : -1;
+    const delegateId = delegated < 0 ? [] : [`review-and-prep.delegate.review.${delegated + 1}`];
+    const folded = list === 'review' ? FOLD.review.indexOf(anchor) : -1;
+    const foldId = folded < 0 ? [] : [`review-and-prep.fold.review.${folded + 1}`];
     const overlapId = `review-and-prep.overlap.${list}.${at + 1}`;
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
-    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([overlapId]);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${1 + delegateId.length + foldId.length}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([...delegateId, ...foldId, overlapId]);
     const line = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${overlapId} `));
     expect(line).toBeGreaterThan(-1);
     expect(r.lines[line]).toContain(`anchor not found byte for byte in ${realpathSync(path)}`);
@@ -936,7 +1051,8 @@ describe('drift', () => {
     expect(r.lines[line + 2]).toContain('docs/upstream-check.md#drift-anchor');
     for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'overlap']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
     expect(r.out).not.toContain('the in-cap delta is inactive');
-    expect(r.out).not.toContain('specialists=fold is inactive');
+    if (!delegateId.length) expect(r.out).not.toContain('delegate=<parts> is inactive');
+    if (!foldId.length) expect(r.out).not.toContain('specialists=fold is inactive');
   }, 30000);
 
   // Value: protects=a missing adversarial section drifts exactly the three adversarial IDs in each layout; fails_when=missing adversarial instructions pass or drift another file's anchors; why_new=adversarial instructions live in review/sections/adversarial.md in nested and in the review file in sibling; seam=none
@@ -1901,7 +2017,7 @@ function unlisted(repo: string) {
     if (grep >= 0) offsets.push(start + grep + 'Check each with `'.length);
     return offsets;
   };
-  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4), ...delimiters(PREGATE_NARROW_HEADING, 3), ...delimiters(DELEGATE_HEADING, 5), ...delimiters(FOLD_HEADING, 10), ...delimiters(OVERLAP_HEADING, 2)];
+  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4), ...delimiters(PREGATE_NARROW_HEADING, 3), ...delimiters(DELEGATE_HEADING, 6), ...delimiters(FOLD_HEADING, 11), ...delimiters(OVERLAP_HEADING, 2)];
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.offset !== undefined && covered.includes(hit.offset)) return false;
     // Only the reviewed list-driven loader sites are covered; a new import or
@@ -1993,14 +2109,22 @@ describe('docs and wiring', () => {
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];
-  // Value: protects=the documents say why the delegation and fold review anchors stay unqualified; fails_when=the subsection or its named IDs and blocking item are dropped; why_new=the combine-line drift was left unqualified on purpose; seam=none
-  test('the documents record the delegation and fold review anchors as left unqualified', () => {
-    const at = docs.indexOf('### Anchors left unqualified');
+  // Value: protects=the documents no longer leave the delegation and fold review anchors unqualified, and state the specialist-dispatch settlement; fails_when=the old unqualified section returns or the settlement subsection drops its core terms; why_new=criterion 5; seam=none
+  test('the documents replace the unqualified-anchors section with the specialist-dispatch settlement', () => {
+    const oldAt = docs.indexOf('### Anchors left unqualified');
+    if (oldAt >= 0) {
+      const oldSection = docs.slice(oldAt, docs.indexOf('\n## ', oldAt));
+      expect(oldSection).not.toContain('review-and-prep.delegate.review.1');
+      expect(oldSection).not.toContain('review-and-prep.fold.review.1');
+    } else {
+      expect(oldAt).toBe(-1);
+    }
+    const at = docs.indexOf("### Upstream's specialist-dispatch item");
     expect(at).toBeGreaterThan(-1);
     const section = docs.slice(at, docs.indexOf('\n## ', at));
-    expect(section).toContain('review-and-prep.delegate.review.1');
-    expect(section).toContain('review-and-prep.fold.review.1');
     expect(section).toContain('specialists-dispatched');
+    expect(section).toContain('waive');
+    expect(section).toContain('not-declared');
   });
 
   test('the documents state the same inspected revisions as the constants', () => {

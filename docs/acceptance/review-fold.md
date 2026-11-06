@@ -18,12 +18,16 @@ Team (when its gate fires), the native adversarial pass and the outside voices
 run as today, and `/review`'s cycle cap, stop and completion matrix are
 unchanged. It applies only while the installed upstream text it relies on
 matches byte for byte; the anchors are in `bin/upstream-check`'s inventory
-(`review-and-prep.fold`, thirteen anchors) and are text both installed layouts
-carry. On drift cycle 1 dispatches specialists as today and the receipt says
+(`review-and-prep.fold`, eighteen anchors: six `/review` lines, nine checklist
+headings, and three `specialists-dispatched` item lines checked all-or-none so a
+sibling copy that declares no item still passes). On drift cycle 1 dispatches
+specialists as today and the receipt says
 `Review arm: dispatch — anchor changed (<which>)`. The receipt records the arm
 and one `Folded checklist:` line per checklist the main pass read, with its file
-and SHA-256. Omitted, every default is unchanged. The value waives no gate and
-never authorizes a continuation, and the light review default never sets it.
+and SHA-256, plus one `specialists-dispatched:` line recording that a folded
+cycle 1 waives upstream's `specialists-dispatched` item where `/review` declares
+it. Omitted, every default is unchanged. The value waives no gate of this skill
+and never authorizes a continuation, and the light review default never sets it.
 
 It and `delegate=` exclude each other: a line carrying both reads `none supplied`
 (an H-E parser holds it as `policy-malformed`), so no part is reviewed twice or
@@ -159,8 +163,11 @@ states what each arm covered.
   It costs more context than a selection and is a measurement arm, not a claimed
   saving.
 - The anchors were qualified at upstream `47079fd89fc7fc13c0f06dc7980b682890175a8c`
-  (`1.93.3.0`) for the nested checkout; the sibling install's revision is
-  unknown, and its anchors are the same text it carries.
+  (`1.93.3.0`) for the nested checkout, and requalified on 2026-11-06 at
+  `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` (`1.96.0.0`) across the nested
+  checkout and the Cursor and Codex sibling copies generated from it (where a
+  folded cycle 1 waives `specialists-dispatched` on copies that declare it); the
+  sibling installs' own revision is unknown.
 - A folded finding recorded with no checklist is attributed to `core`, never
   guessed from its text, file or category.
 

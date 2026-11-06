@@ -2303,12 +2303,15 @@ describe('review-and-prep delegate=<part>', () => {
     expect(light).toContain('It never sets `delegate=`: sending review work to another model needs a caller that configures that provider, so it is an explicit caller opt-in.');
   });
 
-  // Value: protects=the section's position, heading, five anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered or a backtick unbalanced; why_new=fifth activation paragraph; seam=none
-  test('the activation paragraph has the heading, five lists each opened by byte for byte, and the grep delimiter', () => {
+  // Value: protects=the section's position, heading, six anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered or a backtick unbalanced; why_new=fifth activation paragraph; seam=none
+  test('the activation paragraph has the heading, six lists each opened by byte for byte, and the grep delimiter', () => {
     expect(paragraph.startsWith('**Activation (`delegate`).**')).toBe(true);
-    expect(paragraph.match(/byte for byte,/g)).toHaveLength(5);
-    const marks = ['its `review/specialists/testing.md` still contains,', 'its `review/specialists/maintainability.md` still contains,',
-      'its `review/specialists/performance.md` still contains,', 'and its `review/specialists/simplification.md` still contains,'];
+    expect(paragraph.match(/byte for byte,/g)).toHaveLength(6);
+    const marks = [
+      'and, where that `/review` contains any line of the next list, it still contains every line of it,',
+      'its `review/specialists/testing.md` still contains,', 'its `review/specialists/maintainability.md` still contains,',
+      'its `review/specialists/performance.md` still contains,', 'and its `review/specialists/simplification.md` still contains,',
+    ];
     let at = paragraph.indexOf('byte for byte,');
     for (const mark of marks) {
       const next = paragraph.indexOf(mark, at);
@@ -2385,6 +2388,33 @@ describe('review-and-prep delegate=<part>', () => {
   test('the added text uses no host placeholder', () => {
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
+
+  // Value: protects=the delegate section's specialist-dispatch waiver settlement, intro, policy general bullet and three receipt sites; fails_when=the waiver command, never-substitute rule, not-declared case, receipt templates or delimiter isolation drifts; why_new=criterion 1, 2, 4; seam=none
+  test('the section states the specialists-dispatched waiver settlement, receipt templates, intro and policy rule without repeating activation delimiters', () => {
+    const rest = sectionRaw.slice(sectionRaw.indexOf(paragraph) + paragraph.length);
+    expect(rest).not.toContain('byte for byte');
+    expect(rest).not.toContain('grep -F');
+    expect(section).toContain("This is a **wrapper override**, not an upstream fork: it changes who runs a part, never a gate of this skill, a checklist or `/review`'s own text; the one upstream contract item a credited part cannot meet is waived as **Upstream's dispatch item** states.");
+    expect(section).toContain('The item list matches when that `/review` contains all of its lines or none of them, and none means it declares no `specialists-dispatched` item.');
+    expect(policy).toContain("Those are this skill's gates; upstream `/review`'s `specialists-dispatched` contract item, checked by upstream's opt-in contract hook, is set aside only by `delegate=` and `specialists=fold`, only where the installed `/review` declares it, through upstream's own waive command, and the receipt records it.");
+    const itemAt = section.indexOf("**Upstream's dispatch item.**");
+    expect(itemAt).toBeGreaterThan(-1);
+    const itemRule = section.slice(itemAt, section.indexOf('Record each part in `voices.jsonl`', itemAt));
+    expect(itemRule).toContain('Done means');
+    expect(itemRule).toContain('specialists-dispatched');
+    expect(itemRule).toContain('with no `--skill` flag');
+    expect(itemRule).toContain('Never print a narrowed or zero-count selection line or dispatch a placeholder Agent to satisfy the item.');
+    expect(itemRule).toContain('When the installed `/review` contains none of the item lines (as on the Codex sibling copy), waive nothing.');
+    for (const template of [
+      '`specialists-dispatched: waived (delegate; cycles=<n>[,<n>...]; parts=<part>[,<part>...])`',
+      '`specialists-dispatched: met (delegate; <reason>)`',
+      '`specialists-dispatched: not declared (delegate)`',
+      '`specialists-dispatched: unmet (delegate; waive failed: <cause>)`',
+    ]) expect(itemRule, template).toContain(template);
+    expect(flat).toContain('Add the `specialists-dispatched:` line when the policy carries `delegate=` or `specialists=fold`.');
+    expect(flat).toContain('Record the `specialists-dispatched:` line the same way.');
+    expect(flat).toContain('the `specialists-dispatched:` line when the policy carries `delegate=` or `specialists=fold`,');
+  });
 });
 
 // Track 58A: `specialists=fold` runs cycle 1 without specialist subagents; the main pass reads the checklists itself.
@@ -2448,19 +2478,24 @@ describe('review-and-prep specialists=fold', () => {
     expect(light).toContain('It never sets `specialists=fold`: comparing the folded first cycle with dispatched specialists needs a caller that measures the two arms, so it is an explicit caller opt-in.');
   });
 
-  // Value: protects=the section's heading, ten anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered, split by a blank line or a backtick unbalanced; why_new=sixth activation paragraph; seam=none
-  test('the activation paragraph has the heading, ten lists each opened by byte for byte, and the grep delimiter', () => {
+  // Value: protects=the section's heading, eleven anchor lists and closing delimiter that upstream-check reads; fails_when=a list is dropped, reordered, split by a blank line or a backtick unbalanced; why_new=sixth activation paragraph; seam=none
+  test('the activation paragraph has the heading, eleven lists each opened by byte for byte, and the grep delimiter', () => {
     expect(paragraphAt).toBeGreaterThan(-1);
     expect(sectionRaw.startsWith('### Fold specialist checklists into cycle 1\n\n**Activation (`specialists=fold`).**')).toBe(true);
-    expect(paragraph.match(/byte for byte,/g)).toHaveLength(10);
+    expect(paragraph.match(/byte for byte,/g)).toHaveLength(11);
     expect(paragraph.match(/`/g)!.length % 2).toBe(0);
     expect(paragraph.trimEnd().endsWith('Check each with `grep -F`.')).toBe(true);
     expect(paragraph).toContain('and only while the installed `/review` read in Step 1 still contains, byte for byte,\n');
     for (const line of [
-      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE Greptile findings.',
+      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
       'Core findings use the confidence gates below; Step 4.6 applies its specialist gates.',
       'If this host omits Review Army, use',
       'without claiming specialist coverage.',
+      'For an item that truly does not apply, run',
+      '(this session only; it counts as a miss).',
+      'specialists-dispatched',
+      'Dispatching N specialists:',
+      'then one Agent dispatch per specialist it names (none when a small diff skips them).',
     ]) expect(paragraph, line).toContain('`' + line + '`');
     let at = paragraph.indexOf('byte for byte,');
     for (const [name, heading] of HEADINGS) {
@@ -2547,6 +2582,25 @@ describe('review-and-prep specialists=fold', () => {
   // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section; why_new=CLAUDE.md skill-body rule; seam=none
   test('the added text uses no host placeholder', () => {
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+
+  // Value: protects=the fold section's specialist-dispatch waiver settlement, intro and receipt templates; fails_when=the waiver command, never-substitute rule, not-declared case or receipt templates drift; why_new=criterion 1, 2, 4; seam=none
+  test('the section states the specialists-dispatched waiver settlement, intro and receipt templates', () => {
+    expect(section).toContain("This is a **wrapper override**, not an upstream fork: it changes who applies a specialist checklist in cycle 1, never a gate of this skill, a checklist or `/review`'s own text; the one upstream contract item a folded cycle 1 cannot meet is waived as **Upstream's dispatch item** states.");
+    const itemAt = section.indexOf("- **Upstream's dispatch item.**");
+    expect(itemAt).toBeGreaterThan(-1);
+    const itemRule = section.slice(itemAt, section.indexOf('- **Red Team, restated.**', itemAt));
+    expect(itemRule).toContain('Done means');
+    expect(itemRule).toContain('specialists-dispatched');
+    expect(itemRule).toContain('with no `--skill` flag');
+    expect(itemRule).toContain('Never print a narrowed or zero-count selection line or dispatch a placeholder Agent to satisfy the item.');
+    expect(itemRule).toContain('When the installed `/review` contains none of the item lines (as on the Codex sibling copy), waive nothing.');
+    for (const template of [
+      '`specialists-dispatched: waived (fold; cycles=1; parts=<checklist>[,<checklist>...])`',
+      '`specialists-dispatched: met (fold; <reason>)`',
+      '`specialists-dispatched: not declared (fold)`',
+      '`specialists-dispatched: unmet (fold; waive failed: <cause>)`',
+    ]) expect(section, template).toContain(template);
   });
 });
 
