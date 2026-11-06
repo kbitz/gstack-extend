@@ -2,6 +2,21 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md|skills/ship-and-land.md] Harden the bounded documentation audit before enabling it
+- **Gate:** no caller may enable `documentation-scope=contracts` (and no default may include it) until every item below is fixed and reviewed. The owner deferred these from Track 68A's review (2026-11-05, decision "A").
+- **Items (all in Bound the documentation audit unless noted):**
+  - A doc that links a changed source file by a relative path is not selected. Resolve doc links relative to their file, select links that target changed paths, and fall back to broad when resolution is uncertain (outside review, marked blocking).
+  - "The audit runs at `/ship`'s release gate" also reads as review-and-prep's own Step 2, which makes `CHANGELOG.md` a mandatory full read on every bounded audit. Tie the rule to `/ship-and-land`'s release gate or a release-metadata change, and read only the latest entry or the changed hunks of changelogs and backlogs.
+  - A user's `color.ui=always` colours `git grep` output, so the inventory filter silently drops every match. Pass `--no-color`, and treat a printed path outside the inventory as a search failure.
+  - A doc symlink that points outside the repository stays on the read list, though upstream forbids following it. Leave it off the list and out of the `files_reviewed` check, and record it as not followed.
+  - Exact byte counts for docs dirty in the working tree: size every listed file in the splitting script, never by reading it in the parent.
+  - The script-split path lists are retyped by the model; have the script write the path terms and the JSON path arrays.
+  - `git ls-files --others --exclude-standard -z` depends on the working directory; add `--full-name -- ':/'`.
+  - Symlink credit in validation works in one direction only; credit a listed target when `files_reviewed` names it or any in-repository symlink to it.
+- **Revisit trigger:** before any caller enables `documentation-scope=contracts`.
+- **Context:** Filed by /review-and-prep on https://github.com/kbitz/gstack-extend/pull/207 at `045b797` (2026-11-05).
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=skills/review-and-prep.md|src/upstream-check/cli.ts] Upstream anchors for the bounded documentation audit
 - **Finding:** `documentation-scope=contracts` relies on upstream's documentation-audit text with no anchor-gated activation. If upstream renames `gstack-docs-candidate`, its `compare` fields, the `<audit-id>-post.json` name or the child's result rules, the bounded audit fails silently instead of falling back to today's audit.
 - **Why it can wait:** Track 68A's approved plan declined anchors for this section ("Adding `bin/upstream-check` anchors for the prompt addition"), the value is opt-in, and today's audit stays the default.
