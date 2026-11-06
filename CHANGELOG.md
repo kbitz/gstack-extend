@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.0] - 2026-11-06
+
+### Added
+
+- review-and-prep accepts an opt-in first-cycle review overlap.
+
+### Fixed
+
+- Overlap receipts and measurement evidence are clarified. Overlap usage evidence fields are corrected.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. First-cycle review overlap applies only when you set it.
+
 ## [0.68.0] - 2026-11-05
 
 ### Added
