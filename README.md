@@ -6,8 +6,9 @@ implement it, review it, test it with a human, and ship it.
 ## Product direction
 
 The project is in public beta. [The project spec](docs/SPEC.md) defines the
-1.0 contract: a dependable complete skill workflow on **Paseo and Conductor
-with equal priority**, plus stable handoffs for external orchestrators.
+1.0 contract: a dependable complete skill workflow on **Paseo**, the only
+supported workspace host (Conductor is no longer supported), plus stable
+handoffs for external orchestrators.
 Quota-driven routing and unattended shipping remain later work. The
 [roadmap](docs/ROADMAP.md) lists the required work;
 [acceptance records](docs/PROGRESS.md#acceptance) distinguish pending proof from
