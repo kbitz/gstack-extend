@@ -6,7 +6,8 @@ Supporting scope and evidence for SPEC P1, selected by the owner on 2026-10-25
 and extended the same day with E12–E14. SPEC owns product scope and release
 policy; ROADMAP owns scheduling. This program
 does not add a 1.0 gate. O1–O5, public-release 1.0.0, potentially-public users,
-equal Paseo/Conductor priority and explicit merge authorization remain binding.
+Paseo as the only supported workspace host (Conductor dropped 2026-11-06) and
+explicit merge authorization remain binding.
 
 Wrap upstream gstack; do not edit or pin it. Record the source revision of copied
 contracts. No new spend, direct model APIs or unattended merge. Consumer-owned
