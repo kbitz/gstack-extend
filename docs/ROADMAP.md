@@ -24,14 +24,9 @@ followed on 2026-11-05 in the roadmap's own order. The roadmap's order continues
 with first-cycle review overlap (69A), then docs-only test selection and
 release-only proof (Group 70).
 
-**Pause for the Linux move.** The owner froze new work while the development
-setup moves to a new machine (the Linux move), then started Track 67A during
-the move window: "let's just keep going, it's going to take all day for […] to
-finish, so just start on the next thing" (2026-11-05); 68A followed. The owner
-then set the next stop: "When this track is merged, you can do a docs pr, then
-we need to pause for the Linux move" (2026-11-05). The regeneration of
-2026-11-05 is that docs PR and starts no Track; after it merges, no new Track
-starts until the owner says the move is done.
+**Pause for the Linux move.** The owner paused new work after the 2026-11-05
+docs PR while the development setup moved to a new machine. The pause ended on
+2026-11-06 with "let's get going on the next track", and Track 69A started.
 
 **Keep moving; park only what we should not do.** Owner rule (2026-11-05): "we
 never want to 'park' something -- we always want to find a way to keep moving
@@ -43,8 +38,9 @@ re-evaluate". The Linux-move pause is the owner's schedule, not a parked Track.
 **Conductor dropped.** Owner decision (2026-11-06): "we are dropping conductor".
 [SPEC](SPEC.md) now names Paseo as the only supported workspace host. Track 72B
 (the Conductor qualification) is retired unshipped, with its Conductor-only
-obligations: the native Cursor receipt and row-interpretation check from
-Track 23G and the Conductor host-attribution check deferred from Track 26A.
+obligations, which the owner confirmed retired on 2026-11-06: the native
+Cursor receipt and row-interpretation check from Track 23G and the Conductor
+host-attribution check deferred from Track 26A.
 Its host-neutral obligations (cross-session handoff, an independently followed
 onboarding attempt, and the Sonnet-class and `/roadmap` `/docs-ship` runs) move
 to the Paseo Track 72C. Removing the Conductor code is the Future entry
