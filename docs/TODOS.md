@@ -2,6 +2,16 @@
 
 ## Unprocessed
 
+### [review:files=skills/review-and-prep.md|src/upstream-check/cli.ts] Upstream anchors for the bounded documentation audit
+- **Finding:** `documentation-scope=contracts` relies on upstream's documentation-audit text with no anchor-gated activation. If upstream renames `gstack-docs-candidate`, its `compare` fields, the `<audit-id>-post.json` name or the child's result rules, the bounded audit fails silently instead of falling back to today's audit.
+- **Why it can wait:** Track 68A's approved plan declined anchors for this section ("Adding `bin/upstream-check` anchors for the prompt addition"), the value is opt-in, and today's audit stays the default.
+- **Revisit trigger:** before any caller enables `documentation-scope=contracts` by default, or when installed gstack changes `ship/sections/documentation.md` or `bin/gstack-docs-candidate`.
+- **Suggested fix:** an Activation anchor list in **Bound the documentation audit**, an upstream-check inventory with a qualified revision, and a broad-audit fallback recorded in the receipt on drift, as `specialists=fold` and `test-gaps=record` do.
+- **Upstream severity:** CRITICAL (adversarial FIXABLE rule); no failing case today
+- **Found in:** `skills/review-and-prep.md` (Bound the documentation audit)
+- **Context:** Filed by /review-and-prep for Track 68A at `1b800cb` (2026-11-05); auto-chosen keep of the plan's declined scope.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=bin/lib/telemetry_usage.py|tests/workflow-metrics.test.ts] Test gap: Nested step attribution
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Usage tests cover individual and overlapping sibling steps, but not selection among nested containing steps.

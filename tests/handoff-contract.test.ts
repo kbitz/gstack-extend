@@ -2392,6 +2392,6 @@ describe('(J) documentation-scope=contracts', () => {
     }
     expect(POLICY_VALUES['documentation-scope']!.test('contracts')).toBe(true);
     expect(has(prep, 'Under `documentation-scope=contracts`, also include the `Documentation scope:` line')).toBe(true);
-    expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id, section SHA-256 and the durable path of its section copy, bound to the tree that audit read; without the value, this field is unchanged.')).toBe(true);
+    expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id, section SHA-256, and its section copy\'s exact text and durable path, bound to that audit\'s post-child snapshot; without the value, this field is unchanged.')).toBe(true);
   });
 });

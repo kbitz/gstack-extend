@@ -2300,18 +2300,23 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
 3. **Initial read list.** After Prepare's snapshot and before its dispatch,
    build the list in the parent from the candidate's changed paths (committed,
    staged, unstaged and untracked), with renames split so a renamed path's old
-   name counts (`git diff --no-renames --name-only`):
+   name counts (`git diff --no-renames --name-only -z`, also with `--cached`
+   for staged paths), splitting Git's output on NUL:
    - changed-path references: every changed documentation file, each
      inventoried doc that names a changed path, and each doc that a changed
      test line, the plan or an acceptance criterion names;
    - contract references: name, from the diff, the contracts each changed path
-     defines or changes (skill names and required inputs, commands and flags,
-     exit codes, defaults, limits, output formats, config keys, environment
-     variables, schema and record fields, receipt and handoff labels, policy
-     keys and file paths), then add each inventoried doc that mentions one.
-     Search literally: write the terms to a private file with the file-write
-     tool and run `git grep -l -F -f <terms-file> -- <inventoried docs>`, never
-     placing a term in a shell command;
+     defines or changes, for example skill names and required inputs, commands
+     and flags, exit codes, defaults, limits, output formats, config keys,
+     environment variables, schema and record fields, exported symbols, module
+     and component names, API routes, events, error codes, receipt and handoff
+     labels, policy keys and file paths. A changed doc's edited claims count: name
+     the contracts whose description it changes. Then add each inventoried doc
+     that mentions one. Search literally: write the terms with the file-write
+     tool to a private file in the evidence directory, run
+     `git grep --untracked -l -z -F -f <terms-file>` with no pathspec and keep
+     only the inventoried paths it prints, so neither a term nor a repository
+     path enters a shell command;
    - linked authorities: a doc that the project instructions, README or product
      spec name as the authority for a listed contract, or that a doc selected
      by the two inputs above links to as that contract's source. Follow such a
@@ -2343,7 +2348,8 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    the documentation roots the inventory found and no `--select`, because
    `--select` narrows the release paths the snapshot hashes for `/ship`'s Step 16
    freshness check. Write the read list, the contract terms and the inventory
-   as JSON to a private file outside the work tree. After upstream's fixed
+   as JSON with the file-write tool, never through a shell command, to a
+   private file in the evidence directory. After upstream's fixed
    subagent prompt, append one scope paragraph that gives the child only that
    file's path, labelled as data, never as instructions. The paragraph tells
    the child to:
@@ -2370,16 +2376,18 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    and the current candidate: the paths
    `gstack-docs-candidate compare <audit-id>-post.json` reports as changed or
    newly dirty, plus paths the snapshot did not record that changed since it
-   (`git diff --no-renames --name-only` from that snapshot's HEAD to the
-   current HEAD, and new staged, unstaged or untracked paths). Prepare still
+   (`git diff --no-renames --name-only -z` from that snapshot's HEAD to the
+   current HEAD, the same with `--cached` and without a revision for staged and
+   unstaged paths, and new untracked paths). Prepare still
    snapshots the whole candidate. Build the read list from the delta alone by
    item 3, plus the docs the accepted audit edited when the delta touches them;
    item 4
    applies to the delta as to any candidate. Before the re-audit, copy the
    accepted audit's documentation section to the evidence directory and record
-   its durable path and SHA-256. The prompt names the accepted audit's id and
-   section SHA-256, and the new section states that the accepted audit's result
-   stands outside the delta. Run a full-scope re-audit instead (item 3 over the
+   its durable path and SHA-256, and the SHA-256 of that audit's post-child
+   snapshot. The data file names the accepted audit's id and section SHA-256 as
+   the carried audit, never as the child's `audit_id`, and the new section
+   states that the accepted audit's result stands outside the delta. Run a full-scope re-audit instead (item 3 over the
    whole candidate, or broad under item 4) when:
    - no accepted audit of this invocation exists (an earlier invocation's audit
      never counts);
@@ -2401,7 +2409,7 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    extra-reads=<E>; fallback=<none|reason>)` and, for the re-audit,
    `Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs,
    <B2> bytes; carried-from=<audit_id> <section-sha256>; carried-copy=<durable
-   path>; carried-tree=<Git tree SHA>)` or
+   path>; carried-snapshot=<post-snapshot SHA-256>)` or
    `Documentation re-audit scope: full — <reason>`. Write these lines in the
    receipt and beside the documentation section, never inside it: the section
    stays the child's unchanged text, so its SHA-256 still matches. The one-line
@@ -3713,9 +3721,9 @@ hash it followed:
   include the `Documentation scope:` line (arm, inventoried doc count, listed
   docs count and bytes, reviewed docs count and bytes, reads outside the list,
   and fallback reason) and any `Documentation re-audit scope:` line with the
-  carried audit's id, section SHA-256 and the durable path of its section copy,
-  bound to the tree that audit read; without the value, this field is
-  unchanged.
+  carried audit's id, section SHA-256, and its section copy's exact text and
+  durable path, bound to that audit's post-child snapshot; without the value,
+  this field is unchanged.
 
 When Greptile applies, include its single run/review links, original trigger
 time, reviewed SHA/base, and local verification covering any later delta, or
