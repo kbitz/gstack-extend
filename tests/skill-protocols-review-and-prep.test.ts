@@ -2819,6 +2819,7 @@ describe('review-and-prep first-cycle=overlap', () => {
       '`inputs not independent (<part>)`',
     ]) expect(section, reason).toContain(reason);
     expect(section).toContain('The Red Team takes the merged specialist findings, so it is never in the window\'s dispatch.');
+    expect(section).toContain("For the subagent limit, count selected specialists plus the native adversarial subagent; check the outside command's concurrent capacity separately.");
   });
 
   // Value: protects=the overlap window: one snapshot S, "<merge base>" "S", one dispatch message, sequential outside pair in one background command, no metrics in the background, and no current-pass finding in any window prompt; fails_when=a reader compares a mutable tree, outside calls split into two background sessions, background calls metrics or core findings leak into outside prompts; why_new=criteria 2, 3; seam=none
@@ -2832,6 +2833,8 @@ describe('review-and-prep first-cycle=overlap', () => {
     expect(section).toContain('Where **Bound Claude Code outside calls** applies, that is its single helper call, unchanged.');
     expect(section).toContain('Each block runs in its own subshell, with its output and exit status in separate files under `<evidence-directory>/outside-calls/`, and the command\'s limit is at least 1,100 seconds.');
     expect(section).toContain('The pair stays internally sequential. Nothing in the background command calls metrics.');
+    expect(section).toContain("Outside voice spans bound the parent's dispatch-to-observation wait, not each call's runtime: the structured span includes its wait for the challenge.");
+    expect(section).toContain("Preserve the adapter's separate call timestamps for per-call measurements; never backdate a metrics boundary or infer a runtime from a wait span.");
   });
 
   // Value: protects=collection order: Red Team after Step 4.6's merge, QA after every reader, and the post-window tree check against S^{tree}; fails_when=Red Team or QA runs early or a work-tree edit during the window proceeds to fixes; why_new=criteria 2, 3; seam=none
@@ -2855,6 +2858,9 @@ describe('review-and-prep first-cycle=overlap', () => {
     expect(flat).toContain('Add the `Review overlap:` line when the policy carries `first-cycle=overlap`.');
     expect(flat).toContain('Record the `Review overlap:` line when the policy carries `first-cycle=overlap`.');
     expect(flat).toContain('the `Review overlap:` line when the policy carries `first-cycle=overlap`,');
+    expect(section).toContain('Receipt sites refer to this original-cycle observation. Later cycles create no new line.');
+    expect(section).toContain('A continuation preserves a corroborated original line only as history labelled with its originating invocation and head; if unavailable, omit the line and state that the original overlap observation is unavailable.');
+    expect(section).toContain("Never present a carried window as the continuation's own observation.");
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });

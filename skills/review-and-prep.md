@@ -1563,6 +1563,8 @@ text to change, record that there and stop; never edit an upstream file.
   only the diff, its checklist and repository context, never another part's
   findings (an "already caught" list). The Red Team takes the merged specialist
   findings, so it is never in the window's dispatch.
+  For the subagent limit, count selected specialists plus the native adversarial
+  subagent; check the outside command's concurrent capacity separately.
 - **Window,** after Step 4's core pass and Review Army's printed selection
   (`Dispatching N specialists: …`):
   1. Prepare the outside pair's inputs only from what was fixed before this pass
@@ -1585,6 +1587,10 @@ text to change, record that there and stop; never edit an upstream file.
      `<evidence-directory>/outside-calls/`, and the command's limit is at least
      1,100 seconds. The pair stays internally sequential. Nothing in the
      background command calls metrics.
+     Outside voice spans bound the parent's dispatch-to-observation wait, not
+     each call's runtime: the structured span includes its wait for the challenge.
+     Preserve the adapter's separate call timestamps for per-call measurements;
+     never backdate a metrics boundary or infer a runtime from a wait span.
 - **Collection.** Step 4.6 merges the specialist outputs once they settle. The
   Red Team runs on its own gate after that merge, with exactly the inputs
   `/review` gives it. Each voice ends at its own result. Step 4.7's setup and
@@ -1609,6 +1615,11 @@ text to change, record that there and stop; never edit an upstream file.
   `Review overlap: overlapped (cycle 1; parts=<comma-separated parts>; window=<UTC dispatch>–<UTC last return>)`,
   `Review overlap: sequential — <reason>` or
   `Review overlap: stopped — work tree changed during the window`.
+  Receipt sites refer to this original-cycle observation. Later cycles create
+  no new line. A continuation preserves a corroborated original line only as
+  history labelled with its originating invocation and head; if unavailable,
+  omit the line and state that the original overlap observation is unavailable.
+  Never present a carried window as the continuation's own observation.
 
 ### Reopen review only for behavior-changing repairs
 
