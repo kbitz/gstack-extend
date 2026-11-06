@@ -2614,13 +2614,14 @@ describe('review-and-prep documentation-scope=contracts', () => {
     expect(flat).toContain('3. **Documentation audit.** Run `/ship`\'s Documentation audit section with its candidate snapshot, subagent dispatch, validation, attempt bound and blocked recovery. Review its doc edits like any fix. Keep its accepted status, files, base and documentation section. It covers every changed path, so a later edit spends its one re-audit. Under `documentation-scope=contracts`, bound its reads and delta re-audit as **Bound the documentation audit** below defines.');
     for (const clause of [
       '1. **Activation.** Only when the policy carries `documentation-scope=contracts`, or the user chooses it in this session. Otherwise the Documentation audit step above runs `/ship`\'s section unchanged and none of this section applies.',
-      '3. **Initial read list.** After Prepare\'s snapshot and before its dispatch, build the list in the parent from the candidate\'s changed paths (committed, staged, unstaged and untracked), with renames split so a renamed path\'s old name counts (`git diff --no-renames --name-only -z`, also with `--cached` for staged paths), splitting Git\'s output on NUL:',
+      '3. **Initial read list.** After Prepare\'s snapshot and before its dispatch, build the list in the parent from the candidate\'s changed paths, with renames split so a renamed path\'s old name counts: committed (`git diff --no-renames --name-only -z <base> HEAD`), staged (the same with `--cached` and no revision), unstaged (no revision) and untracked (`git ls-files --others --exclude-standard -z`), splitting Git\'s output on NUL. Never reuse the snapshot\'s path lists, which detect renames.',
+      'The list holds only inventoried docs that exist in the candidate, spelled as Git spells them, with an in-repository symlink resolved to its target and duplicates removed; `VERSION` and other release metadata are read but never listed.',
       '2. **Inventory, unchanged.** Inventory documentation exactly as the installed `document-release` audit-scope Discovery says',
       'The bound narrows what the child reads, never what the audit can find.',
-      'changed-path references: every changed documentation file, each inventoried doc that names a changed path, and each doc that a changed test line, the plan or an acceptance criterion names;',
+      'changed-path references: every changed documentation file, each inventoried doc that names a changed path, and each inventoried doc that a changed test line, the plan or an acceptance criterion names;',
       'contract references: name, from the diff, the contracts each changed path defines or changes, for example skill names and required inputs, commands and flags, exit codes, defaults, limits, output formats, config keys, environment variables, schema and record fields, exported symbols, module and component names, API routes, events, error codes, receipt and handoff labels, policy keys and file paths.',
       'A changed doc\'s edited claims count: name the contracts whose description it changes. Then add each inventoried doc that mentions one.',
-      'Search literally: write the terms with the file-write tool to a private file in the evidence directory, run `git grep --untracked -l -z -F -f <terms-file>` with no pathspec and keep only the inventoried paths it prints, so neither a term nor a repository path enters a shell command;',
+      'Search literally, once for both inputs: write every contract term and every changed path (old and new names) with the file-write tool to a private file in the evidence directory, run `git grep --untracked -l -z -F --full-name -f <terms-file> -- \':/\'` and keep only the inventoried paths it prints, so neither a term nor a repository path enters a shell command;',
       'linked authorities: a doc that the project instructions, README or product spec name as the authority for a listed contract, or that a doc selected by the two inputs above links to as that contract\'s source. Follow such a link one step; the always-read docs below never seed it;',
       'always: the project instruction files (for example `CLAUDE.md` or `AGENTS.md`), `README.md` and the product spec when it has an `## Authority` section, plus `CHANGELOG.md` and `VERSION` when the candidate diff touches release metadata or the audit runs at `/ship`\'s release gate.',
       'Changelogs, roadmaps, backlogs and archived or superseded plans record history and intent, so a mention alone never selects them; they join the list when they changed or under the release-metadata rule.',
@@ -2638,7 +2639,7 @@ describe('review-and-prep documentation-scope=contracts', () => {
       'the parent cannot name the contracts a changed non-test path defines or changes (a file path alone names no contract);',
       'a changed path is a project instruction file, the product spec, a docs-build configuration, an authored template that generates docs, or a build, test or install entry point or configuration (for example a package manifest, a CI workflow or a test-selection map) other than a version-only release-metadata change;',
       'a doc is renamed or deleted;',
-      'a contract term is too generic for a literal search to tell references from unrelated prose, or the search fails;',
+      'a contract term is too generic for a literal search to tell references from unrelated prose, or the search fails (an exit status other than 0 for a match or 1 for no match);',
       'a listed path or term holds a newline or control character;',
       'or the list would already hold the whole inventory.',
     ]) {
@@ -2655,23 +2656,25 @@ describe('review-and-prep documentation-scope=contracts', () => {
       'also read any other doc it finds that references a changed path or a listed contract, and report each in `decisions` as a read outside the list, with its reason;',
       'list every doc it read in `files_reviewed`, and never call a doc current without reading it;',
       'name the bounded scope as the section\'s audited scope;',
-      'treat the bounded scope as the whole audit: having read every listed doc and left no correction unresolved, report `current` or `updated` for that scope, and `blocked` only on upstream\'s grounds.',
-      'When validating the result, a `files_reviewed` that omits a listed doc fails the audit\'s checks and takes blocked recovery.',
+      'treat the bounded scope as the whole audit: having read every listed doc and left no correction unresolved, report `current` or `updated` for that scope, and `blocked` only on upstream\'s grounds;',
+      'on a re-audit, read "changed path" as a path in the data file\'s delta, and state in the section that the carried audit\'s result, named by its id, stands outside the delta.',
+      'When validating the result, a `files_reviewed` that omits a listed doc (a symlink counts as read when its target was) fails the audit\'s checks and takes blocked recovery, and so does a re-audit section without the carried statement.',
       'A read outside the list stays inside the attempt and counts in `extra-reads`; it never sends the audit back for a broad relaunch.',
     ]) {
       expect(section, clause).toContain(clause);
     }
     expect(raw).not.toContain('gstack-doc-audit');
     expect(section).not.toContain('git grep -l -F -e <term>');
+    expect(raw).toContain('| `Bound the documentation audit` | `documentation` | none |');
   });
 
   // Value: protects=the re-audit computes its delta from the post-child snapshot, compare and git, carries the accepted section durably, and falls back to full scope on every unverifiable case; fails_when=the delta loses committed changes, an earlier invocation's audit counts, or a full-scope case is dropped; why_new=AC2; seam=none; no_claim=installed-agent execution
   test('the re-audit follows the fix delta and names its full-scope cases', () => {
     for (const clause of [
       '6. **Re-audit follows the fix delta.** When the remaining re-audit runs after an accepted (`current` or `updated`) audit of this invocation, the delta is every path whose content differs between that audit\'s post-child snapshot and the current candidate: the paths `gstack-docs-candidate compare <audit-id>-post.json` reports as changed or newly dirty, plus paths the snapshot did not record that changed since it (`git diff --no-renames --name-only -z` from that snapshot\'s HEAD to the current HEAD, the same with `--cached` and without a revision for staged and unstaged paths, and new untracked paths).',
-      'Build the read list from the delta alone by item 3, plus the docs the accepted audit edited when the delta touches them; item 4 applies to the delta as to any candidate.',
+      'Build the read list from the delta alone by item 3, plus the docs the accepted audit edited when the delta touches them, and list the delta paths in the data file; item 4 applies to the delta as to any candidate.',
       'Before the re-audit, copy the accepted audit\'s documentation section to the evidence directory and record its durable path and SHA-256, and the SHA-256 of that audit\'s post-child snapshot.',
-      'The data file names the accepted audit\'s id and section SHA-256 as the carried audit, never as the child\'s `audit_id`, and the new section states that the accepted audit\'s result stands outside the delta.',
+      'The data file names the accepted audit\'s id and section SHA-256 as the carried audit, never as the child\'s `audit_id`.',
       'no accepted audit of this invocation exists (an earlier invocation\'s audit never counts);',
       'the accepted audit used the broad fallback;',
       'the base changed since it;',
@@ -2687,7 +2690,7 @@ describe('review-and-prep documentation-scope=contracts', () => {
     for (const clause of [
       '7. **Bound and truth.** The attempt budget is upstream\'s, unchanged: choosing a scope never adds or refunds an attempt, a recovery that widens to broad uses the remaining attempt, and there is never a third.',
       '`status` keeps upstream\'s meaning (`updated`, `current`, `blocked`), and a bounded `current` covers only the docs read.',
-      '`inventoried` and `read-list` count those docs, `reviewed` counts the inventoried docs in the child\'s validated `files_reviewed`, `extra-reads` counts the reads outside the list it reported in `decisions`, and bytes are each file\'s size in the candidate.',
+      '`inventoried` and `read-list` count those docs, `reviewed` counts the inventoried docs in the child\'s validated `files_reviewed`, `extra-reads` counts the reads outside the list it reported in `decisions`, and bytes are each file\'s size in the candidate, read with the file-read tool or with `git cat-file --batch-check` fed `<rev>:<path>` lines from a file the file-write tool wrote, never with a path in a shell command.',
       'Record `Documentation scope: contracts (inventoried=<N>; read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes; extra-reads=<E>; fallback=<none|reason>)`',
       '`Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs, <B2> bytes; carried-from=<audit_id> <section-sha256>; carried-copy=<durable path>; carried-snapshot=<post-snapshot SHA-256>)` or `Documentation re-audit scope: full — <reason>`.',
       'Write these lines in the receipt and beside the documentation section, never inside it: the section stays the child\'s unchanged text, so its SHA-256 still matches.',
