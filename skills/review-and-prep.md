@@ -2303,12 +2303,14 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    renames split so a renamed path's old name counts: committed
    (`git diff --no-renames --name-only -z <base> HEAD`), staged (the same with
    `--cached` and no revision), unstaged (no revision) and untracked
-   (`git ls-files --others --exclude-standard -z`), splitting Git's output on
-   NUL. Never reuse the snapshot's path lists, which detect renames. The list
+   (`git ls-files --others --exclude-standard -z`). Redirect each command's
+   output to a file in the evidence directory and split it on NUL with a
+   script, never by eye. Never reuse the snapshot's path lists, which detect
+   renames. The list
    holds only inventoried docs that exist in the candidate, spelled as Git
    spells them, with an in-repository symlink resolved to its target and
-   duplicates removed; `VERSION` and other release metadata are read but never
-   listed. Its inputs:
+   duplicates removed; `VERSION` is read when needed but never listed. Its
+   inputs:
    - changed-path references: every changed documentation file, each
      inventoried doc that names a changed path, and each inventoried doc that a
      changed test line, the plan or an acceptance criterion names;
@@ -2320,8 +2322,9 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
      labels, policy keys and file paths. A changed doc's edited claims count: name
      the contracts whose description it changes. Then add each inventoried doc
      that mentions one. Search literally, once for both inputs: write every
-     contract term and every changed path (old and new names) with the
-     file-write tool to a private file in the evidence directory, run
+     contract term and every changed path (old and new names, and a changed
+     doc's file name too, so relative links count) with the file-write tool to
+     a private file in the evidence directory, run
      `git grep --untracked -l -z -F --full-name -f <terms-file> -- ':/'` and
      keep only the inventoried paths it prints, so neither a term nor a
      repository path enters a shell command;
@@ -2331,9 +2334,8 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
      link one step; the always-read docs below never seed it;
    - always: the project instruction files (for example `CLAUDE.md` or
      `AGENTS.md`), `README.md` and the product spec when it has an
-     `## Authority` section, plus `CHANGELOG.md` and `VERSION` when the
-     candidate diff touches release metadata or the audit runs at `/ship`'s
-     release gate.
+     `## Authority` section, plus `CHANGELOG.md` when the candidate diff
+     touches release metadata or the audit runs at `/ship`'s release gate.
 
    Changelogs, roadmaps, backlogs and archived or superseded plans record
    history and intent, so a mention alone never selects them; they join the
@@ -2374,14 +2376,14 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    - treat the bounded scope as the whole audit: having read every listed doc
      and left no correction unresolved, report `current` or `updated` for that
      scope, and `blocked` only on upstream's grounds;
-   - on a re-audit, read "changed path" as a path in the data file's delta, and
-     state in the section that the carried audit's result, named by its id,
-     stands outside the delta.
+   - on a re-audit, read "changed path" as a path in the data file's delta;
+     every listed doc, the always-read ones included, is still in scope.
 
    When validating the result, a `files_reviewed` that omits a listed doc (a
    symlink counts as read when its target was) fails the audit's checks and
-   takes blocked recovery, and so does a re-audit section without the carried
-   statement. A read outside the list stays
+   takes blocked recovery. On a re-audit the parent writes, beside the section
+   with the scope lines, that the carried audit's result (named by its id)
+   stands outside the delta. A read outside the list stays
    inside the attempt and counts in `extra-reads`; it never sends the audit back
    for a broad relaunch.
 6. **Re-audit follows the fix delta.** When the remaining re-audit runs after
@@ -2418,9 +2420,9 @@ receipt. `<state-root>` is `${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}`
    `reviewed` counts the inventoried docs in the child's validated
    `files_reviewed`, `extra-reads` counts the reads outside the list it
    reported in `decisions`, and bytes are each file's size in the candidate,
-   read with the file-read tool or with `git cat-file --batch-check` fed
-   `<rev>:<path>` lines from a file the file-write tool wrote, never with a
-   path in a shell command.
+   read with the file-read tool (or, for a path unchanged in the working tree,
+   `git cat-file --batch-check` fed `<rev>:<path>` lines from a file the
+   file-write tool wrote), never with a path in a shell command.
    Record `Documentation scope: contracts (inventoried=<N>;
    read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes;
    extra-reads=<E>; fallback=<none|reason>)` and, for the re-audit,

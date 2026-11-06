@@ -522,7 +522,8 @@ For `DOCS`, require these three pieces of coverage:
   Load both from the `review-and-prep` skill source in the skills directory
   of the absolute gstack-extend root recorded in this installed skill
   directory's `.extend-root`, reading that section and **Read an optional review
-  policy** in full; if either cannot be read, run the audit unbounded.
+  policy** in full; if either cannot be read, run the audit unbounded. Its
+  evidence directory is a private directory outside the work tree.
 - **Plan and scope:** retain the complete approved-scope audit, verification and
   reconciliation, including required user testing and recorded deferrals.
 
