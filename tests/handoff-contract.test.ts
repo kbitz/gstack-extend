@@ -647,7 +647,7 @@ function classifyResume(lines: string[], live: Live): Verdict {
 }
 
 const POLICY_VALUES: Record<string, RegExp> = {
-  'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/,
+  'in-cap': /^(?:delta|full)$/, continuation: /^(?:repair-only|full|stop)$/, 'first-cycle': /^overlap$/,
   'documentation-audit': /^final$/, 'documentation-scope': /^contracts$/, 'full-suite': /^(?:final|external)$/, 'final-gate-repair': /^tests-docs$/, 'parent-io': /^lean$/,
   'repair-review': /^behavior-changing$/, 'repair-cycles': /^light$/, 'test-gaps': /^record$/, specialists: /^fold$/,
   // The four delegable parts, comma separated, each at most once (the lookahead rejects a repeat).
@@ -1377,7 +1377,7 @@ describe('(D) the final-gate repair key and the cycle 1 baseline', () => {
 
   // Value: protects=the grammar line, capability check, rollout order and older-parser note agree between skill and doc; fails_when=either side drops the key, the check or the order; why_new=new compatibility contract; seam=none
   test('skill and doc publish the same key, capability check and rollout order', () => {
-    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
+    const grammarLine = '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`';
     expect(has(prep, grammarLine)).toBe(true);
     const doc = squash(DOC);
     expect(has(doc, '`final-gate-repair` (`tests-docs`)')).toBe(true);
@@ -2393,5 +2393,79 @@ describe('(J) documentation-scope=contracts', () => {
     expect(POLICY_VALUES['documentation-scope']!.test('contracts')).toBe(true);
     expect(has(prep, 'Under `documentation-scope=contracts`, also include the `Documentation scope:` line')).toBe(true);
     expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id, section SHA-256, and its section copy\'s exact text and durable path, bound to that audit\'s post-child snapshot; without the value, this field is unchanged.')).toBe(true);
+  });
+});
+
+// Track 69A: `first-cycle=overlap`. It follows the rollout order of the older values and is independent of every other value
+// (with `specialists=fold` or `delegate=`, the line still parses and cycle 1 runs in today's order). no_claim=installed-agent execution.
+describe('(K) first-cycle=overlap', () => {
+  const prep = squash(SKILLS['review-and-prep']);
+  const doc = squash(DOC);
+  const line = (pairs: string) => `review-and-prep-policy/v1; ${pairs}`;
+  const without = (key: string) => {
+    const copy = { ...POLICY_VALUES };
+    delete copy[key];
+    return copy;
+  };
+
+  // Value: protects=the parser accepts only overlap on first-cycle, coexists with every other key including specialists=fold and delegate=testing, rejects near-misses and repeats, and an older map voids the whole line; fails_when=the regex loosens, a repeat parses, an exclusion is added or an older install would not drop the line; why_new=new policy key; seam=none; no_claim=installed-agent execution
+  test('the parser accepts overlap, coexists with every other key including specialists=fold and delegate=testing, refuses near-misses and repeats, and an older map voids the line', () => {
+    expect(parsePolicy(line('first-cycle=overlap'))?.get('first-cycle')).toBe('overlap');
+    const withFold = parsePolicy(line('in-cap=delta; continuation=repair-only; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=1'));
+    expect(withFold?.get('first-cycle')).toBe('overlap');
+    expect(withFold?.get('specialists')).toBe('fold');
+    const withDelegate = parsePolicy(line('in-cap=delta; first-cycle=overlap; delegate=testing'));
+    expect(withDelegate?.get('first-cycle')).toBe('overlap');
+    expect(withDelegate?.get('delegate')).toBe('testing');
+    for (const bad of [
+      'first-cycle=Overlap', 'first-cycle=overlapped', 'first-cycle=on', 'first-cycle=sequential',
+      'first-cycle=', 'first-cycle', 'first_cycle=overlap', 'first-cycle=overlap; first-cycle=overlap',
+    ]) {
+      expect(parsePolicy(line(bad)), bad).toBeNull();
+    }
+    expect(parsePolicy(line('in-cap=delta; first-cycle=overlap'), without('first-cycle'))).toBeNull();
+    expect(parsePolicy(line('in-cap=delta; specialists=fold'), without('first-cycle'))?.get('specialists')).toBe('fold');
+  });
+
+  // Value: protects=an H-E prompt carrying first-cycle=overlap still continues when corroborated, while a bad value or repeat holds as policy-malformed; fails_when=the new key breaks H-E continuation or malformed values slip through; why_new=new policy key through the H-E consumer; seam=none; no_claim=installed-agent execution
+  test('an H-E prompt whose policy carries first-cycle=overlap continues, and bad values are policy-malformed', () => {
+    const base = 'review-and-prep-policy/v1; in-cap=delta; continuation=repair-only; max-continuations=1';
+    for (const tail of ['first-cycle=overlap', 'first-cycle=overlap; specialists=fold', 'first-cycle=overlap; delegate=testing']) {
+      const policy = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      const v = run('E-CONTINUE', { edits: [[base, policy]], live: { callerPolicy: policy } });
+      expect(v.mismatches, tail).toEqual([]);
+      expect(v.outcome, tail).toBe(FULL);
+    }
+    for (const tail of ['first-cycle=Overlap', 'first-cycle=sequential', 'first-cycle=overlap; first-cycle=overlap']) {
+      const bad = base.replace('; max-continuations=1', `; ${tail}; max-continuations=1`);
+      expect(run('E-CONTINUE', { edits: [[base, bad]], live: { callerPolicy: bad } }).mismatches.map((m) => m.binding), tail).toContain('policy-malformed');
+    }
+  });
+
+  // Value: protects=the capability check exits 0 on the skill and 1 on a copy without the value, and the doc publishes the key, check, rollout, stand-down sentence and receipt-present row; fails_when=the value leaves the skill, the check text drifts or the doc drops the rollout, stand-down sentence or receipt-present row; why_new=new compatibility contract; seam=none; no_claim=installed-agent execution
+  test('grep -F exits 0 on the skill and 1 on a copy without the value, and the doc publishes the key, check, rollout, stand-down sentence and receipt-present row', () => {
+    const skillPath = join(ROOT, 'skills', 'review-and-prep.md');
+    expect(spawnSync('grep', ['-F', 'first-cycle=overlap', skillPath]).status).toBe(0);
+    const stripped = SKILLS['review-and-prep'].replaceAll('first-cycle=overlap', 'first-cycle=none');
+    expect(spawnSync('grep', ['-F', 'first-cycle=overlap'], { input: stripped }).status).toBe(1);
+    const check = `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`;
+    expect(has(prep, check), `skill: ${check}`).toBe(true);
+    expect(has(doc, check), `doc: ${check}`).toBe(true);
+    for (const phrase of [
+      '`continuation` (`repair-only`, `full`, `stop`), `first-cycle` (`overlap`), `documentation-audit` (`final`)',
+      '`first-cycle=overlap` follows the same rollout order and the same check',
+      '(exit 0 means supported)',
+      'An installation without it reads the whole line as `none supplied`',
+      'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
+      'a caller omits it when the check fails and keeps its other keys',
+      'It is independent of every other value: with `specialists=fold` or `delegate=` on the line, the line still parses (not malformed) and cycle 1 runs in today\'s order.',
+      'It is never set by the light review default, waives no gate and never authorizes a continuation.',
+      'On anchor drift or a host cap, today\'s order runs and the receipt says so.',
+      '[review concurrency](acceptance/review-concurrency.md)',
+      '| `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |',
+    ]) {
+      expect(has(doc, phrase), phrase).toBe(true);
+    }
+    expect(POLICY_VALUES['first-cycle']!.test('overlap')).toBe(true);
   });
 });

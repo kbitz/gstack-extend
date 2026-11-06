@@ -420,6 +420,7 @@ only: it emits no separate `RUN` decision or span; the executing site owns both.
 | `Scope a re-review to its delta` | `local-pass`, `voice` | `local-pass`, `voice` |
 | `Delegate named specialist parts` | `voice` | `voice` (cross-call) |
 | `Fold specialist checklists into cycle 1` | `local-pass`, `voice` | none |
+| `Overlap independent first-cycle reviewers` | `local-pass`, `voice` | `voice` (cross-call) |
 | `Reopen review only for behavior-changing repairs` | `fix`, `tests` | `fix`, `tests` (cross-call) |
 | `When /review stops at its cycle cap` | `local-pass`, `commit`, `publication`, `handoff` | `commit`, `publication`, `handoff` |
 | `Enforce completion, beyond /review's informational audit` | `completion` | `completion` |
@@ -896,7 +897,7 @@ Name the result in the question:
 
 A caller may pre-approve review choices with one line in the invocation prompt:
 
-`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
+`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`
 
 Print the parsed policy, or `Review policy: none supplied (<offending pair or
 reason>)`, before any review work, so a typo that drops every key is visible.
@@ -989,6 +990,20 @@ copyable handoff; the handoff and receipt retain their own exact policy label.
   its other keys. The key waives no gate: it swaps a review cycle for one
   recorded repair chain that readiness still checks, and it never authorizes a
   continuation.
+- `first-cycle=overlap` (its only value) is opt-in. In the original
+  invocation's full-scope cycle 1 the selected specialists, the native
+  adversarial pass and the outside pair run at the same time on one frozen
+  snapshot, as **Overlap independent first-cycle reviewers** defines, and every
+  reviewer, gate and bound stays. It is active only while that section's
+  anchors match and the host can run those parts at once; otherwise cycle 1 runs
+  in today's order and the receipt says so. Omitted, every cycle runs in today's
+  order. With `specialists=fold` or `delegate=` on the same line the line still
+  parses and cycle 1 runs in today's order, so each measured arm stays separate.
+  `/ship-and-land` is unchanged. An installation without the value reads the
+  whole line as `none supplied`, so a caller first checks
+  `grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"`
+  (exit 0 means supported) and omits the value otherwise, keeping its other
+  keys. The value waives no gate and never authorizes a continuation.
 - `specialists=fold` (its only value) is opt-in. It folds the original
   invocation's full-scope cycle 1: the main review pass reads the selected
   specialists' checklists itself and no specialist subagent is dispatched, as
@@ -1089,6 +1104,9 @@ Under the light default:
 - It never sets `documentation-scope=contracts`: bounding the audit's reads
   needs a caller that accepts the retained-quality risk until the acceptance
   record supports a default (`SPEC P1`).
+- It never sets `first-cycle=overlap`: comparing the overlapped first cycle
+  with today's sequential order needs a caller that measures both orders and
+  opts in until the acceptance record supports a default (`SPEC P1`).
 - It sets no `continuation`, so the cycle-cap question still asks. It is never
   written as a `Review policy:` line: the stopped receipt and its prompt carry
   the actual policy or `none supplied`.
@@ -1501,6 +1519,96 @@ change, record that there and stop; never edit an upstream file.
   line per checklist read. `<name>` is `testing`, `maintainability`,
   `security`, `performance`, `data-migration`, `api-contract`, `simplification`,
   `state-machines` or `design`; `sha256` is the SHA-256 of the file as read.
+
+### Overlap independent first-cycle reviewers
+
+**Activation (`first-cycle=overlap`).** Apply this section only when the review policy carries that value, and only while the installed `/review` read in Step 1 still contains, byte for byte,
+`All readers examine the same candidate.`
+`Do not edit reviewed source until Step 5.`
+`Before edits, every dispatched reader/writer must have returned or be confirmed`
+`Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.`
+`an Agent dispatch for the adversarial pass, its prompt including`
+and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain, byte for byte,
+`Read the diff for this branch. First list changed files:`
+`Wait until every started task has finished or is confirmed stopped.`
+`After all passes complete, synthesize findings across all sources:`
+Check each with `grep -F`.
+
+This is a **wrapper override**, not an upstream fork: it changes when parts
+start in cycle 1, never who reviews, a gate, a checklist or `/review`'s own
+text. What a caller measures, and what this value does not claim, is in
+[the concurrency record](https://github.com/kbitz/gstack-extend/blob/main/docs/acceptance/review-concurrency.md)
+(`docs/acceptance/review-concurrency.md`). If overlapping ever needs upstream
+text to change, record that there and stop; never edit an upstream file.
+
+- **Applies to** the original invocation's full-scope cycle 1 only. A
+  continuation's first pass, Step 5's delta re-review and `/review`'s cycles
+  2–3 run in today's order and record nothing.
+- **Activation check.** At Step 1, check every anchor above against the
+  installed files: the review file Step 1 resolved, and its adversarial
+  instructions (`review/sections/adversarial.md` under the gstack root in the
+  nested layout, the review file itself in the sibling layout). A changed
+  anchor records `Review overlap: sequential — anchor changed (<which>)`, cycle
+  1 runs in today's order, and no upstream file is edited.
+- **Preconditions.** Any failure records `Review overlap: sequential — <reason>`
+  and runs today's order: `anchor changed (<which>)`; no cycle 1 candidate
+  snapshot S (`snapshot unavailable`; the baseline section already takes S
+  whenever its anchor is present); `specialists=fold set` or `delegate= set`;
+  `host cap (<which>)`, for a host that cannot send several reviewer subagent
+  dispatches in one message and run them at once, cannot keep one long command
+  running in an owned background session while they run and report its
+  completion, states a concurrent-subagent limit below the window's part count,
+  or cannot tell; or `inputs not independent (<part>)`, a judgment made from the
+  instructions Step 1 already read: each window part's installed prompt takes
+  only the diff, its checklist and repository context, never another part's
+  findings (an "already caught" list). The Red Team takes the merged specialist
+  findings, so it is never in the window's dispatch.
+- **Window,** after Step 4's core pass and Review Army's printed selection
+  (`Dispatching N specialists: …`):
+  1. Prepare the outside pair's inputs only from what was fixed before this pass
+     started: S, the merge base, plan, spec, acceptance obligations and
+     repository context. Never include a finding from this pass, core findings
+     included. Run Step 4.8's preflight here. Capture every PASS_START token
+     (the native attempt and each outside call) before the dispatch message.
+  2. Metrics, under the existing rules: the pass `started`, then every window
+     voice's `begin` one after another in one Bash call immediately before the
+     dispatch message.
+  3. One dispatch message holds every selected specialist's Agent call and the
+     native adversarial Agent call. Each uses `/review`'s own prompt, and every
+     diff, numstat and name-status command compares `"<merge base>" "S"`, as
+     the delta procedure tells nested `/review`. The same message starts the
+     outside pair as one owned background command. Where **Bound Claude Code
+     outside calls** applies, that is its single helper call, unchanged.
+     Otherwise it is upstream's outside challenge block, then the structured
+     block when `/review`'s size or override gate selects it. Each block runs in
+     its own subshell, with its output and exit status in separate files under
+     `<evidence-directory>/outside-calls/`, and the command's limit is at least
+     1,100 seconds. The pair stays internally sequential. Nothing in the
+     background command calls metrics.
+- **Collection.** Step 4.6 merges the specialist outputs once they settle. The
+  Red Team runs on its own gate after that merge, with exactly the inputs
+  `/review` gives it. Each voice ends at its own result. Step 4.7's setup and
+  probes start only after every reader, including the Red Team and the outside
+  pair, has returned or is confirmed stopped, so the work tree stays at S while
+  any reader runs. Then compare the work tree with S (the snapshot procedure on
+  a temporary index, compared with `S^{tree}`). On a difference, stop before
+  any fix as `worktree-changed` does in **Delegate named specialist parts**
+  (report it, revert nothing, coverage incomplete) and record
+  `Review overlap: stopped — work tree changed during the window`.
+- **Unchanged.** Every reviewer `/review` selects runs once. Step 4.8's persist
+  rule, the cross-model synthesis and Step 5's combine, Step 5.0 dedup and
+  Fix-First all come after collection. The cap, the stop, `converged`/`cycles`
+  and the review-log rows are unchanged. So are the cycle-1 baseline's write
+  point and completion values (an overlapped cycle 1 is a full-scope cycle 1),
+  Greptile-once, the outside-call policy (same calls, same order, once per
+  candidate, same call directory), the provider-failure and bounded-wait host
+  rules, and the completion matrix. A failed, timed-out, unavailable or
+  unverified part is missing coverage as today. It is never re-dispatched while
+  it may still run and never replaced by a sequential rerun.
+- **Receipt lines,** written only when the policy carries the value:
+  `Review overlap: overlapped (cycle 1; parts=<comma-separated parts>; window=<UTC dispatch>–<UTC last return>)`,
+  `Review overlap: sequential — <reason>` or
+  `Review overlap: stopped — work tree changed during the window`.
 
 ### Reopen review only for behavior-changing repairs
 
@@ -1952,7 +2060,8 @@ shapes the prompt below, so the continuation starts in a fresh session.
    continuation count. Add the `test-gaps:` status and
    each `Test gap recorded:`, `Test gap not recorded:` and `Test gap withdrawn:`
    line with the policy line that authorized them; a recorded gap is not listed
-   under `Unresolved:`. Add the `Review arm:` line and every `Folded checklist:`
+   under `Unresolved:`. Add the `Review overlap:` line when the policy carries
+   `first-cycle=overlap`. Add the `Review arm:` line and every `Folded checklist:`
    line. Add the `delegation:` status and every `Delegated part:`
    line. Post it once as a comment marked
    `<!-- review-and-prep:stopped:<full-sha> -->` after the paused comment's
@@ -3058,7 +3167,7 @@ Likewise record the `repair-review:` status and every `Repair classification:`,
 `Repair without review cycle:` and `Repair evidence:` line, every `Repair chain
 voided:` line and any `neutral-only baseline:` outcome, with the policy line
 that authorized them. Record the `test-gaps:` status and every `Test gap recorded:`,
-`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review arm:` line and every `Folded checklist:` line the same way.
+`Test gap not recorded:` and `Test gap withdrawn:` line the same way. Record the `Review overlap:` line when the policy carries `first-cycle=overlap`. Record the `Review arm:` line and every `Folded checklist:` line the same way.
 Record the `delegation:` status and every `Delegated part:` line the same way.
 When Greptile applies,
 record `Greptile: postponed — awaiting manual testing` and whether a request/run
@@ -3709,7 +3818,8 @@ the `delegation:` status line and every `Delegated part: <part>; provider=<label
 line (the PAUSED and STOPPED receipts carry them too when they carry Step 2
 review evidence; the receipt names the configuration's SHA-256 and labels,
 never its path), the `Review arm:` line and every `Folded checklist: <name>; file=<path under the gstack root>; sha256=<64 hex>; findings=<n>`
-line when the policy carries `specialists=fold`, every `External gate attestation:`
+line when the policy carries `specialists=fold`, the `Review overlap:` line when
+the policy carries `first-cycle=overlap`, every `External gate attestation:`
 row (each accepted result line adds one), the `pregate-narrowing:` status line and
 each `Pregate lane not run:` line, and the elapsed
 times from Boundaries. For each test run, include a `Test selection:` line from

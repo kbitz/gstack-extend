@@ -36,6 +36,9 @@ export const DELEGATE_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b68289
 /** Upstream revision at which the anchors behind `specialists=fold` were qualified; the sibling layout's revision is unknown. */
 export const FOLD_QUALIFIED = { revision: '47079fd89fc7fc13c0f06dc7980b682890175a8c', version: '1.93.3.0' } as const;
 
+/** Upstream revision at which the anchors behind `first-cycle=overlap` were qualified; the sibling layout's revision is unknown. */
+export const OVERLAP_QUALIFIED = { revision: '9ceec3f05e4a960d023b3140d6f7a28ed06662d5', version: '1.96.0.0' } as const;
+
 /**
  * Gate idioms and upstream-root imports that are deliberately not in the
  * runtime inventory. `includes` is matched against the hit's line text, so an
@@ -63,6 +66,8 @@ export const EXEMPTIONS: readonly { file: string; includes: string; reason: stri
   { file: 'skills/review-and-prep.md', includes: "grep -F 'specialists=fold'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'skills/review-and-prep.md', includes: "grep -F 'documentation-scope=contracts'",
+    reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
+  { file: 'skills/review-and-prep.md', includes: "grep -F 'first-cycle=overlap'",
     reason: 'the caller-side capability check greps this skill\'s own loaded copy for its policy value, not installed upstream text' },
   { file: 'src/review-delegate/cli.ts', includes: "join(root, 'lib'",
     reason: 'loads the UPSTREAM_HELPERS classifier, whose export and golden cases the export and classifier checks already cover' },
@@ -107,6 +112,8 @@ export const FOLD_CHECKLISTS = [
   { name: 'design', mark: 'and its `review/design-checklist.md` still contains,' },
 ] as const;
 export type FoldName = typeof FOLD_CHECKLISTS[number]['name'];
+const OVERLAP_HEADING = '**Activation (`first-cycle=overlap`).**';
+const OVERLAP_ADVERSARIAL_MARK = 'and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain,';
 
 export interface CliIo { stdout(text: string): void; stderr(text: string): void; cwd: string }
 
@@ -164,6 +171,7 @@ export type TestGapInventory = { ok: true; file: string; review: string[]; testi
 export type PregateNarrowInventory = { ok: true; file: string; bin: string[]; index: string[]; lanes: string[] } | { ok: false; file: string; reason: string };
 export type DelegateInventory = { ok: true; file: string; review: string[]; testing: string[]; maintainability: string[]; performance: string[]; simplification: string[] } | { ok: false; file: string; reason: string };
 export type FoldInventory = { ok: true; file: string; review: string[]; checklists: Record<FoldName, string[]> } | { ok: false; file: string; reason: string };
+export type OverlapInventory = { ok: true; file: string; review: string[]; adversarial: string[] } | { ok: false; file: string; reason: string };
 
 /** The backtick spans of one anchor list, or why the list is malformed. */
 function spansIn(region: string, list: string): { ok: true; spans: string[] } | { ok: false; reason: string } {
@@ -309,6 +317,19 @@ export function foldInventory(extendRootPath: string): FoldInventory {
   return { ok: true, file: found.file, review, checklists };
 }
 
+/**
+ * The anchors behind `first-cycle=overlap`: the backtick spans of its
+ * activation paragraph, two lists (`/review` and its adversarial instructions),
+ * each opened by "byte for byte,".
+ */
+export function overlapInventory(extendRootPath: string): OverlapInventory {
+  const found = activationLists(extendRootPath, OVERLAP_HEADING,
+    [OVERLAP_ADVERSARIAL_MARK, ANCHOR_LIST_TO], ['review', 'adversarial']);
+  if (!found.ok) return found;
+  const [review, adversarial] = found.lists as [string[], string[]];
+  return { ok: true, file: found.file, review, adversarial };
+}
+
 const STAGE = {
   review: '/review-and-prep: the in-cap delta is inactive and /review runs unmodified',
   fixFirst: '/review-and-prep: repair-review=behavior-changing is inactive, so every edited pass repeats as today and the receipt says so',
@@ -321,6 +342,8 @@ const STAGE = {
   delegateList: '/review-and-prep: the delegation anchors cannot be listed, so delegate=<part> is unverified and stays inactive',
   fold: '/review-and-prep: specialists=fold is inactive, so cycle 1 dispatches specialists as today and the receipt says so',
   foldList: '/review-and-prep: the fold anchors cannot be listed, so specialists=fold is unverified and stays inactive',
+  overlap: '/review-and-prep: first-cycle=overlap is inactive, so cycle 1 runs in today\'s order and the receipt says so',
+  overlapList: '/review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive',
   findingLocation: 'bin/secret-dispositions: a reviewed MEDIUM secret finding may be refused as unrecognized, so the pregate gate stays blocked',
   outline: '/autoplan-lean: outline marks no row skip, so /autoplan-lean applies upstream\'s skip list by heading itself and reads more',
   outside: '/review-and-prep: outside coverage is unavailable because bin/outside-review refuses before any dispatch',
@@ -352,6 +375,7 @@ function describe(check: Check): { effect: string; fix: string } {
 interface Layout {
   name: 'nested' | 'sibling';
   review: string;
+  adversarial: string;
   checklist: string;
   testing: string;
   maintainability: string;
@@ -383,14 +407,16 @@ function chooseLayout(root: string, skillsDir: string): Layout {
   if (existsSync(join(root, 'review', 'SKILL.md'))) {
     const autoplan = join(root, 'autoplan', 'SKILL.md');
     const sections = existsSync(join(root, 'autoplan', 'sections'));
-    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
+    return { name: 'nested', review: join(root, 'review', 'SKILL.md'), adversarial: join(root, 'review', 'sections', 'adversarial.md'),
+      checklist: join(root, 'review', 'checklist.md'),
       testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
       performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
       ...fold, coverage: join(root, 'ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot,
       section: (phase) => (sections ? join(root, 'autoplan', 'sections', `${phase}-phase.md`) : autoplan) };
   }
   const autoplan = join(skillsDir, 'gstack-autoplan', 'SKILL.md');
-  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), checklist: join(root, 'review', 'checklist.md'),
+  return { name: 'sibling', review: join(skillsDir, 'gstack-review', 'SKILL.md'), adversarial: join(skillsDir, 'gstack-review', 'SKILL.md'),
+    checklist: join(root, 'review', 'checklist.md'),
     testing: join(root, 'review', 'specialists', 'testing.md'), maintainability: join(root, 'review', 'specialists', 'maintainability.md'),
     performance: join(root, 'review', 'specialists', 'performance.md'), simplification: join(root, 'review', 'specialists', 'simplification.md'),
     ...fold, coverage: join(skillsDir, 'gstack-ship', 'sections', 'test-coverage.md'), ...pregate, autoplan, snapshot, section: () => autoplan };
@@ -569,6 +595,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   info('inspected', `finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`);
   info('inspected', `delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`);
   info('inspected', `fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`);
+  info('inspected', `overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`);
   info('inspected', `criteria ${UPSTREAM.commit} ${UPSTREAM.version}`);
   info('inspected', `outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`);
   info('scope', 'OK means only that the listed anchors, exports, classifier cases and known criteria paragraphs matched; newly added upstream requirements, changed surrounding instructions and other classifier behavior are not checked');
@@ -618,6 +645,10 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
   const fold = foldInventory(extend);
   if (fold.ok) ok('inventory', 'review-and-prep.fold');
   else drift('inventory', 'review-and-prep.fold', `${fold.reason} (${fold.file})`, { effect: STAGE.foldList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
+
+  const overlap = overlapInventory(extend);
+  if (overlap.ok) ok('inventory', 'review-and-prep.overlap');
+  else drift('inventory', 'review-and-prep.overlap', `${overlap.reason} (${overlap.file})`, { effect: STAGE.overlapList, fix: 'this extension\'s own files are damaged or edited: re-run its setup or reinstall, then rerun' });
 
   if (rootOk) info('layout', layout.name);
   const reads = new Map<string, Read>();
@@ -696,6 +727,15 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       const read = rootOk ? readOnce(files[name], `review ${name} checklist`, name) : undefined;
       fold.checklists[name].forEach((anchor, i) => checkAnchor(`review-and-prep.fold.${name}.${i + 1}`, read, anchor, undefined, inactive));
     }
+  }
+  if (overlap.ok) {
+    const inactive = { effect: STAGE.overlap, fix: UPGRADE_FIX };
+    const review = reviewRead();
+    const adversarial = rootOk ? readOnce(layout.adversarial, 'review adversarial section', 'adversarial') : undefined;
+    overlap.review.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.review.${i + 1}`, review, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
+    overlap.adversarial.forEach((anchor, i) => checkAnchor(`review-and-prep.overlap.adversarial.${i + 1}`, adversarial, anchor,
+      (cause) => layout.name === 'sibling' && cause.includes('not found') ? sibling(cause) : cause, inactive));
   }
   {
     const secrets = rootOk ? readOnce(layout.pregateSecrets, 'pregate secrets check', 'pregate.secrets') : undefined;

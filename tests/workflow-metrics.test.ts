@@ -3474,3 +3474,100 @@ describe('Track 67A run token usage capture and read --usage', () => {
     expect(audited.violations).toEqual([]);
   }, 60_000);
 });
+
+describe('Track 69A first-cycle overlap measurement', () => {
+  // Value: protects=E5 before/after concurrency measurement uses the existing v2 pass attribution and interval-union wall-clock summary without a new parser;
+  //   fails_when=overlapping voice intervals inflate union wall time to the sequential sum or alter findings.by_part;
+  //   why_new=Track 69A overlaps specialists, native adversarial and the sequential outside pair while keeping Red Team after specialist merge and QA last;
+  //   seam=none; no_claim=installed-agent wall-clock savings (synthetic ledger through real metrics read)
+  test('sequential and overlapped cycle-1 runs produce identical findings.by_part and interval-union wall time below the sequential sum', () => {
+    const fix = makeTelemetryFixture('community');
+    const voices = [
+      { voice: 'core', findings: [finding('C1', { found_by: ['core'], attribution_reason: null, resolution: 'fixed' })] },
+      { voice: 'testing', findings: [finding('T1', { found_by: ['specialist:testing', 'red-team'], attribution_reason: null, resolution: 'fixed' })] },
+      { voice: 'maintainability', findings: [finding('M1', { found_by: ['specialist:maintainability'], attribution_reason: null })] },
+      { voice: 'red-team', findings: [] },
+      { voice: 'native-adversarial', findings: [finding('A1', { found_by: ['native-adversarial'], attribution_reason: null, resolution: 'fixed' })] },
+      { voice: 'outside-challenge', findings: [finding('O1', { found_by: ['outside:challenge'], attribution_reason: null })] },
+      { voice: 'outside-structured', findings: [] },
+      { voice: 'qa', findings: [finding('Q1', { found_by: ['qa'], attribution_reason: null })] },
+    ];
+    const buildRun = (sid: string, localSpan: [number, number], voiceSpans: Array<[number, number]>) => {
+      const run = runRows(sid, localSpan[0]);
+      const localStep = u();
+      const rows: any[] = [
+        ...run.rows,
+        { op: 'begin', at: localSpan[0], request: { ...base(sid), step_id: localStep, parent_step_id: run.step, kind: 'phase', phase: 'local-pass' } },
+      ];
+      for (const [lo, hi] of voiceSpans) {
+        const vStep = u();
+        rows.push(
+          { op: 'begin', at: lo, request: { ...base(sid), step_id: vStep, parent_step_id: localStep, kind: 'voice', phase: 'voice' } },
+          { op: 'end', at: hi, request: { ...base(sid), step_id: vStep, outcome: 'completed' } },
+        );
+      }
+      const pass = passRows(sid, { scope: 'local', at: localSpan[0] + 100, voices });
+      rows.push(...pass.rows.map((r) => ({ ...r, request: { ...r.request, v: 2 } })));
+      rows.push(
+        { op: 'end', at: localSpan[1], request: { ...base(sid), step_id: localStep, outcome: 'completed' } },
+        { op: 'end', at: localSpan[1], request: { ...base(sid), step_id: run.step, outcome: 'completed' } },
+      );
+      craft(fix, sid, rows);
+      return read(fix, sid).envelope.data;
+    };
+
+    const seqSpans: Array<[number, number]> = [
+      [1000, 2000], // core
+      [2000, 3000], // testing
+      [3000, 4000], // maintainability
+      [4000, 5000], // red-team
+      [5000, 6000], // native-adversarial
+      [6000, 7000], // outside-challenge
+      [7000, 8000], // outside-structured
+      [8000, 9000], // qa
+    ];
+    const ovlSpans: Array<[number, number]> = [
+      [1000, 2000], // core
+      [2000, 3000], // testing (window)
+      [2000, 3000], // maintainability (window)
+      [3000, 4000], // red-team (after specialist merge)
+      [2000, 3000], // native-adversarial (window)
+      [2000, 3000], // outside-challenge (window, outside pair 1)
+      [3000, 4000], // outside-structured (window, outside pair 2 sequential after challenge)
+      [4000, 5000], // qa (last, after every reader)
+    ];
+    const sequentialSumMs = ovlSpans.reduce((sum, [lo, hi]) => sum + (hi - lo), 0);
+    expect(sequentialSumMs).toBe(8000);
+
+    const seq = buildRun('extend-' + u(), [1000, 9000], seqSpans);
+    const ovl = buildRun('extend-' + u(), [1000, 5000], ovlSpans);
+
+    expect(seq.capture).toBe('ok');
+    expect(ovl.capture).toBe('ok');
+    expect(ovl.findings.by_part).toEqual(seq.findings.by_part);
+    expect(ovl.findings.by_part).toEqual({
+      core: { reported: 1, accepted: 1, rejected: 0 },
+      'native-adversarial': { reported: 1, accepted: 1, rejected: 0 },
+      'outside:challenge': { reported: 1, accepted: 1, rejected: 0 },
+      qa: { reported: 1, accepted: 1, rejected: 0 },
+      'red-team': { reported: 1, accepted: 1, rejected: 0 },
+      'specialist:maintainability': { reported: 1, accepted: 1, rejected: 0 },
+      'specialist:testing': { reported: 1, accepted: 1, rejected: 0 },
+    });
+
+    const seqLocalPass = seq.phases.find((p: any) => p.phase === 'local-pass');
+    const ovlLocalPass = ovl.phases.find((p: any) => p.phase === 'local-pass');
+    const seqVoice = seq.phases.find((p: any) => p.phase === 'voice');
+    const ovlVoice = ovl.phases.find((p: any) => p.phase === 'voice');
+
+    expect(seqLocalPass.observed_wall_duration_ms).toBe(8000);
+    expect(seq.union_observed_wall_ms).toBe(8000);
+    expect(seqVoice.observed_wall_duration_ms).toBe(8000);
+
+    expect(ovlLocalPass.observed_wall_duration_ms).toBe(4000);
+    expect(ovl.union_observed_wall_ms).toBe(4000);
+    expect(ovlVoice.observed_wall_duration_ms).toBe(4000);
+    expect(ovlLocalPass.observed_wall_duration_ms).toBeLessThan(sequentialSumMs);
+    expect(ovl.union_observed_wall_ms).toBeLessThan(sequentialSumMs);
+  }, 60_000);
+});
