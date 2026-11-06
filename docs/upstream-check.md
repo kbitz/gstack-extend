@@ -14,7 +14,8 @@ unmodified `/review` (or records `repair-review: inactive` and repeats every
 edited pass, or records `test-gaps: inactive` and writes tests as today, or
 records `pregate-narrowing: inactive` and runs the pregate as today, or
 records `Review arm: dispatch — anchor changed` and dispatches specialists as
-today),
+today, or records `Review overlap: sequential — anchor changed` and runs cycle 1
+in today's order),
 `bin/outside-review` refuses at dispatch, `bin/secret-dispositions` refuses a
 reviewed finding whose location it cannot read, and
 `/autoplan-lean` records criteria drift and continues with voices that are not
@@ -159,7 +160,7 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=88 drift=1
+RESULT drift checks=97 drift=1
 ```
 
 ## What it checks
@@ -260,6 +261,21 @@ The inventory comes from this extension's own source, never a second copy:
   State Machines and Design steps and the Red Team dispatch mechanics, which
   only the nested layout installs and which the fold uses as written, so an
   upstream change inside `review/sections/review-army.md` is not detected here.
+- **Overlap anchors.** The backtick spans of the activation paragraph of
+  `skills/review-and-prep.md` (opened by `**Activation (`first-cycle=overlap`).**`),
+  in two lists each opened by "byte for byte,": the five after the first are
+  checked as raw bytes in the installed `/review` skill file, and the three after
+  the second (following "and its adversarial instructions
+  (`review/sections/adversarial.md` in the nested layout, the review file itself
+  in the sibling layout) still contain,") in `<root>/review/sections/adversarial.md`
+  in the nested layout and in `<skills dir>/gstack-review/SKILL.md` in the sibling
+  layout. They are listed by `overlapInventory`, a separate check
+  (`review-and-prep.overlap`). Anchor IDs read
+  `review-and-prep.overlap.review.<1..5>` and
+  `review-and-prep.overlap.adversarial.<1..3>`, eight in all. What the anchors do
+  not cover: Review Army's Red Team inputs and dispatch mechanics (the Codex
+  sibling copy lacks Review Army), nor the native prompt beyond its anchored line;
+  the section's runtime independence judgment covers them.
 - **Secret-finding location anchors.** Two spans of the installed
   `lib/pregate/checks/secrets.ts`, read as raw bytes from the root in both
   layouts: the template that renders a finding's location, which writes
@@ -343,6 +359,8 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   model as today and the receipt says so, with no upstream file edited; the
   option never runs partly applied. For the thirteen fold anchors,
   `specialists=fold` is inactive: cycle 1 dispatches specialists as today and the
+  receipt says so, with no upstream file edited. For the eight overlap anchors,
+  `first-cycle=overlap` is inactive: cycle 1 runs in today's order and the
   receipt says so, with no upstream file edited. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
@@ -464,6 +482,7 @@ and the test-gap routing value.
 | Secret-finding location anchors | `2512dd7624a474fee036326989ea0c6bb8470e69` | 1.92.55.0 |
 | Delegation anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
 | Fold anchors | `47079fd89fc7fc13c0f06dc7980b682890175a8c` | 1.93.3.0 |
+| Overlap anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Reviewer criteria copies | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 

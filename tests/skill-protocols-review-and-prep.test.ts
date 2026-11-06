@@ -537,7 +537,7 @@ describe('review-and-prep repeated-review cuts', () => {
   // Value: protects=one versioned caller line, defaults unchanged without it, never a gate waiver; fails_when=a key, default or the no-waiver rule drifts; why_new=new caller input; seam=none
   test('the review policy is one versioned, optional line that waives no gate', () => {
     expect(prep).toContain(
-      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
+      '`Review policy: review-and-prep-policy/v1; in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold; parent-io=lean; delegate=<part>[,<part>...]; repair-review=behavior-changing; repair-cycles=light; test-gaps=record; max-continuations=<0-9>`',
     );
     expect(policy).toContain('`max-continuations` defaults to 1 when `continuation` is `repair-only` or `full`, otherwise 0.');
     expect(policy).toContain('A repeated key, an unknown version, key or value, or a second policy line means `none supplied`');
@@ -2703,6 +2703,164 @@ describe('review-and-prep documentation-scope=contracts', () => {
 
   // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section, bullet or light-default line; why_new=CLAUDE.md skill-body rule; seam=none
   test('the added text uses no host placeholder', () => {
+    for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+});
+
+// Track 69A: `first-cycle=overlap` runs selected specialists, the native adversarial pass and the outside pair at the same time on one frozen snapshot in cycle 1.
+describe('review-and-prep first-cycle=overlap', () => {
+  const prep = readFileSync(join(ROOT, 'skills', 'review-and-prep.md'), 'utf8');
+  const flat = prep.replace(/\s+/g, ' ');
+  const policy = skillSection(prep, '### Read an optional review policy').replace(/\s+/g, ' ');
+  const light = skillSection(prep, '### Use the light review default').replace(/\s+/g, ' ');
+  const sectionRaw = skillSection(prep, '### Overlap independent first-cycle reviewers');
+  const section = sectionRaw.replace(/\s+/g, ' ');
+  const bullet = policy.slice(policy.indexOf('- `first-cycle=overlap`'), policy.indexOf('- `specialists=fold`'));
+  const paragraphAt = sectionRaw.indexOf('**Activation');
+  const paragraph = sectionRaw.slice(paragraphAt, sectionRaw.indexOf('\n\n', paragraphAt));
+  const rest = sectionRaw.slice(paragraphAt + paragraph.length);
+  const REVIEW_ANCHORS = [
+    'All readers examine the same candidate.',
+    'Do not edit reviewed source until Step 5.',
+    'Before edits, every dispatched reader/writer must have returned or be confirmed',
+    'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
+    'an Agent dispatch for the adversarial pass, its prompt including',
+  ] as const;
+  const ADVERSARIAL_ANCHORS = [
+    'Read the diff for this branch. First list changed files:',
+    'Wait until every started task has finished or is confirmed stopped.',
+    'After all passes complete, synthesize findings across all sources:',
+  ] as const;
+
+  // Value: protects=the one policy grammar line gains first-cycle=overlap between continuation and documentation-audit without splitting any existing partial-run pin; fails_when=the key moves, is dropped or splits a locked run; why_new=new policy value; seam=none
+  test('the grammar line carries first-cycle=overlap between continuation and documentation-audit', () => {
+    expect(flat).toContain('in-cap=delta|full; continuation=repair-only|full|stop; first-cycle=overlap; documentation-audit=final;');
+    expect(flat).toContain('documentation-audit=final; documentation-scope=contracts; full-suite=final|external; final-gate-repair=tests-docs; specialists=fold;');
+  });
+
+  // Value: protects=the bullet's position between final-gate-repair and specialists=fold, its only value, its coexistence with specialists=fold and delegate=, and the no-waiver rule; fails_when=a second value appears, the bullet moves into another slice or the older-install check is lost; why_new=criteria 5, 6, 9; seam=none
+  test('the policy bullet sits between final-gate-repair and specialists=fold, has one value and coexists with fold and delegate', () => {
+    expect(policy.indexOf('- `final-gate-repair=tests-docs`')).toBeLessThan(policy.indexOf('- `first-cycle=overlap`'));
+    expect(policy.indexOf('- `first-cycle=overlap`')).toBeLessThan(policy.indexOf('- `specialists=fold`'));
+    expect(bullet).toContain('`first-cycle=overlap` (its only value) is opt-in.');
+    expect(bullet).toContain("In the original invocation's full-scope cycle 1 the selected specialists, the native adversarial pass and the outside pair run at the same time on one frozen snapshot, as **Overlap independent first-cycle reviewers** defines, and every reviewer, gate and bound stays.");
+    expect(bullet).toContain("It is active only while that section's anchors match and the host can run those parts at once; otherwise cycle 1 runs in today's order and the receipt says so.");
+    expect(bullet).toContain("Omitted, every cycle runs in today's order.");
+    expect(bullet).toContain("With `specialists=fold` or `delegate=` on the same line the line still parses and cycle 1 runs in today's order, so each measured arm stays separate.");
+    expect(bullet).toContain('`/ship-and-land` is unchanged.');
+    expect(bullet).toContain('An installation without the value reads the whole line as `none supplied`');
+    expect(bullet).toContain('`grep -F \'first-cycle=overlap\' "<installed skill dir>/SKILL.md"` (exit 0 means supported) and omits the value otherwise, keeping its other keys.');
+    expect(bullet).toContain('The value waives no gate and never authorizes a continuation.');
+    expect(bullet).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
+  });
+
+  // Value: protects=the capability check an older installation fails and the light default's explicit opt-out; fails_when=the value is absent yet the check passes or the light default drops its line; why_new=the rollout contract and SPEC P1; seam=none
+  test('the capability check exits 0 on this skill and 1 on a copy without the value, and the light default never sets it', () => {
+    const dir = makeBaseTmp('overlap-capability');
+    const copy = join(dir, 'SKILL.md');
+    const check = (path: string) => spawnSync('grep', ['-F', 'first-cycle=overlap', path]).status;
+    expect(check(join(ROOT, 'skills', 'review-and-prep.md'))).toBe(0);
+    writeFileSync(copy, prep.replaceAll('first-cycle=overlap', 'first-cycle-removed'));
+    expect(check(copy)).toBe(1);
+    rmSync(dir, { recursive: true, force: true });
+    expect(light).toContain("It never sets `first-cycle=overlap`: comparing the overlapped first cycle with today's sequential order needs a caller that measures both orders and opts in until the acceptance record supports a default (`SPEC P1`).");
+  });
+
+  // Value: protects=the activation paragraph's heading, two byte-for-byte lists, eight spans in order, closing delimiter and delimiter-free section body; fails_when=a span moves, wraps, loses a delimiter or repeats a gate idiom in the body; why_new=seventh activation paragraph; seam=none
+  test('the activation paragraph has the heading, two lists opened by byte for byte, the eight spans in order and no delimiter in the rest of the section', () => {
+    expect(paragraphAt).toBeGreaterThan(-1);
+    expect(sectionRaw.startsWith('### Overlap independent first-cycle reviewers\n\n**Activation (`first-cycle=overlap`).**')).toBe(true);
+    expect(paragraph.includes('\n\n')).toBe(false);
+    expect(paragraph.match(/byte for byte,/g)).toHaveLength(2);
+    expect(paragraph.match(/`/g)!.length % 2).toBe(0);
+    expect(paragraph.trimEnd().endsWith('Check each with `grep -F`.')).toBe(true);
+    expect(paragraph).toContain('and only while the installed `/review` read in Step 1 still contains, byte for byte,\n');
+    const mark = 'and its adversarial instructions (`review/sections/adversarial.md` in the nested layout, the review file itself in the sibling layout) still contain, byte for byte,';
+    expect(paragraph).toContain(mark);
+    const ordered = [...REVIEW_ANCHORS.map((s) => `\`${s}\``), mark, ...ADVERSARIAL_ANCHORS.map((s) => `\`${s}\``), 'Check each with `grep -F`.'];
+    let at = 0;
+    for (const token of ordered) {
+      const next = paragraph.indexOf(token, at);
+      expect(next, token).toBeGreaterThan(at);
+      at = next + token.length;
+    }
+    for (const line of paragraph.split('\n').filter((l) => l.startsWith('`'))) {
+      expect(line.endsWith('`')).toBe(true);
+      expect(line.slice(1, -1)).not.toContain('`');
+    }
+    expect(rest).not.toContain('byte for byte');
+    expect(rest).not.toContain('grep -F');
+  });
+
+  // Value: protects=the section sits between the fold section and the repair-review section, and its phase row follows the fold row; fails_when=the section moves or the phase row is lost; why_new=phase mapping closed list; seam=none
+  test('the section follows the fold section, before the repair-review section, and the phase table maps it', () => {
+    const at = (heading: string) => prep.indexOf(heading);
+    expect(at('### Fold specialist checklists into cycle 1')).toBeLessThan(at('### Overlap independent first-cycle reviewers'));
+    expect(at('### Overlap independent first-cycle reviewers')).toBeLessThan(at('### Reopen review only for behavior-changing repairs'));
+    const rows = prep.split('\n').filter((line) => line.startsWith('| `'));
+    const table = rows.map((row) => row.split('|')[1]!.trim());
+    expect(table.indexOf('`Overlap independent first-cycle reviewers`')).toBe(table.indexOf('`Fold specialist checklists into cycle 1`') + 1);
+    expect(rows).toContain('| `Overlap independent first-cycle reviewers` | `local-pass`, `voice` | `voice` (cross-call) |');
+  });
+
+  // Value: protects=applies-to and every sequential fallback reason; fails_when=a continuation or later cycle overlaps or a fallback reason is dropped; why_new=criteria 3, 4, 5; seam=none
+  test('applies only to the original full-scope cycle 1 and names every sequential fallback reason', () => {
+    expect(section).toContain("This is a **wrapper override**, not an upstream fork: it changes when parts start in cycle 1, never who reviews, a gate, a checklist or `/review`'s own text.");
+    expect(section).toContain('(`docs/acceptance/review-concurrency.md`). If overlapping ever needs upstream text to change, record that there and stop; never edit an upstream file.');
+    expect(section).toContain("**Applies to** the original invocation's full-scope cycle 1 only. A continuation's first pass, Step 5's delta re-review and `/review`'s cycles 2–3 run in today's order and record nothing.");
+    expect(section).toContain('A changed anchor records `Review overlap: sequential — anchor changed (<which>)`, cycle 1 runs in today\'s order, and no upstream file is edited.');
+    expect(section).toContain('Any failure records `Review overlap: sequential — <reason>` and runs today\'s order:');
+    for (const reason of [
+      '`anchor changed (<which>)`',
+      '`snapshot unavailable`',
+      '`specialists=fold set`',
+      '`delegate= set`',
+      '`host cap (<which>)`',
+      '`inputs not independent (<part>)`',
+    ]) expect(section, reason).toContain(reason);
+    expect(section).toContain('The Red Team takes the merged specialist findings, so it is never in the window\'s dispatch.');
+    expect(section).toContain("For the subagent limit, count selected specialists plus the native adversarial subagent; check the outside command's concurrent capacity separately.");
+  });
+
+  // Value: protects=the overlap window: one snapshot S, "<merge base>" "S", one dispatch message, sequential outside pair in one background command, no metrics in the background, and no current-pass finding in any window prompt; fails_when=a reader compares a mutable tree, outside calls split into two background sessions, background calls metrics or core findings leak into outside prompts; why_new=criteria 2, 3; seam=none
+  test('the window dispatches on one frozen snapshot S, keeps the outside pair sequential in one background command, and passes no current-pass finding', () => {
+    expect(section).toContain("Prepare the outside pair's inputs only from what was fixed before this pass started: S, the merge base, plan, spec, acceptance obligations and repository context. Never include a finding from this pass, core findings included.");
+    expect(section).toContain('Capture every PASS_START token (the native attempt and each outside call) before the dispatch message.');
+    expect(section).toContain("the pass `started`, then every window voice's `begin` one after another in one Bash call immediately before the dispatch message.");
+    expect(section).toContain('One dispatch message holds every selected specialist\'s Agent call and the native adversarial Agent call.');
+    expect(section).toContain('every diff, numstat and name-status command compares `"<merge base>" "S"`, as the delta procedure tells nested `/review`.');
+    expect(section).toContain('The same message starts the outside pair as one owned background command.');
+    expect(section).toContain('Where **Bound Claude Code outside calls** applies, that is its single helper call, unchanged.');
+    expect(section).toContain('Each block runs in its own subshell, with its output and exit status in separate files under `<evidence-directory>/outside-calls/`, and the command\'s limit is at least 1,100 seconds.');
+    expect(section).toContain('The pair stays internally sequential. Nothing in the background command calls metrics.');
+    expect(section).toContain("Outside voice spans bound the parent's dispatch-to-observation wait, not each call's runtime: the structured span includes its wait for the challenge.");
+    expect(section).toContain("Preserve the adapter's separate call timestamps for per-call measurements; never backdate a metrics boundary or infer a runtime from a wait span.");
+  });
+
+  // Value: protects=collection order: Red Team after Step 4.6's merge, QA after every reader, and the post-window tree check against S^{tree}; fails_when=Red Team or QA runs early or a work-tree edit during the window proceeds to fixes; why_new=criteria 2, 3; seam=none
+  test('collection runs Red Team after Step 4.6 merge, QA after every reader, and stops on a work-tree change against S', () => {
+    expect(section).toContain('Step 4.6 merges the specialist outputs once they settle. The Red Team runs on its own gate after that merge, with exactly the inputs `/review` gives it.');
+    expect(section).toContain("Step 4.7's setup and probes start only after every reader, including the Red Team and the outside pair, has returned or is confirmed stopped, so the work tree stays at S while any reader runs.");
+    expect(section).toContain('Then compare the work tree with S (the snapshot procedure on a temporary index, compared with `S^{tree}`).');
+    expect(section).toContain('stop before any fix as `worktree-changed` does in **Delegate named specialist parts** (report it, revert nothing, coverage incomplete) and record `Review overlap: stopped — work tree changed during the window`.');
+  });
+
+  // Value: protects=the unchanged list, the three receipt templates in all three receipt kinds, and no host placeholder; fails_when=a gate, hold or receipt site is dropped or a reserved placeholder appears; why_new=criteria 3, 4, 6, 7; seam=none
+  test('the unchanged list, the three receipt templates and all three receipt kinds are locked with no host placeholder', () => {
+    expect(section).toContain('**Unchanged.** Every reviewer `/review` selects runs once. Step 4.8\'s persist rule, the cross-model synthesis and Step 5\'s combine, Step 5.0 dedup and Fix-First all come after collection.');
+    expect(section).toContain('The cap, the stop, `converged`/`cycles` and the review-log rows are unchanged. So are the cycle-1 baseline\'s write point and completion values (an overlapped cycle 1 is a full-scope cycle 1), Greptile-once, the outside-call policy (same calls, same order, once per candidate, same call directory), the provider-failure and bounded-wait host rules, and the completion matrix.');
+    expect(section).toContain('A failed, timed-out, unavailable or unverified part is missing coverage as today. It is never re-dispatched while it may still run and never replaced by a sequential rerun.');
+    for (const template of [
+      '`Review overlap: overlapped (cycle 1; parts=<comma-separated parts>; window=<UTC dispatch>–<UTC last return>)`',
+      '`Review overlap: sequential — <reason>`',
+      '`Review overlap: stopped — work tree changed during the window`',
+    ]) expect(section, template).toContain(template);
+    expect(flat).toContain('Add the `Review overlap:` line when the policy carries `first-cycle=overlap`.');
+    expect(flat).toContain('Record the `Review overlap:` line when the policy carries `first-cycle=overlap`.');
+    expect(flat).toContain('the `Review overlap:` line when the policy carries `first-cycle=overlap`,');
+    expect(section).toContain('Receipt sites refer to this original-cycle observation. Later cycles create no new line.');
+    expect(section).toContain('A continuation preserves a corroborated original line only as history labelled with its originating invocation and head; if unavailable, omit the line and state that the original overlap observation is unavailable.');
+    expect(section).toContain("Never present a carried window as the continuation's own observation.");
     for (const text of [section, bullet, light]) expect(text).not.toMatch(/\$\d|\$ARGUMENTS|\$\{CLAUDE_/);
   });
 });

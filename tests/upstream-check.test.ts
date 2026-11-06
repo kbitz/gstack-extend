@@ -8,13 +8,13 @@ import { skipList } from '../src/autoplan-lean/outline';
 import { PHASES } from '../src/autoplan-lean/plan';
 import { INSPECTED_UPSTREAM, UPSTREAM_HELPERS } from '../src/outside-review/cli';
 import { UPSTREAM_FINDING_ANCHORS } from '../src/secret-dispositions/evaluate';
-import { ANCHORS_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, delegateInventory, fixFirstInventory, foldInventory, inventory, main, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
+import { ANCHORS_QUALIFIED, DELEGATE_QUALIFIED, EXEMPTIONS, FINDING_LOCATION_QUALIFIED, FIX_FIRST_QUALIFIED, FOLD_CHECKLISTS, FOLD_QUALIFIED, FORMAT, OVERLAP_QUALIFIED, PREGATE_NARROW_QUALIFIED, TEST_GAP_QUALIFIED, delegateInventory, fixFirstInventory, foldInventory, inventory, main, overlapInventory, pregateNarrowInventory, testGapInventory } from '../src/upstream-check/cli';
 import { GOLDEN_CASES } from '../src/upstream-check/probe';
 import { computeTestSelection } from './helpers/touchfiles';
 
 const REPO = join(import.meta.dir, '..');
 const LAUNCHER = join(REPO, 'bin', 'upstream-check');
-const CHECKS = 88; // root, 6 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 16 delegate + 13 fold + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
+const CHECKS = 97; // root, 7 inventory, 3 in-cap + 6 Fix-First + 16 test-gap + 9 pregate-narrowing + 16 delegate + 13 fold + 8 overlap + 2 finding-location anchors + skip list, 3 exports, 4 classifier cases, 8 criteria
 const scratch = mkdtempSync(join(tmpdir(), 'extend-upstream-check-'));
 // Each check builds a fixture tree under `scratch`; cleanup took 17.4 s under load, so allow 30 s for removal.
 afterAll(() => rmSync(scratch, { recursive: true, force: true }), 30000);
@@ -28,10 +28,12 @@ const TEST_GAP_HEADING = '**Activation (`test-gaps=record`).**';
 const PREGATE_NARROW_HEADING = '**Activation (narrowed pregate).**';
 const DELEGATE_HEADING = '**Activation (`delegate`).**';
 const FOLD_HEADING = '**Activation (`specialists=fold`).**';
+const OVERLAP_HEADING = '**Activation (`first-cycle=overlap`).**';
 const TEST_GAP_ANCHORS = 16;
 const PREGATE_NARROW_ANCHORS = 9;
 const DELEGATE_ANCHORS = 16;
 const FOLD_ANCHORS = 13;
+const OVERLAP_ANCHORS = 8;
 const FOLD_NAMES = FOLD_CHECKLISTS.map((c) => c.name);
 const DELEGATE_PARTS = ['testing', 'maintainability', 'performance', 'simplification'] as const;
 const CURRENT_ANCHORS = (() => { const inv = inventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv.anchors; })();
@@ -40,6 +42,7 @@ const TEST_GAP = (() => { const inv = testGapInventory(REPO); if (!inv.ok) throw
 const PREGATE_NARROW = (() => { const inv = pregateNarrowInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const DELEGATE = (() => { const inv = delegateInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 const FOLD = (() => { const inv = foldInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
+const OVERLAP = (() => { const inv = overlapInventory(REPO); if (!inv.ok) throw new Error(inv.reason); return inv; })();
 
 const CLASSIFIER = (honorNotReady: boolean) => `export function classifyOutsideReview({ text }) {
   const highest = /\\[(P[0-3])\\]/.exec(text)?.[1] ?? null;
@@ -56,7 +59,8 @@ const MODULES = {
 const snapshotText = () => PHASES.map((p) => `  ${p}: \`${NATIVE_CRITERIA[p]}\`,`).join('\n') + '\n';
 const sectionText = (p: (typeof PHASES)[number]) => [BOUNDARY, OUTSIDE_RESULT_CONTRACT, ...OUTSIDE_CRITERIA[p]].join('\n\n') + '\n';
 const SKIP = '**Section skip list (apply these):**\n\n- Preamble\n- Telemetry\n';
-const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${FOLD.review.join('\n')}\n`;
+const reviewText = () => `# review\n\n${CURRENT_ANCHORS.join('\n')}\n${FIX_FIRST.review.join('\n')}\n${TEST_GAP.review.join('\n')}\n${DELEGATE.review.join('\n')}\n${FOLD.review.join('\n')}\n${OVERLAP.review.join('\n')}\n`;
+const adversarialText = () => `# adversarial\n\n${OVERLAP.adversarial.join('\n')}\n`;
 const checklistText = () => `# checklist\n\n${FIX_FIRST.checklist.join('\n')}\n${TEST_GAP.checklist.join('\n')}\n`;
 const testingText = () => `# testing\n\n${TEST_GAP.testing.join('\n')}\n${DELEGATE.testing.join('\n')}\n${FOLD.checklists.testing.join('\n')}\n`;
 const specialistText = (part: Exclude<(typeof DELEGATE_PARTS)[number], 'testing'>) => `# ${part}\n\n${DELEGATE[part].join('\n')}\n${FOLD.checklists[part].join('\n')}\n`;
@@ -101,17 +105,20 @@ function upstream(layout: 'nested' | 'sibling', label = layout): Fixture {
   for (const [name, body] of Object.entries(MODULES)) put(join(root, 'lib', `${name}.ts`), body);
   if (layout === 'nested') {
     files.review = join(root, 'review', 'SKILL.md');
+    files.adversarial = join(root, 'review', 'sections', 'adversarial.md');
     files.autoplan = join(root, 'autoplan', 'SKILL.md');
     files.coverage = join(root, 'ship', 'sections', 'test-coverage.md');
     put(files.review, reviewText());
+    put(files.adversarial, adversarialText());
     put(files.coverage, coverageText());
     put(files.autoplan, SKIP);
     for (const p of PHASES) put(join(root, 'autoplan', 'sections', `${p}-phase.md`), sectionText(p));
   } else {
     files.review = join(skills, 'gstack-review', 'SKILL.md');
+    files.adversarial = files.review;
     files.autoplan = join(skills, 'gstack-autoplan', 'SKILL.md');
     files.coverage = join(skills, 'gstack-ship', 'sections', 'test-coverage.md');
-    put(files.review, reviewText());
+    put(files.review, reviewText() + adversarialText());
     put(files.coverage, coverageText());
     put(files.autoplan, SKIP + PHASES.map(sectionText).join('\n'));
   }
@@ -361,7 +368,7 @@ describe('a healthy installation', () => {
     expectAgreement(r);
     expect(r.code).toBe(0);
     expect(r.result).toBe(`RESULT ok checks=${CHECKS} drift=0`);
-    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, sixteen delegate anchors, thirteen fold anchors, two finding-location anchors + the skip-list label
+    expect(r.lines.filter((l) => l.startsWith('OK anchor '))).toHaveLength(CURRENT_ANCHORS.length + FIX_FIRST.review.length + FIX_FIRST.checklist.length + TEST_GAP_ANCHORS + PREGATE_NARROW_ANCHORS + DELEGATE_ANCHORS + FOLD_ANCHORS + OVERLAP_ANCHORS + UPSTREAM_FINDING_ANCHORS.length + 1); // three in-cap anchors, six Fix-First anchors, sixteen test-gap anchors, nine pregate-narrowing anchors, sixteen delegate anchors, thirteen fold anchors, eight overlap anchors, two finding-location anchors + the skip-list label
     expect(r.lines).toContain(`INFO layout ${layout}`);
     expect(r.lines).toContain('INFO upstream-version 1.2.3.4');
     expect(r.lines).toContain('INFO upstream-revision unknown');
@@ -375,6 +382,7 @@ describe('a healthy installation', () => {
       `INFO inspected finding-location ${FINDING_LOCATION_QUALIFIED.revision} ${FINDING_LOCATION_QUALIFIED.version}`,
       `INFO inspected delegate ${DELEGATE_QUALIFIED.revision} ${DELEGATE_QUALIFIED.version}`,
       `INFO inspected fold ${FOLD_QUALIFIED.revision} ${FOLD_QUALIFIED.version}`,
+      `INFO inspected overlap ${OVERLAP_QUALIFIED.revision} ${OVERLAP_QUALIFIED.version}`,
       `INFO inspected criteria ${UPSTREAM.commit} ${UPSTREAM.version}`,
       `INFO inspected outside-review ${INSPECTED_UPSTREAM.revision} ${INSPECTED_UPSTREAM.version}`,
     ]);
@@ -465,7 +473,7 @@ test.skipIf(process.getuid?.() === 0)('an inaccessible upstream root reports dri
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.out).toContain('DRIFT root gstack-root gstack root is missing, inaccessible or not a directory:');
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 6}`); // all six inventory checks read this extension's own source
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 7}`); // all seven inventory checks read this extension's own source
   } finally { chmodSync(f.root, 0o700); }
 }, 30000);
 
@@ -579,6 +587,7 @@ describe('drift', () => {
       ...TEST_GAP.review.map((_, i) => `review-and-prep.test-gaps.review.${i + 1}`),
       ...DELEGATE.review.map((_, i) => `review-and-prep.delegate.review.${i + 1}`),
       ...FOLD.review.map((_, i) => `review-and-prep.fold.review.${i + 1}`),
+      ...OVERLAP.review.map((_, i) => `review-and-prep.overlap.review.${i + 1}`),
     ]);
     for (const n of [1, 2, 3, 4]) expect(r.lines).toContain(`OK anchor review-and-prep.fix-first.checklist.${n}`);
   }, 30000);
@@ -678,7 +687,7 @@ describe('drift', () => {
     const r = await check(rootArgs(upstream('nested')));
     const ids = r.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
     const inventories = ids.filter((id) => id.startsWith('inventory '));
-    expect(inventories).toEqual(['inventory review-and-prep.incap', 'inventory review-and-prep.fix-first', 'inventory review-and-prep.test-gaps', 'inventory review-and-prep.pregate-narrowing', 'inventory review-and-prep.delegate', 'inventory review-and-prep.fold']);
+    expect(inventories).toEqual(['inventory review-and-prep.incap', 'inventory review-and-prep.fix-first', 'inventory review-and-prep.test-gaps', 'inventory review-and-prep.pregate-narrowing', 'inventory review-and-prep.delegate', 'inventory review-and-prep.fold', 'inventory review-and-prep.overlap']);
     const anchors = ids.filter((id) => id.startsWith('anchor review-and-prep.test-gaps.'));
     expect(anchors).toEqual([
       ...TEST_GAP.review.map((_, i) => `anchor review-and-prep.test-gaps.review.${i + 1}`),
@@ -880,6 +889,94 @@ describe('drift', () => {
     ]);
     expect(ids.indexOf('anchor review-and-prep.delegate.simplification.3')).toBeLessThan(ids.indexOf('anchor review-and-prep.fold.review.1'));
     expect(ids.indexOf('anchor review-and-prep.fold.design.1')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
+  }, 30000);
+
+  // Value: protects=the overlap activation paragraph lists five review anchors and three adversarial anchors with no backticks; fails_when=a list is dropped, merged or gains a backtick; why_new=seventh activation paragraph; seam=none
+  test('the overlap inventory parses two lists of 5 review anchors and 3 adversarial anchors', () => {
+    expect(OVERLAP.review).toEqual([
+      'All readers examine the same candidate.',
+      'Do not edit reviewed source until Step 5.',
+      'Before edits, every dispatched reader/writer must have returned or be confirmed',
+      'Combine core, specialist, Step 4.7 QA, Step 4.8 adversarial and VALID & ACTIONABLE review bot findings.',
+      'an Agent dispatch for the adversarial pass, its prompt including',
+    ]);
+    expect(OVERLAP.adversarial).toEqual([
+      'Read the diff for this branch. First list changed files:',
+      'Wait until every started task has finished or is confirmed stopped.',
+      'After all passes complete, synthesize findings across all sources:',
+    ]);
+    expect(OVERLAP.review.length + OVERLAP.adversarial.length).toBe(OVERLAP_ANCHORS);
+    for (const anchor of [...OVERLAP.review, ...OVERLAP.adversarial]) expect(anchor).not.toContain('`');
+    expect(overlapInventory(join(scratch, 'no-such-extension')).ok).toBe(false);
+  });
+
+  const OVERLAP_EFFECT = '  effect: /review-and-prep: first-cycle=overlap is inactive, so cycle 1 runs in today\'s order and the receipt says so';
+  const overlapFile = (f: Fixture, list: 'review' | 'adversarial') => (list === 'review' ? f.files.review : f.files.adversarial)!;
+  const OVERLAP_PICKS = (['nested', 'sibling'] as const).flatMap((layout) => [
+    ...OVERLAP.review.map((_, at) => [layout, 'review', at] as const),
+    ...OVERLAP.adversarial.map((_, at) => [layout, 'adversarial', at] as const),
+  ]);
+  // Value: protects=a changed overlap anchor in either layout drifts only its own overlap ID with the overlap effect, and every inventory stays OK; fails_when=a changed anchor passes, reports another gate's effect or drifts an unrelated neighbor; why_new=seventh upstream gate across two lists and two layouts; seam=none
+  test.each(OVERLAP_PICKS)('a changed anchor in the %s layout\'s overlap %s list (zero-based anchor %i) is drift with the overlap effect', async (layout, list, at) => {
+    const f = upstream(layout);
+    const path = overlapFile(f, list);
+    const anchor = OVERLAP[list][at]!;
+    writeFileSync(path, readFileSync(path, 'utf8').split(anchor).join(`${anchor.slice(0, -2)}!!`));
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.code).toBe(4);
+    const overlapId = `review-and-prep.overlap.${list}.${at + 1}`;
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=1`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([overlapId]);
+    const line = r.lines.findIndex((l) => l.startsWith(`DRIFT anchor ${overlapId} `));
+    expect(line).toBeGreaterThan(-1);
+    expect(r.lines[line]).toContain(`anchor not found byte for byte in ${realpathSync(path)}`);
+    expect(r.lines[line + 1]).toBe(OVERLAP_EFFECT);
+    expect(r.lines[line + 2]).toContain('  fix: run /gstack-extend-upgrade and rerun');
+    expect(r.lines[line + 2]).toContain('docs/upstream-check.md#drift-anchor');
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold', 'overlap']) expect(r.lines).toContain(`OK inventory review-and-prep.${gate}`);
+    expect(r.out).not.toContain('the in-cap delta is inactive');
+    expect(r.out).not.toContain('specialists=fold is inactive');
+  }, 30000);
+
+  // Value: protects=a missing adversarial section drifts exactly the three adversarial IDs in each layout; fails_when=missing adversarial instructions pass or drift another file's anchors; why_new=adversarial instructions live in review/sections/adversarial.md in nested and in the review file in sibling; seam=none
+  test.each(['nested', 'sibling'] as const)('missing adversarial instructions in the %s layout drift only the three overlap adversarial anchors', async (layout) => {
+    const f = upstream(layout);
+    if (layout === 'nested') rmSync(f.files.adversarial!);
+    else writeFileSync(f.files.review!, reviewText());
+    const r = await check(rootArgs(f));
+    expectAgreement(r);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=3`);
+    expect(r.lines).toContain(`INFO layout ${layout}`);
+    expect(drifts(r.lines).map((l) => l.split(' ')[2])).toEqual([
+      'review-and-prep.overlap.adversarial.1',
+      'review-and-prep.overlap.adversarial.2',
+      'review-and-prep.overlap.adversarial.3',
+    ]);
+    for (const line of drifts(r.lines)) {
+      if (layout === 'nested') expect(line).toContain(`review adversarial section not found: ${f.files.adversarial!}`);
+      else expect(line).toContain(`anchor not found byte for byte in ${realpathSync(f.files.review!)}`);
+    }
+    expect(r.lines).toContain('OK inventory review-and-prep.overlap');
+    for (const n of [1, 2, 3, 4, 5]) expect(r.lines).toContain(`OK anchor review-and-prep.overlap.review.${n}`);
+  }, 30000);
+
+  // Value: protects=missing roots never pass overlap anchors while the local inventory remains readable, and the overlap anchors report in order; fails_when=unavailable upstream files receive OK or the overlap group moves; why_new=overlap root-failure and report-order contract; seam=none
+  test('a missing root leaves the overlap inventory OK and every overlap anchor not run, and the overlap anchors report after fold and before finding-location', async () => {
+    const r = await check(['--gstack-root', join(scratch, 'does-not-exist-overlap')]);
+    expect(r.lines).toContain('OK inventory review-and-prep.overlap');
+    const anchors = drifts(r.lines).filter((l) => l.startsWith('DRIFT anchor review-and-prep.overlap.'));
+    expect(anchors).toHaveLength(OVERLAP_ANCHORS);
+    for (const line of anchors) expect(line).toContain('not run: gstack root unavailable');
+
+    const ok = await check(rootArgs(upstream('nested')));
+    const ids = ok.lines.filter((l) => l.startsWith('OK ')).map((l) => l.split(' ').slice(1).join(' '));
+    expect(ids.filter((id) => id.startsWith('anchor review-and-prep.overlap.'))).toEqual([
+      ...OVERLAP.review.map((_, i) => `anchor review-and-prep.overlap.review.${i + 1}`),
+      ...OVERLAP.adversarial.map((_, i) => `anchor review-and-prep.overlap.adversarial.${i + 1}`),
+    ]);
+    expect(ids.indexOf('anchor review-and-prep.fold.design.1')).toBeLessThan(ids.indexOf('anchor review-and-prep.overlap.review.1'));
+    expect(ids.indexOf('anchor review-and-prep.overlap.adversarial.3')).toBeLessThan(ids.indexOf('anchor secret-dispositions.location.1'));
   }, 30000);
 
   const NARROW_EFFECT = '  effect: /review-and-prep: a pass under full-suite=external does not narrow the pregate, so the pregate runs as today and the receipt says so';
@@ -1108,7 +1205,7 @@ describe('drift', () => {
     expectAgreement(r);
     expect(r.code).toBe(4);
     expect(r.lines.some((l) => l.startsWith('DRIFT root gstack-root '))).toBe(true);
-    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 6}`);
+    expect(r.result).toBe(`RESULT drift checks=${CHECKS} drift=${CHECKS - 7}`);
     expect(drifts(r.lines).filter((l) => !l.startsWith('DRIFT root')).every((l) => l.includes('not run: gstack root unavailable'))).toBe(true);
     expect(r.lines).toContain('  fix: pass --gstack-root (and --skills-dir if needed) for the host being launched; see docs/upstream-check.md#drift-root');
     expect(r.out).not.toContain('is credited clean');
@@ -1619,6 +1716,25 @@ describe('launcher', () => {
     expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - FOLD_ANCHORS} drift=1`);
   }, 40000);
 
+  // Value: protects=a reworded overlap activation paragraph reports its own inventory drift and leaves the other inventories alone; fails_when=the overlap list reuses another check or vanishes silently; why_new=seventh inventory source; seam=none
+  test('a copied tree with a reworded activation paragraph reports DRIFT inventory for overlap only', () => {
+    const copy = fresh('copy-overlap');
+    cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
+    mkdirSync(join(copy, 'bin'));
+    cpSync(LAUNCHER, join(copy, 'bin', 'upstream-check'));
+    writeFileSync(join(copy, 'VERSION'), '9.9.9\n');
+    put(join(copy, 'skills', 'review-and-prep.md'),
+      readFileSync(join(REPO, 'skills', 'review-and-prep.md'), 'utf8').replace(OVERLAP_HEADING, '**Activation of overlap.**'));
+    const r = launch(rootArgs(upstream('nested')), {}, cwd, join(copy, 'bin', 'upstream-check'));
+    expect(r.status).toBe(4);
+    expect(drifts(r.stdout.split('\n')).map((l) => l.split(' ').slice(1, 3).join(' '))).toEqual(['inventory review-and-prep.overlap']);
+    expect(r.stdout).toContain('DRIFT inventory review-and-prep.overlap activation paragraph not found');
+    for (const gate of ['incap', 'fix-first', 'test-gaps', 'pregate-narrowing', 'delegate', 'fold']) expect(r.stdout).toContain(`OK inventory review-and-prep.${gate}`);
+    expect(r.stdout).not.toContain('review-and-prep.overlap.review.');
+    expect(r.stdout).toContain('  effect: /review-and-prep: the overlap anchors cannot be listed, so first-cycle=overlap is unverified and stays inactive');
+    expect(r.stdout.trimEnd().split('\n').at(-1)).toBe(`RESULT drift checks=${CHECKS - OVERLAP_ANCHORS} drift=1`);
+  }, 40000);
+
   test('a missing extension dependency uses the internal-error contract before output', () => {
     const copy = fresh('missing-local-module');
     cpSync(join(REPO, 'src'), join(copy, 'src'), { recursive: true });
@@ -1785,7 +1901,7 @@ function unlisted(repo: string) {
     if (grep >= 0) offsets.push(start + grep + 'Check each with `'.length);
     return offsets;
   };
-  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4), ...delimiters(PREGATE_NARROW_HEADING, 3), ...delimiters(DELEGATE_HEADING, 5), ...delimiters(FOLD_HEADING, 10)];
+  const covered = [...delimiters(HEADING, 1), ...delimiters(FIX_FIRST_HEADING, 2), ...delimiters(TEST_GAP_HEADING, 4), ...delimiters(PREGATE_NARROW_HEADING, 3), ...delimiters(DELEGATE_HEADING, 5), ...delimiters(FOLD_HEADING, 10), ...delimiters(OVERLAP_HEADING, 2)];
   return scanGates(repo).filter((hit) => {
     if (hit.file === 'skills/review-and-prep.md' && hit.offset !== undefined && covered.includes(hit.offset)) return false;
     // Only the reviewed list-driven loader sites are covered; a new import or
@@ -1863,7 +1979,7 @@ describe('docs and wiring', () => {
   const docs = readFileSync(join(REPO, 'docs', 'upstream-check.md'), 'utf8');
   const outside = readFileSync(join(REPO, 'docs', 'outside-review.md'), 'utf8');
 
-  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Delegation anchors|Fold anchors|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
+  const revisions = (text: string) => [...text.matchAll(/^\| (Wrapper anchors[^|]*|Fix-First anchors[^|]*|Test-gap anchors[^|]*|Pregate-narrowing anchors[^|]*|Secret-finding location anchors[^|]*|Delegation anchors|Fold anchors|Overlap anchors|Reviewer criteria copies|Outside-review adapter) \| `([0-9a-f]{40})` \| ([^|]+) \|$/gm)]
     .map((m) => [m[1], m[2], m[3]]);
   const expectedRevisions = [
     ['Wrapper anchors and classifier cases (qualified by this Track)', ANCHORS_QUALIFIED.revision, ANCHORS_QUALIFIED.version],
@@ -1873,6 +1989,7 @@ describe('docs and wiring', () => {
     ['Secret-finding location anchors', FINDING_LOCATION_QUALIFIED.revision, FINDING_LOCATION_QUALIFIED.version],
     ['Delegation anchors', DELEGATE_QUALIFIED.revision, DELEGATE_QUALIFIED.version],
     ['Fold anchors', FOLD_QUALIFIED.revision, FOLD_QUALIFIED.version],
+    ['Overlap anchors', OVERLAP_QUALIFIED.revision, OVERLAP_QUALIFIED.version],
     ['Reviewer criteria copies', UPSTREAM.commit, UPSTREAM.version],
     ['Outside-review adapter', INSPECTED_UPSTREAM.revision, INSPECTED_UPSTREAM.version],
   ];

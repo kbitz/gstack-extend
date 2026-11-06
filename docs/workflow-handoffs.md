@@ -831,7 +831,7 @@ runs only on an open draft (`pr-state`, `pr-ready`: `HOLD`). Fixed text a produc
 The policy grammar is `/review-and-prep`'s "Read an optional review policy": a version
 token `review-and-prep-policy/v1`, then optional unordered `key=value` pairs separated by
 `; `, with keys `in-cap` (`delta`, `full`), `continuation` (`repair-only`, `full`, `stop`),
-`documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
+`first-cycle` (`overlap`), `documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`), `final-gate-repair`
 (`tests-docs`), `specialists` (`fold`), `parent-io` (`lean`), `delegate` (`testing`, `maintainability`,
 `performance`, `simplification`, comma-separated, each once), `repair-review` (`behavior-changing`),
 `repair-cycles` (`light`), `test-gaps` (`record`) and `max-continuations` (`0` to
@@ -963,6 +963,17 @@ A prepared receipt that records a folded first cycle still emits `review: COMPLE
 its H-B handoff: the `Review arm:` and `Folded checklist:` lines are receipt text, not
 handoff bindings, and `/ship-and-land` reads the receipt as it would a plain one
 (`B-FOLDED-HEAD`).
+
+`first-cycle=overlap` follows the same rollout order and the same check, written as
+`grep -F 'first-cycle=overlap' "<installed skill dir>/SKILL.md"` (exit 0 means
+supported). An installation without it reads the whole line as `none supplied`,
+an older H-E parser holds a returned policy that carries it as `policy-malformed`,
+and a caller omits it when the check fails and keeps its other keys. It is
+independent of every other value: with `specialists=fold` or `delegate=` on the
+line, the line still parses (not malformed) and cycle 1 runs in today's order. It
+is never set by the light review default, waives no gate and never authorizes a
+continuation. On anchor drift or a host cap, today's order runs and the receipt
+says so. See [review concurrency](acceptance/review-concurrency.md).
 
 `documentation-scope=contracts` follows the same rollout order and the same check,
 written as `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
@@ -1305,6 +1316,7 @@ or input it says is needed is for the user.
 | `External gate attestation:` rows | receipt-present | published in the receipt under `full-suite=external`, one per accepted result line; the pass is caller-attested, not observed, and a consumer may show the row but it never authorizes a stage or merge |
 | `pregate-narrowing:` status and `Pregate lane not run:` lines | receipt-present | published in the receipt after an accepted external pass: `pregate-narrowing: active` with one `Pregate lane not run:` line per lane the attestation covers, each naming its attestation row, or `pregate-narrowing: inactive — <reason>` when the pregate ran as today; the lines are evidence, never a test record, and never authorize a stage or merge (`B-NARROWED-PREGATE-HEAD`) |
 | `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |
+| `Review overlap:` line | receipt-present | published in the receipt under `first-cycle=overlap`; never authorizes a stage or merge |
 
 A missing or mismatching receipt-present value never changes an outcome. The
 consistency test checks that the producer still publishes it.
