@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 
 - Upgrade with `bin/update-run`.
 - Existing setups keep working. documentation-scope=contracts applies only when you set it. Bounded documentation audits run after the upgrade follow the corrected procedure.
+- Do not enable documentation-scope=contracts yet. It stays barred until the deferred hardening is fixed; see "Harden the bounded documentation audit before enabling it" in [docs/roadmap-future.md](docs/roadmap-future.md).
 
 ## [0.67.0] - 2026-11-05
 

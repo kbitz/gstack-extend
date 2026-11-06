@@ -14,27 +14,40 @@ first, then the folded first cycle and caller-configured review delegation as
 two measured arms, all ahead of the paused and resumed telemetry Track ("Yes -
 your rec sounds good, let's fix" and "1"). That order ran Tracks 64A, 64B, 57A,
 64C and 58A (v0.60.2 to v0.63.0). The edges from 57A and 58A to the bounded
-documentation-audit Track (then 56A, now 68A) were priority choices, and that
+documentation-audit Track (then 56A, shipped as 68A) were priority choices, and that
 order superseded them. Groups 65 and 66 then shipped in full on 2026-11-03 and
 2026-11-04 (Tracks 65C, 65A, 65D, 65B, 66A and 66B, v0.63.1 to v0.66.0), under
 the owner's "Yes go" (65B, 2026-11-04), "Merge when ready and keep going"
-(2026-11-04) and "Yes and then start 66b" (2026-11-04). The roadmap's own order
-continues with run and child usage telemetry (67A), then audit and review
-optimizations.
+(2026-11-04) and "Yes and then start 66b" (2026-11-04). Tracks 67A (run and
+child usage telemetry, v0.67.0) and 68A (bounded documentation audits, v0.68.0)
+followed on 2026-11-05 in the roadmap's own order. The roadmap's order continues
+with first-cycle review overlap (69A), then docs-only test selection and
+release-only proof (Group 70).
 
-**Freeze.** The owner has frozen new work while the development setup moves
-to a new machine (the Linux move): no new item starts until the owner says the
-move is done. The regeneration of 2026-11-04 ran during the freeze with the owner's
-permission; it starts no Track.
+**Pause for the Linux move.** The owner froze new work while the development
+setup moves to a new machine (the Linux move), then started Track 67A during
+the move window: "let's just keep going, it's going to take all day for […] to
+finish, so just start on the next thing" (2026-11-05); 68A followed. The owner
+then set the next stop: "When this track is merged, you can do a docs pr, then
+we need to pause for the Linux move" (2026-11-05). The regeneration of
+2026-11-05 is that docs PR and starts no Track; after it merges, no new Track
+starts until the owner says the move is done.
+
+**Keep moving; park only what we should not do.** Owner rule (2026-11-05): "we
+never want to 'park' something -- we always want to find a way to keep moving
+forward". A stalled or blocked Track is unblocked, split or rerouted, not set
+aside. "parking is an option when it turns out we shouldn't even do a track,
+because it's counter to our objectives, then it would make sense to park and
+re-evaluate". The Linux-move pause is the owner's schedule, not a parked Track.
 
 **Labels.** The regeneration of 2026-11-03 relabelled the nine remaining Groups
 53 to 56 and 59 to 63 as Groups 65 to 73 in packer order (`53A` became `65A`,
 `56A` became `68A`, `63A` became `73A`; the full map is in that commit
-message). The regeneration of 2026-11-04 keeps Groups 67 to 73 and their
-letters unchanged: the packer's bins for the remainder are the same. Shipped
-numbers 33, 47 to 52, 57, 58 and 64 to 66 are reserved by tombstones; 64 was
-never a roadmap Group, and Tracks 65C and 65D were added inside Group 65 when
-they were launched.
+message). The regenerations of 2026-11-04 and 2026-11-05 keep the remaining
+Groups (now 69 to 73) and their letters unchanged: the packer's bins for the
+remainder are the same. Shipped numbers 33, 47 to 52, 57, 58 and 64 to 68 are
+reserved by tombstones; 64 was never a roadmap Group, and Tracks 65C and 65D
+were added inside Group 65 when they were launched.
 
 **Dropped: Track 35B.** The `full-suite=before-audit` value was dropped rather
 than renumbered (2026-10-31): under `full-suite=final` and
@@ -74,60 +87,20 @@ owner acceptance remain distinct. No new spend or unattended merge is authorized
 
 No Group is in progress, and no working branch, session or PR is declared active.
 Every shipped Track is recorded independently in shipped history; the latest
-are 65C (v0.63.1), 65A (v0.63.2), 65D (v0.63.3), 65B (v0.64.0), 66A (v0.65.0)
-and 66B (v0.66.0). New work is frozen until the owner ends the Linux-move
-freeze. Track 28A's required published-release upgrade
+are 67A (v0.67.0) and 68A (v0.68.0). After this regeneration's docs PR merges,
+new work pauses until the owner says the Linux move is done. Track 28A's
+required published-release upgrade
 acceptance remains in Future; its revisit trigger, the first published
 three-part release, was met by v0.48.0 and the item awaits an owner
 reassessment. O1 and O3–O5 remain pending.
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66_
-
-### Group 67: Run and child usage telemetry
-
-_Depends on: none_
-
-**This group delivers:** Per-run token usage from the harness's own logs, with child and outside-reviewer usage attributed to it and explicit uncertainty throughout.
-
-##### Track 67A: Record each run's token usage, parent and child, from the harness's own logs
-_4 tasks . ~640 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can compare each run's total token usage, parent and child together, by workflow, step and recorded model, with explicit uncertainty where a source cannot support it or attribution.
-**Supports:** [SPEC](SPEC.md) P1 and owner-selected usage capture, 2026-10-19; promotes the retained run-usage and outside-voice Future commitments without enabling quota routing or vendor usage API calls.
-**Done when:** A local report combines step/pass events with disjoint token classes and available plan-window observations; fixtures cover streaming copies and cumulative counter resets; each recorded child or outside-reviewer call joins its invocation and pass, with direct evidence distinguished from time/directory correlation and ambiguous or overlapping usage excluded from exact totals; fixtures cover nested children and concurrent sessions; unknown values remain null with reasons; legacy, v1 and v2 stage rows stay immutable and readable, a closed schema gains a version branch and never a silent field, and capture makes no credential or network calls.
-_touches: bin/lib/telemetry.py, bin/lib/workflow_metrics.py, bin/lib/quota/usage.py, docs/workflow-metrics.schema.json, docs/telemetry.md, docs/stage-runs.schema.json, tests/workflow-metrics.test.ts, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, tests/quota.test.ts, tests/fixtures/quota/, tests/helpers/touchfiles.ts_
-_blocked-by: Track 24A, Track 26A, Track 65A, Track 66B, Track 31A_
-**Scheduling:** The third telemetry step after test savings, before bounded audits and review overlap; its paused-segment and requested-model prerequisites shipped as 65A (v0.63.2) and 66B (v0.66.0). Run usage and child and outside-reviewer attribution were two Tracks (~300 lines each) under the card-size rule; the attribution Track edited the same telemetry, metrics and schema files and joined the usage records the first one writes, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~600 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
-_Source: absorbs "Record each run's token usage and plan-window readings from the harness's own logs" and "Record outside-voice calls' vendor, model, tokens and window readings"_
-_read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
-_produces: comparable per-run and per-voice local usage projections, source/attribution grades and a replayable sanitized fixture corpus_
-- **Reuse the local log parser for run usage** -- Absorb "Record each run's token usage and plan-window readings from the harness's own logs". Reuse or isolate the existing quota usage parser rather than introduce a third parser. Record uncached input, cache read/write and output; reasoning is a subset, never added twice. Retain logged start/end rate-limit readings with reset and concurrency caveats; account-wide percentage changes are not attributable stage consumption. Cursor/Grok sources remain unknown until verified. Read only session logs and CLI output: no credentials, identity/capacity readers or vendor usage services. _~240 lines._ (M)
-- **Attribute child and outside-reviewer usage** -- Absorb "Record outside-voice calls' vendor, model, tokens and window readings". Join each recorded call to its invocation and pass using direct parent/session evidence when available, including the local `voices.jsonl` reviewer join (host subagent identifier, parent-observed dispatch/return times) that 0.38.0.0 added; mark directory/time matches as correlation and ambiguous shared-worktree matches as unknown. Deduplicate native subagents and cross-harness children, account for children that outlive the step, and preserve every contributing model/source. Do not modify upstream commands or claim observed/billed models from requested labels. _~240 lines._ (M)
-- **Preserve schema, parser and child-record compatibility** -- Use the step ledger for detailed usage and retain immutable legacy/v1/v2 stage rows. Coordinate any stage-row reference fields with the stage-runs v2 schema shipped in 0.37.0.0; never add fields silently to a published closed schema. Preserve saved retry bytes and paused-segment linkage, publish only sanitized projections, and prove capture makes no credential or network calls. When editing `bin/lib/workflow_metrics.py`, weigh the Future item "Slim the workflow-metrics helper without dropping requirements"; adopting it is optional. _~120 lines._ (S)
-- **Cover the recorded requested-telemetry lifecycle variants** -- Recorded test gap, no demonstrated defect (Track 66B review, `test-gaps=record`): direct cases do not vary requested values between start and first finish or after a saved failed finish, combine requests with a different valid `--agent`, or cover a requested model with independently detected or flagged effort. Re-verify the behavior first, then extend the existing provenance and retry fixtures in `tests/telemetry.test.ts` (finish-time sampling, immutable saved rows, agent reset before fallback, reverse mixed-field precedence). Source: `[review:files=bin/lib/telemetry.py|tests/telemetry.test.ts]`. Placed here by the recorded-test-gap rule; it does not change the card-size reason above. _~40 lines._ (S)
-
-### Group 68: Bound audit effort
-
-_Depends on: Group 67_
-
-**This group delivers:** Fewer irrelevant documentation reads with real drift detection retained.
-
-##### Track 68A: Bound documentation audits by changed contracts
-_1 tasks . ~220 LOC incl. tests . medium risk_
-**Outcome:** Reviews read the documentation relevant to their changed contracts and retain real drift detection.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25
-**Done when:** The scope includes changed-path and contract references, linked authorities and safe broad fallback when relevance is uncertain; the one re-audit follows only the fix delta. Before/after time, read volume and retained finding quality are recorded before any default activation.
-_touches: skills/review-and-prep.md, skills/ship-and-land.md, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-ship-and-land.test.ts, docs/acceptance/documentation-audit-efficiency.md (new)_
-_blocked-by: Track 31A, Track 67A, Track 66A_
-**Scheduling:** Owner-selected order places telemetry after test savings, then bounded documentation audits; the usage edge is a priority choice. The update-check edge ordered the shared skill files and is satisfied (66A, v0.65.0). Tracks 57A and 58A, which the 2026-11-01 plan placed after this Track, ran first under the owner's 2026-11-02 order; their edges to it were priority choices that order superseded.
-_Source: program E4 / research R4_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Constrain discovery and re-audit inputs** -- Keep current/updated/blocked truthful and the existing attempt bound; compare the bounded audit against representative known documentation drift. If public-quality evidence is insufficient, expose an explicit option and retain the default. _~220 lines._ (M)
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68_
 
 ### Group 69: Shorten the first review cycle
 
-_Depends on: Group 68_
+_Depends on: none_
 
 **This group delivers:** Measured overlap of independent first-cycle review work without losing finding quality.
 
@@ -250,7 +223,7 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 
 ### Group 73: Workflow efficiency baseline and decisions
 
-_Depends on: Group 67, Group 72_
+_Depends on: Group 72_
 
 **This group delivers:** A reproducible cross-run baseline report and an adopt, reject or insufficient-evidence decision for each optimization.
 
@@ -276,16 +249,14 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 67 ← {}
-- Group 68 ← {67}
-- Group 69 ← {68}
+- Group 69 ← {}
 - Group 70 ← {69}
 - Group 71 ← {70}
 - Group 72 ← {71}
-- Group 73 ← {67, 72}
+- Group 73 ← {72}
 ```
 
-**7 Groups / 11 Tracks remaining.** None is In Progress; all 7 Groups are in
+**5 Groups / 9 Tracks remaining.** None is In Progress; all 5 Groups are in
 the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
@@ -293,7 +264,7 @@ The published-upgrade obligation remains open and is not waived; its revisit tri
 
 ## Future
 
-Deferred: docs/roadmap-future.md (80 items)
+Deferred: docs/roadmap-future.md (83 items)
 
 ## Shipped
 

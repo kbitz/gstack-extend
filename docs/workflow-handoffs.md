@@ -975,6 +975,9 @@ gate, keeps the audit's attempt bound and never authorizes a continuation. `/shi
 takes `documentation-scope=contracts` only from its own invocation (prompt or user
 choice in that session); preparation's receipt, PR text and comments never turn it on.
 A bounded audit's `current` covers only the docs it read, and its scope lines say so.
+Do not enable it yet: the owner bars it until the deferred hardening is fixed (Future
+entry "Harden the bounded documentation audit before enabling it" in
+[roadmap-future.md](roadmap-future.md)).
 See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
 record.
 
