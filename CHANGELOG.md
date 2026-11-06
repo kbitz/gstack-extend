@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.69.1] - 2026-11-06
+
+### Fixed
+
+- review-and-prep clarifies specialist dispatch receipt outcomes. Specialist dispatch contracts match upstream review.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`.
+- Existing setups keep working. Specialist dispatch now follows the upstream review contracts.
+
 ## [0.69.0] - 2026-11-06
 
 ### Added
