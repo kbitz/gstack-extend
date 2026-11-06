@@ -113,14 +113,14 @@ is the same mistake. Two cases count as mechanics: a lookup on a structured
 value (`bin/roadmap-route`'s default for a source tag) and a configured limit a
 tool enforces (the packer's `parallelism_cap`).
 
-Under `docs/SPEC.md`'s equal-priority clause for supported workspace hosts, any
-rule about workspace lifecycle or storage (branches, worktrees, archival,
-temporary files) names every workspace host the spec supports, as in "in a
-host-managed workspace (Conductor, Paseo)". Never gate a rule on one host
-alone, or it silently skips under the other. Only Conductor workspaces have
-`.context/`; Paseo has no `.context/` directory, so any `.context/` path needs
-a fallback order that works under both hosts (state-root project directory,
-then Conductor's `.context/`, then `~/scratch/`).
+`docs/SPEC.md` supports one workspace host, Paseo; Conductor is no longer
+supported. A rule about workspace lifecycle or storage (branches, worktrees,
+archival, temporary files) names Paseo, as in "in a host-managed workspace
+(Paseo)". Paseo has no `.context/` directory, so durable or temporary storage
+uses the state-root project directory, then `~/scratch/`. Existing skill and
+helper text that still names Conductor or its `.context/` is legacy until the
+Future entry "Remove Conductor support from the code" removes it; add no new
+Conductor branch.
 
 ## Testing
 

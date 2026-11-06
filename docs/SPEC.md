@@ -21,16 +21,18 @@ external orchestrators without requiring a particular orchestrator.
 - Audience ceiling: potentially-public. Selected target: public-release, 1.0.0.
 - Current stage: public-beta, declared by the owner on 2026-10-08. This is a
   baseline, not retrospective proof of every beta or 1.0 acceptance criterion.
-- **Paseo and Conductor have equal priority.** Both must satisfy the same core
-  workflow outcomes. Their different launch and permission APIs do not require
-  identical implementations. A critical supported-host failure blocks 1.0.
+- **Paseo is the only supported workspace host.** Conductor is no longer
+  supported (owner decision, 2026-11-06): it is not a 1.0 gate and needs no
+  acceptance evidence. Skill and helper code that still names Conductor is
+  legacy until a later change removes it (Future). A critical Paseo failure
+  blocks 1.0.
 - Initial acceptance conditions: local macOS development, Git repositories,
   GitHub PRs through authenticated `gh`, supported Bun, installed gstack and
   existing authorized agent accounts. Other operating systems remain unverified
   until a named profile is qualified; this adoption does not remove existing
   installation support for Claude Code, Codex, Cursor or OpenCode.
 - Qualify Codex implementation, Cursor review and Claude planning/shipping on
-  both workspace hosts where those routes are provided. Record concrete host,
+  Paseo where those routes are provided. Record concrete host,
   harness and upstream versions. OpenCode retains its installation contract;
   full workflow acceptance is not inferred from setup fixtures.
 - Human testing, account setup, exceptional decisions and explicit merge/deploy
@@ -56,7 +58,7 @@ external orchestrators without requiring a particular orchestrator.
 2. Upgrade preserves user-owned files, identifies skipped/stale copies and gives
    a working recovery path. The observed installation version matches the skills
    loaded by each qualified host/harness profile.
-3. Retain fresh-install and upgrade/recovery evidence on both workspace hosts,
+3. Retain fresh-install and upgrade/recovery evidence on Paseo,
    including an independently followed onboarding attempt without undocumented
    maintainer fixes. Synthetic HOME fixtures alone do not establish this.
 
@@ -72,7 +74,7 @@ external orchestrators without requiring a particular orchestrator.
    cases deferred from Track 22B. Earlier fixture passes and ordinary roadmap
    runs remain distinct from this required proof.
 
-### O3: Complete or resume the workflow on either host
+### O3: Complete or resume the workflow on Paseo
 
 1. From an approved plan, `/implement` hands off complete scope and verification;
    `/review-and-prep` prepares the bound PR; `/pair-review` pauses/resumes required
@@ -80,7 +82,7 @@ external orchestrators without requiring a particular orchestrator.
 2. A stage never invents completion, repeats a completed review without cause,
    loses uncommitted work, replaces the bound PR, or takes branch/worktree cleanup
    away from the host. Existing Greptile once-per-PR and approval rules remain.
-3. Retain one real complete workflow per host, plus interrupted resume and
+3. Retain one real complete workflow on Paseo, plus interrupted resume and
    manual-testing pause/resume evidence. Include `/full-review` finish/restart
    behavior and an explicit negative hold. Record human actions and workarounds;
    failures remain open. A static prose test is not installed-agent acceptance.
@@ -97,8 +99,8 @@ external orchestrators without requiring a particular orchestrator.
 3. Concurrent starts and retried finishes retain the correct run identity.
    Host, harness and requested-versus-observed model evidence are distinguishable;
    unavailable evidence stays unknown. Public provenance schemas remain readable.
-4. Retain a real external-consumer handoff on Paseo and a cross-session handoff on
-   Conductor. Capture success, stale artifact, interrupted run and manual hold.
+4. Retain a real external-consumer handoff and a cross-session handoff on Paseo.
+   Capture success, stale artifact, interrupted run and manual hold.
    Test parsers/fixtures separately. Consumer-owned orchestration implementation
    and permission controls remain outside this repository.
 
@@ -140,9 +142,9 @@ hosts, agent runtimes or the orchestrator. Preserve host ownership of branches
 and worktrees. Keep durable evidence outside disposable workspaces when it is
 not committed. Never publish credentials or raw private transcripts.
 
-Human decisions and documented manual recovery are supported. Host parity means
-equal priority for the declared outcomes, not a new generic host abstraction or
-a promise to support every possible provider combination. Bind evidence to the
+Human decisions and documented manual recovery are supported. Supporting Paseo
+does not imply a new generic host abstraction or a promise to support every
+possible provider combination. Bind evidence to the
 combinations actually exercised. Missing model/billing observations stay unknown.
 
 ## Non-goals and later work

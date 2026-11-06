@@ -40,6 +40,16 @@ aside. "parking is an option when it turns out we shouldn't even do a track,
 because it's counter to our objectives, then it would make sense to park and
 re-evaluate". The Linux-move pause is the owner's schedule, not a parked Track.
 
+**Conductor dropped.** Owner decision (2026-11-06): "we are dropping conductor".
+[SPEC](SPEC.md) now names Paseo as the only supported workspace host. Track 72B
+(the Conductor qualification) is retired unshipped, with its Conductor-only
+obligations: the native Cursor receipt and row-interpretation check from
+Track 23G and the Conductor host-attribution check deferred from Track 26A.
+Its host-neutral obligations (cross-session handoff, an independently followed
+onboarding attempt, and the Sonnet-class and `/roadmap` `/docs-ship` runs) move
+to the Paseo Track 72C. Removing the Conductor code is the Future entry
+"Remove Conductor support from the code".
+
 **Labels.** The regeneration of 2026-11-03 relabelled the nine remaining Groups
 53 to 56 and 59 to 63 as Groups 65 to 73 in packer order (`53A` became `65A`,
 `56A` became `68A`, `63A` became `73A`; the full map is in that commit
@@ -78,25 +88,20 @@ split on purpose (both Tracks have shipped, 33A in v0.55.0 and 51A in v0.59.0;
 the reason is on 51A's shipped receipt).
 
 Target: [SPEC](SPEC.md) O1–O5, public-release 1.0.0, potentially-public users.
-Paseo and Conductor retain equal priority. The owner-selected
+Paseo is the only supported workspace host. The owner-selected
 [efficiency program](designs/workflow-efficiency-program.md), SPEC P1, is additional
 work and does not gate 1.0. Implementation, installed/operator evidence and
 owner acceptance remain distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-No Group is in progress, and no working branch, session or PR is declared active.
+Track 69A was declared in flight to this regeneration on 2026-11-06 (a working
+session; no PR was open at its base), so Group 69 keeps its label and card.
 Every shipped Track is recorded independently in shipped history; the latest
-are 67A (v0.67.0) and 68A (v0.68.0). After this regeneration's docs PR merges,
-new work pauses until the owner says the Linux move is done. Track 28A's
-required published-release upgrade
-acceptance remains in Future; its revisit trigger, the first published
+are 67A (v0.67.0) and 68A (v0.68.0). Track 28A's required published-release
+upgrade acceptance remains in Future; its revisit trigger, the first published
 three-part release, was met by v0.48.0 and the item awaits an owner
 reassessment. O1 and O3–O5 remain pending.
-
-## Current Plan
-
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68_
 
 ### Group 69: Shorten the first review cycle
 
@@ -116,6 +121,10 @@ _Source: program E5 / research R2_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Overlap only verified-independent inputs** -- Recheck upstream dependencies; preserve no-fix-before-collection, deduplication, cycle cap, stop and outside-call policy; qualify both hosts and retain the old default behind an option until public activation evidence exists. _~230 lines._ (M)
 
+## Current Plan
+
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68_
+
 ### Group 70: Docs-only test selection ∥ release-only proof and full-run credit
 
 _Depends on: Group 69_
@@ -133,10 +142,10 @@ _blocked-by: Track 31A, Track 29A, Track 69A_
 _Source: program E8 / research R8_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Adopt the policy map compatibly** -- Consume exact-delta/base-policy explanation, preserve no-lane and error semantics, and cover policy-backed, policy-less, configured-marker and bump-delta cases without silently losing coverage. _~210 lines._ (M)
-- **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach installed-host qualification to the two existing host Tracks. _~70 lines._ (S)
+- **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach installed-host qualification to the Paseo host Track (72C). _~70 lines._ (S)
 
 ##### Track 70B: Prove release-only reuse mechanically and credit a prepared full run across a release-only delta
-_4 tasks . ~560 LOC incl. tests . medium risk_
+_3 tasks . ~520 LOC incl. tests . medium risk_
 **Outcome:** A policy-equipped repository gets mechanical stamp-hunk proof before release gate reuse, and an opted-in caller whose preparation already ran the full suite on the prepared head does not run it again for a release-only commit.
 **Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved release-only credit, 2026-10-26; O3/O5 release integrity.
 **Done when:** The verified base ship policy drives gstack-tree-receipt; eligible per-lane proof and current evidence are required; same-file functional edits, unreadable policy, stale evidence and stamp-sensitive tests cannot reuse improperly; repositories without policy keep the documented existing path. Under an opt-in policy value (named at planning), when `full-suite=final` is recorded `/ship-and-land` credits a verified full run of the prepared head (same tree, the documented full command, exit 0, tests ran, recorded in the ledger) across a release-only delta and runs only what that delta selects, instead of the full form a second time; without the value, `full-suite=final` keeps today's meaning. An opt-in per-repository list of extra release files keeps a release commit that also edits such a file (for example an acceptance record) on the release-only path; omitted, the release files stay VERSION, the CHANGELOG entry and the files `/ship`'s version tool writes. Under the same opt-in and `full-suite=final`, a verified pregate selection may stand as preparation's main-suite run when the main test command does not select from the diff (today `/review-and-prep`'s coverage rule then runs the full main command). Release edits follow one rule: only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it. Omitted-policy behavior and an older producer's fallback are documented, and before/after test time is measured on a real run.
@@ -148,7 +157,6 @@ _read-first: docs/designs/workflow-efficiency-program.md_
 - **Integrate mechanical eligibility** -- Record the exact upstream source and helper result, retain required checks and receipt compatibility, and demonstrate valid version-only changes versus invalid hunks without authoring any consumer ship policy. _~210 lines._ (M)
 - **Credit a prepared full run across a release-only delta** -- Under the opt-in value, accept a verified full run of the prepared head plus the release-delta selection at Verification Gate (16); add the opt-in per-repository release-file list as a documented project setting; state that rule (only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it); update the handoff grammar and this repository's release-selection note in `CLAUDE.md`. _~230 lines incl. tests._ (M)
 - **Let a verified pregate selection stand when the main command does not select** -- Under the same opt-in and `full-suite=final`, let preparation's verified pregate selection (complete selection retained, tests ran) satisfy its main-suite run when the main command is not a selector, instead of the full main command; partial or unknown coverage keeps today's rule. _~80 lines incl. tests._ (S)
-- **Check the recorded working-rule scenarios** -- Recorded test gap, no demonstrated defect (Track 65D review, `test-gaps=record`): the reader suites keep the existing `CLAUDE.md` contracts but do not exercise six working rules 65D added (priority reporting, the README-only handoff, the judgment/mechanics boundary, two-host storage, timeout diagnosis and near-full pregate selection). Re-verify first; check the scenarios against their observable outcomes where one exists, since string-presence tests would only mirror the prose, and name no test file until one is chosen. No paid evaluation is authorized. Source: `[review:files=CLAUDE.md]`. Placed here by the recorded-test-gap rule because this is the first Track whose `_touches:` cover `CLAUDE.md`; it does not change the card-size reason above. _~40 lines._ (S)
 
 ### Group 71: Machine-readable planning artifacts
 
@@ -168,11 +176,11 @@ _Source: program E9 / research R10_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Emit and validate machine artifacts** -- Map the current sidecar semantics to upstream schemas; preserve IDs and source provenance and report unknowns; bind records to the sealed plan/review without inventing decisions or adding a parallel format. _~240 lines._ (M)
 
-### Group 72: Supporting contracts and equal host acceptance
+### Group 72: Supporting contracts and Paseo host acceptance
 
 _Depends on: Group 71_
 
-**This group delivers:** A stable-interface catalog, evidence/recovery design and independent qualification on both hosts.
+**This group delivers:** A stable-interface catalog, evidence/recovery design and qualification on Paseo.
 
 ##### Track 72A: Publish the stable compatibility and recovery catalog
 _1 tasks . ~180 LOC incl. tests . medium risk_
@@ -186,27 +194,16 @@ _Source: [plan-ceo-review] stable compatibility surfaces (O5.1)_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Catalog the promised surfaces** -- Trace CLI/config, skills, handoffs, provenance and install ownership against shipped code and public instructions. Carry the existing stable promises and disclose unknown qualification; retain O5 acceptance as an owner gate. _~180 lines._ (M)
 
-##### Track 72B: Qualify the complete Conductor workflow and cross-session handoffs
-_1 task . ~200 LOC incl. tests . medium risk_
-**Outcome:** Conductor receives the same supported workflow and recovery guarantees as Paseo.
-**Supports:** [SPEC](SPEC.md) O1/O3/O4 — equal priority requires current host evidence in addition to legacy usage.
-**Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and cross-session handoff evidence; unknown model evidence remains unknown.
-_touches: docs/acceptance/conductor.md (new)_
-_blocked-by: Track 26A, Track 23I, Track 23A, Track 23G, Track 28A, Track 26B, Track 65A, Track 66A, Track 66B, Track 71A_
-**Scheduling:** Retain broad host qualification after the direct efficiency changes and planning artifacts; moving telemetry earlier does not move or waive this acceptance gate. The update-check edge keeps the upgrade qualification on the final upgrade behavior.
-- **Exercise the supported Conductor profile** -- Run the same outcome matrix as Paseo using actual Conductor workspaces and the supported Codex, Cursor and Claude stage routes. Verify action receipts/final output, preserved work and stable artifact bindings after changing sessions. Include stale/partial/held controls and the SQLite store-reader fix from Track 23G, with its still-open owner gate: T42 native receipt 2 on an installed release and the 2-5 minute row-interpretation check (O4 stays unawarded until the owner confirms), plus the open owner note on receipt 1's expected effort. Include the installed Conductor host-attribution check the user deferred from Track 26A (DFR1). Record versions, operator interventions and sanitized receipts. At least one of the two onboarding attempts must be followed independently of the maintainer; do not claim cross-host or provider support from fixtures alone. _~200 documentation lines._ (L)
-**Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Conductor through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Across the two host records include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23. This is part of the one host qualification task, not another release authorization.
-
-##### Track 72C: Qualify the complete Paseo workflow and external handoffs
+##### Track 72C: Qualify the complete Paseo workflow and external and cross-session handoffs
 _1 task . ~200 LOC incl. tests . medium risk_
 **Outcome:** Paseo users and an external orchestrator can carry real work through the supported stages.
 **Supports:** [SPEC](SPEC.md) O1/O3/O4 — workspace guard wording is shipped, but end-to-end host and consumer acceptance is not established.
-**Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart and external-consumer handoff evidence; pending approvals or failures remain holds.
+**Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart, external-consumer handoff and cross-session handoff evidence; pending approvals or failures remain holds.
 _touches: docs/acceptance/paseo.md (new)_
 _blocked-by: Track 26A, Track 23I, Track 23A, Track 28A, Track 26B, Track 65A, Track 66A, Track 66B, Track 71A_
 **Scheduling:** Retain broad host qualification after the direct efficiency changes and planning artifacts; moving telemetry earlier does not move or waive this acceptance gate. The update-check edge keeps the upgrade qualification on the final upgrade behavior.
-- **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. Include the installed Paseo host-attribution check the user deferred from Track 26A (DFR1). The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. Confirm independent onboarding across the two host qualification Tracks. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
-**Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Paseo through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Across the two host records include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23. This is part of the one host qualification task, not another release authorization.
+- **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. Include the installed Paseo host-attribution check the user deferred from Track 26A (DFR1). Verify preserved work and stable artifact bindings after changing sessions (the cross-session handoff moved from the retired Conductor Track 72B, 2026-11-06). The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. At least one of the two onboarding attempts must be followed independently of the maintainer. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
+**Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Paseo through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23 (Paseo only since 2026-11-06). This is part of the one host qualification task, not another release authorization.
 
 ##### Track 72D: Specify portable review evidence and capped-review recovery
 _2 tasks . ~220 LOC incl. tests . medium risk_
@@ -233,7 +230,7 @@ _3 tasks . ~440 LOC incl. tests . medium risk_
 **Supports:** [SPEC](SPEC.md) P1 and owner-selected investigation, 2026-10-19; empirical model comparison and review-policy changes remain outside the 1.0 acceptance gates.
 **Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split. Each candidate has measured evidence or a named evidence gap; comparisons include total parent/child usage, quality and capture overhead; each candidate gets adopt, reject or insufficient evidence with its follow-up mapped to existing Future items. No review gate or model choice changes, and no model downgrade or review gate is changed by the study itself.
 _touches: scripts/workflow-efficiency-report.py (new), tests/workflow-efficiency-report.test.ts (new), tests/fixtures/workflow-efficiency/ (new), tests/helpers/touchfiles.ts, docs/acceptance/workflow-efficiency.md (new)_
-_blocked-by: Track 67A, Track 52A, Track 72A, Track 72D, Track 72B, Track 72C_
+_blocked-by: Track 67A, Track 52A, Track 72A, Track 72D, Track 72C_
 **Scheduling:** Keep the cross-run efficiency assessment after the selected changes and host-qualification work; individual changes still need their own before/after evidence before activation. The baseline report and the evaluation were two Tracks under the card-size rule; the evaluation edited the same script, test and fixture files and read the report the baseline builds, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~440 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
 - **Build a comparable baseline** -- Produce an offline report from sanitized projections. Separate DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs; report sample size and missingness. Reuse eligible existing release-only receipts and preserve the separate first-installed-no-CI timing obligation and 15-minute target. Report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~180 lines._ (M)
@@ -256,15 +253,15 @@ DEPENDS output with bin numbers replaced by the assigned Group numbers.
 - Group 73 ← {72}
 ```
 
-**5 Groups / 9 Tracks remaining.** None is In Progress; all 5 Groups are in
-the Current Plan.
+**5 Groups / 8 Tracks remaining.** Group 69 is In Progress; Groups 70 to 73
+are in the Current Plan.
 
 The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
 
 ## Future
 
-Deferred: docs/roadmap-future.md (83 items)
+Deferred: docs/roadmap-future.md (85 items)
 
 ## Shipped
 
