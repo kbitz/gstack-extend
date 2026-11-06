@@ -2609,34 +2609,88 @@ describe('review-and-prep documentation-scope=contracts', () => {
     expect(light).toContain('It never sets `documentation-scope=contracts`: bounding the audit\'s reads needs a caller that accepts the retained-quality risk until the acceptance record supports a default (`SPEC P1`).');
   });
 
-  // Value: protects=Bound the documentation audit defines activation, the four read-list inputs, the broad fallback triggers, whole-tree snapshot dispatch, delta re-audit rules and unchanged attempt/status bounds; fails_when=any input, fallback trigger, delta rule or receipt line is dropped; why_new=AC1, AC2, AC3; seam=none; no_claim=installed-agent execution
-  test('Bound the documentation audit locks the four read-list inputs, broad fallback, delta re-audit and unchanged attempt bound', () => {
+  // Value: protects=Bound the documentation audit keeps upstream's inventory, builds the read list from the four inputs with one-step authority links that the always-read docs never seed, and skips history docs on a mention alone; fails_when=the inventory is narrowed, an input is dropped or link expansion can reach the whole inventory again; why_new=AC1, AC7; seam=none; no_claim=installed-agent execution
+  test('Bound the documentation audit keeps the upstream inventory and builds a bounded read list from four inputs', () => {
     expect(flat).toContain('3. **Documentation audit.** Run `/ship`\'s Documentation audit section with its candidate snapshot, subagent dispatch, validation, attempt bound and blocked recovery. Review its doc edits like any fix. Keep its accepted status, files, base and documentation section. It covers every changed path, so a later edit spends its one re-audit. Under `documentation-scope=contracts`, bound its reads and delta re-audit as **Bound the documentation audit** below defines.');
     for (const clause of [
-      '1. **Activation.** Only under `documentation-scope=contracts`. Without it, run `/ship`\'s Documentation audit section unchanged.',
-      '2. **Initial read list.** Still inventory every documentation file (`README.md`, `CLAUDE.md`, `CHANGELOG.md`, `VERSION`, `TODOS.md`, `ROADMAP.md`, `PROGRESS.md`, `CONTRIBUTING.md`, `ARCHITECTURE.md` and `docs/**`)',
-      'changed paths in the candidate diff that are themselves documentation files;',
-      'contract terms in the candidate diff (exported symbols, CLI flags, environment variables, schema fields, command names, skill names, policy keys and repository-relative file paths), adding each inventoried documentation file that mentions one;',
-      'authorities linked from `README.md`, `CLAUDE.md` or `docs/SPEC.md` for a changed area, and every doc linked from or linking to a doc already on the list;',
-      '`README.md`, `CLAUDE.md` and `docs/SPEC.md` always, plus `CHANGELOG.md` and `VERSION` when the candidate diff touches release metadata or when this audit runs at `/ship`\'s release gate.',
-      '3. **Broad fallback.** Use the full inventoried documentation set instead of the bounded read list when relevance is uncertain:',
-      'the candidate diff touches `CLAUDE.md`, `docs/SPEC.md`, `README.md`\'s architecture or skill-routing tables, a shared template under `scripts/init-templates/`, or a build/test/install entry point (`package.json`, `bin/setup-*`, `bin/gstack-*`);',
-      'no contract term can be extracted from a non-test code or skill change;',
-      'the bounded read list would omit a doc that a changed test, plan or card criterion names;',
-      'or the child reports that a listed doc depends on an unlisted doc to judge a claim (the child may read that doc and records the expansion).',
-      '4. **Dispatch.** Take the candidate snapshot of the whole working tree (`gstack-doc-audit snapshot` with no `--select`, because `--select` narrows ownership comparison rather than the child\'s read list).',
-      '5. **Re-audit follows the fix delta.** When the initial audit is accepted (`current` or `updated` with `blocked` empty) and a later fix batch, Greptile fix or final-gate repair changes the tree before the one allowed re-audit, compute the fix delta from the accepted audit\'s post-child snapshot to the current candidate.',
-      'the files changed in the fix delta;',
-      'the docs that the initial audit updated;',
-      'and the docs selected by the fix delta\'s own changed paths, contract terms and linked authorities, carrying forward the initial audit\'s accepted findings on untouched docs without rereading them.',
-      'If the initial audit was `blocked`, failed validation, or used the broad fallback, or if the fix delta triggers the broad fallback or merges a new base commit, the re-audit runs on the full candidate scope (bounded by the full candidate\'s read list, or broad when fallback applies).',
-      '6. **Bound and truth.** The attempt bound (`initial + one re-audit`, never a third) and the meanings of `current`, `updated` and `blocked` are unchanged; bounding never adds or refunds an attempt.',
-      'Record `Documentation scope: contracts (inventoried=<N>; read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes; extra-reads=<E>; fallback=<none|reason>)`',
-      '`Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs, <B2> bytes; carried-from=<audit_id> <section-sha256>)`',
+      '1. **Activation.** Only when the policy carries `documentation-scope=contracts`, or the user chooses it in this session. Otherwise item 3 runs `/ship`\'s Documentation audit section unchanged and none of this section applies.',
+      '2. **Inventory, unchanged.** Inventory documentation exactly as the installed `document-release` audit-scope Discovery says',
+      'The bound narrows what the child reads, never what the audit can find.',
+      'changed-path references: every changed documentation file, and each inventoried doc that names a changed path;',
+      'contract references: name, from the diff, the contracts each changed path defines or changes (skill names and required inputs, commands and flags, exit codes, defaults, limits, output formats, config keys, environment variables, schema and record fields, receipt and handoff labels, policy keys and file paths), then add each inventoried doc that mentions one, found by a literal fixed-string search over the inventory',
+      'linked authorities: a doc that the project instructions, README or product spec name as the authority for a listed contract, or that a doc selected by the two inputs above links to as that contract\'s source. Follow such a link one step; the always-read docs below never seed it;',
+      'always: the project instruction files (for example `CLAUDE.md` or `AGENTS.md`), `README.md` and the product spec when it has an `## Authority` section, plus `CHANGELOG.md` and `VERSION` when the candidate diff touches release metadata or the audit runs at `/ship`\'s release gate.',
+      'Changelogs, roadmaps, backlogs and archived or superseded plans record history and intent, so a mention alone never selects them; they join the list when they changed or under the release-metadata rule.',
     ]) {
       expect(section, clause).toContain(clause);
     }
-    expect(flat).toContain('Under `documentation-scope=contracts`, also include the `Documentation scope:` line (arm, inventoried doc count, listed docs count and bytes, reviewed docs count and bytes, reads outside the list, and fallback reason) and any `Documentation re-audit scope:` line with the carried audit\'s id and section SHA-256; without the value, this field is unchanged.');
+    expect(section).not.toContain('every doc linked from or linking to a doc already on the list');
+    for (const repoOnly of ['scripts/init-templates/', 'bin/setup-*', 'bin/gstack-*']) expect(section, repoOnly).not.toContain(repoOnly);
+  });
+
+  // Value: protects=the broad fallback names generic uncertainty cases, including renamed docs, generic terms, failed searches and a version-only release write exemption; fails_when=a case is dropped or a consumer-specific path returns; why_new=AC1; seam=none; no_claim=installed-agent execution
+  test('the broad fallback covers every uncertainty case in generic terms', () => {
+    for (const clause of [
+      '4. **Broad fallback.** Run today\'s unbounded audit instead, recording `fallback=<reason>`, whenever relevance is uncertain:',
+      'the parent cannot name the contracts a changed non-test path defines or changes (a file path alone names no contract);',
+      'a changed path is a project instruction file, the product spec, a docs-build configuration, an authored template that generates docs, or a build, test or install entry point other than a version-only release-metadata change;',
+      'a doc is renamed or deleted;',
+      'a contract term is too generic for a literal search to tell references from unrelated prose, or the search fails;',
+      'the list would omit a doc that a changed test, the plan or an acceptance criterion names;',
+      'or the list would already hold the whole inventory.',
+    ]) {
+      expect(section, clause).toContain(clause);
+    }
+  });
+
+  // Value: protects=dispatch uses the real upstream snapshot helper with no --select, fences parent-built data, keeps the child able to verify source and read outside the list, and makes a bounded current honest; fails_when=the helper name drifts to a nonexistent command, the data fence or read valve is dropped, or a read outside the list relaunches the audit; why_new=AC1, AC3; seam=none; no_claim=installed-agent execution
+  test('dispatch uses gstack-docs-candidate, fences its data and keeps the child able to verify and widen', () => {
+    for (const clause of [
+      '5. **Dispatch.** Prepare runs unchanged: `gstack-docs-candidate snapshot` with the documentation roots the inventory found and no `--select`, because `--select` narrows the release paths the snapshot hashes for `/ship`\'s Step 16 freshness check.',
+      'pass the read list, the contract terms and the inventory in a fenced block labelled as data, never as instructions.',
+      'read every listed doc in full, and the source needed to verify its claims, changed or not;',
+      'also read any other doc it finds that references a changed path or a listed contract, and report each in `decisions` as a read outside the list, with its reason;',
+      'list every doc it read in `files_reviewed`, and never call a doc current without reading it;',
+      'name the bounded scope as the section\'s audited scope.',
+      'A child that read every listed doc and left no correction unresolved has completed the bounded scope, so it reports `current` or `updated` for that scope and `blocked` only on upstream\'s grounds.',
+      'A read outside the list stays inside the attempt and counts in `extra-reads`; it never sends the audit back for a broad relaunch.',
+    ]) {
+      expect(section, clause).toContain(clause);
+    }
+    expect(raw).not.toContain('gstack-doc-audit');
+  });
+
+  // Value: protects=the re-audit computes its delta from the post-child snapshot, compare and git, carries the accepted section durably, and falls back to full scope on every unverifiable case; fails_when=the delta loses committed changes, an earlier invocation's audit counts, or a full-scope case is dropped; why_new=AC2; seam=none; no_claim=installed-agent execution
+  test('the re-audit follows the fix delta and names its full-scope cases', () => {
+    for (const clause of [
+      '6. **Re-audit follows the fix delta.** When the remaining re-audit runs after an accepted (`current` or `updated`) audit of this invocation, the delta is every path whose content differs between that audit\'s post-child snapshot and the current candidate: `gstack-docs-candidate compare <audit-id>-post.json`, plus `git diff --name-only` from that snapshot\'s HEAD to the current HEAD, plus staged, unstaged and new untracked paths.',
+      'Build the read list from the delta alone by item 3, plus the docs the accepted audit edited when the delta touches them; item 4 applies to the delta as to any candidate.',
+      'Before the re-audit, copy the accepted audit\'s documentation section to the evidence directory and record its durable path and SHA-256.',
+      'The prompt names the accepted audit\'s id and section SHA-256, and the new section states that the accepted audit\'s result stands outside the delta.',
+      'no accepted audit of this invocation exists (an earlier invocation\'s audit never counts);',
+      'the accepted audit used the broad fallback;',
+      'the base changed since it;',
+      'its post-child snapshot cannot be read or verified, or that snapshot\'s HEAD is not an ancestor of the current HEAD;',
+      'or the delta cannot be established.',
+    ]) {
+      expect(section, clause).toContain(clause);
+    }
+  });
+
+  // Value: protects=the attempt bound and status meanings stay upstream's, a bounded current covers only docs read, counts have a source, and scope lines stay outside the hashed section; fails_when=an attempt is added or refunded, the truth rule is lost, or the scope line may land inside the section; why_new=AC3; seam=none; no_claim=installed-agent execution
+  test('bound and truth keep the attempt budget, honest status and scope lines beside the section', () => {
+    for (const clause of [
+      '7. **Bound and truth.** The attempt budget is upstream\'s, unchanged: choosing a scope never adds or refunds an attempt, a recovery that widens to broad uses the remaining attempt, and there is never a third.',
+      '`status` keeps upstream\'s meaning (`updated`, `current`, `blocked`), and a bounded `current` covers only the docs read.',
+      'Count docs from the inventory, the read list and the child\'s validated `files_reviewed`, and bytes as each file\'s size in the candidate.',
+      'Record `Documentation scope: contracts (inventoried=<N>; read-list=<M> docs, <B> bytes; reviewed=<K> docs, <R> bytes; extra-reads=<E>; fallback=<none|reason>)`',
+      '`Documentation re-audit scope: delta (delta-files=<D>; read-list=<M2> docs, <B2> bytes; carried-from=<audit_id> <section-sha256>)` or `Documentation re-audit scope: full — <reason>`.',
+      'Write these lines in the receipt and beside the documentation section, never inside it: the section stays the child\'s unchanged text, so its SHA-256 still matches.',
+      'The one-line `scope` in `.gstack/tmp/docs-audit.json` names the arm too',
+    ]) {
+      expect(section, clause).toContain(clause);
+    }
+    expect(flat).toContain('Under `documentation-scope=contracts`, also include the `Documentation scope:` line (arm, inventoried doc count, listed docs count and bytes, reviewed docs count and bytes, reads outside the list, and fallback reason) and any `Documentation re-audit scope:` line with the carried audit\'s id, section SHA-256 and the durable path of its section copy, bound to the tree that audit read; without the value, this field is unchanged.');
   });
 
   // Value: protects=the shared grammar rule against host substitution in the added text; fails_when=a reserved placeholder appears in the section, bullet or light-default line; why_new=CLAUDE.md skill-body rule; seam=none

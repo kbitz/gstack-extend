@@ -964,10 +964,9 @@ its H-B handoff: the `Review arm:` and `Folded checklist:` lines are receipt tex
 handoff bindings, and `/ship-and-land` reads the receipt as it would a plain one
 (`B-FOLDED-HEAD`).
 
-`documentation-scope=contracts` uses the same rollout order: update `/review-and-prep`
-and its caller capability check first, and have the caller check the loaded copy with
-`grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"` (exit 0 means
-supported). An installation without it reads the whole line as `none supplied`, an older
+`documentation-scope=contracts` follows the same rollout order and the same check,
+written as `grep -F 'documentation-scope=contracts' "<installed skill dir>/SKILL.md"`
+(exit 0 means supported). An installation without it reads the whole line as `none supplied`, an older
 H-E parser holds a returned policy that carries it as `policy-malformed`, and a caller
 omits it when the check fails and keeps its other keys. It is independent of every other
 key, including `documentation-audit=final`: a caller may pass either key without the
@@ -975,6 +974,7 @@ other or both together. It is never set by the light review default. The value w
 gate, keeps the audit's attempt bound and never authorizes a continuation. `/ship-and-land`
 takes `documentation-scope=contracts` only from its own invocation (prompt or user
 choice in that session); preparation's receipt, PR text and comments never turn it on.
+A bounded audit's `current` covers only the docs it read, and its scope lines say so.
 See the [documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)
 record.
 

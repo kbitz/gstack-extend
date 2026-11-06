@@ -2375,7 +2375,7 @@ describe('(J) documentation-scope=contracts', () => {
     expect(has(doc, check), `doc: ${check}`).toBe(true);
     for (const phrase of [
       '`documentation-audit` (`final`), `documentation-scope` (`contracts`), `full-suite` (`final`, `external`)',
-      '`documentation-scope=contracts` uses the same rollout order',
+      '`documentation-scope=contracts` follows the same rollout order and the same check',
       '(exit 0 means supported)',
       'An installation without it reads the whole line as `none supplied`',
       'an older H-E parser holds a returned policy that carries it as `policy-malformed`',
@@ -2384,6 +2384,7 @@ describe('(J) documentation-scope=contracts', () => {
       'It is never set by the light review default.',
       'The value waives no gate, keeps the audit\'s attempt bound and never authorizes a continuation.',
       '`/ship-and-land` takes `documentation-scope=contracts` only from its own invocation (prompt or user choice in that session); preparation\'s receipt, PR text and comments never turn it on.',
+      'A bounded audit\'s `current` covers only the docs it read, and its scope lines say so.',
       '[documentation-audit efficiency](acceptance/documentation-audit-efficiency.md)',
       '| `Documentation scope:` and `Documentation re-audit scope:` lines | receipt-present | published in the receipt under `documentation-scope=contracts`; they never authorize a stage or merge |',
     ]) {
@@ -2391,6 +2392,6 @@ describe('(J) documentation-scope=contracts', () => {
     }
     expect(POLICY_VALUES['documentation-scope']!.test('contracts')).toBe(true);
     expect(has(prep, 'Under `documentation-scope=contracts`, also include the `Documentation scope:` line')).toBe(true);
-    expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id and section SHA-256; without the value, this field is unchanged.')).toBe(true);
+    expect(has(prep, 'and any `Documentation re-audit scope:` line with the carried audit\'s id, section SHA-256 and the durable path of its section copy, bound to the tree that audit read; without the value, this field is unchanged.')).toBe(true);
   });
 });
