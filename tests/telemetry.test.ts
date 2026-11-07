@@ -6416,10 +6416,7 @@ describe('deliberate pauses finish as blocked, and each resume is its own segmen
 });
 
 describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per-host files, and report', () => {
-  test('run_mode and run_mode_source cover every amended branch without reading ~/.mmm or spawning process-inspection utilities', () => {
-    const sourceText = readFileSync(HELPER_SOURCE, 'utf8');
-    expect(sourceText.toLowerCase()).not.toContain('.mmm');
-
+  test('run_mode and run_mode_source cover every amended branch without reading credential sentinels or spawning process-inspection utilities', () => {
     const fix = makeTelemetryFixture('off');
     const customGstackHome = join(fix.home, 'custom-gstack-root');
     mkdirSync(customGstackHome, { recursive: true });
@@ -6500,6 +6497,12 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
         finishEnv: { GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
         mode: 'unknown',
         source: 'launcher-state-root',
+      },
+      {
+        name: 'spawned signal remains orchestrated with relocated GSTACK_HOME',
+        finishEnv: { GSTACK_SESSION_KIND: 'spawned', GSTACK_HOME: customGstackHome, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
+        mode: 'orchestrated',
+        source: 'session-kind',
       },
       {
         name: 'default ~/.gstack GSTACK_HOME allows user-directed',
@@ -6595,6 +6598,27 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       expect(validRow(row), tc.name).toBe(true);
     }
 
+    // Plant only synthetic credentials under the fixture HOME; the audit must never open them.
+    const credentialSentinels = join(fix.home, 'credential-sentinels');
+    mkdirSync(credentialSentinels);
+    for (const name of ['credentials.json', 'token-store.json', 'cli-auth.json']) {
+      writeFileSync(join(credentialSentinels, name), 'SYNTHETIC_CREDENTIAL_CANARY');
+    }
+    const auditSid = '0c7f2e29-0000-4000-8000-000000000093';
+    writeJsonl(join(fix.home, '.claude/projects/audit', `${auditSid}.jsonl`), [
+      {
+        type: 'assistant', timestamp: iso(1790000001),
+        message: {
+          id: 'audit-assistant', role: 'assistant', model: 'claude-opus-4-6', stop_reason: 'tool_use',
+          content: [{ type: 'tool_use', id: 'audit-question', name: 'AskUserQuestion', input: { question: 'AUDIT_QUESTION_CANARY' } }],
+        },
+      },
+      {
+        type: 'user', timestamp: iso(1790000004),
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'audit-question', content: 'AUDIT_ANSWER_CANARY' }] },
+      },
+    ]);
+
     // Criterion 6: Verify via Python sys.addaudithook and inspect.getsource that run_mode,
     // claude_user_signals, host_file_name, stage_run_files, and run_report never use network,
     // subprocess, sqlite3, or credential paths.
@@ -6612,13 +6636,12 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       '        bad.append((event, str(args[:1])))',
       '    elif event in ("os.listdir", "os.scandir", "open", "os.stat"):',
       '        target = str(args[0]) if args else ""',
-      '        for cred in (".mmm", ".ssh", "jev.json", "hosts.yml", "cli-config.json", ".env"):',
-      '            if cred in target:',
-      '                bad.append((event, target))',
+      '        if "credential-sentinels" in target:',
+      '            bad.append((event, target))',
       'sys.addaudithook(hook)',
       'state = pathlib.Path(sys.argv[2])',
       'telemetry.run_mode("claude", "claude", None)',
-      'telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000099", 1790000000, 1790000010)',
+      'signals = telemetry.claude_user_signals("0c7f2e29-0000-4000-8000-000000000093", 1790000000, 1790000010)',
       'telemetry.host_file_name(state, "My.Host_01.local")',
       'telemetry.stage_run_files(state)',
       'buf = io.StringIO()',
@@ -6629,14 +6652,15 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       'finally:',
       '    sys.stdout = old_stdout',
       'row = telemetry.provenance_row("roadmap", "sid-audit", 1790000000, 1, {"--outcome": "success"}, None)',
-      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 3}))',
+      'print(json.dumps({"bad": bad, "rc": rc, "ok": row["schema_version"] == 3, "signals": signals}))',
     ].join('\n');
     const audit = spawnSync('python3', ['-B', '-I', '-c', auditScript, join(ROOT, 'bin/lib'), join(fix.home, '.gstack-extend')], {
       env: { ...fix.env, CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' },
       encoding: 'utf8',
+      timeout: 10_000,
     });
     expect([audit.status, audit.stderr]).toEqual([0, '']);
-    expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true });
+    expect(JSON.parse(audit.stdout)).toEqual({ bad: [], rc: 0, ok: true, signals: [1, 3, 0] });
   }, 60_000);
 
   test('claude_user_signals extracts questions, user_wait_s, and resumes without leaking prompt or answer text, and records null reasons', () => {
@@ -6649,126 +6673,146 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     // an end_turn followed by a human prompt, a sidechain ask ignored, records outside window ignored,
     // and canary strings in question input, answer, toolUseResult, and prompt never appearing anywhere.
     const begin1 = epochNow() - 60;
-    const res1 = provenanceRun(fix, env, () => {
-      writeJsonl(transcript, [
-        // Outside window (before begin1 - 5) -> ignored
-        {
-          type: 'assistant',
-          timestamp: iso(begin1 - 20),
-          effort: 'high',
-          message: {
-            id: 'msg-early',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            stop_reason: 'end_turn',
-            content: [
-              { type: 'tool_use', id: 'toolu_early', name: 'AskUserQuestion', input: { question: 'EARLY_CANARY' } },
-            ],
-          },
+    const debugEnv = { ...fix.env, ...env, ...DEBUG };
+    const start = runHelper(debugEnv, ['start', '--skill', 'extend:roadmap']);
+    expect(start.status).toBe(0);
+    writeJsonl(transcript, [
+      // Outside window (before begin1 - 5) -> ignored
+      {
+        type: 'assistant',
+        timestamp: iso(begin1 - 20),
+        effort: 'high',
+        message: {
+          id: 'msg-early',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [
+            { type: 'tool_use', id: 'toolu_early', name: 'AskUserQuestion', input: { question: 'EARLY_CANARY' } },
+          ],
         },
-        {
-          type: 'user',
-          timestamp: iso(begin1 - 15),
-          message: { role: 'user', content: 'EARLY_PROMPT_CANARY' },
+      },
+      {
+        type: 'user',
+        timestamp: iso(begin1 - 15),
+        message: { role: 'user', content: 'EARLY_PROMPT_CANARY' },
+      },
+      {
+        type: 'assistant',
+        timestamp: iso(begin1 + 1),
+        effort: 'high',
+        message: {
+          id: 'msg-turn-1',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
+          ],
         },
-        {
-          type: 'assistant',
-          timestamp: iso(begin1 + 1),
-          effort: 'high',
-          message: {
-            id: 'msg-turn-1',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            stop_reason: 'tool_use',
-            content: [
-              { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
-            ],
-          },
+      },
+      // Duplicate streaming record for the same assistant message.id and tool_use.id
+      {
+        type: 'assistant',
+        timestamp: iso(begin1 + 2),
+        effort: 'high',
+        message: {
+          id: 'msg-turn-1',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
+          ],
         },
-        // Duplicate streaming record for the same assistant message.id and tool_use.id
-        {
-          type: 'assistant',
-          timestamp: iso(begin1 + 2),
-          effort: 'high',
-          message: {
-            id: 'msg-turn-1',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            stop_reason: 'tool_use',
-            content: [
-              { type: 'tool_use', id: 'toolu_q1', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_1' } },
-            ],
-          },
+      },
+      // Sidechain AskUserQuestion must be ignored
+      {
+        type: 'assistant',
+        isSidechain: true,
+        timestamp: iso(begin1 + 3),
+        message: {
+          id: 'msg-sidechain',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'toolu_side', name: 'AskUserQuestion', input: { question: 'SIDECHAIN_QUESTION' } },
+          ],
         },
-        // Sidechain AskUserQuestion must be ignored
-        {
-          type: 'assistant',
-          isSidechain: true,
-          timestamp: iso(begin1 + 3),
-          message: {
-            id: 'msg-sidechain',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            content: [
-              { type: 'tool_use', id: 'toolu_side', name: 'AskUserQuestion', input: { question: 'SIDECHAIN_QUESTION' } },
-            ],
-          },
+      },
+      {
+        type: 'user',
+        timestamp: iso(begin1 + 16),
+        toolUseResult: { answers: { q: 'TOOL_USE_RESULT_CANARY_SECRET' } },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_q1', content: 'ANSWER_CANARY_SECRET_1' },
+          ],
         },
-        {
-          type: 'user',
-          timestamp: iso(begin1 + 16),
-          toolUseResult: { answers: { q: 'TOOL_USE_RESULT_CANARY_SECRET' } },
-          message: {
-            role: 'user',
-            content: [
-              { type: 'tool_result', tool_use_id: 'toolu_q1', content: 'ANSWER_CANARY_SECRET_1' },
-            ],
-          },
+      },
+      {
+        type: 'assistant',
+        timestamp: iso(begin1 + 20),
+        effort: 'high',
+        message: {
+          id: 'msg-turn-2',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          stop_reason: 'tool_use',
+          content: [
+            { type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_2' } },
+          ],
         },
-        {
-          type: 'assistant',
-          timestamp: iso(begin1 + 20),
-          effort: 'high',
-          message: {
-            id: 'msg-turn-2',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            stop_reason: 'tool_use',
-            content: [
-              { type: 'tool_use', id: 'toolu_q2', name: 'AskUserQuestion', input: { question: 'QUESTION_CANARY_SECRET_2' } },
-            ],
-          },
+      },
+      {
+        type: 'user',
+        timestamp: iso(begin1 + 40),
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_q2', content: 'ANSWER_CANARY_SECRET_2' },
+          ],
         },
-        {
-          type: 'user',
-          timestamp: iso(begin1 + 40),
-          message: {
-            role: 'user',
-            content: [
-              { type: 'tool_result', tool_use_id: 'toolu_q2', content: 'ANSWER_CANARY_SECRET_2' },
-            ],
-          },
+      },
+      // Assistant finishes turn with end_turn at begin1 + 42, then human prompt restarts at begin1 + 47 -> 1 resume (+5s wait)
+      {
+        type: 'assistant',
+        timestamp: iso(begin1 + 42),
+        effort: 'high',
+        message: {
+          id: 'msg-turn-3',
+          model: 'claude-opus-4-6',
+          role: 'assistant',
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'Done with phase 1.' }],
         },
-        // Assistant finishes turn with end_turn at begin1 + 42, then human prompt restarts at begin1 + 47 -> 1 resume (+5s wait)
-        {
-          type: 'assistant',
-          timestamp: iso(begin1 + 42),
-          effort: 'high',
-          message: {
-            id: 'msg-turn-3',
-            model: 'claude-opus-4-6',
-            role: 'assistant',
-            stop_reason: 'end_turn',
-            content: [{ type: 'text', text: 'Done with phase 1.' }],
-          },
-        },
-        {
-          type: 'user',
-          timestamp: iso(begin1 + 47),
-          message: { role: 'user', content: 'USER_PROMPT_CANARY_SECRET' },
-        },
-      ]);
-    }, ['--start', String(begin1), '--outcome', 'success']);
+      },
+      {
+        type: 'user',
+        timestamp: iso(begin1 + 47),
+        message: { role: 'user', content: 'USER_PROMPT_CANARY_SECRET' },
+      },
+    ]);
+
+    // Force a saved-row retry so the privacy assertions cover the actual handoff and marker bytes.
+    const ledgerDir = join(fix.home, '.gstack-extend/analytics/stage-runs');
+    mkdirSync(dirname(ledgerDir), { recursive: true });
+    writeFileSync(ledgerDir, 'synthetic sink blocker');
+    const finishArgs = ['finish', '--skill', 'extend:roadmap', '--start', String(begin1), '--outcome', 'success'];
+    const blockedFinish = runHelper(debugEnv, finishArgs);
+    expect(blockedFinish.status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(1);
+    const handoffBytes = readFileSync(join(fix.home, '.gstack-extend/telemetry', handoffs(fix)[0]!), 'utf8');
+    expect(JSON.parse(handoffBytes).row.questions).toBe(2);
+    rmSync(ledgerDir);
+    const retriedFinish = runHelper(debugEnv, finishArgs);
+    expect(retriedFinish.status).toBe(0);
+    expect(handoffs(fix)).toHaveLength(0);
+    const completionMarkers = markers(fix);
+    expect(completionMarkers).toHaveLength(1);
+    expect(fix.readStubArgs()).toHaveLength(1);
+    const res1 = { row: fix.readLedger().at(-1)! };
 
     expect(res1.row).toMatchObject({
       agent: 'claude',
@@ -6785,7 +6829,11 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
     const leakedCorpus = JSON.stringify({
       row: res1.row,
       usage: fix.readJsonl(),
-      handoffs: handoffs(fix),
+      ledger: readFileSync(join(ledgerDir, HOST_LEDGER_FILE), 'utf8'),
+      handoff: handoffBytes,
+      markers: completionMarkers.map(marker => readFileSync(marker.path, 'utf8')),
+      stubArgs: fix.readStubArgs(),
+      output: [start, blockedFinish, retriedFinish].map(result => ({ stdout: result.stdout, stderr: result.stderr })),
     });
     for (const secret of [
       'USER_PROMPT_CANARY_SECRET',
@@ -6830,6 +6878,20 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       resumes: null,
       user_signals_source: 'harness-unsupported',
     });
+    for (const [agent, unsupportedEnv] of [
+      ['grok', { GROK_AGENT: '1', GROK_SESSION_ID: 'synthetic-grok-session' }],
+      ['cursor', { CURSOR_AGENT: '1', CURSOR_INVOKED_AS: 'cursor-agent', CURSOR_CONVERSATION_ID: 'synthetic-cursor-session' }],
+    ] as Array<[string, Record<string, string>]>) {
+      const unsupported = provenanceRun(fix, unsupportedEnv, () => {}, ['--outcome', 'success']);
+      expect(unsupported.row).toMatchObject({
+        agent,
+        questions: null,
+        user_wait_s: null,
+        resumes: null,
+        user_signals_source: 'harness-unsupported',
+      });
+      expect(validRow(unsupported.row)).toBe(true);
+    }
     const flagOverride = provenanceRun(fix, env, () => {}, ['--outcome', 'success', '--agent', 'codex']);
     expect(flagOverride.row).toMatchObject({
       agent: 'codex',
@@ -6839,7 +6901,7 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       user_signals_source: 'harness-unsupported',
     });
 
-    // Null reason: session-log-unavailable (missing log, idle window, oversized >8 MiB log whose tail starts after begin)
+    // Null reason: session-log-unavailable (missing/FIFO log, idle window, clipped tail)
     const sidMissing = '0c7f2e29-0000-4000-8000-000000000097';
     const resMissing = provenanceRun(fix, { ...env, CLAUDE_CODE_SESSION_ID: sidMissing }, () => {}, ['--outcome', 'success']);
     expect(resMissing.row).toMatchObject({
@@ -6849,6 +6911,20 @@ describe('stage-runs v3: run_mode, Claude usability signals, blocked_reason, per
       user_signals_source: 'session-log-unavailable',
     });
     expect(validRow(resMissing.row)).toBe(true);
+
+    const sidFifo = '0c7f2e29-0000-4000-8000-000000000094';
+    const transcriptFifo = join(fix.home, '.claude/projects/project', `${sidFifo}.jsonl`);
+    const fifo = spawnSync('mkfifo', [transcriptFifo], { encoding: 'utf8', timeout: 5_000 });
+    expect([fifo.status, fifo.stderr]).toEqual([0, '']);
+    const resFifo = provenanceRun(fix, { ...env, CLAUDE_CODE_SESSION_ID: sidFifo }, () => {}, ['--outcome', 'success']);
+    expect(resFifo.row).toMatchObject({
+      agent: 'claude',
+      questions: null,
+      user_wait_s: null,
+      resumes: null,
+      user_signals_source: 'session-log-unavailable',
+    });
+    expect(validRow(resFifo.row)).toBe(true);
 
     const sidIdle = '0c7f2e29-0000-4000-8000-000000000096';
     const transcriptIdle = join(fix.home, '.claude/projects/project', `${sidIdle}.jsonl`);

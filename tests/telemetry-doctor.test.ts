@@ -578,7 +578,8 @@ describe('gstack helper warning', () => {
       rows: { counted: 0, routed: 0, malformed: 0, invalid: 0, unsupported: 0 },
     });
     expect(emptyData.skills.map((s: { skill: string }) => s.skill)).toEqual([...EXPECTED_SETUP_SKILLS]);
-    expect(emptyData.empty_cells).toHaveLength(EXPECTED_SETUP_SKILLS.length * 3);
+    expect(emptyData.empty_cells).toEqual(EXPECTED_SETUP_SKILLS.flatMap(skill =>
+      ['orchestrated', 'user-directed', 'unknown'].map(mode => [skill, mode])));
 
     const emptyText = spawnSync(telBin, ['report'], { env: fix.env, encoding: 'utf8' });
     expect([emptyText.status, emptyText.stderr]).toEqual([0, '']);
@@ -678,7 +679,8 @@ describe('gstack helper warning', () => {
       outcomes: { success: 0, abort: 0, error: 1, blocked: 0, unknown: 0 },
     });
     // roadmap has all 3 primary modes populated, so none of its cells are in empty_cells
-    expect(repData.empty_cells.filter(([skill]: [string, string]) => skill === 'roadmap')).toEqual([]);
+    expect(repData.empty_cells).toEqual(EXPECTED_SETUP_SKILLS.filter(skill => skill !== 'roadmap').flatMap(skill =>
+      ['orchestrated', 'user-directed', 'unknown'].map(mode => [skill, mode])));
 
     const implementEntry = repData.skills.find((s: { skill: string }) => s.skill === 'implement');
     expect(implementEntry.cells.unrecorded).toMatchObject({
@@ -723,5 +725,90 @@ describe('gstack helper warning', () => {
     const badArg = spawnSync(telBin, ['report', '--bad-arg'], { env: fix.env, encoding: 'utf8' });
     expect(badArg.status).toBe(0);
     expect(badArg.stderr).toContain("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json]'");
+  });
+});
+
+
+describe('stage-runs report regressions', () => {
+  const telBin = join(ROOT, 'bin/gstack-extend-telemetry');
+  test('classifies invalid source and unsafe versions without counting unrelated directory entries', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const directory = join(fix.home, '.gstack-extend/analytics/stage-runs');
+    mkdirSync(directory, { recursive: true });
+    const valid = { source: 'gstack-extend', schema_version: 3, stage: 'roadmap',
+      run_mode: 'unknown', outcome: 'success', started_at: '2026-11-01T12:00:00Z' };
+    const { source: ignoredSource, ...withoutSource } = valid;
+    const rows = [
+      valid,
+      { ...valid, started_at: '2026-11-03T12:00:00Z', outcome: 'error' },
+      { ...valid, started_at: 'invalid-date', outcome: 'blocked' },
+      { ...valid, started_at: '2026-11-02T12:00:00Z' },
+      withoutSource,
+      ...['', '  ', 7, null, {}].map(source => ({ ...valid, source })),
+      { ...valid, source: 'other-producer' },
+      { ...valid, schema_version: Number.MAX_SAFE_INTEGER },
+      { ...valid, schema_version: Number.MAX_SAFE_INTEGER + 1 },
+      { ...valid, schema_version: true },
+    ];
+    writeFileSync(join(directory, 'host.jsonl'), rows.map(value => JSON.stringify(value)).join('\n') + '\n');
+    writeFileSync(join(directory, '.DS_Store'), 'unrelated');
+    writeFileSync(join(directory, '.jsonl'), 'not a ledger name');
+    mkdirSync(join(directory, 'notes'));
+    mkdirSync(join(directory, 'bad.jsonl'));
+    const result = spawnSync(telBin, ['report', '--json'], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    const data = JSON.parse(result.stdout);
+    expect(data.files).toEqual({ read: 1, unreadable: 1 });
+    expect(data.rows).toEqual({ counted: 4, routed: 1, malformed: 0, invalid: 8, unsupported: 1 });
+    expect(data.skills.find((entry: any) => entry.skill === 'roadmap').cells.unknown).toEqual({
+      runs: 4, outcomes: { success: 2, error: 1, blocked: 1, abort: 0, unknown: 0 },
+      last_seen: '2026-11-03T12:00:00Z',
+    });
+  });
+
+  test('reports large history with memory bounded independently of file size', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const script = [
+      'import contextlib, io, json, pathlib, sys, tracemalloc',
+      'sys.path.insert(0, sys.argv[1])',
+      'import telemetry',
+      'directory = pathlib.Path.home() / ".gstack-extend/analytics/stage-runs"',
+      'directory.mkdir(parents=True)',
+      'record = {"source":"gstack-extend", "schema_version":3, "stage":"roadmap", "run_mode":"unknown", "outcome":"success", "started_at":"2026-11-01T12:00:00Z", "padding":"x" * 2048}',
+      'line = json.dumps(record) + "\\n"',
+      'with (directory / "history.jsonl").open("w") as stream:',
+      '    for _ in range(8000): stream.write(line)',
+      'tracemalloc.start()',
+      'output = io.StringIO()',
+      'with contextlib.redirect_stdout(output): telemetry.run_report(["--json"])',
+      '_, peak = tracemalloc.get_traced_memory()',
+      'tracemalloc.stop()',
+      'print(json.dumps({"counted":json.loads(output.getvalue())["rows"]["counted"], "peak":peak}))',
+    ].join('\n');
+    const result = spawnSync('python3', ['-B', '-I', '-c', script, join(ROOT, 'bin/lib')], {
+      env: fix.env, encoding: 'utf8', timeout: 30_000,
+    });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    const data = JSON.parse(result.stdout);
+    expect(data.counted).toBe(8000);
+    // The 17 MB history must not be retained whole or copied into a split-lines list.
+    expect(data.peak).toBeLessThan(8 * 1024 * 1024);
+  }, 60_000);
+
+  test('per-host writes retain support for an analytics root linked to a sync directory', () => {
+    const fix = makeTelemetryFixture('community', 'stub');
+    const target = join(fix.home, 'synced-analytics');
+    mkdirSync(target);
+    mkdirSync(join(fix.home, '.gstack-extend'), { recursive: true });
+    symlinkSync(target, join(fix.home, '.gstack-extend/analytics'));
+    for (const args of [['start', '--skill', 'extend:roadmap'],
+      ['finish', '--skill', 'extend:roadmap', '--outcome', 'success']]) {
+      const result = spawnSync(telBin, args, { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+      expect([result.status, result.stderr]).toEqual([0, '']);
+    }
+    expect(fix.readLedger()).toHaveLength(1);
+    const result = spawnSync(telBin, ['report', '--json'], { env: fix.env, encoding: 'utf8', timeout: 10_000 });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    expect(JSON.parse(result.stdout).rows.counted).toBe(1);
   });
 });

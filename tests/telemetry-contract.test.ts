@@ -451,12 +451,12 @@ const V1_READER_COMMAND = [
   "",
 ].join('\n');
 
-/** The one `bun --no-install -e` block under "## Schema validation", byte for byte. */
+/** The reusable validator block under "## Schema validation", byte for byte. */
 function validationCommand(doc: string) {
   const blocks = [...section(doc, '## Schema validation').matchAll(/~~~sh\n([\s\S]*?)~~~/g)].map(match => match[1]);
-  const commands = blocks.filter(block => block.startsWith('bun --no-install -e '));
+  const commands = blocks.filter(block => block.startsWith('validate_stage_runs() {\nbun --no-install -e '));
   if (commands.length !== 1) {
-    throw new Error('docs/telemetry.md "## Schema validation" must contain exactly one ~~~sh block starting with bun --no-install -e');
+    throw new Error('docs/telemetry.md "## Schema validation" must contain exactly one validate_stage_runs function block');
   }
   return commands[0];
 }
@@ -2741,4 +2741,73 @@ describe('stage-runs v3: run_mode, usability signals, per-host files, migration,
     expect(second.status).not.toBe(0);
     expect(second.stderr).toContain('refused: target already exists');
   });
+
+  test('documented migration rolls back its new link when removing the source fails', () => {
+    const body = section(docText(), '### Per-host files and migration');
+    const command = /~~~sh\n([\s\S]*?)~~~/.exec(body)![1];
+    const script = /^python3 -I -c '([\s\S]*)'\n$/.exec(command)![1];
+    for (const replaceDestination of [false, true]) {
+      const fix = makeTelemetryFixture('off');
+      const root = join(fix.home, '.gstack-extend');
+      const legacy = join(root, 'analytics/stage-runs.jsonl');
+      const destination = join(root, 'analytics/stage-runs/fixture-host.legacy.jsonl');
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(join(root, 'config'), 'host_id=fixture-host\n');
+      const original = JSON.stringify(historicalRow()) + '\n';
+      writeFileSync(legacy, original);
+      // Inject the filesystem failure in this isolated process, including an unrelated replacement
+      // at the destination: recovery must remove only the hard link this attempt created.
+      const failUnlink = `import os\nfrom pathlib import Path\n_real_unlink = os.unlink\ndef fail_source(path, *args, **kwargs):\n    if Path(path).name == "stage-runs.jsonl":\n        target = Path(path).parent / "stage-runs/fixture-host.legacy.jsonl"\n        if ${replaceDestination ? 'True' : 'False'}:\n            _real_unlink(target)\n            target.write_text("replacement\\n")\n        raise PermissionError("injected source removal failure")\n    return _real_unlink(path, *args, **kwargs)\nos.unlink = fail_source\n`;
+      const result = spawnSync('python3', ['-B', '-I', '-c', failUnlink + script],
+        { cwd: ROOT, env: fix.env, encoding: 'utf8', timeout: 10_000 });
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(legacy, 'utf8')).toBe(original);
+      if (replaceDestination) expect(readFileSync(destination, 'utf8')).toBe('replacement\n');
+      else {
+        expect(existsSync(destination)).toBe(false);
+        expect(fix.readLedger()).toEqual([historicalRow()]);
+      }
+    }
+  });
+
+  test('documented validator visits legacy and every host ledger in shared-reader order', () => {
+    const fix = makeTelemetryFixture('off');
+    const root = join(fix.home, '.gstack-extend');
+    const hosts = join(root, 'analytics/stage-runs');
+    mkdirSync(hosts, { recursive: true });
+    writeFileSync(join(root, 'config'), 'host_id=configured-host\n');
+    const files = [join(root, 'analytics/stage-runs.jsonl'), join(hosts, 'a.legacy.jsonl'),
+      join(hosts, 'configured-host.jsonl'), join(hosts, 'z.jsonl')];
+    for (let index = 0; index < files.length; index++) {
+      writeFileSync(files[index], (JSON.stringify(historicalRow()) + '\n').repeat(index + 1));
+    }
+    symlinkSync(files[0], join(hosts, 'symlink.jsonl'));
+    writeFileSync(join(hosts, 'ignored.txt'), 'not a ledger\n');
+    expect(spawnSync('mkfifo', [join(hosts, 'fifo.jsonl')]).status).toBe(0);
+    const doc = docText();
+    const discovery = [...section(doc, '## Schema validation').matchAll(/~~~sh\n([\s\S]*?)~~~/g)]
+      .map(match => match[1]).find(block => block.includes('export STAGE_RUNS_FILE'))!;
+    expect(discovery).toBeDefined();
+    const result = spawnSync('bash', ['-c', validationCommand(doc) + '\n' + discovery], {
+      cwd: ROOT, env: { ...fix.env, PATH: dirname(process.execPath) + ':/usr/bin:/bin' },
+      encoding: 'utf8', timeout: 30_000,
+    });
+    expect([result.status, result.stderr]).toEqual([0, '']);
+    expect(result.stdout.trimEnd().split('\n')).toEqual([
+      summaryOf({ rows: 1, v3: 1 }),
+      ...files.map((_, index) => summaryOf({ rows: index + 1, v1: index + 1 })),
+    ]);
+    // One invalid file must fail the whole block without hiding the remaining host results.
+    writeFileSync(files[1], 'null\n');
+    const invalid = spawnSync('bash', ['-c', validationCommand(doc) + '\n' + discovery], {
+      cwd: ROOT, env: { ...fix.env, PATH: dirname(process.execPath) + ':/usr/bin:/bin' },
+      encoding: 'utf8', timeout: 30_000,
+    });
+    expect(invalid.status).toBe(1);
+    expect(invalid.stdout.trimEnd().split('\n')).toEqual([
+      summaryOf({ rows: 1, v3: 1 }), summaryOf({ rows: 1, v1: 1 }),
+      summaryOf({ rows: 1, invalid: 1 }), summaryOf({ rows: 3, v1: 3 }),
+      summaryOf({ rows: 4, v1: 4 }),
+    ]);
+  }, 30_000);
 });

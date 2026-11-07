@@ -1619,7 +1619,11 @@ configured `host_id` or the sanitized lowercase short nodename from
 `os.uname().nodename`, or `unknown-host` when unavailable; historical rows remain in
 `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl`). **The files are local-only**:
 gstack-telemetry-sync never reads them, so branch and work item never leave the
-machine. Each file is created mode 0600 inside a mode 0700 directory. A symlink, FIFO, or extra hard link at that path (or a symlinked parent directory) is not written. The provenance config and the finish handoff are read the same way, so none of those stand-ins can stall a skill.
+machine. Each file is created mode 0600; new directory permissions follow the
+process umask. A symlink, FIFO, or extra hard link at the file path, or a symlink
+at `stage-runs/` itself, is not written. A symlinked `analytics/` directory remains
+supported. The provenance config and the finish handoff are read the same way,
+so none of those stand-ins can stall a skill.
 
 The machine-readable contract is [stage-runs.schema.json](stage-runs.schema.json),
 a self-contained JSON Schema (draft-07) for gstack-extend's own hand-run rows
@@ -1757,6 +1761,10 @@ command lines or orchestrator directories.
 
 ### Hand-run usability signals
 
+Symlinked transcript files are refused by the shared transcript reader, including
+for existing model/effort detection. Keep the transcript file itself regular;
+this does not prohibit a configured transcript directory outside its default path.
+
 For non-orchestrated runs (`run_mode` is not `orchestrated`) when both the detected and
 final `agent` are `claude` and the active session's transcript
 (`~/.claude/projects/*/<session>.jsonl`, honoring `CLAUDE_CONFIG_DIR`) is a readable
@@ -1773,7 +1781,9 @@ records with parseable timestamps to populate:
   - `harness-unsupported`: final `agent` is not `claude`, or detected `agent` was not `claude` while one was detected (all three counts are `null`).
   - `session-log-unavailable`: `claude` with a missing, unreadable, non-regular, idle-window, or clipped-tail transcript (all three counts are `null`).
   - `session-log`: the three integer counts were read from the Claude session log.
-  Prompt text, question `input`, answer `content`, and `toolUseResult` values are never read, stored, or traced.
+  Only structural markers and whether a human prompt is nonblank affect counts.
+  Question `input`, answer `content`, and `toolUseResult` values are not inspected
+  for counts; no prompt, question, or answer text is stored, returned, or traced.
 - `blocked_reason` and `blocked_reason_source`: `--blocked-reason TOKEN` accepts a token matching `[a-z0-9][a-z0-9-]{0,63}`.
   - `run_mode` is `orchestrated` → `null` / `orchestrated`.
   - `outcome` is not `blocked` → `null` / `not-blocked` (any `--blocked-reason` flag is ignored with a value-free debug trace).
@@ -1785,7 +1795,7 @@ records with parseable timestamps to populate:
 ### Per-host files and migration
 
 Finish appends to `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs/<host>.jsonl`
-(mode `0600`, directory mode `0700`), where `<host>` is:
+(file mode `0600`, new directory permissions governed by the process umask), where `<host>` is:
 
 1. The `host_id` config key (`"$HOME/.claude/skills/gstack-extend/bin/config" set host_id <id>`) when it matches `[a-z0-9][a-z0-9-]{0,62}`, which gives same-named machines distinct files. An invalid value is ignored with a value-free debug trace.
 2. Otherwise the first label of `os.uname().nodename` (before the first `.`), lowercased, with characters outside `[a-z0-9]` mapped to `-`, collapsed and stripped of leading/trailing `-`, and capped at 63 characters (or `unknown-host` when empty). `socket`, `getfqdn`, and DNS are never used.
@@ -1799,7 +1809,10 @@ Before syncing `analytics/` between machines, you may optionally run this manual
 no-clobber move of `stage-runs.jsonl` to `stage-runs/<host>.legacy.jsonl` (which
 cannot collide with a live writer file because writer host names contain no `.`).
 It refuses a symlink or non-regular source or an existing target, never copies or
-concatenates, and prints the row count before and after:
+concatenates, and prints the row count before and after. If removing the source
+fails, it removes only the new link created by this attempt, retaining the source.
+An interrupted process or failed cleanup needs manual inspection before retrying:
+both names may remain, and readers would count both until the extra link is removed.
 
 ~~~sh
 python3 -I -c 'import os, re, sys
@@ -1830,8 +1843,20 @@ if os.path.lexists(dest):
 def count_rows(p):
     return sum(1 for line in p.read_bytes().splitlines() if line.strip())
 before = count_rows(src)
+source_info = src.stat()
 os.link(src, dest)
-os.unlink(src)
+try:
+    os.unlink(src)
+except OSError:
+    try:
+        target_info = dest.lstat()
+        if (target_info.st_dev, target_info.st_ino) == (source_info.st_dev, source_info.st_ino):
+            os.unlink(dest)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        sys.exit("migration incomplete: source remains and new link cleanup failed; inspect both names before retrying")
+    sys.exit("refused: could not remove source; original retained")
 after = count_rows(dest)
 print(f"migrated rows: before={before} after={after}")'
 ~~~
@@ -2021,7 +2046,7 @@ on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
 
-The v2/v3 host ID and v3 `blocked_reason` patterns require Unicode property escapes and Unicode-mode
+The v2/v3 `host_agent_id` pattern requires Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
 `unicodeRegExp: true`. Draft-07 support alone does not establish compatibility:
 readers using other regex engines must verify these capabilities before rollout.
@@ -2044,9 +2069,11 @@ The install uses the committed `bun.lock` and fails rather than change it. Ajv 8
 is a development dependency only; the skills and telemetry need no package. The
 command below runs with `--no-install`, so it never downloads anything. If Bun
 reports `Cannot find package 'ajv'`, run the install above. Run the command from
-the checkout root. With no input it validates its included synthetic 30-field v3 row:
+the checkout root in Bash. This block defines `validate_stage_runs` for reuse below
+and, with no input, validates its included synthetic 30-field v3 row:
 
 ~~~sh
+validate_stage_runs() {
 bun --no-install -e '
 import Ajv from "ajv";
 import { createReadStream, readFileSync, statSync } from "node:fs";
@@ -2184,6 +2211,8 @@ if (hidden) console.error(`${hidden} more diagnoses not shown`);
 console.log(`summary: rows=${counts.rows} valid=${counts.v3 + counts.v2 + counts.v1 + counts.legacy} v3=${counts.v3} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
 process.exitCode = counts.invalid || counts.unsupported ? 1 : 0;
 '
+}
+validate_stage_runs
 ~~~
 
 The command reads UTF-8 strictly. An unreadable file or invalid UTF-8 stops
@@ -2201,16 +2230,41 @@ workspace_host identifies the launch host, host_agent_id its hosting agent/sessi
 agent the harness, route the independent launch classifier, and session_id this
 telemetry invocation. Source labels describe acquisition, not serving or billing.
 
-To check a ledger instead, set `STAGE_RUNS_FILE` to a per-host file (or the legacy
-`stage-runs.jsonl`) and run the same command; `unset STAGE_RUNS_FILE` returns to the
-included row:
+To check one ledger, set `STAGE_RUNS_FILE` and call `validate_stage_runs` in the
+same Bash shell. To validate every ledger, run the following after defining the
+function above. Discovery uses the shared reader's order: the regular non-symlink
+legacy file first, then sorted regular non-symlink `*.jsonl` files in a real
+`stage-runs/` directory. This includes configured `host_id` filenames, other
+hosts and migrated `.legacy.jsonl` files without guessing the current host name.
+Each file gets one validator invocation; any failure makes the block fail.
 
 ~~~sh
-_GE_HOST="$(python3 -I -c 'import os, re; raw = os.uname().nodename.split(".", 1)[0].lower(); print(re.sub(r"[^a-z0-9]+", "-", raw).strip("-")[:63].rstrip("-") or "unknown-host")')"
-case "${GSTACK_EXTEND_STATE_DIR:-}" in
-  /*) export STAGE_RUNS_FILE="$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs/$_GE_HOST.jsonl" ;;
-  *) export STAGE_RUNS_FILE="$HOME/.gstack-extend/analytics/stage-runs/$_GE_HOST.jsonl" ;;
-esac
+(
+  _GE_STATUS=0
+  _GE_COUNT=0
+  while IFS= read -r -d '' STAGE_RUNS_FILE; do
+    export STAGE_RUNS_FILE
+    _GE_COUNT=$((_GE_COUNT + 1))
+    validate_stage_runs || _GE_STATUS=1
+  done < <(python3 -I -c 'import os, sys
+from pathlib import Path
+base = os.environ.get("GSTACK_EXTEND_STATE_DIR", "")
+root = Path(base) if os.path.isabs(base) else Path.home() / ".gstack-extend"
+legacy = root / "analytics/stage-runs.jsonl"
+files = [legacy] if not legacy.is_symlink() and legacy.is_file() else []
+directory = root / "analytics/stage-runs"
+if not directory.is_symlink() and directory.is_dir():
+    for path in sorted(directory.iterdir(), key=lambda p: p.name):
+        if path.name.endswith(".jsonl") and path.name != ".jsonl" and not path.is_symlink() and path.is_file():
+            files.append(path)
+for path in files:
+    sys.stdout.buffer.write(os.fsencode(path) + b"\0")')
+  if [ "$_GE_COUNT" -eq 0 ]; then
+    echo 'No stage-runs ledgers found; nothing validated.' >&2
+    _GE_STATUS=1
+  fi
+  exit "$_GE_STATUS"
+)
 ~~~
 
 As the writer does, this uses an absolute state-directory override and ignores
@@ -2448,22 +2502,36 @@ The marker lines and the prose around each fence did not change.
   export HOME="$GX_TMP" GSTACK_EXTEND_STATE_DIR="$GX_TMP/.gstack-extend"
   unset GSTACK_STATE_ROOT GSTACK_HOME GSTACK_STATE_DIR GSTACK_DIR CLAUDE_PLUGIN_DATA CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME
   mkdir "$GX_TMP/repo" && git init -q "$GX_TMP/repo" && cd "$GX_TMP/repo" || exit 1
-   "$GXT" start --skill "extend:roadmap"
-   "$GXT" finish --skill "extend:roadmap" --outcome success
-   tail -n 1 "$GSTACK_EXTEND_STATE_DIR"/analytics/stage-runs/*.jsonl
- )
- gstack-extend doctor telemetry --days 30
- ~~~
+  "$GXT" start --skill "extend:roadmap"
+  "$GXT" finish --skill "extend:roadmap" --outcome success
+  tail -n 1 "$GSTACK_EXTEND_STATE_DIR"/analytics/stage-runs/*.jsonl
+)
+gstack-extend doctor telemetry --days 30
+~~~
 
 This block follows the [isolation prelude](#workflow-metrics-isolation), so the
 smoke start and finish touch only a temporary HOME. The doctor reads your real
 sinks and writes nothing.
 
 Start prints GE_TELEMETRY: session=extend-<uuid> start=<epoch>. Finish needs neither
-value copied. Reading your real newest stage-runs row writes nothing:
+value copied. To read the last appended row from each existing legacy and per-host
+file without writing anything, run this Bash block. `tail` prints filename headers
+when there is more than one file; these are per-file last rows, not one globally
+newest run. Use `report` for each skill/mode cell's latest `started_at`.
 
 ~~~sh
-tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}"/analytics/stage-runs/*.jsonl
+(
+  shopt -s nullglob
+  case "${GSTACK_EXTEND_STATE_DIR:-}" in
+    /*) _GE_ANALYTICS="$GSTACK_EXTEND_STATE_DIR/analytics" ;;
+    *) _GE_ANALYTICS="$HOME/.gstack-extend/analytics" ;;
+  esac
+  _GE_FILES=()
+  for _GE_FILE in "$_GE_ANALYTICS/stage-runs.jsonl" "$_GE_ANALYTICS"/stage-runs/*.jsonl; do
+    if [ -f "$_GE_FILE" ] && [ ! -L "$_GE_FILE" ]; then _GE_FILES+=("$_GE_FILE"); fi
+  done
+  if [ "${#_GE_FILES[@]}" -gt 0 ]; then tail -n 1 "${_GE_FILES[@]}"; fi
+)
 ~~~
 
 `skill_start.repo` is the checkout directory name (a workspace name under

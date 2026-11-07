@@ -835,10 +835,9 @@ def append_row(path, row, name):
     # 0600 and O_NOFOLLOW: the ledger holds branch and work item. A symlink planted at the
     # destination must not append those fields into a file gstack may upload.
     try:
-        for ancestor in (path.parent.parent, path.parent):
-            if ancestor.is_symlink():
-                debug(f"{name} directory is a symlink at {ancestor}", "remove the symlink and retry")
-                return False
+        if path.parent.is_symlink():
+            debug(f"{name} directory is a symlink at {path.parent}", "remove the symlink and retry")
+            return False
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.parent.is_dir() or path.parent.is_symlink():
             debug(f"{name} directory is not a directory at {path.parent}", "remove the non-directory and retry")
@@ -2444,8 +2443,7 @@ def run_report(args):
             entries = []
             unreadable_count += 1
         for name in entries:
-            candidate = directory / name
-            if candidate not in readable_set:
+            if name.endswith(".jsonl") and name != ".jsonl" and directory / name not in readable_set:
                 unreadable_count += 1
     installed_skills = _discover_installed_skills()
     installed_set = set(installed_skills or ())
@@ -2465,63 +2463,66 @@ def run_report(args):
                 continue
             with os.fdopen(fd, "rb") as stream:
                 fd = -1
-                raw_lines = stream.read().splitlines()
+                files_read += 1
+                for raw_line in stream:
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        line = raw_line.decode("utf-8")
+                        row = json.loads(line)
+                    except (UnicodeDecodeError, ValueError, RecursionError):
+                        row_counts["malformed"] += 1
+                        continue
+                    if not isinstance(row, dict):
+                        row_counts["malformed"] += 1
+                        continue
+                    source = row.get("source")
+                    if not isinstance(source, str) or not source.strip():
+                        row_counts["invalid"] += 1
+                        continue
+                    if source != "gstack-extend":
+                        row_counts["routed"] += 1
+                        continue
+                    if "schema_version" not in row:
+                        mode = "unrecorded"
+                    else:
+                        sv = row.get("schema_version")
+                        if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1 or sv > 2**53 - 1:
+                            row_counts["invalid"] += 1
+                            continue
+                        if sv in (1, 2):
+                            mode = "unrecorded"
+                        elif sv == 3:
+                            rm = row.get("run_mode")
+                            if rm in RUN_MODES:
+                                mode = rm
+                            else:
+                                row_counts["invalid"] += 1
+                                continue
+                        else:
+                            row_counts["unsupported"] += 1
+                            continue
+                    stage_name = clean(row.get("stage"))
+                    outcome = row.get("outcome")
+                    if stage_name is None or outcome not in OUTCOMES:
+                        row_counts["invalid"] += 1
+                        continue
+                    row_counts["counted"] += 1
+                    cells = stage_cells.setdefault(stage_name, {m: _empty_cell() for m in REPORT_MODES})
+                    cell = cells[mode]
+                    cell["runs"] += 1
+                    cell["outcomes"][outcome] += 1
+                    started_at = row.get("started_at")
+                    ts = parse_ts(started_at)
+                    if ts is not None and (cell["_last_ts"] is None or ts > cell["_last_ts"]):
+                        cell["_last_ts"] = ts
+                        cell["last_seen"] = started_at
         except OSError:
             unreadable_count += 1
             continue
         finally:
             if fd >= 0:
                 os.close(fd)
-        files_read += 1
-        for raw_line in raw_lines:
-            if not raw_line.strip():
-                continue
-            try:
-                line = raw_line.decode("utf-8")
-                row = json.loads(line)
-            except (UnicodeDecodeError, ValueError, RecursionError):
-                row_counts["malformed"] += 1
-                continue
-            if not isinstance(row, dict):
-                row_counts["malformed"] += 1
-                continue
-            if row.get("source") != "gstack-extend":
-                row_counts["routed"] += 1
-                continue
-            if "schema_version" not in row:
-                mode = "unrecorded"
-            else:
-                sv = row.get("schema_version")
-                if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1 or sv > INT64_MAX:
-                    row_counts["invalid"] += 1
-                    continue
-                if sv in (1, 2):
-                    mode = "unrecorded"
-                elif sv == 3:
-                    rm = row.get("run_mode")
-                    if rm in RUN_MODES:
-                        mode = rm
-                    else:
-                        row_counts["invalid"] += 1
-                        continue
-                else:
-                    row_counts["unsupported"] += 1
-                    continue
-            stage_name = clean(row.get("stage"))
-            outcome = row.get("outcome")
-            if stage_name is None or outcome not in OUTCOMES:
-                row_counts["invalid"] += 1
-                continue
-            row_counts["counted"] += 1
-            cells = stage_cells.setdefault(stage_name, {m: _empty_cell() for m in REPORT_MODES})
-            cell = cells[mode]
-            cell["runs"] += 1
-            cell["outcomes"][outcome] += 1
-            started_at = row.get("started_at")
-            ts = parse_ts(started_at)
-            if ts is not None and (cell["_last_ts"] is None or ts > cell["_last_ts"]):
-                cell["_last_ts"] = ts
-                cell["last_seen"] = started_at
     extra_skills = sorted(s for s in stage_cells if s not in installed_set)
     all_skills = list(installed_skills or ()) + extra_skills
     skills_payload = []
