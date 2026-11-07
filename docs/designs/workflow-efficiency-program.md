@@ -4,10 +4,12 @@
 
 Supporting scope and evidence for SPEC P1, selected by the owner on 2026-10-25
 and extended the same day with E12–E14. SPEC owns product scope and release
-policy; ROADMAP owns scheduling. This program
-does not add a 1.0 gate. O1–O5, public-release 1.0.0, potentially-public users,
-Paseo as the only supported workspace host (Conductor dropped 2026-11-06) and
-explicit merge authorization remain binding.
+policy; ROADMAP owns scheduling. Since the 2026-11-07 SPEC revision, outcome O6
+gates 1.0 on measured stage effort and an adopt, reject or insufficient-evidence
+decision for each item below; no individual item is a 1.0.0 gate. SPEC's
+1.0.0 target (the owner's own real use, by hand and through an orchestrator), its
+host-neutral orchestration contract and explicit merge authorization remain
+binding.
 
 Wrap upstream gstack; do not edit or pin it. Record the source revision of copied
 contracts. No new spend, direct model APIs or unattended merge. Consumer-owned
@@ -26,9 +28,9 @@ older producers' refusal/fallback behavior; unknown values never waive a gate.
 | E4 / R4 | Limit documentation reads using changed paths and affected contracts, including linked authoritative docs that describe a contract without naming a source file. Re-audit only a fix's delta plus the necessary contract context. Preserve honest current/updated/blocked outcomes and the existing audit-attempt bound. |
 | E5 / R2 | After E1 supplies timing and E13 supplies per-part finding quality, overlap cycle 1's specialists, independent native adversarial pass and outside pair on one immutable diff. Keep the two outside calls sequential for cache reuse. Red Team waits for merged specialist findings. Preserve host limits, all required coverage, result collection, deduplication, cap/stop and missing-voice holds. E12 sits beside this as an alternative. |
 | E6 | Every successful `/implement` handoff includes `DEFERRED BY USER <n>, BLOCKED <n>`, including zeros. Keep the blocked-refusal rule. An implementer waiting on its own long test stays inside the active turn, follows that run to completion and does not emit a partial handoff. The wait must outlast the host's foreground command cap (10 minutes in Claude Code, against a full suite of 30 to 70); three observed incidents had an implementer start the suite in the background and end its turn waiting. |
-| E7 / R7 | With a reviewed ship policy, `/ship-and-land` uses upstream `gstack-tree-receipt` for hunk-level stamp proof and per-lane reuse. Require its eligible result plus the existing evidence checks. A failed proof invalidates reuse; a missing policy retains the existing documented path. |
+| E7 / R7 | **Deferred to Future (2026-11-07):** its full-run credit applies under `full-suite=final`, and this project reviews under `full-suite=external`; see the Future entry of the same card title. With a reviewed ship policy, `/ship-and-land` uses upstream `gstack-tree-receipt` for hunk-level stamp proof and per-lane reuse. Require its eligible result plus the existing evidence checks. A failed proof invalidates reuse; a missing policy retains the existing documented path. |
 | E8 / R8 | With a usable pregate policy, `/docs-ship` obtains selected tests from nonexecuting `gstack-pregate --stage tests --explain`, bound to the verified base policy and exact delta. Define compatibility for existing markers and policy-less repositories without silently dropping tests. Explain the reported 211-minute run versus 34.5 minutes by separating work and waits, or record the precise missing evidence and instrument the next run. |
-| E9 / R10 | **Suspended (2026-11-07): `/autoplan-lean` was retired; whether these artifacts move to another producer is for the next `/roadmap` run (Track 71A).** `/autoplan-lean` emits `decisions.jsonl` and `findings.jsonl` beside its sidecar, validates them with upstream `gstack-artifact validate`, and retains auto/approval/user_challenge decisions, finding provenance and sealing/retry semantics. Existing handoff and sidecar consumers remain valid. |
+| E9 / R10 | **Killed (2026-11-07):** `/autoplan-lean` was retired (v0.72.0), so its sidecar has no successor here; reopen if an orchestrator needs machine-readable plan decisions from `/plan-track` or upstream `/autoplan`. `/autoplan-lean` emits `decisions.jsonl` and `findings.jsonl` beside its sidecar, validates them with upstream `gstack-artifact validate`, and retains auto/approval/user_challenge decisions, finding provenance and sealing/retry semantics. Existing handoff and sidecar consumers remain valid. |
 | E10 / R11 | Design the pending review-evidence envelope as review facts plus a reference to upstream's portable evidence bundle. Evaluate upstream review-log fields and binding rules for a completed full-review baseline; do not infer that a completed delta or a nonconverged pass supplies it. This is design input, not authorization to build another envelope format. The producer-side record of cycle 1's completed baseline belongs to E14; E10 specifies and checks it. |
 | E11 | Document the supported path from a capped STOPPED review: run its exact repair-only continuation when authorized, resolve the stop and reach prepared readiness, then `/ship-and-land`. Preserve continuation count, PR identity, `Full-review evidence: unavailable` and all remaining holds. A ship invocation cannot clear a stop. Owner decision, 2026-10-25: `/ship-and-land` keeps refusing a stopped draft, including one whose receipt records `Unresolved: none recorded`; once E14 exists, a capped pull request's path is its repair-only continuation. |
 | E12 | Opt-in fold mode. A `/review-and-prep` cycle-1 mode, a `Review policy:` value or a flag, runs cycle 1 without dispatching the specialist subagents; the main review pass reads the selected specialists' checklists itself, as reference loaded on demand. Red Team when its gate fires, the native adversarial pass and the outside voices stay. Installed upstream triggers Red Team on a diff over 200 lines or on a specialist CRITICAL finding; with no specialist dispatches, restate that as the size arm or a CRITICAL finding from the folded pass. Gate the mode on byte-for-byte installed `/review` text, as `in-cap=delta` does, and edit no upstream file; if folding needs upstream text to change, record that and stop. Its anchors join `bin/upstream-check`'s inventory once the E2 checker has shipped. Today's default stays and the receipt records which arm ran. The `Review policy:` grammar is v1 with fixed keys, so document an older producer's fallback (an unknown key or value reads as `none supplied`). Upstream's adaptive gating statistics learn from specialist dispatches only, so folded checklist parts add no sample; a dispatched Red Team still adds its own sample. The evidence is observed incidents, not repeated measurements: two first review invocations in which all seven specialists returned no findings (two specialists reported one finding each in a later repair pass of one of them), and one 249-minute review that spent 51 minutes in first-cycle specialists. The quality comparison is an external backtest the caller runs on retained reviews; this program authorizes no spend and no default change. |
@@ -66,8 +68,9 @@ edge. That edge is a priority choice, not a technical prerequisite of E1.
    tokens. E12 sits beside E5 as an alternative; E1's timings decide their order,
    and if folding wins, overlapping the specialists matters less. The ROADMAP
    packer's order between them is a placeholder, not that decision.
-6. **Optimize the remaining paths:** E8 docs-only selection/investigation and
-   E7 mechanical release-only reuse, then E9 machine planning artifacts.
+6. **Optimize the remaining paths:** E8 docs-only selection/investigation. E7
+   mechanical release-only reuse is deferred and E9 machine planning artifacts
+   are killed (2026-11-07, see their rows).
 7. **Complete supporting contracts and acceptance:** E10/E11 evidence/recovery
    documentation, the stable catalog, both-host acceptance and the final
    cross-run efficiency assessment. Retain every existing obligation.

@@ -5,10 +5,13 @@ implement it, review it, test it with a human, and ship it.
 
 ## Product direction
 
-The project is in public beta. [The project spec](docs/SPEC.md) defines the
-1.0 contract: a dependable complete skill workflow on **Paseo**, the only
-supported workspace host (Conductor is no longer supported), plus stable
-handoffs for external orchestrators.
+The repository is public, and the project is in public beta. [The project
+spec](docs/SPEC.md) defines 1.0 as the maintainer's own real use: a dependable
+complete skill workflow, run stage by stage by hand or launched by an
+orchestrator, plus a published orchestration contract that says what a
+workspace host or orchestrator must provide. No particular host or orchestrator
+is required, and support claims cover only the combinations actually exercised.
+Conductor is no longer supported. A public release is the planned next stage.
 Quota-driven routing and unattended shipping remain later work. The
 [roadmap](docs/ROADMAP.md) lists the required work;
 [acceptance records](docs/PROGRESS.md#acceptance) distinguish pending proof from
@@ -169,7 +172,9 @@ on your PATH, use `~/.claude/skills/gstack-extend/bin/gstack-extend` directly.
 - **Quota ledger (experimental):** `gstack-extend quota status --refresh` checks
   remaining vendor capacity; `gstack-extend doctor quota` diagnoses adapters.
   Only explicit quota commands sample vendors. [Quick start and JSON contract](docs/quota-ledger.md).
-- **Telemetry:** `gstack-extend doctor telemetry` checks local skill-run records.
+- **Telemetry:** `gstack-extend doctor telemetry` checks local skill-run records;
+  `gstack-extend-telemetry report [--json]` summarizes them by
+  [run mode](docs/telemetry.md#run-mode-report) (user-directed or orchestrated).
   Optional usage telemetry follows gstack's settings; local execution provenance
   is on by default and never uploaded. `/review-and-prep` and `/ship-and-land`
   also keep optional local [workflow metrics](docs/telemetry.md#workflow-metrics)

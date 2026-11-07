@@ -6,54 +6,35 @@ file footprints and their launch dependencies. Explicit scheduling edges carry
 the owner's priority order, and each card's **Scheduling:** line separates its
 priority choices from technical prerequisites.
 
-**Owner order.** The owner's 2026-10-30 efficiency-review order has shipped
-(Tracks 47A, 48A, 33A, 49A, 50A and 51A, v0.53.0 to v0.59.0). On 2026-11-01 the
-owner kept that order with the skill-test narrowing next; it shipped as Track
-52A (v0.60.1). On 2026-11-02 the owner approved review-finding attribution
-first, then the folded first cycle and caller-configured review delegation as
-two measured arms, all ahead of the paused and resumed telemetry Track ("Yes -
-your rec sounds good, let's fix" and "1"). That order ran Tracks 64A, 64B, 57A,
-64C and 58A (v0.60.2 to v0.63.0). The edges from 57A and 58A to the bounded
-documentation-audit Track (then 56A, shipped as 68A) were priority choices, and that
-order superseded them. Groups 65 and 66 then shipped in full on 2026-11-03 and
-2026-11-04 (Tracks 65C, 65A, 65D, 65B, 66A and 66B, v0.63.1 to v0.66.0), under
-the owner's "Yes go" (65B, 2026-11-04), "Merge when ready and keep going"
-(2026-11-04) and "Yes and then start 66b" (2026-11-04). Tracks 67A (run and
-child usage telemetry, v0.67.0) and 68A (bounded documentation audits, v0.68.0)
-followed on 2026-11-05 in the roadmap's own order. The roadmap's order continues
-with first-cycle review overlap (69A), then docs-only test selection and
-release-only proof (Group 70).
+**Spec revision, 2026-11-07.** The owner revised [SPEC](SPEC.md): 1.0.0 is the
+owner's own real use, by hand and through an orchestrator, and the public
+release (the owner's "2.0") is the next stage; no single workspace host is
+required, because a published orchestration contract (O4) says what a host or
+orchestrator must provide, and O3 is evidenced by two real drivers; bounded,
+measured stage effort is outcome O6. The owner's answers that shaped this plan
+(2026-11-07): "1 - a", "2 yes", "3 yes", "70b yes future", "71a yes kill",
+"70a ok", "72c ok", "72a confirm" and "72d confirmed as well", using that day's
+labels. The pair-review redesign ("pair-review design: yes"), the Codex sandbox
+fix ("let's do everything under our control though to resolve this") and the
+retirement of `/autoplan-lean` ("yes, kill autoplan-lean") were approved the
+same day, as were capturing the owner's hand use in telemetry ("we need to make
+sure telemetry captures my use by hand") and labelled release-note disclosures
+in plans and review handoffs ("sure if necessary").
 
-**Pause for the Linux move.** The owner paused new work after the 2026-11-05
-docs PR while the development setup moved to a new machine. The pause ended on
-2026-11-06 with "let's get going on the next track", and Track 69A started.
+**Order.** The owner's efficiency order through Track 69A has shipped (see
+shipped history), and so has the retirement of `/autoplan-lean` (Track 70A,
+v0.72.0). The plan builds the published contract and the pair-review change side by
+side, moves the skills and telemetry onto the contract's signals, makes hand use
+visible in telemetry, qualifies install/upgrade and the two-driver workflow on
+that final behavior, and ends with the O6 measurement and decisions, whose rows
+come from those real runs.
 
 **Keep moving; park only what we should not do.** Owner rule (2026-11-05): "we
 never want to 'park' something -- we always want to find a way to keep moving
 forward". A stalled or blocked Track is unblocked, split or rerouted, not set
 aside. "parking is an option when it turns out we shouldn't even do a track,
 because it's counter to our objectives, then it would make sense to park and
-re-evaluate". The Linux-move pause is the owner's schedule, not a parked Track.
-
-**Conductor dropped.** Owner decision (2026-11-06): "we are dropping conductor".
-[SPEC](SPEC.md) now names Paseo as the only supported workspace host. Track 72B
-(the Conductor qualification) is retired unshipped, with its Conductor-only
-obligations, which the owner confirmed retired on 2026-11-06: the native
-Cursor receipt and row-interpretation check from Track 23G and the Conductor
-host-attribution check deferred from Track 26A.
-Its host-neutral obligations (cross-session handoff, an independently followed
-onboarding attempt, and the Sonnet-class and `/roadmap` `/docs-ship` runs) move
-to the Paseo Track 72C. Removing the Conductor code is the Future entry
-"Remove Conductor support from the code".
-
-**Labels.** The regeneration of 2026-11-03 relabelled the nine remaining Groups
-53 to 56 and 59 to 63 as Groups 65 to 73 in packer order (`53A` became `65A`,
-`56A` became `68A`, `63A` became `73A`; the full map is in that commit
-message). The regenerations of 2026-11-04 and 2026-11-05 keep the remaining
-Groups (now 69 to 73) and their letters unchanged: the packer's bins for the
-remainder are the same. Shipped numbers 33, 47 to 52, 57, 58 and 64 to 68 are
-reserved by tombstones; 64 was never a roadmap Group, and Tracks 65C and 65D
-were added inside Group 65 when they were launched.
+re-evaluate".
 
 **Dropped: Track 35B.** The `full-suite=before-audit` value was dropped rather
 than renumbered (2026-10-31): under `full-suite=final` and
@@ -83,156 +64,233 @@ card, with the reason on its Scheduling line; the review-fix policy pair stayed
 split on purpose (both Tracks have shipped, 33A in v0.55.0 and 51A in v0.59.0;
 the reason is on 51A's shipped receipt).
 
-Target: [SPEC](SPEC.md) O1–O5, public-release 1.0.0, potentially-public users.
-Paseo is the only supported workspace host. The owner-selected
-[efficiency program](designs/workflow-efficiency-program.md), SPEC P1, is additional
-work and does not gate 1.0. Implementation, installed/operator evidence and
-owner acceptance remain distinct. No new spend or unattended merge is authorized.
+**Labels.** This regeneration recorded Tracks 69A to 69D and 70A, retired
+Groups 69 and 70 and relabelled the remaining work from Group 71 in packer
+order; the renames are in its commit messages. Shipped numbers through 70 are
+reserved by tombstones; 64 was never a roadmap Group.
+
+Target: [SPEC](SPEC.md) O1–O6, 1.0.0 as the owner's own real use by hand and
+through an orchestrator; audience ceiling potentially-public. No workspace host
+or orchestrator is required; support claims name only exercised combinations.
+Implementation, installed/operator evidence and owner acceptance remain
+distinct. No new spend or unattended merge is authorized.
 
 ## In Progress
 
-Track 69A was declared in flight to this regeneration on 2026-11-06 (a working
-session; no PR was open at its base), so Group 69 keeps its label and card.
-Every shipped Track is recorded independently in shipped history; the latest
-are 67A (v0.67.0) and 68A (v0.68.0). Track 28A's required published-release
-upgrade acceptance remains in Future; its revisit trigger, the first published
-three-part release, was met by v0.48.0 and the item awaits an owner
-reassessment. O1 and O3–O5 remain pending.
-
-### Group 69: Shorten the first review cycle
-
-_Depends on: none_
-
-**This group delivers:** Measured overlap of independent first-cycle review work without losing finding quality.
-
-##### Track 69A: Overlap independent first-cycle review work
-_1 tasks . ~230 LOC incl. tests . medium risk_
-**Outcome:** A full first review cycle can finish sooner without losing independent coverage.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25
-**Done when:** E1 establishes a baseline; one immutable scope feeds concurrent specialists, native adversarial and outside pair, with the pair internally sequential and Red Team after merged findings. Host-cap fallback and incomplete voices preserve holds. Before/after wall time and finding quality support activation.
-_touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts, tests/workflow-metrics.test.ts, docs/acceptance/review-concurrency.md (new)_
-_blocked-by: Track 31A, Track 29A, Track 68A, Track 57A_
-**Scheduling:** Owner order, 2026-10-25: after the per-finding attribution Track (shipped as 57A, v0.61.0), whose per-part finding quality this Track's activation evidence needs. The folded first cycle shipped first as an opt-in arm (58A, `specialists=fold`, v0.63.0), beside caller-configured delegation (64C, `delegate=`, v0.62.0), the two measured arms of the owner's 2026-11-02 order. Settle at planning how overlap behaves when either value is set, and whether their measured runs still leave overlap worth building. Since installed gstack 1.94.39.0 both values stay off: Track 65C (v0.63.1) left their anchors unqualified because upstream `/review`'s "Done means" contract requires one Agent dispatch per selected specialist, and the Future entry "Reconcile `delegate=` and `specialists=fold` with upstream /review's specialist-dispatch contract" owns that reconciliation, so neither arm's measured run can happen until it lands.
-_Source: program E5 / research R2_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Overlap only verified-independent inputs** -- Recheck upstream dependencies; preserve no-fix-before-collection, deduplication, cycle cap, stop and outside-call policy; qualify both hosts and retain the old default behind an option until public activation evidence exists. _~230 lines._ (M)
+No Track is declared in flight. Track 70A (retire `/autoplan-lean`), declared in
+flight while this regeneration was drafted, shipped as v0.72.0 (PR #215) before
+it merged and is recorded in shipped history with 69A to 69D. O1 and O3–O6
+remain pending; O2 was accepted on 2026-10-23.
 
 ## Current Plan
 
-_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68_
+_tombstone: 17, 19, 20, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 47, 48, 49, 50, 51, 52, 57, 58, 64, 65, 66, 67, 68, 69, 70_
 
-### Group 70: Docs-only test selection ∥ release-only proof and full-run credit
+### Group 71: Install/upgrade qualification ∥ contract, pair-review narrowing, docs-only selection and the Codex sandbox
 
-_Depends on: Group 69_
+_Depends on: none_
 
-**This group delivers:** A shared docs-only test map, an explained elapsed-time outlier, mechanical release-stamp proof and an opt-in credit for a prepared full run across a release-only delta.
+**This group delivers:** The owner's install/upgrade/recovery evidence including the published three-part upgrade, the published orchestration contract, agent verification ahead of human testing, policy-backed docs-only test selection and a suite that passes inside Codex's sandbox.
 
-##### Track 70A: Use pregate to select docs-only tests and explain long runs
+##### Track 71A: Qualify install, upgrade and recovery on the owner's machines
+_2 tasks . ~160 LOC . medium risk_
+**Outcome:** The owner can install, onboard, upgrade and recover a working skill set on a fresh machine from the published instructions, with evidence of what was actually installed.
+**Supports:** [SPEC](SPEC.md) O1 (all three criteria) and O5.2; the preserved published three-part upgrade obligation from Track 28A planning (2026-10-23), whose trigger was met by v0.48.0.
+**Done when:** A dated record names the OS, host, harnesses and versions of a fresh install and project onboarding on the owner's machine, actionable failures for a missing prerequisite, an upgrade with user-owned files preserved and stale copies reported, a working recovery path, and a real legacy four-part install upgraded through the default remote with offered and installed commit/tag identity, reader compatibility and unchanged user state; it records the actual installed commit and discloses that upgrade offers follow main rather than a release identity; failures stay open; the owner confirms before O1 counts.
+_touches: docs/acceptance/install-upgrade.md (new)_
+_blocked-by: Track 70A, Track 28A_
+**Scheduling:** Technical edge on Track 70A (shipped, v0.72.0): the qualified upgrade includes removing the retired skill. Candidate or file-remote proof does not satisfy the published-upgrade obligation.
+_read-first: docs/installation.md, docs/acceptance/release-compatibility.md_
+- **Fresh install, onboarding, upgrade and recovery** -- Run them on the owner's machine from the published instructions and record each step, intervention and result. _~90 lines._ (M)
+- **Published three-part upgrade from a legacy install** -- Upgrade a real four-part install through the default remote and record offered and installed identity, reader compatibility, recovery and unchanged state beside `docs/acceptance/release-compatibility.md`. _~70 lines._ (M)
+
+##### Track 71B: Use pregate to select docs-only tests and explain long runs
 _2 tasks . ~280 LOC incl. tests . medium risk_
 **Outcome:** Docs-only shipping has one policy map for selected tests and attributable work/wait timing.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O3 documentation workflow.
+**Supports:** [SPEC](SPEC.md) O6, a non-gating candidate optimization (P1, selected efficiency program item E8, 2026-10-25), kept in the plan by the owner on 2026-11-07 ("70a ok") because `/docs-ship` ships every roadmap and spec PR.
 **Done when:** With a usable base policy the nonexecuting pregate explanation owns selected tests and reasons for the exact delta; missing/invalid policy and legacy marker handling are explicit and conservative. Same-tree evidence reuse survives. The reported 211-minute outlier has an evidenced explanation; any unavailable intervals remain open unless the owner explicitly defers that obligation.
 _touches: src/docs-ship/pinning.ts, src/docs-ship/cli.ts, src/docs-ship/config.ts, skills/docs-ship.md, docs/docs-ship.md, tests/docs-ship.test.ts, tests/skill-protocols-docs-ship.test.ts_
 _blocked-by: Track 31A, Track 29A, Track 69A_
-**Scheduling:** Prioritize the main review savings before the separate docs-only path and its long-run investigation; relative call frequency has not been established.
+**Scheduling:** Its before/after evidence feeds the O6 decision for item E8; the change itself is not a 1.0 gate.
 _Source: program E8 / research R8_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Adopt the policy map compatibly** -- Consume exact-delta/base-policy explanation, preserve no-lane and error semantics, and cover policy-backed, policy-less, configured-marker and bump-delta cases without silently losing coverage. _~210 lines._ (M)
-- **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach installed-host qualification to the Paseo host Track (72C). _~70 lines._ (S)
+- **Account for long docs-only runs** -- Separate active review/test work, host/tool stalls and human waits using E1; retain bounded evidence and unknowns, and attach the installed `/docs-ship` run to the two-driver workflow qualification. _~70 lines._ (S)
 
-##### Track 70B: Prove release-only reuse mechanically and credit a prepared full run across a release-only delta
-_3 tasks . ~520 LOC incl. tests . medium risk_
-**Outcome:** A policy-equipped repository gets mechanical stamp-hunk proof before release gate reuse, and an opted-in caller whose preparation already ran the full suite on the prepared head does not run it again for a release-only commit.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25 and owner-approved release-only credit, 2026-10-26; O3/O5 release integrity.
-**Done when:** The verified base ship policy drives gstack-tree-receipt; eligible per-lane proof and current evidence are required; same-file functional edits, unreadable policy, stale evidence and stamp-sensitive tests cannot reuse improperly; repositories without policy keep the documented existing path. Under an opt-in policy value (named at planning), when `full-suite=final` is recorded `/ship-and-land` credits a verified full run of the prepared head (same tree, the documented full command, exit 0, tests ran, recorded in the ledger) across a release-only delta and runs only what that delta selects, instead of the full form a second time; without the value, `full-suite=final` keeps today's meaning. An opt-in per-repository list of extra release files keeps a release commit that also edits such a file (for example an acceptance record) on the release-only path; omitted, the release files stay VERSION, the CHANGELOG entry and the files `/ship`'s version tool writes. Under the same opt-in and `full-suite=final`, a verified pregate selection may stand as preparation's main-suite run when the main test command does not select from the diff (today `/review-and-prep`'s coverage rule then runs the full main command). Release edits follow one rule: only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it. Omitted-policy behavior and an older producer's fallback are documented, and before/after test time is measured on a real run.
-_touches: skills/ship-and-land.md, skills/review-and-prep.md, tests/skill-protocols-ship-and-land.test.ts, tests/skill-protocols-review-and-prep.test.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts, tests/fixtures/handoffs/, CLAUDE.md_
-_blocked-by: Track 29A, Track 69A_
-**Scheduling:** Land the main review speed improvements before optimizing release-only proof. **Reach, stated for the owner (2026-11-03):** the full-run credit and the pregate-selection allowance apply under `full-suite=final`, while this project's own reviews run under `full-suite=external` (PRs #191 to #196), so as written they would not shorten this project's releases. Whether the opt-in should also cover `full-suite=external` is settled at planning; the card's scope is unchanged. The mechanical proof and the full-run credit were two Tracks under the card-size rule; the credit edited the same ship-and-land and handoff files and consumed the proof's eligibility result, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~520 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
-_Source: program E7 / research R7; owner-approved release-only full-run credit, 2026-10-26_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Integrate mechanical eligibility** -- Record the exact upstream source and helper result, retain required checks and receipt compatibility, and demonstrate valid version-only changes versus invalid hunks without authoring any consumer ship policy. _~210 lines._ (M)
-- **Credit a prepared full run across a release-only delta** -- Under the opt-in value, accept a verified full run of the prepared head plus the release-delta selection at Verification Gate (16); add the opt-in per-repository release-file list as a documented project setting; state that rule (only an opted-in release-only delta over a credited full run skips the full rerun, and any other or unknown change still runs it); update the handoff grammar and this repository's release-selection note in `CLAUDE.md`. _~230 lines incl. tests._ (M)
-- **Let a verified pregate selection stand when the main command does not select** -- Under the same opt-in and `full-suite=final`, let preparation's verified pregate selection (complete selection retained, tests ran) satisfy its main-suite run when the main command is not a selector, instead of the full main command; partial or unknown coverage keeps today's rule. _~80 lines incl. tests._ (S)
+##### Track 71C: Publish the orchestration contract
+_2 tasks . ~220 LOC . medium risk_
+**Outcome:** A person writing an orchestrator, or configuring a workspace host, can read what they must provide and what each stage promises, without reading skill prose.
+**Supports:** [SPEC](SPEC.md) O4.1 (owner, 2026-11-07: host-agnostic, "publish good documentation about how an orchestrator can use our skill flow successfully").
+**Done when:** A versioned contract names what a host or orchestrator must provide (a worktree-ownership signal, a state root, a run-mode signal for every stage it launches, interactive or not, resume semantics and approval semantics) and, for each stage, what it promises (stage identity, status/hold, plan and repository/PR identity, checked revision, artifact references, next action), linking the existing handoff grammar instead of copying it; every requirement names its current provider in the code or is marked not yet honored, with the Track that closes it; existing `Run /review-and-prep` and `review-and-prep/v1` consumers stay valid; no orchestrator is named as required and no unexercised combination is claimed.
+_touches: docs/orchestration-contract.md (new)_
+**Scheduling:** First of the host-neutral chain: the skill-guard and telemetry Tracks implement the signals it names. It writes one new document and links it from nothing else; the catalog Track adds the README and installation links.
+_read-first: docs/workflow-handoffs.md, docs/telemetry.md_
+- **State what a host or orchestrator provides** -- Worktree-ownership signal, state root (`GSTACK_STATE_ROOT` and its fallbacks), resume and approval semantics, and the run-mode signal an orchestrator sets for every stage it launches, interactive workers included, each traced to the code that reads it today. _~120 lines._ (M)
+- **State what each stage promises** -- One row per stage linking its handoff grammar, holds and next action, plus the compatibility and versioning rules. _~100 lines._ (M)
 
-### Group 71: Machine-readable planning artifacts
+##### Track 71D: Verify agent-checkable items before human testing
+_2 tasks . ~240 LOC incl. tests . medium risk_
+**Outcome:** `/review-and-prep` sends a person only the checks that need human judgment or access; everything an agent can check is verified first with the installed upstream QA skill that fits the project, with recorded evidence.
+**Supports:** [SPEC](SPEC.md) O3 (manual-testing pause/resume stays human testing, not autonomous QA); owner, 2026-11-07: "there are just items that should never go to pair review because they can be qa'd without the user in the review process".
+**Done when:** "Identify required user testing" counts only judgment or access (look and feel, a physical device, credentials only the human holds, a decision), no longer "exercising a flow in the app"; items an agent can check run before any pause through the installed QA skill that fits (the plan checks what is installed and each skill's contract, for example `/qa-only` or `/browse` for a web app, `/qa`'s CLI/API modes, `/ios-qa` for an iOS app), and their evidence is recorded in the completion matrix; an app the agent cannot drive falls back to the human with the reason recorded, never by default; destructive actions against shared environments stay with the human; a failed agent check is never re-marked passed; protocol tests lock each rule.
+_touches: skills/review-and-prep.md, tests/skill-protocols-review-and-prep.test.ts_
+**Scheduling:** The owner approved this design on 2026-11-07 ("pair-review design: yes"); it is the first of two Tracks under the card-size rule, and the `/pair-review` Track consumes its narrowed definition.
+- **Narrow required user testing to judgment or access** -- Rewrite the definition and its pause trigger; keep `manual testing pending` semantics, the passed-status invariant and the H-C pause handoff unchanged. _~90 lines._ (M)
+- **Run agent-checkable items through the fitting QA skill first** -- Select the installed upstream QA skill by project type, record its evidence in the matrix, fall back to the human only when the agent cannot drive the app, and never let the agent re-mark its own failed check. _~150 lines incl. tests._ (M)
 
-_Depends on: Group 70_
+##### Track 71E: Make the suite pass inside Codex's workspace-write sandbox
+_1 tasks . ~120 LOC incl. tests . low risk_
+**Outcome:** The tests pass the same on the host and inside a Codex worker's workspace-write sandbox, so a Codex implementer's or reviewer's targeted checks never fail on the test environment.
+**Supports:** [SPEC](SPEC.md) O3 (a supported driver's checks must not fail on its own sandbox); owner direction, 2026-11-07: "let's do everything under our control though to resolve this" (no upstream report).
+**Done when:** `tests/layout-scaffold.test.ts` passes on the host and inside `codex sandbox -c sandbox_mode=workspace-write`, with and without `TMPDIR` set to a private directory and with `/tmp` excluded from the sandbox's writable roots; a plain root with a real `.git` ancestor is still refused, and a test proves it; no assertion is weakened, no retry is added and `src/layout-scaffold/` behavior is unchanged unless the plan names why; the handoff records the sweep: each other test file with the same pattern and whether it now passes under the sandbox.
+_touches: tests/layout-scaffold.test.ts, tests/helpers/fixture-repo.ts_
+_blocked-by: Track 69C_
+**Scheduling:** Facts probed on 2026-11-07 with codex-cli 0.167.0: in workspace-write mode Codex bind-mounts a read-only `.git` at every writable root (the workspace, `/tmp`, `$TMPDIR`), creating an empty mount point where none exists, present inside the sandbox for the whole command. At v0.70.0, `codex sandbox -c sandbox_mode=workspace-write -- bun test tests/layout-scaffold.test.ts` printed "0 pass, 1 fail, 1 error", because the suite places its roots under `$XDG_RUNTIME_DIR`, which the sandbox cannot write; on the host the file passes 183/183. A caller-side change giving Codex workers a private `TMPDIR` still leaves an empty `.git` at that `TMPDIR` inside the sandbox. `tests/helpers/fixture-repo.ts` is a global touchfile, so its edit runs the whole suite.
+_read-first: tests/layout-scaffold.test.ts, src/layout-scaffold/root.ts_
+- **Pass inside and outside the sandbox** -- Choose the suite's private temp parent from a location the running process can actually write (probe rather than assume `XDG_RUNTIME_DIR`) and make the expectations hold when an empty read-only `.git` sits at that location's writable root; keep the product refusal, every assertion and no retry; a test-only boundary needs the plan to show why no other route works. Then sweep the other test files for the same pattern (plain temp roots plus an upward `.git` lookup or `git` probe) and fix any that fail under the sandbox the same way. _~120 lines._ (M)
 
-**This group delivers:** Validated upstream-compatible decisions and findings artifacts alongside the current lean sidecar.
-
-##### Track 71A: Publish upstream-schema lean planning artifacts
-_1 tasks . ~240 LOC incl. tests . medium risk_
-**Outcome:** An orchestrator can inspect decisions and findings without parsing the review prose.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O4 compatible artifacts.
-**Done when:** decisions.jsonl and findings.jsonl validate with installed upstream schemas, carry auto/approval/user_challenge decisions and attributed findings beside the sidecar, and remain consistent on sealing, retries and phase replacement; existing prompt/handoff consumers are unchanged.
-_touches: src/autoplan-lean/sidecar.ts, src/autoplan-lean/cli.ts, src/autoplan-lean/history.ts, skills/autoplan-lean.md, docs/workflow-handoffs.md, tests/autoplan-lean.test.ts, tests/autoplan-lean-history.test.ts, tests/skill-protocols-autoplan-lean.test.ts_
-_blocked-by: Track 29A, Track 32B, Track 70B, Track 70A_
-**Scheduling:** Land direct test, audit, review and shipping efficiency changes before the planning-artifact producer.
-_Source: program E9 / research R10_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Emit and validate machine artifacts** -- Map the current sidecar semantics to upstream schemas; preserve IDs and source provenance and report unknowns; bind records to the sealed plan/review without inventing decisions or adding a parallel format. _~240 lines._ (M)
-
-### Group 72: Supporting contracts and Paseo host acceptance
+### Group 72: Contract host attribution ∥ release-note labels
 
 _Depends on: Group 71_
 
-**This group delivers:** A stable-interface catalog, evidence/recovery design and qualification on Paseo.
+**This group delivers:** Host attribution through the contract in telemetry, and labelled release-note disclosures in plans and review handoffs.
 
-##### Track 72A: Publish the stable compatibility and recovery catalog
-_1 tasks . ~180 LOC incl. tests . medium risk_
-**Outcome:** Public users can identify stable interfaces, experimental exclusions and recovery obligations.
-**Supports:** [SPEC](SPEC.md) O5.1; preserved required inbox obligation, 2026-10-23
-**Done when:** A catalog names every promised surface, version/compatibility rules, support conditions and recovery links; stage-runs v2 is one checked example, not the whole catalog. Experimental surfaces stay explicitly excluded; no checkpoint is awarded by documentation alone.
-_touches: docs/compatibility.md (new), docs/SPEC.md, README.md, docs/installation.md_
-_blocked-by: Track 28A, Track 71A_
-**Scheduling:** The stable-interface catalog remains a 1.0 obligation but does not delay the selected efficiency work.
-_Source: [plan-ceo-review] stable compatibility surfaces (O5.1)_
-_read-first: docs/designs/workflow-efficiency-program.md_
-- **Catalog the promised surfaces** -- Trace CLI/config, skills, handoffs, provenance and install ownership against shipped code and public instructions. Carry the existing stable promises and disclose unknown qualification; retain O5 acceptance as an owner gate. _~180 lines._ (M)
+##### Track 72A: Attribute workspace hosts through the contract in telemetry
+_3 tasks . ~260 LOC incl. tests . medium risk_
+**Outcome:** Provenance rows record the workspace host from the contract's signal, Conductor-only reading code is gone, and every existing row stays readable.
+**Supports:** [SPEC](SPEC.md) O4.2 and O4.4 (host evidence distinguishable, public provenance schemas readable); owner, 2026-11-07 (host-specific markers replaced by the generic contract).
+**Done when:** `bin/lib/telemetry.py` takes host attribution from the contract's signal instead of the `PASEO_AGENT_ID`/`CONDUCTOR_SESSION_ID` pair, and its Conductor Cursor-store reader and `conductor` route are removed; the schema and `docs/telemetry.md` keep accepting old rows' `conductor` route and `workspace_host` values; the four recorded report test gaps from Track 69D's review have tests; the release notes disclose the incompatible change under the 0.x policy.
+_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/stage-runs.schema.json_
+_blocked-by: Track 71C, Track 70A_
+**Scheduling:** Technical edge on Track 71C (the contract names the host-attribution signal); the edge on Track 70A (shipped, v0.72.0) is satisfied. The quota ledger's Conductor store reader stays in Future: quota is experimental and not a host guard or marker.
+_read-first: docs/orchestration-contract.md, docs/telemetry.md_
+- **Attribute the host from the contract and drop the Conductor reader** -- Replace the marker pair, remove the Conductor store reader and route, keep old rows valid. _~170 lines incl. tests._ (M)
+- **Keep the schema and documentation readable for old rows** -- Document the change, keep historical enum values, and disclose it. _~40 lines._ (S)
+- **Cover the recorded report test gaps** -- Structured transcript resume forms, signal-reader exception isolation, missing installed-skill metadata and report filesystem error diagnostics (`[review:files=bin/lib/telemetry.py]`, recorded 2026-11-07). _~50 lines._ (S)
 
-##### Track 72C: Qualify the complete Paseo workflow and external and cross-session handoffs
-_1 task . ~200 LOC incl. tests . medium risk_
-**Outcome:** Paseo users and an external orchestrator can carry real work through the supported stages.
-**Supports:** [SPEC](SPEC.md) O1/O3/O4 — workspace guard wording is shipped, but end-to-end host and consumer acceptance is not established.
-**Done when:** A named release/profile has fresh install, upgrade/recovery, real plan-to-authorized-release, interrupted resume, manual-testing pause, full-review restart, external-consumer handoff and cross-session handoff evidence; pending approvals or failures remain holds.
-_touches: docs/acceptance/paseo.md (new)_
-_blocked-by: Track 26A, Track 23I, Track 23A, Track 28A, Track 26B, Track 65A, Track 66A, Track 66B, Track 71A_
-**Scheduling:** Retain broad host qualification after the direct efficiency changes and planning artifacts; moving telemetry earlier does not move or waive this acceptance gate. The update-check edge keeps the upgrade qualification on the final upgrade behavior.
-- **Exercise the supported Paseo profile** -- Use the actual host-managed worktree and approved accounts with Codex implementation, Cursor review and Claude planning/release where supported. Retain the bound PR and worktree, test stale/partial/held handoffs, confirm next-stage consumption from artifacts, and count operator interventions. Include the installed Paseo host-attribution check the user deferred from Track 26A (DFR1). Verify preserved work and stable artifact bindings after changing sessions (the cross-session handoff moved from the retired Conductor Track 72B, 2026-11-06). The real external consumer may stop at a ready PR; a separate authorized human-driven run proves landing. At least one of the two onboarding attempts must be followed independently of the maintainer. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. _~200 documentation lines._ (L)
-**Include installed `/docs-ship` acceptance** -- Run a real docs-only PR on Paseo through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging. Include one Sonnet-class run and one `/roadmap` handoff; compare work/wait wall time with a recent docs PR shipped through the ordinary path. Source: `[manual] Qualify /docs-ship on a real docs-only PR on both workspace hosts`, 2026-10-23 (Paseo only since 2026-11-06). This is part of the one host qualification task, not another release authorization.
+##### Track 72B: Carry release-note disclosures from the plan through the review handoff
+_3 tasks . ~180 LOC incl. tests . low risk_
+**Outcome:** An orchestrator's release step can read labelled release-note and upgrade-risk disclosures from the plan and the review handoff instead of inferring them from prose.
+**Supports:** [SPEC](SPEC.md) O4.1 (what each stage promises) and O5.1 (disclosed upgrade risk); owner, 2026-11-07 ("sure if necessary"). Today no stored plan carries such labels and almost no review handoff does.
+**Done when:** `/plan-track` writes an optional labelled block of `Release note:` and `Upgrade risk:` lines only when a change needs a disclosure, never reusing Risks bullets; `/review-and-prep`'s handoff carries `User-facing change:` lines kept out of the `Run /ship-and-land` and `stage-handoff/v1` lines; `docs/workflow-handoffs.md` documents both with the grammar a consumer reads (label singular or plural, optionally bold, inline or as a bullet block, outside code fences); protocol tests lock both; existing handoff consumers are unaffected.
+_touches: skills/plan-track.md, skills/review-and-prep.md, docs/workflow-handoffs.md, tests/skill-protocols-plan-track.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/handoff-contract.test.ts_
+_blocked-by: Track 70A, Track 71D_
+**Scheduling:** The edges are priority choices ordering edits to the same skill, handoff and test files behind the retirement of `/autoplan-lean` (shipped as Track 70A, v0.72.0) and the narrowed user-testing Track. On 2026-11-07 a search of `skills/`, `src/`, `bin/`, `docs/workflow-handoffs.md` and `docs/roadmap-shipped.md` found none of the three labels, so the grammar clashes with nothing.
+- **Optional disclosure block in /plan-track** -- `Release note:` / `Upgrade risk:` lines, written only when needed. _~40 lines incl. tests._ (S)
+- **`User-facing change:` lines in the review handoff** -- Emit them beside, never inside, the `Run /ship-and-land` and `stage-handoff/v1` lines. _~70 lines incl. tests._ (M)
+- **Document and lock the label grammar** -- Add the grammar to the handoff contract with fixtures. _~70 lines incl. tests._ (S)
 
-##### Track 72D: Specify portable review evidence and capped-review recovery
+### Group 73: Hand use in telemetry ∥ human-judgment pair-review
+
+_Depends on: Group 71, Group 72_
+
+**This group delivers:** Telemetry that records the owner's hand use correctly across machines, and a `/pair-review` that carries only human-judgment items.
+
+##### Track 73A: Record hand use accurately across the owner's machines
+_3 tasks . ~260 LOC incl. tests . medium risk_
+**Outcome:** The owner can see in telemetry how often they run each stage by hand, on every machine they use, and an orchestrated run is never counted as hand use.
+**Supports:** [SPEC](SPEC.md) O6.1 and O3.3 (the by-hand driver's evidence); owner, 2026-11-07: "we need to make sure telemetry captures my use by hand, because I use it by hand often enough but you don't seem to be aware of it".
+**Done when:** A stage the owner runs by hand is recorded `user-directed` in each harness the owner uses by hand, or `unknown` with the reason where no signal can show it, never a guess; a stage an orchestrator launches, interactive or not, is never recorded `user-directed` when it carries the orchestration contract's run-mode signal, and an interactive session in a host-managed workspace without that signal is not assumed to be hand use; `gstack-extend-telemetry report` can read per-host files synced from the owner's other machines (no hosted service) and shows hand use per machine; a dated record holds real by-hand runs on each of the owner's machines read back as `user-directed`, and an orchestrated interactive run read back as `orchestrated`; until that record exists, nothing claims hand use is captured.
+_touches: bin/lib/telemetry.py, tests/telemetry.test.ts, tests/telemetry-contract.test.ts, docs/telemetry.md, docs/acceptance/hand-use-telemetry.md (new)_
+_blocked-by: Track 71C, Track 72A_
+**Scheduling:** Technical edge on Track 71C (the contract names the run-mode signal an orchestrator sets for every stage it launches). The edge on Track 72A orders edits to the same telemetry files. Facts at 0.71.0 (`bin/lib/telemetry.py` `run_mode()`, checked 2026-11-07): with no `GSTACK_SESSION_KIND`, work item or `GSTACK_EXTEND_RUN_MODE`, a Claude session whose entrypoint is `cli` or `Paseo` reads `user-directed`, so an orchestrator-launched interactive worker that sets none of them is counted as hand use (this machine's report showed exactly that for two `project-spec` runs on 2026-11-07); Codex and Cursor sessions always read `unknown`; rows are written per host under each machine's own state directory; and only gstack-extend's own skills write rows, so hand use of upstream gstack skills is not counted (out of scope here). Setting the signal inside an orchestrator is that consumer's work, not this repository's.
+_read-first: docs/telemetry.md, docs/orchestration-contract.md_
+- **Classify interactive orchestrated runs and hand runs correctly** -- Read the contract's run-mode signal for interactive workers, stop inferring hand use from a host entrypoint alone, and cover the harnesses the owner uses by hand, with `unknown` plus a reason where no signal decides. _~140 lines incl. tests._ (M)
+- **Report hand use across the owner's machines** -- Let the report read synced per-host files from more than one state directory and show runs per machine and mode, keeping today's single-machine output. _~90 lines incl. tests._ (M)
+- **Record real by-hand and orchestrated runs** -- Run stages by hand on each of the owner's machines and one orchestrated interactive stage, read them back through the report and record the result. _~30 lines._ (S)
+
+##### Track 73B: Keep /pair-review to human-judgment items
+_3 tasks . ~260 LOC incl. tests, plus deletions . medium risk_
+**Outcome:** A person running `/pair-review` sees only items that need their judgment or access, with state prepared and evidence attached by the agent, and is asked to retest only after the agent has reproduced and re-verified a fix.
+**Supports:** [SPEC](SPEC.md) O3 manual-testing pause/resume; owner, 2026-11-07 ("pair-review design: yes … it isn't supposed to be [autonomous QA]").
+**Done when:** The test list carries only human-judgment items, each with agent-prepared state and attached evidence; after a fix the agent reproduces and re-verifies before any human retest and keeps the failed result on record; the Covers/bundle and coverage-editing machinery that exists only for inspection checks (cookies, logs, DB rows, network calls) is removed, so `skills/pair-review.md` shrinks; the handoff `Results:` line stays readable by `/review-and-prep resume` and published H-C consumers (a compatible form or an explicit migration); it stays a human-testing skill.
+_touches: skills/pair-review.md, tests/skill-protocols-pair-review.test.ts, docs/workflow-handoffs.md, tests/handoff-contract.test.ts_
+_blocked-by: Track 71D, Track 70A, Track 72B_
+**Scheduling:** Technical edge on Track 71D: it consumes the narrowed definition of required user testing. The edge on Track 72B is a priority choice ordering edits to the handoff contract and its test; the edge on Track 70A (shipped, v0.72.0) is satisfied. Kept at three tasks; the deletion is cheap.
+_read-first: skills/review-and-prep.md_
+- **Remove the inspection-only coverage machinery** -- Delete `Covers:` inference, its validation, the coverage-graph review, bundle confirmation and their counters. _~300 lines (del)._ (S)
+- **Carry only human-judgment items with prepared state and evidence** -- Generate the list from the narrowed definition, have the agent prepare state and attach its evidence per item, and keep the H-C `Results:` line compatible (`(0 by coverage)` or a documented migration). _~150 lines._ (M)
+- **Re-verify fixes before any human retest** -- After a fix the agent reproduces the failure and re-verifies; a human retests only a verified fix, and a failed check is never re-marked passed. _~110 lines incl. tests._ (M)
+
+### Group 74: Review evidence and recovery ∥ contract workspace signal in the skills
+
+_Depends on: Group 71, Group 73_
+
+**This group delivers:** A documented review-evidence and capped-review recovery path, and stage skills that read the contract's workspace signal with the Conductor code removed.
+
+##### Track 74A: Specify portable review evidence and capped-review recovery
 _2 tasks . ~220 LOC incl. tests . medium risk_
 **Outcome:** Callers know what proves a completed full review and how a stopped draft can reach shipping.
-**Supports:** [SPEC](SPEC.md) P1, selected efficiency program 2026-10-25; O4 provenance and O3 stop preservation.
+**Supports:** [SPEC](SPEC.md) O3.2 stop preservation and O4.3–O4.4 provenance (efficiency program E10–E11); confirmed by the owner, 2026-11-07 ("72d confirmed as well").
 **Done when:** A supporting design maps review facts to a portable evidence-bundle reference and independently checks review-log full-scope/completion/convergence/binding predicates. Documentation walks stopped draft → authorized exact repair-only continuation → prepared readiness → ship with all unavailable evidence and continuation counts preserved, including a stop after a first cycle that reproduced defects; it cites the already recorded rule that `/ship-and-land` keeps refusing a stopped draft, including one whose receipt says `Unresolved: none recorded` (`B-STOPPED-NONE-RECORDED`). No envelope runtime or stop bypass is introduced.
 _touches: docs/designs/review-evidence-envelope.md (new), docs/workflow-handoffs.md_
-_blocked-by: Track 29A, Track 71A, Track 30A, Track 32A_
-**Scheduling:** Preserve the evidence design and capped-review recovery work after the direct savings and artifact producer; the artifact producer edge is priority ordering, not a claimed technical prerequisite. The capped-review repair and baseline-repair edges are technical: the documented recovery path must describe the shipped repair-only continuation, including after a first cycle that reproduced defects. This Track specifies and checks the cycle 1 baseline record and does not write it.
+_blocked-by: Track 29A, Track 30A, Track 32A, Track 73B_
+**Scheduling:** The capped-review repair and baseline-repair edges are technical: the documented recovery path must describe the shipped repair-only continuation. The edge on Track 73B is a priority choice ordering edits to `docs/workflow-handoffs.md` behind the pair-review Tracks. This Track specifies and checks the cycle 1 baseline record and does not write it.
 _Source: program E10–E11 / research R11 and observed capped-review stops_
 _read-first: docs/designs/workflow-efficiency-program.md_
 - **Map the existing upstream proof** -- Compare commit_full/tree/scope/completed/converged/cycles plus review_binding and verified/imported lane semantics; specify missing/stale/unavailable cases and identify gaps without claiming nonconverged full scope is a completed baseline. _~150 lines._ (M)
-- **Document the recovery path** -- Use the stop receipt's own repair-only prompt and remaining budget, which the capped-review and baseline repairs make reachable after a completed first cycle, preserve the bound PR, and show why shipping cannot replace the continuation, including for a receipt that says `Unresolved: none recorded`. Keep manual holds and Full-review evidence: unavailable explicit. _~70 lines._ (S)
+- **Document the recovery path** -- Use the stop receipt's own repair-only prompt and remaining budget, preserve the bound PR, and show why shipping cannot replace the continuation, including for a receipt that says `Unresolved: none recorded`. Keep manual holds and Full-review evidence: unavailable explicit. _~70 lines._ (S)
 
-### Group 73: Workflow efficiency baseline and decisions
+##### Track 74B: Honor the contract's workspace signal in the skills
+_3 tasks . ~220 LOC incl. tests . medium risk_
+**Outcome:** Every stage leaves branch and worktree lifecycle to whatever host or orchestrator marks the workspace as its own, without detecting Paseo or Conductor by name.
+**Supports:** [SPEC](SPEC.md) O4.2 and O3.2 (host ownership of branches and worktrees); owner, 2026-11-07, approving that the Future entry "Remove Conductor support from the code" become a 1.0 Track.
+**Done when:** The host-managed-workspace guards in `/implement`, `/review-and-prep` and `/ship-and-land` read the contract's worktree-ownership signal, with Paseo documented as one provider if the contract keeps it; the `SHARED:conductor-visibility-head` block, its `CONDUCTOR_SKILLS` cohort and the Conductor `.context/` storage fallbacks are gone from `/full-review`, `/pair-review` and `/roadmap`, which store under the state root, then `~/scratch/`; protocol tests lock the new guards and the removal; the release notes disclose the incompatible change under the 0.x policy.
+_touches: skills/implement.md, skills/review-and-prep.md, skills/ship-and-land.md, skills/full-review.md, skills/pair-review.md, skills/roadmap.md, tests/skill-protocols.test.ts, tests/skill-protocols-implement.test.ts, tests/skill-protocols-review-and-prep.test.ts, tests/skill-protocols-ship-and-land.test.ts, tests/skill-protocols-roadmap.test.ts, tests/skill-protocols-plan-track.test.ts, tests/helpers/parse-setup-skills.ts_
+_blocked-by: Track 71C, Track 73B, Track 70A_
+**Scheduling:** Technical edge on Track 71C (it implements the contract's signal). The edge on Track 73B is a priority choice that orders same-file edits with the pair-review Tracks; the edge on Track 70A (shipped, v0.72.0) is satisfied.
+_read-first: docs/orchestration-contract.md_
+- **Read the contract's signal in the workspace guards** -- Replace the Paseo- and Conductor-named guards in the three stage skills. _~90 lines._ (M)
+- **Remove the Conductor visibility block and `.context/` fallbacks** -- Remove the shared block, its cohort and the fallbacks, keeping each cohort's other members exact. _~110 lines incl. tests._ (M)
+- **Lock the CLAUDE.md never-shared sentence** -- Add the missing drift lock for `/roadmap`'s sentence that `CLAUDE.md` is never shared and only one Track per Group may declare it, with a negative case. _~20 lines._ (S)
 
-_Depends on: Group 72_
+### Group 75: Compatibility catalog ∥ two-driver workflow qualification
 
-**This group delivers:** A reproducible cross-run baseline report and an adopt, reject or insufficient-evidence decision for each optimization.
+_Depends on: Group 71, Group 72, Group 73, Group 74_
 
-##### Track 73A: Build a comparable workflow-efficiency baseline and evaluate each optimization
-_3 tasks . ~440 LOC incl. tests . medium risk_
-**Outcome:** The maintainer can reproduce an offline report that separates model work, tool/CI/human waits, reuse and rework across runs, and gets an evidence-backed decision for each proposed optimization, including a valid conclusion that a change is not worthwhile or that evidence is insufficient.
-**Supports:** [SPEC](SPEC.md) P1 and owner-selected investigation, 2026-10-19; empirical model comparison and review-policy changes remain outside the 1.0 acceptance gates.
-**Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split. Each candidate has measured evidence or a named evidence gap; comparisons include total parent/child usage, quality and capture overhead; each candidate gets adopt, reject or insufficient evidence with its follow-up mapped to existing Future items. No review gate or model choice changes, and no model downgrade or review gate is changed by the study itself.
+**This group delivers:** The stable compatibility and recovery catalog, and real by-hand and orchestrated workflow evidence.
+
+##### Track 75A: Publish the stable compatibility and recovery catalog
+_1 tasks . ~180 LOC incl. tests . medium risk_
+**Outcome:** The owner and an orchestrator can identify stable interfaces, experimental exclusions and recovery obligations before relying on them.
+**Supports:** [SPEC](SPEC.md) O5.1; preserved required inbox obligation, 2026-10-23; confirmed by the owner, 2026-11-07.
+**Done when:** A catalog names every promised surface (including the orchestration contract), version/compatibility rules, support conditions and recovery links; stage-runs v2 is one checked example, not the whole catalog. Experimental surfaces stay explicitly excluded; no checkpoint is awarded by documentation alone.
+_touches: docs/compatibility.md (new), docs/SPEC.md, README.md, docs/installation.md_
+_blocked-by: Track 28A, Track 71C, Track 74B, Track 72A_
+**Scheduling:** The edges on the contract and host-signal Tracks keep the catalog from freezing host-specific behavior as stable.
+_Source: [plan-ceo-review] stable compatibility surfaces (O5.1)_
+_read-first: docs/orchestration-contract.md_
+- **Catalog the promised surfaces** -- Trace CLI/config, skills, the orchestration contract, handoffs, provenance and install ownership against shipped code and public instructions. Carry the existing stable promises and disclose unknown qualification; retain O5 acceptance as an owner gate. _~180 lines._ (M)
+
+##### Track 75B: Qualify the workflow with two real drivers
+_2 tasks . ~240 LOC . medium risk_
+**Outcome:** The owner can carry real work through every stage both by hand and through a real external orchestrator, and the evidence shows what the documented contract actually supports.
+**Supports:** [SPEC](SPEC.md) O3.3 and O4.5 (reshaped from the Paseo host Track by the owner, 2026-11-07: "72c ok").
+**Done when:** A dated record names host, harness and versions for real runs by both drivers (the owner by hand, and one real external orchestrator), each run read back in telemetry with the correct run mode, covering, between them, a complete plan-to-authorized-release workflow, interrupted resume, manual-testing pause/resume, `/full-review` finish/restart, an explicit negative hold, an external-consumer handoff consumed from artifacts, a cross-session handoff and stale/partial/held handoffs; it counts operator interventions and keeps pending approvals or failures as holds; it includes the installed `/docs-ship` acceptance below; no unexercised combination is claimed.
+_touches: docs/acceptance/workflow-drivers.md (new)_
+_blocked-by: Track 70A, Track 71B, Track 71E, Track 73B, Track 74B, Track 72A, Track 73A, Track 26A, Track 23I, Track 23A, Track 26B, Track 65A, Track 66A, Track 66B_
+**Scheduling:** Runs on the final behavior of the stages it qualifies, so it follows every Track that changes them. The external orchestrator may stop at a ready PR; a separate authorized run by hand proves landing. No consumer-repo edits, new spend, unattended release or acceptance-by-idle-status. The independently followed onboarding attempt moved to the public-release stage (Future).
+- **Exercise both drivers** -- Use real host-managed workspaces and approved accounts with the harnesses the owner uses for each stage; retain the bound PR and workspace, test stale/partial/held handoffs, confirm next-stage consumption from artifacts across sessions, include the host-attribution check deferred from Track 26A, and count operator interventions. _~200 documentation lines._ (L)
+- **Include installed `/docs-ship` acceptance** -- Run a real docs-only PR through classification, a no-write classification hand-back, selected tests once, same-tree test-record reuse, final receipt hash, policy bump and `docs-ship/v1` without merging; include one Sonnet-class run and one `/roadmap` handoff, and compare work/wait wall time with a recent docs PR shipped through the ordinary path. _~40 lines._ (S)
+
+### Group 76: Measured stage cost and optimization decisions
+
+_Depends on: Group 74, Group 75_
+
+**This group delivers:** Expected cost per stage and an adopt, reject or insufficient-evidence decision for every candidate optimization.
+
+##### Track 76A: Measure each stage's cost and decide each optimization
+_3 tasks . ~460 LOC incl. tests . medium risk_
+**Outcome:** The owner can reproduce an offline report of each stage's measured cost (model work, tool/CI/human waits, reuse and rework), read a documented expected cost per stage, and see an adopt, reject or insufficient-evidence decision for every candidate optimization.
+**Supports:** [SPEC](SPEC.md) O6.1–O6.3 (owner, 2026-11-07: P1 joins the 1.0 outcomes with this finish line, and this Track gains the expected stage cost).
+**Done when:** A reproducible offline report from sanitized projections separates DOCS/FULL/release-only paths, diff/task size, repo/host, run mode, skill version, waits and fresh versus resumed runs, and reports sample size and missingness; fixtures cover each split. A documented expected cost per stage (wall time and model usage, with sample size and unknowns) is published. Each efficiency-program candidate, including first-cycle overlap (69A), fold, delegation and the docs-only selection, has measured evidence or a named evidence gap and an adopt, reject or insufficient-evidence decision with its follow-up mapped to existing Future items. No review gate, model choice or default changes through the study itself.
 _touches: scripts/workflow-efficiency-report.py (new), tests/workflow-efficiency-report.test.ts (new), tests/fixtures/workflow-efficiency/ (new), tests/helpers/touchfiles.ts, docs/acceptance/workflow-efficiency.md (new)_
-_blocked-by: Track 67A, Track 52A, Track 72A, Track 72D, Track 72C_
-**Scheduling:** Keep the cross-run efficiency assessment after the selected changes and host-qualification work; individual changes still need their own before/after evidence before activation. The baseline report and the evaluation were two Tracks under the card-size rule; the evaluation edited the same script, test and fixture files and read the report the baseline builds, so the two would have run one after another anyway. Merged into one card under the rule's same-files exception (owner direction, 2026-10-26) and kept at ~440 lines for that reason: splitting it would cost a second full pipeline run for no parallelism.
+_blocked-by: Track 67A, Track 52A, Track 75A, Track 74A, Track 75B_
+**Scheduling:** Kept as one card above ~300 lines under the card-size rule's same-files exception (owner direction, 2026-10-26): the evaluation edits the same script, test and fixture files and reads the report the baseline builds. It follows the workflow qualification, whose real runs supply most of its rows.
 _read-first: docs/telemetry.md, docs/quota-ledger.md, docs/designs/review-independence.md_
-- **Build a comparable baseline** -- Produce an offline report from sanitized projections. Separate DOCS/FULL/release-only paths, diff/task size, repo/host, skill version, waits and fresh versus resumed runs; report sample size and missingness. Reuse eligible existing release-only receipts and preserve the separate first-installed-no-CI timing obligation and 15-minute target. Report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~180 lines._ (M)
-- **Assess the uncertain efficiency choices** -- Compare smaller models and lower effort for bounded drafting/extraction versus the main runner, including launch/context-transfer and parent-correction costs. Investigate repeated plan extraction, evidence reads, long-suite reruns, section loading, parallel scheduling and each reviewer voice's unique accepted findings. Use the existing eval/benchmark facilities where suitable; define corpus, quality bars, fixed budgets and stop rules before any model trial. Include known-defect controls and false positives; a saved success flag is not quality evidence. This Track authorizes offline analysis; any new paid/API trials need a separately approved concrete pilot and spend bound. _~180 lines._ (M)
-- **Publish decisions and follow-up ownership** -- For each candidate give adopt/reject/insufficient-evidence, expected benefit, observed limitations and the smallest follow-up scope. Map recommendations to existing Future items rather than duplicating them: lifecycle helper, eval persistence, vendor diversity, the delta-scoped review default and on-demand `/review-and-prep` section loading. Preserve the independent historical review-independence study and its unfulfilled evidence obligations. An insufficient-evidence result names missing data and a bounded next measurement; it never silently removes a review or acceptance gate. _~80 lines._ (S)
-
+- **Build a comparable baseline and expected stage costs** -- Produce the offline report and the per-stage expected cost from it; reuse eligible release-only receipts and preserve the first-installed-no-CI timing obligation and 15-minute target; report time to push and merge gate separately from human approval. Observational differences are not causal model comparisons. _~200 lines._ (M)
+- **Assess the uncertain efficiency choices** -- Compare smaller models and lower effort for bounded drafting/extraction versus the main runner, including launch/context-transfer and parent-correction costs; investigate repeated plan extraction, evidence reads, long-suite reruns, section loading, parallel scheduling and each reviewer voice's unique accepted findings. Define corpus, quality bars, fixed budgets and stop rules before any model trial; offline analysis only, and any paid trial needs a separately approved pilot and spend bound. _~180 lines._ (M)
+- **Publish decisions and follow-up ownership** -- Adopt/reject/insufficient-evidence per candidate with expected benefit, observed limitations and the smallest follow-up, mapped to existing Future items; an insufficient-evidence result names missing data and a bounded next measurement and never silently removes a review or acceptance gate. _~80 lines._ (S)
 
 ### Execution Map
 
@@ -242,22 +300,22 @@ separately from technical prerequisites. Adjacency below is the packer's
 DEPENDS output with bin numbers replaced by the assigned Group numbers.
 
 ```
-- Group 69 ← {}
-- Group 70 ← {69}
-- Group 71 ← {70}
+- Group 71 ← {}
 - Group 72 ← {71}
-- Group 73 ← {72}
+- Group 73 ← {71, 72}
+- Group 74 ← {71, 73}
+- Group 75 ← {71, 72, 73, 74}
+- Group 76 ← {74, 75}
 ```
 
-**5 Groups / 8 Tracks remaining.** Group 69 is In Progress; Groups 70 to 73
-are in the Current Plan.
+**6 Groups / 14 Tracks remaining**, all in the Current Plan.
 
-The published-upgrade obligation remains open and is not waived; its revisit trigger has been met and it awaits owner reassessment. Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
+Only owner-confirmed acceptance in PROGRESS can satisfy a stage/checkpoint.
 
 
 ## Future
 
-Deferred: docs/roadmap-future.md (85 items)
+Deferred: docs/roadmap-future.md (86 items)
 
 ## Shipped
 
