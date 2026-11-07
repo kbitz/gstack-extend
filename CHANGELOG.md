@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.1] - 2026-11-07
+
+### Changed
+
+- The project spec now defines 1.0 as the maintainer's own real use, by hand and through an orchestrator; a public release is the planned next stage.
+- No workspace host or orchestrator is required: the spec commits to a published orchestration contract (what a host or orchestrator must provide, and what each stage promises), with support claimed only for the combinations actually exercised.
+- Bounded, measured stage effort is now a 1.0 outcome, including recording by-hand runs correctly in telemetry.
+- The roadmap is regenerated against the revised spec; README's product direction and CLAUDE.md's workspace-host rule follow it.
+
+### Fixed
+
+- The 0.72.0 release notes now state that retiring `/autoplan-lean` is a breaking change and how to migrate.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. This release changes documentation only; no skill, command or file format changes.
+
 ## [0.72.0] - 2026-11-07
 
 ### Removed (breaking)
