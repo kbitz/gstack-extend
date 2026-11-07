@@ -148,9 +148,15 @@ export function bindRoot(requested: string | undefined, cwd: string, env: NodeJS
   }
   const notRepo = /not a git repository \(or any of the parent directories\)|not a git repository \(or any parent up to mount point /.test(probe.stderr);
   if (probe.status === 128 && notRepo) {
+    // Git's discovery does not treat an empty .git directory as a repository (no HEAD, objects or refs),
+    // so there is no Git metadata a plain move could put out of sync, and some agent sandboxes mount an empty read-only .git at each writable root.
     for (let current = root; ; current = dirname(current)) {
       try {
-        if (entry(join(current, '.git'), fs)) throw new Refusal('git_unusable', join(current, '.git'), 'Git failed despite a .git entry in an ancestor');
+        const gitPath = join(current, '.git');
+        const st = entry(gitPath, fs);
+        if (st && (!st.isDirectory() || fs.readdirSync(gitPath).length > 0)) {
+          throw new Refusal('git_unusable', gitPath, 'Git failed despite a .git entry in an ancestor');
+        }
       } catch (error) {
         if (error instanceof Refusal) throw error;
         throw new Refusal('git_unusable', current, errno(error));

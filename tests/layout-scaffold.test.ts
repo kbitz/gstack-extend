@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync as nodeSpawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { chmodSync, constants, copyFileSync, lstatSync, linkSync, readdirSync, readlinkSync, renameSync, rmdirSync, statSync, symlinkSync, utimesSync } from 'node:fs';
@@ -15,23 +15,63 @@ import { walkMdFiles } from '../src/audit/lib/md-walk.ts';
 
 const EXTEND_ROOT = resolve(import.meta.dir, '..');
 const DRAFT = '## Current Plan\n#### Group 101: Example\n##### Track 101A: Example\n_touches: src/example.ts_\n- **Build example** -- fixture (S)\n';
-// bindRoot (src/layout-scaffold/root.ts) refuses a plain root while any ancestor holds a .git entry.
-// A shared tmpdir such as /tmp can gain one for a moment from another process, and every plain-root
-// test that runs in that window then fails at id(). Root the suite in the private per-user runtime
-// directory when the platform provides one (owned by this user, mode 0700); otherwise use tmpdir().
-function suiteBase(): string {
+// On the host, prefer the private per-user runtime directory (owned by this user, mode 0700) because
+// a shared tmpdir such as /tmp can briefly gain a populated .git entry from another process. Inside a
+// sandbox where XDG_RUNTIME_DIR is unwritable, use the first writable candidate, where bindRoot accepts
+// an empty read-only .git mount.
+function suiteCandidates(): string[] {
+  const candidates: string[] = [];
   const runtime = process.env.XDG_RUNTIME_DIR;
   if (runtime && isAbsolute(runtime)) {
     try {
       const st = statSync(runtime);
-      if (st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o077) === 0) return runtime;
+      if (st.isDirectory() && st.uid === process.getuid?.() && (st.mode & 0o077) === 0) candidates.push(runtime);
     } catch { /* fall back to tmpdir() */ }
   }
-  return tmpdir();
+  candidates.push(tmpdir());
+  return candidates;
 }
-const SUITE_PARENT = realpathSync(mkdtempSync(join(suiteBase(), 'layout-scaffold-suite-')));
+function createSuiteParent(candidates = suiteCandidates()): string {
+  const failures: string[] = [];
+  for (const base of candidates) {
+    try {
+      return realpathSync(mkdtempSync(join(base, 'layout-scaffold-suite-')));
+    } catch (error) {
+      failures.push(`${base} (${(error as NodeJS.ErrnoException)?.code ?? String(error)})`);
+    }
+  }
+  throw new Error(
+    `No writable temp parent for layout-scaffold suite: ${failures.join(', ')}. Set TMPDIR to a private writable directory outside any Git work tree.`,
+  );
+}
+const SUITE_PARENT = createSuiteParent();
 chmodSync(SUITE_PARENT, 0o700);
 afterAll(() => rmSync(SUITE_PARENT, { recursive: true, force: true }));
+// Bun's child_process.spawnSync uses AF_UNIX socketpairs for stdio:'pipe' on Linux, which makes a child
+// Bun process's FileSink (process.stdout.write / process.stderr.write) issue sendto(2) and hit EPERM
+// under seccomp sandboxes that disallow socket sends. File-backed stdio under SUITE_PARENT keeps child
+// fds regular files without touching test roots or assertions.
+let spawnSeq = 0;
+function spawnSync(command: string, args: readonly string[] = [], options: SpawnSyncOptions = {}): SpawnSyncReturns<string> {
+  const ioDir = join(SUITE_PARENT, `.spawn-${process.pid}-${++spawnSeq}`);
+  mkdirSync(ioDir, { mode: 0o700 });
+  const inPath = join(ioDir, 'in');
+  const outPath = join(ioDir, 'out');
+  const errPath = join(ioDir, 'err');
+  writeFileSync(inPath, typeof options.input === 'string' || Buffer.isBuffer(options.input) || options.input instanceof Uint8Array ? options.input : '');
+  const inFd = openSync(inPath, constants.O_RDONLY);
+  const outFd = openSync(outPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);
+  const errFd = openSync(errPath, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);
+  try {
+    const result = nodeSpawnSync(command, args, { ...options, input: undefined, stdio: [inFd, outFd, errFd] });
+    return { ...result, stdout: readFileSync(outPath, 'utf8'), stderr: readFileSync(errPath, 'utf8') };
+  } finally {
+    closeSync(inFd);
+    closeSync(outFd);
+    closeSync(errFd);
+    rmSync(ioDir, { recursive: true, force: true });
+  }
+}
 
 describe('Process: hardened launchers', () => {
   let temp: string;
@@ -209,6 +249,69 @@ describe('CLI contract and roots', () => {
     git(['init', '--bare', '--quiet']); refused('git_unusable');
     rmSync(root, { recursive: true }); mkdirSync(root); file('.git', 'gitdir: /missing/worktree\n'); refused('git_unusable');
     unlinkSync(join(root, '.git')); writeFileSync(join(temp, '.git'), 'gitdir: /missing/worktree\n'); refused('git_unusable');
+  });
+  // Value: protects=an empty ancestor .git directory allows an explicit plain root while a plain cwd without --root still refuses root_invalid and every other ancestor .git entry (corrupted repo, symlink, regular file, unreadable directory) refuses git_unusable; fails_when=bindRoot refuses an empty .git directory or accepts a non-empty, non-directory or unreadable ancestor .git; why_new=existing ancestor check covers only a dangling gitfile; seam=fs.readdirSync EACCES injection for root-user independence
+  test('empty ancestor .git directory permits explicit plain root while other ancestor .git entries refuse', () => {
+    const ancestorGit = join(temp, '.git');
+    mkdirSync(ancestorGit);
+    chmodSync(ancestorGit, 0o555);
+    try {
+      status(plan(), 'ok', 0, true, true);
+      const noRoot = invoke(['plan']);
+      status(noRoot, 'refused', 1, false);
+      expect(noRoot.stdout).toContain('pass --root');
+    } finally {
+      chmodSync(ancestorGit, 0o755);
+    }
+    const unreadableFs = withFs({
+      readdirSync: path => {
+        if (path === ancestorGit) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        return defaultFs.readdirSync(path);
+      },
+    });
+    expect(refused('git_unusable', [], { fs: unreadableFs }).stdout).toContain('EACCES');
+    rmdirSync(ancestorGit);
+
+    expect(spawnSync('/usr/bin/git', ['-C', temp, 'init', '--quiet', '--initial-branch=main'], { env: childEnv(testEnv, true) }).status).toBe(0);
+    unlinkSync(join(ancestorGit, 'HEAD'));
+    expect(refused('git_unusable').stdout).toContain('Git failed despite a .git entry in an ancestor');
+    rmSync(ancestorGit, { recursive: true, force: true });
+
+    const emptyTarget = join(temp, 'empty-git-target');
+    mkdirSync(emptyTarget);
+    symlinkSync(emptyTarget, ancestorGit);
+    expect(refused('git_unusable').stdout).toContain('Git failed despite a .git entry in an ancestor');
+    unlinkSync(ancestorGit);
+    rmdirSync(emptyTarget);
+
+    writeFileSync(ancestorGit, '');
+    refused('git_unusable');
+    unlinkSync(ancestorGit);
+  });
+  // Value: protects=createSuiteParent picks the first writable candidate and throws with every failed candidate, error code and TMPDIR guidance when none succeeds; fails_when=the helper stops after the first failure or silently skips; why_new=suiteBase previously returned XDG_RUNTIME_DIR without probing mkdtemp; seam=none
+  test('suite parent probe falls back across unwritable candidates and fails loudly when none works', () => {
+    const fileA = join(temp, 'not-a-dir-a');
+    const fileB = join(temp, 'not-a-dir-b');
+    const writableDir = join(temp, 'writable-parent');
+    writeFileSync(fileA, 'x');
+    writeFileSync(fileB, 'x');
+    mkdirSync(writableDir);
+    const created = createSuiteParent([fileA, writableDir]);
+    try {
+      expect(created.startsWith(`${writableDir}/`)).toBe(true);
+    } finally {
+      rmSync(created, { recursive: true, force: true });
+    }
+    let caught: Error | undefined;
+    try {
+      createSuiteParent([fileA, fileB]);
+    } catch (error) {
+      caught = error as Error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught!.message).toContain(`${fileA} (ENOTDIR)`);
+    expect(caught!.message).toContain(`${fileB} (ENOTDIR)`);
+    expect(caught!.message).toContain('TMPDIR');
   });
   test('dubious ownership stays a Git refusal', () => {
     refused('git_unusable', [], { git: (args, opts) => args.includes('--is-inside-work-tree')

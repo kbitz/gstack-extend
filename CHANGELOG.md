@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.72.2] - 2026-11-07
+
+### Fixed
+
+- An explicit plain project root is now accepted when an ancestor directory contains an empty `.git` folder.
+
+### Upgrade notes
+
+- Upgrade with `bin/update-run`. This release fixes how explicit plain project roots are detected; no skill, command or file format changes.
+
 ## [0.72.1] - 2026-11-07
 
 ### Changed
