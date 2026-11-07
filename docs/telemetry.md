@@ -25,11 +25,13 @@ skill-usage rows.
   `skill_start` row means a start ran with gstack's tier on. A `skill_run` row
   records a completion append; it does not prove the wrapper saw a successful return. A
   missing row is not evidence that a run did not happen.
-- **stage-runs.jsonl** contains a local provenance row when a finish ran with
-  provenance on and the append succeeded. It answers which harness, model, and
-  effort level that finish recorded, and where each value came from, in the
-  published [schema](stage-runs.schema.json) any caller can validate and join.
-  One row is one successful append, not proof of one independent run.
+- **stage-runs/\<host>.jsonl** (plus historical **stage-runs.jsonl**) contains a local
+  provenance row when a finish ran with provenance on and the append succeeded. It
+  answers which harness, model, and effort level that finish recorded, whether the
+  run was user-directed or orchestrated, optional hand-run usability signals, and
+  where each value came from, in the published [schema](stage-runs.schema.json) any
+  caller can validate and join. One row is one successful append, not proof of one
+  independent run.
 - **Transcript-derived counts from other tools** count transcript tool-use records
   whose name is Skill, potentially gathered across machines. Instrumenting these skills does
   not change those counts. Fleet totals cannot be the denominator of a local
@@ -425,18 +427,22 @@ with explicit ids (the handoff carries it). The identifying fields of that row:
 {"stage":"roadmap","session_id":"extend-0a1b2c3d-0000-4000-8000-000000000001","work_item":"issue-1234",...}
 ~~~
 
-Join the launcher's key to its rows (the second argument is the default stage-runs file):
+Join the launcher's key to its rows (the second argument is the default analytics directory or a single stage-runs file):
 
 ~~~sh
-python3 -c 'import json, sys
-for line in open(sys.argv[2], "rb"):
-    try:
-        row = json.loads(line)
-    except (ValueError, RecursionError):
-        continue
-    if isinstance(row, dict) and row.get("work_item") == sys.argv[1]:
-        print(row.get("stage"), row.get("session_id"), row.get("outcome"), row.get("started_at"))' \
-  "issue-1234" "$HOME/.gstack-extend/analytics/stage-runs.jsonl"
+python3 -c 'import json, os, sys
+from pathlib import Path
+base = Path(sys.argv[2])
+files = [base] if base.is_file() else [p for p in [base / "stage-runs.jsonl"] + sorted((base / "stage-runs").glob("*.jsonl")) if p.is_file() and not p.is_symlink()]
+for path in files:
+    for line in open(path, "rb"):
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(row, dict) and row.get("work_item") == sys.argv[1]:
+            print(row.get("stage"), row.get("session_id"), row.get("outcome"), row.get("started_at"))' \
+  "issue-1234" "$HOME/.gstack-extend/analytics"
 ~~~
 
 To finish a run by hand, take the values from its `GE_TELEMETRY:` line. `work_item`
@@ -1607,10 +1613,17 @@ listings.
 skill-usage.jsonl has no model or agent field, and gstack-skill-start drops its
 `--model` argument (upstream), so no gstack row says which vendor ran a stage.
 When provenance is on and the append succeeds, finish appends one row to
-$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl (default
-`$HOME/.gstack-extend/analytics/stage-runs.jsonl`). **The file is local-only**:
-gstack-telemetry-sync never reads it, so branch and work item never leave the
-machine. It is created mode 0600. A symlink, FIFO, or extra hard link at that path is not written. The provenance config and the finish handoff are read the same way, so none of those stand-ins can stall a skill.
+`$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs/<host>.jsonl` (default
+`$HOME/.gstack-extend/analytics/stage-runs/<host>.jsonl`, where `<host>` is the
+configured `host_id` or the sanitized lowercase short nodename from
+`os.uname().nodename`, or `unknown-host` when unavailable; historical rows remain in
+`$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl`). **The files are local-only**:
+gstack-telemetry-sync never reads them, so branch and work item never leave the
+machine. Each file is created mode 0600; new directory permissions follow the
+process umask. A symlink, FIFO, or extra hard link at the file path, or a symlink
+at `stage-runs/` itself, is not written. A symlinked `analytics/` directory remains
+supported. The provenance config and the finish handoff are read the same way,
+so none of those stand-ins can stall a skill.
 
 The machine-readable contract is [stage-runs.schema.json](stage-runs.schema.json),
 a self-contained JSON Schema (draft-07) for gstack-extend's own hand-run rows
@@ -1636,13 +1649,21 @@ table below is the reader's reference; the schema is authoritative where they di
 | `source` | `gstack-extend`: the writer label, which any caller can choose |
 | `route` | `cli`, `conductor`, `sdk`, or `unknown`, from the selected harness markers |
 | `entrypoint_raw` | The selected harness entrypoint marker, when present |
-| `schema_version` | `2`: the row format, not a release |
+| `schema_version` | `3`: the row format, not a release |
 | `producer_version` | Release in the VERSION file of the gstack-extend installation that constructed the row; null when unknown |
 | `agent_source` | `flag`, `detected`, or `unknown`: where `agent` came from |
 | `model_source` | `flag`, `detected`, `requested`, or `unknown`: where `model` came from |
 | `effort_source` | `flag`, `detected`, `requested`, or `unknown`: where `effort` came from |
 | `workspace_host` | `paseo`, `conductor`, or `unknown`: explicit inherited launch context |
 | `host_agent_id` | Exact host launch ID (1–200 printable Unicode code points, not blank), or null; unknown host requires null |
+| `run_mode` | `user-directed`, `orchestrated`, or `unknown`: whether the run was driven interactively by a user or launched by an orchestrator; see [Run mode](#run-mode) |
+| `run_mode_source` | `session-kind`, `work-item`, `run-mode-env`, `unrecognized-run-mode-env`, `launcher-state-root`, `cli`, `Paseo`, `sdk-cli`, `sdk-ts`, `acp`, or `none`: which signal decided `run_mode`; see [Run mode](#run-mode) |
+| `questions` | Non-negative integer count of distinct `AskUserQuestion` tool-use blocks in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
+| `user_wait_s` | Non-negative integer rounded total seconds waiting on `AskUserQuestion` tool results and post-`end_turn` human resumes in the stage window on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
+| `resumes` | Non-negative integer count of in-window human prompts immediately following an `end_turn` assistant record on Claude Code for non-orchestrated runs, or null; see [Hand-run usability signals](#hand-run-usability-signals) |
+| `user_signals_source` | `session-log`, `orchestrated`, `no-harness`, `harness-unsupported`, or `session-log-unavailable`: where `questions`, `user_wait_s`, and `resumes` came from; see [Hand-run usability signals](#hand-run-usability-signals) |
+| `blocked_reason` | Token matching `[a-z0-9][a-z0-9-]{0,63}` from `--blocked-reason` when `outcome` is `blocked` and `run_mode` is not `orchestrated`, else null |
+| `blocked_reason_source` | `flag`, `not-blocked`, `not-supplied`, or `orchestrated`: where `blocked_reason` came from |
 
 **Work item.** `work_item` resolves in this order: a valid `--work-item` flag, then the
 value start saved in the handoff from `GSTACK_EXTEND_WORK_ITEM`, then that variable in
@@ -1708,10 +1729,168 @@ repair attribution. Ask the launcher owner for the correct original context on
 the next new invocation; never invent an ID, blindly unset a marker, or rewrite
 a saved row. Quiet mode remains silent and optional telemetry remains nonfatal.
 
+<a id="run-mode"></a>
+
+### Run mode
+
+`run_mode` and `run_mode_source` classify whether a stage run was driven interactively
+by a user (`user-directed`), launched by an orchestrator (`orchestrated`), or lacks
+sufficient evidence (`unknown`). Finish evaluates signals in this exact precedence:
+
+1. **Primary orchestration signals (`run_mode: "orchestrated"`):**
+   - `GSTACK_SESSION_KIND` equal to `spawned` or `unattended` (`run_mode_source: "session-kind"`).
+   - An accepted launcher work item saved at start from `GSTACK_EXTEND_WORK_ITEM` or supplied via `GSTACK_EXTEND_WORK_ITEM` in the finish environment (`run_mode_source: "work-item"`). A manual `--work-item` finish flag alone does not classify a run as orchestrated.
+   - `GSTACK_EXTEND_RUN_MODE` equal to `orchestrated` (`run_mode_source: "run-mode-env"`), a consumer-neutral environment variable that any orchestrator may set when launching a worker. Any other non-empty value of `GSTACK_EXTEND_RUN_MODE` is ignored without guessing and recorded as `run_mode: "unknown"`, `run_mode_source: "unrecognized-run-mode-env"`.
+2. **Supporting evidence blocking `user-directed` (`run_mode: "unknown"`):**
+   - With no primary orchestration signal and no `GSTACK_EXTEND_RUN_MODE`, a non-default absolute `GSTACK_HOME` (normalized path different from `$HOME/.gstack`) yields `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"`.
+   - A malformed non-empty `GSTACK_SESSION_KIND` or `GSTACK_EXTEND_WORK_ITEM` yields `run_mode: "unknown"`, `run_mode_source: "none"`.
+3. **Interactive entrypoint (`run_mode: "user-directed"`):**
+   - Requires no orchestration signal at all (none of the primary signals or `GSTACK_EXTEND_RUN_MODE`, and no non-default absolute `GSTACK_HOME`), `agent: "claude"` (detected, not overridden to another harness), and an interactive `CLAUDE_CODE_ENTRYPOINT` exported by the harness:
+     - Claude Code's `cli` (`workspace_host` in `unknown` or `paseo`, `route: "cli"`), recording `run_mode_source: "cli"`.
+     - A Paseo-hosted Claude session (`workspace_host: "paseo"`, or `route: "cli"` when `CLAUDE_CODE_ENTRYPOINT` is `Paseo`) with `CLAUDE_CODE_ENTRYPOINT` equal to `Paseo` or the SDK/ACP entrypoint Paseo uses (`sdk-cli`, `sdk-ts`, or `acp`), recording that exact entrypoint in `run_mode_source`.
+4. **Otherwise (`run_mode: "unknown"`, `run_mode_source: "none"`):**
+   - Emitted only when the entrypoint cannot be read or is not interactive (for example `conductor`, `claude-desktop`, `claude-vscode`, `github-action`, or non-Claude harnesses where an interactive entrypoint signal is not yet qualified), or when a signal is malformed.
+
+An orchestrator that launches workers without any signal (`GSTACK_SESSION_KIND`,
+`GSTACK_EXTEND_WORK_ITEM`, `GSTACK_EXTEND_RUN_MODE`, or an isolated `GSTACK_HOME`)
+will have runs on an otherwise eligible interactive Claude entrypoint counted as
+`user-directed` until it sets one; `run_mode_source`
+shows why each row got its mode. The classifier never inspects parent process
+command lines or orchestrator directories.
+
+<a id="hand-run-usability-signals"></a>
+
+### Hand-run usability signals
+
+Symlinked transcript files are refused by the shared transcript reader, including
+for existing model/effort detection. Keep the transcript file itself regular;
+this does not prohibit a configured transcript directory outside its default path.
+
+For non-orchestrated runs (`run_mode` is not `orchestrated`) when the final `agent`
+is `claude` and detection did not identify another harness, and the active session's transcript
+(`~/.claude/projects/*/<session>.jsonl`, honoring `CLAUDE_CONFIG_DIR`) is a readable
+regular file whose last 8 MiB covers `begin` and contains at least one non-sidechain
+`assistant` record in `[begin, end]`, finish scans non-sidechain `user` and `assistant`
+records with parseable timestamps to populate:
+
+- `questions`: non-negative integer count of distinct `tool_use` blocks named `AskUserQuestion` (deduplicated by block `id`) in `assistant` records with timestamps in `[begin, end]`.
+- `resumes`: non-negative integer count of in-window human prompts (non-`isMeta` `user` records whose `message.content` is a nonblank string or a non-empty list of only `text`/`image` blocks containing nonblank text or an image) immediately preceded in the conversation by a non-sidechain `assistant` record whose `message.stop_reason` is `end_turn` (the run stopped and the user restarted it inside the same segment). A formal resume (`/review-and-prep resume`, `/pair-review resume`, `/full-review resume`) is its own segment and row; `resumes` counts only in-segment restarts.
+- `user_wait_s`: non-negative integer (`round(total)`, at least 0) summing (a) for each in-window `AskUserQuestion` block, the in-window `user` record carrying a `tool_result` with that `tool_use_id` (`user_ts - ask_ts`), plus (b) for each counted in-segment resume, `user_ts - max(prev_assistant_ts, begin)`.
+- `user_signals_source`:
+  - `orchestrated`: `run_mode` is `orchestrated` (all three counts are `null`).
+  - `no-harness`: final `agent` is `null` (all three counts are `null`).
+  - `harness-unsupported`: final `agent` is not `claude`, or detected `agent` was not `claude` while one was detected (all three counts are `null`).
+  - `session-log-unavailable`: `claude` with a missing, unreadable, non-regular, idle-window, or clipped-tail transcript (all three counts are `null`).
+  - `session-log`: the three integer counts were read from the Claude session log.
+  Only structural markers and whether a human prompt is nonblank affect counts.
+  Question `input`, answer `content`, and `toolUseResult` values are not inspected
+  for counts; no prompt, question, or answer text is stored, returned, or traced.
+- `blocked_reason` and `blocked_reason_source`: `--blocked-reason TOKEN` accepts a token matching `[a-z0-9][a-z0-9-]{0,63}`.
+  - `run_mode` is `orchestrated` → `null` / `orchestrated`.
+  - `outcome` is not `blocked` → `null` / `not-blocked` (any `--blocked-reason` flag is ignored with a value-free debug trace).
+  - `outcome` is `blocked` with a valid token → `token` / `flag`.
+  - `outcome` is `blocked` without a valid token → `null` / `not-supplied` (a rejected value is never echoed).
+
+<a id="per-host-files"></a>
+
+### Per-host files and migration
+
+Finish appends to `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs/<host>.jsonl`
+(file mode `0600`, new directory permissions governed by the process umask), where `<host>` is:
+
+1. The `host_id` config key (`"$HOME/.claude/skills/gstack-extend/bin/config" set host_id <id>`) when it matches `[a-z0-9][a-z0-9-]{0,62}`, which gives same-named machines distinct files. An invalid value is ignored with a value-free debug trace.
+2. Otherwise the first label of `os.uname().nodename` (before the first `.`), lowercased, with characters outside `[a-z0-9]` mapped to `-`, collapsed and stripped of leading/trailing `-`, and capped at 63 characters (or `unknown-host` when empty). `socket`, `getfqdn`, and DNS are never used.
+
+The legacy `$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl` is read forever (before
+the sorted `analytics/stage-runs/*.jsonl` files) and never written again by the new writer.
+Upgrade every reader before moving the legacy file. Rollback is safe: an older writer
+appends to the legacy path again, and both locations stay readable.
+
+Before syncing `analytics/` between machines, you may optionally run this manual
+no-clobber move of `stage-runs.jsonl` to `stage-runs/<host>.legacy.jsonl` (which
+cannot collide with a live writer file because writer host names contain no `.`).
+It refuses a symlink or non-regular source or an existing target, never copies or
+concatenates, and prints the row count before and after. If removing the source
+fails, it removes only the new link created by this attempt, retaining the source.
+An interrupted process or failed cleanup needs manual inspection before retrying:
+both names may remain, and readers would count both until the extra link is removed.
+
+~~~sh
+python3 -I -c 'import os, re, sys
+from pathlib import Path
+base = os.environ.get("GSTACK_EXTEND_STATE_DIR", "")
+root = Path(base) if os.path.isabs(base) else Path.home() / ".gstack-extend"
+src = root / "analytics" / "stage-runs.jsonl"
+if src.is_symlink() or not src.is_file():
+    sys.exit("refused: source is missing, a symlink, or not a regular file")
+cfg = root / "config"
+host = None
+if not cfg.is_symlink() and cfg.is_file():
+    for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k == "host_id" and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", v.strip()):
+            host = v.strip()
+            break
+if not host:
+    raw = os.uname().nodename.split(".", 1)[0].lower()
+    host = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")[:63].rstrip("-") or "unknown-host"
+dest_dir = root / "analytics" / "stage-runs"
+dest_dir.mkdir(parents=True, exist_ok=True)
+if dest_dir.is_symlink() or not dest_dir.is_dir():
+    sys.exit("refused: stage-runs directory is a symlink or not a directory")
+dest = dest_dir / f"{host}.legacy.jsonl"
+if os.path.lexists(dest):
+    sys.exit("refused: target already exists")
+def count_rows(p):
+    return sum(1 for line in p.read_bytes().splitlines() if line.strip())
+before = count_rows(src)
+source_info = src.stat()
+os.link(src, dest)
+try:
+    os.unlink(src)
+except OSError:
+    try:
+        target_info = dest.lstat()
+        if (target_info.st_dev, target_info.st_ino) == (source_info.st_dev, source_info.st_ino):
+            os.unlink(dest)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        sys.exit("migration incomplete: source remains and new link cleanup failed; inspect both names before retrying")
+    sys.exit("refused: could not remove source; original retained")
+after = count_rows(dest)
+print(f"migrated rows: before={before} after={after}")'
+~~~
+
+<a id="run-mode-report"></a>
+
+### Run-mode report
+
+~~~sh
+gstack-extend-telemetry report
+gstack-extend-telemetry report --json
+~~~
+
+`gstack-extend-telemetry report` reads `analytics/stage-runs.jsonl` and sorted
+`analytics/stage-runs/*.jsonl` under `$GSTACK_EXTEND_STATE_DIR` (default
+`~/.gstack-extend`) without taking locks, resolving the logger, or writing state.
+It prints the skill-by-mode table across `orchestrated`, `user-directed`, `unknown`,
+and `unrecorded` (legacy, v1, and v2 rows), with `runs`, `outcomes` (`success`,
+`error`, `abort`, `blocked`, `unknown`), and `last_seen` per cell, lists `empty_cells`
+(each installed skill × `orchestrated|user-directed|unknown` with zero runs), and
+reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`, `malformed`,
+`invalid`, `unsupported`). It never prints session IDs, branch, repo, work item,
+host ID, or file paths.
+`last_seen` is the greatest valid `started_at` in the cell, or null if none is valid.
+If the installed skills directory is unavailable, JSON adds `installed_skills: null`,
+retains observed stages, and leaves `empty_cells` empty because installed coverage is unknown.
+
 ### Versions
 
-Every newly constructed row has all 22 fields in table order: the original 20,
-then workspace_host and host_agent_id, with schema_version 2. This is the row
+Every newly constructed row has all 30 fields in table order: the v2 22 fields,
+then `run_mode`, `run_mode_source`, `questions`, `user_wait_s`, `resumes`,
+`user_signals_source`, `blocked_reason`, and `blocked_reason_source`, with
+`schema_version` 3. This is the row
 format, unrelated to skill-usage v and the start-finish protocol marker. Changes
 to row shape or meaning add a branch and retain the historical branches; a
 release alone does not change schema_version.
@@ -1722,7 +1901,7 @@ release alone does not change schema_version.
 
 producer_version comes from the VERSION file in the wrapper's real installation
 checkout (resolving symlinks), never the caller repository, upstream gstack or an
-environment override. New v2 rows accept exactly three or four dot-separated ASCII
+environment override. New v2 and v3 rows accept exactly three or four dot-separated ASCII
 numeric components after trimming, including 1.0.0 and legacy four-part releases.
 Missing, unreadable, unsafe (symlink/FIFO/hard-link/non-regular), over-128-byte,
 non-UTF-8 or malformed files degrade to null. Prefixes, suffixes, non-ASCII digits
@@ -1738,27 +1917,32 @@ upgrade remains pending.
 |---|---|---|
 | Legacy (absent schema_version) | Original 13 fields; route and entrypoint_raw individually optional; no version/source/host metadata | No producer field |
 | v1 (schema_version 1) | Original 20 fields, no host keys | Four numeric parts or null |
-| v2 (schema_version 2) | All 22 fields | Three or four numeric parts or null |
+| v2 (schema_version 2) | All 22 v2 fields | Three or four numeric parts or null |
+| v3 (schema_version 3) | All 30 v3 fields | Three or four numeric parts or null |
 
 Absent legacy keys stay unknown, with no defaults or release inference. Missing
 required keys or cross-version keys are invalid; stripping a version does not
-make a metadata-bearing row legacy. Historical v0/v1 acceptance is unchanged.
+make a metadata-bearing row legacy. Historical v0/v1/v2 acceptance is unchanged.
 
 **Retries keep their first construction.** A failed append saves the exact row.
 A retry reuses its order, values, version, producer, host, sources, duration and
-work item without detecting markers again, including legacy/v1 saved rows under
+work item without detecting markers again, including legacy/v1/v2 saved rows under
 a newer writer. Completion markers still suppress an already-completed retry.
 
 **Reader-first migration and rollback.** The supported in-repo readers are
-stage-runs.schema.json and the executable validator below (legacy/v1/v2), plus
-quota's existing-field projection of agent/model/effort/route. Before shipping
-the writer, the existing release owner checks those reader tests and publishes
-the schema and migration guidance with the release. Consumers pinned to v1
-upgrade their reader/schema before opting into the new writer release. Apply
-SPEC's existing 0.x MINOR disclosure/migration policy; no release number is
-reserved here. An old reader reports v2 unsupported and keeps it. Roll back the
-writer while retaining a reader capable of every emitted version, including v2,
-and retain all ledger rows. Never delete, rewrite, backfill or re-stamp them.
+stage-runs.schema.json and the executable validator below (legacy/v1/v2/v3),
+`gstack-extend-telemetry report`, and quota's existing-field projection of
+agent/model/effort/route across `analytics/stage-runs.jsonl` and
+`analytics/stage-runs/*.jsonl`. Before shipping the writer, the existing release
+owner checks those reader tests and publishes the schema and migration guidance
+with the release. Consumers pinned to v1 or v2 upgrade their reader/schema and
+file-discovery path (`analytics/stage-runs/*.jsonl` alongside legacy
+`analytics/stage-runs.jsonl`) before opting into the new writer release. Apply
+SPEC's existing 0.x MINOR disclosure/migration policy for both the `schema_version: 3`
+row expansion and the per-host file path; no release number is reserved here. An
+old reader reports v3 unsupported and keeps it. Roll back the writer while
+retaining a reader capable of every emitted version, including v3, and retain all
+ledger rows. Never delete, rewrite, backfill or re-stamp them.
 Track 28A records the post-release in-repo v2 reader compatibility check,
 including three-part producers, against SPEC's stable provenance surface.
 Installed two-host acceptance remains with Tracks 30B/30C; the real
@@ -1823,7 +2007,7 @@ model and effort first, so an omitted `--model` or `--effort` is then null and
 `requested`. `source` is the writer label; the three `*_source` fields are evidence
 origins. A `flag` or `requested` label records who supplied the value, not that it is correct.
 
-The v2 schema allows outcome `blocked` and source `requested` for non-null
+The v2 and v3 schemas allow outcome `blocked` and source `requested` for non-null
 model/effort only; agent_source remains flag/detected/unknown and every null value
 requires unknown. `blocked` is emitted at a deliberate pause (see Paused and resumed
 segments in the join contract below). `requested` is emitted only from
@@ -1853,11 +2037,11 @@ off, and a missing or broken gstack costs only the skill-usage rows.
 2. Read `source`. A missing, blank, or non-string `source` is invalid. Any other
    label belongs to another producer: route that row to its own contract rather
    than reporting a malformed gstack-extend row.
-3. Read `schema_version`. Absent means legacy; positive safe integers 1/2 select
-   v1/v2. Safe integers 3 through Number.MAX_SAFE_INTEGER are unsupported: keep
+3. Read `schema_version`. Absent means legacy; positive safe integers 1/2/3 select
+   v1/v2/v3. Safe integers 4 through Number.MAX_SAFE_INTEGER are unsupported: keep
    the row and upgrade the reader. All other types/values, including unsafe
    integers and nonfinite numbers, are invalid without echoing their value.
-4. Validate against the matching closed legacy/v1/v2 schema branch. Never coerce
+4. Validate against the matching closed legacy/v1/v2/v3 schema branch. Never coerce
    values, fill defaults, or drop unknown keys to make a row pass.
 
 Keep every row, duplicates included, and never rewrite the ledger to make it
@@ -1866,7 +2050,7 @@ on main gains branches over time. A new schema version adds a branch and keeps
 the existing ones, and a reader pinned to an older copy reports rows with a newer
 version as unsupported (step 3) instead of misreading them.
 
-The v2 host ID pattern requires Unicode property escapes and Unicode-mode
+The v2/v3 `host_agent_id` pattern requires Unicode property escapes and Unicode-mode
 ECMA-262 regex evaluation, as provided by the pinned Ajv's default
 `unicodeRegExp: true`. Draft-07 support alone does not establish compatibility:
 readers using other regex engines must verify these capabilities before rollout.
@@ -1889,9 +2073,11 @@ The install uses the committed `bun.lock` and fails rather than change it. Ajv 8
 is a development dependency only; the skills and telemetry need no package. The
 command below runs with `--no-install`, so it never downloads anything. If Bun
 reports `Cannot find package 'ajv'`, run the install above. Run the command from
-the checkout root. With no input it validates its included synthetic 22-field v2 row:
+the checkout root in Bash. This block defines `validate_stage_runs` for reuse below
+and, with no input, validates its included synthetic 30-field v3 row:
 
 ~~~sh
+validate_stage_runs() {
 bun --no-install -e '
 import Ajv from "ajv";
 import { createReadStream, readFileSync, statSync } from "node:fs";
@@ -1899,8 +2085,9 @@ import { createReadStream, readFileSync, statSync } from "node:fs";
 const DOC = "See docs/telemetry.md#schema-validation";
 const FIELDS = ["stage", "agent", "model", "effort", "rung", "outcome", "started_at", "duration_s", "session_id",
   "repo", "branch", "work_item", "source", "route", "entrypoint_raw", "schema_version", "producer_version",
-  "agent_source", "model_source", "effort_source", "workspace_host", "host_agent_id"];
-const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":2,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent"};
+  "agent_source", "model_source", "effort_source", "workspace_host", "host_agent_id", "run_mode", "run_mode_source",
+  "questions", "user_wait_s", "resumes", "user_signals_source", "blocked_reason", "blocked_reason_source"];
+const EXAMPLE = {"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":3,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"};
 const EVIDENCE = "a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested";
 const KEEP = "keep the saved row unchanged; correct the producer to ";
 const WHY = {
@@ -1916,7 +2103,7 @@ const WHY = {
   minimum: ["a number is below the documented minimum", KEEP + "emit a nonnegative value"],
   "false schema": ["a field is forbidden in this schema branch", "keep the saved row unchanged; fix the producer or use the appropriate reader/contract"],
 };
-const counts = { rows: 0, blank: 0, v2: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
+const counts = { rows: 0, blank: 0, v3: 0, v2: 0, v1: 0, legacy: 0, invalid: 0, unsupported: 0, routed: 0 };
 let shown = 0;
 let hidden = 0;
 function report(line, where, keyword, cause, fix) {
@@ -1999,12 +2186,12 @@ try {
         report(line, "/schema_version", "version", "not a positive safe integer", "keep the saved row unchanged; correct the producer, never guess a version");
         continue;
       }
-      if (version > 2) {
+      if (version > 3) {
         counts.unsupported++;
-        report(line, "/schema_version", "unsupported", `version ${version} is newer than supported versions 1/2 (and legacy)`, "keep the saved row unchanged; upgrade the reader/schema");
+        report(line, "/schema_version", "unsupported", `version ${version} is newer than supported versions 1/2/3 (and legacy)`, "keep the saved row unchanged; upgrade the reader/schema");
         continue;
       }
-      kind = version === 1 ? "v1" : "v2";
+      kind = version === 1 ? "v1" : version === 2 ? "v2" : "v3";
     }
     if (validate(row)) { counts[kind]++; continue; }
     counts.invalid++;
@@ -2016,7 +2203,7 @@ try {
       if (seen.has(where + error.keyword)) continue;
       seen.add(where + error.keyword);
       const [cause, fix] = WHY[error.keyword] ?? ["the row fails the contract", "keep the saved row unchanged; check the producer against the appropriate reader/contract"];
-      const evidence = where.endsWith("_source") && (error.keyword === "const" || error.keyword === "enum");
+      const evidence = (where === "/agent_source" || where === "/model_source" || where === "/effort_source") && (error.keyword === "const" || error.keyword === "enum");
       report(line, where, error.keyword, evidence ? EVIDENCE : cause, evidence ? "correct the producer, never the saved row" : fix);
     }
   }
@@ -2025,9 +2212,11 @@ try {
   process.exit(1);
 }
 if (hidden) console.error(`${hidden} more diagnoses not shown`);
-console.log(`summary: rows=${counts.rows} valid=${counts.v2 + counts.v1 + counts.legacy} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
+console.log(`summary: rows=${counts.rows} valid=${counts.v3 + counts.v2 + counts.v1 + counts.legacy} v3=${counts.v3} v2=${counts.v2} v1=${counts.v1} legacy=${counts.legacy} invalid=${counts.invalid} unsupported=${counts.unsupported} routed=${counts.routed} blank=${counts.blank}`);
 process.exitCode = counts.invalid || counts.unsupported ? 1 : 0;
 '
+}
+validate_stage_runs
 ~~~
 
 The command reads UTF-8 strictly. An unreadable file or invalid UTF-8 stops
@@ -2037,7 +2226,7 @@ including private input in the diagnosis.
 Expected output, with exit status 0:
 
 ~~~text
-summary: rows=1 valid=1 v2=1 v1=0 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
+summary: rows=1 valid=1 v3=1 v2=0 v1=0 legacy=0 invalid=0 unsupported=0 routed=0 blank=0
 ~~~
 
 The included synthetic sample demonstrates shape, not installed-host evidence.
@@ -2045,14 +2234,41 @@ workspace_host identifies the launch host, host_agent_id its hosting agent/sessi
 agent the harness, route the independent launch classifier, and session_id this
 telemetry invocation. Source labels describe acquisition, not serving or billing.
 
-To check a ledger instead, set `STAGE_RUNS_FILE` and run the same command;
-`unset STAGE_RUNS_FILE` returns to the included row:
+To check one ledger, set `STAGE_RUNS_FILE` and call `validate_stage_runs` in the
+same Bash shell. To validate every ledger, run the following after defining the
+function above. Discovery uses the shared reader's order: the regular non-symlink
+legacy file first, then sorted regular non-symlink `*.jsonl` files in a real
+`stage-runs/` directory. This includes configured `host_id` filenames, other
+hosts and migrated `.legacy.jsonl` files without guessing the current host name.
+Each file gets one validator invocation; any failure makes the block fail.
 
 ~~~sh
-case "${GSTACK_EXTEND_STATE_DIR:-}" in
-  /*) export STAGE_RUNS_FILE="$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl" ;;
-  *) export STAGE_RUNS_FILE="$HOME/.gstack-extend/analytics/stage-runs.jsonl" ;;
-esac
+(
+  _GE_STATUS=0
+  _GE_COUNT=0
+  while IFS= read -r -d '' STAGE_RUNS_FILE; do
+    export STAGE_RUNS_FILE
+    _GE_COUNT=$((_GE_COUNT + 1))
+    validate_stage_runs || _GE_STATUS=1
+  done < <(python3 -I -c 'import os, sys
+from pathlib import Path
+base = os.environ.get("GSTACK_EXTEND_STATE_DIR", "")
+root = Path(base) if os.path.isabs(base) else Path.home() / ".gstack-extend"
+legacy = root / "analytics/stage-runs.jsonl"
+files = [legacy] if not legacy.is_symlink() and legacy.is_file() else []
+directory = root / "analytics/stage-runs"
+if not directory.is_symlink() and directory.is_dir():
+    for path in sorted(directory.iterdir(), key=lambda p: p.name):
+        if path.name.endswith(".jsonl") and path.name != ".jsonl" and not path.is_symlink() and path.is_file():
+            files.append(path)
+for path in files:
+    sys.stdout.buffer.write(os.fsencode(path) + b"\0")')
+  if [ "$_GE_COUNT" -eq 0 ]; then
+    echo 'No stage-runs ledgers found; nothing validated.' >&2
+    _GE_STATUS=1
+  fi
+  exit "$_GE_STATUS"
+)
 ~~~
 
 As the writer does, this uses an absolute state-directory override and ignores
@@ -2069,14 +2285,14 @@ parser messages, raw validator details, or the input path. It exits 1 when any r
 is invalid or unsupported, or when the input or schema cannot be read. Rows routed
 to other producers and blank lines do not fail it. Diagnoses and truncation notices
 go to stderr; the summary alone goes to stdout. The validated safe schema version
-is the only row value printed. For example, a v2 row whose
+is the only row value printed. For example, a v3 row whose
 `model` is null but whose `model_source` is `flag`, followed by a row with
-`schema_version` 3, prints (the first two lines on stderr):
+`schema_version` 4, prints (the first two lines on stderr):
 
 ~~~text
 line 1: /model_source const: a null value needs source unknown; a non-null agent or v1 value needs flag/detected; non-null v2 model/effort needs flag/detected/requested. Fix: correct the producer, never the saved row. See docs/telemetry.md#schema-validation
-line 2: /schema_version unsupported: version 3 is newer than supported versions 1/2 (and legacy). Fix: keep the saved row unchanged; upgrade the reader/schema. See docs/telemetry.md#schema-validation
-summary: rows=2 valid=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
+line 2: /schema_version unsupported: version 4 is newer than supported versions 1/2/3 (and legacy). Fix: keep the saved row unchanged; upgrade the reader/schema. See docs/telemetry.md#schema-validation
+summary: rows=2 valid=0 v3=0 v2=0 v1=0 legacy=0 invalid=1 unsupported=1 routed=0 blank=0
 ~~~
 
 ### Contributor setup
@@ -2117,8 +2333,8 @@ same `session_id`.
 2. Treat a skill-usage row as legacy unless `v` is the integer 1, `session_id` is a non-empty string, and `event_type` is `skill_start` or `skill_run` (the doctor's rule). Drop legacy rows. A modern v1 `skill_run` with no matching start is an unpaired completion of unknown issuance. `ts` and ID shape are hints only, and none is attributed to the pre-rollout wrapper without independent evidence.
 3. To pair gstack-extend's own stage-runs rows with skill-usage, key on `(skill, session_id)`, mapping stage-runs `stage` to `extend:<stage>`. Rows other callers write to stage-runs, and the quota ledger, join by `session_id` alone. `(skill, session_id)` is a correlation key, not a unique key: expect duplicate or conflicting rows for one key and keep them visible rather than silently picking one, especially for rows outside the guarantees below (other writers, pruned markers, a `skill_run` beyond the logger scan).
 4. A session ID without the `extend-<uuid>` shape came from explicit flags or an older writer and may stay unpaired locally. An explicit retry that reuses the original IDs pairs normally and, while its completion marker lives, writes nothing new. The `extend-` prefix alone does not prove the wrapper issued the ID.
-5. Sort per dataset. Stage-runs file order is finish order: sort by `started_at`, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
-6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2 row missing a required key is malformed.
+5. Sort per dataset. Stage-runs file order is finish order within each file: sort by `started_at` across files, null last (an unrepresentable explicit start or legacy duration). Sort `skill_start` by `ts` (its start time). A `skill_run` `ts` is its finish time. Skill-usage file order interleaves starts and finishes.
+6. Dispatch stage-runs rows by `source`, then `schema_version`, as in [Schema validation](#schema-validation). Treat an absent key in a legacy row as unknown; a v1/v2/v3 row missing a required key is malformed.
 
 **Paused and resumed segments.** A run that pauses is several segments. Each segment is
 one start and one finish: one stage-runs row and, with the tier on, one `skill_start`
@@ -2152,7 +2368,7 @@ and one `skill_run`.
   `started_at` and saved `work_item` the row then carries, or writes nothing when none is
   open. Each skill therefore runs start again whenever work continues after a pause,
   including later in the same conversation.
-- The schema is unchanged: legacy, v1 and v2 readers are unchanged, and legacy and v1
+- Legacy, v1, v2 and v3 readers stay compatible across segments, and legacy and v1
   rows never carry `blocked`.
 - Future cards: segments cover the resumable cross-checkout case. "Recover a telemetry
   finish run from a different repository root" keeps only a start-less finish whose own
@@ -2292,7 +2508,7 @@ The marker lines and the prose around each fence did not change.
   mkdir "$GX_TMP/repo" && git init -q "$GX_TMP/repo" && cd "$GX_TMP/repo" || exit 1
   "$GXT" start --skill "extend:roadmap"
   "$GXT" finish --skill "extend:roadmap" --outcome success
-  tail -n 1 "$GSTACK_EXTEND_STATE_DIR/analytics/stage-runs.jsonl"
+  tail -n 1 "$GSTACK_EXTEND_STATE_DIR"/analytics/stage-runs/*.jsonl
 )
 gstack-extend doctor telemetry --days 30
 ~~~
@@ -2302,10 +2518,24 @@ smoke start and finish touch only a temporary HOME. The doctor reads your real
 sinks and writes nothing.
 
 Start prints GE_TELEMETRY: session=extend-<uuid> start=<epoch>. Finish needs neither
-value copied. Reading your real newest stage-runs row writes nothing:
+value copied. To read the last appended row from each existing legacy and per-host
+file without writing anything, run this Bash block. `tail` prints filename headers
+when there is more than one file; these are per-file last rows, not one globally
+newest run. Use `report` for each skill/mode cell's latest `started_at`.
 
 ~~~sh
-tail -n 1 "${GSTACK_EXTEND_STATE_DIR:-$HOME/.gstack-extend}/analytics/stage-runs.jsonl"
+(
+  shopt -s nullglob
+  case "${GSTACK_EXTEND_STATE_DIR:-}" in
+    /*) _GE_ANALYTICS="$GSTACK_EXTEND_STATE_DIR/analytics" ;;
+    *) _GE_ANALYTICS="$HOME/.gstack-extend/analytics" ;;
+  esac
+  _GE_FILES=()
+  for _GE_FILE in "$_GE_ANALYTICS/stage-runs.jsonl" "$_GE_ANALYTICS"/stage-runs/*.jsonl; do
+    if [ -f "$_GE_FILE" ] && [ ! -L "$_GE_FILE" ]; then _GE_FILES+=("$_GE_FILE"); fi
+  done
+  if [ "${#_GE_FILES[@]}" -gt 0 ]; then tail -n 1 "${_GE_FILES[@]}"; fi
+)
 ~~~
 
 `skill_start.repo` is the checkout directory name (a workspace name under
@@ -2321,7 +2551,7 @@ loses its `skill_run` duration.
 ~~~json
 {"v":1,"event_type":"skill_start","skill":"extend:roadmap","session_id":"extend-example","ts":"2026-09-20T12:00:00Z","repo":"example","source":"gstack-extend"}
 {"v":1,"ts":"2026-09-20T12:00:03Z","event_type":"skill_run","skill":"extend:roadmap","session_id":"extend-example","duration_s":3,"outcome":"success","source":"gstack-extend"}
-{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":2,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent"}
+{"stage":"roadmap","agent":"claude","model":"claude-opus-5","effort":"xhigh","rung":0,"outcome":"success","started_at":"2026-09-20T12:00:00Z","duration_s":3,"session_id":"extend-example","repo":"acme/widget","branch":"main","work_item":null,"source":"gstack-extend","route":"cli","entrypoint_raw":"cli","schema_version":3,"producer_version":"1.0.0","agent_source":"detected","model_source":"detected","effort_source":"detected","workspace_host":"paseo","host_agent_id":"example-host-agent","run_mode":"user-directed","run_mode_source":"cli","questions":null,"user_wait_s":null,"resumes":null,"user_signals_source":"session-log-unavailable","blocked_reason":null,"blocked_reason_source":"not-blocked"}
 ~~~
 
 Copy both complete SHARED blocks below into a skill and replace the quoted
@@ -2884,37 +3114,56 @@ def project(row):
             projected[field] = None
     return projected
 
+def ledger_files():
+    analytics = state_root() / "analytics"
+    legacy = analytics / "stage-runs.jsonl"
+    files = [legacy] if legacy.is_file() and not legacy.is_symlink() else []
+    host_dir = analytics / "stage-runs"
+    try:
+        if host_dir.is_dir() and not host_dir.is_symlink():
+            for entry in sorted(host_dir.iterdir(), key=lambda p: p.name):
+                if entry.suffix == ".jsonl" and entry.is_file() and not entry.is_symlink():
+                    files.append(entry)
+    except OSError:
+        pass
+    return files
+
 def main():
     session = sys.argv[1] if len(sys.argv) > 1 else ""
     stage = sys.argv[2] if len(sys.argv) > 2 else None
     started = sys.argv[3] if len(sys.argv) > 3 else None
-    ledger = state_root() / "analytics" / "stage-runs.jsonl"
-    try:
-        if not ledger.is_file():
-            print("missing-file")
-            return
-        stream = ledger.open("rb")
-    except OSError:
+    files = ledger_files()
+    if not files:
         print("missing-file")
         return
     matches = []
     malformed = 0
-    with stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except (ValueError, RecursionError):
-                malformed += 1
-                continue
-            if not isinstance(row, dict) or row.get("session_id") != session:
-                continue
-            if stage is not None and row.get("stage") != stage:
-                continue
-            if started is not None and row.get("started_at") != started:
-                continue
-            matches.append(project(row))
+    opened = 0
+    for ledger in files:
+        try:
+            stream = ledger.open("rb")
+        except OSError:
+            continue
+        opened += 1
+        with stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except (ValueError, RecursionError):
+                    malformed += 1
+                    continue
+                if not isinstance(row, dict) or row.get("session_id") != session:
+                    continue
+                if stage is not None and row.get("stage") != stage:
+                    continue
+                if started is not None and row.get("started_at") != started:
+                    continue
+                matches.append(project(row))
+    if not opened:
+        print("missing-file")
+        return
     if malformed:
         print("malformed-lines: " + str(malformed))
     if not matches:

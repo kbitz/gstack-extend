@@ -2,6 +2,46 @@
 
 ## Unprocessed
 
+### [review:files=bin/lib/telemetry.py] Test gap: structured transcript resume forms
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Structured text/image, empty, mixed tool and isMeta user records lack dedicated resume-count assertions.
+- **Hypothesis (untested):** Extend the existing synthetic transcript fixture and independently assert counts for each form.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/lib/telemetry.py
+- **Evidence:** Read-only coverage audit of d6163e2; existing assertions inspected; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep on branch mmm/471c8d3a (PR not yet created), 2026-11-07.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py] Test gap: signal-reader exception isolation
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** The signal reader exception fallback has no direct test; missing and FIFO fixtures return normally.
+- **Hypothesis (untested):** Inject a reader exception at the existing callable boundary and assert a complete row with unavailable signals.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/lib/telemetry.py
+- **Evidence:** Read-only coverage audit of d6163e2; existing assertions inspected; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep on branch mmm/471c8d3a (PR not yet created), 2026-11-07.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py] Test gap: missing installed skill metadata
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** Report behavior when the installation skills directory is absent or unreadable lacks a dedicated test.
+- **Hypothesis (untested):** Use an isolated installation and assert installed_skills null with observed stages retained.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/lib/telemetry.py
+- **Evidence:** Read-only coverage audit of d6163e2; existing assertions inspected; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep on branch mmm/471c8d3a (PR not yet created), 2026-11-07.
+- **Effort:** ? (user triages in /roadmap)
+
+### [review:files=bin/lib/telemetry.py] Test gap: report filesystem error diagnostics
+- **Test gap:** no demonstrated defect; filed under `test-gaps=record`
+- **Description:** OS enumeration, open and mid-read exceptions lack direct diagnostic assertions.
+- **Hypothesis (untested):** Inject isolated filesystem failures and assert unreadable diagnostics while other ledgers remain counted.
+- **Upstream severity:** INFORMATIONAL
+- **Found in:** bin/lib/telemetry.py
+- **Evidence:** Read-only coverage audit of d6163e2; existing assertions inspected; no failure reproduced for this gap.
+- **Context:** Filed by /review-and-prep on branch mmm/471c8d3a (PR not yet created), 2026-11-07.
+- **Effort:** ? (user triages in /roadmap)
+
 ### [review:files=skills/review-and-prep.md] Test gap: installed-agent specialist waiver and receipt history
 - **Test gap:** no demonstrated defect; filed under `test-gaps=record`
 - **Description:** Static prompt locks and CLI probes do not execute the new delegate/fold waiver and mixed-cycle receipt instructions.

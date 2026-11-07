@@ -163,10 +163,13 @@ def get_runs(store,args,context):
         covered={(r['session_id'],r['pool_kind'],r['pool']) for r in rows}
         rows.extend(r for r in stored if (r['session_id'],r['pool_kind'],r['pool']) not in covered)
     # External provenance fills missing config only; explicit lifecycle values win.
-    path=store.root/'analytics/stage-runs.jsonl'
-    if path.is_file() and not path.is_symlink():
-        from telemetry import tail_records
-        provenance={r.get('session_id'):r for r in tail_records(path)}
+    from telemetry import stage_run_files, tail_records
+    provenance={}
+    for path in stage_run_files(store.root):
+        for r in tail_records(path):
+            if r.get('session_id'):
+                provenance[r['session_id']]=r
+    if provenance:
         for row in rows:
             for field in ('stage','agent','model','effort','route'):
                 if row.get(field) is None:

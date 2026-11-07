@@ -22,7 +22,7 @@ trial records at least 95% successful reads over 24 hours.
 ### Bracket a stage (four commands plus identity attachment)
 
 Ledger session IDs belong to the caller; harness session IDs belong to the vendor.
-Use the same ledger ID in any independently written `stage-runs.jsonl` row.
+Use the same ledger ID in any independently written stage-runs provenance row.
 For Claude, preassign a UUID with `claude -p --session-id`; Codex emits its thread
 ID in the first `codex exec --json` event; Cursor returns `session_id` with
 `--output-format json`. Capture that ID without printing the surrounding response.
@@ -73,9 +73,10 @@ When a vendor or exchange backoff is active, that error object also includes
 `retry_at`.
 Report text and fixture banners never contaminate JSON stdout. Additive fields
 preserve the version; removed fields, renames and meaning changes require a new
-version and release notes. The database layout is private. `stage-runs.jsonl`
-remains JSONL and is joined by `session_id`; consumers own work-item, tier and
-outcome joins.
+version and release notes. The database layout is private. Provenance remains
+JSONL in legacy `analytics/stage-runs.jsonl` and per-host
+`analytics/stage-runs/*.jsonl`, joined by `session_id`; consumers own work-item,
+tier and outcome joins. See the [provenance contract](telemetry.md#execution-provenance).
 
 | Command | Result and semantics |
 |---|---|
@@ -398,7 +399,7 @@ For reset/retention, stop quota commands, back up the private quota directory,
 then remove the database together with its WAL/SHM files. This discards samples,
 bindings, pending settlements and receipts. Preserve the key for stable pool IDs;
 removing it starts a new identity namespace. Never truncate a live SQLite file.
-`stage-runs.jsonl` is independent. Disabling quota is sufficient to stop new work.
+The stage-runs provenance files are independent. Disabling quota is sufficient to stop new work.
 
 ## Evidence appendix
 

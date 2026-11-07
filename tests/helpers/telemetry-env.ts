@@ -101,8 +101,12 @@ export type TelemetryFixture = {
   home: string;
   env: Record<string, string>;
   readJsonl: () => Array<Record<string, any>>;
-  /** Local-only provenance rows (stage-runs.jsonl under the gstack-extend state directory). */
+  /** Local-only provenance rows (legacy stage-runs.jsonl plus stage-runs/<host>.jsonl under the gstack-extend state directory). */
   readLedger: () => Array<Record<string, any>>;
+  /** Existing stage-runs ledger paths (legacy file first, then sorted stage-runs/<host>.jsonl). */
+  ledgerFiles: () => string[];
+  /** Rows from a specific stage-runs/<host>.jsonl file (defaults to the first existing host file). */
+  readHostLedger: (host?: string) => Array<Record<string, any>>;
   readStubArgs: () => string[];
 };
 
@@ -183,11 +187,40 @@ with (sink / 'skill-usage.jsonl').open('a') as f:
   }
   const readRows = (file: string) =>
     existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];
+  const hostLedgerDir = join(home, '.gstack-extend/analytics/stage-runs');
+  const hostLedgerFiles = () => {
+    try {
+      return readdirSync(hostLedgerDir, { withFileTypes: true })
+        .filter(entry => entry.isFile() && /^[A-Za-z0-9._-]+\.jsonl$/.test(entry.name))
+        .map(entry => join(hostLedgerDir, entry.name))
+        .sort();
+    } catch {
+      return [];
+    }
+  };
+  const ledgerFiles = () => {
+    const legacy = join(home, '.gstack-extend/analytics/stage-runs.jsonl');
+    const files: string[] = [];
+    try {
+      const info = lstatSync(legacy);
+      if (info.isFile()) files.push(legacy);
+    } catch {
+      // absent legacy file
+    }
+    files.push(...hostLedgerFiles());
+    return files;
+  };
   return {
     home,
     env: { HOME: home, PATH: processBin + ':/usr/bin:/bin' },
     readJsonl: () => readRows(join(home, '.gstack/analytics/skill-usage.jsonl')),
-    readLedger: () => readRows(join(home, '.gstack-extend/analytics/stage-runs.jsonl')),
+    readLedger: () => ledgerFiles().flatMap(readRows),
+    ledgerFiles,
+    readHostLedger: (host?: string) => {
+      if (host) return readRows(join(hostLedgerDir, `${host}.jsonl`));
+      const first = hostLedgerFiles()[0];
+      return first ? readRows(first) : [];
+    },
     readStubArgs: () => {
       const file = join(home, 'captured-args.txt');
       return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean) : [];

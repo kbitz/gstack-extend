@@ -41,7 +41,45 @@ SOURCE_REQUESTED = "requested"
 SOURCES = (SOURCE_FLAG, SOURCE_DETECTED, SOURCE_UNKNOWN)
 # The stage-runs row format in docs/stage-runs.schema.json. Bump it, and add a schema branch, when the row's
 # shape or meaning changes; a release alone does not. Unrelated to skill-usage's v and PROTOCOL_MARKER.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+RUN_MODE_ENV = "GSTACK_EXTEND_RUN_MODE"
+RUN_MODES = ("user-directed", "orchestrated", "unknown")
+PASEO_INTERACTIVE_ENTRYPOINTS = ("Paseo", "sdk-cli", "sdk-ts", "acp")
+RUN_MODE_SOURCES = (
+    "session-kind",
+    "work-item",
+    "run-mode-env",
+    "unrecognized-run-mode-env",
+    "launcher-state-root",
+    "cli",
+    *PASEO_INTERACTIVE_ENTRYPOINTS,
+    "none",
+)
+USER_SIGNALS_SOURCES = (
+    "session-log",
+    "orchestrated",
+    "no-harness",
+    "harness-unsupported",
+    "session-log-unavailable",
+)
+BLOCKED_REASON_SOURCES = ("flag", "not-blocked", "not-supplied", "orchestrated")
+BLOCKED_REASON_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+HOST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+REPORT_MODES = ("orchestrated", "user-directed", "unknown", "unrecorded")
+KNOWN_SKILLS = (
+    "pair-review",
+    "roadmap",
+    "project-spec",
+    "full-review",
+    "gstack-extend-upgrade",
+    "gstack-extend-init",
+    "review-and-prep",
+    "implement",
+    "ship-and-land",
+    "autoplan-lean",
+    "docs-ship",
+    "plan-track",
+)
 # The installation running this file, resolved so a symlinked bin/ names its real checkout. Never the caller's
 # repository, an environment override, or gstack's VERSION.
 VERSION_FILE = Path(__file__).resolve().parents[2] / "VERSION"
@@ -158,6 +196,63 @@ def state_root():
     if override and os.path.isabs(override):
         return Path(override)
     return Path.home() / ".gstack-extend"
+
+
+def host_file_name(state=None, nodename=None):
+    base = Path(state) if state is not None else state_root()
+    try:
+        configured = config_value(base, "host_id")
+    except OSError:
+        configured = None
+    if configured is not None:
+        if HOST_ID_RE.fullmatch(configured):
+            return configured
+        trace("ignored invalid host_id config value (expected [a-z0-9][a-z0-9-]{0,62})")
+    if nodename is None:
+        try:
+            nodename = os.uname().nodename
+        except OSError:
+            nodename = ""
+    label = str(nodename).split(".", 1)[0].lower()
+    sanitized = re.sub(r"[^a-z0-9]+", "-", label).strip("-")[:63].rstrip("-")
+    return sanitized if sanitized and HOST_ID_RE.fullmatch(sanitized) else "unknown-host"
+
+
+def stage_run_dir(state=None):
+    base = Path(state) if state is not None else state_root()
+    return base / "analytics/stage-runs"
+
+
+def stage_run_path(state=None):
+    base = Path(state) if state is not None else state_root()
+    return stage_run_dir(base) / (host_file_name(base) + ".jsonl")
+
+
+def stage_run_files(state=None):
+    base = Path(state) if state is not None else state_root()
+    files = []
+    legacy = base / "analytics/stage-runs.jsonl"
+    try:
+        if not legacy.is_symlink() and legacy.is_file():
+            files.append(legacy)
+    except OSError:
+        pass
+    directory = stage_run_dir(base)
+    if store_shape(directory) == "ok":
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:
+            names = []
+        for name in names:
+            if not name.endswith(".jsonl") or name == ".jsonl":
+                continue
+            entry = directory / name
+            try:
+                if not entry.is_symlink() and entry.is_file():
+                    files.append(entry)
+            except OSError:
+                continue
+    return files
 
 
 def helper_candidates(name):
@@ -740,7 +835,15 @@ def append_row(path, row, name):
     # 0600 and O_NOFOLLOW: the ledger holds branch and work item. A symlink planted at the
     # destination must not append those fields into a file gstack may upload.
     try:
+        # Only the per-host provenance directory must be real. Upstream usage supports
+        # an analytics-directory symlink; the destination file itself remains protected.
+        if name == "provenance sink" and path.parent.is_symlink():
+            debug(f"{name} directory is a symlink at {path.parent}", "remove the symlink and retry")
+            return False
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.parent.is_dir() or (name == "provenance sink" and path.parent.is_symlink()):
+            debug(f"{name} directory is not a directory at {path.parent}", "remove the non-directory and retry")
+            return False
         # O_NONBLOCK: a FIFO with no reader would otherwise block in open(). A FIFO that does open
         # is still not a ledger; refuse it before writing.
         descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
@@ -856,6 +959,7 @@ def delegate(logger, skill, sid, duration, values):
         # The work item is local: the launcher's variable must not reach upstream by inheritance either.
         env = os.environ.copy()
         env.pop(WORK_ITEM_ENV, None)
+        env.pop(RUN_MODE_ENV, None)
         if not env.get("GSTACK_DIR"):
             env["GSTACK_DIR"] = str(Path(os.path.realpath(logger)).parent.parent)
         result = subprocess.run(delegated, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -985,7 +1089,7 @@ def tail_records(path):
     # JSON objects from the last LOG_TAIL_BYTES of a JSONL log; a line cut by the seek is dropped.
     # Regular files only: a FIFO or device named like a transcript blocks in open(). A bounded read keeps a
     # concurrent append from exceeding the cap; the Claude grace loop re-seeks and sees the later bytes.
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         return
     with path.open("rb") as stream:
         size = stream.seek(0, os.SEEK_END)
@@ -1009,7 +1113,113 @@ def claude_logs(session_id, config_dir=None):
     if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
         return []
     root = Path(config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    return list((root / "projects").glob(f"*/{session_id}.jsonl"))
+    found = []
+    for path in (root / "projects").glob(f"*/{session_id}.jsonl"):
+        try:
+            if not path.is_symlink() and path.is_file():
+                found.append(path)
+        except OSError:
+            continue
+    return found
+
+
+def _is_human_prompt(record, message):
+    if record.get("isMeta") is True:
+        return False
+    content = message.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list) and content:
+        has_nonblank = False
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") not in ("text", "image"):
+                return False
+            if item.get("type") == "image":
+                has_nonblank = True
+            elif isinstance(item.get("text"), str) and item["text"].strip():
+                has_nonblank = True
+        return has_nonblank
+    return False
+
+
+def claude_user_signals(session_id, begin, end):
+    """Aggregate (questions, wait_s, resumes) from the Claude transcript in [begin, end], or None.
+
+    Only aggregate non-negative integer counts and seconds are returned; prompt text, question text and answers
+    are never stored or traced.
+    """
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", session_id):
+        return None
+    try:
+        log = newest(claude_logs(session_id))
+        if log is None or log.is_symlink() or not log.is_file():
+            return None
+        size = log.stat().st_size
+        records = list(tail_records(log))
+    except OSError:
+        return None
+    if size > LOG_TAIL_BYTES:
+        first_ts = next((parse_ts(r.get("timestamp")) for r in records if parse_ts(r.get("timestamp")) is not None), None)
+        if first_ts is None or first_ts > begin:
+            return None
+    questions = 0
+    total_wait = 0.0
+    resumes = 0
+    saw_window_assistant = False
+    ask_times = {}
+    answered_asks = set()
+    seen_pos_asks = set()
+    prev_type = None
+    prev_stop_reason = None
+    prev_ts = None
+    for record_idx, record in enumerate(records):
+        if record.get("isSidechain") is True:
+            continue
+        rtype = record.get("type")
+        if rtype not in ("user", "assistant"):
+            continue
+        ts = parse_ts(record.get("timestamp"))
+        if ts is None or ts > end:
+            continue
+        message = record.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if ts >= begin:
+            if rtype == "assistant":
+                saw_window_assistant = True
+                if isinstance(content, list):
+                    for block_idx, block in enumerate(content):
+                        if not isinstance(block, dict) or block.get("type") != "tool_use" or block.get("name") != "AskUserQuestion":
+                            continue
+                        block_id = block.get("id") if isinstance(block.get("id"), str) and block.get("id") else None
+                        if block_id is not None:
+                            if block_id not in ask_times:
+                                ask_times[block_id] = ts
+                                questions += 1
+                        else:
+                            position = (record_idx, block_idx)
+                            if position not in seen_pos_asks:
+                                seen_pos_asks.add(position)
+                                questions += 1
+            elif rtype == "user":
+                if isinstance(content, list):
+                    for item in content:
+                        if not isinstance(item, dict) or item.get("type") != "tool_result":
+                            continue
+                        tuid = item.get("tool_use_id")
+                        if isinstance(tuid, str) and tuid in ask_times and tuid not in answered_asks:
+                            answered_asks.add(tuid)
+                            total_wait += max(0.0, ts - ask_times[tuid])
+                if _is_human_prompt(record, message) and prev_type == "assistant" and prev_stop_reason == "end_turn" and prev_ts is not None:
+                    resumes += 1
+                    total_wait += max(0.0, ts - max(prev_ts, float(begin)))
+        prev_type = rtype
+        prev_stop_reason = message.get("stop_reason") if rtype == "assistant" else None
+        prev_ts = ts
+    if not saw_window_assistant:
+        return None
+    return questions, max(0, int(round(total_wait))), resumes
 
 
 def codex_logs(thread_id, codex_home=None):
@@ -1970,7 +2180,76 @@ def workspace_host():
     return host, agent_id
 
 
-def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None):
+def run_mode(detected_agent="claude", agent="claude", saved_work_item=None):
+    """Return (run_mode, run_mode_source) from consumer-neutral launcher signals and interactive entrypoints."""
+    session_kind = os.environ.get("GSTACK_SESSION_KIND")
+    if session_kind in ("spawned", "unattended"):
+        return "orchestrated", "session-kind"
+    finish_env_work_item = os.environ.get(WORK_ITEM_ENV)
+    accepted_item = clean(saved_work_item)
+    if accepted_item is None and finish_env_work_item not in (None, ""):
+        accepted_item = clean(finish_env_work_item)
+    if accepted_item is not None:
+        return "orchestrated", "work-item"
+    raw_run_mode = os.environ.get(RUN_MODE_ENV)
+    if raw_run_mode == "orchestrated":
+        return "orchestrated", "run-mode-env"
+    if raw_run_mode not in (None, ""):
+        trace(f"ignored {RUN_MODE_ENV} (unrecognized value; expected 'orchestrated'). See docs/telemetry.md#run-mode.")
+        return "unknown", "unrecognized-run-mode-env"
+    gstack_home = os.environ.get("GSTACK_HOME")
+    home = os.environ.get("HOME") or str(Path.home())
+    if (
+        isinstance(gstack_home, str)
+        and gstack_home.strip()
+        and os.path.isabs(gstack_home)
+        and isinstance(home, str)
+        and os.path.isabs(home)
+        and os.path.normpath(gstack_home) != os.path.normpath(os.path.join(home, ".gstack"))
+    ):
+        return "unknown", "launcher-state-root"
+    if (
+        session_kind not in (None, "")
+        or finish_env_work_item not in (None, "")
+        or saved_work_item is not None
+        or (gstack_home is not None and gstack_home != "" and not os.path.isabs(gstack_home))
+    ):
+        return "unknown", "none"
+    paseo_raw = os.environ.get("PASEO_AGENT_ID")
+    conductor_raw = os.environ.get("CONDUCTOR_SESSION_ID")
+    has_paseo = bool(paseo_raw and paseo_raw.strip())
+    has_conductor = bool(conductor_raw and conductor_raw.strip())
+    if has_paseo and has_conductor:
+        return "unknown", "none"
+    if paseo_raw not in (None, "") and clean(paseo_raw) is None:
+        return "unknown", "none"
+    raw_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT")
+    entry = clean(raw_entrypoint)
+    if detected_agent == "claude" and agent == "claude" and entry is not None and raw_entrypoint == entry:
+        if not has_conductor and entry in ("cli", "Paseo"):
+            return "user-directed", entry
+        if has_paseo and not has_conductor and entry in PASEO_INTERACTIVE_ENTRYPOINTS:
+            return "user-directed", entry
+    return "unknown", "none"
+
+
+def resolve_blocked_reason(raw_reason, outcome, mode):
+    if mode == "orchestrated":
+        if raw_reason is not None:
+            trace("ignored --blocked-reason flag (run_mode is orchestrated)")
+        return None, "orchestrated"
+    if outcome != "blocked":
+        if raw_reason is not None:
+            trace("ignored --blocked-reason flag (outcome is not blocked; expected --outcome blocked)")
+        return None, "not-blocked"
+    if isinstance(raw_reason, str) and BLOCKED_REASON_RE.fullmatch(raw_reason):
+        return raw_reason, "flag"
+    if raw_reason is not None:
+        trace("ignored --blocked-reason flag (invalid token; expected [a-z0-9][a-z0-9-]{0,63})")
+    return None, "not-supplied"
+
+
+def provenance_row(stage, sid, start, duration, values, root, work_item=None, observed=None, saved_work_item=None):
     # Read the mutable store before sampling the observation end, then share that one selection.
     captured = capture_cursor_store() if _observe_cursor_store() else None
     now = time.time()
@@ -2024,7 +2303,8 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
         except (OSError, subprocess.SubprocessError):
             # A stuck git must not skip the skill-usage completion that follows this row.
             repo = branch = None
-    outcome = values.get("--outcome")
+    raw_outcome = values.get("--outcome")
+    resolved_outcome = raw_outcome if raw_outcome in OUTCOMES else "unknown"
     # Route certification uses the agent detect() selected before --agent rewrote it.
     conductor_match = bool(
         detected_agent == "cursor" and agent == "cursor" and not os.environ.get("CURSOR_INVOKED_AS")
@@ -2035,14 +2315,50 @@ def provenance_row(stage, sid, start, duration, values, root, work_item=None, ob
     # Field order is part of the published contract (docs/stage-runs.schema.json): new fields append after the existing
     # ones. rung is always 0 for a hand-run skill (no fallback chain).
     host, host_id = workspace_host()
+    finish_env_item = os.environ.get(WORK_ITEM_ENV)
+    saved_for_mode = saved_work_item if saved_work_item is not None else (
+        work_item if "--work-item" not in values and finish_env_item in (None, "") else None
+    )
+    resolved_work_item = (
+        work_item
+        if work_item is not None
+        else clean(values.get("--work-item"))
+        if "--work-item" in values
+        else clean(finish_env_item)
+    )
+    mode, mode_source = run_mode(detected_agent, agent, saved_for_mode)
+    signal_end = now if begin <= now < begin + max(0, duration) + 1 else begin + max(0, duration)
+    if mode == "orchestrated":
+        questions, user_wait_s, resumes, signals_source = None, None, None, "orchestrated"
+    elif agent is None:
+        questions, user_wait_s, resumes, signals_source = None, None, None, "no-harness"
+    elif agent != "claude" or (detected_agent is not None and detected_agent != "claude"):
+        questions, user_wait_s, resumes, signals_source = None, None, None, "harness-unsupported"
+    else:
+        try:
+            signals = claude_user_signals(os.environ.get("CLAUDE_CODE_SESSION_ID", ""), begin, signal_end)
+        except Exception:
+            signals = None
+        if signals is None:
+            questions, user_wait_s, resumes, signals_source = None, None, None, "session-log-unavailable"
+        else:
+            questions, user_wait_s, resumes = signals
+            signals_source = "session-log"
+    blocked_reason, blocked_reason_source = resolve_blocked_reason(
+        values.get("--blocked-reason"), resolved_outcome, mode
+    )
     return dict(stage=stage, agent=agent, model=model, effort=effort, rung=0,
-                outcome=outcome if outcome in OUTCOMES else "unknown", started_at=iso(begin), duration_s=duration,
+                outcome=resolved_outcome, started_at=iso(begin), duration_s=duration,
                 session_id=sid, repo=repo, branch=branch,
-                work_item=work_item if work_item is not None else clean(values.get("--work-item")),
+                work_item=resolved_work_item,
                 source="gstack-extend", route=route, entrypoint_raw=entrypoint,
                 schema_version=SCHEMA_VERSION, producer_version=producer_version(),
                 agent_source=source("agent", agent), model_source=source("model", model),
-                effort_source=source("effort", effort), workspace_host=host, host_agent_id=host_id)
+                effort_source=source("effort", effort), workspace_host=host, host_agent_id=host_id,
+                run_mode=mode, run_mode_source=mode_source,
+                questions=questions, user_wait_s=user_wait_s, resumes=resumes,
+                user_signals_source=signals_source,
+                blocked_reason=blocked_reason, blocked_reason_source=blocked_reason_source)
 
 
 def _load_workflow_metrics():
@@ -2076,15 +2392,213 @@ def _metrics_dispatch(args):
                 pass
 
 
+def _empty_cell():
+    return {
+        "runs": 0,
+        "outcomes": {outcome: 0 for outcome in OUTCOMES},
+        "last_seen": None,
+        "_last_ts": None,
+    }
+
+
+def _discover_installed_skills():
+    skills_dir = Path(__file__).resolve().parents[2] / "skills"
+    if store_shape(skills_dir) != "ok":
+        return None
+    try:
+        stems = {
+            name[:-3]
+            for name in os.listdir(skills_dir)
+            if name.endswith(".md") and not (skills_dir / name).is_symlink() and (skills_dir / name).is_file()
+        }
+    except OSError:
+        return None
+    ordered = [s for s in KNOWN_SKILLS if s in stems]
+    ordered.extend(sorted(stems - set(ordered)))
+    return ordered
+
+
+def run_report(args):
+    """Print the skill-by-mode stage-runs table across the legacy and per-host files."""
+    if args in (["-h"], ["--help"]):
+        print("Usage: gstack-extend-telemetry report [--json]")
+        return 0
+    if any(arg != "--json" for arg in args) or len(args) > 1:
+        print("telemetry report: invalid arguments; use 'gstack-extend-telemetry report [--json]'", file=sys.stderr)
+        return 0
+    as_json = "--json" in args
+    base = state_root()
+    readable_files = stage_run_files(base)
+    readable_set = set(readable_files)
+    unreadable_count = 0
+    legacy = base / "analytics/stage-runs.jsonl"
+    if os.path.lexists(legacy) and legacy not in readable_set:
+        unreadable_count += 1
+    directory = stage_run_dir(base)
+    dir_shape = store_shape(directory)
+    if dir_shape == "bad":
+        unreadable_count += 1
+    elif dir_shape == "ok":
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            entries = []
+            unreadable_count += 1
+        for name in entries:
+            if name.endswith(".jsonl") and name != ".jsonl" and directory / name not in readable_set:
+                unreadable_count += 1
+    installed_skills = _discover_installed_skills()
+    installed_set = set(installed_skills or ())
+    stage_cells = {
+        skill: {mode: _empty_cell() for mode in REPORT_MODES}
+        for skill in (installed_skills or ())
+    }
+    files_read = 0
+    row_counts = {"counted": 0, "routed": 0, "malformed": 0, "invalid": 0, "unsupported": 0}
+    for path in readable_files:
+        fd = -1
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                unreadable_count += 1
+                continue
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                files_read += 1
+                for raw_line in stream:
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        line = raw_line.decode("utf-8")
+                        row = json.loads(line)
+                    except (UnicodeDecodeError, ValueError, RecursionError):
+                        row_counts["malformed"] += 1
+                        continue
+                    if not isinstance(row, dict):
+                        row_counts["malformed"] += 1
+                        continue
+                    source = row.get("source")
+                    if not isinstance(source, str) or not source.strip():
+                        row_counts["invalid"] += 1
+                        continue
+                    if source != "gstack-extend":
+                        row_counts["routed"] += 1
+                        continue
+                    if "schema_version" not in row:
+                        mode = "unrecorded"
+                    else:
+                        sv = row.get("schema_version")
+                        if isinstance(sv, bool) or not isinstance(sv, int) or sv < 1 or sv > 2**53 - 1:
+                            row_counts["invalid"] += 1
+                            continue
+                        if sv in (1, 2):
+                            mode = "unrecorded"
+                        elif sv == 3:
+                            rm = row.get("run_mode")
+                            if rm in RUN_MODES:
+                                mode = rm
+                            else:
+                                row_counts["invalid"] += 1
+                                continue
+                        else:
+                            row_counts["unsupported"] += 1
+                            continue
+                    stage_name = clean(row.get("stage"))
+                    outcome = row.get("outcome")
+                    if stage_name is None or outcome not in OUTCOMES:
+                        row_counts["invalid"] += 1
+                        continue
+                    row_counts["counted"] += 1
+                    cells = stage_cells.setdefault(stage_name, {m: _empty_cell() for m in REPORT_MODES})
+                    cell = cells[mode]
+                    cell["runs"] += 1
+                    cell["outcomes"][outcome] += 1
+                    started_at = row.get("started_at")
+                    ts = parse_ts(started_at)
+                    if ts is not None and (cell["_last_ts"] is None or ts > cell["_last_ts"]):
+                        cell["_last_ts"] = ts
+                        cell["last_seen"] = started_at
+        except OSError:
+            unreadable_count += 1
+            continue
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    extra_skills = sorted(s for s in stage_cells if s not in installed_set)
+    all_skills = list(installed_skills or ()) + extra_skills
+    skills_payload = []
+    for skill in all_skills:
+        cells = stage_cells[skill]
+        skills_payload.append({
+            "skill": skill,
+            "installed": skill in installed_set,
+            "cells": {
+                mode: {
+                    "runs": cells[mode]["runs"],
+                    "outcomes": dict(cells[mode]["outcomes"]),
+                    "last_seen": cells[mode]["last_seen"],
+                }
+                for mode in REPORT_MODES
+            },
+        })
+    empty_cells = [
+        [skill, mode]
+        for skill in (installed_skills or ())
+        for mode in ("orchestrated", "user-directed", "unknown")
+        if stage_cells[skill][mode]["runs"] == 0
+    ]
+    payload = {
+        "v": 1,
+        "modes": list(REPORT_MODES),
+        "skills": skills_payload,
+        "empty_cells": empty_cells,
+        "files": {"read": files_read, "unreadable": unreadable_count},
+        "rows": row_counts,
+    }
+    if installed_skills is None:
+        payload["installed_skills"] = None
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return 0
+    print(
+        f"Stage-runs report — files: read={files_read} unreadable={unreadable_count}; "
+        f"rows: counted={row_counts['counted']} routed={row_counts['routed']} "
+        f"malformed={row_counts['malformed']} invalid={row_counts['invalid']} unsupported={row_counts['unsupported']}"
+    )
+    print("Skill                   Mode           Runs  Success  Blocked  Error  Abort  Unknown  Last seen")
+    for entry in skills_payload:
+        skill = entry["skill"]
+        for mode in REPORT_MODES:
+            c = entry["cells"][mode]
+            o = c["outcomes"]
+            last = c["last_seen"] or "-"
+            print(
+                f"{skill:<22}  {mode:<13}  {c['runs']:>4}  {o['success']:>7}  {o['blocked']:>7}  "
+                f"{o['error']:>5}  {o['abort']:>5}  {o['unknown']:>7}  {last}"
+            )
+    if empty_cells:
+        formatted = ", ".join(f"{s}:{m}" for s, m in empty_cells)
+        print(f"Empty cells ({len(empty_cells)}): {formatted}")
+    else:
+        print("Empty cells (0): none")
+    return 0
+
+
 def main(args):
     if args and args[0] == "metrics":
         _metrics_dispatch(args[1:])
         return
+    if args and args[0] == "report":
+        run_report(args[1:])
+        return
     if args and args[0] in ("-h", "--help"):
         print('Usage: gstack-extend-telemetry start|finish --skill "extend:<name>"')
-        print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown]")
+        print("       gstack-extend-telemetry report [--json]")
+        print("  finish: [--start EPOCH] [--session-id ID] [--outcome success|error|abort|blocked|unknown] [--blocked-reason TOKEN]")
         print("  finish also forwards: [--used-browse true|false] [--error-class CLASS] [--error-message TEXT] [--failed-step STEP]")
         print("  finish provenance overrides: [--agent claude|codex|cursor|grok] [--model ID] [--effort LEVEL] [--work-item ID]")
+        print("  blocked_reason: --blocked-reason when --outcome blocked ([a-z0-9][a-z0-9-]{0,63}, local-only, otherwise null).")
         print("  work_item: --work-item, else the value start saved from GSTACK_EXTEND_WORK_ITEM, else that variable at finish;")
         print("  at most 200 printable characters, otherwise null.")
         print("  Missing/malformed start and session values fall back to this repository root's skill handoff.")
@@ -2099,6 +2613,7 @@ def main(args):
         print("  (until its marker is pruned).")
         print("  Bare flags retain legacy finish compatibility (--duration SECONDS).")
         print("  GSTACK_EXTEND_TELEMETRY_DEBUG=1 explains skips. See docs/telemetry.md.")
+        print("  report: print the skill-by-mode stage-runs table across legacy and per-host files (--json for JSON).")
         print("  metrics: optional local step/pass capture for review-and-prep and ship-and-land;")
         print("  run 'gstack-extend-telemetry metrics --help'. See docs/telemetry.md#workflow-metrics.")
         return
@@ -2109,7 +2624,7 @@ def main(args):
     # --duration counts only for legacy finish calls. Provenance overrides stay local to the provenance row.
     flags = {"--skill", "--start", "--session-id", "--duration", "--outcome",
              "--used-browse", "--error-class", "--error-message", "--failed-step",
-             "--event-type", "--source", "--agent", "--model", "--effort", "--work-item"}
+             "--event-type", "--source", "--agent", "--model", "--effort", "--work-item", "--blocked-reason"}
     while args:
         flag = args.pop(0)
         if flag == "--no-sweep":
@@ -2134,7 +2649,7 @@ def main(args):
         logger = None
     if not logger and not provenance and not retry_usage:
         return
-    ledger = extend_state / "analytics/stage-runs.jsonl"
+    ledger = stage_run_path(extend_state)
     trace(f"provenance={'on sink=' + str(ledger) if provenance else 'off'}")
     root = capture(["git", "rev-parse", "--show-toplevel"])
     # Outside git use cwd for isolation, while the row honestly says repo:unknown.
@@ -2278,7 +2793,7 @@ def main(args):
         # appended as saved, even by a later release: its version, producer and sources describe its construction.
         row = saved or provenance_row(skill.removeprefix("extend:"), sid, start, duration, values, root,
                                       resolve_work_item(values.get("--work-item"), state.get("work_item")),
-                                      observed=observed)
+                                      observed=observed, saved_work_item=state.get("work_item"))
         trace(f"provenance agent={row['agent']} model={row['model']} effort={row['effort']}")
         if append_row(ledger, row, "provenance sink"):
             done.append("provenance")
