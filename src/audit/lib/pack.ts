@@ -100,7 +100,7 @@ export type TouchNorm = {
 };
 
 const NEW_MARKER_RE = /[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i;
-const SHARED_DOCS_MARKER_RE = /roadmap:shared_docs=([^\s]*?)(?=\s|-->|$)/;
+const SHARED_DOCS_MARKER_RE = /<!--\s*roadmap:shared_docs=([^\s]*?)(?=\s|-->|$)/;
 const PROTECTED_CLAUDE_DOCS = new Set(['CLAUDE.md', 'docs/CLAUDE.md']);
 const sharedDocCache = new WeakMap<readonly string[], Set<string>>();
 
@@ -116,6 +116,7 @@ export function normalizeTouch(raw: string): TouchNorm {
 
 /**
  * Parse `<!-- roadmap:shared_docs=a.md,b.md -->` from CLAUDE.md content.
+ * Only an HTML comment is a marker, so a prose or inline-code mention is not.
  * First marker wins; value runs to whitespace or `-->` and splits on `,`.
  */
 export function sharedDocsMarker(instructions: string): string[] {
@@ -217,13 +218,26 @@ function matchTouchPair(x: TouchNorm, y: TouchNorm): CollisionMatch | null {
   return null;
 }
 
+/** Scheduling touches with repeated entries dropped; `(new)` stays part of the identity. */
+function distinctSchedulingTouches(touches: string[], rules: CollisionRules): TouchNorm[] {
+  const seen = new Set<string>();
+  const out: TouchNorm[] = [];
+  for (const n of schedulingTouches(touches, rules)) {
+    const key = `${n.isNew ? '+' : '-'}${n.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
+  }
+  return out;
+}
+
 export function collisionMatches(
   a: string[],
   b: string[],
   rules: CollisionRules = {},
 ): CollisionMatch[] {
-  const na = schedulingTouches(a, rules);
-  const nb = schedulingTouches(b, rules);
+  const na = distinctSchedulingTouches(a, rules);
+  const nb = distinctSchedulingTouches(b, rules);
   const out: CollisionMatch[] = [];
   for (const x of na) {
     for (const y of nb) {
@@ -239,9 +253,18 @@ export function collisionKind(
   b: string[],
   rules: CollisionRules = {},
 ): 'none' | 'file' | 'folder-only' {
-  const matches = collisionMatches(a, b, rules);
-  if (matches.length === 0) return 'none';
-  return matches.some((m) => m.kind === 'file') ? 'file' : 'folder-only';
+  const na = distinctSchedulingTouches(a, rules);
+  const nb = distinctSchedulingTouches(b, rules);
+  let folder = false;
+  for (const x of na) {
+    for (const y of nb) {
+      const m = matchTouchPair(x, y);
+      if (m === null) continue;
+      if (m.kind === 'file') return 'file';
+      folder = true;
+    }
+  }
+  return folder ? 'folder-only' : 'none';
 }
 
 export function touchesIntersect(

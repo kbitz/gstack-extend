@@ -70,8 +70,10 @@ export function runPackCli(argv: string[], stdinText?: string): string {
     if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive)));
   }
 
-  const claude =
-    readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
+  // Same file the audit reads (src/audit/cli.ts findDoc): root CLAUDE.md when it is a regular
+  // file, even an empty one, else docs/CLAUDE.md. A different pick would pack Groups that
+  // COLLISIONS and PACKING then fail.
+  const claude = readMaybe(findDoc(repoRoot, 'CLAUDE.md'));
   const rules = { sharedDocs: sharedDocsMarker(claude) };
 
   if (materialize) {

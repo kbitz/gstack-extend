@@ -5,6 +5,7 @@ import {
   COLLISION_CONTRACT,
   SHARED_DOC_PATHS,
   collisionKind,
+  collisionMatches,
   fillCap,
   folderOnlyCollisions,
   formatPackOutput,
@@ -483,6 +484,30 @@ describe('sharedDocsMarker', () => {
         '<!-- roadmap:shared_docs=first.md -->\n<!-- roadmap:shared_docs=second.md -->',
       ),
     ).toEqual(['first.md']);
+  });
+
+  test('only an HTML comment is a marker: a prose or inline-code mention before it is ignored', () => {
+    expect(
+      sharedDocsMarker(
+        'Declare `roadmap:shared_docs=` in a comment.\n<!-- roadmap:shared_docs=docs/runbook.md -->\n',
+      ),
+    ).toEqual(['docs/runbook.md']);
+    expect(sharedDocsMarker('roadmap:shared_docs=docs/runbook.md\n')).toEqual([]);
+  });
+});
+
+describe('collision matching with repeated touches', () => {
+  test('duplicate entries produce one match per distinct pair', () => {
+    expect(collisionMatches(['src/a.ts', 'src/a.ts'], ['src/a.ts', ' src/a.ts '])).toHaveLength(1);
+    expect(collisionMatches(['src/', 'src/'], ['src/a.ts', 'src/a.ts'])).toHaveLength(1);
+    expect(collisionMatches(['src/a.ts (new)', 'src/a.ts'], ['src/a.ts'])).toHaveLength(2);
+  });
+
+  test('many duplicates still give the same kind and verdict', () => {
+    const many = Array.from({ length: 2000 }, () => 'src/a.ts');
+    expect(collisionKind(many, many)).toBe('file');
+    expect(touchesIntersect(many, many)).toBe(true);
+    expect(collisionKind(Array.from({ length: 2000 }, () => 'src/'), many)).toBe('folder-only');
   });
 });
 
