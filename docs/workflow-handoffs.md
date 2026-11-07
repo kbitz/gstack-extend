@@ -1365,13 +1365,15 @@ With neither variable set, every path is what it was before this section.
   `GSTACK_SESSION_KIND=spawned` (or `unattended`), `GSTACK_EXTEND_WORK_ITEM=<id>`
   or `GSTACK_EXTEND_RUN_MODE=orchestrated` so the provenance row records
   `run_mode: "orchestrated"` with `run_mode_source` (`"session-kind"`,
-  `"work-item"` or `"run-mode-env"`). Any other non-empty `GSTACK_EXTEND_RUN_MODE`
-  value is ignored and recorded as `run_mode: "unknown"`,
+  `"work-item"` or `"run-mode-env"`). When neither the session-kind nor work-item
+  signal applies, any other non-empty `GSTACK_EXTEND_RUN_MODE` value is ignored
+  and recorded as `run_mode: "unknown"`,
   `run_mode_source: "unrecognized-run-mode-env"`. A non-default absolute
   `GSTACK_HOME` is supporting evidence that blocks `user-directed` and records
   `run_mode: "unknown"`, `run_mode_source: "launcher-state-root"` when no primary
-  orchestration signal is set. An orchestrator that launches workers without any
-  signal will have those runs counted as `user-directed` until it sets one;
+  orchestration signal or run-mode override is set. An orchestrator that launches
+  workers without any signal will have runs on an otherwise eligible interactive
+  Claude entrypoint counted as `user-directed` until it sets one;
   `run_mode_source` shows why each row got its mode.
 - **Other upstream variables are not followed.** `GSTACK_STATE_DIR` and
   `CLAUDE_PLUGIN_DATA` select an upstream root, but these paths do not read them.

@@ -1753,7 +1753,8 @@ sufficient evidence (`unknown`). Finish evaluates signals in this exact preceden
 
 An orchestrator that launches workers without any signal (`GSTACK_SESSION_KIND`,
 `GSTACK_EXTEND_WORK_ITEM`, `GSTACK_EXTEND_RUN_MODE`, or an isolated `GSTACK_HOME`)
-will have those runs counted as `user-directed` until it sets one; `run_mode_source`
+will have runs on an otherwise eligible interactive Claude entrypoint counted as
+`user-directed` until it sets one; `run_mode_source`
 shows why each row got its mode. The classifier never inspects parent process
 command lines or orchestrator directories.
 
@@ -1765,15 +1766,15 @@ Symlinked transcript files are refused by the shared transcript reader, includin
 for existing model/effort detection. Keep the transcript file itself regular;
 this does not prohibit a configured transcript directory outside its default path.
 
-For non-orchestrated runs (`run_mode` is not `orchestrated`) when both the detected and
-final `agent` are `claude` and the active session's transcript
+For non-orchestrated runs (`run_mode` is not `orchestrated`) when the final `agent`
+is `claude` and detection did not identify another harness, and the active session's transcript
 (`~/.claude/projects/*/<session>.jsonl`, honoring `CLAUDE_CONFIG_DIR`) is a readable
 regular file whose last 8 MiB covers `begin` and contains at least one non-sidechain
 `assistant` record in `[begin, end]`, finish scans non-sidechain `user` and `assistant`
 records with parseable timestamps to populate:
 
 - `questions`: non-negative integer count of distinct `tool_use` blocks named `AskUserQuestion` (deduplicated by block `id`) in `assistant` records with timestamps in `[begin, end]`.
-- `resumes`: non-negative integer count of in-window human prompts (non-`isMeta` `user` records whose `message.content` is a nonblank string or a non-empty list of only `text`/`image` blocks) immediately preceded in the conversation by a non-sidechain `assistant` record whose `message.stop_reason` is `end_turn` (the run stopped and the user restarted it inside the same segment). A formal resume (`/review-and-prep resume`, `/pair-review resume`, `/full-review resume`) is its own segment and row; `resumes` counts only in-segment restarts.
+- `resumes`: non-negative integer count of in-window human prompts (non-`isMeta` `user` records whose `message.content` is a nonblank string or a non-empty list of only `text`/`image` blocks containing nonblank text or an image) immediately preceded in the conversation by a non-sidechain `assistant` record whose `message.stop_reason` is `end_turn` (the run stopped and the user restarted it inside the same segment). A formal resume (`/review-and-prep resume`, `/pair-review resume`, `/full-review resume`) is its own segment and row; `resumes` counts only in-segment restarts.
 - `user_wait_s`: non-negative integer (`round(total)`, at least 0) summing (a) for each in-window `AskUserQuestion` block, the in-window `user` record carrying a `tool_result` with that `tool_use_id` (`user_ts - ask_ts`), plus (b) for each counted in-segment resume, `user_ts - max(prev_assistant_ts, begin)`.
 - `user_signals_source`:
   - `orchestrated`: `run_mode` is `orchestrated` (all three counts are `null`).
@@ -1880,6 +1881,9 @@ and `unrecorded` (legacy, v1, and v2 rows), with `runs`, `outcomes` (`success`,
 reports `files` (`read`, `unreadable`) and `rows` (`counted`, `routed`, `malformed`,
 `invalid`, `unsupported`). It never prints session IDs, branch, repo, work item,
 host ID, or file paths.
+`last_seen` is the greatest valid `started_at` in the cell, or null if none is valid.
+If the installed skills directory is unavailable, JSON adds `installed_skills: null`,
+retains observed stages, and leaves `empty_cells` empty because installed coverage is unknown.
 
 ### Versions
 
