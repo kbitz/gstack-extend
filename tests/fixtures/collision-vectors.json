@@ -1,0 +1,177 @@
+{
+  "schema": "collision-vectors/v1",
+  "contract": "collision-contract/v1",
+  "vectors": [
+    {
+      "name": "exact: same file collides",
+      "case": "exact",
+      "a": ["src/a.ts"],
+      "b": ["src/a.ts"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": false
+    },
+    {
+      "name": "exact: different files do not collide",
+      "case": "exact",
+      "a": ["src/a.ts"],
+      "b": ["src/b.ts"],
+      "shared_docs": [],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "folder: folder collides with file under it",
+      "case": "folder",
+      "a": ["src/audit/"],
+      "b": ["src/audit/cli.ts"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "folder: src/ does not collide with sibling prefix srcx/a.ts",
+      "case": "folder",
+      "a": ["src/"],
+      "b": ["srcx/a.ts"],
+      "shared_docs": [],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "folder: nested folders collide",
+      "case": "folder",
+      "a": ["src/"],
+      "b": ["src/audit/"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "folder-only: true for folder over a file",
+      "case": "folder-only",
+      "a": ["src/audit/"],
+      "b": ["src/audit/pack-cli.ts"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "folder-only: false when pair also shares a file",
+      "case": "folder-only",
+      "a": ["src/audit/", "src/shared.ts"],
+      "b": ["src/audit/pack-cli.ts", "src/shared.ts"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": false
+    },
+    {
+      "name": "folder-only: true for same folder named twice",
+      "case": "folder-only",
+      "a": ["src/audit/"],
+      "b": ["src/audit/"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "new: new file under bare parent folder does not collide",
+      "case": "new",
+      "a": ["src/audit/new-check.ts (new)"],
+      "b": ["src/audit/"],
+      "shared_docs": [],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "new: new file under folder marked (new) collides",
+      "case": "new",
+      "a": ["src/audit/new-check.ts (new)"],
+      "b": ["src/audit/ (new)"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "new: new file against same existing path collides",
+      "case": "new",
+      "a": ["src/audit/new-check.ts (new)"],
+      "b": ["src/audit/new-check.ts"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": false
+    },
+    {
+      "name": "new: new folder under existing folder does not collide",
+      "case": "new",
+      "a": ["src/audit/sub/ (new)"],
+      "b": ["src/audit/"],
+      "shared_docs": [],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "new: existing file under folder marked (new) collides",
+      "case": "new",
+      "a": ["src/audit/existing.ts"],
+      "b": ["src/audit/ (new)"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "shared-doc: fixed shared doc docs/ROADMAP.md does not collide",
+      "case": "shared-doc",
+      "a": ["docs/ROADMAP.md"],
+      "b": ["docs/ROADMAP.md"],
+      "shared_docs": [],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "shared-doc: docs/runbook.md collides when shared_docs is empty",
+      "case": "shared-doc",
+      "a": ["docs/runbook.md"],
+      "b": ["docs/runbook.md"],
+      "shared_docs": [],
+      "collide": true,
+      "folder_only": false
+    },
+    {
+      "name": "shared-doc: docs/runbook.md does not collide when listed in shared_docs",
+      "case": "shared-doc",
+      "a": ["docs/runbook.md"],
+      "b": ["docs/runbook.md"],
+      "shared_docs": ["docs/runbook.md"],
+      "collide": false,
+      "folder_only": false
+    },
+    {
+      "name": "shared-doc: CLAUDE.md in shared_docs is ignored so pair still collides",
+      "case": "shared-doc",
+      "a": ["CLAUDE.md"],
+      "b": ["CLAUDE.md"],
+      "shared_docs": ["CLAUDE.md"],
+      "collide": true,
+      "folder_only": false
+    },
+    {
+      "name": "shared-doc: folder entry in shared_docs is ignored so pair still collides",
+      "case": "shared-doc",
+      "a": ["src/a.ts"],
+      "b": ["src/"],
+      "shared_docs": ["src/"],
+      "collide": true,
+      "folder_only": true
+    },
+    {
+      "name": "shared-doc: shared doc plus common file still collides as file",
+      "case": "shared-doc",
+      "a": ["docs/runbook.md", "src/a.ts"],
+      "b": ["docs/runbook.md", "src/a.ts"],
+      "shared_docs": ["docs/runbook.md"],
+      "collide": true,
+      "folder_only": false
+    }
+  ]
+}

@@ -164,6 +164,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     'bin/roadmap-route',
     'bin/lib/source-tag.sh',
   ],
+  'tests/lib-pack.test.ts': [
+    'tests/fixtures/collision-vectors.json',
+    'docs/collision-contract.md',
+  ],
   // The cross-skill protocol rules read every skill and setup's install list.
   'tests/skill-protocols.test.ts': [
     'skills/**',

@@ -9,7 +9,13 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { fillCap, formatPackOutput, packTracks } from './lib/pack.ts';
+import {
+  fillCap,
+  folderOnlyCollisions,
+  formatPackOutput,
+  packTracks,
+  sharedDocsMarker,
+} from './lib/pack.ts';
 import { tracksForPacker } from './checks/packing.ts';
 import { parallelismCap } from './lib/parallelism-cap.ts';
 import { mergeShippedArchive, parseRoadmap } from './parsers/roadmap.ts';
@@ -64,6 +70,10 @@ export function runPackCli(argv: string[], stdinText?: string): string {
     if (archive !== null) parsed = mergeShippedArchive(parsed, parseRoadmap(readMaybe(archive)));
   }
 
+  const claude =
+    readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
+  const rules = { sharedDocs: sharedDocsMarker(claude) };
+
   if (materialize) {
     const groups = [...parsed.value.groups].sort(
       (a, b) => Number.parseInt(a.num, 10) - Number.parseInt(b.num, 10),
@@ -80,27 +90,29 @@ export function runPackCli(argv: string[], stdinText?: string): string {
     }
     if (!any) lines.push('- (none — every Group already has an explicit annotation or is first)');
     lines.push('');
-    const claude =
-      readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
     const ctx = { roadmap: parsed, parallelismCap: parallelismCap(claude) } as AuditCtx;
     const cap = fillCap(ctx.parallelismCap);
-    const packed = packTracks(tracksForPacker(ctx), { target: cap, maxPerBin: cap });
-    lines.push(formatPackOutput(packed).trimEnd());
+    const input = tracksForPacker(ctx);
+    const packed = packTracks(input, { target: cap, maxPerBin: cap, ...rules });
+    lines.push(
+      formatPackOutput(packed, { folderOnly: folderOnlyCollisions(input, rules) }).trimEnd(),
+    );
     return lines.join('\n') + '\n';
   }
 
-  const claude =
-    readMaybe(join(repoRoot, 'CLAUDE.md')) || readMaybe(join(repoRoot, 'docs', 'CLAUDE.md'));
   const cap = fillCap(parallelismCap(claude));
   const ctx = { roadmap: parsed, parallelismCap: cap } as AuditCtx;
   const input = tracksForPacker(ctx);
-  const packed = packTracks(input, { target: cap, maxPerBin: cap });
+  const packed = packTracks(input, { target: cap, maxPerBin: cap, ...rules });
   const headingCount = (live.match(/^#{3,5} Track /gm) ?? []).length;
   let emptyHint = 'no unshipped Tracks';
   if (input.length === 0 && headingCount > 0) {
     emptyHint = `parsed 0 unshipped Tracks; file still has ${headingCount} Track heading(s) — check ✓ Shipped / Hotfix / _touches:`;
   }
-  return formatPackOutput(packed, { emptyHint });
+  return formatPackOutput(packed, {
+    emptyHint,
+    folderOnly: folderOnlyCollisions(input, rules),
+  });
 }
 
 if (import.meta.main) {

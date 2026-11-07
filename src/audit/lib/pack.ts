@@ -14,8 +14,10 @@
  * Capacity overflow stays in the same layer (parallel ready).
  * File-collision spill is a later layer — never two ready bins on one path.
  *
- * Shared docs are excluded from collision. A path ending in `/` is a
- * directory prefix. `path (new)` is the same path without the marker.
+ * Shared docs (fixed set plus `roadmap:shared_docs=` from CLAUDE.md) are
+ * excluded from collision. A path ending in `/` is a directory prefix.
+ * `path (new)` collides only with the same path or a folder entry also
+ * marked `(new)` (see docs/collision-contract.md).
  *
  * Group-level `_Depends on:` is NOT packer input — only track `_blocked-by:`
  * and file collisions. Group deps are derived output.
@@ -29,6 +31,16 @@ import { normalizeTitle } from './renames-diff.ts';
 
 export const PACK_TARGET = 6;
 export const PACK_HARD_MAX = 8;
+export const COLLISION_CONTRACT = 'collision-contract/v1';
+
+export type CollisionRules = {
+  sharedDocs?: readonly string[];
+};
+
+export type PackOpts = {
+  target?: number;
+  maxPerBin?: number;
+} & CollisionRules;
 
 /** Single fill width for FFD and tail-absorb. */
 export function fillCap(target = PACK_TARGET, hardMax = PACK_HARD_MAX): number {
@@ -84,20 +96,62 @@ export type PackResult = {
 export type TouchNorm = {
   path: string;
   dir: boolean;
+  isNew: boolean;
 };
+
+const NEW_MARKER_RE = /[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i;
+const SHARED_DOCS_MARKER_RE = /roadmap:shared_docs=([^\s]*?)(?=\s|-->|$)/;
+const PROTECTED_CLAUDE_DOCS = new Set(['CLAUDE.md', 'docs/CLAUDE.md']);
+const sharedDocCache = new WeakMap<readonly string[], Set<string>>();
 
 export function normalizeTouch(raw: string): TouchNorm {
   let s = raw.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/g, '');
-  s = s.replace(/[ \t\v\f\r]*\(new\)[ \t\v\f\r]*$/i, '');
+  const isNew = NEW_MARKER_RE.test(s);
+  if (isNew) s = s.replace(NEW_MARKER_RE, '');
   s = s.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/g, '');
   const dir = s.endsWith('/');
   if (dir) s = s.replace(/\/+$/, '') + '/';
-  return { path: s, dir };
+  return { path: s, dir, isNew };
 }
 
-export function isSharedDoc(path: string): boolean {
+/**
+ * Parse `<!-- roadmap:shared_docs=a.md,b.md -->` from CLAUDE.md content.
+ * First marker wins; value runs to whitespace or `-->` and splits on `,`.
+ */
+export function sharedDocsMarker(instructions: string): string[] {
+  if (!instructions) return [];
+  const m = SHARED_DOCS_MARKER_RE.exec(instructions);
+  if (!m || !m[1]) return [];
+  const out: string[] = [];
+  for (const part of m[1].split(',')) {
+    const trimmed = part.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/g, '');
+    if (trimmed !== '') out.push(trimmed);
+  }
+  return out;
+}
+
+function extraSharedDocSet(rules?: CollisionRules): Set<string> {
+  const list = rules?.sharedDocs;
+  if (!list || list.length === 0) return new Set();
+  const cached = sharedDocCache.get(list);
+  if (cached !== undefined) return cached;
+  const set = new Set<string>();
+  for (const raw of list) {
+    const n = normalizeTouch(raw);
+    if (n.path === '' || n.dir || PROTECTED_CLAUDE_DOCS.has(n.path)) continue;
+    set.add(n.path);
+  }
+  sharedDocCache.set(list, set);
+  return set;
+}
+
+export function isSharedDoc(path: string, rules: CollisionRules = {}): boolean {
   const stripped = path.replace(/\/+$/, '');
-  return SHARED_DOC_PATHS.has(path) || SHARED_DOC_PATHS.has(stripped);
+  if (SHARED_DOC_PATHS.has(path) || SHARED_DOC_PATHS.has(stripped)) return true;
+  const n = normalizeTouch(path);
+  if (SHARED_DOC_PATHS.has(n.path)) return true;
+  if (n.dir || n.path === '') return false;
+  return extraSharedDocSet(rules).has(n.path);
 }
 
 /** IDs are paint — strip Group/Track tokens so remapping a title does not change FFD. */
@@ -111,34 +165,91 @@ function titleKey(title: string): string {
 }
 
 /** Rename- and regroup-stable FFD key. Touches + title; never ID or file position. */
-export function packIdent(t: Pick<PackTrack, 'touches' | 'title'>): string {
-  const paths = schedulingTouches(t.touches)
+export function packIdent(
+  t: Pick<PackTrack, 'touches' | 'title'>,
+  rules: CollisionRules = {},
+): string {
+  const paths = schedulingTouches(t.touches, rules)
     .map((n) => n.path)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return `${paths.join('\n')}\0${titleKey(t.title ?? '')}`;
 }
 
-export function schedulingTouches(touches: string[]): TouchNorm[] {
+export function schedulingTouches(touches: string[], rules: CollisionRules = {}): TouchNorm[] {
+  const extra = extraSharedDocSet(rules);
   const out: TouchNorm[] = [];
   for (const raw of touches) {
     const n = normalizeTouch(raw);
-    if (n.path === '' || isSharedDoc(n.path)) continue;
+    if (n.path === '') continue;
+    const stripped = n.path.replace(/\/+$/, '');
+    if (SHARED_DOC_PATHS.has(n.path) || SHARED_DOC_PATHS.has(stripped)) continue;
+    if (!n.dir && extra.has(n.path)) continue;
     out.push(n);
   }
   return out;
 }
 
-export function touchesIntersect(a: string[], b: string[]): boolean {
-  const na = schedulingTouches(a);
-  const nb = schedulingTouches(b);
+export type CollisionMatch = {
+  kind: 'file' | 'folder';
+  a: string;
+  b: string;
+  /** Folder entry when kind === 'folder'. */
+  folder?: string;
+  /** Covered path when kind === 'folder'. */
+  path?: string;
+};
+
+function matchTouchPair(x: TouchNorm, y: TouchNorm): CollisionMatch | null {
+  if (x.path === y.path) {
+    if (!x.dir && !y.dir) {
+      return { kind: 'file', a: x.path, b: y.path };
+    }
+    return { kind: 'folder', a: x.path, b: y.path, folder: x.path, path: y.path };
+  }
+  if (x.dir && y.path.startsWith(x.path)) {
+    if (y.isNew && !x.isNew) return null;
+    return { kind: 'folder', a: x.path, b: y.path, folder: x.path, path: y.path };
+  }
+  if (y.dir && x.path.startsWith(y.path)) {
+    if (x.isNew && !y.isNew) return null;
+    return { kind: 'folder', a: x.path, b: y.path, folder: y.path, path: x.path };
+  }
+  return null;
+}
+
+export function collisionMatches(
+  a: string[],
+  b: string[],
+  rules: CollisionRules = {},
+): CollisionMatch[] {
+  const na = schedulingTouches(a, rules);
+  const nb = schedulingTouches(b, rules);
+  const out: CollisionMatch[] = [];
   for (const x of na) {
     for (const y of nb) {
-      if (x.path === y.path) return true;
-      if (x.dir && y.path.startsWith(x.path)) return true;
-      if (y.dir && x.path.startsWith(y.path)) return true;
+      const m = matchTouchPair(x, y);
+      if (m !== null) out.push(m);
     }
   }
-  return false;
+  return out;
+}
+
+export function collisionKind(
+  a: string[],
+  b: string[],
+  rules: CollisionRules = {},
+): 'none' | 'file' | 'folder-only' {
+  const matches = collisionMatches(a, b, rules);
+  if (matches.length === 0) return 'none';
+  return matches.some((m) => m.kind === 'file') ? 'file' : 'folder-only';
+}
+
+export function touchesIntersect(
+  a: string[],
+  b: string[],
+  rules: CollisionRules = {},
+): boolean {
+  return collisionKind(a, b, rules) !== 'none';
 }
 
 function longestPathLayer(
@@ -222,9 +333,9 @@ function computeCriticalPath(bins: PackedBin[]): string[] {
   return bestPath.map((i) => bins[i]!.trackIds[0]!);
 }
 
-function binCollides(bin: PackTrack[], candidate: PackTrack): boolean {
+function binCollides(bin: PackTrack[], candidate: PackTrack, rules: CollisionRules): boolean {
   for (const existing of bin) {
-    if (touchesIntersect(existing.touches, candidate.touches)) return true;
+    if (touchesIntersect(existing.touches, candidate.touches, rules)) return true;
   }
   return false;
 }
@@ -235,7 +346,7 @@ type LayerBin = {
   collisionBlockedBy: string[];
 };
 
-function absorbTails(bins: LayerBin[], maxPerBin: number): void {
+function absorbTails(bins: LayerBin[], maxPerBin: number, rules: CollisionRules): void {
   let changed = true;
   while (changed) {
     changed = false;
@@ -245,7 +356,7 @@ function absorbTails(bins: LayerBin[], maxPerBin: number): void {
       if (last.layerOffset !== prev.layerOffset) continue;
       if (prev.tracks.some((x) => x.isHotfix) || last.tracks.some((x) => x.isHotfix)) continue;
       if (prev.tracks.length + last.tracks.length > maxPerBin) continue;
-      if (last.tracks.some((t) => binCollides(prev.tracks, t))) continue;
+      if (last.tracks.some((t) => binCollides(prev.tracks, t, rules))) continue;
       prev.tracks.push(...last.tracks);
       bins.splice(i, 1);
       changed = true;
@@ -254,17 +365,17 @@ function absorbTails(bins: LayerBin[], maxPerBin: number): void {
   }
 }
 
-function collidingIds(bin: PackTrack[], candidate: PackTrack): string[] {
+function collidingIds(bin: PackTrack[], candidate: PackTrack, rules: CollisionRules): string[] {
   const ids: string[] = [];
   for (const existing of bin) {
-    if (touchesIntersect(existing.touches, candidate.touches)) ids.push(existing.id);
+    if (touchesIntersect(existing.touches, candidate.touches, rules)) ids.push(existing.id);
   }
   return ids;
 }
 
 export function packTracks(
   tracks: PackTrack[],
-  opts: { target?: number; maxPerBin?: number } = {},
+  opts: PackOpts = {},
 ): PackResult {
   const target = opts.target ?? PACK_TARGET;
   const maxPerBin = opts.maxPerBin ?? PACK_HARD_MAX;
@@ -278,7 +389,7 @@ export function packTracks(
   const byId = new Map(live.map((t) => [t.id, t]));
   const identOf = (id: string): string => {
     const t = byId.get(id);
-    return t === undefined ? id : packIdent(t);
+    return t === undefined ? id : packIdent(t, opts);
   };
   const ordOf = (id: string): number => byId.get(id)?.ord ?? 0;
   const cmpIdent = (a: string, b: string): number => {
@@ -304,8 +415,8 @@ export function packTracks(
   for (const L of layerNums) {
     const members = byLayer.get(L) ?? [];
     const ordered = [...members].sort((a, b) => {
-      const da = schedulingTouches(a.touches).length;
-      const db = schedulingTouches(b.touches).length;
+      const da = schedulingTouches(a.touches, opts).length;
+      const db = schedulingTouches(b.touches, opts).length;
       if (db !== da) return db - da;
       return cmpIdent(a.id, b.id);
     });
@@ -321,7 +432,7 @@ export function packTracks(
       for (const bin of fitOrder) {
         if (bin.tracks.length >= capacity) continue;
         if (bin.tracks.some((x) => x.isHotfix)) continue;
-        if (binCollides(bin.tracks, t)) continue;
+        if (binCollides(bin.tracks, t, opts)) continue;
         bin.tracks.push(t);
         placed = true;
         break;
@@ -330,7 +441,7 @@ export function packTracks(
         let collideOffset = -1;
         const collided: string[] = [];
         for (const bin of layerBins) {
-          const hits = collidingIds(bin.tracks, t);
+          const hits = collidingIds(bin.tracks, t, opts);
           if (hits.length === 0) continue;
           collideOffset = Math.max(collideOffset, bin.layerOffset);
           for (const id of hits) {
@@ -345,7 +456,7 @@ export function packTracks(
       }
     }
 
-    absorbTails(layerBins, capacity);
+    absorbTails(layerBins, capacity, opts);
 
     for (const bin of layerBins) {
       const blocked = new Set<string>();
@@ -356,7 +467,7 @@ export function packTracks(
       }
       for (const d of bin.collisionBlockedBy) blocked.add(d);
       const trackIds = bin.tracks.map((t) => t.id).sort(cmpIdent);
-      const idents = bin.tracks.map((t) => packIdent(t)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const idents = bin.tracks.map((t) => packIdent(t, opts)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
       bins.push({
         layer: L + bin.layerOffset,
         trackIds,
@@ -410,11 +521,11 @@ export function relayerAndSort(bins: PackedBin[]): PackedBin[] {
 }
 
 /** Two live tracks with the same packIdent — last-resort FFD order is arbitrary. */
-export function identCollisions(tracks: PackTrack[]): string[] {
+export function identCollisions(tracks: PackTrack[], rules: CollisionRules = {}): string[] {
   const byKey = new Map<string, string[]>();
   for (const t of tracks) {
     if (t.id === '') continue;
-    const k = packIdent(t);
+    const k = packIdent(t, rules);
     const arr = byKey.get(k) ?? [];
     arr.push(t.id);
     byKey.set(k, arr);
@@ -435,7 +546,7 @@ export type CollisionContext = {
   trackGroup?: Map<string, string>;
   groupDeps?: Map<string, readonly string[]>;
   /** Must match PACKING's fillCap. Default packTracks cap invents a different bin DAG. */
-  packOpts?: { target?: number; maxPerBin?: number };
+  packOpts?: PackOpts;
 };
 
 function closedReach(ids: Iterable<string>, preds: (id: string) => readonly string[]): Map<string, Set<string>> {
@@ -501,7 +612,7 @@ export function unorderedCollisions(tracks: PackTrack[], ctx: CollisionContext =
     for (let j = i + 1; j < live.length; j++) {
       const a = live[i]!;
       const b = live[j]!;
-      if (!touchesIntersect(a.touches, b.touches)) continue;
+      if (!touchesIntersect(a.touches, b.touches, ctx.packOpts)) continue;
       if (orderedBy(trackReach, a.id, b.id)) continue;
       const ba = trackBin.get(a.id);
       const bb = trackBin.get(b.id);
@@ -540,7 +651,47 @@ export function packingDrift(written: string[][], packed: PackResult): string[] 
   ];
 }
 
-export function formatPackOutput(packed: PackResult, opts: { emptyHint?: string } = {}): string {
+/**
+ * Pairs of live tracks that collide only through a folder entry, including
+ * pairs already ordered by `_blocked-by`. Sorted by packIdent (ties by ord).
+ */
+export function folderOnlyCollisions(
+  tracks: PackTrack[],
+  rules: CollisionRules = {},
+): string[] {
+  const live = tracks
+    .filter((t) => t.id !== '')
+    .map((t, i) => ({
+      track: t,
+      ident: packIdent(t, rules),
+      ord: t.ord ?? i,
+    }))
+    .sort((a, b) => {
+      if (a.ident < b.ident) return -1;
+      if (a.ident > b.ident) return 1;
+      return a.ord - b.ord;
+    });
+
+  const out: string[] = [];
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const a = live[i]!.track;
+      const b = live[j]!.track;
+      const matches = collisionMatches(a.touches, b.touches, rules);
+      if (matches.length === 0 || matches.some((m) => m.kind === 'file')) continue;
+      const pairs = [...new Set(matches.map((m) => `${m.folder} ⊇ ${m.path}`))].sort((x, y) =>
+        x < y ? -1 : x > y ? 1 : 0,
+      );
+      out.push(`- ${a.id} ∥ ${b.id}: ${pairs.join(', ')}`);
+    }
+  }
+  return out;
+}
+
+export function formatPackOutput(
+  packed: PackResult,
+  opts: { emptyHint?: string; folderOnly?: string[] } = {},
+): string {
   if (packed.cycles.length > 0) {
     return `BINS: CYCLE\n${packed.cycles.map((c) => `- ${c}`).join('\n')}\n`;
   }
@@ -577,5 +728,15 @@ export function formatPackOutput(packed: PackResult, opts: { emptyHint?: string 
     );
   }
   if (!any) lines.push('- (none — every bin is ready)');
+  if (opts.folderOnly !== undefined) {
+    lines.push(
+      'FOLDER_ONLY (collide only through a folder entry; name files where the code shows them, then re-pack):',
+    );
+    if (opts.folderOnly.length === 0) {
+      lines.push('- (none)');
+    } else {
+      lines.push(...opts.folderOnly);
+    }
+  }
   return lines.join('\n') + '\n';
 }

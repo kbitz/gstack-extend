@@ -216,6 +216,9 @@
     "docs/acceptance/skill-test-selection.md": [
       "tests/touchfiles.test.ts"
     ],
+    "docs/collision-contract.md": [
+      "tests/lib-pack.test.ts"
+    ],
     "docs/delegated-review.md": [
       "tests/review-delegate.test.ts"
     ],
@@ -403,6 +406,9 @@
     "tests/fixtures/autoplan-lean/**": [
       "tests/autoplan-lean-history.test.ts",
       "tests/autoplan-lean.test.ts"
+    ],
+    "tests/fixtures/collision-vectors.json": [
+      "tests/lib-pack.test.ts"
     ],
     "tests/fixtures/handoffs/**": [
       "tests/handoff-contract.test.ts"

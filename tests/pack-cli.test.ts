@@ -80,5 +80,54 @@ describe('runPackCli', () => {
     expect(out).toContain('MATERIALIZE');
     expect(out).toContain('Group 2');
     expect(out).toContain('BINS:');
+    expect(out).toContain('FOLDER_ONLY');
+    expect(out).toContain('- (none)');
+  });
+
+  test('prints FOLDER_ONLY pair when a draft has a folder Track and a file Track under it', () => {
+    const draft = join(dir, 'folder-draft.md');
+    writeFileSync(
+      draft,
+      [
+        '## Current Plan',
+        '##### Track 1A: Folder owner',
+        '_touches: src/audit/_',
+        '- **Do a** -- body (S)',
+        '##### Track 1B: File owner',
+        '_touches: src/audit/cli.ts_',
+        '- **Do b** -- body (S)',
+        '',
+      ].join('\n'),
+    );
+    const out = runPackCli(['--from', draft, dir]);
+    expect(out).toContain(
+      'FOLDER_ONLY (collide only through a folder entry; name files where the code shows them, then re-pack):',
+    );
+    expect(out).toContain('- 1A ∥ 1B: src/audit/ ⊇ src/audit/cli.ts');
+  });
+
+  test('CLAUDE.md roadmap:shared_docs marker packs Tracks sharing listed doc into one bin', () => {
+    const draft = join(dir, 'shared-docs-draft.md');
+    writeFileSync(
+      draft,
+      [
+        '## Current Plan',
+        '##### Track 1A: First',
+        '_touches: src/a.ts, docs/runbook.md_',
+        '- **Do a** -- body (S)',
+        '##### Track 1B: Second',
+        '_touches: src/b.ts, docs/runbook.md_',
+        '- **Do b** -- body (S)',
+        '',
+      ].join('\n'),
+    );
+    const withoutMarker = runPackCli(['--from', draft, dir]);
+    expect(withoutMarker).toContain('- bin 1 layer=0 ← {} : 1A');
+    expect(withoutMarker).toContain('- bin 2 layer=1 ← {1A} : 1B');
+
+    writeFileSync(join(dir, 'CLAUDE.md'), '# Project\n<!-- roadmap:shared_docs=docs/runbook.md -->\n');
+    const withMarker = runPackCli(['--from', draft, dir]);
+    expect(withMarker).toContain('- bin 1 layer=0 ← {} : 1A 1B');
+    expect(withMarker).not.toContain('- bin 2');
   });
 });

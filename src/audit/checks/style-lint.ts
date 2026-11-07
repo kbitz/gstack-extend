@@ -16,7 +16,7 @@
  */
 
 import { tracksForPacker } from './packing.ts';
-import { fillCap, identCollisions, unorderedCollisions } from '../lib/pack.ts';
+import { fillCap, identCollisions, sharedDocsMarker, unorderedCollisions } from '../lib/pack.ts';
 import type { AuditCtx, CheckResult } from '../types.ts';
 
 export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
@@ -28,8 +28,9 @@ export function runCheckStyleLint(ctx: AuditCtx): CheckResult {
   }
   const packedInput = tracksForPacker(ctx);
   const cap = fillCap(ctx.parallelismCap);
-  const packOpts = { target: cap, maxPerBin: cap };
-  for (const w of identCollisions(packedInput)) {
+  const rules = { sharedDocs: sharedDocsMarker(ctx.claudeMd) };
+  const packOpts = { target: cap, maxPerBin: cap, ...rules };
+  for (const w of identCollisions(packedInput, rules)) {
     warnings.push(w);
   }
   for (const w of unorderedCollisions(packedInput, { trackGroup, groupDeps, packOpts })) {
