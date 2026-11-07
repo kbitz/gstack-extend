@@ -104,16 +104,10 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/pregate-deps.test.ts': [
     'bin/pregate-deps', 'src/pregate-deps/**', 'tests/fixtures/pregate-deps/**', 'docs/pregate-deps.md',
   ],
-  'tests/autoplan-lean.test.ts': [
-    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**',
-  ],
-  'tests/autoplan-lean-history.test.ts': [
-    'bin/autoplan-lean', skill('autoplan-lean'), 'tests/fixtures/autoplan-lean/**',
-  ],
   // The release and manifest checks: what a release commit (VERSION, the
   // CHANGELOG entry and package.json's version field) can break on its own.
   // Only this suite and the two telemetry suites declare VERSION. The others
-  // that read it (layout-scaffold, autoplan-lean, merge-gate, setup-hosts,
+  // that read it (layout-scaffold, merge-gate, setup-hosts,
   // workflow-metrics) echo it back. Track 28A's full four-part control and
   // three-part candidate probe (2026-10-23–24) introduced no format failures;
   // the candidate passed all 76 suites. Control harness corrections and normal
@@ -188,10 +182,9 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
   'tests/skill-protocols-full-review.test.ts': [skill('full-review'), 'bin/lib/session-paths.sh'],
   'tests/skill-protocols-implement.test.ts': [skill('implement')],
   'tests/skill-protocols-pair-review.test.ts': [skill('pair-review'), 'bin/lib/session-paths.sh'],
-  // Reads /autoplan-lean to lock that the two planners stay separate, and the docs that name the new skill.
+  // Reads the docs and setup list that document the skill.
   'tests/skill-protocols-plan-track.test.ts': [
     skill('plan-track'),
-    skill('autoplan-lean'),
     'setup',
     'README.md',
     'CLAUDE.md',
@@ -227,8 +220,7 @@ export const MANUAL_TOUCHFILES: Record<string, string[]> = {
     skill('review-and-prep'),
     skill('pair-review'),
     skill('ship-and-land'),
-    // The stage line: /autoplan-lean and /plan-track print it too, and the others must not.
-    skill('autoplan-lean'),
+    // The stage line: /plan-track prints it too, and the others must not.
     skill('plan-track'),
     skill('docs-ship'),
     'README.md',

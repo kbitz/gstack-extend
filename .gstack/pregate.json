@@ -29,10 +29,6 @@
       "tests/telemetry-contract.test.ts",
       "tests/telemetry.test.ts"
     ],
-    "bin/autoplan-lean": [
-      "tests/autoplan-lean-history.test.ts",
-      "tests/autoplan-lean.test.ts"
-    ],
     "bin/config": [
       "tests/setup-hosts.test.ts",
       "tests/skill-content.test.ts",
@@ -319,12 +315,6 @@
       "tests/telemetry-doctor.test.ts",
       "tests/upstream-check.test.ts"
     ],
-    "skills/autoplan-lean.md": [
-      "tests/autoplan-lean-history.test.ts",
-      "tests/autoplan-lean.test.ts",
-      "tests/handoff-contract.test.ts",
-      "tests/skill-protocols-plan-track.test.ts"
-    ],
     "skills/docs-ship.md": [
       "tests/docs-ship.test.ts",
       "tests/handoff-contract.test.ts"
@@ -402,10 +392,6 @@
     ],
     "src/secret-dispositions/**": [
       "tests/secret-dispositions.test.ts"
-    ],
-    "tests/fixtures/autoplan-lean/**": [
-      "tests/autoplan-lean-history.test.ts",
-      "tests/autoplan-lean.test.ts"
     ],
     "tests/fixtures/collision-vectors.json": [
       "tests/lib-pack.test.ts"

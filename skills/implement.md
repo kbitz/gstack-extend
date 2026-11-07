@@ -156,7 +156,7 @@ Own the implementation interval:
 
 Accept a plan path or reference and an optional scope boundary (for example,
 one Track in a larger plan). With no arguments, use the plan and scope already
-established in the session. A handoff from `/autoplan` or `/autoplan-lean` is a
+established in the session. A handoff from `/autoplan` or `/plan-track` is a
 normal input.
 
 ## Keep the main session small
@@ -480,13 +480,11 @@ task or acceptance criterion and re-read only the needed line ranges, not
 the whole plan. Apply the same rule during completeness checks; do not reload
 the plan just to refresh context. Accepted revisions require reading the
 changed scope and updating coverage, not another full read of unchanged text.
-For an `/autoplan-lean` plan, its `## Review record` names a
-`<plan-stem>.review-record.md` sidecar; keep that sidecar out of main context
-unless a task or accepted decision needs deeper phase detail. When the
-handoff carries plan and sidecar SHA-256 values, verify them against the
-files on disk (and the named HEAD against `git rev-parse HEAD`) before
-implementing; a mismatch means the handoff is stale — stop and surface it
-instead of implementing a different revision than the one reviewed.
+When the handoff carries any plan or review-record SHA-256 values, verify
+them against the files on disk (and the named HEAD against
+`git rev-parse HEAD`) before implementing; a mismatch means the handoff is
+stale — stop and surface it instead of implementing a different revision
+than the one reviewed.
 
 Inspect the current branch, target base, HEAD, and committed, staged, unstaged,
 and untracked changes. Record existing work so you can build on it and preserve

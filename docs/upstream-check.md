@@ -16,10 +16,8 @@ records `pregate-narrowing: inactive` and runs the pregate as today, or
 records `Review arm: dispatch — anchor changed` and dispatches specialists as
 today, or records `Review overlap: sequential — anchor changed` and runs cycle 1
 in today's order),
-`bin/outside-review` refuses at dispatch, `bin/secret-dispositions` refuses a
-reviewed finding whose location it cannot read, and
-`/autoplan-lean` records criteria drift and continues with voices that are not
-upstream-identical. The check moves that discovery ahead of the spend. It only
+`bin/outside-review` refuses at dispatch, and `bin/secret-dispositions` refuses a
+reviewed finding whose location it cannot read. The check moves that discovery ahead of the spend. It only
 describes the installation at the moment it ran.
 
 ## Run it
@@ -28,10 +26,10 @@ Pass the root of the installed upstream the stage will use. The checker never
 guesses a root.
 
 ```sh
-# Claude Code layout: review and autoplan live under the root.
+# Claude Code layout: review and ship live under the root.
 bin/upstream-check --gstack-root "$HOME/.claude/skills/gstack"
 
-# Codex-style layout: gstack-review and gstack-autoplan are siblings of the root
+# Codex-style layout: gstack-review and gstack-ship are siblings of the root
 # (review/checklist.md stays under the root in both layouts).
 bin/upstream-check --gstack-root "$HOME/.codex/skills/gstack"
 # Sibling skills somewhere else:
@@ -95,14 +93,14 @@ user-wide root and present that result as coverage of the selected install.
 These are upstream host rules, not automatic discovery by this command.
 
 The layout is chosen once per run. It is **nested** when `<root>/review/SKILL.md`
-exists: review is `<root>/review/SKILL.md`, autoplan is
-`<root>/autoplan/SKILL.md` and each phase section is
-`<root>/autoplan/sections/<phase>-phase.md` (or the autoplan file for every
-phase when that directory is absent). Otherwise it is **sibling**:
-`<skills dir>/gstack-review/SKILL.md` and `<skills dir>/gstack-autoplan/SKILL.md`,
-which inlines the phase sections. In both layouts the snapshot tool is
-`<root>/bin/gstack-autoplan-snapshot.ts` and helper modules are
-`<root>/lib/<name>.ts`. No run mixes layouts, and an `INFO file` line names the
+exists: review is that file, its adversarial section is
+`<root>/review/sections/adversarial.md`, and test coverage is
+`<root>/ship/sections/test-coverage.md`. Otherwise it is **sibling**:
+`<skills dir>/gstack-review/SKILL.md` inlines the adversarial section, and
+test coverage is `<skills dir>/gstack-ship/sections/test-coverage.md`.
+In both layouts the review checklists stay under `<root>/review/`, pregate is
+`<root>/bin/gstack-pregate` with modules under `<root>/lib/pregate/`, and
+helper modules are `<root>/lib/<name>.ts`. No run mixes layouts, and an `INFO file` line names the
 real path of each checked contract file, inventory source, VERSION and helper
 module (not every transitive module import; symlinks are followed, so a symlinked layout
 reports OK).
@@ -123,10 +121,9 @@ RESULT ok|drift checks=<n> drift=<m>
 ```
 
 Ids contain no whitespace and come from the source position
-(`review-and-prep.incap.1`, `autoplan-lean.skip-list`,
+(`review-and-prep.incap.1`,
 `outside-review.classifyOutsideReview`, `classifier.review-not-ready`,
-`secret-dispositions.location.1`,
-`criteria.eng.outside`). `INFO` keys are `extend-version`, `extend-root`,
+`secret-dispositions.location.1`). `INFO` keys are `extend-version`, `extend-root`,
 `inspected <contract> <revision> <version>`, `scope`, `root`,
 `upstream-version`, `upstream-revision` (the git revision when the root is a
 checkout, `unknown` otherwise), `layout`, `file <id> <path>` and
@@ -161,13 +158,12 @@ the module path and a reason the checker owns. To see the raw message run
 DRIFT anchor review-and-prep.incap.2 anchor not found byte for byte in /Users/me/.claude/skills/gstack/review/SKILL.md: "Allow at most 3 fix cycles"
   effect: /review-and-prep: the in-cap delta is inactive and /review runs unmodified; repair-review=behavior-changing is also inactive, so every edited pass repeats as today and the receipt says so
   fix: run /gstack-extend-upgrade and rerun; if it still drifts the extension is not qualified for this upstream, so proceed knowing the stated cost or hold the stage (your decision); see docs/upstream-check.md#drift-anchor
-RESULT drift checks=107 drift=1
+RESULT drift checks=98 drift=1
 ```
 
 ## What it checks
 
-`OK` means only that the listed anchors, exports, classifier cases and known
-criteria paragraphs matched. It does not detect newly added upstream
+`OK` means only that the listed anchors, exports and classifier cases matched. It does not detect newly added upstream
 requirements, changed surrounding instructions, or classifier behavior outside
 the golden cases. It is not the installed-call qualification
 [outside-review.md](outside-review.md) requires after an upstream upgrade.
@@ -179,8 +175,7 @@ The inventory comes from this extension's own source, never a second copy:
   `skills/review-and-prep.md`, each checked as raw bytes anywhere in the
   installed `/review` skill file (whole-file `grep -F` semantics, as the
   wrapper's check does; its prose "in its Step 5.8" is enforced by neither, and
-  there is no decoding or normalization), plus the `**Section skip list` label in the installed
-  autoplan file, through the `skipList` helper `/autoplan-lean outline` uses.
+  there is no decoding or normalization).
 - **Fix-First anchors.** The backtick spans of the activation paragraph of
   `skills/review-and-prep.md` (opened by `**Activation
   (`repair-review=behavior-changing`).**`): the two after its first "byte for
@@ -305,9 +300,6 @@ The inventory comes from this extension's own source, never a second copy:
   and credited, for both the `review` and `structured` gates. The `review` cases
   include a recommendation; the `structured` cases omit it.
   The table is qualified at upstream `db87940e` (1.91.198.0) or later.
-- **Criteria.** `driftReport` from `src/autoplan-lean/criteria.ts`, the
-  comparison `autoplan-lean drift` uses, over the installed snapshot tool and
-  each phase's section text. `unreadable` and `unknown` count as drift.
 
 The upstream imports and the golden cases run in one child Bun process with
 stdin closed and a deadline (`--timeout-ms`); its output never reaches this
@@ -373,28 +365,16 @@ list. Rerunning is always safe, and an unchanged rerun cannot repair drift.
   receipt says so, with no upstream file edited. For the two secret-finding
   location anchors, `bin/secret-dispositions` may refuse a reviewed MEDIUM
   secret finding as unrecognized, so the pregate gate stays blocked; nothing is
-  approved in its place and no upstream file is edited. For the skip list,
-  `autoplan-lean outline` marks no row `skip`, so `/autoplan-lean` applies
-  upstream's skip list by heading itself and reads more.
-
-<a id="drift-criteria"></a>
-- **`criteria`.** The copied reviewer criteria no longer match the installed
-  text, so `/autoplan-lean` voices are not upstream-identical for that phase.
-  The run continues, but it records the difference.
+  approved in its place and no upstream file is edited.
 
 <a id="drift-inventory"></a>
 - **`inventory`.** This extension's own files are damaged or edited: the
   anchors cannot be listed. Re-run its `setup` or reinstall, then rerun.
 
-For `anchor`, `export`, `classifier` and `criteria`, run
+For `anchor`, `export` and `classifier`, run
 `/gstack-extend-upgrade` and rerun. If it still drifts, the extension is not
 qualified for this upstream; proceed knowing the stated cost, or hold the stage.
 That decision belongs to the caller.
-
-`autoplan-lean drift` prints `DRIFT: found` and `CRITERIA:` lines; this command
-prints `DRIFT <kind> …`. `autoplan-lean drift` also refuses a symlinked file
-argument, while this command resolves symlinks, so a symlinked nested layout
-(such as Claude's) is checked, not reported unreadable.
 
 ### Upstream's specialist-dispatch item
 
@@ -473,9 +453,8 @@ and the test-gap routing value.
 2. A pass is not the installed-call qualification
    [outside-review.md](outside-review.md) requires. Re-inspect the adapter
    against the new upstream before changing the inspected revision recorded
-   there; the constants in `src/upstream-check/cli.ts`,
-   `src/autoplan-lean/criteria.ts` and `src/outside-review/cli.ts` must agree
-   with the documents (a test checks).
+   there; the constants in `src/upstream-check/cli.ts` and
+   `src/outside-review/cli.ts` must agree with the documents (a test checks).
 3. If a check still drifts, decide to proceed with the stated cost or hold.
 
 ## What it does not do
@@ -499,7 +478,6 @@ and the test-gap routing value.
 | Delegation anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Fold anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
 | Overlap anchors | `9ceec3f05e4a960d023b3140d6f7a28ed06662d5` | 1.96.0.0 |
-| Reviewer criteria copies | `f8085aa0e499085c411f712d6d5c00a81d1b104a` | 1.94.39.0 |
 | Outside-review adapter | `e2fffee3114e90ce2a7d165f09d3efce3555e252` | 1.91.208.0 |
 
 ## Measured startup profile

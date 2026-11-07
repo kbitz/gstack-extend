@@ -103,6 +103,7 @@ describe('template substitution', () => {
     expect(claude).toContain('## Product scope');
     expect(claude.replace(/\s+/g, ' ')).toContain('When `docs/SPEC.md` exists with an `## Authority` section, read it');
     expect(claude).toContain('invoke `/project-spec`');
+    expect(claude).not.toContain('autoplan-lean');
     const todos = readFileSync(join(s.target, 'docs', 'TODOS.md'), 'utf8');
     expect(todos).toContain('Suggested order: `/project-spec`');
   });
