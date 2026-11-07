@@ -39,19 +39,19 @@ The following paths (and their trailing-slash stripped forms) are always exclude
 
 ### Project marker (`roadmap:shared_docs=`)
 
-A project may declare additional shared documentation files in `CLAUDE.md` (read from repo-root `CLAUDE.md`, falling back to `docs/CLAUDE.md`):
+A project may declare additional shared documentation files in `CLAUDE.md`. `bin/roadmap-pack` and `bin/roadmap-audit` read the same file: repo-root `CLAUDE.md` when it is a regular file (even an empty one), otherwise `docs/CLAUDE.md`.
 
 ```markdown
 <!-- roadmap:shared_docs=AGENTS.md,docs/runbook.md -->
 ```
 
 Parsing and entry rules (`sharedDocsMarker`):
-- The first `roadmap:shared_docs=` marker in the file wins.
+- A marker starts with `<!--`, optional whitespace, then `roadmap:shared_docs=`, so a bare prose or inline-code mention of `roadmap:shared_docs=` is not a marker. The parser does not read Markdown structure: as with `parallelism_cap`, a full `<!-- roadmap:shared_docs=... -->` form inside a code span or fenced block still counts. The first marker in the file wins, so put the real marker before any example of it.
 - The value runs to the first whitespace character or `-->` and is split on `,`, with each entry trimmed and empty entries dropped. Missing or empty markers yield `[]`.
 - Each listed entry is normalized with `normalizeTouch`:
   - Empty entries are ignored.
   - Folder entries (`dir === true`, ending with `/`) are ignored so a directory prefix cannot erase scheduling collisions.
-  - `CLAUDE.md` and `docs/CLAUDE.md` are ignored so the `COLLISIONS` one-owner-per-Group rule remains enforced.
+  - `CLAUDE.md` and `docs/CLAUDE.md` are ignored so the `COLLISIONS` one-owner-per-Group rule remains enforced. The check compares these literal paths only: when `CLAUDE.md` is a symlink (for example to `AGENTS.md`), do not list its target, or Tracks that edit the project instructions run in parallel.
   - Remaining file paths are excluded from scheduling touches before matching, alongside `SHARED_DOC_PATHS`. Remaining conflicts in listed docs are left to the base merge.
 
 ## Match rule and `(new)` exemption
@@ -70,6 +70,8 @@ This rule is symmetric in `a` and `b`:
 - A new file (`src/audit/new-check.ts (new)`) or new subfolder (`src/audit/sub/ (new)`) does **not** collide with an existing parent folder entry (`src/audit/`).
 - A new file (`src/audit/new-check.ts (new)`) **does** collide with the same file path (`src/audit/new-check.ts` or `src/audit/new-check.ts (new)`).
 - Any path under a folder entry that is itself marked new (`src/audit/ (new)`) **does** collide with that folder entry.
+
+The `(new)` marker is trusted: nothing checks that the path is absent from the repository. A `(new)` marker on an existing file removes its collision with a folder entry above it, and the conflict surfaces at merge.
 
 ## `collisionKind` and `folder_only`
 

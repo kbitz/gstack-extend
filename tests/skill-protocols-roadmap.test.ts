@@ -372,6 +372,9 @@ describe('collision-driven grouping prose and shared_docs marker', () => {
       'https://github.com/kbitz/gstack-extend/blob/main/docs/collision-contract.md',
     );
     expect(flat).toContain(
+      'Never list the file a symlinked `CLAUDE.md` points to (such as `AGENTS.md`): the guard below matches the literal name only.',
+    );
+    expect(flat).toContain(
       "Resolving a card's named functions or modules to files is the regeneration's judgment: read the code and name each file the work changes, keeping a bare folder entry (ending in `/`) only when the code does not show which files change.",
     );
     expect(flat).toContain(
