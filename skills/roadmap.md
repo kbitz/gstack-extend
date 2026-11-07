@@ -922,7 +922,7 @@ Hard-fail is **weight ≥ 6**. Weight 5 warns (SIZE `WEIGHT_WARN`) unless you ra
 
 **Deletions are cheap.** A task tagged `~N lines (del)` (or `(deletion)` / `(deletions)`) is weight S regardless of N. Title verbs are not enough — "Trim pair-review.md" without `(del)` is a write-task. Deleting a 2000-line file is one S. Caller rewrites that the delete forces are separate write-tasks.
 
-**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
+**Fan-out is type-aware.** `max_files_per_track=8` applies to **code** `_touches:`. Markdown / docs / skill-only Tracks and delete-only Tracks skip it. A directory touch (`src/`) is scan-scope: it cannot room with anything under that prefix except a path marked `(new)`. It still rooms with disjoint files. It is a singleton only when it collides with every other unpacked Track in the layer.
 
 **The card is the scope.** Do not pre-shrink a Track so `/autoplan` can fill it. Overflow discovered in review goes to `TODOS.md` with its source, target impact and any approved scope amendment; the next regeneration re-evaluates admission before packing. Filing a TODO alone never defers an approved obligation. **No "Ship as N PRs" language ever** (`STRUCTURE: fail`).
 
