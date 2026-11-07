@@ -4,14 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [0.72.0] - 2026-11-07
 
-### Removed
+### Removed (breaking)
 
-- The autoplan-lean planning workflow is retired.
+- The `/autoplan-lean` skill is retired, along with its `bin/autoplan-lean` launcher and its `src/autoplan-lean/` module. Use `/plan-track` to plan a small, well-specified card in one session, or upstream gstack's `/autoplan` for the full multi-voice review.
+- `bin/upstream-check` no longer runs the `/autoplan-lean` skip-list and criteria checks. Its other checks, their order, exit codes and the `upstream-check/v1` line grammar are unchanged.
+- `stage-handoff/v1` no longer lists `/autoplan-lean` as a producer. Its grammar and values are unchanged.
 
 ### Upgrade notes
 
-- Upgrade with `bin/update-run`.
-- Existing setups keep working. The autoplan-lean planning workflow is retired.
+- Upgrade with `bin/update-run`. `setup` now treats `autoplan-lean` as a retired skill and removes the installed copy from each host it installed it to, under the existing install-safety rules. A user-owned or regular file at that path is left in place and reported.
+- This removes a skill name, which is a stable surface, so it ships as a 0.x MINOR release. Anything that invokes `/autoplan-lean` or `bin/autoplan-lean` by name must move to `/plan-track` or `/autoplan`. Other skills and commands keep working unchanged.
+- Shared code that other commands import (outside-review, upstream-check, secret-dispositions and the telemetry helpers) is kept. Historical telemetry rows naming `autoplan-lean` stay readable.
 
 ## [0.71.0] - 2026-11-07
 
