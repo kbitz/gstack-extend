@@ -101,6 +101,26 @@ describe('skill sources', () => {
     }
   });
 
+  // Value: protects=the retired autoplan-lean fixtures stay removed; fails_when=any former fixture returns as a file, directory or symlink; why_new=surviving retirement coverage after the owning suites were deleted; seam=none
+  test('retired autoplan-lean fixtures remain absent', () => {
+    for (const file of [
+      'tests/fixtures/autoplan-lean/final-message-fenced.md',
+      'tests/fixtures/autoplan-lean/final-message.md',
+      'tests/fixtures/autoplan-lean/outside/bulleted-bold-period.md',
+      'tests/fixtures/autoplan-lean/outside/numbered-bold-period.md',
+      'tests/fixtures/autoplan-lean/outside/outcome-and-bold-recommendation.md',
+      'tests/fixtures/autoplan-lean/plan.md',
+      'tests/fixtures/autoplan-lean/run/ceo-native.md',
+      'tests/fixtures/autoplan-lean/run/ceo-outside.md',
+      'tests/fixtures/autoplan-lean/run/ceo-review.md',
+      'tests/fixtures/autoplan-lean/run/decisions.md',
+      'tests/fixtures/autoplan-lean/run/intake.md',
+      'tests/fixtures/autoplan-lean/run/restore.md',
+    ]) {
+      expect(lstatSync(join(ROOT, file), { throwIfNoEntry: false }), file).toBeUndefined();
+    }
+  });
+
   test('--host cursor preserves skill bodies and strips allowed-tools from all skills', () => {
     const home = join(baseTmp, 'cursor-explicit');
     mkdirSync(home, { recursive: true });
